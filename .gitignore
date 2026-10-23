@@ -2,6 +2,8 @@
 *.local
 .gradle/
 build/
+# but never a source folder that is called build (build-logic has a package of that name)
+!**/src/**/build/
 .kotlin/
 .idea/
 .DS_Store
