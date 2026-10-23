@@ -1,0 +1,86 @@
+name: Deploy to dev
+
+# Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
+# GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. The app's own settings and secrets
+# live on the server (/opt/circaso/.env).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: circaso-backend   # the Docker Hub repository, under the DOCKERHUB_USERNAME account
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false   # a deploy in flight finishes; the next one waits
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    name: Build and publish the image
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ref
+        # The tag is the commit, so every deploy is exactly one commit.
+        run: echo "image=${{ vars.DOCKERHUB_USERNAME }}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ref.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  deploy:
+    name: Deploy to the dev server
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: dev
+      url: ${{ vars.DEV_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH setup
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEV_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server's host key is pinned, so a stranger answering on that address is refused instead of trusted on first use.
+          printf '%s\n' "$DEV_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+        env:
+          DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
+          DEV_SSH_KNOWN_HOSTS: ${{ vars.DEV_SSH_KNOWN_HOSTS }}
+      - name: Copy the deploy files
+        run: |
+          scp -r -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            deploy/docker-compose.dev.yml deploy/remote-deploy.sh deploy/nginx \
+            "${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}:/opt/circaso/"
+      - name: Roll out
+        run: |
+          # The Docker Hub token goes in on stdin, so it is never on a command line or in a file on the server.
+          printf '%s' "$REGISTRY_TOKEN" | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}" \
+            "IMAGE='${{ needs.image.outputs.image }}' REGISTRY_USER='${{ vars.DOCKERHUB_USERNAME }}' bash /opt/circaso/remote-deploy.sh"
+        env:
+          REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Remove the key from the runner
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

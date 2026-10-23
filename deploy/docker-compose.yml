@@ -1,0 +1,42 @@
+# Local development: ScyllaDB and Redis (Valkey is wire-compatible). The vendors (SMS, email, push, Circle) are
+# not here: locally the `log` and `fake` integrations stand in for them.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#   ./gradlew :app:run                       # serve on :8080, colored console
+#   ./gradlew :app:migrate                   # run migrations once
+#   settings come from environment variables, locally from .env (copy .env.example)
+name: circaso
+
+services:
+  scylla:
+    image: scylladb/scylla:2026.1
+    # Small and single-node for a laptop. Keyspaces are created by Kandra (AUTO_CREATE) in local runs.
+    command: --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1 --skip-wait-for-gossip-to-settle 0
+    ports:
+      - "9042:9042"
+    volumes:
+      - scylla-data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+
+  redis:
+    image: valkey/valkey:8-alpine
+    # Append-only persistence as in production (appendfsync everysec).
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  scylla-data:
+  redis-data:

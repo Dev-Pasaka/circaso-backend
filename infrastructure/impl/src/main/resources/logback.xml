@@ -1,0 +1,70 @@
+<configuration>
+  <!-- The format that isn't chosen is declared but unreferenced, which logback reports as a warning and answers
+       by printing its whole status log at startup. LoggingTest fails the build on any real configuration problem. -->
+  <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+  <conversionRule conversionWord="ts" class="com.circaso.infrastructure.impl.logging.DimTime"/>
+  <conversionRule conversionWord="lvl" class="com.circaso.infrastructure.impl.logging.LevelColor"/>
+  <conversionRule conversionWord="rid" class="com.circaso.infrastructure.impl.logging.ShortRequestId"/>
+  <conversionRule conversionWord="mod" class="com.circaso.infrastructure.impl.logging.ModuleName"/>
+  <conversionRule conversionWord="line" class="com.circaso.infrastructure.impl.logging.ColoredLine"/>
+
+  <!-- local (LOG_FORMAT=PRETTY): colored, human-readable; colors drop automatically when stdout isn't a terminal -->
+  <appender name="PRETTY" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder><pattern>%ts %rid %lvl %mod %line%n%ex{short}</pattern></encoder>
+  </appender>
+
+  <!-- staging and production (the default): one JSON object per line, MDC and structured arguments as fields -->
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <fieldNames><timestamp>@timestamp</timestamp><level>level</level></fieldNames>
+      <provider class="com.circaso.infrastructure.impl.logging.ModuleJsonProvider"/>
+      <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter"/>
+      <!-- last-line filter: anything shaped like an E.164 number or a JWT is masked (same patterns as Redaction) -->
+      <decorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+        <valueMask><value>\+[1-9][0-9]{6,14}</value><mask>[phone]</mask></valueMask>
+        <valueMask><value>eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*</value><mask>[jwt]</mask></valueMask>
+      </decorator>
+    </encoder>
+  </appender>
+
+  <!--
+    Levels, set per service with an environment variable (or a line in .env): OFF, ERROR, WARN, INFO, DEBUG or TRACE.
+    LOG_LEVEL                  Circaso's own code, every module (default INFO)
+    LOG_LEVEL_OTHER            everything not named below: libraries (default WARN)
+    One service at a time, each overriding LOG_LEVEL for its part of Circaso:
+    LOG_LEVEL_REQUESTS         the one line per HTTP request
+    LOG_LEVEL_GATEWAY          auth, limits, idempotency, WebSockets, webhooks
+    LOG_LEVEL_IDENTITY, LOG_LEVEL_USERS, LOG_LEVEL_ASSISTANT    the business modules
+    LOG_LEVEL_INTEGRATIONS     SMS, email, push and the other vendors, and the HTTP calls to them
+    LOG_LEVEL_EVENTS           the outbox relay and the stream consumers
+    LOG_LEVEL_SCHEDULER        scheduled jobs
+    LOG_LEVEL_DATABASE         ScyllaDB and Kandra, Circaso's side and the driver's
+    LOG_LEVEL_REDIS            Redis, Circaso's side and Lettuce's
+    LOG_LEVEL_HTTP             the Ktor server and Netty
+    Example for debugging sign-in only:  LOG_LEVEL=WARN  LOG_LEVEL_IDENTITY=DEBUG  LOG_LEVEL_REQUESTS=INFO
+  -->
+  <root level="${LOG_LEVEL_OTHER:-WARN}">
+    <appender-ref ref="${LOG_FORMAT:-JSON}"/>
+  </root>
+
+  <logger name="com.circaso" level="${LOG_LEVEL:-INFO}"/>
+
+  <logger name="com.circaso.gateway.RequestLog" level="${LOG_LEVEL_REQUESTS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.gateway" level="${LOG_LEVEL_GATEWAY:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.identity" level="${LOG_LEVEL_IDENTITY:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.users" level="${LOG_LEVEL_USERS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.assistant" level="${LOG_LEVEL_ASSISTANT:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.integrations" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.infrastructure.impl.http" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.infrastructure.impl.events" level="${LOG_LEVEL_EVENTS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.infrastructure.impl.scheduler" level="${LOG_LEVEL_SCHEDULER:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.infrastructure.impl.database" level="${LOG_LEVEL_DATABASE:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.datastax" level="${LOG_LEVEL_DATABASE:-WARN}"/>
+  <logger name="io.kandra" level="${LOG_LEVEL_DATABASE:-WARN}"/>
+  <logger name="com.circaso.infrastructure.impl.redis" level="${LOG_LEVEL_REDIS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="io.lettuce" level="${LOG_LEVEL_REDIS:-WARN}"/>
+  <logger name="io.ktor" level="${LOG_LEVEL_HTTP:-WARN}"/>
+  <logger name="io.netty" level="${LOG_LEVEL_HTTP:-WARN}"/>
+  <logger name="org.eclipse.jetty" level="${LOG_LEVEL_HTTP:-WARN}"/>
+</configuration>

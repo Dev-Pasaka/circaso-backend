@@ -1,0 +1,70 @@
+[versions]
+kotlin = "2.4.0"
+kotlinx-serialization = "1.12.0"
+kotlinx-coroutines = "1.11.0"
+koin = "4.2.2"
+logback = "1.5.37"
+logstash-logback-encoder = "9.0"
+opentelemetry = "1.63.0"
+junit = "5.14.4"
+konsist = "0.18.1"
+kandra = "0.5.1"
+lettuce = "7.9.0.RELEASE"
+aws-sdk-kotlin = "1.9.23"
+testcontainers = "1.21.4"
+grpc = "1.85.1"
+
+[libraries]
+# build-logic
+kotlin-gradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kotlin-serializationPlugin = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
+
+# kernel
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-slf4j = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-slf4j", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+
+# DI
+koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
+koin-ktor = { module = "io.insert-koin:koin-ktor", version.ref = "koin" }
+
+# logging
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash-logback-encoder" }
+
+# observability
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }
+opentelemetry-extension-kotlin = { module = "io.opentelemetry:opentelemetry-extension-kotlin", version.ref = "opentelemetry" }
+opentelemetry-sdk-testing ={ module = "io.opentelemetry:opentelemetry-sdk-testing", version.ref = "opentelemetry" }
+
+# database: Kandra's BOM aligns every Kandra artifact
+kandra-bom = { module = "com.kandraorm.kandra:kandra-bom", version.ref = "kandra" }
+kandra-ktor = { module = "com.kandraorm.kandra:kandra-ktor" }
+kandra-runtime = { module = "com.kandraorm.kandra:kandra-runtime" }
+kandra-koin = { module = "com.kandraorm.kandra:kandra-koin" }
+kandra-migrate = { module = "com.kandraorm.kandra:kandra-migrate" }
+kandra-test = { module = "com.kandraorm.kandra:kandra-test" }
+
+# Redis: Lettuce with its coroutine API, behind RedisScope so it can be swapped
+lettuce-core = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+aws-s3 = { module = "aws.sdk.kotlin:s3", version.ref = "aws-sdk-kotlin" }
+kotlinx-coroutines-reactive = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-reactive", version.ref = "kotlinx-coroutines" }
+
+# gRPC client (outbound calls); the server edge is the grpc module
+grpc-api = { module = "io.grpc:grpc-api", version.ref = "grpc" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+
+# tests
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
+testcontainers-scylladb = { module = "org.testcontainers:scylladb", version.ref = "testcontainers" }
+testcontainers-cassandra = { module = "org.testcontainers:cassandra", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

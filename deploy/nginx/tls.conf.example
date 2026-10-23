@@ -1,0 +1,21 @@
+# HTTPS with a Cloudflare Origin Certificate (Cloudflare dashboard > SSL/TLS > Origin Server > Create Certificate, for the API's hostname).
+# 1. Save the certificate and its key on the server as /opt/circaso/certs/origin.pem and /opt/circaso/certs/origin.key (mode 600).
+# 2. In Cloudflare set SSL/TLS mode to "Full (strict)" and proxy the DNS record (orange cloud).
+# 3. Copy this file to /opt/circaso/nginx/tls.conf (not .example) and reload: docker compose -f /opt/circaso/docker-compose.dev.yml exec nginx nginx -s reload
+#    A deploy leaves that file alone.
+# Optionally also close port 80 to the world (ufw delete allow 80/tcp) once everything goes through Cloudflare over 443.
+
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_certificate     /etc/nginx/certs/origin.pem;
+    ssl_certificate_key /etc/nginx/certs/origin.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    include /etc/nginx/conf.d/locations.inc;
+}

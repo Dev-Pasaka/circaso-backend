@@ -1,0 +1,458 @@
+package com.circaso.app
+
+import com.circaso.infrastructure.impl.config.EnvConfig
+import com.circaso.infrastructure.impl.config.EnvSecrets
+import com.circaso.integrations.impl.dev.FakeSms
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.request.delete
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.put
+import io.ktor.client.request.request
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.server.testing.ApplicationTestBuilder
+import io.ktor.server.testing.testApplication
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.koin.ktor.ext.getKoin
+import org.testcontainers.containers.GenericContainer
+import org.testcontainers.scylladb.ScyllaDBContainer
+import org.testcontainers.utility.DockerImageName
+import java.security.KeyPairGenerator
+import java.util.Base64
+import java.util.UUID
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+/** `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis and ScyllaDB. */
+class ServeTest {
+
+    private companion object {
+        val redis: GenericContainer<*> = GenericContainer(DockerImageName.parse("valkey/valkey:8-alpine")).withExposedPorts(6379).also { it.start() }
+        val scylla: ScyllaDBContainer = ScyllaDBContainer(DockerImageName.parse("scylladb/scylla:2026.1")).also { it.start() }
+    }
+
+    private fun env(extra: Map<String, String> = emptyMap()) = mapOf(
+        "CIRCASO_ENV" to "local",
+        "REDIS_URL" to "redis://${redis.host}:${redis.getMappedPort(6379)}",
+        "SCYLLA_CONTACT_POINTS" to "${scylla.contactPoint.hostString}:${scylla.contactPoint.port}",
+        "SCYLLA_DATACENTER" to "datacenter1",
+        "SCYLLA_TLS" to "false",
+        "INTEGRATIONS_SMS_PROVIDER" to "fake",
+    ) + extra
+
+    @AfterTest
+    fun resetKandra() = io.kandra.test.KandraTestUtils.reset()
+
+    @Test
+    fun `serve starts and reports Redis, ScyllaDB and the stream consumers ready`() = testApplication {
+        application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
+
+        val response = client.get("/health/ready")
+        val checks = Json.parseToJsonElement(response.bodyAsText()).jsonObject["checks"]!!.jsonObject
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("up", checks["redis"]!!.jsonPrimitive.content)
+        assertEquals("up", checks["scylla"]!!.jsonPrimitive.content)
+        assertEquals("up", checks["streams"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `serve answers in the envelope, with a request id`() = testApplication {
+        application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
+
+        val body = Json.parseToJsonElement(client.get("/nope").bodyAsText()).jsonObject
+
+        assertEquals("request.not_found", body["code"]!!.jsonPrimitive.content)
+        assertEquals(32, body["requestId"]!!.jsonPrimitive.content.length)
+    }
+
+    @Test
+    fun `migrate applies each module's migrations once and a second run applies none`() {
+        val keyspaceEnv = env(mapOf("SCYLLA_CONTACT_POINTS" to env()["SCYLLA_CONTACT_POINTS"]!!))
+        val first = migrate(EnvConfig(keyspaceEnv), EnvSecrets(keyspaceEnv))
+        assertTrue(first >= 0)
+        assertEquals(0, migrate(EnvConfig(keyspaceEnv), EnvSecrets(keyspaceEnv)), "migrations already applied are not run again")
+    }
+
+    @Test
+    fun `identity's routes sit under v1 behind the gateway's rules`() = testApplication {
+        application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
+
+        // a scoped route with no token
+        val noToken = client.get("/v1/account/security")
+        assertEquals(HttpStatusCode.Unauthorized, noToken.status)
+        assertEquals("auth.token_missing", json(noToken)["code"]!!.jsonPrimitive.content)
+
+        // a state change with no idempotency key
+        val noKey = client.post("/v1/auth/nonce")
+        assertEquals(HttpStatusCode.BadRequest, noKey.status)
+
+        // the public keys
+        val jwks = client.get("/v1/.well-known/jwks.json")
+        assertEquals(HttpStatusCode.OK, jwks.status)
+        assertEquals("Ed25519", json(jwks)["data"]!!.jsonObject["keys"]!!.toString().let { if ("Ed25519" in it) "Ed25519" else it })
+    }
+
+    @Test
+    fun `sign up over HTTP from Google to an active session, then the security overview`() = testApplication {
+        var sms: FakeSms? = null
+        application {
+            circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+            sms = getKoin().get<com.circaso.integrations.api.SmsGateway>() as FakeSms
+        }
+        val deviceId = UUID.randomUUID().let { com.circaso.shared.Uuid7.generate().toString() }
+        val number = "+254712${(100000..999999).random()}"
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+
+        suspend fun HttpClient.call(path: String, body: String, token: String? = null): HttpResponse = post(path) {
+            contentType(ContentType.Application.Json)
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            header("X-Client-Version", "android/1.0.0")
+            token?.let { header("Authorization", "Bearer $it") }
+            setBody(body)
+        }
+
+        val nonce = json(client.call("/v1/auth/nonce", "{}"))["data"]!!.jsonObject["nonce"]!!.jsonPrimitive.content
+
+        val signIn = json(
+            client.call(
+                "/v1/auth/social",
+                """{"provider":"google","idToken":"dev:amina-${UUID.randomUUID()}:amina@example.com:Amina Otieno","nonce":"$nonce",
+                    "device":{"deviceId":"$deviceId","platform":"android","model":"Pixel","appVersion":"1.0.0"}}""",
+            ),
+        )["data"]!!.jsonObject
+        assertEquals("VERIFY_PHONE", signIn["next"]!!.jsonPrimitive.content)
+        val onboarding = signIn["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content
+
+        val started = json(client.call("/v1/auth/phone/start", """{"phone":"$number"}""", onboarding))["data"]!!.jsonObject
+        val code = Regex("[0-9]{6}").find(sms!!.sent.last().text)!!.value
+        val verified = json(
+            client.call("/v1/auth/phone/verify", """{"verificationId":"${started["verificationId"]!!.jsonPrimitive.content}","code":"$code"}""", onboarding),
+        )["data"]!!.jsonObject
+        assertEquals("REGISTER_DEVICE", verified["next"]!!.jsonPrimitive.content)
+
+        val publicKey = Base64.getEncoder().encodeToString(pair.public.encoded)
+        val registered = client.call(
+            "/v1/devices",
+            """{"deviceId":"$deviceId","publicKey":"$publicKey","keyAlgorithm":"ES256","pushToken":"fcm:abc","model":"Pixel"}""",
+            onboarding,
+        )
+        assertEquals(HttpStatusCode.OK, registered.status, registered.bodyAsText())
+        val data = json(registered)["data"]!!.jsonObject
+        assertEquals("ACTIVE", data["user"]!!.jsonObject["status"]!!.jsonPrimitive.content)
+        val app = data["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content
+        val agent = data["agentSession"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content
+        assertNotNull(data["session"]!!.jsonObject["refreshToken"])
+
+        val overview = client.get("/v1/account/security") { header("Authorization", "Bearer $app") }
+        assertEquals(HttpStatusCode.OK, overview.status, overview.bodyAsText())
+        assertEquals("google", json(overview)["data"]!!.jsonObject["providers"]!!.toString().let { if ("google" in it) "google" else it })
+
+        // the onboarding token is not enough for the app routes, and the agent token reaches nothing outside /v1/agent
+        assertEquals(HttpStatusCode.Forbidden, client.get("/v1/account/security") { header("Authorization", "Bearer $onboarding") }.status)
+        assertEquals(HttpStatusCode.Forbidden, client.get("/v1/account/security") { header("Authorization", "Bearer $agent") }.status)
+
+        // a repeated idempotency key replays the first answer
+        val key = UUID.randomUUID().toString()
+        suspend fun pushTokenOnce() = client.put("/v1/devices/current/push-token") {
+            header("Authorization", "Bearer $app"); header("Idempotency-Key", key); contentType(ContentType.Application.Json)
+            setBody("""{"pushToken":"fcm:new"}""")
+        }
+        val first = pushTokenOnce()
+        val second = pushTokenOnce()
+        assertEquals(HttpStatusCode.OK, first.status)
+        assertEquals("true", second.headers["Idempotent-Replayed"])
+
+        val signOut = client.post("/v1/auth/signout") {
+            header("Authorization", "Bearer $app"); header("Idempotency-Key", UUID.randomUUID().toString()); contentType(ContentType.Application.Json); setBody("{}")
+        }
+        assertEquals(HttpStatusCode.OK, signOut.status)
+
+        // and the session is gone for the gateway
+        val after = client.get("/v1/account/security") { header("Authorization", "Bearer $app") }
+        assertEquals(HttpStatusCode.Unauthorized, after.status)
+        assertEquals("identity.session_revoked", json(after)["code"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `the API reader is Circaso's, with a UUID generator, and the spec is organised for the person using it`() = testApplication {
+        application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
+
+        // ---- the page: Circaso's own reader (static files), with the key generator, opening on Infrastructure ----
+        val page = client.get("/docs")
+        assertEquals(HttpStatusCode.OK, page.status)
+        val html = page.bodyAsText()
+        assertTrue("swagger" !in html.lowercase() && "scalar" !in html.lowercase(), "neither Swagger UI nor Scalar")
+        assertTrue("/docs/app.js" in html && "/docs/app.css" in html && "defer" in html, "two static files, the script not blocking the page")
+        assertTrue("id=\"uuid-copy\"" in html && "Idempotency-Key" in html, "an Idempotency-Key UUID generator is in the bar")
+        assertTrue("rel=\"preload\"" in html && "/docs/openapi.json" in html, "the spec is requested while the script loads")
+        assertTrue("class=\"skeleton\"" in html, "something is shown while it loads")
+        assertTrue("etag" in page.headers.names().map { it.lowercase() }, "the page is validated by ETag")
+        assertEquals(HttpStatusCode.NotModified, client.get("/docs") { header("If-None-Match", page.headers["ETag"]!!) }.status, "a repeat visit is a 304")
+        val script = client.get("/docs/app.js")
+        assertEquals(HttpStatusCode.OK, script.status)
+        assertTrue(script.bodyAsText().length in 5_000..200_000, "a small bundle, not a framework")
+        val css = client.get("/docs/app.css").bodyAsText()
+        assertTrue("#0b0b0c" in css && "#f2f2f7" in css && "-apple-system" in css, "drawn in circaso.com's own tokens")
+        assertTrue("backdrop-filter" in css && "prefers-reduced-motion" in css && "prefers-contrast" in css, "glass bar, adapting to reduced motion and contrast")
+
+        // ---- the spec: sent gzipped, and never stale ----
+        val gzipped = client.get("/docs/openapi.json") { header("Accept-Encoding", "gzip") }
+        assertEquals("gzip", gzipped.headers["Content-Encoding"], "the spec is compressed")
+        val spec = client.get("/docs/openapi.json")
+        assertEquals("no-cache", spec.headers["Cache-Control"])
+        assertEquals(HttpStatusCode.NotModified, client.get("/docs/openapi.json") { header("If-None-Match", spec.headers["ETag"]!!) }.status, "the reader re-renders only when the spec changed")
+        assertEquals(HttpStatusCode.OK, spec.status)
+        val doc = Json.parseToJsonElement(spec.bodyAsText()).jsonObject
+        val paths = doc["paths"]!!.jsonObject
+
+        // sections: Infrastructure first, then the order a person uses the API
+        val groups = doc["x-tagGroups"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(
+            listOf("Infrastructure", "Authentication", "Your profile", "People", "Asha", "Account", "Assistant tools"),
+            groups.map { it["name"]!!.jsonPrimitive.content },
+        )
+        assertEquals(listOf("Health", "Webhooks"), groups.first()["tags"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(
+            listOf("Sign in", "Phone verification", "Register device"),
+            groups[1]["tags"]!!.jsonArray.map { it.jsonPrimitive.content },
+            "authentication reads as sign in, then phone, then the device",
+        )
+        val declared = doc["tags"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        assertEquals(groups.flatMap { g -> g["tags"]!!.jsonArray.map { it.jsonPrimitive.content } }, declared)
+        assertTrue(doc["tags"]!!.jsonArray.all { it.jsonObject["description"]!!.jsonPrimitive.content.length > 60 }, "each section is explained")
+
+        // every route is in a known section, has a summary and a description, and the docs' own routes are not listed
+        val operations = paths.flatMap { (path, item) -> item.jsonObject.filterValues { it is JsonObject }.map { (method, op) -> Triple(path, method, op.jsonObject) } }
+        operations.forEach { (path, method, op) ->
+            val tag = (op["tags"] ?: error("$method $path is in the spec but has no section: it needs .docs(...) or .hide()")).jsonArray.single().jsonPrimitive.content
+            assertTrue(tag in declared, "$method $path is in a section that exists (was '$tag')")
+            assertTrue(op["summary"]!!.jsonPrimitive.content.isNotBlank(), "$method $path has a summary")
+        }
+        assertTrue(paths.keys.none { it.startsWith("/docs") }, "the reader's own routes are hidden")
+        listOf(
+            "/health/live", "/health/ready", "/v1/hooks/{vendor}", "/v1/auth/nonce", "/v1/auth/social", "/v1/auth/phone/start", "/v1/auth/phone/verify",
+            "/v1/devices", "/v1/auth/refresh", "/v1/me/profile", "/v1/me/handle", "/v1/contacts/sync", "/v1/connections", "/v1/blocks/{userId}",
+            "/v1/assistant/chat/messages", "/v1/assistant/usage", "/v1/account/security", "/v1/recovery/requests", "/v1/agent/users/contacts",
+        ).forEach { assertTrue(it in paths.keys, "$it is documented") }
+
+        // the journey order: infrastructure, then nonce before social sign-in before the phone before the device
+        val order = paths.keys.toList()
+        assertTrue(order.indexOf("/health/live") < order.indexOf("/v1/auth/nonce"), "Infrastructure comes first")
+        assertTrue(order.indexOf("/v1/auth/nonce") < order.indexOf("/v1/auth/social"))
+        assertTrue(order.indexOf("/v1/auth/social") < order.indexOf("/v1/auth/phone/start"))
+        assertTrue(order.indexOf("/v1/auth/phone/verify") < order.indexOf("/v1/devices"))
+        assertTrue(order.indexOf("/v1/devices") < order.indexOf("/v1/me/profile"), "authentication before the profile")
+
+        // the guide, security and servers
+        val info = doc["info"]!!.jsonObject["description"]!!.jsonPrimitive.content
+        assertTrue("Quick start" in info && "POST /v1/auth/nonce" in info && "identity.phone_taken" in info && "Idempotency" in info, "the introduction explains how to use the API")
+        assertTrue("generator" in info, "and points to the UUID generator")
+        assertEquals("bearer", doc["components"]!!.jsonObject["securitySchemes"]!!.jsonObject["bearerAuth"]!!.jsonObject["scheme"]!!.jsonPrimitive.content)
+        assertTrue(operations.first { it.first == "/v1/account/security" }.third["security"]!!.jsonArray.isNotEmpty(), "a route that needs a token says so")
+        assertTrue(operations.first { it.first == "/v1/auth/nonce" }.third["security"]!!.jsonArray.isEmpty(), "and one that does not, says that")
+        assertTrue(doc["servers"]!!.jsonArray.size >= 2)
+
+        // each state change lists the idempotency header and the errors it can return
+        val body = spec.bodyAsText()
+        assertTrue("Idempotency-Key" in body && "identity.phone_taken" in body && "users.handle_taken" in body && "DefaultResponse" in body)
+    }
+
+    private class Person(val userId: String, val app: String, val agent: String)
+
+    /** Sign-up over HTTP (Google, SMS code, device key) to an active session; returns the user id and the app token. */
+    private suspend fun ApplicationTestBuilder.signUp(sms: FakeSms, name: String, number: String): Person {
+        val deviceId = com.circaso.shared.Uuid7.generate().toString()
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        suspend fun call(path: String, body: String, token: String? = null) = client.post(path) {
+            contentType(ContentType.Application.Json)
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            header("X-Client-Version", "android/1.0.0")
+            token?.let { header("Authorization", "Bearer $it") }
+            setBody(body)
+        }
+        val nonce = json(call("/v1/auth/nonce", "{}"))["data"]!!.jsonObject["nonce"]!!.jsonPrimitive.content
+        val onboarding = json(
+            call(
+                "/v1/auth/social",
+                """{"provider":"google","idToken":"dev:${UUID.randomUUID()}:$name@example.com:$name","nonce":"$nonce",
+                    "device":{"deviceId":"$deviceId","platform":"android","model":"Pixel","appVersion":"1.0.0"}}""",
+            ),
+        )["data"]!!.jsonObject["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content
+        val started = json(call("/v1/auth/phone/start", """{"phone":"$number"}""", onboarding))["data"]!!.jsonObject
+        val code = Regex("[0-9]{6}").find(sms.sent.last().text)!!.value
+        call("/v1/auth/phone/verify", """{"verificationId":"${started["verificationId"]!!.jsonPrimitive.content}","code":"$code"}""", onboarding)
+        val publicKey = Base64.getEncoder().encodeToString(pair.public.encoded)
+        val registered = json(call("/v1/devices", """{"deviceId":"$deviceId","publicKey":"$publicKey","keyAlgorithm":"ES256","model":"Pixel"}""", onboarding))["data"]!!.jsonObject
+        return Person(
+            registered["user"]!!.jsonObject["userId"]!!.jsonPrimitive.content,
+            registered["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content,
+            registered["agentSession"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun `two people meet through contact sync, handles and the activation event`() = testApplication {
+        var sms: FakeSms? = null
+        application {
+            circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+            sms = getKoin().get<com.circaso.integrations.api.SmsGateway>() as FakeSms
+        }
+        client.get("/health/live") // start the application
+        val brianNumber = "+254733${(100000..999999).random()}"
+        val amina = signUp(sms!!, "Amina Otieno", "+254712${(100000..999999).random()}")
+        val brian = signUp(sms!!, "Brian Mwangi", brianNumber)
+
+        suspend fun get(path: String, token: String) = client.get(path) { header("Authorization", "Bearer $token") }
+        suspend fun send(method: io.ktor.http.HttpMethod, path: String, token: String, body: String = "{}") = client.request(path) {
+            this.method = method
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $token")
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            setBody(body)
+        }
+
+        // The AccountActivated event reaches users through Redis Streams and names the profile from the Google hint.
+        var name = ""
+        repeat(50) {
+            name = json(get("/v1/me/profile", amina.app))["data"]!!.jsonObject["displayName"]!!.jsonPrimitive.content
+            if (name != "Circaso user") return@repeat
+            kotlinx.coroutines.delay(200)
+        }
+        assertEquals("Amina Otieno", name, "the profile was created from the activation event")
+
+        // Amina syncs her phone book: Brian is on Circaso, someone else is not.
+        val sync = send(
+            io.ktor.http.HttpMethod.Post, "/v1/contacts/sync", amina.app,
+            """{"syncId":"${UUID.randomUUID()}","batch":1,"final":true,"phones":["$brianNumber","+254799000999"]}""",
+        )
+        assertEquals(HttpStatusCode.OK, sync.status, sync.bodyAsText())
+        val matches = json(sync)["data"]!!.jsonObject["matches"]!!.toString()
+        assertTrue(brian.userId in matches && "Brian Mwangi" in matches, "Brian is matched with his public profile")
+        assertTrue("+254712" !in matches.replace(brianNumber, ""), "only the numbers she sent come back")
+
+        val contacts = json(get("/v1/contacts", amina.app))["data"]!!.jsonObject["contacts"]!!.toString()
+        assertTrue(brian.userId in contacts)
+        assertEquals("true", json(get("/v1/me/reach/${brian.userId}", amina.app))["data"]!!.jsonObject["reachable"]!!.jsonPrimitive.content)
+        assertEquals("false", json(get("/v1/me/reach/${amina.userId}", brian.app))["data"]!!.jsonObject["reachable"]!!.jsonPrimitive.content, "Brian has not saved Amina")
+        assertEquals(HttpStatusCode.OK, get("/v1/users/${brian.userId}", amina.app).status)
+        assertEquals(HttpStatusCode.Forbidden, get("/v1/users/${amina.userId}", brian.app).status)
+
+        // A handle, and a lookup by it.
+        val handle = "amina_${(1000..9999).random()}"
+        assertEquals(HttpStatusCode.OK, send(io.ktor.http.HttpMethod.Put, "/v1/me/handle", amina.app, """{"handle":"$handle"}""").status)
+        val found = get("/v1/users/by-handle/$handle", brian.app)
+        assertEquals(HttpStatusCode.OK, found.status)
+        assertEquals(amina.userId, json(found)["data"]!!.jsonObject["userId"]!!.jsonPrimitive.content)
+
+        // Brian connects through the handle, then blocks her: the connection no longer reaches.
+        assertEquals(HttpStatusCode.OK, send(io.ktor.http.HttpMethod.Post, "/v1/connections", brian.app, """{"via":"handle","value":"$handle"}""").status)
+        assertEquals("true", json(get("/v1/me/reach/${amina.userId}", brian.app))["data"]!!.jsonObject["reachable"]!!.jsonPrimitive.content)
+        send(io.ktor.http.HttpMethod.Put, "/v1/blocks/${amina.userId}", brian.app)
+        assertEquals("false", json(get("/v1/me/reach/${amina.userId}", brian.app))["data"]!!.jsonObject["reachable"]!!.jsonPrimitive.content)
+        assertEquals("false", json(get("/v1/me/reach/${brian.userId}", amina.app))["data"]!!.jsonObject["reachable"]!!.jsonPrimitive.content, "a block works both ways")
+
+        // The agent token reads her contacts through its own routes, and cannot write or read anything else.
+        val agentContacts = get("/v1/agent/users/contacts", amina.agent)
+        assertEquals(HttpStatusCode.OK, agentContacts.status, agentContacts.bodyAsText())
+        assertTrue(brian.userId in agentContacts.bodyAsText())
+        assertEquals(HttpStatusCode.OK, get("/v1/agent/users/contacts/search?q=brian", amina.agent).status)
+        assertEquals(HttpStatusCode.Forbidden, get("/v1/contacts", amina.agent).status)
+        assertEquals(HttpStatusCode.Forbidden, send(io.ktor.http.HttpMethod.Put, "/v1/me/handle", amina.agent, """{"handle":"x_hack"}""").status)
+        assertEquals(HttpStatusCode.Forbidden, get("/v1/agent/users/contacts", amina.app).status, "the user token does not open the agent routes")
+    }
+
+    @Test
+    fun `Asha answers over server-sent events, asks the phone for a chat, and forgets on request`() = testApplication {
+        var sms: FakeSms? = null
+        application {
+            circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+            sms = getKoin().get<com.circaso.integrations.api.SmsGateway>() as FakeSms
+        }
+        client.get("/health/live")
+        val me = signUp(sms!!, "Amina Otieno", "+254712${(100000..999999).random()}")
+
+        suspend fun post(path: String, body: String) = client.post(path) {
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer ${me.app}")
+            header("X-Agent-Token", me.agent)
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            setBody(body)
+        }
+        fun events(sse: String) = sse.trim().split("\n\n").filter { it.isNotBlank() }.associate {
+            val lines = it.lines()
+            lines.first().removePrefix("event: ") to lines.last().removePrefix("data: ")
+        }
+
+        // a plain question streams as message events and ends with done
+        val plain = post("/v1/assistant/chat/messages", """{"text":"habari Asha"}""")
+        assertEquals(HttpStatusCode.OK, plain.status, plain.bodyAsText())
+        assertTrue(plain.headers["Content-Type"]!!.startsWith("text/event-stream"))
+        val plainEvents = events(plain.bodyAsText())
+        assertTrue("You said: habari Asha" in plainEvents["message"]!! || "habari" in plainEvents["message"]!!)
+        assertTrue("\"role\":\"ASHA\"" in plainEvents["done"]!!)
+
+        // a question about chats pauses for the phone, which answers with a snippet
+        val paused = events(post("/v1/assistant/chat/messages", """{"text":"chat december contribution","askedFrom":{"chatId":"c1","chatName":"Family"}}""").bodyAsText())
+        val request = Json.parseToJsonElement(paused["tool_request"]!!).jsonObject
+        assertEquals("searchChats", request["name"]!!.jsonPrimitive.content)
+        val turnId = request["turnId"]!!.jsonPrimitive.content
+        val resumed = post(
+            "/v1/assistant/chat/messages/$turnId/tool-results",
+            """{"callId":"${request["callId"]!!.jsonPrimitive.content}","snippets":[{"chatId":"c1","chatName":"Family","sender":"Brian","at":"2026-10-20T09:00:00Z","text":"KES 2,000 each by the 15th"}]}""",
+        )
+        assertEquals(HttpStatusCode.OK, resumed.status, resumed.bodyAsText())
+        val done = Json.parseToJsonElement(events(resumed.bodyAsText())["done"]!!).jsonObject["message"]!!.jsonObject
+        assertEquals(1, done["readNote"]!!.jsonObject["messageCount"]!!.jsonPrimitive.content.toInt())
+        // the same answer cannot be replayed
+        assertEquals(
+            HttpStatusCode.NotFound,
+            post("/v1/assistant/chat/messages/$turnId/tool-results", """{"callId":"${request["callId"]!!.jsonPrimitive.content}","snippets":[]}""").status,
+        )
+
+        // the chat holds both exchanges, newest first, and the snippet is nowhere in it
+        val chat = json(client.get("/v1/assistant/chat") { header("Authorization", "Bearer ${me.app}") })["data"]!!.jsonObject["messages"]!!.toString()
+        assertTrue("habari Asha" in chat && "chat december contribution" in chat)
+        assertTrue("KES 2,000 each by the 15th" !in chat, "device snippets are never stored")
+
+        val usage = json(client.get("/v1/assistant/usage") { header("Authorization", "Bearer ${me.app}") })["data"]!!.jsonObject
+        assertEquals("FREE", usage["plan"]!!.jsonPrimitive.content)
+        assertEquals(2, usage["textTurnsUsed"]!!.jsonPrimitive.content.toInt())
+
+        // voice and speech
+        val voice = client.post("/v1/assistant/voice") {
+            header("Authorization", "Bearer ${me.app}"); header("Idempotency-Key", UUID.randomUUID().toString())
+            header("X-Duration-Seconds", "4"); contentType(ContentType.parse("audio/mp4")); setBody("what is my balance".toByteArray())
+        }
+        assertEquals("what is my balance", json(voice)["data"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals(HttpStatusCode.OK, post("/v1/assistant/speech", """{"text":"Habari yako"}""").status)
+
+        // the agent token cannot talk to Asha: she is for the user token
+        val asAgent = client.get("/v1/assistant/chat") { header("Authorization", "Bearer ${me.agent}") }
+        assertEquals(HttpStatusCode.Forbidden, asAgent.status)
+
+        // forgetting
+        val deleted = client.delete("/v1/assistant/chat") { header("Authorization", "Bearer ${me.app}"); header("Idempotency-Key", UUID.randomUUID().toString()) }
+        assertEquals(HttpStatusCode.OK, deleted.status)
+        val after = json(client.get("/v1/assistant/chat") { header("Authorization", "Bearer ${me.app}") })["data"]!!.jsonObject["messages"]!!.toString()
+        assertEquals("[]", after)
+    }
+
+    private suspend fun json(response: HttpResponse): JsonObject = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+
+    @Suppress("unused")
+    private fun ApplicationTestBuilder.unused() = Unit
+}

@@ -1,0 +1,43 @@
+name: CI
+
+# Builds and tests every change. The deploy workflow calls this too, so main is only ever deployed after it passes.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Build and test the server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # The tests start ScyllaDB, Cassandra and Valkey in Docker, which the runner has.
+      - run: ./gradlew build --console=plain
+
+  docs-ui:
+    name: API reference (TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test
+        working-directory: docs-ui
+      # The built files are committed (the server serves them), so they must match the source.
+      - run: bun run build.ts
+        working-directory: docs-ui
+      - name: Built files are up to date
+        run: git diff --exit-code -- gateway/src/main/resources/docs
