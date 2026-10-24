@@ -40,6 +40,9 @@ back_out() {
 echo "starting"
 compose up -d --remove-orphans || back_out "the new version could not be started; last logs:"
 
+# nginx does not notice that its mounted files changed, so check the config and reload it. A config that does not pass leaves the old one running.
+compose exec -T nginx nginx -t >/dev/null 2>&1 && compose exec -T nginx nginx -s reload >/dev/null 2>&1 || echo "warning: nginx kept its previous config (it did not pass nginx -t)"
+
 ready() {
   for _ in $(seq 1 40); do
     if compose exec -T app curl -fsS http://localhost:8080/health/ready >/dev/null 2>&1; then return 0; fi

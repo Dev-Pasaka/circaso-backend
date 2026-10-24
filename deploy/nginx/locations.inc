@@ -2,6 +2,10 @@
 
 server_tokens off;
 
+# Only Cloudflare may talk to this server. Anyone who finds its address and connects directly is dropped without an answer. (The host firewall cannot
+# do this: Docker publishes ports around it.)
+if ($from_cloudflare = 0) { return 444; }
+
 # Docker's own resolver, so a restarted app container is found again at its new address.
 resolver 127.0.0.11 valid=10s ipv6=off;
 set $upstream app:8080;

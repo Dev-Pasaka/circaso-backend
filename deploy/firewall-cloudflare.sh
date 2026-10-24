@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Lets only Cloudflare's servers reach ports 443 (and nothing else new): anyone who finds the server's address can not skip Cloudflare's protection
-# and Access. SSH stays open to everyone (keys only). Run on the server as root; it reads Cloudflare's published ranges, so run it again now and then
-# (it installs itself in /etc/cron.weekly). Idempotent.
+# Host firewall rules for 443: only Cloudflare's servers. NOTE this alone does not close the server: Docker publishes nginx's ports around ufw, so the
+# rule that actually keeps non-Cloudflare callers out is in nginx (deploy/nginx/locations.inc, `$from_cloudflare`). This is a second layer for anything
+# that is not in Docker. SSH stays open to everyone (keys only). Run on the server as root; it reads Cloudflare's published ranges, so run it again now and
+# then (it installs itself in /etc/cron.weekly). Idempotent.
 set -euo pipefail
 
 v4="$(curl -fsS https://www.cloudflare.com/ips-v4)"
