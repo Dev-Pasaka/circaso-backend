@@ -31,7 +31,7 @@ class R2ObjectStoreTest {
     private val keys = mapOf("r2.access-key-id" to "AKIATESTKEY", "r2.secret-access-key" to "test-secret")
 
     @Test
-    fun `an upload is signed locally for the account's R2 endpoint, the bucket and the module's folder`() = runBlocking {
+    fun `an upload is signed locally for the account's R2 endpoint, the bucket and the module's folder`() = runBlocking<Unit> {
         val stores = ConfiguredObjectStores(MapConfig(r2), MapSecrets(keys))
         val store = stores.scope("users")
 
@@ -47,7 +47,7 @@ class R2ObjectStoreTest {
     }
 
     @Test
-    fun `a download is signed too, so a private bucket can serve a picture for an hour`() = runBlocking {
+    fun `a download is signed too, so a private bucket can serve a picture for an hour`() = runBlocking<Unit> {
         val stores = ConfiguredObjectStores(MapConfig(r2), MapSecrets(keys))
         val url = (stores.scope("users").presignDownload("avatars/a.png", Duration.ofHours(1)) as Resource.Success).data
         assertTrue("backend/users/avatars/a.png" in url && "X-Amz-Signature=" in url && "X-Amz-Expires=3600" in url, url)
@@ -62,7 +62,7 @@ class R2ObjectStoreTest {
     }
 
     @Test
-    fun `local storage still needs nothing`() = runBlocking {
+    fun `local storage still needs nothing`() = runBlocking<Unit> {
         val store = ConfiguredObjectStores(MapConfig(mapOf("storage.prefix" to "backend")), MapSecrets(emptyMap())).scope("users")
         assertIs<Resource.Success<String>>(store.presignUpload("a.png", "image/png", Duration.ofMinutes(1)))
         assertTrue((store.presignDownload("a.png", Duration.ofMinutes(1)) as Resource.Success).data.contains("backend/users/a.png"))

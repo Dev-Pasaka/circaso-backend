@@ -90,7 +90,7 @@ class VendorHttpClientsTest {
     // ---- the retry table ---------------------------------------------------------------------------------
 
     @Test
-    fun `a connection that failed before reaching the vendor is retried, even for a POST without a key`() = runBlocking {
+    fun `a connection that failed before reaching the vendor is retried, even for a POST without a key`() = runBlocking<Unit> {
         val client = clients({ throw ConnectException("refused") }, { throw ConnectTimeoutException("slow") }, { ok() }).named("v")
 
         val response = client.post("http://vendor/sms") { setBody("hello") }
@@ -100,7 +100,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `429 and 503 are retried, and 429 waits for Retry-After`() = runBlocking {
+    fun `429 and 503 are retried, and 429 waits for Retry-After`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.TooManyRequests, HttpHeaders.RetryAfter to "1") }, { status(HttpStatusCode.ServiceUnavailable) }, { ok() }).named("v")
 
         val started = System.currentTimeMillis()
@@ -113,7 +113,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `other server errors and client errors are not retried`() = runBlocking {
+    fun `other server errors and client errors are not retried`() = runBlocking<Unit> {
         for (code in listOf(HttpStatusCode.InternalServerError, HttpStatusCode.BadGateway, HttpStatusCode.BadRequest, HttpStatusCode.NotFound)) {
             calls.clear()
             val response = clients({ status(code) }).named("v-${code.value}").get("http://vendor/x")
@@ -124,7 +124,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `GET, PUT and DELETE that time out are retried`() = runBlocking {
+    fun `GET, PUT and DELETE that time out are retried`() = runBlocking<Unit> {
         for ((index, send) in listOf<suspend (io.ktor.client.HttpClient) -> HttpResponse>(
             { it.get("http://vendor/x") }, { it.put("http://vendor/x") }, { it.delete("http://vendor/x") },
         ).withIndex()) {
@@ -137,7 +137,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `a POST that times out is not retried when it has no idempotency key`() = runBlocking {
+    fun `a POST that times out is not retried when it has no idempotency key`() = runBlocking<Unit> {
         val client = clients(timeout(), { ok() }).named("v")
 
         assertFailsWith<HttpRequestTimeoutException> { client.post("http://vendor/send-sms") { setBody("code") } }
@@ -146,7 +146,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `a POST that times out is retried with the same key when it carries one`() = runBlocking {
+    fun `a POST that times out is retried with the same key when it carries one`() = runBlocking<Unit> {
         val client = clients(timeout(), { ok() }).named("v")
 
         val response = client.post("http://vendor/transfer") {
@@ -159,7 +159,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `attempts are capped at the configured number`() = runBlocking {
+    fun `attempts are capped at the configured number`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.ServiceUnavailable) }).named("v")
 
         val response = client.get("http://vendor/x")
@@ -180,7 +180,7 @@ class VendorHttpClientsTest {
     // ---- the circuit breaker -----------------------------------------------------------------------------
 
     @Test
-    fun `five failures in a row open the circuit and the next call fails without reaching the vendor`() = runBlocking {
+    fun `five failures in a row open the circuit and the next call fails without reaching the vendor`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.InternalServerError) }).named("v") { maxAttempts = 1 }
 
         repeat(5) { client.get("http://vendor/x") }
@@ -191,7 +191,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `every retried attempt counts toward the failures in a row`() = runBlocking {
+    fun `every retried attempt counts toward the failures in a row`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.ServiceUnavailable) }).named("v") { circuitFailureThreshold = 3 }
 
         client.get("http://vendor/x") // 3 attempts, all failing
@@ -201,7 +201,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `after the open time one probe goes through, and success closes the circuit`() = runBlocking {
+    fun `after the open time one probe goes through, and success closes the circuit`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.InternalServerError) }, { status(HttpStatusCode.InternalServerError) }, { ok() })
             .named("v") { maxAttempts = 1; circuitFailureThreshold = 2; circuitOpenFor = Duration.ofMillis(300) }
         repeat(2) { client.get("http://vendor/x") }
@@ -215,7 +215,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `a failed probe opens the circuit again`() = runBlocking {
+    fun `a failed probe opens the circuit again`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.InternalServerError) })
             .named("v") { maxAttempts = 1; circuitFailureThreshold = 1; circuitOpenFor = Duration.ofMillis(300) }
         client.get("http://vendor/x")
@@ -226,7 +226,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `a success in between resets the count of failures in a row`() = runBlocking {
+    fun `a success in between resets the count of failures in a row`() = runBlocking<Unit> {
         val client = clients({ status(HttpStatusCode.InternalServerError) }, { status(HttpStatusCode.InternalServerError) }, { ok() }, { status(HttpStatusCode.InternalServerError) })
             .named("v") { maxAttempts = 1; circuitFailureThreshold = 3 }
 
@@ -239,7 +239,7 @@ class VendorHttpClientsTest {
     // ---- logging, metrics, configuration -------------------------------------------------------------------
 
     @Test
-    fun `an attempt is logged and measured without its query, body or headers`() = runBlocking {
+    fun `an attempt is logged and measured without its query, body or headers`() = runBlocking<Unit> {
         val client = clients({ ok() }).named("africastalking")
 
         client.post("http://vendor/messaging?phone=%2B254712345678&code=482913") {
@@ -260,7 +260,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `a failed attempt logs only the exception class, never its message`() = runBlocking {
+    fun `a failed attempt logs only the exception class, never its message`() = runBlocking<Unit> {
         val client = clients({ throw ConnectException("refused connecting to http://vendor/x?code=482913") }).named("v") { maxAttempts = 1 }
 
         assertFailsWith<ConnectException> { client.get("http://vendor/x") }
@@ -272,7 +272,7 @@ class VendorHttpClientsTest {
     }
 
     @Test
-    fun `the base url is applied to relative paths, and a name always gives the same client`() = runBlocking {
+    fun `the base url is applied to relative paths, and a name always gives the same client`() = runBlocking<Unit> {
         val clients = clients({ ok() })
         val client = clients.named("v") { baseUrl = "https://api.vendor.test/v2/" }
 

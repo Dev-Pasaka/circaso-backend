@@ -1,29 +1,28 @@
 package com.circaso.integrations.impl.social
 
+import com.circaso.infrastructure.api.HttpClients
+import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SocialIdentity
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.shared.Resource
-import kotlinx.coroutines.Dispatchers
+import io.ktor.client.request.forms.FormDataContent
+import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.Parameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.io.IOException
-import java.net.URI
-import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.PublicKey
 import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.time.Clock
-import java.time.Duration
 import java.util.Base64
 
 /** What differs between the two providers: where the keys are, who signs, and who the token must be for. */
@@ -32,30 +31,18 @@ class ProviderSpec(val jwksUrl: String, val issuers: Set<String>, val audiences:
 /** Apple's settings for revoking a sign-in when an account is deleted. Optional: sign-in works without them. */
 class AppleRevocation(val teamId: String, val keyId: String, val clientId: String, val privateKeyPem: String)
 
-/** Downloads a provider's JWKS. Replaced in tests. */
-fun interface JwksFetcher {
-    @Throws(IOException::class)
-    fun fetch(url: String): String
-}
-
 /**
  * Verifies Google and Apple ID tokens ourselves, with no vendor SDK: the RS256 signature against the provider's published keys
- * (cached for an hour, fetched again once when a token names a key we have not seen), then issuer, audience, expiry and the
+ * (cached for an hour, fetched again once when a token names a key we have not seen, through the shared `HttpClients.named("google")` and
+ * `named("apple")` clients, so timeouts, retries, the circuit breaker and the vendor metrics apply), then issuer, audience, expiry and the
  * nonce we issued. A token that fails any of these is `Rejected`; a provider that cannot be reached is `Unavailable`.
  * Nothing from a token is logged.
  */
 class GoogleAppleSignIn(
     private val google: ProviderSpec,
     private val apple: ProviderSpec,
+    private val clients: HttpClients,
     private val revocation: AppleRevocation? = null,
-    private val fetcher: JwksFetcher = JwksFetcher { url ->
-        val response = HttpClient.newHttpClient().send(
-            HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(8)).GET().build(),
-            HttpResponse.BodyHandlers.ofString(),
-        )
-        if (response.statusCode() != 200) throw IOException("JWKS answered ${response.statusCode()}")
-        response.body()
-    },
     private val clock: Clock = Clock.systemUTC(),
 ) : SocialSignIn {
     private val log = LoggerFactory.getLogger(GoogleAppleSignIn::class.java)
@@ -115,9 +102,17 @@ class GoogleAppleSignIn(
         if (cached != null && now - cached.fetchedAt < KEYS_FRESH_FOR) cached.keys[kid]?.let { return it }
         // Unknown key id or stale list: fetch again, but not more than once a minute, so a flood of bad tokens cannot hammer the provider.
         if (cached != null && now - cached.fetchedAt < MIN_REFETCH && cached.keys[kid] == null) return null
-        val fresh = KeySet(withContext(Dispatchers.IO) { parseJwks(fetcher.fetch(spec.jwksUrl)) }, now)
+        val fresh = KeySet(parseJwks(fetchJwks(spec)), now)
         keys[spec.jwksUrl] = fresh
         fresh.keys[kid]
+    }
+
+    /** The provider's key document. A non-200 answer is an error, so a bad day at the provider is `Unavailable` and never a cached empty list. */
+    private suspend fun fetchJwks(spec: ProviderSpec): String {
+        val client = clients.named(if (spec === google) "google" else "apple")
+        val response = client.get(spec.jwksUrl) { operation("fetch_keys") }
+        check(response.status.value == 200) { "keys answered ${response.status.value}" }
+        return response.bodyAsText()
     }
 
     /**
@@ -133,19 +128,24 @@ class GoogleAppleSignIn(
         }
         return try {
             val secret = clientSecret(settings)
-            val form = listOf("client_id" to settings.clientId, "client_secret" to secret, "token" to appleToken, "token_type_hint" to "refresh_token")
-                .joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, StandardCharsets.UTF_8)}" }
-            val request = HttpRequest.newBuilder(URI.create(APPLE_REVOKE_URL))
-                .timeout(Duration.ofSeconds(8))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(form))
-                .build()
-            val response = withContext(Dispatchers.IO) { HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding()) }
+            val form = Parameters.build {
+                append("client_id", settings.clientId)
+                append("client_secret", secret)
+                append("token", appleToken)
+                append("token_type_hint", "refresh_token")
+            }
+            val response = clients.named("apple").post(APPLE_REVOKE_URL) {
+                operation("revoke_token")
+                setBody(FormDataContent(form))
+            }
+            val status = response.status.value
             when {
-                response.statusCode() == 200 -> Resource.success(Unit)
-                response.statusCode() in 400..499 -> Resource.error(IntegrationError.Rejected("Apple refused to revoke the sign-in."))
+                status == 200 -> Resource.success(Unit)
+                status in 400..499 -> Resource.error(IntegrationError.Rejected("Apple refused to revoke the sign-in."))
                 else -> Resource.error(IntegrationError.Unavailable("Apple"))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             log.warn("could not revoke the Apple sign-in", e)
             Resource.error(IntegrationError.Unavailable("Apple"), e)

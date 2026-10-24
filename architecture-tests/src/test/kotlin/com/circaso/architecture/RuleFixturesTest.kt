@@ -97,6 +97,10 @@ class RuleFixturesTest {
         assertFlags("routesGroupByPath", "BadRoutes.kt", "get(\"/", "post(\"/")
 
     @Test
+    fun `outbound HTTP is Ktor's client, from HttpClients, and nothing else`() =
+        assertFlags("httpOnlyThroughKtor", "imports 'java.net.http.HttpClient'", "builds an HttpClient")
+
+    @Test
     fun `a controller is a function on Route, not a class`() =
         assertFlags("controllersAreRouteFunctions", "'ProfileController' is a class", "no 'fun Route.xController")
 }

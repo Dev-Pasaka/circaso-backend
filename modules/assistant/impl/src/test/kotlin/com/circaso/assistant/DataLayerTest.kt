@@ -71,7 +71,7 @@ class DataLayerTest {
         ChatMessage(user, Uuid7.generate(at), role, text, replyTo, null, if (role == Role.USER) "Family" else null, note, at)
 
     @Test
-    fun `text is sealed in the table and comes back whole, with the read note`() = runBlocking {
+    fun `text is sealed in the table and comes back whole, with the read note`() = runBlocking<Unit> {
         val user = UserId.new()
         val note = ReadNote(listOf("family"), 4, listOf("Family"))
         val question = message(user, "What did Mum say about the rent?")
@@ -89,7 +89,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `the chat lists newest first and pages by cursor`() = runBlocking {
+    fun `the chat lists newest first and pages by cursor`() = runBlocking<Unit> {
         val user = UserId.new()
         val base = Instant.now()
         val all = (0 until 5).map { message(user, "m$it", at = base.plusMillis(it * 10L)) }
@@ -101,7 +101,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `deleting messages and a whole long chat really removes them`() = runBlocking {
+    fun `deleting messages and a whole long chat really removes them`() = runBlocking<Unit> {
         val user = UserId.new()
         val other = UserId.new()
         val base = Instant.now()
@@ -119,7 +119,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `the plan is free until an entitlement says otherwise and runs out with it`() = runBlocking {
+    fun `the plan is free until an entitlement says otherwise and runs out with it`() = runBlocking<Unit> {
         val user = UserId.new()
         assertEquals(Plan.FREE, entitlements.planOf(user))
 
@@ -132,7 +132,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `usage totals and audit records are stored`() = runBlocking {
+    fun `usage totals and audit records are stored`() = runBlocking<Unit> {
         val user = UserId.new()
         store.saveUsage(user, "2026-10-22", 3, 12, 900, 140, Instant.now())
         store.commit(AssistantChanges(audit = listOf(AuditEntry(user, "TURN", "tools=none", "req-1"), AuditEntry(user, "CHAT_DELETED", "all", null))))

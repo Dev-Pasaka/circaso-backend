@@ -16,6 +16,7 @@ import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import kotlinx.coroutines.test.runTest
+import io.ktor.client.engine.mock.respondOk
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import kotlin.test.AfterTest
@@ -39,7 +40,12 @@ class IntegrationsModuleTest {
     fun tearDown() = stopKoin()
 
     private fun koin(vararg values: Pair<String, String>) =
-        startKoin { modules(integrationsModule(MapConfig(values.toMap()), object : Secrets { override fun get(name: String): String? = null })) }.koin
+        startKoin {
+            modules(
+                integrationsModule(MapConfig(values.toMap()), object : Secrets { override fun get(name: String): String? = null }),
+                org.koin.dsl.module { single<com.circaso.infrastructure.api.HttpClients> { FakeHttpClients { _ -> respondOk() } } },
+            )
+        }.koin
 
     @Test
     fun `every contract defaults to its log provider`() = runTest {

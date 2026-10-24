@@ -24,7 +24,7 @@ class R2LiveTest {
     private fun env(name: String) = System.getenv(name)?.takeIf { it.isNotBlank() }
 
     @Test
-    fun `an upload, a read and a delete through signed links against the real bucket`() = runBlocking {
+    fun `an upload, a read and a delete through signed links against the real bucket`() = runBlocking<Unit> {
         assumeTrue(listOf("STORAGE_R2_ACCOUNT_ID", "STORAGE_BUCKET", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY").all { env(it) != null }, "R2 settings are not in the environment")
 
         val config = object : Config {

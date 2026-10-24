@@ -86,7 +86,7 @@ class DataLayerTest {
         Contact(owner, other, ContactSource.PHONEBOOK, status, null, now)
 
     @Test
-    fun `a profile saves, reads back with its privacy, and updates only from the version it was read at`() = runBlocking {
+    fun `a profile saves, reads back with its privacy, and updates only from the version it was read at`() = runBlocking<Unit> {
         val id = UserId.new()
         store.commit(UsersChanges(profiles = listOf(profile(id))))
 
@@ -104,7 +104,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `an active contact writes both tables, a removed one drops the reverse row`() = runBlocking {
+    fun `an active contact writes both tables, a removed one drops the reverse row`() = runBlocking<Unit> {
         val me = UserId.new()
         val her = UserId.new()
         store.commit(UsersChanges(contacts = listOf(contact(me, her))))
@@ -120,7 +120,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `contacts page in order after a cursor`() = runBlocking {
+    fun `contacts page in order after a cursor`() = runBlocking<Unit> {
         val me = UserId.new()
         val others = (1..5).map { UserId.new() }
         store.commit(UsersChanges(contacts = others.map { contact(me, it) }))
@@ -133,7 +133,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `a handle goes to one owner, then is held for its old owner after release`() = runBlocking {
+    fun `a handle goes to one owner, then is held for its old owner after release`() = runBlocking<Unit> {
         val first = UserId.new()
         val second = UserId.new()
         val handle = "h_${UUID.randomUUID().toString().take(8).replace("-", "")}"
@@ -149,7 +149,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `waiting contacts are found by hash and cleared`() = runBlocking {
+    fun `waiting contacts are found by hash and cleared`() = runBlocking<Unit> {
         val owner = UserId.new()
         val hmac = "hmac-${UUID.randomUUID()}"
         val row = WaitingContact(hmac, owner, now)
@@ -161,7 +161,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `blocks and invites round trip`() = runBlocking {
+    fun `blocks and invites round trip`() = runBlocking<Unit> {
         val me = UserId.new()
         val pest = UserId.new()
         store.commit(UsersChanges(blocks = listOf(Block(me, pest, now)), invites = listOf(Invite("inv_t${UUID.randomUUID()}", me, "LINK", now))))
@@ -177,7 +177,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `an event is written with the change, published, and waits in the outbox for its stamp`() = runBlocking {
+    fun `an event is written with the change, published, and waits in the outbox for its stamp`() = runBlocking<Unit> {
         val id = UserId.new()
         val event = bus.envelope(ProfileUpdated(id, 2, listOf(ProfileUpdated.ABOUT)))
 
@@ -189,7 +189,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `deleting a long contact list goes in chunks`() = runBlocking {
+    fun `deleting a long contact list goes in chunks`() = runBlocking<Unit> {
         val me = UserId.new()
         val others = (1..90).map { UserId.new() }
         store.commit(UsersChanges(contacts = others.map { contact(me, it) }))
@@ -200,7 +200,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `clearing the about line, the avatar and a removal date really clears them`() = runBlocking {
+    fun `clearing the about line, the avatar and a removal date really clears them`() = runBlocking<Unit> {
         val id = UserId.new()
         store.commit(UsersChanges(profiles = listOf(profile(id).copy(about = "Treasurer", avatarKey = "avatars/x.jpg"))))
         val read = profiles.find(id)!!

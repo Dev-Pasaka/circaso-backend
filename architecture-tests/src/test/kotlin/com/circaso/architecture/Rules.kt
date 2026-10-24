@@ -306,6 +306,25 @@ object Rules {
             }.toList()
         }
 
+    private val otherHttpClients = listOf("java.net.http", "java.net.HttpURLConnection", "okhttp3", "com.squareup.okhttp", "org.apache.http", "org.apache.hc", "retrofit2", "kong.unirest")
+    private val ktorClientConstructor = Regex("""(^|[^.\w])HttpClient\(""")
+
+    /**
+     * Outbound HTTP is Ktor's client and nothing else, and only `infrastructure:impl` builds one: everything else asks `HttpClients.named("<vendor>")`
+     * for the vendor's client, which comes with the timeouts, retries, circuit breaker, tracing and log redaction the architecture promises.
+     */
+    fun httpOnlyThroughKtor(files: List<KoFileDeclaration>): List<String> =
+        files.flatMap { file ->
+            val other = file.importNames().filter { import -> otherHttpClients.any { import == it || import.startsWith("$it.") } }
+                .map { violation(file, "imports '$it'; outbound HTTP uses Ktor's client, through HttpClients.named(\"<vendor>\")") }
+            val builds = if (projectOf(file)?.kind != "infrastructure-impl" && ktorClientConstructor.containsMatchIn(file.text)) {
+                listOf(violation(file, "builds an HttpClient; ask HttpClients.named(\"<vendor>\") instead (only infrastructure:impl builds clients)"))
+            } else {
+                emptyList()
+            }
+            other + builds
+        }
+
     val all: Map<String, (List<KoFileDeclaration>) -> List<String>> = linkedMapOf(
         "domainIsPureKotlin" to ::domainIsPureKotlin,
         "apiIsContractOnly" to ::apiIsContractOnly,
@@ -323,5 +342,6 @@ object Rules {
         "agentControllersOnlyRead" to ::agentControllersOnlyRead,
         "routesGroupByPath" to ::routesGroupByPath,
         "controllersAreRouteFunctions" to ::controllersAreRouteFunctions,
+        "httpOnlyThroughKtor" to ::httpOnlyThroughKtor,
     )
 }

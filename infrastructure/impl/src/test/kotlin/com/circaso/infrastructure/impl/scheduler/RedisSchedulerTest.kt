@@ -35,7 +35,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `withLock runs one holder at a time and tells the other it lost`() = runBlocking {
+    fun `withLock runs one holder at a time and tells the other it lost`() = runBlocking<Unit> {
         val a = RedisScheduler(redis, nodeId = "a")
         val b = RedisScheduler(redis, nodeId = "b")
 
@@ -49,7 +49,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `withLock releases the lock when the block ends or throws`() = runBlocking {
+    fun `withLock releases the lock when the block ends or throws`() = runBlocking<Unit> {
         val scheduler = RedisScheduler(redis, nodeId = "a")
 
         assertEquals(1, scheduler.withLock(name, Duration.ofSeconds(10)) { 1 })
@@ -60,7 +60,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `a lock held by a node that died lapses and is taken over`() = runBlocking {
+    fun `a lock held by a node that died lapses and is taken over`() = runBlocking<Unit> {
         redis.commands.set("sch:lock:$name", "dead-node", SetArgs().nx().px(300))
         val scheduler = RedisScheduler(redis, nodeId = "a")
 
@@ -71,7 +71,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `a slow job keeps its lock by renewing it`() = runBlocking {
+    fun `a slow job keeps its lock by renewing it`() = runBlocking<Unit> {
         val a = RedisScheduler(redis, nodeId = "a")
         val b = RedisScheduler(redis, nodeId = "b")
 
@@ -84,7 +84,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `two nodes running the same job run it once per interval between them`() = runBlocking {
+    fun `two nodes running the same job run it once per interval between them`() = runBlocking<Unit> {
         val runs = AtomicInteger()
         val concurrent = AtomicInteger()
         var overlapped = false
@@ -110,7 +110,7 @@ class RedisSchedulerTest {
     }
 
     @Test
-    fun `a job that throws is logged and tried again next interval`() = runBlocking {
+    fun `a job that throws is logged and tried again next interval`() = runBlocking<Unit> {
         val attempts = AtomicInteger()
         val scheduler = RedisScheduler(redis, nodeId = "a")
         scheduler.every(name, Duration.ofMillis(1000)) {

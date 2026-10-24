@@ -2,6 +2,8 @@ package com.circaso.integrations.impl.social
 
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SocialProvider
+import com.circaso.integrations.impl.FakeHttpClients
+import com.circaso.integrations.impl.FakeHttpClients.Companion.json
 import com.circaso.shared.Resource
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
@@ -36,10 +38,10 @@ class GoogleAppleSignInTest {
     private fun verifier() = GoogleAppleSignIn(
         google = ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client", "android-client")),
         apple = ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("com.circaso.app")),
-        fetcher = JwksFetcher { url ->
+        clients = FakeHttpClients { _ ->
             fetches++
-            if (down) throw IOException("down $url")
-            served
+            if (down) throw IOException("down")
+            json(served)
         },
         clock = clock,
     )
@@ -119,7 +121,7 @@ class GoogleAppleSignInTest {
 
     @Test
     fun `a provider with no client id configured accepts nothing`() {
-        val none = GoogleAppleSignIn(ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, emptySet()), ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, emptySet()), fetcher = { served }, clock = clock)
+        val none = GoogleAppleSignIn(ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, emptySet()), ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, emptySet()), clients = FakeHttpClients { _ -> json(served) }, clock = clock)
         rejected(verify(SocialProvider.GOOGLE, token(google()), v = none))
     }
 
@@ -136,7 +138,7 @@ class GoogleAppleSignInTest {
 
         val later = GoogleAppleSignIn(
             ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client")), ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("x")),
-            fetcher = { fetches++; served }, clock = clock,
+            clients = FakeHttpClients { _ -> fetches++; json(served) }, clock = clock,
         )
         fetches = 0
         assertIs<Resource.Success<*>>(verify(SocialProvider.GOOGLE, token(google(), kid = "k2"), v = later), "a rotated key is picked up")
@@ -150,7 +152,7 @@ class GoogleAppleSignInTest {
     }
 
     @Test
-    fun `revoking Apple without its key is Unavailable so deletion can retry later`() = runBlocking {
+    fun `revoking Apple without its key is Unavailable so deletion can retry later`() = runBlocking<Unit> {
         assertIs<IntegrationError.Unavailable>((verifier().revokeApple("refresh") as Resource.Error).error)
     }
 }

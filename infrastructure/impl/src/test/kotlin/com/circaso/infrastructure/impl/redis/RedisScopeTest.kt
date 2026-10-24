@@ -27,7 +27,7 @@ class RedisScopeTest {
     fun close() = redis.close()
 
     @Test
-    fun `a value is stored under the module prefix and expires`() = runBlocking {
+    fun `a value is stored under the module prefix and expires`() = runBlocking<Unit> {
         idn.set("otp:$id", "123456", Duration.ofMillis(400))
 
         assertEquals("123456", idn.get("otp:$id"))
@@ -40,7 +40,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `two modules with different prefixes never see each other's keys`() = runBlocking {
+    fun `two modules with different prefixes never see each other's keys`() = runBlocking<Unit> {
         val usr = scopes.scope("usr")
         idn.set("seq:$id", "1", Duration.ofSeconds(30))
 
@@ -49,7 +49,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `setIfAbsent claims a key once`() = runBlocking {
+    fun `setIfAbsent claims a key once`() = runBlocking<Unit> {
         assertTrue(idn.setIfAbsent("claim:$id", "first", Duration.ofSeconds(30)))
         assertFalse(idn.setIfAbsent("claim:$id", "second", Duration.ofSeconds(30)))
 
@@ -57,7 +57,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `getAndDelete hands a single-use value to one caller only`() = runBlocking {
+    fun `getAndDelete hands a single-use value to one caller only`() = runBlocking<Unit> {
         idn.set("nonce:$id", "n", Duration.ofSeconds(30))
 
         assertEquals("n", idn.getAndDelete("nonce:$id"))
@@ -65,7 +65,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `delete says whether anything was there`() = runBlocking {
+    fun `delete says whether anything was there`() = runBlocking<Unit> {
         idn.set("k:$id", "v", Duration.ofSeconds(30))
 
         assertTrue(idn.delete("k:$id"))
@@ -73,7 +73,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `a counter counts and its expiry is set once, not extended`() = runBlocking {
+    fun `a counter counts and its expiry is set once, not extended`() = runBlocking<Unit> {
         assertEquals(1, idn.increment("rate:$id", Duration.ofSeconds(30)))
         val firstTtl = idn.ttl("rate:$id")!!
         delay(150)
@@ -84,14 +84,14 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `a counter always has an expiry`() = runBlocking {
+    fun `a counter always has an expiry`() = runBlocking<Unit> {
         idn.increment("rate:$id", Duration.ofSeconds(30))
 
         assertTrue(redis.commands.pttl("idn:rate:$id")!! > 0)
     }
 
     @Test
-    fun `a hash is written with its expiry and fields can be counted up`() = runBlocking {
+    fun `a hash is written with its expiry and fields can be counted up`() = runBlocking<Unit> {
         idn.hashSet("otp:$id", mapOf("hmac" to "ab", "attempts" to "0"), Duration.ofSeconds(30))
 
         assertEquals(mapOf("hmac" to "ab", "attempts" to "0"), idn.hashGetAll("otp:$id"))
@@ -101,7 +101,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `counting up a hash that expired does not bring back a key with no expiry`() = runBlocking {
+    fun `counting up a hash that expired does not bring back a key with no expiry`() = runBlocking<Unit> {
         assertNull(idn.hashIncrement("otp:gone-$id", "attempts"))
 
         assertFalse(idn.exists("otp:gone-$id"))
@@ -116,7 +116,7 @@ class RedisScopeTest {
     }
 
     @Test
-    fun `a message published on a channel reaches a subscriber of the same prefix only`() = runBlocking {
+    fun `a message published on a channel reaches a subscriber of the same prefix only`() = runBlocking<Unit> {
         val usr = scopes.scope("usr")
         val channel = "node:$id"
         val received = kotlinx.coroutines.CompletableDeferred<String>()

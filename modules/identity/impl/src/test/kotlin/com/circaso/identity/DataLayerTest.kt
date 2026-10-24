@@ -95,7 +95,7 @@ class DataLayerTest {
     )
 
     @Test
-    fun `one commit writes every table and the outbox, then publishes the event`() = runBlocking {
+    fun `one commit writes every table and the outbox, then publishes the event`() = runBlocking<Unit> {
         val user = UserId.new()
         val device = Device(user, DeviceId.new(), "android", "Pixel", "1.0.0", "key", "ES256", "fcm:t", DeviceStatus.ACTIVE, now, now)
         val session = Session(SessionId.new(), user, device.deviceId, "hash", Scope.APP, SessionStatus.ACTIVE, now, now)
@@ -127,7 +127,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `a phone number can be claimed by one account only`() = runBlocking {
+    fun `a phone number can be claimed by one account only`() = runBlocking<Unit> {
         val first = UserId.new()
         val second = UserId.new()
         val phone = PhoneNumber.parse("+254799${(100000..999999).random()}")!!
@@ -143,7 +143,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `a Google login can belong to one account only`() = runBlocking {
+    fun `a Google login can belong to one account only`() = runBlocking<Unit> {
         val first = UserId.new()
         val subject = "sub-${UUID.randomUUID()}"
 
@@ -154,7 +154,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `the security log pages newest first`() = runBlocking {
+    fun `the security log pages newest first`() = runBlocking<Unit> {
         val user = UserId.new()
         repeat(5) { store.commit(Changes(securityEvents = listOf(SecurityEvent(user, null, SecurityEventType.SIGN_IN, "Pixel", "n$it")))) }
 
@@ -165,7 +165,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `a support case is found by its request id`() = runBlocking {
+    fun `a support case is found by its request id`() = runBlocking<Unit> {
         val target = UserId.new()
         val request = Uuid7.generate()
         store.commit(
@@ -184,7 +184,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `removing a provider link deletes its row`() = runBlocking {
+    fun `removing a provider link deletes its row`() = runBlocking<Unit> {
         val user = UserId.new()
         val link = ProviderLink(user, SocialProvider.APPLE, "apple-sub", null, now)
         store.commit(Changes(providerLinks = listOf(link)))
@@ -195,7 +195,7 @@ class DataLayerTest {
     }
 
     @Test
-    fun `clearing the active device and the number really clears them`() = runBlocking {
+    fun `clearing the active device and the number really clears them`() = runBlocking<Unit> {
         val user = UserId.new()
         val device = DeviceId.new()
         store.commit(Changes(accounts = listOf(account(user).copy(activeDeviceId = device))))

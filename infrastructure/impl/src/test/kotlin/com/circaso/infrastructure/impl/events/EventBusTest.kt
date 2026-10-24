@@ -80,7 +80,7 @@ class EventBusTest {
     private suspend fun pending(): Long = runCatching { redis.commands.xpending(stream, group)?.count ?: 0 }.getOrDefault(-1)
 
     @Test
-    fun `a published event reaches the subscribed handler, is recorded as done and acknowledged`() = runBlocking {
+    fun `a published event reaches the subscribed handler, is recorded as done and acknowledged`() = runBlocking<Unit> {
         val received = ConcurrentLinkedQueue<Pinged>()
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler { received += it.decode<Pinged>() }))
@@ -96,7 +96,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `an event published before the group existed is still delivered`() = runBlocking {
+    fun `an event published before the group existed is still delivered`() = runBlocking<Unit> {
         val bus = bus()
         bus.publish(bus.envelope(Pinged(producer, 1)))
         val received = ConcurrentLinkedQueue<Int>()
@@ -108,7 +108,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `the same event delivered twice is handled once`() = runBlocking {
+    fun `the same event delivered twice is handled once`() = runBlocking<Unit> {
         val handled = AtomicInteger()
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler { handled.incrementAndGet() }))
@@ -126,7 +126,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `an event type the group does not react to is acknowledged and ignored`() = runBlocking {
+    fun `an event type the group does not react to is acknowledged and ignored`() = runBlocking<Unit> {
         val pings = AtomicInteger()
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler { pings.incrementAndGet() }))
@@ -140,7 +140,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `a failing handler is retried after the idle time and then succeeds`() = runBlocking {
+    fun `a failing handler is retried after the idle time and then succeeds`() = runBlocking<Unit> {
         val attempts = AtomicInteger()
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler {
@@ -157,7 +157,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `an event that keeps failing is dead-lettered after five attempts`() = runBlocking {
+    fun `an event that keeps failing is dead-lettered after five attempts`() = runBlocking<Unit> {
         val attempts = AtomicInteger()
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler {
@@ -180,7 +180,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `two groups each get their own copy of an event`() = runBlocking {
+    fun `two groups each get their own copy of an event`() = runBlocking<Unit> {
         val first = AtomicInteger()
         val second = AtomicInteger()
         val bus = bus()
@@ -194,7 +194,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `publishing stamps the outbox row`() = runBlocking {
+    fun `publishing stamps the outbox row`() = runBlocking<Unit> {
         val store = FakeOutbox(producer)
         val bus = bus(listOf(store))
 
@@ -207,7 +207,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `the relay publishes what a crashed node left unpublished, once, and moves its checkpoint`() = runBlocking {
+    fun `the relay publishes what a crashed node left unpublished, once, and moves its checkpoint`() = runBlocking<Unit> {
         val store = FakeOutbox(producer)
         val bus = bus(listOf(store))
         val twoMinutesAgo = Clock.systemUTC().instant().minusSeconds(150)
@@ -231,7 +231,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `a rescued event reaches a consumer exactly like a published one`() = runBlocking {
+    fun `a rescued event reaches a consumer exactly like a published one`() = runBlocking<Unit> {
         val store = FakeOutbox(producer)
         val bus = bus(listOf(store))
         val received = ConcurrentLinkedQueue<Int>()
@@ -245,7 +245,7 @@ class EventBusTest {
     }
 
     @Test
-    fun `consumers are healthy while their loops run and not before they start`() = runBlocking {
+    fun `consumers are healthy while their loops run and not before they start`() = runBlocking<Unit> {
         val bus = bus()
         bus.subscribe(subscription("$producer.Pinged" to EventHandler { }))
         assertFalse(bus.consumersHealthy(), "a subscription with no running loop is not healthy")
