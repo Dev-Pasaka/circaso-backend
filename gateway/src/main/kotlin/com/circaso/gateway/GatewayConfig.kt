@@ -22,7 +22,9 @@ class GatewayConfig(
                 apiDocs = ApiDocsConfig(
                     // The reader and the raw spec map every route, support and ops ones included: never in production.
                     enabled = !production && gateway.boolean("api-docs.enabled", true),
-                    requireOps = !config.environment.isLocal,
+                    // Behind the `ops` scope outside local runs, unless something in front of the app already decides who may read the docs
+                    // (Cloudflare Access on the dev server): a browser cannot send a bearer token to open a page.
+                    requireOps = gateway.boolean("api-docs.require-ops", !config.environment.isLocal),
                 ),
                 minClientVersions = platforms.mapNotNull { platform ->
                     gateway.string("min-client-version.$platform")?.let { raw ->
@@ -43,6 +45,6 @@ class GatewayConfig(
 /** The API reader at `/docs` and the spec behind it at `/docs/openapi.json`. */
 data class ApiDocsConfig(
     val enabled: Boolean = false,
-    /** Outside local runs the reader sits behind the `ops` scope. */
+    /** Outside local runs the reader sits behind the `ops` scope, unless `gateway.api-docs.require-ops` is false (`GATEWAY_API_DOCS_REQUIRE_OPS`). */
     val requireOps: Boolean = true,
 )
