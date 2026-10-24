@@ -99,3 +99,19 @@ unless `org.testcontainers:cassandra` is added to the test classpath by hand. `k
 
 - `SchemaRegistry` and `DdlGenerator` are `@InternalKandraApi`, so a migration cannot reuse the entity DDL without an opt-in. We wrote the DDL by hand, from what Kandra generated, in each module's `V001` migration.
 - `KandraTestcontainers` starts **Cassandra**, not ScyllaDB, so data-layer tests run against Cassandra-compatible CQL.
+
+## 7. Migration checksum changes when the migration moves to other lines
+
+**Issue:** not filed yet.
+
+**Status:** reproduced (compiled `75a8a9d` and the next commit, same source except layout, and compared the class files).
+
+A migration whose `up()` uses an inline function (`listOf(...).forEach { session.execute(it) }`) gets Kotlin's source-line table (the SMAP) as a text entry in the class's constant pool. `BytecodeNormalizer` removes the `SourceDebugExtension` and `LineNumberTable` attributes, but not that constant, so the checksum depends on which lines the code is on. Reformatting the file, or adding a KDoc line above the migration, makes `KandraMigrationRunner` fail on an already-applied migration:
+
+```
+KandraMigrationException: Migration v1 ('create users tables') checksum mismatch — the migration was modified after being applied.
+```
+
+The SQL and the instructions were identical; only `line 25: 0` became `line 34: 0` in the javap output.
+
+**What we do:** migrations avoid inline functions (a plain `for` loop), so their classes carry no line table. A checksum that already changed is updated once in `kandra_migrations`, as Kandra's own recovery note says, after confirming with a bytecode diff that nothing but line numbers moved.

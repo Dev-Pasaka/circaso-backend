@@ -3,7 +3,8 @@ name: Deploy to dev
 # Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
 # GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. Everything the server runs with
 # lives on the server in /opt/circaso (docker-compose.yml, nginx, certs, .env): this workflow copies nothing there. It logs in,
-# runs the migrations, starts the new image with the server's docker-compose.yml, waits for ready and prunes old images.
+# starts the new image with the server's docker-compose.yml, waits for ready and prunes old images. It never runs
+# migrations: those are run by hand (`./gradlew :app:migrate`).
 on:
   push:
     branches: [main]
@@ -85,11 +86,6 @@ jobs:
 
           echo "pulling $IMAGE"
           docker pull --quiet "$IMAGE" >/dev/null </dev/null
-
-          echo "migrating"
-          docker run --rm --env-file .env -e LOG_FORMAT=JSON -e LOG_COLOR=false --read-only --tmpfs /tmp \
-            --cap-drop ALL --security-opt no-new-privileges:true --entrypoint java "$IMAGE" \
-            --enable-native-access=ALL-UNNAMED -cp "/app/lib/*" com.circaso.app.Migrate </dev/null
 
           echo "starting"
           docker compose up -d --remove-orphans </dev/null
