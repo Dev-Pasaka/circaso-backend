@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Unavailable · Circaso</title>
+<style>
+  /* The same tokens as the API reference (docs-ui/src/app.css), which follow circaso.com. */
+  :root {
+    --bg: #fff; --grouped: #f2f2f7; --fill: #e9e9eb; --sep: #e3e3e8;
+    --ink: #0b0b0c; --ink2: #636366; --ink3: #7c7c80;
+    --critical: #c8102e; --glass: rgba(255,255,255,.72);
+    --r-s: 6px; --r-m: 10px; --r-l: 14px; --r-xl: 22px;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --grouped: #1c1c1e; --fill: #2c2c2e; --sep: #38383a;
+      --ink: #f5f5f7; --ink2: #98989f; --ink3: #8e8e93;
+      --critical: #ff5a6e; --glass: rgba(28,28,30,.72);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--grouped); border-radius: 5px; padding: .12em .4em; }
+
+  .bar {
+    position: sticky; top: 0; z-index: 20; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+    background: var(--glass); backdrop-filter: blur(24px) saturate(1.8); -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border-bottom: 1px solid var(--sep);
+  }
+  .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 600; letter-spacing: -.01em; }
+  .brand em { font-style: normal; font-weight: 500; color: var(--ink3); }
+
+  main { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
+  .eyebrow { margin: 0 0 6px; font-size: 13px; color: var(--ink3); font-weight: 500; display: flex; align-items: center; gap: 10px; }
+  .status {
+    font: 700 11px/1 var(--font); letter-spacing: .05em; text-transform: uppercase;
+    padding: 5px 8px; border-radius: var(--r-s); background: var(--fill); color: var(--ink);
+  }
+  .status.deny { background: var(--critical); color: #fff; }
+  h1 { margin: 0 0 14px; font-size: clamp(30px, 4.6vw, 44px); line-height: 1.05; letter-spacing: -.03em; font-weight: 700; }
+  .lead { margin: 0 0 12px; max-width: 60ch; color: var(--ink); font-size: 17px; }
+  .muted { color: var(--ink2); }
+  h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink3); margin: 34px 0 8px; font-weight: 600; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--sep); border-radius: var(--r-m); margin: 8px 0 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 9px 14px; border-bottom: 1px solid var(--sep); vertical-align: top; text-align: left; }
+  tr:last-child th, tr:last-child td { border-bottom: 0; }
+  th { width: 130px; font-size: 12px; color: var(--ink3); font-weight: 600; background: var(--grouped); white-space: nowrap; }
+  td { font: 500 13px/1.5 var(--mono); overflow-wrap: anywhere; }
+  .note { max-width: 60ch; font-size: 14px; color: var(--ink2); }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--sep); font-size: 13px; color: var(--ink3); }
+
+  @media (max-width: 560px) {
+    main { padding: 36px 16px 72px; }
+    th { width: 96px; padding-left: 12px; padding-right: 8px; }
+    td { padding-left: 10px; padding-right: 10px; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="https://circaso.com"><svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="currentColor"/><path d="M21 11.5A7 7 0 1 0 21 20.5" fill="none" stroke="var(--bg)" stroke-width="3" stroke-linecap="round"/></svg><span>Circaso</span></a>
+</header>
+<main>
+  <p class="eyebrow"><span class="status">5xx</span>Service unavailable</p>
+  <h1>Circaso is not answering right now</h1>
+  <p class="lead">The service is starting, being updated, or briefly unavailable.</p>
+  <p class="note">This usually clears within a minute. Nothing you did caused it, and no data is lost. If it lasts longer, try again in a few minutes.</p>
+  <footer>Circaso</footer>
+</main>
+</body>
+</html>

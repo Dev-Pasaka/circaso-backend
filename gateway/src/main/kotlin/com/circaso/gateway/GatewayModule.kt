@@ -80,5 +80,6 @@ fun Application.installGateway() {
             hub.routes(this)
         }
         apiDocsRoutes(this@installGateway, deps.config.apiDocs)
+        errorPageRoutes()
     }
 }

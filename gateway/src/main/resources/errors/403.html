@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Access denied · Circaso</title>
+{{STYLE}}
+</head>
+<body>
+{{LOGO}}
+<main>
+  <p class="eyebrow"><span class="status deny">403</span>Forbidden</p>
+  <h1>Access denied</h1>
+  <p class="lead">This area is restricted. Your request was not allowed through, and it has been recorded.</p>
+  <h4>What we received</h4>
+  <div class="table-wrap">
+    <table>
+      <tr><th scope="row">Address</th><td>{{ADDRESS}}</td></tr>
+      <tr><th scope="row">Country</th><td>{{COUNTRY}}</td></tr>
+      <tr><th scope="row">Browser</th><td>{{BROWSER}}</td></tr>
+      <tr><th scope="row">Request</th><td>{{REQUEST}}</td></tr>
+      <tr><th scope="row">Time (UTC)</th><td>{{TIME}}</td></tr>
+      <tr><th scope="row">Reference</th><td>{{REFERENCE}}</td></tr>
+    </table>
+  </div>
+  <p class="note">Your address, browser and request are in our access log, and Cloudflare sees them too. Repeated attempts are counted and can be blocked by address. If you are part of the Circaso team and should have access, send the reference above to the team and ask to be added.</p>
+  <footer>Circaso</footer>
+</main>
+</body>
+</html>
