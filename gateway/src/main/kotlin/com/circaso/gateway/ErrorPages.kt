@@ -1,5 +1,6 @@
 package com.circaso.gateway
 
+import com.circaso.web.EnvelopeSent
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -100,6 +101,8 @@ fun Route.errorPageRoutes() {
                         "STYLE" to ErrorPageResources.style,
                         "LOGO" to ErrorPageResources.logo,
                     )
+            // This route answers with the page itself; without the flag the 404 handler would swap it for the JSON envelope.
+            call.attributes.put(EnvelopeSent, true)
             call.response.header(HttpHeaders.CacheControl, "no-store")
             call.response.header("Content-Security-Policy", CONTENT_SECURITY_POLICY)
             call.respondText(

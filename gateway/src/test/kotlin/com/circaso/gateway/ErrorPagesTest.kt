@@ -1,5 +1,8 @@
 package com.circaso.gateway
 
+import com.circaso.web.installJson
+import com.circaso.web.installRequestId
+import com.circaso.web.installStatusPages
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -15,7 +18,13 @@ import kotlin.test.assertTrue
 class ErrorPagesTest {
     private fun pages(block: suspend io.ktor.server.testing.ApplicationTestBuilder.() -> Unit) =
         testApplication {
-            application { routing { errorPageRoutes() } }
+            application {
+                // as in the app: its JSON setup and 404 handler must not replace these pages
+                installRequestId()
+                installJson()
+                installStatusPages()
+                routing { errorPageRoutes() }
+            }
             block()
         }
 
@@ -65,6 +74,10 @@ class ErrorPagesTest {
             )) {
                 val response = client.get("/_errors/$code")
                 assertEquals(status, response.status)
+                assertTrue(
+                    response.headers[HttpHeaders.ContentType]!!.startsWith("text/html"),
+                    "$code is a page, not JSON",
+                )
                 assertTrue("Circaso" in response.bodyAsText())
             }
         }
