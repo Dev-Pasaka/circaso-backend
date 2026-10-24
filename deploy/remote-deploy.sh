@@ -37,6 +37,10 @@ back_out() {
   exit 1
 }
 
+# The proxy and the app share this network, created once here because Compose treats it as external; the data network
+# (app and Redis only, no internet) is created by Compose itself.
+docker network inspect circaso-backend >/dev/null 2>&1 || docker network create circaso-backend >/dev/null
+
 echo "starting"
 compose up -d --remove-orphans || back_out "the new version could not be started; last logs:"
 
@@ -60,6 +64,7 @@ clean_images() {
     | grep -v -x -F -e "$IMAGE" -e "${previous:-none}" \
     | xargs -r docker image rm >/dev/null 2>&1 || true
   docker image prune -f >/dev/null 2>&1 || true
+  docker network rm circaso_internal >/dev/null 2>&1 || true   # the single network of the first version, now unused
   echo "images kept: $(docker image ls "$repo" --format '{{.Tag}}' | tr '\n' ' ')"
   df -h / | awk 'NR==2 {print "disk used: " $5 " of " $2}'
 }

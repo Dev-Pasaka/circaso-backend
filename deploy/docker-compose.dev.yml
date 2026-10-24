@@ -1,4 +1,6 @@
-# The dev server: the app, Redis (Valkey) and the nginx proxy. Only the proxy publishes ports; the app and Redis are on a private network.
+# The dev server: the app, Redis (Valkey) and the nginx proxy. Only the proxy publishes a port (443); the app and Redis publish none.
+# Networks: circaso-backend (external, created by remote-deploy.sh) joins nginx and the app; circaso-data (internal, no internet) joins the
+# app and Redis, so nginx cannot reach Redis and Redis cannot reach the internet. Nothing uses Compose's default network.
 # Used by deploy/remote-deploy.sh, which sets IMAGE. Settings live in /opt/circaso/.env on the server (see deploy/dev.env.example).
 name: circaso
 
@@ -14,7 +16,7 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
-    networks: [internal]
+    networks: [backend, data]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -34,22 +36,21 @@ services:
       retries: 5
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-    networks: [internal]
-    # Runs as its own user from the start (the image's data folder is already that user's), so it needs no privileges at all. As root
-    # with everything dropped it cannot even read a data folder it already created, and the restart after a deploy would fail.
-    user: valkey
+    networks: [data]
+    # Run as the image's valkey user: the root entrypoint's chown of /data fails once appendonlydir exists, because cap_drop removes DAC_OVERRIDE.
+    user: "999:1000"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
   nginx:
     image: nginx:1-alpine
     restart: unless-stopped
-    ports: ["80:80", "443:443"]
+    ports: ["443:443"]
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro
       - ./certs:/etc/nginx/certs:ro
     depends_on: [app]
-    networks: [internal]
+    networks: [backend]
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE, CHOWN, SETGID, SETUID]
     security_opt: ["no-new-privileges:true"]
@@ -57,7 +58,12 @@ services:
     tmpfs: [/var/cache/nginx, /var/run, /tmp]
 
 networks:
-  internal:
+  backend:
+    name: circaso-backend
+    external: true
+  data:
+    name: circaso-data
+    internal: true
 
 volumes:
   valkey-data:
