@@ -8,14 +8,14 @@ dependencies {
     implementation(libs.kandra.runtime)
     implementation(libs.kandra.migrate)
 
-    implementation(ktorLibs.server.core)
+    implementation(libs.ktor.server.core)
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.logback.classic)
 
     testImplementation(platform(libs.kandra.bom))
     testImplementation(libs.kandra.test)
-    testImplementation(ktorLibs.server.testHost)
+    testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.cassandra)

@@ -7,17 +7,17 @@ plugins {
 // and the gateway. May depend on `shared` and Ktor.
 dependencies {
     api(project(":shared"))
-    api(ktorLibs.server.core)
-    api(ktorLibs.server.callId)
-    api(ktorLibs.server.statusPages)
-    api(ktorLibs.server.contentNegotiation)
-    api(ktorLibs.serialization.kotlinx.json)
-    api(ktorLibs.server.routingOpenapi)
-    api(ktorLibs.openapiSchema)
+    api(libs.ktor.server.core)
+    api(libs.ktor.server.call.id)
+    api(libs.ktor.server.status.pages)
+    api(libs.ktor.server.content.negotiation)
+    api(libs.ktor.serialization.kotlinx.json)
+    api(libs.ktor.server.routing.openapi)
+    api(libs.ktor.openapi.schema)
     implementation(libs.kotlinx.coroutines.slf4j)
     implementation(libs.opentelemetry.api)
 
-    testImplementation(ktorLibs.server.testHost)
-    testImplementation(ktorLibs.client.contentNegotiation)
+    testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.content.negotiation)
     testRuntimeOnly(libs.logback.classic)
 }

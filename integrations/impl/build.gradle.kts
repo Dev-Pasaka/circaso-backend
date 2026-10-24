@@ -9,12 +9,11 @@ dependencies {
     implementation(libs.koin.core)
     implementation(libs.logback.classic)
 
-    // What the vendor code itself uses, declared here rather than inherited from another module. Ktor comes from the `ktorLibs` version
-    // catalog (settings.gradle.kts), which keeps every Ktor artifact on one version; the rest are in gradle/libs.versions.toml.
-    implementation(ktorLibs.client.core)
+    // What the vendor code itself uses, declared here rather than inherited from another module. Versions are in gradle/libs.versions.toml.
+    implementation(libs.ktor.client.core)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(ktorLibs.client.mock)
+    testImplementation(libs.ktor.client.mock)
 }

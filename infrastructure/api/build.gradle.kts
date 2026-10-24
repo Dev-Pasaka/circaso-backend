@@ -8,6 +8,6 @@ dependencies {
     api(platform(libs.kandra.bom))
     api(libs.kandra.runtime)
     api(libs.kandra.migrate)
-    api(ktorLibs.client.core)
+    api(libs.ktor.client.core)
     api(libs.grpc.api)
 }
