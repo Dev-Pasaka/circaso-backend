@@ -105,16 +105,28 @@ class RedisScheduler(
         try {
             if (!acquire(definition.name, lease)) return
             val start = System.nanoTime()
-            log.info("start", kv("kind", "job"), kv("job", definition.name))
+            log.debug("start", kv("kind", "job"), kv("job", definition.name))
             val items =
                 holding(definition.name, lease) { telemetry.span("job.${definition.name}") { definition.job() } }
-            log.info(
-                "done",
-                kv("kind", "job"),
-                kv("job", definition.name),
-                kv("items", items),
-                kv("durationMs", 0L.millisSince(start)),
-            )
+            // A run that found nothing to do happens every few seconds; it is only worth a line at DEBUG.
+            val durationMs = 0L.millisSince(start)
+            if (items > 0) {
+                log.info(
+                    "done",
+                    kv("kind", "job"),
+                    kv("job", definition.name),
+                    kv("items", items),
+                    kv("durationMs", durationMs),
+                )
+            } else {
+                log.debug(
+                    "done",
+                    kv("kind", "job"),
+                    kv("job", definition.name),
+                    kv("items", items),
+                    kv("durationMs", durationMs),
+                )
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
