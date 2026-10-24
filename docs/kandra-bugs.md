@@ -95,12 +95,7 @@ unless `org.testcontainers:cassandra` is added to the test classpath by hand. `k
 
 **Workaround:** `testImplementation(libs.testcontainers.cassandra)` (version 1.21.4, matching the other Testcontainers modules) in every module that uses it.
 
-## Not bugs, but surprises worth a line in the docs
-
-- `SchemaRegistry` and `DdlGenerator` are `@InternalKandraApi`, so a migration cannot reuse the entity DDL without an opt-in. We wrote the DDL by hand, from what Kandra generated, in each module's `V001` migration.
-- `KandraTestcontainers` starts **Cassandra**, not ScyllaDB, so data-layer tests run against Cassandra-compatible CQL.
-
-## 7. Migration checksum changes when the migration moves to other lines
+## 5. Migration checksum changes when the migration moves to other lines
 
 **Issue:** not filed yet.
 
@@ -115,3 +110,8 @@ KandraMigrationException: Migration v1 ('create users tables') checksum mismatch
 The SQL and the instructions were identical; only `line 25: 0` became `line 34: 0` in the javap output.
 
 **What we do:** migrations avoid inline functions (a plain `for` loop), so their classes carry no line table. A checksum that already changed is updated once in `kandra_migrations`, as Kandra's own recovery note says, after confirming with a bytecode diff that nothing but line numbers moved.
+
+## Not bugs, but surprises worth a line in the docs
+
+- `SchemaRegistry` and `DdlGenerator` are `@InternalKandraApi`, so a migration cannot reuse the entity DDL without an opt-in. We wrote the DDL by hand, from what Kandra generated, in each module's `V001` migration.
+- `KandraTestcontainers` starts **Cassandra**, not ScyllaDB, so data-layer tests run against Cassandra-compatible CQL.
