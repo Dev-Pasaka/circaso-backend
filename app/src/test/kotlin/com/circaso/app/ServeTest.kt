@@ -272,49 +272,9 @@ class ServeTest {
         }
 
     @Test
-    fun `the API reader is Circaso's, with a UUID generator, and the spec is organised for the person using it`() =
+    fun `the spec is organised for the person using it, sent gzipped and never stale`() =
         testApplication {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
-
-            // ---- the page: Circaso's own reader (static files), with the key generator, opening on Infrastructure ----
-            val page = client.get("/docs")
-            assertEquals(HttpStatusCode.OK, page.status)
-            val html = page.bodyAsText()
-            assertTrue("swagger" !in html.lowercase() && "scalar" !in html.lowercase(), "neither Swagger UI nor Scalar")
-            assertTrue(
-                "/docs/app.js" in html && "/docs/app.css" in html && "defer" in html,
-                "two static files, the script not blocking the page",
-            )
-            assertTrue(
-                "id=\"uuid-copy\"" in html && "Idempotency-Key" in html,
-                "an Idempotency-Key UUID generator is in the bar",
-            )
-            assertTrue(
-                "rel=\"preload\"" in html && "/docs/openapi.json" in html,
-                "the spec is requested while the script loads",
-            )
-            assertTrue("class=\"skeleton\"" in html, "something is shown while it loads")
-            assertTrue("etag" in page.headers.names().map { it.lowercase() }, "the page is validated by ETag")
-            assertEquals(
-                HttpStatusCode.NotModified,
-                client
-                    .get("/docs") {
-                        header("If-None-Match", page.headers["ETag"]!!)
-                    }.status,
-                "a repeat visit is a 304",
-            )
-            val script = client.get("/docs/app.js")
-            assertEquals(HttpStatusCode.OK, script.status)
-            assertTrue(script.bodyAsText().length in 5_000..200_000, "a small bundle, not a framework")
-            val css = client.get("/docs/app.css").bodyAsText()
-            assertTrue(
-                "#0b0b0c" in css && "#f2f2f7" in css && "-apple-system" in css,
-                "drawn in circaso.com's own tokens",
-            )
-            assertTrue(
-                "backdrop-filter" in css && "prefers-reduced-motion" in css && "prefers-contrast" in css,
-                "glass bar, adapting to reduced motion and contrast",
-            )
 
             // ---- the spec: sent gzipped, and never stale ----
             val gzipped = client.get("/docs/openapi.json") { header("Accept-Encoding", "gzip") }

@@ -36,8 +36,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun test
         working-directory: docs-ui
-      # The built files are committed (the server serves them), so they must match the source.
+      # The reader must still build: the docs image is made from dist/.
       - run: bun run build.ts
         working-directory: docs-ui
-      - name: Built files are up to date
-        run: git diff --exit-code -- gateway/src/main/resources/docs

@@ -1,8 +1,9 @@
-// Bundles src/ into the gateway's resources: one minified script, one stylesheet, and the HTML shell.
+// Bundles src/ into dist/docs: one minified script, one stylesheet, and the HTML shell. The docs image (Dockerfile) serves
+// that folder as static files; `bun run serve` serves it locally.
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const out = join(import.meta.dir, '..', 'gateway', 'src', 'main', 'resources', 'docs');
+const out = join(import.meta.dir, 'dist', 'docs');
 mkdirSync(out, { recursive: true });
 
 const js = await Bun.build({ entrypoints: ['src/main.ts'], minify: true, target: 'browser', format: 'iife' });

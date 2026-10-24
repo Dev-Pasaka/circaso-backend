@@ -42,6 +42,16 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  docs:
+    image: ${DOCS_IMAGE}
+    restart: unless-stopped
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+
   nginx:
     image: nginx:1-alpine
     restart: unless-stopped

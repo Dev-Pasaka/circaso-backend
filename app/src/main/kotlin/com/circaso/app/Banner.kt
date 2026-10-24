@@ -40,7 +40,11 @@ object Banner {
                 "  " + palette.gray("environment ") + app.environment.name.lowercase() + palette.gray("  version ") +
                     app.version,
             )
-            if (docs) appendLine("  " + palette.gray("api docs    ") + "$url/docs")
+            if (docs) {
+                appendLine(
+                    "  " + palette.gray("api docs    ") + "cd docs-ui && bun run serve  (http://localhost:8090/docs)",
+                )
+            }
             appendLine("  " + palette.gray("health      ") + "$url/health/ready")
             appendLine()
         }

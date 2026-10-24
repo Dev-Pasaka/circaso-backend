@@ -218,7 +218,7 @@ class AppTest {
         )
         assertTrue(Banner.logo().joinToString("\n").contains("|_|  |_|"), "the logo ends with the M of .COM")
         assertTrue("Application started on http://localhost:8080" in text)
-        assertTrue("http://localhost:8080/docs" in text && "http://localhost:8080/health/ready" in text)
+        assertTrue("http://localhost:8090/docs" in text && "http://localhost:8080/health/ready" in text)
         assertTrue("version 1.2.3" in text)
         assertTrue("\u001B[" !in text, "no color codes when colors are off")
     }

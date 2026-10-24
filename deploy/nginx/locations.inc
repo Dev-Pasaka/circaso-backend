@@ -60,10 +60,22 @@ location ^~ /dev/ { return 404; }
 
 # The API reference is for people Cloudflare Access has let in (dashboard: Zero Trust > Access > Applications, path /docs). Access puts its signed token in
 # this header on every request it allows, so a request without it did not come through Access: refuse it here as well, in case Access is ever misconfigured.
-location ^~ /docs {
+# The reader is its own small service (the docs container: static files); only the spec, which the app builds from its routes, comes from the app.
+location = /docs/openapi.json {
     if ($http_cf_access_jwt_assertion = "") { return 403; }
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
+}
+
+location ^~ /docs {
+    if ($http_cf_access_jwt_assertion = "") { return 403; }
+    limit_req zone=api burst=60 nodelay;
+    set $docs docs:8080;
+    proxy_pass http://$docs;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 30s;
 }
 
 location / {
