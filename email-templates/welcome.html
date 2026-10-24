@@ -9,10 +9,17 @@
 <title>Welcome to Circaso</title>
 <style>
   :root { color-scheme: light dark; supported-color-schemes: light dark; }
-  body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    padding: 0;
+    width: 100% !important;
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+  }
   table { border-collapse: collapse; mso-table-lspace: 0; mso-table-rspace: 0; }
   a { color: inherit; }
   .card, .hero, .pay, .step, .stage, .panel { border-collapse: separate !important; }
+
   @media only screen and (max-width: 620px) {
     .wrap { padding: 12px 8px !important; }
     .card { border-radius: 18px !important; }
@@ -20,6 +27,7 @@
     .h1 { font-size: 26px !important; line-height: 1.15 !important; }
     .btn a { display: block !important; text-align: center !important; }
   }
+
   @media (prefers-color-scheme: dark) {
     .page { background-color: #000000 !important; }
     .card { background-color: #1c1c1e !important; border-color: #38383a !important; }
@@ -38,8 +46,13 @@
     .stage-pad { padding: 18px 14px !important; }
     .bubble { font-size: 15px !important; }
   }
+
   @media (prefers-color-scheme: dark) {
-    .hero { background-color: #000000 !important; background-image: none !important; border: 1px solid #38383a !important; }
+    .hero {
+      background-color: #000000 !important;
+      background-image: none !important;
+      border: 1px solid #38383a !important;
+    }
     .stage { background-color: #2c2c2e !important; }
     .bubble-in { background-color: #3a3a3c !important; color: #f5f5f7 !important; }
     .bubble-out { background-color: #f5f5f7 !important; color: #0b0b0c !important; }
@@ -50,67 +63,102 @@
 </style>
 </head>
 <body style="margin:0;padding:0;background-color:#f2f2f7;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">Your account is ready. Three things to try first.&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="page" style="background-color:#f2f2f7;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all">Your account is ready. Three things to try first.&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="page" style="background-color:#f2f2f7;">
   <tr><td align="center" class="wrap" style="padding:32px 12px;">
-    <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" class="card" style="width:100%;max-width:560px;background-color:#ffffff;border:1px solid #e3e3e8;border-radius:28px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="560" class="card" style="width:100%;max-width:560px;background-color:#ffffff;border:1px solid #e3e3e8;border-radius:28px">
       <tr><td style="padding:10px 10px 0;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="hero" bgcolor="#0b0b0c" style="background-color:#0b0b0c;background-image:linear-gradient(160deg,#0b0b0c 0%,#1c1c1e 55%,#2c2c2e 100%);border-radius:20px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="hero" bgcolor="#0b0b0c" style="background-color:#0b0b0c;background-image:linear-gradient(160deg,#0b0b0c 0%,#1c1c1e 55%,#2c2c2e 100%);border-radius:20px">
           <tr><td class="hero-pad" style="padding:40px 36px 36px;">
-            <img src="https://assets.circaso.com/brand/circaso-logo-white-480.png" width="132" height="44" alt="Circaso" style="display:block;width:132px;height:44px;border:0;font:700 22px/44px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#ffffff;">
-            <div style="height:40px;line-height:40px;font-size:1px;">&nbsp;</div>
-            <div style="font:600 13px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#98989f;">Welcome</div>
-            <h1 class="hero-h" style="margin:10px 0 14px;font:700 46px/1.02 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.04em;color:#ffffff;">Your chats<br>just learned<br>to move money.</h1>
-            <p style="margin:0;font:400 17px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#c7c7cc;max-width:420px;">Your account is ready. Circaso is where you talk to the people you know and send, receive and save money with them, without leaving the conversation.</p>
+            <img src="https://assets.circaso.com/brand/circaso-logo-white-480.png" width="132" height="44" alt="Circaso" style="display:block;width:132px;height:44px;border:0;font:700 22px/44px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#ffffff">
+            <div style="height:40px;line-height:40px;font-size:1px">&nbsp;</div>
+            <div style="font:600 13px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#98989f">Welcome</div>
+            <h1 class="hero-h" style="margin:10px 0 14px;font:700 46px/1.02 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.04em;color:#ffffff">Your chats<br>just learned<br>to move money.</h1>
+            <p style="margin:0;font:400 17px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#c7c7cc;max-width:420px">Your account is ready. Circaso is where you talk to the people you know and send, receive and save money with them, without leaving the conversation.</p>
           </td></tr>
         </table>
       </td></tr>
       <tr><td class="px" style="padding:28px 26px 4px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="stage" style="background-color:#f2f2f7;border-radius:22px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="stage" style="background-color:#f2f2f7;border-radius:22px">
           <tr><td class="stage-pad" style="padding:22px 20px 14px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr><td style="padding:0 0 8px;"><table role="presentation" align="left" cellpadding="0" cellspacing="0" border="0" style="max-width:78%;"><tr><td class="bubble bubble-in" style="padding:10px 15px;border-radius:19px;background-color:#ffffff;color:#0b0b0c;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;">Rent is due Friday</td></tr></table></td></tr>
-              <tr><td style="padding:0 0 8px;"><table role="presentation" align="right" cellpadding="0" cellspacing="0" border="0" style="max-width:78%;"><tr><td class="bubble bubble-out" style="padding:10px 15px;border-radius:19px;background-color:#0b0b0c;color:#ffffff;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;">Sending it now</td></tr></table></td></tr>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
               <tr><td style="padding:0 0 8px;">
-                <table role="presentation" align="right" cellpadding="0" cellspacing="0" border="0" class="pay" style="background-color:#ffffff;border:1px solid #e3e3e8;border-radius:19px;"><tr><td style="padding:13px 20px 13px 18px;">
-                  <div class="muted" style="font:500 12px/1.2 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:.04em;text-transform:uppercase;color:#636366;">Sent</div>
-                  <div class="ink" style="margin-top:3px;font:700 26px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.03em;color:#0b0b0c;">KES 15,000</div>
-                </td></tr></table>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left" style="max-width:78%;">
+                  <tr><td class="bubble bubble-in" style="padding:10px 15px;border-radius:19px;background-color:#ffffff;color:#0b0b0c;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">Rent is due Friday</td></tr>
+                </table>
               </td></tr>
-              <tr><td style="padding:0 0 8px;"><table role="presentation" align="left" cellpadding="0" cellspacing="0" border="0" style="max-width:78%;"><tr><td class="bubble bubble-in" style="padding:10px 15px;border-radius:19px;background-color:#ffffff;color:#0b0b0c;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;">Got it, thank you!</td></tr></table></td></tr>
+              <tr><td style="padding:0 0 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" style="max-width:78%;">
+                  <tr><td class="bubble bubble-out" style="padding:10px 15px;border-radius:19px;background-color:#0b0b0c;color:#ffffff;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">Sending it now</td></tr>
+                </table>
+              </td></tr>
+              <tr><td style="padding:0 0 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" class="pay" style="background-color:#ffffff;border:1px solid #e3e3e8;border-radius:19px">
+                  <tr><td style="padding:13px 20px 13px 18px;">
+                    <div class="muted" style="font:500 12px/1.2 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:.04em;text-transform:uppercase;color:#636366">Sent</div>
+                    <div class="ink" style="margin-top:3px;font:700 26px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.03em;color:#0b0b0c">KES 15,000</div>
+                  </td></tr>
+                </table>
+              </td></tr>
+              <tr><td style="padding:0 0 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="left" style="max-width:78%;">
+                  <tr><td class="bubble bubble-in" style="padding:10px 15px;border-radius:19px;background-color:#ffffff;color:#0b0b0c;font:400 16px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">Got it, thank you!</td></tr>
+                </table>
+              </td></tr>
             </table>
           </td></tr>
         </table>
-        <p class="muted" style="margin:10px 4px 0;text-align:center;font:400 13px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80;">Messages, money and your people, in the same thread.</p>
+        <p class="muted" style="margin:10px 4px 0;text-align:center;font:400 13px/1.4 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80">Messages, money and your people, in the same thread.</p>
       </td></tr>
       <tr><td class="px" style="padding:30px 36px 6px;">
-        <h2 class="ink" style="margin:0 0 14px;font:700 26px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.03em;color:#0b0b0c;">Start with these three</h2>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:0 0 10px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="step" style="border:1px solid #e3e3e8;border-radius:16px;"><tr>
-            <td width="64" valign="top" style="padding:18px 0 18px 18px;"><div class="num" style="width:34px;height:34px;border-radius:17px;background-color:#0b0b0c;color:#ffffff;text-align:center;font:700 16px/34px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;">1</div></td>
-            <td valign="top" style="padding:17px 18px 17px 0;"><div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c;">Add your contacts</div>
-              <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366;">Circaso shows you who you already know here, and lets you invite the rest.</div></td>
-          </tr></table></td></tr>
-<tr><td style="padding:0 0 10px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="step" style="border:1px solid #e3e3e8;border-radius:16px;"><tr>
-            <td width="64" valign="top" style="padding:18px 0 18px 18px;"><div class="num" style="width:34px;height:34px;border-radius:17px;background-color:#0b0b0c;color:#ffffff;text-align:center;font:700 16px/34px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;">2</div></td>
-            <td valign="top" style="padding:17px 18px 17px 0;"><div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c;">Claim your handle</div>
-              <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366;">A short name people can use to find you, so you never have to share your number.</div></td>
-          </tr></table></td></tr>
-<tr><td style="padding:0 0 10px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="step" style="border:1px solid #e3e3e8;border-radius:16px;"><tr>
-            <td width="64" valign="top" style="padding:18px 0 18px 18px;"><img src="https://assets.circaso.com/brand/asha/asha-icon-silver-96.png" width="34" height="34" alt="Asha" style="display:block;width:34px;height:34px;border-radius:17px;border:0;"></td>
-            <td valign="top" style="padding:17px 18px 17px 0;"><div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c;">Ask Asha</div>
-              <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366;">Asha is the assistant in your chat. Ask a question, or ask it to help with something.</div></td>
-          </tr></table></td></tr></table>
+        <h2 class="ink" style="margin:0 0 14px;font:700 26px/1.1 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.03em;color:#0b0b0c">Start with these three</h2>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr><td style="padding:0 0 10px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="step" style="border:1px solid #e3e3e8;border-radius:16px">
+            <tr>
+              <td width="64" valign="top" style="padding:18px 0 18px 18px;"><div class="num" style="width:34px;height:34px;border-radius:17px;background-color:#0b0b0c;color:#ffffff;text-align:center;font:700 16px/34px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">1</div></td>
+              <td valign="top" style="padding:17px 18px 17px 0;">
+                <div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c">Add your contacts</div>
+                <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366">Circaso shows you who you already know here, and lets you invite the rest.</div>
+              </td>
+            </tr>
+          </table></td></tr>
+        <tr><td style="padding:0 0 10px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="step" style="border:1px solid #e3e3e8;border-radius:16px">
+            <tr>
+              <td width="64" valign="top" style="padding:18px 0 18px 18px;"><div class="num" style="width:34px;height:34px;border-radius:17px;background-color:#0b0b0c;color:#ffffff;text-align:center;font:700 16px/34px -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif">2</div></td>
+              <td valign="top" style="padding:17px 18px 17px 0;">
+                <div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c">Claim your handle</div>
+                <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366">A short name people can use to find you, so you never have to share your number.</div>
+              </td>
+            </tr>
+          </table></td></tr>
+        <tr><td style="padding:0 0 10px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="step" style="border:1px solid #e3e3e8;border-radius:16px">
+            <tr>
+              <td width="64" valign="top" style="padding:18px 0 18px 18px;"><img src="https://assets.circaso.com/brand/asha/asha-icon-silver-96.png" width="34" height="34" alt="Asha" style="display:block;width:34px;height:34px;border-radius:17px;border:0"></td>
+              <td valign="top" style="padding:17px 18px 17px 0;">
+                <div class="ink" style="font:700 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;letter-spacing:-.015em;color:#0b0b0c">Ask Asha</div>
+                <div class="muted" style="margin-top:3px;font:400 15px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#636366">Asha is the assistant in your chat. Ask a question, or ask it to help with something.</div>
+              </td>
+            </tr>
+          </table></td></tr>
+        </table>
       </td></tr>
       <tr><td class="px" style="padding:18px 36px 32px;">
-        <p class="ink" style="margin:0 0 16px;font:400 16px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#0b0b0c;">Questions? Just reply to this email and a person will answer.</p>
-        <p class="ink" style="margin:0;font:600 16px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#0b0b0c;">Glad you are here.<br><span class="muted" style="font-weight:400;color:#636366;">The Circaso team</span></p>
+        <p class="ink" style="margin:0 0 16px;font:400 16px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#0b0b0c">Questions? Just reply to this email and a person will answer.</p>
+        <p class="ink" style="margin:0;font:600 16px/1.5 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#0b0b0c">
+          Glad you are here.<br><span class="muted" style="font-weight:400;color:#636366">The Circaso team</span>
+        </p>
       </td></tr>
-      <tr><td class="px rule" style="padding:20px 36px 28px;border-top:1px solid #e3e3e8;">
-        <p class="muted" style="margin:0;font:400 13px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80;">Circaso will never ask for your PIN or a code by email, and will never ask you to send money to keep your account safe. You are getting this one email because you just created a Circaso account. We will not send you marketing email.</p>
-        <p class="muted" style="margin:12px 0 0;font:400 13px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80;"><a href="https://circaso.com" style="color:#7c7c80;text-decoration:underline;">circaso.com</a></p>
+      <tr><td class="px rule" style="padding:20px 36px 28px;border-top:1px solid #e3e3e8">
+        <p class="muted" style="margin:0;font:400 13px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80">
+          Circaso will never ask for your PIN or a code by email, and will never ask you to send money to keep
+          your account safe. You are getting this one email because you just created a Circaso account. We will not send you marketing email.
+        </p>
+        <p class="muted" style="margin:12px 0 0;font:400 13px/1.55 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;color:#7c7c80">
+          <a href="https://circaso.com" style="color:#7c7c80;text-decoration:underline;">circaso.com</a>
+        </p>
       </td></tr>
     </table>
   </td></tr>

@@ -11,3 +11,5 @@ build/
 # every env file except the example (server logins and keys live in these)
 .env.*
 !.env.example
+
+node_modules/
