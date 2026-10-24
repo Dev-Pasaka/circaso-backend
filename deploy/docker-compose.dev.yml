@@ -35,8 +35,10 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     networks: [internal]
+    # Runs as its own user from the start (the image's data folder is already that user's), so it needs no privileges at all. As root
+    # with everything dropped it cannot even read a data folder it already created, and the restart after a deploy would fail.
+    user: valkey
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN]
     security_opt: ["no-new-privileges:true"]
 
   nginx:

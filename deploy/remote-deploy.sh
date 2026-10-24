@@ -27,8 +27,18 @@ echo "migrating"
 docker run --rm --env-file .env -e LOG_FORMAT=JSON -e LOG_COLOR=false --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
   --entrypoint java "$IMAGE" --enable-native-access=ALL-UNNAMED -cp "/app/lib/*" com.circaso.app.Migrate
 
+back_out() {
+  echo "$1"
+  compose logs --tail 60 app valkey 2>&1 || true
+  if [ -n "$previous" ]; then
+    echo "putting back $previous"
+    IMAGE="$previous" compose up -d --remove-orphans || true
+  fi
+  exit 1
+}
+
 echo "starting"
-compose up -d --remove-orphans
+compose up -d --remove-orphans || back_out "the new version could not be started; last logs:"
 
 ready() {
   for _ in $(seq 1 40); do
@@ -43,11 +53,5 @@ if ready; then
   echo "deployed $IMAGE"
   docker image prune -f --filter "until=168h" >/dev/null
 else
-  echo "the new version did not become ready; last logs:"
-  compose logs --tail 60 app || true
-  if [ -n "$previous" ]; then
-    echo "putting back $previous"
-    IMAGE="$previous" compose up -d --remove-orphans
-  fi
-  exit 1
+  back_out "the new version did not become ready; last logs:"
 fi
