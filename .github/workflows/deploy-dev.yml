@@ -25,7 +25,8 @@ jobs:
 
   image:
     name: Build and publish the image
-    needs: ci
+    # Runs beside the tests, not after them: the deploy job waits for both, so a commit that fails its tests
+    # leaves an unused image on Docker Hub but is never deployed.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: dev   # the Docker Hub username and token are stored on this environment
@@ -52,7 +53,7 @@ jobs:
 
   deploy:
     name: Deploy to the dev server
-    needs: image
+    needs: [ci, image]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
