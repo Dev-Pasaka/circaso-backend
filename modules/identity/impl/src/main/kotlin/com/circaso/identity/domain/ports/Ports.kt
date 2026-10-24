@@ -91,6 +91,9 @@ interface IdentityCache {
     suspend fun countPhoneRelease(phoneHmac: String): Boolean
 }
 
+/** What [PendingOtp.codeHash] holds when a vendor (Twilio Verify) makes and checks the code: there is no hash of ours to compare. */
+const val VENDOR_CHECKED_CODE = "vendor"
+
 data class PendingOtp(
     val phoneHmac: String,
     val sealedPhone: String,

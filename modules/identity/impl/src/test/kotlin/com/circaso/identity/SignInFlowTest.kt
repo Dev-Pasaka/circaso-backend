@@ -269,4 +269,47 @@ class SignInFlowTest {
 
         assertEquals("identity.provider_last", h.unlink(principal, com.circaso.integrations.api.SocialProvider.GOOGLE).errorCode())
     }
+
+    @Test
+    fun `with a vendor that manages codes no text is sent by us, and the vendor's verdict decides`() = runTest {
+        val vendor = FakeVendorVerification()
+        val h = Harness(vendor = vendor)
+        val onboarding = h.principalOf(h.signIn("amina", Phone()).session.accessToken)
+
+        val started = h.startPhone(StartPhoneCommand(onboarding, phone())).data()
+        assertEquals(1, vendor.started, "the vendor was asked to send the code")
+        assertTrue(h.sms.texts.isEmpty(), "our own SMS sender is not used")
+
+        val wrong = h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, "000000"))
+        assertEquals("identity.code_invalid", wrong.errorCode())
+
+        val right = h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, vendor.code)).data()
+        assertEquals(NextStep.REGISTER_DEVICE, right.next)
+    }
+
+    @Test
+    fun `five wrong codes still lock the account when the vendor checks them`() = runTest {
+        val vendor = FakeVendorVerification()
+        val h = Harness(vendor = vendor)
+        val onboarding = h.principalOf(h.signIn("amina", Phone()).session.accessToken)
+        val started = h.startPhone(StartPhoneCommand(onboarding, phone())).data()
+
+        repeat(4) { assertEquals("identity.code_invalid", h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, "111111")).errorCode()) }
+        assertEquals("identity.code_locked", h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, "111111")).errorCode())
+        assertEquals("identity.code_locked", h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, vendor.code)).errorCode(), "even the right code, while locked")
+    }
+
+    @Test
+    fun `a code the vendor no longer has is expired, and a vendor outage is a sending failure`() = runTest {
+        val vendor = FakeVendorVerification()
+        val h = Harness(vendor = vendor)
+        val onboarding = h.principalOf(h.signIn("amina", Phone()).session.accessToken)
+        val started = h.startPhone(StartPhoneCommand(onboarding, phone())).data()
+        vendor.expired = true
+        assertEquals("identity.code_expired", h.verifyCode(VerifyCodeCommand(onboarding, started.verificationId, vendor.code)).errorCode())
+
+        vendor.down = true
+        assertEquals("identity.sms_unavailable", h.startPhone(StartPhoneCommand(onboarding, phone())).errorCode())
+    }
 }
+

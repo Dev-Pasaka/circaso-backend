@@ -40,6 +40,7 @@ Every architecture decision, newest first, with the reason it was made. A decisi
 | 2026-10-20 | The phone number stays required | Contact discovery, the reach rule, one real SIM per account, and M-PESA cash-out later | Identity, Users |
 | 2026-10-19 | Identity is built in-house; no auth-as-a-service | The design (devices, one phone, recovery rules) doesn't fit Auth0 or Firebase Auth | Identity |
 | 2026-10-19 | Rebrand to Circaso (`circaso.com`); iOS bundle `com.circaso.app`; Android keeps `online.pascarl.coinx` | Package names can't change on a published listing | Everywhere |
+| 2026-10-24 | Phone codes may be made, sent and checked by Twilio Verify instead of by identity (`PhoneVerificationGateway`, `integrations.verify.provider = none \| twilio`, default `none`) | The code never passes through our servers; Twilio carries the delivery and fraud tooling. Identity keeps its own send and attempt limits on top, so the flow and the API are unchanged | Identity |
 | 2026-10-19 | Personal developer accounts now; convert to a Crins Limited organisation account later | Converting keeps the Apple Team ID, so Sign in with Apple ids don't change | Release |
 | 2026-10-19 | Modular monolith in Kotlin/Ktor, a keyspace per module, contracts between modules | Clear boundaries now, separate services later without rewrites | Architecture |
 | 2026-10-18 | Sign-in with Google or Apple only, then a verified phone; one number per account, duplicates blocked | No passwords; the number is identity in Kenya | Identity |

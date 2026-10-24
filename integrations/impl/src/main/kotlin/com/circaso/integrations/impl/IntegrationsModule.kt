@@ -23,7 +23,10 @@ import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
+import com.circaso.integrations.api.NoVendorVerification
+import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.impl.sms.AfricasTalkingSms
+import com.circaso.integrations.impl.verify.TwilioVerify
 import com.circaso.integrations.impl.placeholder.FcmApnsPush
 import com.circaso.integrations.impl.placeholder.WorkersAiLanguageModel
 import com.circaso.integrations.impl.placeholder.WorkersAiSpeechToText
@@ -54,6 +57,10 @@ fun integrationsModule(config: Config, secrets: Secrets) = module {
 
     single<SmsGateway> {
         pick("sms", providers = mapOf("log" to ::LogSms, "fake" to ::FakeSms, "africastalking" to { africasTalkingSms(config, secrets) }))
+    }
+    // Who makes and checks the one-time code: `none` (identity does, and SmsGateway delivers) or `twilio` (Twilio Verify does both).
+    single<PhoneVerificationGateway> {
+        pick("verify", default = "none", providers = mapOf("none" to { NoVendorVerification }, "twilio" to { twilioVerify(config, secrets) }))
     }
     single<EmailGateway> {
         pick("email", providers = mapOf("log" to ::LogEmail, "fake" to ::FakeEmail, "resend" to { resendEmail(integrations.section("email"), secrets) }))
@@ -130,4 +137,15 @@ private fun africasTalkingSms(config: Config, secrets: Secrets) = AfricasTalking
     username = config.requireString("africastalking.username"),
     apiKey = secrets.require("africastalking.api-key"),
     senderId = config.string("africastalking.sender-id"),
+)
+
+/**
+ * Twilio Verify needs the secrets `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` and the setting `TWILIO_VERIFY_SERVICE_SID` (a `VA...` id, made in
+ * the Twilio console under Verify > Services). `TWILIO_VERIFY_LOCALE` (for example `en` or `sw`) sets the language of the text.
+ */
+private fun twilioVerify(config: Config, secrets: Secrets) = TwilioVerify(
+    accountSid = secrets.require("twilio.account-sid"),
+    authToken = secrets.require("twilio.auth-token"),
+    serviceSid = config.requireString("twilio.verify-service-sid"),
+    locale = config.string("twilio.verify-locale"),
 )

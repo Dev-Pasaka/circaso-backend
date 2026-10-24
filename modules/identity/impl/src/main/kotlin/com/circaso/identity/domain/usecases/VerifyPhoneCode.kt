@@ -5,10 +5,14 @@ import com.circaso.identity.domain.models.PhoneVerifiedResult
 import com.circaso.identity.domain.models.VerifyCodeCommand
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PhoneProtection
+import com.circaso.identity.domain.ports.VENDOR_CHECKED_CODE
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.sha256Hex
+import com.circaso.integrations.api.CodeCheck
+import com.circaso.integrations.api.NoVendorVerification
+import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import java.security.MessageDigest
@@ -24,6 +28,7 @@ class VerifyPhoneCode(
     private val phones: PhoneProtection,
     private val ownership: PhoneOwnership,
     private val config: IdentityConfig,
+    private val verifier: PhoneVerificationGateway = NoVendorVerification,
 ) {
     suspend operator fun invoke(command: VerifyCodeCommand): Resource<PhoneVerifiedResult> {
         val userId = command.principal.userId
@@ -34,8 +39,25 @@ class VerifyPhoneCode(
             return Resource.error(IdentityError.CodeExpired)
         }
 
-        val given = sha256Hex("${command.verificationId}:${command.code}")
-        if (!MessageDigest.isEqual(given.toByteArray(), otp.codeHash.toByteArray())) {
+        val sealedPhone = phones.unseal(otp.sealedPhone) ?: return Resource.error(IdentityError.CodeExpired)
+        val right = if (otp.codeHash == VENDOR_CHECKED_CODE) {
+            // The vendor holds the code: ask it. Nothing pending there means it expired or ran out of tries.
+            when (val checked = verifier.check(sealedPhone, command.code)) {
+                is Resource.Error -> return checked
+                is Resource.Success -> when (checked.data) {
+                    CodeCheck.APPROVED -> true
+                    CodeCheck.DENIED -> false
+                    CodeCheck.EXPIRED -> {
+                        cache.deleteOtp(command.verificationId)
+                        return Resource.error(IdentityError.CodeExpired)
+                    }
+                }
+            }
+        } else {
+            val given = sha256Hex("${command.verificationId}:${command.code}")
+            MessageDigest.isEqual(given.toByteArray(), otp.codeHash.toByteArray())
+        }
+        if (!right) {
             val attempts = cache.recordWrongAttempt(command.verificationId) ?: return Resource.error(IdentityError.CodeExpired)
             if (attempts >= config.maxCodeAttempts) {
                 cache.deleteOtp(command.verificationId)
@@ -45,7 +67,7 @@ class VerifyPhoneCode(
             return Resource.error(IdentityError.CodeInvalid((config.maxCodeAttempts - attempts).toInt()))
         }
 
-        val phone = phones.unseal(otp.sealedPhone) ?: return Resource.error(IdentityError.CodeExpired)
+        val phone = sealedPhone
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
 
         val result = ownership.confirm(account, phone, command.principal.deviceId)

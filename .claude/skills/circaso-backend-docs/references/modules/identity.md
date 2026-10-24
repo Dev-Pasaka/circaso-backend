@@ -44,6 +44,7 @@ The contract never hands out a user's phone number, and events carry only `phone
 
 | Contract (`integrations:api`) | Used for | Provider now |
 | --- | --- | --- |
+| `PhoneVerificationGateway` | Optional: a vendor that makes, sends and checks the one-time code (`managesCodes = true`); then identity stores only a pending record marked as vendor-checked and `SmsGateway` is not used for codes | Twilio Verify |
 | `SocialSignIn` | Verifying Google and Apple ID tokens; revoking Apple tokens when an account is deleted | Google, Apple |
 | `CarrierPhoneVerification` | One-tap number check on Android | Firebase PNV |
 | `SmsGateway` | Verification codes, sender ID "Circaso" | Africa's Talking |

@@ -6,11 +6,14 @@ import com.circaso.identity.domain.models.StartPhoneCommand
 import com.circaso.identity.domain.models.StartPhoneResult
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PendingOtp
+import com.circaso.identity.domain.ports.VENDOR_CHECKED_CODE
 import com.circaso.identity.domain.ports.PhoneProtection
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.randomToken
 import com.circaso.identity.domain.support.sha256Hex
+import com.circaso.integrations.api.NoVendorVerification
+import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SmsPurpose
 import com.circaso.shared.Resource
@@ -19,7 +22,8 @@ import java.security.SecureRandom
 
 /**
  * I3: sends a 6-digit code through `SmsGateway`. Identity generates, hashes and counts the code and words the
- * text; the gateway only delivers it. Limits: 3 codes per number per 10 minutes, 10 per phone per day, and the
+ * text; the gateway only delivers it. With a vendor that manages codes (`PhoneVerificationGateway`, Twilio Verify) the vendor makes,
+ * texts and checks the code instead, and we keep only the pending record. Limits: 3 codes per number per 10 minutes, 10 per phone per day, and the
  * account locks for 10 minutes after 5 wrong codes.
  */
 class StartPhoneVerification(
@@ -28,6 +32,7 @@ class StartPhoneVerification(
     private val phones: PhoneProtection,
     private val sms: SmsGateway,
     private val config: IdentityConfig,
+    private val verifier: PhoneVerificationGateway = NoVendorVerification,
 ) {
     private val random = SecureRandom()
 
@@ -46,6 +51,8 @@ class StartPhoneVerification(
             return Resource.error(SharedError.RateLimited(86_400))
         }
 
+        if (verifier.managesCodes) return startWithVendor(command, phoneHmac)
+
         val code = "%0${config.codeLength}d".format(random.nextInt(Math.pow(10.0, config.codeLength.toDouble()).toInt()))
         val verificationId = randomToken(16)
         cache.saveOtp(
@@ -61,6 +68,23 @@ class StartPhoneVerification(
             is Resource.Error -> {
                 cache.deleteOtp(verificationId)
                 Resource.error(IdentityError.SmsUnavailable)
+            }
+        }
+    }
+
+    private suspend fun startWithVendor(command: StartPhoneCommand, phoneHmac: String): Resource<StartPhoneResult> {
+        val userId = command.principal.userId
+        val verificationId = randomToken(16)
+        cache.saveOtp(
+            verificationId,
+            PendingOtp(phoneHmac, phones.seal(command.phone), VENDOR_CHECKED_CODE, userId, command.principal.deviceId),
+        )
+        return when (val started = verifier.start(command.phone, config.smsRetrieverHash)) {
+            is Resource.Success -> Resource.success(StartPhoneResult(verificationId, config.codeLength, config.codeTtl.seconds, config.resendAfter.seconds))
+            is Resource.Error -> {
+                cache.deleteOtp(verificationId)
+                // The vendor's own limit is the person's to wait out; anything else is ours to fix.
+                if (started.error is SharedError.RateLimited) started else Resource.error(IdentityError.SmsUnavailable)
             }
         }
     }

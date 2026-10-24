@@ -103,7 +103,32 @@ class Phone(val model: String = "Pixel") {
     fun info() = DeviceInfo(deviceId, "android", model, "14", "1.0.0")
 }
 
-class Harness(attestation: AttestationMode = AttestationMode.LOG, attested: Boolean = true) {
+/** A Twilio Verify stand-in: it makes the code itself, so a test can read it from here the way a person reads it from their phone. */
+class FakeVendorVerification : com.circaso.integrations.api.PhoneVerificationGateway {
+    override val managesCodes = true
+    val code = "246810"
+    var started = 0
+    var down = false
+    var expired = false
+    override suspend fun start(to: PhoneNumber, appHash: String?): Resource<Unit> {
+        if (down) return Resource.error(IntegrationError.Unavailable("Twilio"))
+        started++
+        return Resource.success(Unit)
+    }
+    override suspend fun check(to: PhoneNumber, code: String): Resource<com.circaso.integrations.api.CodeCheck> = Resource.success(
+        when {
+            expired -> com.circaso.integrations.api.CodeCheck.EXPIRED
+            code == this.code -> com.circaso.integrations.api.CodeCheck.APPROVED
+            else -> com.circaso.integrations.api.CodeCheck.DENIED
+        },
+    )
+}
+
+class Harness(
+    attestation: AttestationMode = AttestationMode.LOG,
+    attested: Boolean = true,
+    vendor: com.circaso.integrations.api.PhoneVerificationGateway = com.circaso.integrations.api.NoVendorVerification,
+) {
     val store = MemoryStore()
     val cache = MemoryCache()
     val bus = MemoryBus()
@@ -124,8 +149,8 @@ class Harness(attestation: AttestationMode = AttestationMode.LOG, attested: Bool
 
     val issueNonce = IssueNonce(cache)
     val signInWithProvider = SignInWithProvider(cache, FakeSocial(), store, store, store, store, opener, proofs, tokens, clock)
-    val startPhone = StartPhoneVerification(cache, store, phones, sms, config)
-    val verifyCode = VerifyPhoneCode(cache, store, phones, ownership, config)
+    val startPhone = StartPhoneVerification(cache, store, phones, sms, config, vendor)
+    val verifyCode = VerifyPhoneCode(cache, store, phones, ownership, config, vendor)
     val verifyCarrier = VerifyCarrierToken(FakeCarrier(), store, ownership)
     val registerDevice = RegisterDevice(store, store, store, store, cache, phones, keys, attestationVerifier, opener, bus, email, config, clock)
     val refresh = RefreshSession(store, store, store, store, cache, opener, proofs)

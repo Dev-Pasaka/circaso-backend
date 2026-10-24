@@ -150,8 +150,8 @@ fun identityModule(config: Config): Module = module {
     single { PhoneOwnership(get(), get(), get(), get(), clock) }
     single { IssueNonce(get()) }
     single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-    single { StartPhoneVerification(get(), get(), get(), get(), get()) }
-    single { VerifyPhoneCode(get(), get(), get(), get(), get()) }
+    single { StartPhoneVerification(get(), get(), get(), get(), get(), get()) }
+    single { VerifyPhoneCode(get(), get(), get(), get(), get(), get()) }
     single { VerifyCarrierToken(get(), get(), get()) }
     single { RegisterDevice(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
     single { RefreshSession(get(), get(), get(), get(), get(), get(), get()) }

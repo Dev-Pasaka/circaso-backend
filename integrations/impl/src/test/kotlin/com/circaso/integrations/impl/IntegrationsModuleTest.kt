@@ -103,4 +103,13 @@ class IntegrationsModuleTest {
         val social = koin("integrations.social.provider" to "google-apple", "integrations.social.google.client-ids" to "web, android").get<SocialSignIn>()
         assertTrue(social !is com.circaso.integrations.impl.dev.FakeSocialSignIn)
     }
+
+    @Test
+    fun `phone verification defaults to none, and twilio needs its account, token and service`() {
+        assertEquals(false, koin().get<com.circaso.integrations.api.PhoneVerificationGateway>().managesCodes)
+        stopKoin()
+        val e = assertFailsWith<Exception> { koin("integrations.verify.provider" to "twilio").get<com.circaso.integrations.api.PhoneVerificationGateway>() }
+        assertTrue("twilio" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() })
+    }
 }
+
