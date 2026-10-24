@@ -138,7 +138,9 @@ jobs:
             exit 1
           fi
 
+          # What is running, for a manual restart (/opt/circaso/up.sh) and for rolling back
           echo "$IMAGE" > .current
+          echo "$DOCS_IMAGE" > .current-docs
           echo "deployed $IMAGE"
           docker image prune -af >/dev/null </dev/null
           df -h / | awk 'NR==2 {print "disk used: " $5 " of " $2}'
