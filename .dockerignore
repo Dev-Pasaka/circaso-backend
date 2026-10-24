@@ -1,17 +1,3 @@
-.git
-.github
-.gradle
-.kotlin
-.idea
-**/build
-# but never a source folder that happens to be called build (build-logic has a package of that name)
-!**/src/**
-**/node_modules
-.env
-.env.*
-!.env.example
-docs-ui/node_modules
-email-templates
-brand
-docs
-*.md
+# Only the compiled server goes into the image: ./gradlew :app:installDist builds it, the Dockerfile packages it.
+*
+!app/build/install/app/

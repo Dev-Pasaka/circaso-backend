@@ -1,17 +1,14 @@
 # syntax=docker/dockerfile:1
-# Builds the server and runs it as a non-root user. Settings come from environment variables at run time; nothing secret is in the image.
-
-FROM eclipse-temurin:21-jdk AS build
-WORKDIR /src
-COPY . .
-# The Gradle cache is kept between builds, so dependencies are downloaded once.
-RUN --mount=type=cache,target=/root/.gradle ./gradlew :app:installDist -x test --no-daemon --console=plain
+# Packages the server and runs it as a non-root user. Compile first (the deploy workflow's image job does):
+#   ./gradlew :app:installDist -x test
+# so building the image is only a copy and takes seconds, while Gradle's cache does the compiling.
+# Settings come from environment variables at run time; nothing secret is in the image.
 
 FROM eclipse-temurin:21-jre
 RUN groupadd --system --gid 10001 circaso \
  && useradd --system --uid 10001 --gid circaso --home-dir /app --shell /usr/sbin/nologin circaso
 WORKDIR /app
-COPY --from=build --chown=circaso:circaso /src/app/build/install/app/ /app/
+COPY --chown=circaso:circaso app/build/install/app/ /app/
 USER circaso:circaso
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
 EXPOSE 8080
