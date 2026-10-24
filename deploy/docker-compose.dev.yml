@@ -1,7 +1,7 @@
 # The dev server: the app, Redis (Valkey) and the nginx proxy. Only the proxy publishes a port (443); the app and Redis publish none.
-# Networks: circaso-backend (external, created by remote-deploy.sh) joins nginx and the app; circaso-data (internal, no internet) joins the
+# Networks: circaso-backend (external, created once with `docker network create circaso-backend`) joins nginx and the app; circaso-data (internal, no internet) joins the
 # app and Redis, so nginx cannot reach Redis and Redis cannot reach the internet. Nothing uses Compose's default network.
-# Used by deploy/remote-deploy.sh, which sets IMAGE. Settings live in /opt/circaso/.env on the server (see deploy/dev.env.example).
+# Reference copy of the server's file; the deploy workflow sets IMAGE and runs `docker compose up -d`. Settings live in /opt/circaso/.env on the server (see deploy/dev.env.example).
 name: circaso
 
 services:

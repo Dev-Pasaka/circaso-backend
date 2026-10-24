@@ -2,8 +2,8 @@ name: Deploy to dev
 
 # Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
 # GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. Everything the server runs with
-# lives on the server in /opt/circaso (remote-deploy.sh, the compose file, nginx, certs, .env): this workflow copies nothing
-# there. It logs in and runs the server's own remote-deploy.sh with the new image.
+# lives on the server in /opt/circaso (docker-compose.yml, nginx, certs, .env): this workflow copies nothing there. It logs in,
+# runs the migrations, starts the new image with the server's docker-compose.yml, waits for ready and prunes old images.
 on:
   push:
     branches: [main]
@@ -70,13 +70,54 @@ jobs:
           DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
           DEV_SSH_KNOWN_HOSTS: ${{ vars.DEV_SSH_KNOWN_HOSTS }}
       - name: Roll out
+        # Runs on the server, in /opt/circaso, with the docker-compose.yml and .env that live there. The Docker Hub token
+        # goes in on stdin with the script, so it is never on a command line or in a file on the server.
         run: |
-          # The Docker Hub token goes in on stdin, so it is never on a command line or in a file on the server.
-          printf '%s' "$REGISTRY_TOKEN" | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}" \
-            "IMAGE='${{ needs.image.outputs.image }}' REGISTRY_USER='${{ vars.DOCKERHUB_USERNAME }}' bash /opt/circaso/remote-deploy.sh"
+          {
+            printf 'REGISTRY_TOKEN=%q\nREGISTRY_USER=%q\nIMAGE=%q\n' "$REGISTRY_TOKEN" "$REGISTRY_USER" "$IMAGE"
+            cat <<'REMOTE'
+          set -euo pipefail
+          cd /opt/circaso
+          printf '%s' "$REGISTRY_TOKEN" | docker login -u "$REGISTRY_USER" --password-stdin >/dev/null
+          trap 'docker logout >/dev/null 2>&1 || true' EXIT
+          export IMAGE APP_VERSION="${IMAGE##*:}"
+
+          echo "pulling $IMAGE"
+          docker pull --quiet "$IMAGE" >/dev/null </dev/null
+
+          echo "migrating"
+          docker run --rm --env-file .env -e LOG_FORMAT=JSON -e LOG_COLOR=false --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges:true --entrypoint java "$IMAGE" \
+            --enable-native-access=ALL-UNNAMED -cp "/app/lib/*" com.circaso.app.Migrate </dev/null
+
+          echo "starting"
+          docker compose up -d --remove-orphans </dev/null
+
+          ready=
+          for _ in $(seq 1 40); do
+            if docker compose exec -T app curl -fsS http://localhost:8080/health/ready >/dev/null 2>&1 </dev/null; then
+              ready=yes
+              break
+            fi
+            sleep 3
+          done
+          if [ -z "$ready" ]; then
+            docker compose logs --tail 60 app </dev/null || true
+            echo "the new version did not become ready"
+            exit 1
+          fi
+
+          echo "$IMAGE" > .current
+          echo "deployed $IMAGE"
+          docker image prune -af >/dev/null </dev/null
+          df -h / | awk 'NR==2 {print "disk used: " $5 " of " $2}'
+          REMOTE
+          } | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}" bash -s
         env:
           REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REGISTRY_USER: ${{ vars.DOCKERHUB_USERNAME }}
+          IMAGE: ${{ needs.image.outputs.image }}
       - name: Remove the key from the runner
         if: always()
         run: rm -f ~/.ssh/deploy_key
