@@ -82,12 +82,12 @@ location ^~ /v1/ {
     include /etc/nginx/conf.d/proxy.inc;
 }
 
-# Everything else is for people with a browser: a path that does not exist gets the designed 404 page. The app answers such a path
-# with JSON, or with a bare 406 when the browser accepts only HTML, so nginx swaps either for the page.
+# Everything else is for people with a browser: a path that does not exist gets the designed 404 page. The app only speaks JSON and
+# answers a browser that accepts just HTML with a bare 406, so nginx says "anything is fine" to it; its JSON 404 is then swapped for the page.
 location / {
     proxy_intercept_errors on;
     include /etc/nginx/conf.d/errors.inc;
-    error_page 406 =404 /_errors/404;
+    proxy_set_header Accept "*/*";
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
 }
