@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs ON the server, started by the deploy workflow:  IMAGE=user/circaso-backend:sha REGISTRY_USER=... bash remote-deploy.sh   (the Docker Hub token arrives on stdin)
 # Pulls the image, runs the database migrations once, starts the new version, waits until it reports ready, and puts the previous
-# version back if it does not. Settings are in /opt/circaso/.env, which this script never writes or prints.
+# version back if it does not. After a good deploy it removes the old images. Settings are in /opt/circaso/.env, which this script never writes or prints.
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/circaso}"
@@ -51,10 +51,23 @@ ready() {
   return 1
 }
 
+# Frees disk after a good deploy: every older image of this app goes (they are tagged by commit, so a plain prune keeps
+# them all), except the one just started and the one before it, which a rollback would want. Untagged leftovers of
+# nginx and valkey go too. Volumes are never touched: valkey keeps its data there.
+clean_images() {
+  repo="${IMAGE%:*}"
+  docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' \
+    | grep -v -x -F -e "$IMAGE" -e "${previous:-none}" \
+    | xargs -r docker image rm >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null 2>&1 || true
+  echo "images kept: $(docker image ls "$repo" --format '{{.Tag}}' | tr '\n' ' ')"
+  df -h / | awk 'NR==2 {print "disk used: " $5 " of " $2}'
+}
+
 if ready; then
   echo "$IMAGE" > .current
   echo "deployed $IMAGE"
-  docker image prune -f --filter "until=168h" >/dev/null
+  clean_images
 else
   back_out "the new version did not become ready; last logs:"
 fi
