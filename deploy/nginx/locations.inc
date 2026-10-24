@@ -28,11 +28,7 @@ add_header Strict-Transport-Security "max-age=31536000" always;
 recursive_error_pages on;
 limit_req_status 429;
 limit_conn_status 429;
-error_page 403 /_errors/403;
-error_page 404 /_errors/404;
-error_page 413 /_errors/413;
-error_page 429 /_errors/429;
-error_page 502 503 504 /errors/50x.html;
+include /etc/nginx/conf.d/errors.inc;
 
 location ^~ /_errors/ {
     internal;
@@ -71,6 +67,8 @@ location ^~ /docs {
     if ($http_cf_access_jwt_assertion = "") { return 403; }
     limit_req zone=api burst=60 nodelay;
     set $docs docs:8080;
+    proxy_intercept_errors on;
+    include /etc/nginx/conf.d/errors.inc;
     proxy_pass http://$docs;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -78,7 +76,18 @@ location ^~ /docs {
     proxy_read_timeout 30s;
 }
 
+# The API keeps the app's own JSON answers (its 404 is the envelope clients parse).
+location ^~ /v1/ {
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
+# Everything else is for people with a browser: a path that does not exist gets the designed 404 page. The app answers such a path
+# with JSON, or with a bare 406 when the browser accepts only HTML, so nginx swaps either for the page.
 location / {
+    proxy_intercept_errors on;
+    include /etc/nginx/conf.d/errors.inc;
+    error_page 406 =404 /_errors/404;
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
 }
