@@ -62,6 +62,7 @@ class ServeTest {
             "SCYLLA_CONTACT_POINTS" to "${scylla.contactPoint.hostString}:${scylla.contactPoint.port}",
             "SCYLLA_DATACENTER" to "datacenter1",
             "SCYLLA_TLS" to "false",
+            "SCYLLA_CREATE_SCHEMA" to "true",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
         ) + extra
 

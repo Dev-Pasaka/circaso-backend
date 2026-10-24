@@ -22,7 +22,7 @@ Problems found in Kandra are in [`docs/kandra-bugs.md`](docs/kandra-bugs.md).
 docker compose -f deploy/docker-compose.yml up -d     # ScyllaDB and Redis
 cp .env.example .env                                   # once; .env is not committed
 ./gradlew :app:run                                     # serve on :8080
-./gradlew :app:migrate                                 # the migrations, once (local runs create tables on their own)
+./gradlew :app:migrate                                 # the migrations, once (a node on this machine creates its tables on start; a local run against a remote cluster such as ScyllaDB Cloud leaves the schema to this command, which keeps that start to about 8 s; staging and production validate it)
 ```
 
 It is a plain embedded Ktor server, configured with environment variables and no arguments. For local development they

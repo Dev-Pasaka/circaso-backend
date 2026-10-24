@@ -38,7 +38,10 @@ object TestScylla {
                     "SCYLLA_CONTACT_POINTS" to contactPoint,
                     "SCYLLA_DATACENTER" to "datacenter1",
                     "SCYLLA_TLS" to "false",
-                ) + extra,
+                ) +
+                    // the container is a throw-away node: in the local environment its tables are made on start
+                    (if (environment == "local") mapOf("SCYLLA_CREATE_SCHEMA" to "true") else emptyMap()) +
+                    extra,
             ),
             EnvSecrets(emptyMap()),
         )

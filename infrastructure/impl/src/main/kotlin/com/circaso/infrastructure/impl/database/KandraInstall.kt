@@ -10,7 +10,6 @@ import io.kandra.core.ExperimentalKandraApi
 import io.kandra.core.KandraMetrics
 import io.kandra.koin.kandraKoin
 import io.kandra.ktor.Kandra
-import io.kandra.ktor.SchemaMode
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import org.koin.core.module.Module
@@ -46,7 +45,9 @@ fun Application.installDatabase(
         contactPoints = settings.contactPoints
         localDatacenter = settings.datacenter
         // no default keyspace: every entity names its own
-        schemaMode = if (settings.local) SchemaMode.AUTO_CREATE else SchemaMode.VALIDATE
+        schemaMode = settings.schemaMode
+        // ScyllaDB has no role_permissions table, so the check only costs round trips (and logs that it was skipped)
+        validatePermissions = false
         replicationStrategy = settings.localReplication
 
         for (spec in specs) {

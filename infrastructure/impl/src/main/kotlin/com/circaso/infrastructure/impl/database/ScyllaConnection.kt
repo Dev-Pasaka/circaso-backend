@@ -8,6 +8,7 @@ import com.datastax.oss.driver.api.core.config.DriverConfigLoader
 import io.kandra.core.KandraAuth
 import io.kandra.core.KandraCredentials
 import io.kandra.ktor.ReplicationStrategy
+import io.kandra.ktor.SchemaMode
 import java.io.FileInputStream
 import java.net.InetSocketAddress
 import java.security.KeyStore
@@ -32,8 +33,28 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
     val tls: Boolean = scylla.boolean("tls", !local)
     private val trustStorePath: String? = scylla.string("truststore-path")
 
-    /** Local keyspaces are created on demand; everywhere else they are provisioned ahead of time. */
-    val autoCreateKeyspaces: Boolean = local
+    /**
+     * Whether a start creates the keyspaces and tables itself. That is a convenience for a node on this machine. Against a
+     * remote cluster (ScyllaDB Cloud, even from a laptop) it ran dozens of DDL statements over the internet on every start,
+     * about 25 seconds; there the schema is migrated by `./gradlew :app:migrate` and a start only validates it. The default
+     * is "local environment and a loopback address"; `scylla.create-schema` (`SCYLLA_CREATE_SCHEMA`) overrides it.
+     */
+    val createsSchemaOnStart: Boolean = scylla.boolean("create-schema", local && contactPoints.isLoopbackOnly())
+
+    /**
+     * What Kandra does with the schema on start: create it (a node on this machine), check it against the entities (staging
+     * and production, where a missing column should stop the deploy), or leave it alone (a local run against a remote cluster:
+     * the check is one round trip per table, about ten seconds from a laptop, and `:app:migrate` already owns the schema).
+     */
+    val schemaMode: SchemaMode =
+        when {
+            createsSchemaOnStart -> SchemaMode.AUTO_CREATE
+            local -> SchemaMode.NONE
+            else -> SchemaMode.VALIDATE
+        }
+
+    /** Keyspaces follow the tables: created on demand where the schema is, provisioned ahead of time everywhere else. */
+    val autoCreateKeyspaces: Boolean = createsSchemaOnStart
 
     /** ScyllaDB Cloud uses tablets, which reject SimpleStrategy; the local node is told not to use them. */
     val localReplication: ReplicationStrategy =
@@ -97,3 +118,9 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
         return builder.build()
     }
 }
+
+private val loopbackHosts = setOf("localhost", "127.0.0.1", "::1", "[::1]")
+
+/** True when every `host:port` entry names this machine. */
+private fun String.isLoopbackOnly(): Boolean =
+    split(',').map { it.trim().substringBeforeLast(':', it.trim()) }.all { it in loopbackHosts }

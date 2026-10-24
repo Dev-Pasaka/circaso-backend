@@ -1,4 +1,5 @@
 import com.circaso.build.DependencyRules
+import com.circaso.build.TestLimit
 
 // Base for every Circaso Gradle module: Kotlin/JVM, serialization, JUnit 5, and the dependency table.
 plugins {
@@ -43,7 +44,11 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// One test suite at a time (see TestLimit); everything else in the build still runs in parallel.
+val testLimit = gradle.sharedServices.registerIfAbsent("testLimit", TestLimit::class.java) { maxParallelUsages = 1 }
+
 tasks.withType<Test>().configureEach {
+    usesService(testLimit)
     useJUnitPlatform()
     testLogging {
         events("failed")
