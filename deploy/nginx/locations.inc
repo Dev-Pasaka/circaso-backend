@@ -76,8 +76,9 @@ location ^~ /docs {
     proxy_read_timeout 30s;
 }
 
-# The API keeps the app's own JSON answers (its 404 is the envelope clients parse).
+# The API keeps the app's own JSON answers (its 404 is the envelope clients parse). $api_accept is defined in accept.conf.
 location ^~ /v1/ {
+    proxy_set_header Accept $api_accept;
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
 }
