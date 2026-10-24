@@ -5,9 +5,9 @@ import com.circaso.identity.data.entities.AccountRow
 import com.circaso.identity.data.entities.DeviceRow
 import com.circaso.identity.data.entities.IdentityOutboxRow
 import com.circaso.identity.data.entities.PhoneClaimRow
-import com.circaso.identity.data.entities.RecoveryByRequestRow
 import com.circaso.identity.data.entities.ProviderClaimRow
 import com.circaso.identity.data.entities.ProviderLinkRow
+import com.circaso.identity.data.entities.RecoveryByRequestRow
 import com.circaso.identity.data.entities.SecurityEventRow
 import com.circaso.identity.data.entities.SessionRow
 import com.circaso.identity.data.entities.SupportRecoveryRow
@@ -69,7 +69,11 @@ class ProviderRepositoryImpl(
     override suspend fun ownerOf(provider: SocialProvider, subject: String): UserId? =
         claims.findById(provider.name.lowercase(), subject)?.let { UserId(it.userId) }
 
-    override suspend fun claim(provider: SocialProvider, subject: String, userId: UserId): Boolean =
+    override suspend fun claim(
+        provider: SocialProvider,
+        subject: String,
+        userId: UserId,
+    ): Boolean =
         claims.saveIfNotExists(ProviderClaimRow(provider.name.lowercase(), subject, userId.value, Instant.now())) ||
             ownerOf(provider, subject) == userId
 
@@ -87,11 +91,16 @@ class SessionRepositoryImpl(private val sessions: KandraSuspendRepository<Sessio
 }
 
 class SecurityLogRepositoryImpl(private val log: KandraSuspendRepository<SecurityEventRow>) : SecurityLogRepository {
-    override suspend fun list(userId: UserId, before: UUID?, limit: Int): List<SecurityEvent> =
-        log.findAll(limit) {
-            USER_ID eq userId.value
-            if (before != null) EVENT_ID lt before
-        }.map { it.toModel() }
+    override suspend fun list(
+        userId: UserId,
+        before: UUID?,
+        limit: Int,
+    ): List<SecurityEvent> =
+        log
+            .findAll(limit) {
+                USER_ID eq userId.value
+                if (before != null) EVENT_ID lt before
+            }.map { it.toModel() }
 }
 
 class RecoveryRepositoryImpl(
@@ -121,8 +130,7 @@ class IdentityStoreImpl(
     private val outbox: KandraSuspendRepository<IdentityOutboxRow>,
     private val providerClaims: KandraSuspendRepository<ProviderClaimRow>,
     private val bus: EventBus,
-) : com.circaso.identity.domain.repositories.IdentityStore {
-
+) : IdentityStore {
     override suspend fun commit(changes: Changes) {
         runtime.batch {
             changes.accounts.forEach { accounts.saveInBatch(it.toRow()) }

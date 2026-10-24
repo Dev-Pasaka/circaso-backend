@@ -53,8 +53,21 @@ fun Route.chatController(chat: ChatService) {
         route("/assistant/chat") {
             get {
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
-                call.respondDefault(chat.listChat(call.userId(), call.request.queryParameters["cursor"], limit).toDefaultResponse { it.toResponse() })
-            }.docs<NoBody, ChatResponse>("A1 · The Asha chat, newest first", TAG, notes = "$SCOPE Query: `cursor`, `limit` (default 50, at most 100).")
+                call.respondDefault(
+                    chat
+                        .listChat(
+                            call.userId(),
+                            call.request.queryParameters["cursor"],
+                            limit,
+                        ).toDefaultResponse {
+                            it.toResponse()
+                        },
+                )
+            }.docs<NoBody, ChatResponse>(
+                "A1 · The Asha chat, newest first",
+                TAG,
+                notes = "$SCOPE Query: `cursor`, `limit` (default 50, at most 100).",
+            )
 
             delete {
                 call.respondDefault(chat.deleteAll(call.userId(), call.callId).toDefaultResponse { it })
@@ -62,31 +75,60 @@ fun Route.chatController(chat: ChatService) {
 
             route("/messages") {
                 post {
-                    val command = call.receive<SendMessageRequest>().toCommand(call.userId(), call.request.header(AGENT_TOKEN_HEADER), call.callId)
+                    val command =
+                        call.receive<SendMessageRequest>().toCommand(
+                            call.userId(),
+                            call.request.header(AGENT_TOKEN_HEADER),
+                            call.callId,
+                        )
                     call.stream(command.flatMap { chat.ask(it) })
                 }.docs<SendMessageRequest, NoBody>(
-                    "A2 · Ask Asha; the reply streams as server-sent events", TAG, listOf("assistant.quota_exceeded", "assistant.model_unavailable", "request.malformed"),
-                    notes = "$SCOPE Send the user's agent token in `X-Agent-Token` so Asha's tools can read contacts. " +
-                        "The response is `text/event-stream`, not the envelope (errors before any text are the envelope): " +
-                        "`message` events carry `{delta}`; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool " +
-                        "and answer with A9; `done` carries the saved reply.",
+                    "A2 · Ask Asha; the reply streams as server-sent events",
+                    TAG,
+                    listOf("assistant.quota_exceeded", "assistant.model_unavailable", "request.malformed"),
+                    notes =
+                        "$SCOPE Send the user's agent token in `X-Agent-Token` so Asha's tools can read " +
+                            "contacts. " +
+                            "The response is `text/event-stream`, not the envelope (errors before any text are " +
+                            "the " +
+                            "envelope): " +
+                            "`message` events carry `{delta}`; a `tool_request` event `{turnId, callId, name, " +
+                            "arguments}` asks the phone to run a device tool " +
+                            "and answer with A9; `done` carries the saved reply.",
                 )
 
                 route("/{messageId}") {
                     delete {
                         val id = parseUuid(call.parameters["messageId"])
                         val result: Resource<Unit> =
-                            if (id == null) Resource.error(SharedError.Malformed(mapOf("messageId" to "is not valid"))) else chat.deleteOne(call.userId(), id, call.callId)
+                            if (id ==
+                                null
+                            ) {
+                                Resource.error(SharedError.Malformed(mapOf("messageId" to "is not valid")))
+                            } else {
+                                chat.deleteOne(call.userId(), id, call.callId)
+                            }
                         call.respondDefault(result.toDefaultResponse { it })
                     }.docs<NoBody, NoBody>("A6 · Delete one exchange", TAG, notes = SCOPE)
 
                     post("tool-results") {
-                        val command = call.receive<ToolResultsRequest>()
-                            .toCommand(call.userId(), call.parameters["messageId"], call.request.header(AGENT_TOKEN_HEADER), call.callId)
+                        val command =
+                            call
+                                .receive<ToolResultsRequest>()
+                                .toCommand(
+                                    call.userId(),
+                                    call.parameters["messageId"],
+                                    call.request.header(AGENT_TOKEN_HEADER),
+                                    call.callId,
+                                )
                         call.stream(command.flatMap { chat.answerDevice(it) })
                     }.docs<ToolResultsRequest, NoBody>(
-                        "A9 · The phone's answer to a device tool; the reply then continues as server-sent events", TAG, listOf("assistant.turn_not_found"),
-                        notes = "$SCOPE `messageId` is the `turnId` from the `tool_request` event. At most 30 short snippets; they are used for this turn and never stored.",
+                        "A9 · The phone's answer to a device tool; the reply then continues as server-sent events",
+                        TAG,
+                        listOf("assistant.turn_not_found"),
+                        notes =
+                            "$SCOPE `messageId` is the `turnId` from the `tool_request` event. At most 30 short " +
+                                "snippets; they are used for this turn and never stored.",
                     )
                 }
             }
@@ -96,10 +138,11 @@ fun Route.chatController(chat: ChatService) {
 
 /** An error before any text answers with the envelope; otherwise the reply, or the question for the phone, streams as SSE. */
 private suspend fun ApplicationCall.stream(result: Resource<TurnResult>) {
-    val turn = when (result) {
-        is Resource.Error -> return respondError(result.error)
-        is Resource.Success -> result.data
-    }
+    val turn =
+        when (result) {
+            is Resource.Error -> return respondError(result.error)
+            is Resource.Success -> result.data
+        }
     attributes.put(EnvelopeSent, true)
     response.cacheControl(CacheControl.NoCache(null))
     respondTextWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
@@ -115,10 +158,16 @@ private suspend fun ApplicationCall.stream(result: Resource<TurnResult>) {
                 }
                 event("done", CircasoJson.encodeToString(DoneEvent.serializer(), DoneEvent(turn.message.toDto())))
             }
-            is TurnResult.NeedsDevice -> event(
-                "tool_request",
-                CircasoJson.encodeToString(ToolRequestEvent.serializer(), ToolRequestEvent(turn.turnId.toString(), turn.callId, turn.toolName, turn.argumentsJson)),
-            )
+
+            is TurnResult.NeedsDevice -> {
+                event(
+                    "tool_request",
+                    CircasoJson.encodeToString(
+                        ToolRequestEvent.serializer(),
+                        ToolRequestEvent(turn.turnId.toString(), turn.callId, turn.toolName, turn.argumentsJson),
+                    ),
+                )
+            }
         }
     }
 }

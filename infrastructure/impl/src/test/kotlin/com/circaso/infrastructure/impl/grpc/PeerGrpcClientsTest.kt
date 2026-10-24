@@ -1,5 +1,6 @@
 package com.circaso.infrastructure.impl.grpc
 
+import com.circaso.infrastructure.api.GrpcClientConfig
 import io.grpc.CallOptions
 import io.grpc.ManagedChannel
 import io.grpc.MethodDescriptor
@@ -23,15 +24,18 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 
 class PeerGrpcClientsTest {
+    private val strings =
+        object : MethodDescriptor.Marshaller<String> {
+            override fun stream(value: String): InputStream = ByteArrayInputStream(value.toByteArray())
 
-    private val strings = object : MethodDescriptor.Marshaller<String> {
-        override fun stream(value: String): InputStream = ByteArrayInputStream(value.toByteArray())
-        override fun parse(stream: InputStream): String = stream.readBytes().decodeToString()
-    }
-    private val say = MethodDescriptor.newBuilder(strings, strings)
-        .setType(MethodDescriptor.MethodType.UNARY)
-        .setFullMethodName("test.Echo/Say")
-        .build()
+            override fun parse(stream: InputStream): String = stream.readBytes().decodeToString()
+        }
+    private val say =
+        MethodDescriptor
+            .newBuilder(strings, strings)
+            .setType(MethodDescriptor.MethodType.UNARY)
+            .setFullMethodName("test.Echo/Say")
+            .build()
 
     private val serverName = "peer-${UUID.randomUUID()}"
     private val calls = AtomicInteger()
@@ -46,19 +50,39 @@ class PeerGrpcClientsTest {
 
     /** Serves `test.Echo/Say`, answering each call from [respond] (the call number counts from 1). */
     private fun serve(respond: (call: Int, request: String) -> Result<String>) {
-        val definition = ServerServiceDefinition.builder("test.Echo")
-            .addMethod(say, ServerCalls.asyncUnaryCall<String, String> { request, observer ->
-                respond(calls.incrementAndGet(), request).fold(
-                    { observer.onNext(it); observer.onCompleted() },
-                    { observer.onError(if (it is StatusRuntimeException) it else Status.INTERNAL.asRuntimeException()) },
-                )
-            })
-            .build()
-        server = InProcessServerBuilder.forName(serverName).addService(definition).build().start()
+        val definition =
+            ServerServiceDefinition
+                .builder("test.Echo")
+                .addMethod(
+                    say,
+                    ServerCalls.asyncUnaryCall<String, String> { request, observer ->
+                        respond(calls.incrementAndGet(), request).fold(
+                            {
+                                observer.onNext(it)
+                                observer.onCompleted()
+                            },
+                            {
+                                observer.onError(
+                                    if (it is StatusRuntimeException) it else Status.INTERNAL.asRuntimeException(),
+                                )
+                            },
+                        )
+                    },
+                ).build()
+        server =
+            InProcessServerBuilder
+                .forName(serverName)
+                .addService(definition)
+                .build()
+                .start()
     }
 
-    private fun peer(configure: com.circaso.infrastructure.api.GrpcClientConfig.() -> Unit = {}): ManagedChannel =
-        clients.channel("echo") { target = serverName; tls = false; configure() }
+    private fun peer(configure: GrpcClientConfig.() -> Unit = {}): ManagedChannel =
+        clients.channel("echo") {
+            target = serverName
+            tls = false
+            configure()
+        }
 
     private fun call(channel: ManagedChannel, text: String = "hi") =
         ClientCalls.blockingUnaryCall(channel, say, CallOptions.DEFAULT, text)
@@ -82,7 +106,10 @@ class PeerGrpcClientsTest {
 
     @Test
     fun `a call with no deadline gets the configured one`() {
-        serve { _, _ -> Thread.sleep(1500); Result.success("late") }
+        serve { _, _ ->
+            Thread.sleep(1500)
+            Result.success("late")
+        }
 
         val failure = assertFailsWith<StatusRuntimeException> { call(peer { deadline = Duration.ofMillis(200) }) }
 
@@ -101,7 +128,14 @@ class PeerGrpcClientsTest {
     fun `attempts are capped at the configured number`() {
         serve { _, _ -> unavailable() }
 
-        assertFailsWith<StatusRuntimeException> { call(peer { maxAttempts = 2; circuitFailureThreshold = 100 }) }
+        assertFailsWith<StatusRuntimeException> {
+            call(
+                peer {
+                    maxAttempts = 2
+                    circuitFailureThreshold = 100
+                },
+            )
+        }
 
         assertEquals(2, calls.get())
     }

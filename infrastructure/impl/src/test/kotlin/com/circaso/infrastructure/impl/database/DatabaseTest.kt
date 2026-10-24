@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.HealthCheck
 import com.circaso.infrastructure.api.KandraModuleSpec
 import com.circaso.infrastructure.impl.TestScylla
 import com.circaso.observability.api.NoopTelemetry
+import com.circaso.shared.Resource
 import com.datastax.oss.driver.api.core.CqlSession
 import io.kandra.core.annotations.PartitionKey
 import io.kandra.core.annotations.ScyllaTable
@@ -32,16 +33,27 @@ import kotlin.test.assertTrue
 
 // Two modules, two keyspaces, entities with module-style names (they end in Row and are unique).
 @ScyllaTable(name = "things_by_id", keyspace = "circaso_test_alpha")
-data class AlphaThingRow(@PartitionKey val id: UUID, val label: String)
+data class AlphaThingRow(
+    @PartitionKey val id: UUID,
+    val label: String,
+)
 
 @ScyllaTable(name = "things_by_id", keyspace = "circaso_test_beta")
-data class BetaThingRow(@PartitionKey val id: UUID, val label: String)
+data class BetaThingRow(
+    @PartitionKey val id: UUID,
+    val label: String,
+)
 
 @ScyllaTable(name = "orphans_by_id", keyspace = "circaso_test_gamma")
-data class GammaOrphanRow(@PartitionKey val id: UUID, val label: String)
+data class GammaOrphanRow(
+    @PartitionKey val id: UUID,
+    val label: String,
+)
 
 @ScyllaTable(name = "nowhere")
-data class NoKeyspaceRow(@PartitionKey val id: UUID)
+data class NoKeyspaceRow(
+    @PartitionKey val id: UUID,
+)
 
 object AlphaV1 : KandraMigration(version = 1, name = "create things") {
     override fun up(session: CqlSession) {
@@ -62,7 +74,6 @@ object BetaV2 : KandraMigration(version = 2, name = "add note") {
 }
 
 class DatabaseTest {
-
     private val alpha = KandraModuleSpec("circaso_test_alpha", listOf(AlphaThingRow::class), listOf(AlphaV1))
     private val beta = KandraModuleSpec("circaso_test_beta", listOf(BetaThingRow::class), listOf(BetaV1, BetaV2))
 
@@ -80,9 +91,14 @@ class DatabaseTest {
 
     private fun <T> withSession(block: (CqlSession) -> T): T = TestScylla.settings().openSession().use(block)
 
-    private fun tableExists(session: CqlSession, keyspace: String, table: String) = session.execute(
-        "SELECT table_name FROM system_schema.tables WHERE keyspace_name = '$keyspace' AND table_name = '$table'",
-    ).one() != null
+    private fun tableExists(
+        session: CqlSession,
+        keyspace: String,
+        table: String,
+    ) = session
+        .execute(
+            "SELECT table_name FROM system_schema.tables WHERE keyspace_name = '$keyspace' AND table_name = '$table'",
+        ).one() != null
 
     // ---- migrate ------------------------------------------------------------------------------------------
 
@@ -96,8 +112,14 @@ class DatabaseTest {
         withSession { session ->
             assertTrue(tableExists(session, "circaso_test_alpha", "things_by_id"))
             assertTrue(tableExists(session, "circaso_test_beta", "things_by_id"))
-            val alphaHistory = session.execute("SELECT version FROM circaso_test_alpha.kandra_migrations").all().map { it.getInt("version") }
-            val betaHistory = session.execute("SELECT version FROM circaso_test_beta.kandra_migrations").all().map { it.getInt("version") }
+            val alphaHistory =
+                session.execute("SELECT version FROM circaso_test_alpha.kandra_migrations").all().map {
+                    it.getInt("version")
+                }
+            val betaHistory =
+                session.execute("SELECT version FROM circaso_test_beta.kandra_migrations").all().map {
+                    it.getInt("version")
+                }
             assertEquals(listOf(1), alphaHistory.sorted())
             assertEquals(listOf(1, 2), betaHistory.sorted(), "beta numbers its migrations independently of alpha")
         }
@@ -119,38 +141,48 @@ class DatabaseTest {
     }
 
     @Test
-    fun `local install creates the tables in each module's own keyspace and hands out repositories`() = testApplication {
-        application { database(listOf(alpha, beta)) }
-        startApplication()
+    fun `local install creates the tables in each module's own keyspace and hands out repositories`() =
+        testApplication {
+            application { database(listOf(alpha, beta)) }
+            startApplication()
 
-        val alphaRepo = application.getKoin().get<KandraSuspendRepository<*>>(named("AlphaThingRowSuspendRepo"))
-        val betaRepo = application.getKoin().get<KandraSuspendRepository<*>>(named("BetaThingRowSuspendRepo"))
-        @Suppress("UNCHECKED_CAST") val alphaThings = alphaRepo as KandraSuspendRepository<AlphaThingRow>
-        @Suppress("UNCHECKED_CAST") val betaThings = betaRepo as KandraSuspendRepository<BetaThingRow>
-        val id = UUID.randomUUID()
+            val alphaRepo = application.getKoin().get<KandraSuspendRepository<*>>(named("AlphaThingRowSuspendRepo"))
+            val betaRepo = application.getKoin().get<KandraSuspendRepository<*>>(named("BetaThingRowSuspendRepo"))
 
-        alphaThings.save(AlphaThingRow(id, "in alpha"))
+            @Suppress("UNCHECKED_CAST")
+            val alphaThings = alphaRepo as KandraSuspendRepository<AlphaThingRow>
 
-        assertEquals("in alpha", alphaThings.findById(id)?.label)
-        assertEquals(null, betaThings.findById(id), "the same id is not visible in the other module's keyspace")
-        withSession {
-            assertEquals(
-                "in alpha",
-                it.execute("SELECT label FROM circaso_test_alpha.things_by_id WHERE id = $id").one()?.getString("label"),
-            )
+            @Suppress("UNCHECKED_CAST")
+            val betaThings = betaRepo as KandraSuspendRepository<BetaThingRow>
+            val id = UUID.randomUUID()
+
+            alphaThings.save(AlphaThingRow(id, "in alpha"))
+
+            assertEquals("in alpha", alphaThings.findById(id)?.label)
+            assertEquals(null, betaThings.findById(id), "the same id is not visible in the other module's keyspace")
+            withSession {
+                assertEquals(
+                    "in alpha",
+                    it
+                        .execute(
+                            "SELECT label FROM circaso_test_alpha.things_by_id WHERE id = $id",
+                        ).one()
+                        ?.getString("label"),
+                )
+            }
         }
-    }
 
     @Test
-    fun `the database reports healthy and answers the Kandra health route`() = testApplication {
-        application { database(listOf(alpha)) }
-        startApplication()
+    fun `the database reports healthy and answers the Kandra health route`() =
+        testApplication {
+            application { database(listOf(alpha)) }
+            startApplication()
 
-        val health = application.getKoin().get<HealthCheck>(named("scylla"))
+            val health = application.getKoin().get<HealthCheck>(named("scylla"))
 
-        assertTrue(health.check() is com.circaso.shared.Resource.Success)
-        assertEquals(HttpStatusCode.OK, client.get("/kandra/health").status)
-    }
+            assertTrue(health.check() is Resource.Success)
+            assertEquals(HttpStatusCode.OK, client.get("/kandra/health").status)
+        }
 
     @Test
     fun `outside local the install only validates, and passes once migrate has run`() {
@@ -166,7 +198,9 @@ class DatabaseTest {
     @Test
     fun `outside local the install refuses to start when a table was never migrated`() {
         // the keyspace exists (migrate made it) but gamma has no migration creating its table
-        DatabaseMigrator(TestScylla.settings()).migrate(listOf(KandraModuleSpec("circaso_test_gamma", listOf(GammaOrphanRow::class))))
+        DatabaseMigrator(
+            TestScylla.settings(),
+        ).migrate(listOf(KandraModuleSpec("circaso_test_gamma", listOf(GammaOrphanRow::class))))
         val staging = KandraModuleSpec("circaso_test_gamma", listOf(GammaOrphanRow::class))
 
         assertFailsWith<KandraSchemaException> {

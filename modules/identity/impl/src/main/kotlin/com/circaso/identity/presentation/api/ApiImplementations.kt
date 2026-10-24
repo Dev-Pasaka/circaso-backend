@@ -27,8 +27,12 @@ class AccountDirectoryImpl(private val directory: DirectoryService) : AccountDir
 }
 
 class DeviceSignaturesImpl(private val directory: DirectoryService) : DeviceSignatures {
-    override suspend fun verify(userId: UserId, deviceId: DeviceId, payload: ByteArray, signature: ByteArray): Resource<Unit> =
-        directory.verifySignature(userId, deviceId, payload, signature)
+    override suspend fun verify(
+        userId: UserId,
+        deviceId: DeviceId,
+        payload: ByteArray,
+        signature: ByteArray,
+    ): Resource<Unit> = directory.verifySignature(userId, deviceId, payload, signature)
 }
 
 class PushRegistrationsImpl(private val directory: DirectoryService) : PushRegistrations {

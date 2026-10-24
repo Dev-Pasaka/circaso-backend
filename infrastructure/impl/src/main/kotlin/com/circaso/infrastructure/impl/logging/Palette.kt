@@ -8,15 +8,22 @@ package com.circaso.infrastructure.impl.logging
  * environment or, failing that, from a system property (which is where `.env` puts it).
  */
 class Palette(private val enabled: Boolean) {
-
     fun gray(text: String) = paint("90", text)
+
     fun cyan(text: String) = paint("36", text)
+
     fun green(text: String) = paint("32", text)
+
     fun yellow(text: String) = paint("33", text)
+
     fun red(text: String) = paint("31", text)
+
     fun boldRed(text: String) = paint("1;31", text)
+
     fun blue(text: String) = paint("34", text)
+
     fun magenta(text: String) = paint("35", text)
+
     fun boldWhite(text: String) = paint("1;37", text)
 
     private fun paint(code: String, text: String) = if (enabled) "\u001B[${code}m$text\u001B[0m" else text
@@ -26,14 +33,25 @@ class Palette(private val enabled: Boolean) {
             val forced = setting("LOG_COLOR")?.lowercase()
             Palette(
                 when (forced) {
-                    "true" -> true
-                    "false" -> false
-                    else -> setting("NO_COLOR") == null &&
-                        (setting("LOG_FORMAT")?.uppercase() == "PRETTY" || System.console() != null)
+                    "true" -> {
+                        true
+                    }
+
+                    "false" -> {
+                        false
+                    }
+
+                    else -> {
+                        setting("NO_COLOR") == null &&
+                            (setting("LOG_FORMAT")?.uppercase() == "PRETTY" || System.console() != null)
+                    }
                 },
             )
         }
 
-        private fun setting(name: String): String? = (System.getenv(name) ?: System.getProperty(name))?.takeIf { it.isNotEmpty() }
+        private fun setting(name: String): String? =
+            (System.getenv(name) ?: System.getProperty(name))?.takeIf {
+                it.isNotEmpty()
+            }
     }
 }

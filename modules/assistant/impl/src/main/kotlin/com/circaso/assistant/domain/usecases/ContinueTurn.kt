@@ -23,19 +23,32 @@ class ContinueTurn(
     private val config: AssistantConfig,
 ) {
     suspend operator fun invoke(result: DeviceToolResult): Resource<TurnResult> {
-        val turn = pending.take(result.userId, result.turnId)?.takeIf { it.callId == result.callId }
-            ?: return Resource.error(AssistantError.TurnNotFound)
+        val turn =
+            pending.take(result.userId, result.turnId)?.takeIf { it.callId == result.callId }
+                ?: return Resource.error(AssistantError.TurnNotFound)
 
-        val snippets = result.snippets.take(config.maxSnippets).map { it.copy(text = it.text.take(config.maxSnippetChars)) }
+        val snippets =
+            result.snippets
+                .take(
+                    config.maxSnippets,
+                ).map { it.copy(text = it.text.take(config.maxSnippetChars)) }
         val note = AshaAgent.noteOf(snippets, turn.readNote)
-        val conversation = turn.conversation.toModel() + ModelMessage.ToolResult(turn.callId, turn.toolName, AshaAgent.snippetsAsText(snippets))
+        val conversation =
+            turn.conversation.toModel() +
+                ModelMessage.ToolResult(turn.callId, turn.toolName, AshaAgent.snippetsAsText(snippets))
 
-        val outcome = when (val r = agent.run(conversation, result.agentToken, deviceTools = true, startSteps = turn.steps)) {
-            is Resource.Success -> r.data
-            is Resource.Error -> return r
-        }
+        val outcome =
+            when (val r = agent.run(conversation, result.agentToken, deviceTools = true, startSteps = turn.steps)) {
+                is Resource.Success -> r.data
+                is Resource.Error -> return r
+            }
         return recorder.conclude(
-            turn.userId, turn.userMessageId, turn.userText, turn.askedFrom, result.requestId, outcome,
+            turn.userId,
+            turn.userMessageId,
+            turn.userText,
+            turn.askedFrom,
+            result.requestId,
+            outcome,
             PendingReadNote(note.chatIds, note.chatNames, note.messageCount),
         )
     }

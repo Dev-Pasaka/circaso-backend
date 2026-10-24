@@ -12,6 +12,7 @@ import java.util.UUID
 
 interface ProfileRepository {
     suspend fun find(userId: UserId): Profile?
+
     suspend fun findAll(ids: Set<UserId>): Map<UserId, Profile>
 
     /** Optimistic lock on `version`: the saved profile, or null if it changed since [old] was read. */
@@ -29,7 +30,11 @@ interface ContactRepository {
     suspend fun find(ownerId: UserId, contactId: UserId): Contact?
 
     /** Active and removed rows, [after] being the last contact id of the previous page. */
-    suspend fun list(ownerId: UserId, after: UUID?, limit: Int): List<Contact>
+    suspend fun list(
+        ownerId: UserId,
+        after: UUID?,
+        limit: Int,
+    ): List<Contact>
 
     /** Who has [contactId] in their contacts (the reverse table), for fan-out. */
     suspend fun ownersOf(contactId: UserId, limit: Int): List<UserId>
@@ -45,7 +50,9 @@ interface BlockRepository {
 
     /** True if either of the two blocked the other. */
     suspend fun eitherWay(a: UserId, b: UserId): Boolean
+
     suspend fun list(userId: UserId): List<Block>
+
     suspend fun blockedBy(userId: UserId): List<Block>
 }
 

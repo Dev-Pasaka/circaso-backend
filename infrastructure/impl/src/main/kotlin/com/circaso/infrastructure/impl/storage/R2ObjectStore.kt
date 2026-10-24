@@ -27,17 +27,24 @@ import kotlin.time.toKotlinDuration
  * every request is switched to "only when the operation requires it", because R2 does not accept the checksum trailers
  * the newer SDK versions add by default. The keys are never logged.
  */
-class R2Client(accountId: String, val bucket: String, accessKeyId: String, secretAccessKey: String) : AutoCloseable {
-    val s3: S3Client = S3Client {
-        region = "auto"
-        endpointUrl = Url.parse("https://$accountId.r2.cloudflarestorage.com")
-        credentialsProvider = StaticCredentialsProvider {
-            this.accessKeyId = accessKeyId
-            this.secretAccessKey = secretAccessKey
+class R2Client(
+    accountId: String,
+    val bucket: String,
+    accessKeyId: String,
+    secretAccessKey: String,
+) : AutoCloseable {
+    val s3: S3Client =
+        S3Client {
+            region = "auto"
+            endpointUrl = Url.parse("https://$accountId.r2.cloudflarestorage.com")
+            credentialsProvider =
+                StaticCredentialsProvider {
+                    this.accessKeyId = accessKeyId
+                    this.secretAccessKey = secretAccessKey
+                }
+            requestChecksumCalculation = RequestHttpChecksumConfig.WHEN_REQUIRED
+            responseChecksumValidation = ResponseHttpChecksumConfig.WHEN_REQUIRED
         }
-        requestChecksumCalculation = RequestHttpChecksumConfig.WHEN_REQUIRED
-        responseChecksumValidation = ResponseHttpChecksumConfig.WHEN_REQUIRED
-    }
 
     override fun close() = s3.close()
 }
@@ -54,14 +61,24 @@ class R2ObjectStore(private val client: R2Client, private val folder: String) : 
 
     private fun full(key: String) = "$folder/${key.trimStart('/')}"
 
-    override suspend fun presignUpload(key: String, contentType: String, expiresIn: Duration): Resource<String> =
+    override suspend fun presignUpload(
+        key: String,
+        contentType: String,
+        expiresIn: Duration,
+    ): Resource<String> =
         try {
-            val request = PutObjectRequest {
-                bucket = client.bucket
-                this.key = full(key)
-                this.contentType = contentType
-            }
-            Resource.success(client.s3.presignPutObject(request, expiresIn.toKotlinDuration()).url.toString())
+            val request =
+                PutObjectRequest {
+                    bucket = client.bucket
+                    this.key = full(key)
+                    this.contentType = contentType
+                }
+            Resource.success(
+                client.s3
+                    .presignPutObject(request, expiresIn.toKotlinDuration())
+                    .url
+                    .toString(),
+            )
         } catch (e: Exception) {
             log.warn("could not presign an upload", e)
             Resource.error(Unavailable, e)
@@ -69,23 +86,40 @@ class R2ObjectStore(private val client: R2Client, private val folder: String) : 
 
     override suspend fun describe(key: String): StoredObject? =
         try {
-            val head = client.s3.headObject(HeadObjectRequest { bucket = client.bucket; this.key = full(key) })
+            val head =
+                client.s3.headObject(
+                    HeadObjectRequest {
+                        bucket = client.bucket
+                        this.key = full(key)
+                    },
+                )
             StoredObject(head.contentLength ?: 0L, head.contentType ?: "application/octet-stream")
         } catch (_: NotFound) {
             null
         }
 
     override suspend fun delete(key: String) {
-        client.s3.deleteObject(DeleteObjectRequest { bucket = client.bucket; this.key = full(key) })
+        client.s3.deleteObject(
+            DeleteObjectRequest {
+                bucket = client.bucket
+                this.key = full(key)
+            },
+        )
     }
 
     override suspend fun presignDownload(key: String, expiresIn: Duration): Resource<String> =
         try {
-            val request = GetObjectRequest {
-                bucket = client.bucket
-                this.key = full(key)
-            }
-            Resource.success(client.s3.presignGetObject(request, expiresIn.toKotlinDuration()).url.toString())
+            val request =
+                GetObjectRequest {
+                    bucket = client.bucket
+                    this.key = full(key)
+                }
+            Resource.success(
+                client.s3
+                    .presignGetObject(request, expiresIn.toKotlinDuration())
+                    .url
+                    .toString(),
+            )
         } catch (e: Exception) {
             log.warn("could not presign a download", e)
             Resource.error(Unavailable, e)

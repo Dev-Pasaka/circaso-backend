@@ -14,5 +14,10 @@ class RecoveryService(
     private val getRecoveryRequest: GetRecoveryCase,
 ) {
     suspend fun request(command: RecoveryCommand): Resource<SupportRecovery> = requestSupportRecovery(command)
-    suspend fun get(principal: Principal, requestId: UUID): Resource<SupportRecovery> = getRecoveryRequest(principal, requestId)
+
+    suspend fun get(principal: Principal, requestId: UUID): Resource<SupportRecovery> =
+        getRecoveryRequest(
+            principal,
+            requestId,
+        )
 }

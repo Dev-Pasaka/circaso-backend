@@ -41,27 +41,35 @@ class UpdateProfile(
             return Resource.error(UsersError.ProfileInvalid("displayName", "must be 1 to $MAX_DISPLAY_NAME characters"))
         }
         val about = change.about?.trim()
-        if (about != null && about.length > MAX_ABOUT) return Resource.error(UsersError.ProfileInvalid("about", "must be at most $MAX_ABOUT characters"))
+        if (about != null &&
+            about.length > MAX_ABOUT
+        ) {
+            return Resource.error(UsersError.ProfileInvalid("about", "must be at most $MAX_ABOUT characters"))
+        }
 
-        val new = old.copy(
-            displayName = name ?: old.displayName,
-            about = when {
-                change.clearAbout -> null
-                about != null -> about.ifEmpty { null }
-                else -> old.about
-            },
-            privacy = old.privacy.copy(
-                avatar = change.avatarVisibility ?: old.privacy.avatar,
-                about = change.aboutVisibility ?: old.privacy.about,
-                handleLookup = change.handleLookup ?: old.privacy.handleLookup,
-            ),
-        )
+        val new =
+            old.copy(
+                displayName = name ?: old.displayName,
+                about =
+                    when {
+                        change.clearAbout -> null
+                        about != null -> about.ifEmpty { null }
+                        else -> old.about
+                    },
+                privacy =
+                    old.privacy.copy(
+                        avatar = change.avatarVisibility ?: old.privacy.avatar,
+                        about = change.aboutVisibility ?: old.privacy.about,
+                        handleLookup = change.handleLookup ?: old.privacy.handleLookup,
+                    ),
+            )
         val saved = profiles.update(old, new) ?: return Resource.error(UsersError.VersionConflict)
 
-        val changed = buildList {
-            if (new.displayName != old.displayName) add(ProfileUpdated.DISPLAY_NAME)
-            if (new.about != old.about) add(ProfileUpdated.ABOUT)
-        }
+        val changed =
+            buildList {
+                if (new.displayName != old.displayName) add(ProfileUpdated.DISPLAY_NAME)
+                if (new.about != old.about) add(ProfileUpdated.ABOUT)
+            }
         if (changed.isNotEmpty()) {
             store.commit(UsersChanges(events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, changed)))))
             notifier.profileUpdated(userId, saved.version)

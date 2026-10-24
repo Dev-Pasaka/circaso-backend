@@ -16,7 +16,12 @@ data class ClientVersion(val parts: List<Int>) : Comparable<ClientVersion> {
 
         /** `1.4.0` or `1.4.0-debug`; the suffix is ignored. */
         fun parseVersion(raw: String): ClientVersion? {
-            val numbers = raw.trim().substringBefore('-').split('.').map { it.toIntOrNull() ?: return null }
+            val numbers =
+                raw
+                    .trim()
+                    .substringBefore('-')
+                    .split('.')
+                    .map { it.toIntOrNull() ?: return null }
             return numbers.takeIf { it.isNotEmpty() }?.let(::ClientVersion)
         }
 

@@ -13,12 +13,14 @@ import kotlin.test.assertTrue
  * The fixtures are not compiled; Konsist only parses them.
  */
 class RuleFixturesTest {
-
     private fun filesIn(case: String): List<KoFileDeclaration> {
         val dir = File(System.getProperty("user.dir"), "src/test/fixtures/$case")
         assertTrue(dir.isDirectory, "missing fixture $dir")
         // Konsist resolves a directory against the root of the Gradle build, not this module.
-        return Konsist.scopeFromDirectory("architecture-tests/src/test/fixtures/$case").files.filter { "/src/main/" in it.path }
+        return Konsist.scopeFromDirectory("architecture-tests/src/test/fixtures/$case").files.filter {
+            "/src/main/" in
+                it.path
+        }
     }
 
     private fun assertFlags(rule: String, vararg expected: String) {
@@ -26,7 +28,12 @@ class RuleFixturesTest {
 
         assertTrue(violations.isNotEmpty(), "$rule found nothing in its fixture")
         expected.forEach { fragment ->
-            assertTrue(violations.any { fragment in it }, "$rule should mention '$fragment' but said:\n${violations.joinToString("\n")}")
+            assertTrue(
+                violations.any {
+                    fragment in it
+                },
+                "$rule should mention '$fragment' but said:\n${violations.joinToString("\n")}",
+            )
         }
     }
 
@@ -42,7 +49,12 @@ class RuleFixturesTest {
 
     @Test
     fun `domain may not import Ktor, serialization or Kandra`() =
-        assertFlags("domainIsPureKotlin", "io.ktor.http.HttpStatusCode", "kotlinx.serialization.Serializable", "com.kandraorm")
+        assertFlags(
+            "domainIsPureKotlin",
+            "io.ktor.http.HttpStatusCode",
+            "kotlinx.serialization.Serializable",
+            "com.kandraorm",
+        )
 
     @Test
     fun `an api may not import a library or an impl`() =
@@ -70,11 +82,20 @@ class RuleFixturesTest {
 
     @Test
     fun `classes are named by their folder`() =
-        assertFlags("layersAreNamedByRole", "'ProfileManager' in services must end in Service", "'Profiles' in controllers must end in Controller")
+        assertFlags(
+            "layersAreNamedByRole",
+            "'ProfileManager' in services must end in Service",
+            "'Profiles' in controllers must end in Controller",
+        )
 
     @Test
     fun `entities name their keyspace and are unique`() =
-        assertFlags("entitiesNameTheirKeyspace", "no keyspace", "expected 'circaso_identity'", "must be unique across modules")
+        assertFlags(
+            "entitiesNameTheirKeyspace",
+            "no keyspace",
+            "expected 'circaso_identity'",
+            "must be unique across modules",
+        )
 
     @Test
     fun `Kandra stays in data`() = assertFlags("kandraOnlyInData", "io.kandra.runtime.KandraRepository")
@@ -84,13 +105,28 @@ class RuleFixturesTest {
 
     @Test
     fun `modules meet only through api`() =
-        assertFlags("importsFollowTheDependencyTable", "com.circaso.users.domain.models.Profile", "com.circaso.infrastructure.impl", "gateway imports")
+        assertFlags(
+            "importsFollowTheDependencyTable",
+            "com.circaso.users.domain.models.Profile",
+            "com.circaso.infrastructure.impl",
+            "gateway imports",
+        )
 
     @Test
-    fun `one vendor does not import another`() = assertFlags("vendorsDoNotKnowEachOther", "sms.africastalking", "email.resend")
+    fun `one vendor does not import another`() =
+        assertFlags(
+            "vendorsDoNotKnowEachOther",
+            "sms.africastalking",
+            "email.resend",
+        )
 
     @Test
-    fun `agent routes only call methods that read`() = assertFlags("agentControllersOnlyRead", "profiles.update", "profiles.delete")
+    fun `agent routes only call methods that read`() =
+        assertFlags(
+            "agentControllersOnlyRead",
+            "profiles.update",
+            "profiles.delete",
+        )
 
     @Test
     fun `endpoints carry their own segment and inherit the rest from a parent route`() =

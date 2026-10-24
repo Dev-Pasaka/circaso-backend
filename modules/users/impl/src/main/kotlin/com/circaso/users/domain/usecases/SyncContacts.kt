@@ -44,8 +44,11 @@ class SyncContacts(
         val resolved = directory.resolvePhones(command.phones).filterValues { it != owner }
         val existing = resolved.values.toSet().associateWith { contacts.find(owner, it) }
 
-        val added = existing.filterValues { it == null }.keys
-            .map { Contact(owner, it, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now) }
+        val added =
+            existing
+                .filterValues { it == null }
+                .keys
+                .map { Contact(owner, it, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now) }
         val waiting = (command.phones - resolved.keys).map { WaitingContact(hasher.hmac(it), owner, now) }
         store.commit(UsersChanges(contacts = added, waiting = waiting))
         added.forEach { cache.invalidateTarget(it.contactId) }
@@ -54,7 +57,12 @@ class SyncContacts(
         val shown = resolved.filter { (_, user) -> existing[user]?.status != ContactStatus.REMOVED }
         val found = profiles.findAll(shown.values.toSet())
         return Resource.success(
-            shown.map { (phone, user) -> SyncMatch(phone, found[user]?.let { views.forViewer(owner, it) } ?: fallbackProfile(user)) },
+            shown.map { (phone, user) ->
+                SyncMatch(
+                    phone,
+                    found[user]?.let { views.forViewer(owner, it) } ?: fallbackProfile(user),
+                )
+            },
         )
     }
 

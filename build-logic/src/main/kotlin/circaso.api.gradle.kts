@@ -11,7 +11,8 @@ plugins {
 
 check(
     DependencyRules.kindOf(path).let {
-        it is Kind.ModuleApi || it == Kind.InfrastructureApi || it == Kind.IntegrationsApi || it == Kind.ObservabilityApi
+        it is Kind.ModuleApi || it == Kind.InfrastructureApi || it == Kind.IntegrationsApi ||
+            it == Kind.ObservabilityApi
     },
 ) {
     "circaso.api is for modules:<name>:api, infrastructure:api, integrations:api and observability:api, not $path"

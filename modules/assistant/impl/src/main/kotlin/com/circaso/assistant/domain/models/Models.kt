@@ -56,11 +56,23 @@ data class TurnCommand(
 /** What a turn comes to: an answer, or a question for the phone (a device tool) that the phone answers through A9. */
 sealed interface TurnResult {
     data class Answer(val message: ChatMessage) : TurnResult
-    data class NeedsDevice(val turnId: UUID, val callId: String, val toolName: String, val argumentsJson: String) : TurnResult
+
+    data class NeedsDevice(
+        val turnId: UUID,
+        val callId: String,
+        val toolName: String,
+        val argumentsJson: String,
+    ) : TurnResult
 }
 
 /** One decrypted message the phone sends back for a device tool. Used for the turn and dropped. */
-data class ChatSnippet(val chatId: String, val chatName: String?, val sender: String, val at: Instant, val text: String)
+data class ChatSnippet(
+    val chatId: String,
+    val chatName: String?,
+    val sender: String,
+    val at: Instant,
+    val text: String,
+)
 
 data class DeviceToolResult(
     val userId: UserId,
@@ -73,4 +85,9 @@ data class DeviceToolResult(
 
 data class ChatPage(val messages: List<ChatMessage>, val nextCursor: String?)
 
-data class VoiceClip(val audio: ByteArray, val contentType: String, val claimedSeconds: Int, val language: String?)
+data class VoiceClip(
+    val audio: ByteArray,
+    val contentType: String,
+    val claimedSeconds: Int,
+    val language: String?,
+)

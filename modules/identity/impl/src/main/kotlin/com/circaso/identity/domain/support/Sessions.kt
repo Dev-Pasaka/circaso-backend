@@ -25,8 +25,14 @@ private val urlEncoder = Base64.getUrlEncoder().withoutPadding()
 internal fun randomToken(bytes: Int = 32): String = urlEncoder.encodeToString(ByteArray(bytes).also(random::nextBytes))
 
 /** An app session just opened (or rotated), with the refresh token to hand to the phone once. */
-data class IssuedSession(val session: Session, val refreshToken: String, val app: IssuedToken, val agent: IssuedToken) {
+data class IssuedSession(
+    val session: Session,
+    val refreshToken: String,
+    val app: IssuedToken,
+    val agent: IssuedToken,
+) {
     fun appTokens() = SessionTokens(app.token, refreshToken, app.expiresInSeconds, Scope.APP.wire)
+
     fun agentTokens() = SessionTokens(agent.token, null, agent.expiresInSeconds, Scope.AGENT.wire)
 }
 
@@ -45,16 +51,28 @@ class SessionOpener(
     private val clock: Clock,
 ) {
     suspend fun open(account: Account, deviceId: DeviceId): OpenedSession {
-        val ended = cache.deviceSession(account.userId, deviceId)
-            ?.let { sessions.find(it) }
-            ?.takeIf { it.status == SessionStatus.ACTIVE }
-            ?.copy(status = SessionStatus.REVOKED)
-            ?.let { listOf(it) }
-            .orEmpty()
+        val ended =
+            cache
+                .deviceSession(account.userId, deviceId)
+                ?.let { sessions.find(it) }
+                ?.takeIf { it.status == SessionStatus.ACTIVE }
+                ?.copy(status = SessionStatus.REVOKED)
+                ?.let { listOf(it) }
+                .orEmpty()
         val id = SessionId.new()
         val secret = randomToken()
         val now = clock.instant()
-        val session = Session(id, account.userId, deviceId, sha256Hex(refreshString(id, secret)), Scope.APP, SessionStatus.ACTIVE, now, now)
+        val session =
+            Session(
+                id,
+                account.userId,
+                deviceId,
+                sha256Hex(refreshString(id, secret)),
+                Scope.APP,
+                SessionStatus.ACTIVE,
+                now,
+                now,
+            )
         return OpenedSession(issue(account, session, refreshString(id, secret)), ended)
     }
 
@@ -71,19 +89,34 @@ class SessionOpener(
         cache.rememberDeviceSession(account.userId, opened.issued.session.deviceId, opened.issued.session.sessionId)
     }
 
-    private fun issue(account: Account, session: Session, refresh: String): IssuedSession = IssuedSession(
-        session = session,
-        refreshToken = refresh,
-        app = tokens.issue(account.userId, session.deviceId, session.sessionId, Scope.APP, account.sessionVersion),
-        agent = tokens.issue(account.userId, session.deviceId, session.sessionId, Scope.AGENT, account.sessionVersion),
-    )
+    private fun issue(
+        account: Account,
+        session: Session,
+        refresh: String,
+    ): IssuedSession =
+        IssuedSession(
+            session = session,
+            refreshToken = refresh,
+            app = tokens.issue(account.userId, session.deviceId, session.sessionId, Scope.APP, account.sessionVersion),
+            agent =
+                tokens.issue(
+                    account.userId,
+                    session.deviceId,
+                    session.sessionId,
+                    Scope.AGENT,
+                    account.sessionVersion,
+                ),
+        )
 
     companion object {
         fun refreshString(id: SessionId, secret: String) = "rt_$id.$secret"
 
         /** The session id inside `rt_<sessionId>.<secret>`, or null for anything else. */
         fun sessionIdOf(refreshToken: String): SessionId? =
-            refreshToken.takeIf { it.startsWith("rt_") && it.contains('.') }
-                ?.removePrefix("rt_")?.substringBefore('.')?.let(SessionId::parse)
+            refreshToken
+                .takeIf { it.startsWith("rt_") && it.contains('.') }
+                ?.removePrefix("rt_")
+                ?.substringBefore('.')
+                ?.let(SessionId::parse)
     }
 }

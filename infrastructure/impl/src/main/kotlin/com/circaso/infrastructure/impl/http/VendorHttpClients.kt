@@ -37,8 +37,8 @@ class VendorHttpClients(
     private val engine: () -> HttpClientEngine = { CIO.create() },
     private val clock: Clock = Clock.systemUTC(),
     private val retryBaseMillis: Long = 200,
-) : HttpClients, AutoCloseable {
-
+) : HttpClients,
+    AutoCloseable {
     private val clients = ConcurrentHashMap<String, HttpClient>()
 
     override fun named(name: String, configure: VendorHttpConfig.() -> Unit): HttpClient =
@@ -48,7 +48,10 @@ class VendorHttpClients(
 
     private fun build(vendor: String, config: VendorHttpConfig): HttpClient {
         val breaker = CircuitBreaker(vendor, config.circuitFailureThreshold, config.circuitOpenFor, clock)
-        telemetry.gauge(Metrics.INTEGRATION_CIRCUIT_OPEN, mapOf("vendor" to vendor)) { if (breaker.isOpen) 1.0 else 0.0 }
+        telemetry.gauge(
+            Metrics.INTEGRATION_CIRCUIT_OPEN,
+            mapOf("vendor" to vendor),
+        ) { if (breaker.isOpen) 1.0 else 0.0 }
 
         return HttpClient(engine()) {
             expectSuccess = false // vendor errors are answers to translate, not exceptions
@@ -65,50 +68,73 @@ class VendorHttpClients(
                 maxRetries = config.maxAttempts - 1
                 retryOnExceptionIf { request, cause -> RetryPolicy.retryAfterException(request, cause) }
                 retryIf { _, response -> RetryPolicy.retryAfterStatus(response.status.value) }
-                delayMillis(respectRetryAfterHeader = true) { retry -> RetryPolicy.backoffMillis(retry, retryBaseMillis) }
+                delayMillis(
+                    respectRetryAfterHeader = true,
+                ) { retry -> RetryPolicy.backoffMillis(retry, retryBaseMillis) }
             }
             install(CircuitBreakerPlugin) { this.breaker = breaker }
             install(attemptLogging(vendor, breaker))
         }
     }
 
-    private fun attemptLogging(vendor: String, breaker: CircuitBreaker) = createClientPlugin("VendorLogging-$vendor") {
-        on(Send) { request ->
-            val start = System.nanoTime()
-            val operation = request.attributes.getOrNull(HttpOperation) ?: "request"
-            val where = arrayOf(
-                kv("kind", "http"), kv("vendor", vendor), kv("http.method", request.method.value),
-                kv("url.path", request.url.encodedPath), // never the query string
-            )
-            try {
-                val call = proceed(request)
-                val status = call.response.status.value
-                val outcome = when {
-                    status >= 500 -> "server_error"
-                    status >= 400 -> "client_error"
-                    else -> "ok"
+    private fun attemptLogging(vendor: String, breaker: CircuitBreaker) =
+        createClientPlugin("VendorLogging-$vendor") {
+            on(Send) { request ->
+                val start = System.nanoTime()
+                val operation = request.attributes.getOrNull(HttpOperation) ?: "request"
+                val where =
+                    arrayOf(
+                        kv("kind", "http"),
+                        kv("vendor", vendor),
+                        kv("http.method", request.method.value),
+                        kv("url.path", request.url.encodedPath), // never the query string
+                    )
+                try {
+                    val call = proceed(request)
+                    val status = call.response.status.value
+                    val outcome =
+                        when {
+                            status >= 500 -> "server_error"
+                            status >= 400 -> "client_error"
+                            else -> "ok"
+                        }
+                    record(vendor, operation, outcome, start)
+                    val line =
+                        arrayOf(
+                            *where,
+                            kv("http.status", status),
+                            kv("durationMs", 0L.millisSince(start)),
+                            kv("circuit", if (breaker.isOpen) "open" else "closed"),
+                        )
+                    if (status >= 500 || status == 429) log.warn("attempt", *line) else log.info("attempt", *line)
+                    call
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: CircuitOpenException) {
+                    record(vendor, operation, "circuit_open", start)
+                    throw e
+                } catch (e: Exception) {
+                    record(vendor, operation, "failure", start)
+                    // the exception class only: a message can carry a URL or a body fragment
+                    log.warn(
+                        "attempt failed",
+                        *where,
+                        kv("durationMs", 0L.millisSince(start)),
+                        kv("error", e::class.simpleName),
+                    )
+                    throw e
                 }
-                record(vendor, operation, outcome, start)
-                val line = arrayOf(*where, kv("http.status", status), kv("durationMs", 0L.millisSince(start)), kv("circuit", if (breaker.isOpen) "open" else "closed"))
-                if (status >= 500 || status == 429) log.warn("attempt", *line) else log.info("attempt", *line)
-                call
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: CircuitOpenException) {
-                record(vendor, operation, "circuit_open", start)
-                throw e
-            } catch (e: Exception) {
-                record(vendor, operation, "failure", start)
-                // the exception class only: a message can carry a URL or a body fragment
-                log.warn("attempt failed", *where, kv("durationMs", 0L.millisSince(start)), kv("error", e::class.simpleName))
-                throw e
             }
         }
-    }
 
-    private fun record(vendor: String, operation: String, outcome: String, startNanos: Long) =
-        telemetry.record(
-            Metrics.INTEGRATION_DURATION, (System.nanoTime() - startNanos) / 1e9,
-            mapOf("vendor" to vendor, "operation" to operation, "outcome" to outcome),
-        )
+    private fun record(
+        vendor: String,
+        operation: String,
+        outcome: String,
+        startNanos: Long,
+    ) = telemetry.record(
+        Metrics.INTEGRATION_DURATION,
+        (System.nanoTime() - startNanos) / 1e9,
+        mapOf("vendor" to vendor, "operation" to operation, "outcome" to outcome),
+    )
 }

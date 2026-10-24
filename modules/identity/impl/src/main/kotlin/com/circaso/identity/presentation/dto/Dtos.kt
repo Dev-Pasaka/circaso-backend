@@ -20,7 +20,10 @@ data class DeviceDto(
 )
 
 @Serializable
-data class DeviceProofDto(@Serializable(with = InstantSerializer::class) val timestamp: Instant, val signature: String)
+data class DeviceProofDto(
+    @Serializable(with = InstantSerializer::class) val timestamp: Instant,
+    val signature: String,
+)
 
 @Serializable
 data class SocialSignInRequest(
@@ -33,16 +36,31 @@ data class SocialSignInRequest(
 )
 
 @Serializable
-data class SessionDto(val accessToken: String, val refreshToken: String? = null, val expiresInSeconds: Long, val scope: String)
+data class SessionDto(
+    val accessToken: String,
+    val refreshToken: String? = null,
+    val expiresInSeconds: Long,
+    val scope: String,
+)
 
 @Serializable
-data class SignInResponse(val next: String, val maskedPhone: String? = null, val session: SessionDto, val agentSession: SessionDto? = null)
+data class SignInResponse(
+    val next: String,
+    val maskedPhone: String? = null,
+    val session: SessionDto,
+    val agentSession: SessionDto? = null,
+)
 
 @Serializable
 data class StartPhoneRequest(val phone: String)
 
 @Serializable
-data class StartPhoneResponse(val verificationId: String, val codeLength: Int, val expiresInSeconds: Long, val resendAfterSeconds: Long)
+data class StartPhoneResponse(
+    val verificationId: String,
+    val codeLength: Int,
+    val expiresInSeconds: Long,
+    val resendAfterSeconds: Long,
+)
 
 @Serializable
 data class VerifyCodeRequest(val verificationId: String, val code: String)
@@ -68,7 +86,10 @@ data class RegisterDeviceRequest(
 data class UserStateDto(val userId: String, val status: String)
 
 @Serializable
-data class ReplacedDeviceDto(val model: String, @Serializable(with = InstantSerializer::class) val lastSeenAt: Instant)
+data class ReplacedDeviceDto(
+    val model: String,
+    @Serializable(with = InstantSerializer::class) val lastSeenAt: Instant,
+)
 
 @Serializable
 data class RegisterDeviceResponse(
@@ -100,7 +121,10 @@ data class ProviderDto(
 )
 
 @Serializable
-data class ActiveDeviceDto(val model: String, @Serializable(with = InstantSerializer::class) val activeSince: Instant)
+data class ActiveDeviceDto(
+    val model: String,
+    @Serializable(with = InstantSerializer::class) val activeSince: Instant,
+)
 
 @Serializable
 data class SecurityOverviewResponse(
@@ -140,10 +164,19 @@ data class RecoveryResponse(
 data class ReleaseRequest(val verificationId: String, val confirmAbandon: Boolean)
 
 @Serializable
-data class ReleaseResponse(@Serializable(with = InstantSerializer::class) val releaseAt: Instant)
+data class ReleaseResponse(
+    @Serializable(with = InstantSerializer::class) val releaseAt: Instant,
+)
 
 @Serializable
-data class JwkDto(val kty: String = "OKP", val crv: String = "Ed25519", val use: String = "sig", val alg: String = "EdDSA", val kid: String, val x: String)
+data class JwkDto(
+    val kty: String = "OKP",
+    val crv: String = "Ed25519",
+    val use: String = "sig",
+    val alg: String = "EdDSA",
+    val kid: String,
+    val x: String,
+)
 
 @Serializable
 data class JwksResponse(val keys: List<JwkDto>)

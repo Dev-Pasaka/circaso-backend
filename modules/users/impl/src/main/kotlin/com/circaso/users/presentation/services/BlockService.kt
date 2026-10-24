@@ -16,7 +16,10 @@ class BlockService(
     private val checkReach: CheckReach,
 ) {
     suspend fun listBlocks(userId: UserId): Resource<List<PublicProfile>> = listBlocks.invoke(userId)
+
     suspend fun block(userId: UserId, target: UserId): Resource<Unit> = blockUser(userId, target)
+
     suspend fun unblock(userId: UserId, target: UserId): Resource<Unit> = unblockUser(userId, target)
+
     suspend fun checkReach(from: UserId, to: UserId): Resource<Boolean> = checkReach.invoke(from, to)
 }

@@ -32,7 +32,10 @@ class VerifyPhoneCode(
 ) {
     suspend operator fun invoke(command: VerifyCodeCommand): Resource<PhoneVerifiedResult> {
         val userId = command.principal.userId
-        cache.codeLockRemaining(userId)?.let { return Resource.error(IdentityError.CodeLocked(it.seconds.coerceAtLeast(1))) }
+        cache
+            .codeLockRemaining(
+                userId,
+            )?.let { return Resource.error(IdentityError.CodeLocked(it.seconds.coerceAtLeast(1))) }
 
         val otp = cache.otp(command.verificationId)
         if (otp == null || otp.userId != userId || otp.deviceId != command.principal.deviceId) {
@@ -40,25 +43,38 @@ class VerifyPhoneCode(
         }
 
         val sealedPhone = phones.unseal(otp.sealedPhone) ?: return Resource.error(IdentityError.CodeExpired)
-        val right = if (otp.codeHash == VENDOR_CHECKED_CODE) {
-            // The vendor holds the code: ask it. Nothing pending there means it expired or ran out of tries.
-            when (val checked = verifier.check(sealedPhone, command.code)) {
-                is Resource.Error -> return checked
-                is Resource.Success -> when (checked.data) {
-                    CodeCheck.APPROVED -> true
-                    CodeCheck.DENIED -> false
-                    CodeCheck.EXPIRED -> {
-                        cache.deleteOtp(command.verificationId)
-                        return Resource.error(IdentityError.CodeExpired)
+        val right =
+            if (otp.codeHash == VENDOR_CHECKED_CODE) {
+                // The vendor holds the code: ask it. Nothing pending there means it expired or ran out of tries.
+                when (val checked = verifier.check(sealedPhone, command.code)) {
+                    is Resource.Error -> {
+                        return checked
+                    }
+
+                    is Resource.Success -> {
+                        when (checked.data) {
+                            CodeCheck.APPROVED -> {
+                                true
+                            }
+
+                            CodeCheck.DENIED -> {
+                                false
+                            }
+
+                            CodeCheck.EXPIRED -> {
+                                cache.deleteOtp(command.verificationId)
+                                return Resource.error(IdentityError.CodeExpired)
+                            }
+                        }
                     }
                 }
+            } else {
+                val given = sha256Hex("${command.verificationId}:${command.code}")
+                MessageDigest.isEqual(given.toByteArray(), otp.codeHash.toByteArray())
             }
-        } else {
-            val given = sha256Hex("${command.verificationId}:${command.code}")
-            MessageDigest.isEqual(given.toByteArray(), otp.codeHash.toByteArray())
-        }
         if (!right) {
-            val attempts = cache.recordWrongAttempt(command.verificationId) ?: return Resource.error(IdentityError.CodeExpired)
+            val attempts =
+                cache.recordWrongAttempt(command.verificationId) ?: return Resource.error(IdentityError.CodeExpired)
             if (attempts >= config.maxCodeAttempts) {
                 cache.deleteOtp(command.verificationId)
                 cache.lockAccountCodes(userId)

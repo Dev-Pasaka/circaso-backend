@@ -8,50 +8,58 @@ import kotlinx.serialization.Serializable
 /** The stream these are published on is `events:identity`. No raw phone number goes on it: only the HMAC. */
 
 @Serializable
-data class AccountActivated(
-    val userId: UserId,
-    val phoneHmac: String,
-    val hints: Hints = Hints(),
-) : DomainEvent {
+data class AccountActivated(val userId: UserId, val phoneHmac: String, val hints: Hints = Hints()) : DomainEvent {
     override val type: String get() = TYPE
 
     @Serializable
     data class Hints(val displayName: String? = null, val avatarUrl: String? = null)
 
-    companion object { const val TYPE = "identity.AccountActivated" }
+    companion object {
+        const val TYPE = "identity.AccountActivated"
+    }
 }
 
 @Serializable
 data class PhoneChanged(val userId: UserId, val oldPhoneHmac: String, val newPhoneHmac: String) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "identity.PhoneChanged" }
+    companion object {
+        const val TYPE = "identity.PhoneChanged"
+    }
 }
 
 @Serializable
 data class DeviceReplaced(val userId: UserId, val oldDeviceId: DeviceId, val newDeviceId: DeviceId) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "identity.DeviceReplaced" }
+    companion object {
+        const val TYPE = "identity.DeviceReplaced"
+    }
 }
 
 @Serializable
 data class AccountStatusChanged(val userId: UserId, val status: AccountStatus) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "identity.AccountStatusChanged" }
+    companion object {
+        const val TYPE = "identity.AccountStatusChanged"
+    }
 }
 
 @Serializable
 data class AccountRelinked(val userId: UserId, val provider: String) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "identity.AccountRelinked" }
+    companion object {
+        const val TYPE = "identity.AccountRelinked"
+    }
 }
 
 @Serializable
 data class AccountDeleted(val userId: UserId) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "identity.AccountDeleted" }
+    companion object {
+        const val TYPE = "identity.AccountDeleted"
+    }
 }

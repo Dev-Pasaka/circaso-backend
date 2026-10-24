@@ -23,9 +23,23 @@ class ProfileService(
     private val getPublicProfile: GetPublicProfile,
 ) {
     suspend fun getMine(userId: UserId): Resource<MyProfile> = getMyProfile(userId)
+
     suspend fun update(userId: UserId, change: ProfileChange): Resource<MyProfile> = updateProfile(userId, change)
-    suspend fun prepareAvatar(userId: UserId, contentType: String, sizeBytes: Long): Resource<UploadTarget> = prepareAvatarUpload(userId, contentType, sizeBytes)
+
+    suspend fun prepareAvatar(
+        userId: UserId,
+        contentType: String,
+        sizeBytes: Long,
+    ): Resource<UploadTarget> =
+        prepareAvatarUpload(
+            userId,
+            contentType,
+            sizeBytes,
+        )
+
     suspend fun setAvatar(userId: UserId, objectKey: String): Resource<MyProfile> = setAvatar.invoke(userId, objectKey)
+
     suspend fun removeAvatar(userId: UserId): Resource<MyProfile> = removeAvatar.invoke(userId)
+
     suspend fun getPublic(viewer: UserId, target: UserId): Resource<PublicProfile> = getPublicProfile(viewer, target)
 }

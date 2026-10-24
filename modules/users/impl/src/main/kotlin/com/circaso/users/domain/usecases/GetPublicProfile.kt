@@ -10,7 +10,11 @@ import com.circaso.users.domain.support.ProfileViews
 import com.circaso.users.domain.support.ReachRule
 
 /** U10: the public profile of someone the caller can reach (or of themselves). */
-class GetPublicProfile(private val reach: ReachRule, private val profiles: ProfileRepository, private val views: ProfileViews) {
+class GetPublicProfile(
+    private val reach: ReachRule,
+    private val profiles: ProfileRepository,
+    private val views: ProfileViews,
+) {
     suspend operator fun invoke(viewer: UserId, target: UserId): Resource<PublicProfile> {
         if (viewer != target && !reach.canReach(viewer, target)) return Resource.error(UsersError.NotReachable)
         val profile = profiles.find(target) ?: return Resource.error(SharedError.NotFound)

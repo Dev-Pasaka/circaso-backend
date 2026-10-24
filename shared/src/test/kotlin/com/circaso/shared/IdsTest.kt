@@ -2,6 +2,7 @@ package com.circaso.shared
 
 import kotlinx.serialization.SerializationException
 import java.time.Instant
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -9,7 +10,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IdsTest {
-
     @Test
     fun `generated ids are UUIDv7 with the creation time in them`() {
         val at = Instant.parse("2026-10-22T10:15:30.123Z")
@@ -30,7 +30,7 @@ class IdsTest {
 
     @Test
     fun `a UUIDv4 has no timestamp`() {
-        assertNull(Uuid7.timestampOf(java.util.UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")))
+        assertNull(Uuid7.timestampOf(UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")))
     }
 
     @Test

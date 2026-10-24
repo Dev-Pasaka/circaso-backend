@@ -39,7 +39,17 @@ class DeleteUserData(
                 deletedProfiles = listOfNotNull(profile?.userId),
                 deletedContacts = mine.map { userId to it.contactId } + theirs.map { it to userId },
                 unblocks = blocked + blockedBy,
-                releasedHandles = listOfNotNull(profile?.handle?.let { HandleClaim(it, userId, profile.handleChangedAt ?: profile.createdAt, clock.instant()) }),
+                releasedHandles =
+                    listOfNotNull(
+                        profile?.handle?.let {
+                            HandleClaim(
+                                it,
+                                userId,
+                                profile.handleChangedAt ?: profile.createdAt,
+                                clock.instant(),
+                            )
+                        },
+                    ),
             ),
         )
         profile?.avatarKey?.let { storage.delete(it) }

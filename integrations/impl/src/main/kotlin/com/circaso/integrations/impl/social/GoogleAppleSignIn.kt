@@ -29,7 +29,12 @@ import java.util.Base64
 class ProviderSpec(val jwksUrl: String, val issuers: Set<String>, val audiences: Set<String>)
 
 /** Apple's settings for revoking a sign-in when an account is deleted. Optional: sign-in works without them. */
-class AppleRevocation(val teamId: String, val keyId: String, val clientId: String, val privateKeyPem: String)
+class AppleRevocation(
+    val teamId: String,
+    val keyId: String,
+    val clientId: String,
+    val privateKeyPem: String,
+)
 
 /**
  * Verifies Google and Apple ID tokens ourselves, with no vendor SDK: the RS256 signature against the provider's published keys
@@ -51,7 +56,11 @@ class GoogleAppleSignIn(
 
     private class KeySet(val keys: Map<String, PublicKey>, val fetchedAt: Long)
 
-    override suspend fun verify(provider: SocialProvider, idToken: String, nonce: String): Resource<SocialIdentity> {
+    override suspend fun verify(
+        provider: SocialProvider,
+        idToken: String,
+        nonce: String,
+    ): Resource<SocialIdentity> {
         val spec = if (provider == SocialProvider.GOOGLE) google else apple
         val rejected = Resource.error(IntegrationError.Rejected("The sign-in token was not accepted."))
         if (spec.audiences.isEmpty() || nonce.isBlank()) return rejected
@@ -60,12 +69,16 @@ class GoogleAppleSignIn(
         if (jwt.algorithm != "RS256") return rejected
         val kid = jwt.keyId ?: return rejected
 
-        val key = try {
-            keyFor(spec, kid)
-        } catch (e: Exception) {
-            log.warn("could not load {} signing keys", provider, e)
-            return Resource.error(IntegrationError.Unavailable(provider.name.lowercase().replaceFirstChar { it.uppercase() }), e)
-        } ?: return rejected
+        val key =
+            try {
+                keyFor(spec, kid)
+            } catch (e: Exception) {
+                log.warn("could not load {} signing keys", provider, e)
+                return Resource.error(
+                    IntegrationError.Unavailable(provider.name.lowercase().replaceFirstChar { it.uppercase() }),
+                    e,
+                )
+            } ?: return rejected
         if (!jwt.verifyRs256(key)) return rejected
 
         val now = clock.instant().epochSecond
@@ -90,22 +103,27 @@ class GoogleAppleSignIn(
     }
 
     /** Google echoes the nonce as given. Apple's native flow gives it the SHA-256 of the nonce, so either form is accepted there. */
-    private fun nonceMatches(provider: SocialProvider, claim: String?, nonce: String): Boolean {
+    private fun nonceMatches(
+        provider: SocialProvider,
+        claim: String?,
+        nonce: String,
+    ): Boolean {
         if (claim == null) return false
         val allowed = if (provider == SocialProvider.APPLE) listOf(nonce, sha256Hex(nonce)) else listOf(nonce)
         return allowed.any { MessageDigest.isEqual(it.toByteArray(), claim.toByteArray()) }
     }
 
-    private suspend fun keyFor(spec: ProviderSpec, kid: String): PublicKey? = lock.withLock {
-        val now = clock.instant().epochSecond
-        val cached = keys[spec.jwksUrl]
-        if (cached != null && now - cached.fetchedAt < KEYS_FRESH_FOR) cached.keys[kid]?.let { return it }
-        // Unknown key id or stale list: fetch again, but not more than once a minute, so a flood of bad tokens cannot hammer the provider.
-        if (cached != null && now - cached.fetchedAt < MIN_REFETCH && cached.keys[kid] == null) return null
-        val fresh = KeySet(parseJwks(fetchJwks(spec)), now)
-        keys[spec.jwksUrl] = fresh
-        fresh.keys[kid]
-    }
+    private suspend fun keyFor(spec: ProviderSpec, kid: String): PublicKey? =
+        lock.withLock {
+            val now = clock.instant().epochSecond
+            val cached = keys[spec.jwksUrl]
+            if (cached != null && now - cached.fetchedAt < KEYS_FRESH_FOR) cached.keys[kid]?.let { return it }
+            // Unknown key id or stale list: fetch again, but not more than once a minute, so a flood of bad tokens cannot hammer the provider.
+            if (cached != null && now - cached.fetchedAt < MIN_REFETCH && cached.keys[kid] == null) return null
+            val fresh = KeySet(parseJwks(fetchJwks(spec)), now)
+            keys[spec.jwksUrl] = fresh
+            fresh.keys[kid]
+        }
 
     /** The provider's key document. A non-200 answer is an error, so a bad day at the provider is `Unavailable` and never a cached empty list. */
     private suspend fun fetchJwks(spec: ProviderSpec): String {
@@ -122,22 +140,25 @@ class GoogleAppleSignIn(
      */
     // TODO(decision: where the Apple refresh token is kept and who exchanges the authorization code; account deletion does not call this yet)
     override suspend fun revokeApple(appleToken: String): Resource<Unit> {
-        val settings = revocation ?: run {
-            log.warn("Sign in with Apple revocation is not configured; the grant was not revoked")
-            return Resource.error(IntegrationError.Unavailable("Apple"))
-        }
+        val settings =
+            revocation ?: run {
+                log.warn("Sign in with Apple revocation is not configured; the grant was not revoked")
+                return Resource.error(IntegrationError.Unavailable("Apple"))
+            }
         return try {
             val secret = clientSecret(settings)
-            val form = Parameters.build {
-                append("client_id", settings.clientId)
-                append("client_secret", secret)
-                append("token", appleToken)
-                append("token_type_hint", "refresh_token")
-            }
-            val response = clients.named("apple").post(APPLE_REVOKE_URL) {
-                operation("revoke_token")
-                setBody(FormDataContent(form))
-            }
+            val form =
+                Parameters.build {
+                    append("client_id", settings.clientId)
+                    append("client_secret", secret)
+                    append("token", appleToken)
+                    append("token_type_hint", "refresh_token")
+                }
+            val response =
+                clients.named("apple").post(APPLE_REVOKE_URL) {
+                    operation("revoke_token")
+                    setBody(FormDataContent(form))
+                }
             val status = response.status.value
             when {
                 status == 200 -> Resource.success(Unit)
@@ -157,21 +178,40 @@ class GoogleAppleSignIn(
         val enc = Base64.getUrlEncoder().withoutPadding()
         val now = clock.instant().epochSecond
         val header = """{"alg":"ES256","kid":"${settings.keyId}"}"""
-        val claims = """{"iss":"${settings.teamId}","iat":$now,"exp":${now + 600},"aud":"https://appleid.apple.com","sub":"${settings.clientId}"}"""
+        val claims =
+            """
+            {"iss":"${settings.teamId}","iat":$now,"exp":${now + 600},
+            "aud":"https://appleid.apple.com","sub":"${settings.clientId}"}
+            """.trimIndent().replace("\n", "")
         val input = enc.encodeToString(header.toByteArray()) + "." + enc.encodeToString(claims.toByteArray())
-        val der = Base64.getMimeDecoder().decode(
-            settings.privateKeyPem.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").replace("\\n", "").replace("\\s".toRegex(), ""),
-        )
+        val der =
+            Base64.getMimeDecoder().decode(
+                settings.privateKeyPem
+                    .replace(
+                        "-----BEGIN PRIVATE KEY-----",
+                        "",
+                    ).replace("-----END PRIVATE KEY-----", "")
+                    .replace("\\n", "")
+                    .replace("\\s".toRegex(), ""),
+            )
         val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
-        val signature = Signature.getInstance("SHA256withECDSAinP1363Format").run {
-            initSign(key)
-            update(input.toByteArray())
-            sign()
-        }
+        val signature =
+            Signature.getInstance("SHA256withECDSAinP1363Format").run {
+                initSign(key)
+                update(input.toByteArray())
+                sign()
+            }
         return input + "." + enc.encodeToString(signature)
     }
 
-    private fun sha256Hex(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+    private fun sha256Hex(text: String): String =
+        MessageDigest
+            .getInstance(
+                "SHA-256",
+            ).digest(text.toByteArray())
+            .joinToString("") {
+                "%02x".format(it)
+            }
 
     companion object {
         const val GOOGLE_JWKS = "https://www.googleapis.com/oauth2/v3/certs"

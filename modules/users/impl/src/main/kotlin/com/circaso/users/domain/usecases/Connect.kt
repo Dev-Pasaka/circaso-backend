@@ -45,25 +45,61 @@ class Connect(
     private val notifier: UserNotifier,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(viewer: UserId, via: ConnectVia, value: String): Resource<Connection> {
-        val (target, source, mutual) = when (via) {
-            ConnectVia.HANDLE -> {
-                if (usersCache.countHandleLookup(viewer) > MAX_LOOKUPS_PER_HOUR) {
-                    return Resource.error(SharedError.RateLimited(usersCache.handleLookupRetryAfter(viewer)?.seconds ?: 3_600))
+    suspend operator fun invoke(
+        viewer: UserId,
+        via: ConnectVia,
+        value: String,
+    ): Resource<Connection> {
+        val (target, source, mutual) =
+            when (via) {
+                ConnectVia.HANDLE -> {
+                    if (usersCache.countHandleLookup(viewer) > MAX_LOOKUPS_PER_HOUR) {
+                        return Resource.error(
+                            SharedError.RateLimited(usersCache.handleLookupRetryAfter(viewer)?.seconds ?: 3_600),
+                        )
+                    }
+                    val handle = HandleRules.normalise(value) ?: return Resource.error(UsersError.HandleNotFound)
+                    val claim =
+                        handles.find(handle)?.takeIf { it.releasedAt == null }
+                            ?: return Resource.error(UsersError.HandleNotFound)
+                    if (profiles.find(claim.userId)?.privacy?.handleLookup !=
+                        true
+                    ) {
+                        return Resource.error(UsersError.HandleNotFound)
+                    }
+                    Triple(claim.userId, ContactSource.HANDLE, false)
                 }
-                val handle = HandleRules.normalise(value) ?: return Resource.error(UsersError.HandleNotFound)
-                val claim = handles.find(handle)?.takeIf { it.releasedAt == null } ?: return Resource.error(UsersError.HandleNotFound)
-                if (profiles.find(claim.userId)?.privacy?.handleLookup != true) return Resource.error(UsersError.HandleNotFound)
-                Triple(claim.userId, ContactSource.HANDLE, false)
+
+                ConnectVia.QR, ConnectVia.INVITE -> {
+                    val token = value.trim().substringAfterLast('/')
+                    val invite = invites.find(token) ?: return Resource.error(UsersError.InviteInvalid)
+                    Triple(invite.ownerId, if (via == ConnectVia.QR) ContactSource.QR else ContactSource.INVITE, true)
+                }
             }
-            ConnectVia.QR, ConnectVia.INVITE -> {
-                val token = value.trim().substringAfterLast('/')
-                val invite = invites.find(token) ?: return Resource.error(UsersError.InviteInvalid)
-                Triple(invite.ownerId, if (via == ConnectVia.QR) ContactSource.QR else ContactSource.INVITE, true)
-            }
+        if (target ==
+            viewer
+        ) {
+            return Resource.error(
+                if (via ==
+                    ConnectVia.HANDLE
+                ) {
+                    UsersError.HandleNotFound
+                } else {
+                    UsersError.InviteInvalid
+                },
+            )
         }
-        if (target == viewer) return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.InviteInvalid)
-        if (blocks.eitherWay(viewer, target)) return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.NotReachable)
+        if (blocks.eitherWay(viewer, target)) {
+            return Resource.error(
+                if (via ==
+                    ConnectVia.HANDLE
+                ) {
+                    UsersError.HandleNotFound
+                } else {
+                    UsersError.NotReachable
+                },
+            )
+        }
         val targetProfile = profiles.find(target) ?: return Resource.error(SharedError.NotFound)
 
         val now = clock.instant()
@@ -76,10 +112,25 @@ class Connect(
         if (created) {
             store.commit(
                 UsersChanges(
-                    contacts = listOfNotNull(
-                        Contact(viewer, target, source, ContactStatus.ACTIVE, null, forward?.addedAt ?: now).takeIf { newForward },
-                        Contact(target, viewer, source, ContactStatus.ACTIVE, null, back?.addedAt ?: now).takeIf { newBack },
-                    ),
+                    contacts =
+                        listOfNotNull(
+                            Contact(
+                                viewer,
+                                target,
+                                source,
+                                ContactStatus.ACTIVE,
+                                null,
+                                forward?.addedAt ?: now,
+                            ).takeIf { newForward },
+                            Contact(
+                                target,
+                                viewer,
+                                source,
+                                ContactStatus.ACTIVE,
+                                null,
+                                back?.addedAt ?: now,
+                            ).takeIf { newBack },
+                        ),
                     events = listOf(bus.envelope(ConnectionAdded(viewer, target, source.name, mutual))),
                 ),
             )

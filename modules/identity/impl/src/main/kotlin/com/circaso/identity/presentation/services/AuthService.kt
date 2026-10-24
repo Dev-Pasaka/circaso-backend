@@ -22,8 +22,12 @@ class AuthService(
     private val getPublicKeys: GetPublicKeys,
 ) {
     suspend fun nonce(): Resource<String> = issueNonce()
+
     suspend fun signIn(command: SignInCommand): Resource<SignInResult> = signInWithProvider(command)
+
     suspend fun refresh(command: RefreshCommand): Resource<RefreshedSession> = refreshSession(command)
+
     suspend fun signOut(principal: Principal): Resource<Unit> = signOut.invoke(principal)
+
     suspend fun publicKeys(): Resource<List<PublicKey>> = getPublicKeys()
 }

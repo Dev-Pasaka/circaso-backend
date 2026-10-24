@@ -11,19 +11,19 @@ import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.flatMap
-import com.circaso.web.principal
 import com.circaso.web.NoBody
 import com.circaso.web.authenticate
 import com.circaso.web.docs
+import com.circaso.web.principal
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
+import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
-import io.ktor.server.routing.route
-import io.ktor.server.request.header
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
+import io.ktor.server.routing.route
 
 private const val REGISTER = "Register device"
 private const val TAG = "Account and security"
@@ -33,14 +33,19 @@ fun Route.deviceController(devices: DeviceService) {
     route("/devices") {
         authenticate(Scope.ONBOARDING) {
             post {
-                val result = call.receive<RegisterDeviceRequest>()
-                    .toCommand(call.principal(), call.request.header("X-Client-Version"))
-                    .flatMap { devices.register(it) }
+                val result =
+                    call
+                        .receive<RegisterDeviceRequest>()
+                        .toCommand(call.principal(), call.request.header("X-Client-Version"))
+                        .flatMap { devices.register(it) }
                 call.respondDefault(result.toDefaultResponse { it.toResponse() })
             }.docs<RegisterDeviceRequest, RegisterDeviceResponse>(
-                "I6 · Register this phone's key; activates the account on sign-up and issues the app session", REGISTER,
+                "I6 · Register this phone's key; activates the account on sign-up and issues the app session",
+                REGISTER,
                 listOf("identity.device_attestation_failed", "request.malformed"),
-                notes = "Scope: `onboarding`. Send `X-Client-Version` (`android/1.0.0`): it carries the platform and app version.",
+                notes =
+                    "Scope: `onboarding`. Send `X-Client-Version` (`android/1.0.0`): it carries the platform and " +
+                        "app version.",
             )
         }
         authenticate(Scope.APP) {
@@ -48,14 +53,25 @@ fun Route.deviceController(devices: DeviceService) {
                 put("push-token") {
                     val token = call.receive<PushTokenRequest>().pushToken
                     val result: Resource<Unit> =
-                        if (token.isBlank()) Resource.error(SharedError.Malformed(mapOf("pushToken" to "is required")))
-                        else devices.updatePushToken(call.principal().toPrincipal(), token)
+                        if (token.isBlank()) {
+                            Resource.error(SharedError.Malformed(mapOf("pushToken" to "is required")))
+                        } else {
+                            devices.updatePushToken(call.principal().toPrincipal(), token)
+                        }
                     call.respondDefault(result.toDefaultResponse { it })
-                }.docs<PushTokenRequest, NoBody>("I9 · Store this phone's FCM or APNs token", TAG, notes = "Scope: `app`.")
+                }.docs<PushTokenRequest, NoBody>(
+                    "I9 · Store this phone's FCM or APNs token",
+                    TAG,
+                    notes = "Scope: `app`.",
+                )
 
                 delete {
                     call.respondDefault(devices.remove(call.principal().toPrincipal()).toDefaultResponse { it })
-                }.docs<NoBody, NoBody>("I10 · Forget this phone; the next sign-in verifies the number again", TAG, notes = "Scope: `app`.")
+                }.docs<NoBody, NoBody>(
+                    "I10 · Forget this phone; the next sign-in verifies the number again",
+                    TAG,
+                    notes = "Scope: `app`.",
+                )
             }
         }
     }

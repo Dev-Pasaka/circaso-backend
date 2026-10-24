@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.ports
 
+import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import java.time.Duration
@@ -8,12 +9,16 @@ import java.util.UUID
 /** Asha's read-only tools on the other modules, called with the user's agent token. */
 interface AgentTools {
     /** The tools available to this turn, for the model. */
-    fun specs(): List<com.circaso.integrations.api.ToolSpec>
+    fun specs(): List<ToolSpec>
 
     fun handles(toolName: String): Boolean
 
     /** The tool's answer as text for the model, or an error. Content is untrusted: it may come from other people. */
-    suspend fun call(toolName: String, argumentsJson: String, agentToken: String): Resource<String>
+    suspend fun call(
+        toolName: String,
+        argumentsJson: String,
+        agentToken: String,
+    ): Resource<String>
 }
 
 /** The questions Asha asks the phone, which holds the keys to the encrypted chats. */
@@ -41,7 +46,9 @@ data class PendingTurn(
 
 sealed interface PendingMessage {
     data class User(val text: String) : PendingMessage
+
     data class Assistant(val text: String?, val calls: List<PendingCall>) : PendingMessage
+
     data class ToolResult(val callId: String, val name: String, val content: String) : PendingMessage
 }
 
@@ -60,16 +67,31 @@ interface PendingTurns {
 interface QuotaCounters {
     /** Counts one text turn; the count today after this one. */
     suspend fun countTextTurn(userId: UserId, day: String): Long
+
     suspend fun textTurns(userId: UserId, day: String): Long
-    suspend fun addVoiceSeconds(userId: UserId, day: String, seconds: Int): Long
+
+    suspend fun addVoiceSeconds(
+        userId: UserId,
+        day: String,
+        seconds: Int,
+    ): Long
+
     suspend fun voiceSeconds(userId: UserId, day: String): Long
-    suspend fun addTokens(userId: UserId, day: String, input: Int, output: Int)
+
+    suspend fun addTokens(
+        userId: UserId,
+        day: String,
+        input: Int,
+        output: Int,
+    )
+
     suspend fun tokens(userId: UserId, day: String): Pair<Long, Long>
 }
 
 /** Conversation text is encrypted at rest: it is not end-to-end encrypted, because Asha has to read it. */
 interface TextVault {
     fun seal(text: String): String
+
     fun open(sealed: String): String
 }
 

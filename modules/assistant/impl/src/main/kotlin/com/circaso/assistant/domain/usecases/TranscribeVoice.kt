@@ -27,12 +27,17 @@ class TranscribeVoice(
 
         val day = clock.today()
         val limit = config.limitsOf(entitlements.planOf(userId)).voiceSecondsPerDay
-        if (quota.voiceSeconds(userId, day) + clip.claimedSeconds > limit) return Resource.error(AssistantError.QuotaExceeded(RESET_HINT_SECONDS))
-
-        val transcript = when (val r = speech.transcribe(clip.audio, clip.contentType, clip.language)) {
-            is Resource.Success -> r.data
-            is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
+        if (quota.voiceSeconds(userId, day) + clip.claimedSeconds >
+            limit
+        ) {
+            return Resource.error(AssistantError.QuotaExceeded(RESET_HINT_SECONDS))
         }
+
+        val transcript =
+            when (val r = speech.transcribe(clip.audio, clip.contentType, clip.language)) {
+                is Resource.Success -> r.data
+                is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
+            }
         if (transcript.seconds > config.maxVoiceSeconds) return Resource.error(AssistantError.VoiceTooLong)
         quota.addVoiceSeconds(userId, day, transcript.seconds)
         return Resource.success(transcript)

@@ -16,10 +16,10 @@ import com.circaso.web.toDefaultResponse
 import com.circaso.web.userId
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
-import io.ktor.server.routing.route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.put
+import io.ktor.server.routing.route
 
 private const val TAG = "Blocks and reach"
 private const val SCOPE = "Scope: `app`."
@@ -35,12 +35,37 @@ fun Route.blockController(blocks: BlockService) {
             route("/{userId}") {
                 put {
                     val target = parseUserId(call.parameters["userId"])
-                    call.respondDefault((if (target == null) invalidUserId() else blocks.block(call.userId(), target)).toDefaultResponse { it })
-                }.docs<NoBody, NoBody>("U14 · Block someone; a block overrides every other way of reaching a person", TAG, listOf("users.cannot_block_self"), notes = SCOPE)
+                    call.respondDefault(
+                        (
+                            if (target ==
+                                null
+                            ) {
+                                invalidUserId()
+                            } else {
+                                blocks.block(call.userId(), target)
+                            }
+                        ).toDefaultResponse { it },
+                    )
+                }.docs<NoBody, NoBody>(
+                    "U14 · Block someone; a block overrides every other way of reaching a person",
+                    TAG,
+                    listOf("users.cannot_block_self"),
+                    notes = SCOPE,
+                )
 
                 delete {
                     val target = parseUserId(call.parameters["userId"])
-                    call.respondDefault((if (target == null) invalidUserId() else blocks.unblock(call.userId(), target)).toDefaultResponse { it })
+                    call.respondDefault(
+                        (
+                            if (target ==
+                                null
+                            ) {
+                                invalidUserId()
+                            } else {
+                                blocks.unblock(call.userId(), target)
+                            }
+                        ).toDefaultResponse { it },
+                    )
                 }.docs<NoBody, NoBody>("U14 · Lift a block", TAG, notes = SCOPE)
             }
         }
@@ -48,9 +73,20 @@ fun Route.blockController(blocks: BlockService) {
         route("/me") {
             get("reach/{userId}") {
                 val target = parseUserId(call.parameters["userId"])
-                val result: Resource<Boolean> = if (target == null) invalidUserId() else blocks.checkReach(call.userId(), target)
+                val result: Resource<Boolean> =
+                    if (target ==
+                        null
+                    ) {
+                        invalidUserId()
+                    } else {
+                        blocks.checkReach(call.userId(), target)
+                    }
                 call.respondDefault(result.toDefaultResponse { ReachResponse(it) })
-            }.docs<NoBody, ReachResponse>("U15 · Whether you can reach that person", TAG, notes = "$SCOPE Never says why not.")
+            }.docs<NoBody, ReachResponse>(
+                "U15 · Whether you can reach that person",
+                TAG,
+                notes = "$SCOPE Never says why not.",
+            )
         }
     }
 }

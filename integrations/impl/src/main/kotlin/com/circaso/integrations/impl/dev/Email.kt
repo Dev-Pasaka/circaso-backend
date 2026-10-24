@@ -12,7 +12,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 class LogEmail : EmailGateway {
     private val log = LoggerFactory.getLogger(LogEmail::class.java)
 
-    override suspend fun send(to: String, template: EmailTemplate, variables: Map<String, String>, idempotencyKey: String?): Resource<EmailReceipt> {
+    override suspend fun send(
+        to: String,
+        template: EmailTemplate,
+        variables: Map<String, String>,
+        idempotencyKey: String?,
+    ): Resource<EmailReceipt> {
         log.info("email: {}", template)
         return Resource.success(EmailReceipt(UUID.randomUUID().toString(), "log"))
     }
@@ -20,11 +25,21 @@ class LogEmail : EmailGateway {
 
 /** Tests: records every email for assertions. */
 class FakeEmail : EmailGateway {
-    data class Sent(val to: String, val template: EmailTemplate, val variables: Map<String, String>, val idempotencyKey: String? = null)
+    data class Sent(
+        val to: String,
+        val template: EmailTemplate,
+        val variables: Map<String, String>,
+        val idempotencyKey: String? = null,
+    )
 
     val sent: MutableList<Sent> = CopyOnWriteArrayList()
 
-    override suspend fun send(to: String, template: EmailTemplate, variables: Map<String, String>, idempotencyKey: String?): Resource<EmailReceipt> {
+    override suspend fun send(
+        to: String,
+        template: EmailTemplate,
+        variables: Map<String, String>,
+        idempotencyKey: String?,
+    ): Resource<EmailReceipt> {
         sent += Sent(to, template, variables, idempotencyKey)
         return Resource.success(EmailReceipt("fake-${sent.size}", "fake"))
     }

@@ -10,15 +10,26 @@ import com.circaso.shared.EventSubscription
 import com.circaso.shared.decode
 
 /** The gateway's consumer group on `events:identity`: close sockets that no longer have a right to be open. */
-fun gatewayIdentitySubscription(hub: SocketHub) = EventSubscription(
-    group = "gateway",
-    stream = EventEnvelope.streamOf("identity"),
-    handlers = mapOf(
-        DeviceReplaced.TYPE to EventHandler { hub.revoke(it.decode<DeviceReplaced>().let { e -> e.userId }, it.decode<DeviceReplaced>().oldDeviceId) },
-        AccountRelinked.TYPE to EventHandler { hub.revoke(it.decode<AccountRelinked>().userId) },
-        AccountStatusChanged.TYPE to EventHandler {
-            val event = it.decode<AccountStatusChanged>()
-            if (event.status != AccountStatus.ACTIVE) hub.revoke(event.userId)
-        },
-    ),
-)
+fun gatewayIdentitySubscription(hub: SocketHub) =
+    EventSubscription(
+        group = "gateway",
+        stream = EventEnvelope.streamOf("identity"),
+        handlers =
+            mapOf(
+                DeviceReplaced.TYPE to
+                    EventHandler {
+                        hub.revoke(
+                            it.decode<DeviceReplaced>().let { e ->
+                                e.userId
+                            },
+                            it.decode<DeviceReplaced>().oldDeviceId,
+                        )
+                    },
+                AccountRelinked.TYPE to EventHandler { hub.revoke(it.decode<AccountRelinked>().userId) },
+                AccountStatusChanged.TYPE to
+                    EventHandler {
+                        val event = it.decode<AccountStatusChanged>()
+                        if (event.status != AccountStatus.ACTIVE) hub.revoke(event.userId)
+                    },
+            ),
+    )

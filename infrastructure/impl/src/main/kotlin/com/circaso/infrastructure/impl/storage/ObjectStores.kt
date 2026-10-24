@@ -17,22 +17,25 @@ import java.util.concurrent.ConcurrentHashMap
  * through pre-signed URLs only.
  * Anything missing stops startup, naming it.
  */
-class ConfiguredObjectStores(config: Config, secrets: Secrets) : ObjectStores, AutoCloseable {
+class ConfiguredObjectStores(config: Config, secrets: Secrets) :
+    ObjectStores,
+    AutoCloseable {
     private val storage = config.section("storage")
     private val provider = storage.string("provider", "local")
     private val folder = storage.string("prefix", "").trim('/')
     private val local = ConcurrentHashMap<String, StoredObject>()
 
-    private val r2: R2Client? = if (provider == "r2") {
-        R2Client(
-            accountId = storage.requireString("r2.account-id"),
-            bucket = storage.requireString("bucket"),
-            accessKeyId = secrets.require("r2.access-key-id"),
-            secretAccessKey = secrets.require("r2.secret-access-key"),
-        )
-    } else {
-        null
-    }
+    private val r2: R2Client? =
+        if (provider == "r2") {
+            R2Client(
+                accountId = storage.requireString("r2.account-id"),
+                bucket = storage.requireString("bucket"),
+                accessKeyId = secrets.require("r2.access-key-id"),
+                secretAccessKey = secrets.require("r2.secret-access-key"),
+            )
+        } else {
+            null
+        }
 
     init {
         require(provider in setOf("local", "r2")) { "storage.provider must be local or r2 (was '$provider')" }
@@ -54,8 +57,11 @@ class LocalObjectStore(
     private val prefix: String,
     private val objects: MutableMap<String, StoredObject> = ConcurrentHashMap(),
 ) : ObjectStore {
-    override suspend fun presignUpload(key: String, contentType: String, expiresIn: Duration): Resource<String> =
-        Resource.success("http://localhost/local-upload/$prefix/$key?expires=${expiresIn.seconds}")
+    override suspend fun presignUpload(
+        key: String,
+        contentType: String,
+        expiresIn: Duration,
+    ): Resource<String> = Resource.success("http://localhost/local-upload/$prefix/$key?expires=${expiresIn.seconds}")
 
     override suspend fun describe(key: String): StoredObject? = objects["$prefix/$key"]
 
@@ -66,7 +72,11 @@ class LocalObjectStore(
     override suspend fun presignDownload(key: String, expiresIn: Duration): Resource<String> =
         Resource.success("http://localhost/local-download/$prefix/$key?expires=${expiresIn.seconds}")
 
-    fun upload(key: String, sizeBytes: Long, contentType: String) {
+    fun upload(
+        key: String,
+        sizeBytes: Long,
+        contentType: String,
+    ) {
         objects["$prefix/$key"] = StoredObject(sizeBytes, contentType)
     }
 }

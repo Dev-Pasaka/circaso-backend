@@ -39,7 +39,11 @@ class StartTurn(
     suspend operator fun invoke(command: TurnCommand): Resource<TurnResult> {
         val text = command.text.trim()
         if (text.isEmpty() || text.length > config.maxMessageChars) {
-            return Resource.error(SharedError.Malformed(mapOf("text" to "must be 1 to ${config.maxMessageChars} characters")))
+            return Resource.error(
+                SharedError.Malformed(
+                    mapOf("text" to "must be 1 to ${config.maxMessageChars} characters"),
+                ),
+            )
         }
         val userId = command.userId
         val limits = config.limitsOf(entitlements.planOf(userId))
@@ -51,13 +55,19 @@ class StartTurn(
         val asked = command.askedFrom?.let { "[Asked from the chat \"${it.chatName ?: it.chatId}\"] " }.orEmpty()
         val history = context + ModelMessage.User(asked + text)
 
-        val outcome = when (val r = agent.run(history, command.agentToken, command.chatReading)) {
-            is Resource.Success -> r.data
-            is Resource.Error -> return r
-        }
+        val outcome =
+            when (val r = agent.run(history, command.agentToken, command.chatReading)) {
+                is Resource.Success -> r.data
+                is Resource.Error -> return r
+            }
         return recorder.conclude(
-            userId, ids.next(), text, command.askedFrom?.let { it.chatName ?: it.chatId }, command.requestId,
-            outcome, PendingReadNote(emptyList(), emptyList(), 0),
+            userId,
+            ids.next(),
+            text,
+            command.askedFrom?.let { it.chatName ?: it.chatId },
+            command.requestId,
+            outcome,
+            PendingReadNote(emptyList(), emptyList(), 0),
         )
     }
 
@@ -66,6 +76,11 @@ class StartTurn(
 
     private fun secondsUntilReset(): Long {
         val now = clock.instant().atZone(ZoneOffset.UTC)
-        return Duration.between(now, now.toLocalDate().plusDays(1).atStartOfDay(ZoneOffset.UTC)).seconds.coerceAtLeast(1)
+        return Duration
+            .between(
+                now,
+                now.toLocalDate().plusDays(1).atStartOfDay(ZoneOffset.UTC),
+            ).seconds
+            .coerceAtLeast(1)
     }
 }

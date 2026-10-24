@@ -21,7 +21,6 @@ import java.util.concurrent.CopyOnWriteArrayList
  * a name ending in `_seconds` is a duration, so its histogram is declared in seconds.
  */
 class OtelTelemetry(openTelemetry: OpenTelemetry) : Telemetry {
-
     private val meter = openTelemetry.getMeter("circaso")
     private val tracer = openTelemetry.getTracer("circaso")
     private val propagators = openTelemetry.propagators.textMapPropagator
@@ -32,24 +31,41 @@ class OtelTelemetry(openTelemetry: OpenTelemetry) : Telemetry {
     // Held so the callbacks stay registered for the life of the process.
     private val gauges = CopyOnWriteArrayList<ObservableDoubleGauge>()
 
-    override fun count(metric: String, labels: Map<String, String>, by: Long) {
+    override fun count(
+        metric: String,
+        labels: Map<String, String>,
+        by: Long,
+    ) {
         counters.getOrPut(metric) { meter.counterBuilder(metric).build() }.add(by, attributes(labels))
     }
 
-    override fun record(metric: String, value: Double, labels: Map<String, String>) {
-        histograms.getOrPut(metric) {
-            val builder = meter.histogramBuilder(metric)
-            if (metric.endsWith("_seconds")) builder.setUnit("s")
-            builder.build()
-        }.record(value, attributes(labels))
+    override fun record(
+        metric: String,
+        value: Double,
+        labels: Map<String, String>,
+    ) {
+        histograms
+            .getOrPut(metric) {
+                val builder = meter.histogramBuilder(metric)
+                if (metric.endsWith("_seconds")) builder.setUnit("s")
+                builder.build()
+            }.record(value, attributes(labels))
     }
 
-    override fun gauge(metric: String, labels: Map<String, String>, supplier: () -> Double) {
+    override fun gauge(
+        metric: String,
+        labels: Map<String, String>,
+        supplier: () -> Double,
+    ) {
         val attributes = attributes(labels)
         gauges += meter.gaugeBuilder(metric).buildWithCallback { it.record(supplier(), attributes) }
     }
 
-    override suspend fun <T> span(name: String, attributes: Map<String, String>, block: suspend () -> T): T {
+    override suspend fun <T> span(
+        name: String,
+        attributes: Map<String, String>,
+        block: suspend () -> T,
+    ): T {
         val span = tracer.spanBuilder(name).setAllAttributes(attributes(attributes)).startSpan()
         return try {
             withContext(Context.current().with(span).asContextElement()) { block() }
@@ -73,7 +89,8 @@ class OtelTelemetry(openTelemetry: OpenTelemetry) : Telemetry {
         val builder: AttributesBuilder = Attributes.builder()
         labels.forEach { (key, value) ->
             require(key !in Metrics.forbiddenLabels) {
-                "'$key' must not be a metric label or span attribute: it would leak personal data or explode the series count"
+                "'$key' must not be a metric label or span attribute: it would leak personal data or explode the " +
+                    "series count"
             }
             builder.put(key, value)
         }

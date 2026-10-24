@@ -20,27 +20,38 @@ private val log = LoggerFactory.getLogger("com.circaso.assistant.data.Vault")
  * TODO(decision: key storage and rotation; a stored message names no key id yet)
  */
 class AesTextVault(secrets: Secrets, local: Boolean) : TextVault {
-    private val key = SecretKeySpec(
-        MessageDigest.getInstance("SHA-256").digest(
-            (secrets.get("assistant.vault-key") ?: run {
-                check(local) { "Missing secret 'assistant.vault-key'" }
-                log.warn("No assistant.vault-key set; using a development key")
-                "circaso-development-assistant-vault-key"
-            }).toByteArray(),
-        ),
-        "AES",
-    )
+    private val key =
+        SecretKeySpec(
+            MessageDigest.getInstance("SHA-256").digest(
+                (
+                    secrets.get("assistant.vault-key") ?: run {
+                        check(local) { "Missing secret 'assistant.vault-key'" }
+                        log.warn("No assistant.vault-key set; using a development key")
+                        "circaso-development-assistant-vault-key"
+                    }
+                ).toByteArray(),
+            ),
+            "AES",
+        )
     private val random = SecureRandom()
 
     override fun seal(text: String): String {
         val iv = ByteArray(12).also(random::nextBytes)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv)) }
+        val cipher =
+            Cipher
+                .getInstance(
+                    "AES/GCM/NoPadding",
+                ).apply { init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv)) }
         return Base64.getEncoder().encodeToString(iv + cipher.doFinal(text.toByteArray()))
     }
 
-    override fun open(sealed: String): String = runCatching {
-        val bytes = Base64.getDecoder().decode(sealed)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, bytes.copyOfRange(0, 12))) }
-        String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)))
-    }.getOrDefault("")
+    override fun open(sealed: String): String =
+        runCatching {
+            val bytes = Base64.getDecoder().decode(sealed)
+            val cipher =
+                Cipher.getInstance("AES/GCM/NoPadding").apply {
+                    init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
+                }
+            String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)))
+        }.getOrDefault("")
 }

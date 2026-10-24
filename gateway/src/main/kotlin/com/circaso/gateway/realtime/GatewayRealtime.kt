@@ -26,13 +26,21 @@ class GatewayRealtime(
     private val push: PushGateway,
     private val registrations: PushRegistrations,
 ) : Realtime {
-
     override suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope): Resource<Unit> {
         if (hub.deliver(userId, envelope)) return Resource.success(Unit)
         val message = pushFor(envelope) ?: return Resource.success(Unit)
         val target = registrations.pushTarget(userId)
         if (target != null) {
-            val platform = if (target.platform.equals("ios", ignoreCase = true)) PushPlatform.IOS else PushPlatform.ANDROID
+            val platform =
+                if (target.platform.equals(
+                        "ios",
+                        ignoreCase = true,
+                    )
+                ) {
+                    PushPlatform.IOS
+                } else {
+                    PushPlatform.ANDROID
+                }
             val result = push.send(PushTarget(platform, target.token), message)
             if (result is Resource.Error) log.warn("push failed: code={}", result.error.code)
         }

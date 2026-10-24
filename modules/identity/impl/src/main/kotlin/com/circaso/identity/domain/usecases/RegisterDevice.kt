@@ -28,6 +28,7 @@ import com.circaso.integrations.api.EmailTemplate
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
+import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import java.time.Clock
 
@@ -58,16 +59,34 @@ class RegisterDevice(
         }
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
         val phone = account.phone
-        if (phone == null || !cache.isPhoneVerified(userId, command.deviceId)) return Resource.error(IdentityError.PhoneMismatch)
+        if (phone == null ||
+            !cache.isPhoneVerified(userId, command.deviceId)
+        ) {
+            return Resource.error(IdentityError.PhoneMismatch)
+        }
 
         val attested = attestation.verify(command.platform, command.deviceId, command.attestation)
-        if (!attested && config.attestation == AttestationMode.ENFORCE) return Resource.error(IdentityError.DeviceAttestationFailed)
+        if (!attested &&
+            config.attestation == AttestationMode.ENFORCE
+        ) {
+            return Resource.error(IdentityError.DeviceAttestationFailed)
+        }
 
         val now = clock.instant()
-        val device = Device(
-            userId, command.deviceId, command.platform, command.model, command.appVersion,
-            command.publicKey, command.keyAlgorithm, command.pushToken, DeviceStatus.ACTIVE, now, now,
-        )
+        val device =
+            Device(
+                userId,
+                command.deviceId,
+                command.platform,
+                command.model,
+                command.appVersion,
+                command.publicKey,
+                command.keyAlgorithm,
+                command.pushToken,
+                DeviceStatus.ACTIVE,
+                now,
+                now,
+            )
         val old = account.activeDeviceId?.takeIf { it != command.deviceId }?.let { devices.find(userId, it) }
         val replacedOld = old?.copy(status = DeviceStatus.REPLACED)
 
@@ -75,22 +94,42 @@ class RegisterDevice(
         val opened = sessions.open(activated, command.deviceId)
         val oldSession = replacedOld?.let { cache.deviceSession(userId, it.deviceId) }
 
-        val events = buildList {
-            if (account.status == AccountStatus.PENDING_PHONE) {
-                val hints = cache.hints(userId)
-                add(bus.envelope(AccountActivated(userId, phones.hmac(phone), AccountActivated.Hints(hints?.displayName, hints?.avatarUrl))))
+        val events =
+            buildList {
+                if (account.status == AccountStatus.PENDING_PHONE) {
+                    val hints = cache.hints(userId)
+                    add(
+                        bus.envelope(
+                            AccountActivated(
+                                userId,
+                                phones.hmac(phone),
+                                AccountActivated.Hints(hints?.displayName, hints?.avatarUrl),
+                            ),
+                        ),
+                    )
+                }
+                if (replacedOld !=
+                    null
+                ) {
+                    add(bus.envelope(DeviceReplaced(userId, replacedOld.deviceId, command.deviceId)))
+                }
             }
-            if (replacedOld != null) add(bus.envelope(DeviceReplaced(userId, replacedOld.deviceId, command.deviceId)))
-        }
         val newPhone = replacedOld != null
         store.commit(
             Changes(
                 accounts = listOf(activated),
                 devices = listOfNotNull(device, replacedOld),
                 sessions = opened.ended + opened.issued.session,
-                securityEvents = listOf(
-                    SecurityEvent(userId, null, if (newPhone) SecurityEventType.NEW_PHONE else SecurityEventType.SIGN_IN, command.model, null),
-                ),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(
+                            userId,
+                            null,
+                            if (newPhone) SecurityEventType.NEW_PHONE else SecurityEventType.SIGN_IN,
+                            command.model,
+                            null,
+                        ),
+                    ),
                 events = events,
             ),
         )
@@ -113,13 +152,13 @@ class RegisterDevice(
      * Best effort, once: the first time an account becomes active, a person who signed in with Google or Apple (the only way
      * we hold an email) gets a short welcome. The key is per account, so a retry cannot send a second one.
      */
-    private suspend fun welcome(userId: com.circaso.shared.UserId) {
+    private suspend fun welcome(userId: UserId) {
         val to = providers.links(userId).firstNotNullOfOrNull { it.email } ?: return
         email.send(to, EmailTemplate.WELCOME, idempotencyKey = "welcome-$userId")
     }
 
     /** Best effort: the owner hears about the new phone by email; a failed email never blocks the sign-in. */
-    private suspend fun alertOldPhoneOwner(userId: com.circaso.shared.UserId, newModel: String) {
+    private suspend fun alertOldPhoneOwner(userId: UserId, newModel: String) {
         val to = providers.links(userId).firstNotNullOfOrNull { it.email } ?: return
         email.send(to, EmailTemplate.NEW_PHONE_SIGN_IN, mapOf("DEVICE_MODEL" to newModel))
     }

@@ -18,8 +18,16 @@ class ListContacts(
     private val profiles: ProfileRepository,
     private val views: ProfileViews,
 ) {
-    suspend operator fun invoke(userId: UserId, cursor: String?, limit: Int): Resource<ContactPage> {
-        val after = cursor?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid"))) }
+    suspend operator fun invoke(
+        userId: UserId,
+        cursor: String?,
+        limit: Int,
+    ): Resource<ContactPage> {
+        val after =
+            cursor?.let {
+                runCatching { UUID.fromString(it) }.getOrNull()
+                    ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid")))
+            }
         val size = limit.coerceIn(1, 200)
 
         // Removed contacts stay in the table (so a sync doesn't add them back); skip them here.
@@ -28,7 +36,25 @@ class ListContacts(
         val page = active.take(size)
         val more = active.size > size || (rows.size == size * 3 && active.size >= size)
         val found = profiles.findAll(page.map { it.contactId }.toSet())
-        val entries = page.map { ContactEntry(it, found[it.contactId]?.let { p -> views.forViewer(userId, p) } ?: fallbackProfile(it.contactId)) }
-        return Resource.success(ContactPage(entries, if (more) page.last().contactId.value.toString() else null))
+        val entries =
+            page.map {
+                ContactEntry(
+                    it,
+                    found[it.contactId]?.let { p -> views.forViewer(userId, p) } ?: fallbackProfile(it.contactId),
+                )
+            }
+        return Resource.success(
+            ContactPage(
+                entries,
+                if (more) {
+                    page
+                        .last()
+                        .contactId.value
+                        .toString()
+                } else {
+                    null
+                },
+            ),
+        )
     }
 }

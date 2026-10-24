@@ -4,6 +4,7 @@ import com.circaso.build.DependencyRules
 plugins {
     kotlin("jvm")
     kotlin("plugin.serialization")
+    id("com.diffplug.spotless")
 }
 
 // Several projects are called `api` and `impl`; their group carries the rest of the path so that
@@ -20,6 +21,15 @@ val libs = the<VersionCatalogsExtension>().named("libs")
 
 kotlin {
     jvmToolchain(21)
+}
+
+// Layout is checked by `spotlessCheck` (part of `build`); the rules are in the root .editorconfig.
+spotless {
+    kotlin {
+        target("src/**/*.kt")
+        targetExclude("**/fixtures/**")
+        ktlint(libs.findVersion("ktlint").get().requiredVersion)
+    }
 }
 
 // kandra-core 0.5.1 depends on slf4j-simple, a second SLF4J provider next to Logback. Logback is the one provider.

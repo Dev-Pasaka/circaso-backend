@@ -1,6 +1,7 @@
 package com.circaso.web
 
 import com.circaso.shared.DeviceId
+import com.circaso.shared.DomainException
 import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
@@ -16,14 +17,19 @@ import io.ktor.util.AttributeKey
 import java.util.UUID
 
 /** Who the gateway authenticated for this call; set once per request, read by routes and controllers. */
-data class CallPrincipal(val userId: UserId, val deviceId: DeviceId, val sessionId: UUID, val scope: Scope)
+data class CallPrincipal(
+    val userId: UserId,
+    val deviceId: DeviceId,
+    val sessionId: UUID,
+    val scope: Scope,
+)
 
 val CallPrincipalKey = AttributeKey<CallPrincipal>("circaso.principal")
 
 fun ApplicationCall.principalOrNull(): CallPrincipal? = attributes.getOrNull(CallPrincipalKey)
 
 /** The caller. Only valid inside `authenticate { }`, which refuses a call without one. */
-fun ApplicationCall.principal(): CallPrincipal = principalOrNull() ?: throw com.circaso.shared.DomainException(SharedError.TokenMissing)
+fun ApplicationCall.principal(): CallPrincipal = principalOrNull() ?: throw DomainException(SharedError.TokenMissing)
 
 fun ApplicationCall.userId(): UserId = principal().userId
 
@@ -36,18 +42,23 @@ fun ApplicationCall.userId(): UserId = principal().userId
 fun Route.authenticate(vararg scopes: Scope, build: Route.() -> Unit): Route {
     require(scopes.isNotEmpty()) { "authenticate needs at least one scope" }
     val allowed = scopes.toSet()
-    val node = createChild(object : RouteSelector() {
-        override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int) = RouteSelectorEvaluation.Transparent
+    val node =
+        createChild(
+            object : RouteSelector() {
+                override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int) =
+                    RouteSelectorEvaluation.Transparent
 
-        override fun toString() = "(authenticate ${scopes.joinToString { it.wire }})"
-    })
+                override fun toString() = "(authenticate ${scopes.joinToString { it.wire }})"
+            },
+        )
     node.intercept(ApplicationCallPipeline.Plugins) {
         val principal = call.principalOrNull()
-        val refusal = when {
-            principal == null -> SharedError.TokenMissing
-            principal.scope !in allowed -> SharedError.ScopeInsufficient
-            else -> null
-        }
+        val refusal =
+            when {
+                principal == null -> SharedError.TokenMissing
+                principal.scope !in allowed -> SharedError.ScopeInsufficient
+                else -> null
+            }
         if (refusal != null) {
             call.respondError(refusal)
             finish()

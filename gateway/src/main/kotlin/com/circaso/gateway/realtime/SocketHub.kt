@@ -68,19 +68,24 @@ class SocketHub(
     private val scope: CoroutineScope,
     val nodeId: String = Uuid7.generate().toString(),
 ) {
-    private class Connection(val userId: UserId, val deviceId: DeviceId, val sessionId: SessionId, val session: WebSocketSession)
+    private class Connection(
+        val userId: UserId,
+        val deviceId: DeviceId,
+        val sessionId: SessionId,
+        val session: WebSocketSession,
+    )
 
     private val connections = ConcurrentHashMap<UserId, MutableSet<Connection>>()
 
     /** Starts listening on this node's channel. Called once, when the application starts. */
     fun start() {
-        redis.subscribe("node:$nodeId")
+        redis
+            .subscribe("node:$nodeId")
             .onEach { raw ->
                 runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
                     .onSuccess { handle(it) }
                     .onFailure { log.warn("unreadable node message", it) }
-            }
-            .launchIn(scope)
+            }.launchIn(scope)
     }
 
     private suspend fun handle(message: NodeMessage) {
@@ -96,7 +101,10 @@ class SocketHub(
         if (node == nodeId) {
             handle(NodeMessage.Frame(userId, frame))
         } else {
-            redis.publish("node:$node", CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Frame(userId, frame)))
+            redis.publish(
+                "node:$node",
+                CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Frame(userId, frame)),
+            )
         }
         return true
     }
@@ -107,7 +115,10 @@ class SocketHub(
         if (node == nodeId) {
             revokeLocal(userId, deviceId)
         } else {
-            redis.publish("node:$node", CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Revoke(userId, deviceId)))
+            redis.publish(
+                "node:$node",
+                CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Revoke(userId, deviceId)),
+            )
         }
     }
 
@@ -119,7 +130,15 @@ class SocketHub(
 
     private suspend fun revokeLocal(userId: UserId, deviceId: DeviceId?) {
         val targets = connections[userId]?.filter { deviceId == null || it.deviceId == deviceId } ?: return
-        val frame = RealtimeEnvelope("system", "session.revoked", Uuid7.generate().toString(), nextSystemSeq(userId), Instant.now(), JsonObject(emptyMap()))
+        val frame =
+            RealtimeEnvelope(
+                "system",
+                "session.revoked",
+                Uuid7.generate().toString(),
+                nextSystemSeq(userId),
+                Instant.now(),
+                JsonObject(emptyMap()),
+            )
         targets.forEach {
             send(it, frame)
             runCatching { it.session.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked")) }
@@ -127,8 +146,11 @@ class SocketHub(
     }
 
     private suspend fun send(connection: Connection, frame: RealtimeEnvelope) {
-        runCatching { connection.session.send(Frame.Text(CircasoJson.encodeToString(RealtimeEnvelope.serializer(), frame))) }
-            .onFailure { log.debug("socket write failed", it) }
+        runCatching {
+            connection.session.send(
+                Frame.Text(CircasoJson.encodeToString(RealtimeEnvelope.serializer(), frame)),
+            )
+        }.onFailure { log.debug("socket write failed", it) }
     }
 
     private fun register(connection: Connection) {
@@ -145,42 +167,56 @@ class SocketHub(
         }
     }
 
-    fun routes(route: Route) = with(route) {
-        webSocket("ws") {
-            val first = withTimeoutOrNull(AUTH_WINDOW_MILLIS) { incoming.receive() as? Frame.Text }
-            val hello = first?.let { runCatching { CircasoJson.decodeFromString(Hello.serializer(), it.readText()) }.getOrNull() }
-            if (hello == null || hello.type != "auth") {
-                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "auth required"))
-                return@webSocket
-            }
-            val principal = (verifier.verify(hello.accessToken) as? Resource.Success)?.data?.takeIf { it.scope == Scope.APP }
-            if (principal == null) {
-                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "unauthorized"))
-                return@webSocket
-            }
+    fun routes(route: Route) =
+        with(route) {
+            webSocket("ws") {
+                val first = withTimeoutOrNull(AUTH_WINDOW_MILLIS) { incoming.receive() as? Frame.Text }
+                val hello =
+                    first?.let {
+                        runCatching {
+                            CircasoJson.decodeFromString(
+                                Hello.serializer(),
+                                it.readText(),
+                            )
+                        }.getOrNull()
+                    }
+                if (hello == null || hello.type != "auth") {
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "auth required"))
+                    return@webSocket
+                }
+                val principal =
+                    (verifier.verify(hello.accessToken) as? Resource.Success)?.data?.takeIf {
+                        it.scope ==
+                            Scope.APP
+                    }
+                if (principal == null) {
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "unauthorized"))
+                    return@webSocket
+                }
 
-            val connection = Connection(principal.userId, principal.deviceId, principal.sessionId, this)
-            register(connection)
-            redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
-            val heartbeat = scope.launch {
-                while (true) {
-                    delay(HEARTBEAT_MILLIS)
-                    redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
-                    runCatching { send(Frame.Text("""{"type":"ping"}""")) }
+                val connection = Connection(principal.userId, principal.deviceId, principal.sessionId, this)
+                register(connection)
+                redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
+                val heartbeat =
+                    scope.launch {
+                        while (true) {
+                            delay(HEARTBEAT_MILLIS)
+                            redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
+                            runCatching { send(Frame.Text("""{"type":"ping"}""")) }
+                        }
+                    }
+                try {
+                    replay(connection, hello.last)
+                    for (frame in incoming) {
+                        // Only typing, read receipts, presence and acks travel this way; none are handled yet.
+                        if (frame is Frame.Text) log.debug("client frame ignored")
+                    }
+                } finally {
+                    heartbeat.cancel()
+                    unregister(connection)
                 }
-            }
-            try {
-                replay(connection, hello.last)
-                for (frame in incoming) {
-                    // Only typing, read receipts, presence and acks travel this way; none are handled yet.
-                    if (frame is Frame.Text) log.debug("client frame ignored")
-                }
-            } finally {
-                heartbeat.cancel()
-                unregister(connection)
             }
         }
-    }
 
     private suspend fun replay(connection: Connection, last: Map<String, Long>) {
         for (module in replays()) {

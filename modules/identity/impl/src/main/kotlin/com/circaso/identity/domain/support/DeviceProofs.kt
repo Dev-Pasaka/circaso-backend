@@ -12,8 +12,11 @@ import java.time.Duration
  * and the timestamp must be recent, so a captured proof can't be replayed later.
  */
 class DeviceProofs(private val keys: DeviceKeyVerifier, private val clock: Clock, private val window: Duration) {
-
-    fun valid(device: Device?, payload: String, proof: DeviceProof?): Boolean {
+    fun valid(
+        device: Device?,
+        payload: String,
+        proof: DeviceProof?,
+    ): Boolean {
         if (device == null || proof == null || device.status != DeviceStatus.ACTIVE) return false
         if (Duration.between(proof.timestamp, clock.instant()).abs() > window) return false
         return keys.verify(device.publicKey, device.keyAlgorithm, payload.toByteArray(), proof.signature)

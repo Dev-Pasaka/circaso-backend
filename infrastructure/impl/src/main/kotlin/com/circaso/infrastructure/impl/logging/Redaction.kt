@@ -11,10 +11,11 @@ object Redaction {
     private val e164 = Regex(E164_PATTERN)
     private val jwt = Regex(JWT_PATTERN)
 
-    fun mask(text: String): String = text
-        .replace(jwt, "[jwt]")
-        .replace(e164) { match ->
-            val digits = match.value
-            "+${digits.drop(1).take(3)}•••${digits.takeLast(3)}"
-        }
+    fun mask(text: String): String =
+        text
+            .replace(jwt, "[jwt]")
+            .replace(e164) { match ->
+                val digits = match.value
+                "+${digits.drop(1).take(3)}•••${digits.takeLast(3)}"
+            }
 }

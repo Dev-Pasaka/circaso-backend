@@ -42,37 +42,55 @@ class ResendEmail(
 ) : EmailGateway {
     private val log = LoggerFactory.getLogger(ResendEmail::class.java)
 
-    override suspend fun send(to: String, template: EmailTemplate, variables: Map<String, String>, idempotencyKey: String?): Resource<EmailReceipt> {
-        val templateId = templates[template] ?: return Resource.error(IntegrationError.Rejected("No Resend template is configured for $template."))
-        val body = buildJsonObject {
-            put("from", from)
-            put("to", buildJsonArray { add(JsonPrimitive(to)) })
-            putJsonObject("template") {
-                put("id", templateId)
-                putJsonObject("variables") { variables.forEach { (k, v) -> put(k, v) } }
+    override suspend fun send(
+        to: String,
+        template: EmailTemplate,
+        variables: Map<String, String>,
+        idempotencyKey: String?,
+    ): Resource<EmailReceipt> {
+        val templateId =
+            templates[template]
+                ?: return Resource.error(IntegrationError.Rejected("No Resend template is configured for $template."))
+        val body =
+            buildJsonObject {
+                put("from", from)
+                put("to", buildJsonArray { add(JsonPrimitive(to)) })
+                putJsonObject("template") {
+                    put("id", templateId)
+                    putJsonObject("variables") { variables.forEach { (k, v) -> put(k, v) } }
+                }
             }
-        }
 
-        val (status, text) = try {
-            val response = http.post("/emails") {
-                operation("send_email")
-                header(HttpHeaders.Authorization, "Bearer $apiKey")
-                header(HttpHeaders.UserAgent, "circaso-backend") // Resend answers 403 to a request with none
-                idempotencyKey?.let { header(IDEMPOTENCY_KEY_HEADER, it.take(256)) }
-                contentType(ContentType.Application.Json)
-                setBody(body.toString())
+        val (status, text) =
+            try {
+                val response =
+                    http.post("/emails") {
+                        operation("send_email")
+                        header(HttpHeaders.Authorization, "Bearer $apiKey")
+                        header(HttpHeaders.UserAgent, "circaso-backend") // Resend answers 403 to a request with none
+                        idempotencyKey?.let { header(IDEMPOTENCY_KEY_HEADER, it.take(256)) }
+                        contentType(ContentType.Application.Json)
+                        setBody(body.toString())
+                    }
+                response.status.value to response.bodyAsText()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("resend unreachable: template={} error={}", template, e::class.simpleName)
+                return Resource.error(IntegrationError.Unavailable("Resend"), e)
             }
-            response.status.value to response.bodyAsText()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log.warn("resend unreachable: template={} error={}", template, e::class.simpleName)
-            return Resource.error(IntegrationError.Unavailable("Resend"), e)
-        }
 
         return when {
             status in 200..299 -> {
-                val id = runCatching { Json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.content }.getOrNull()
+                val id =
+                    runCatching {
+                        Json
+                            .parseToJsonElement(
+                                text,
+                            ).jsonObject["id"]
+                            ?.jsonPrimitive
+                            ?.content
+                    }.getOrNull()
                 if (id == null) {
                     log.warn("resend answered {} without an id: template={}", status, template)
                     Resource.error(IntegrationError.Unavailable("Resend"))
@@ -80,15 +98,18 @@ class ResendEmail(
                     Resource.success(EmailReceipt(id, "resend"))
                 }
             }
+
             // 401 and 403 are our key or sender being wrong, not the caller's input: an error for us.
             status == 401 || status == 403 -> {
                 log.error("resend refused our credentials: status={} template={}", status, template)
                 Resource.error(IntegrationError.Unavailable("Resend"))
             }
+
             status == 429 || status >= 500 -> {
                 log.warn("resend unavailable: status={} template={}", status, template)
                 Resource.error(IntegrationError.Unavailable("Resend"))
             }
+
             else -> {
                 log.warn("resend refused: status={} template={}", status, template)
                 Resource.error(IntegrationError.Rejected("Resend refused the email (status $status)."))

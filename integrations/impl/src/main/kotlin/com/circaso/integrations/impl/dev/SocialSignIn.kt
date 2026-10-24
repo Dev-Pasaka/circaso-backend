@@ -14,7 +14,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 class FakeSocialSignIn : SocialSignIn {
     val revoked: MutableList<String> = CopyOnWriteArrayList()
 
-    override suspend fun verify(provider: SocialProvider, idToken: String, nonce: String): Resource<SocialIdentity> {
+    override suspend fun verify(
+        provider: SocialProvider,
+        idToken: String,
+        nonce: String,
+    ): Resource<SocialIdentity> {
         val parts = idToken.split(':')
         if (parts.size < 2 || parts[0] != "dev" || parts[1].isBlank()) {
             return Resource.error(IntegrationError.Rejected("The sign-in token was not accepted."))

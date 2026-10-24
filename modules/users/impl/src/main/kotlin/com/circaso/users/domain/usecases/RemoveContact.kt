@@ -25,7 +25,9 @@ class RemoveContact(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(userId: UserId, contactId: UserId): Resource<Unit> {
-        val contact = contacts.find(userId, contactId)?.takeIf { it.status == ContactStatus.ACTIVE } ?: return Resource.error(UsersError.ContactNotFound)
+        val contact =
+            contacts.find(userId, contactId)?.takeIf { it.status == ContactStatus.ACTIVE }
+                ?: return Resource.error(UsersError.ContactNotFound)
         store.commit(
             UsersChanges(
                 contacts = listOf(contact.copy(status = ContactStatus.REMOVED, removedAt = clock.instant())),

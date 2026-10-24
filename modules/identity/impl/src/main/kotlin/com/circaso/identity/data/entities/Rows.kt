@@ -28,7 +28,11 @@ data class AccountRow(
 )
 
 @ScyllaTable(name = "phone_claims", keyspace = KS)
-data class PhoneClaimRow(@PartitionKey @Sensitive val phone: String, val userId: UUID, val claimedAt: Instant)
+data class PhoneClaimRow(
+    @PartitionKey @Sensitive val phone: String,
+    val userId: UUID,
+    val claimedAt: Instant,
+)
 
 @ScyllaTable(name = "provider_claims", keyspace = KS)
 data class ProviderClaimRow(
@@ -103,7 +107,10 @@ data class SupportRecoveryRow(
 // Agents open a case by request id. Kandra's @LookupIndex can't sit on a clustering key (its lookup table would
 // repeat the column), so this is a table of our own, written in the same batch as the case.
 @ScyllaTable(name = "support_recoveries_by_request", keyspace = KS)
-data class RecoveryByRequestRow(@PartitionKey val requestId: UUID, val userId: UUID)
+data class RecoveryByRequestRow(
+    @PartitionKey val requestId: UUID,
+    val userId: UUID,
+)
 
 @ScyllaTable(name = "outbox", keyspace = KS)
 @Ttl(seconds = 60 * 60 * 24 * 7)

@@ -20,7 +20,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LoggingTest {
-
     private val context = LoggerFactory.getILoggerFactory() as LoggerContext
     private val originalOut = System.out
     private val captured = ByteArrayOutputStream()
@@ -43,17 +42,27 @@ class LoggingTest {
             doConfigure(javaClass.getResource("/logback.xml"))
         }
         // the format that isn't chosen is declared but unreferenced, which logback reports as a warning
-        val problems = context.statusManager.copyOfStatusList
-            .filter { it.level >= ch.qos.logback.core.status.Status.WARN && "not referenced" !in it.message }
+        val problems =
+            context.statusManager.copyOfStatusList
+                .filter { it.level >= ch.qos.logback.core.status.Status.WARN && "not referenced" !in it.message }
         assertTrue(problems.isEmpty(), "logback.xml has configuration problems: $problems")
         write(LoggerFactory.getLogger("com.circaso.identity.presentation.SessionService"))
         return captured.toString()
     }
 
     /** One real event, built by logback, for the formatter tests. */
-    private fun eventOf(level: String, message: String, vararg args: Any, mdc: Map<String, String> = emptyMap()): ILoggingEvent {
+    private fun eventOf(
+        level: String,
+        message: String,
+        vararg args: Any,
+        mdc: Map<String, String> = emptyMap(),
+    ): ILoggingEvent {
         val logger = LoggerFactory.getLogger("com.circaso.gateway.RequestLog") as Logger
-        val appender = ListAppender<ILoggingEvent>().apply { this.context = this@LoggingTest.context; start() }
+        val appender =
+            ListAppender<ILoggingEvent>().apply {
+                this.context = this@LoggingTest.context
+                start()
+            }
         logger.level = ch.qos.logback.classic.Level.TRACE
         logger.addAppender(appender)
         mdc.forEach { (k, v) -> MDC.put(k, v) }
@@ -68,10 +77,18 @@ class LoggingTest {
 
     @Test
     fun `the pretty format shows the request id, module and a request line`() {
-        val out = logWith("PRETTY") { log ->
-            MDC.put("requestId", "4bf92f3577b34da6a3ce929d0e0e4736")
-            log.info("out", kv("kind", "response"), kv("http.method", "GET"), kv("http.route", "/v1/me/profile"), kv("http.status", 200), kv("durationMs", 12))
-        }
+        val out =
+            logWith("PRETTY") { log ->
+                MDC.put("requestId", "4bf92f3577b34da6a3ce929d0e0e4736")
+                log.info(
+                    "out",
+                    kv("kind", "response"),
+                    kv("http.method", "GET"),
+                    kv("http.route", "/v1/me/profile"),
+                    kv("http.status", 200),
+                    kv("durationMs", 12),
+                )
+            }
 
         assertTrue(out.contains("4bf92f35"), out)
         assertTrue(out.contains("identity"), out)
@@ -81,10 +98,16 @@ class LoggingTest {
 
     @Test
     fun `the json format carries the request id, module, kind and whole ids as fields`() {
-        val out = logWith("JSON") { log ->
-            MDC.put("requestId", "4bf92f3577b34da6a3ce929d0e0e4736")
-            log.info("out", kv("kind", "response"), kv("http.status", 200), kv("userId", "0193f2c1-7a4e-7c21-9b1e-5f3d2a8c4e61"))
-        }
+        val out =
+            logWith("JSON") { log ->
+                MDC.put("requestId", "4bf92f3577b34da6a3ce929d0e0e4736")
+                log.info(
+                    "out",
+                    kv("kind", "response"),
+                    kv("http.status", 200),
+                    kv("userId", "0193f2c1-7a4e-7c21-9b1e-5f3d2a8c4e61"),
+                )
+            }
         val json = Json.parseToJsonElement(out.trim().lines().last()).jsonObject
 
         assertEquals("4bf92f3577b34da6a3ce929d0e0e4736", json["requestId"]!!.jsonPrimitive.content)
@@ -98,9 +121,10 @@ class LoggingTest {
     @Test
     fun `the json format masks a phone number and a token that slip into a message`() {
         val jwt = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl"
-        val out = logWith("JSON") { log ->
-            log.warn("sent code to +254712345678 with $jwt")
-        }
+        val out =
+            logWith("JSON") { log ->
+                log.warn("sent code to +254712345678 with $jwt")
+            }
 
         assertFalse(out.contains("+254712345678"), out)
         assertFalse(out.contains(jwt), out)
@@ -117,12 +141,19 @@ class LoggingTest {
     @Test
     fun `colors follow the table`() {
         val formatter = LineFormatter(Palette(true))
-        val line = formatter.line(
-            eventOf(
-                "warn", "out", kv("kind", "response"), kv("http.method", "POST"), kv("http.route", "/v1/auth/code"),
-                kv("http.status", 429), kv("durationMs", 450), kv("error.code", "request.rate_limited"),
-            ),
-        )
+        val line =
+            formatter.line(
+                eventOf(
+                    "warn",
+                    "out",
+                    kv("kind", "response"),
+                    kv("http.method", "POST"),
+                    kv("http.route", "/v1/auth/code"),
+                    kv("http.status", 429),
+                    kv("durationMs", 450),
+                    kv("error.code", "request.rate_limited"),
+                ),
+            )
 
         assertTrue(line.contains("\u001B[90m← out\u001B[0m"), line)
         assertTrue(line.contains("\u001B[32mPOST\u001B[0m"), line)
@@ -134,7 +165,10 @@ class LoggingTest {
     @Test
     fun `a slow request is red and a server error is bold red`() {
         val formatter = LineFormatter(Palette(true))
-        val line = formatter.line(eventOf("error", "out", kv("kind", "response"), kv("http.status", 503), kv("durationMs", 1500)))
+        val line =
+            formatter.line(
+                eventOf("error", "out", kv("kind", "response"), kv("http.status", 503), kv("durationMs", 1500)),
+            )
 
         assertTrue(line.contains("\u001B[1;31m503\u001B[0m"), line)
         assertTrue(line.contains("\u001B[31m1500ms\u001B[0m"), line)
@@ -143,7 +177,15 @@ class LoggingTest {
     @Test
     fun `the console shortens user ids and keeps other metadata as key=value`() {
         val formatter = LineFormatter(Palette(false))
-        val line = formatter.line(eventOf("info", "attempt failed", kv("vendor", "africastalking"), kv("userId", "0193f2c1-7a4e-7c21-9b1e-5f3d2a8c4e61")))
+        val line =
+            formatter.line(
+                eventOf(
+                    "info",
+                    "attempt failed",
+                    kv("vendor", "africastalking"),
+                    kv("userId", "0193f2c1-7a4e-7c21-9b1e-5f3d2a8c4e61"),
+                ),
+            )
 
         assertEquals("attempt failed vendor=africastalking userId=0193…e61", line)
     }

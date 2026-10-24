@@ -5,12 +5,18 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import net.logstash.logback.composite.AbstractFieldJsonProvider
 import net.logstash.logback.composite.JsonWritingUtils
 import tools.jackson.core.JsonGenerator
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 // The conversion words declared in logback.xml: %lvl, %rid, %mod, %line.
 
 private val formatter by lazy { LineFormatter(Palette.detected) }
 
-private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault())
+private val timeFormat =
+    DateTimeFormatter
+        .ofPattern(
+            "HH:mm:ss.SSS",
+        ).withZone(ZoneId.systemDefault())
 
 /** The console time, `18:07:12.347` in local time, dim. Logback's own `%gray` ignores whether stdout is a terminal. */
 class DimTime : ClassicConverter() {

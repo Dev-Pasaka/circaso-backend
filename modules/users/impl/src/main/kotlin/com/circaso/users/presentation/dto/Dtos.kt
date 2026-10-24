@@ -50,13 +50,23 @@ data class UploadUrlResponse(val uploadUrl: String, val objectKey: String, val e
 data class SetAvatarRequest(val objectKey: String)
 
 @Serializable
-data class HandleAvailabilityResponse(val handle: String, val available: Boolean, val status: String, val suggestion: String? = null)
+data class HandleAvailabilityResponse(
+    val handle: String,
+    val available: Boolean,
+    val status: String,
+    val suggestion: String? = null,
+)
 
 @Serializable
 data class ClaimHandleRequest(val handle: String)
 
 @Serializable
-data class SyncRequest(val syncId: String, val batch: Int = 1, val final: Boolean = false, val phones: List<String>)
+data class SyncRequest(
+    val syncId: String,
+    val batch: Int = 1,
+    val final: Boolean = false,
+    val phones: List<String>,
+)
 
 @Serializable
 data class SyncMatchDto(val phone: String, val user: PublicProfileDto)
@@ -65,7 +75,11 @@ data class SyncMatchDto(val phone: String, val user: PublicProfileDto)
 data class SyncResponse(val matches: List<SyncMatchDto>)
 
 @Serializable
-data class ContactDto(val user: PublicProfileDto, val source: String, @Serializable(with = InstantSerializer::class) val addedAt: Instant)
+data class ContactDto(
+    val user: PublicProfileDto,
+    val source: String,
+    @Serializable(with = InstantSerializer::class) val addedAt: Instant,
+)
 
 @Serializable
 data class ContactsResponse(val contacts: List<ContactDto>, val nextCursor: String? = null)

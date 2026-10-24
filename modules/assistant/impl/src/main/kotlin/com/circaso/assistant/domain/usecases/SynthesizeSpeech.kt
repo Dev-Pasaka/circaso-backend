@@ -24,22 +24,37 @@ class SynthesizeSpeech(
     private val config: AssistantConfig,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(userId: UserId, text: String, language: String?): Resource<SpokenAudio> {
+    suspend operator fun invoke(
+        userId: UserId,
+        text: String,
+        language: String?,
+    ): Resource<SpokenAudio> {
         val spoken = text.trim()
         if (spoken.isEmpty() || spoken.length > config.maxSpeechChars) {
-            return Resource.error(SharedError.Malformed(mapOf("text" to "must be 1 to ${config.maxSpeechChars} characters")))
+            return Resource.error(
+                SharedError.Malformed(
+                    mapOf("text" to "must be 1 to ${config.maxSpeechChars} characters"),
+                ),
+            )
         }
         val seconds = (spoken.length + CHARS_PER_SECOND - 1) / CHARS_PER_SECOND
         val day = clock.today()
         val limit = config.limitsOf(entitlements.planOf(userId)).voiceSecondsPerDay
-        if (quota.voiceSeconds(userId, day) + seconds > limit) return Resource.error(AssistantError.QuotaExceeded(RESET_HINT_SECONDS))
+        if (quota.voiceSeconds(userId, day) + seconds >
+            limit
+        ) {
+            return Resource.error(AssistantError.QuotaExceeded(RESET_HINT_SECONDS))
+        }
 
         return when (val r = speech.speak(spoken, language)) {
             is Resource.Success -> {
                 quota.addVoiceSeconds(userId, day, seconds)
                 r
             }
-            is Resource.Error -> Resource.error(AssistantError.ModelUnavailable, r.cause)
+
+            is Resource.Error -> {
+                Resource.error(AssistantError.ModelUnavailable, r.cause)
+            }
         }
     }
 

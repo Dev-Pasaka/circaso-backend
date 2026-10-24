@@ -45,12 +45,13 @@ class TwilioVerify(
     override val managesCodes: Boolean = true
 
     override suspend fun start(to: PhoneNumber, appHash: String?): Resource<Unit> {
-        val form = Parameters.build {
-            append("To", to.e164)
-            append("Channel", "sms")
-            locale?.let { append("Locale", it) }
-            appHash?.takeIf { it.isNotBlank() }?.let { append("AppHash", it) }
-        }
+        val form =
+            Parameters.build {
+                append("To", to.e164)
+                append("Channel", "sms")
+                locale?.let { append("Locale", it) }
+                appHash?.takeIf { it.isNotBlank() }?.let { append("AppHash", it) }
+            }
         return when (val r = post("/v2/Services/$serviceSid/Verifications", "start_verification", form)) {
             is Resource.Error -> Resource.error(r.error, r.cause)
             is Resource.Success -> if (r.data.status in 200..299) Resource.success(Unit) else failure(r.data, "start")
@@ -58,57 +59,92 @@ class TwilioVerify(
     }
 
     override suspend fun check(to: PhoneNumber, code: String): Resource<CodeCheck> {
-        val form = Parameters.build {
-            append("To", to.e164)
-            append("Code", code)
-        }
+        val form =
+            Parameters.build {
+                append("To", to.e164)
+                append("Code", code)
+            }
         return when (val r = post("/v2/Services/$serviceSid/VerificationCheck", "check_verification", form)) {
-            is Resource.Error -> Resource.error(r.error, r.cause)
-            is Resource.Success -> when (r.data.status) {
-                in 200..299 -> {
-                    val json = runCatching { Json.parseToJsonElement(r.data.body).jsonObject }.getOrNull()
-                    val approved = json?.get("status")?.jsonPrimitive?.content == "approved" || json?.get("valid")?.jsonPrimitive?.booleanOrNull == true
-                    if (json == null) Resource.error(IntegrationError.Unavailable("Twilio")) else Resource.success(if (approved) CodeCheck.APPROVED else CodeCheck.DENIED)
+            is Resource.Error -> {
+                Resource.error(r.error, r.cause)
+            }
+
+            is Resource.Success -> {
+                when (r.data.status) {
+                    in 200..299 -> {
+                        val json = runCatching { Json.parseToJsonElement(r.data.body).jsonObject }.getOrNull()
+                        val approved =
+                            json?.get("status")?.jsonPrimitive?.content == "approved" ||
+                                json?.get("valid")?.jsonPrimitive?.booleanOrNull == true
+                        if (json ==
+                            null
+                        ) {
+                            Resource.error(IntegrationError.Unavailable("Twilio"))
+                        } else {
+                            Resource.success(if (approved) CodeCheck.APPROVED else CodeCheck.DENIED)
+                        }
+                    }
+
+                    404 -> {
+                        Resource.success(CodeCheck.EXPIRED)
+                    }
+
+                    else -> {
+                        failure(r.data, "check")
+                    }
                 }
-                404 -> Resource.success(CodeCheck.EXPIRED)
-                else -> failure(r.data, "check")
             }
         }
     }
 
     /** Twilio's numeric error code (60200 invalid number, 21608 trial account and unverified number, ...), from its reply. Never the message: it can hold the number. */
     private fun errorCode(body: String): Int? =
-        runCatching { Json.parseToJsonElement(body).jsonObject["code"]?.jsonPrimitive?.intOrNull }.getOrNull()
+        runCatching {
+            Json
+                .parseToJsonElement(body)
+                .jsonObject["code"]
+                ?.jsonPrimitive
+                ?.intOrNull
+        }.getOrNull()
 
-    private fun <T> failure(answer: Answer, step: String): Resource<T> = when (val status = answer.status) {
-        400 -> {
-            log.warn("twilio would not text this number: step={} twilioCode={}", step, errorCode(answer.body))
-            Resource.error(IntegrationError.Rejected("That number cannot receive the code."))
+    private fun <T> failure(answer: Answer, step: String): Resource<T> =
+        when (val status = answer.status) {
+            400 -> {
+                log.warn("twilio would not text this number: step={} twilioCode={}", step, errorCode(answer.body))
+                Resource.error(IntegrationError.Rejected("That number cannot receive the code."))
+            }
+
+            401, 403 -> {
+                log.error("twilio refused: status={} step={} twilioCode={}", status, step, errorCode(answer.body))
+                Resource.error(IntegrationError.Unavailable("Twilio"))
+            }
+
+            429 -> {
+                log.warn("twilio rate limited: step={} twilioCode={}", step, errorCode(answer.body))
+                Resource.error(SharedError.RateLimited(600))
+            }
+
+            else -> {
+                log.warn("twilio answered {}: step={} twilioCode={}", status, step, errorCode(answer.body))
+                Resource.error(IntegrationError.Unavailable("Twilio"))
+            }
         }
-        401, 403 -> {
-            log.error("twilio refused: status={} step={} twilioCode={}", status, step, errorCode(answer.body))
-            Resource.error(IntegrationError.Unavailable("Twilio"))
-        }
-        429 -> {
-            log.warn("twilio rate limited: step={} twilioCode={}", step, errorCode(answer.body))
-            Resource.error(SharedError.RateLimited(600))
-        }
-        else -> {
-            log.warn("twilio answered {}: step={} twilioCode={}", status, step, errorCode(answer.body))
-            Resource.error(IntegrationError.Unavailable("Twilio"))
-        }
-    }
 
     private class Answer(val status: Int, val body: String)
 
-    private suspend fun post(path: String, operation: String, form: Parameters): Resource<Answer> =
+    private suspend fun post(
+        path: String,
+        operation: String,
+        form: Parameters,
+    ): Resource<Answer> =
         try {
-            val response = http.post(path) {
-                operation(operation)
-                header(HttpHeaders.Authorization, authorization)
-                header(HttpHeaders.Accept, "application/json")
-                setBody(FormDataContent(form))
-            }
+            val response =
+                http.post(path) {
+                    operation(operation)
+                    header(HttpHeaders.Authorization, authorization)
+                    header(HttpHeaders.Accept, "application/json")
+                    setBody(FormDataContent(form))
+                }
             Resource.success(Answer(response.status.value, response.bodyAsText()))
         } catch (e: CancellationException) {
             throw e

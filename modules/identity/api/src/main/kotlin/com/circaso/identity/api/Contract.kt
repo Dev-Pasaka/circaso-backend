@@ -14,12 +14,18 @@ value class SessionId(val value: UUID) {
 
     companion object {
         fun new(): SessionId = SessionId(Uuid7.generate())
+
         fun parse(raw: String): SessionId? = Uuid7.parse(raw)?.let(::SessionId)
     }
 }
 
 /** Who a verified access token belongs to. */
-data class Principal(val userId: UserId, val deviceId: DeviceId, val sessionId: SessionId, val scope: Scope)
+data class Principal(
+    val userId: UserId,
+    val deviceId: DeviceId,
+    val sessionId: SessionId,
+    val scope: Scope,
+)
 
 /** The gateway, on every request. */
 interface TokenVerifier {
@@ -39,7 +45,12 @@ interface AccountDirectory {
 
 /** Device-bound actions; wallet transactions are signed with the Circle PIN instead. */
 interface DeviceSignatures {
-    suspend fun verify(userId: UserId, deviceId: DeviceId, payload: ByteArray, signature: ByteArray): Resource<Unit>
+    suspend fun verify(
+        userId: UserId,
+        deviceId: DeviceId,
+        payload: ByteArray,
+        signature: ByteArray,
+    ): Resource<Unit>
 }
 
 /**

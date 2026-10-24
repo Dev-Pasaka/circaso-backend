@@ -26,13 +26,17 @@ private val log = LoggerFactory.getLogger("com.circaso.identity.data.security.Pr
  * with AES-GCM under a key derived from the same secret, so Redis and its backups never hold a raw number.
  */
 class KeyedPhoneProtection(secrets: Secrets, local: Boolean) : PhoneProtection {
-    private val secret: ByteArray = (secrets.get("phone-hmac-key") ?: run {
-        check(local) { "Missing secret 'phone-hmac-key'" }
-        log.warn("No phone-hmac-key set; using a development key")
-        "circaso-development-phone-hmac-key"
-    }).toByteArray()
+    private val secret: ByteArray =
+        (
+            secrets.get("phone-hmac-key") ?: run {
+                check(local) { "Missing secret 'phone-hmac-key'" }
+                log.warn("No phone-hmac-key set; using a development key")
+                "circaso-development-phone-hmac-key"
+            }
+        ).toByteArray()
 
-    private val sealKey = SecretKeySpec(MessageDigest.getInstance("SHA-256").digest("otp-seal:".toByteArray() + secret), "AES")
+    private val sealKey =
+        SecretKeySpec(MessageDigest.getInstance("SHA-256").digest("otp-seal:".toByteArray() + secret), "AES")
     private val random = SecureRandom()
 
     override fun hmac(phone: PhoneNumber): String {
@@ -42,23 +46,35 @@ class KeyedPhoneProtection(secrets: Secrets, local: Boolean) : PhoneProtection {
 
     override fun seal(phone: PhoneNumber): String {
         val iv = ByteArray(12).also(random::nextBytes)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, sealKey, GCMParameterSpec(128, iv)) }
+        val cipher =
+            Cipher.getInstance("AES/GCM/NoPadding").apply {
+                init(Cipher.ENCRYPT_MODE, sealKey, GCMParameterSpec(128, iv))
+            }
         return Base64.getEncoder().encodeToString(iv + cipher.doFinal(phone.e164.toByteArray()))
     }
 
-    override fun unseal(sealed: String): PhoneNumber? = runCatching {
-        val bytes = Base64.getDecoder().decode(sealed)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            .apply { init(Cipher.DECRYPT_MODE, sealKey, GCMParameterSpec(128, bytes.copyOfRange(0, 12))) }
-        PhoneNumber.parse(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size))))
-    }.getOrNull()
+    override fun unseal(sealed: String): PhoneNumber? =
+        runCatching {
+            val bytes = Base64.getDecoder().decode(sealed)
+            val cipher =
+                Cipher
+                    .getInstance("AES/GCM/NoPadding")
+                    .apply { init(Cipher.DECRYPT_MODE, sealKey, GCMParameterSpec(128, bytes.copyOfRange(0, 12))) }
+            PhoneNumber.parse(String(cipher.doFinal(bytes.copyOfRange(12, bytes.size))))
+        }.getOrNull()
 }
 
 /** Phones sign with a hardware-backed ES256 key (Android Keystore, Secure Enclave): an SPKI public key, DER signatures. */
 class EcdsaDeviceKeyVerifier : DeviceKeyVerifier {
-    override fun isValid(publicKey: String, algorithm: String): Boolean = algorithm == "ES256" && parse(publicKey) != null
+    override fun isValid(publicKey: String, algorithm: String): Boolean =
+        algorithm == "ES256" && parse(publicKey) != null
 
-    override fun verify(publicKey: String, algorithm: String, payload: ByteArray, signature: ByteArray): Boolean {
+    override fun verify(
+        publicKey: String,
+        algorithm: String,
+        payload: ByteArray,
+        signature: ByteArray,
+    ): Boolean {
         if (algorithm != "ES256") return false
         val key = parse(publicKey) ?: return false
         return runCatching {
@@ -70,9 +86,10 @@ class EcdsaDeviceKeyVerifier : DeviceKeyVerifier {
         }.getOrDefault(false)
     }
 
-    private fun parse(base64: String) = runCatching {
-        KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(base64)))
-    }.getOrNull()
+    private fun parse(base64: String) =
+        runCatching {
+            KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(base64)))
+        }.getOrNull()
 }
 
 /**
@@ -84,8 +101,16 @@ class EcdsaDeviceKeyVerifier : DeviceKeyVerifier {
 class UnconfiguredAttestation : AttestationVerifier {
     private val log = LoggerFactory.getLogger(UnconfiguredAttestation::class.java)
 
-    override suspend fun verify(platform: String, deviceId: DeviceId, attestation: String?): Boolean {
-        log.info("attestation not checked: no verifier is configured (platform={}, present={})", platform, !attestation.isNullOrBlank())
+    override suspend fun verify(
+        platform: String,
+        deviceId: DeviceId,
+        attestation: String?,
+    ): Boolean {
+        log.info(
+            "attestation not checked: no verifier is configured (platform={}, present={})",
+            platform,
+            !attestation.isNullOrBlank(),
+        )
         return false
     }
 }

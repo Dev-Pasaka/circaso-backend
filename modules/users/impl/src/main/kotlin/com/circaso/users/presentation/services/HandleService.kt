@@ -16,6 +16,8 @@ class HandleService(
     private val lookupHandle: LookupHandle,
 ) {
     suspend fun check(userId: UserId, handle: String): Resource<HandleCheck> = checkHandle(userId, handle)
+
     suspend fun claim(userId: UserId, handle: String): Resource<MyProfile> = claimHandle(userId, handle)
+
     suspend fun getByHandle(viewer: UserId, handle: String): Resource<PublicProfile> = lookupHandle(viewer, handle)
 }

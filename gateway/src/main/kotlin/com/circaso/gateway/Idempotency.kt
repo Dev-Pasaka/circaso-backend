@@ -7,6 +7,7 @@ import java.time.Duration
 /** What Redis holds for one `Idempotency-Key`: a marker while the first request runs, then its response. */
 sealed interface IdempotencyState {
     data object InProgress : IdempotencyState
+
     data class Done(val status: Int, val json: String) : IdempotencyState
 }
 
@@ -16,7 +17,6 @@ sealed interface IdempotencyState {
  * Keys are scoped to the caller and the route. Server errors are not stored, so a retry runs again.
  */
 class Idempotency(private val redis: RedisScope) {
-
     /** True if the caller may run the request; false if the key is already taken (see [state]). */
     suspend fun begin(key: String): Boolean = redis.setIfAbsent(key, MARKER, MARKER_TTL)
 
@@ -27,7 +27,11 @@ class Idempotency(private val redis: RedisScope) {
         return IdempotencyState.Done(status, raw.substringAfter(':'))
     }
 
-    suspend fun finish(key: String, status: Int, json: String) {
+    suspend fun finish(
+        key: String,
+        status: Int,
+        json: String,
+    ) {
         if (status >= 500) redis.delete(key) else redis.set(key, "$status:$json", STORED_FOR)
     }
 
@@ -38,7 +42,12 @@ class Idempotency(private val redis: RedisScope) {
         private val STORED_FOR = Duration.ofHours(24)
 
         /** `idem:<hash>`: the key never appears in Redis as the client sent it. */
-        fun redisKey(subject: String, method: String, path: String, clientKey: String): String {
+        fun redisKey(
+            subject: String,
+            method: String,
+            path: String,
+            clientKey: String,
+        ): String {
             val digest = MessageDigest.getInstance("SHA-256").digest("$subject|$method|$path|$clientKey".toByteArray())
             return "idem:" + digest.joinToString("") { "%02x".format(it) }
         }

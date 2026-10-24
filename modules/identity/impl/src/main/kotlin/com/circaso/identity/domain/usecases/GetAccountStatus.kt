@@ -7,5 +7,6 @@ import com.circaso.shared.UserId
 
 /** For other modules: is this account active, suspended, deleted? Null if there is no such account. */
 class GetAccountStatus(private val accounts: AccountRepository) {
-    suspend operator fun invoke(userId: UserId): Resource<AccountStatus?> = Resource.success(accounts.find(userId)?.status)
+    suspend operator fun invoke(userId: UserId): Resource<AccountStatus?> =
+        Resource.success(accounts.find(userId)?.status)
 }

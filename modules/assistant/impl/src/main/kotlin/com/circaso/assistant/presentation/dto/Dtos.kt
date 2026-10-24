@@ -67,7 +67,12 @@ data class SpeechRequest(val text: String, val language: String? = null)
 data class DeltaEvent(val delta: String)
 
 @Serializable
-data class ToolRequestEvent(val turnId: String, val callId: String, val name: String, val arguments: String)
+data class ToolRequestEvent(
+    val turnId: String,
+    val callId: String,
+    val name: String,
+    val arguments: String,
+)
 
 @Serializable
 data class DoneEvent(val message: ChatMessageDto)

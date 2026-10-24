@@ -20,7 +20,10 @@ class UnlinkProvider(private val providers: ProviderRepository, private val stor
         store.commit(
             Changes(
                 removedProviderLinks = listOf(link),
-                securityEvents = listOf(SecurityEvent(principal.userId, null, SecurityEventType.PROVIDER_UNLINKED, null, provider.name)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(principal.userId, null, SecurityEventType.PROVIDER_UNLINKED, null, provider.name),
+                    ),
             ),
         )
         store.releaseProvider(link.provider, link.subject)

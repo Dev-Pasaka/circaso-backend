@@ -14,7 +14,7 @@ dependencies {
 
     implementation(libs.grpc.netty.shaded)
     implementation(libs.lettuce.core)
-    implementation(libs.aws.s3)           // the AWS SDK for Kotlin, pointed at Cloudflare R2 (S3 compatible)
+    implementation(libs.aws.s3) // the AWS SDK for Kotlin, pointed at Cloudflare R2 (S3 compatible)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.reactive)
     implementation(libs.kotlinx.coroutines.slf4j)

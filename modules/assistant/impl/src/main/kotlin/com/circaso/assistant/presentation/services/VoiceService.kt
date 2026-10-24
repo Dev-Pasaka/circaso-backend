@@ -17,6 +17,17 @@ class VoiceService(
     private val getUsage: GetUsage,
 ) {
     suspend fun transcribe(userId: UserId, clip: VoiceClip): Resource<Transcript> = transcribeVoice(userId, clip)
-    suspend fun speak(userId: UserId, text: String, language: String?): Resource<SpokenAudio> = synthesizeSpeech(userId, text, language)
+
+    suspend fun speak(
+        userId: UserId,
+        text: String,
+        language: String?,
+    ): Resource<SpokenAudio> =
+        synthesizeSpeech(
+            userId,
+            text,
+            language,
+        )
+
     suspend fun getUsage(userId: UserId): Resource<Usage> = getUsage.invoke(userId)
 }

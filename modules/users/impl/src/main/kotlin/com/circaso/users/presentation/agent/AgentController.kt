@@ -13,8 +13,8 @@ import com.circaso.web.toDefaultResponse
 import com.circaso.web.userId
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
-import io.ktor.server.routing.route
 import io.ktor.server.routing.get
+import io.ktor.server.routing.route
 
 private const val AGENT = "Agent routes"
 
@@ -28,18 +28,35 @@ fun Route.agentController(contacts: ContactService) {
             route("/contacts") {
                 get {
                     val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
-                    call.respondDefault(contacts.listContacts(call.userId(), call.request.queryParameters["cursor"], limit).toDefaultResponse { it.toAgentResponse() })
+                    call.respondDefault(
+                        contacts
+                            .listContacts(
+                                call.userId(),
+                                call.request.queryParameters["cursor"],
+                                limit,
+                            ).toDefaultResponse {
+                                it.toAgentResponse()
+                            },
+                    )
                 }.docs<NoBody, AgentContactsResponse>(
-                    "The user's contacts, so the assistant can resolve a name to a person", AGENT,
+                    "The user's contacts, so the assistant can resolve a name to a person",
+                    AGENT,
                     notes = "Scope: `agent` (read-only). Query: `cursor`, `limit`.",
                 )
 
                 get("search") {
                     val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 10
-                    val result = contacts.findContacts(call.userId(), call.request.queryParameters["q"].orEmpty(), limit)
+                    val result =
+                        contacts.findContacts(
+                            call.userId(),
+                            call.request.queryParameters["q"].orEmpty(),
+                            limit,
+                        )
                     call.respondDefault(result.toDefaultResponse { it.toAgentContacts() })
                 }.docs<NoBody, AgentContactsResponse>(
-                    "Contacts whose name or @handle contains the text", AGENT, notes = "Scope: `agent` (read-only). Query: `q`, `limit`.",
+                    "Contacts whose name or @handle contains the text",
+                    AGENT,
+                    notes = "Scope: `agent` (read-only). Query: `q`, `limit`.",
                 )
             }
         }

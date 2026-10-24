@@ -15,6 +15,12 @@ class DeviceService(
     private val removeDevice: RemoveDevice,
 ) {
     suspend fun register(command: RegisterDeviceCommand): Resource<RegisteredDevice> = registerDevice(command)
-    suspend fun updatePushToken(principal: Principal, token: String): Resource<Unit> = updatePushToken.invoke(principal, token)
+
+    suspend fun updatePushToken(principal: Principal, token: String): Resource<Unit> =
+        updatePushToken.invoke(
+            principal,
+            token,
+        )
+
     suspend fun remove(principal: Principal): Resource<Unit> = removeDevice(principal)
 }

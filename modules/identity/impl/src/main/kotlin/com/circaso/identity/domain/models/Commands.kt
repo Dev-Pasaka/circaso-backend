@@ -9,12 +9,23 @@ import java.util.UUID
 
 enum class NextStep { VERIFY_PHONE, REVERIFY_PHONE, REGISTER_DEVICE, DONE }
 
-data class DeviceInfo(val deviceId: DeviceId, val platform: String, val model: String, val osVersion: String?, val appVersion: String)
+data class DeviceInfo(
+    val deviceId: DeviceId,
+    val platform: String,
+    val model: String,
+    val osVersion: String?,
+    val appVersion: String,
+)
 
 /** A signature over a nonce and timestamp (I2) or a refresh token and timestamp (I7), from the phone's key. */
 data class DeviceProof(val timestamp: Instant, val signature: ByteArray)
 
-data class SessionTokens(val accessToken: String, val refreshToken: String?, val expiresInSeconds: Long, val scope: String)
+data class SessionTokens(
+    val accessToken: String,
+    val refreshToken: String?,
+    val expiresInSeconds: Long,
+    val scope: String,
+)
 
 data class SignInCommand(
     val provider: SocialProvider,
@@ -25,11 +36,21 @@ data class SignInCommand(
     val proof: DeviceProof?,
 )
 
-data class SignInResult(val next: NextStep, val maskedPhone: String?, val session: SessionTokens, val agentSession: SessionTokens?)
+data class SignInResult(
+    val next: NextStep,
+    val maskedPhone: String?,
+    val session: SessionTokens,
+    val agentSession: SessionTokens?,
+)
 
 data class StartPhoneCommand(val principal: Principal, val phone: PhoneNumber)
 
-data class StartPhoneResult(val verificationId: String, val codeLength: Int, val expiresInSeconds: Long, val resendAfterSeconds: Long)
+data class StartPhoneResult(
+    val verificationId: String,
+    val codeLength: Int,
+    val expiresInSeconds: Long,
+    val resendAfterSeconds: Long,
+)
 
 data class VerifyCodeCommand(val principal: Principal, val verificationId: String, val code: String)
 
@@ -62,7 +83,12 @@ data class RefreshCommand(val refreshToken: String, val deviceId: DeviceId, val 
 
 data class RefreshedSession(val session: SessionTokens, val agentSession: SessionTokens)
 
-data class LinkProviderCommand(val principal: Principal, val provider: SocialProvider, val idToken: String, val nonce: String)
+data class LinkProviderCommand(
+    val principal: Principal,
+    val provider: SocialProvider,
+    val idToken: String,
+    val nonce: String,
+)
 
 data class SecurityOverview(
     val maskedPhone: String?,
@@ -73,6 +99,11 @@ data class SecurityOverview(
 
 data class SecurityPage(val events: List<SecurityEvent>, val nextCursor: String?)
 
-data class RecoveryCommand(val principal: Principal, val phone: PhoneNumber, val contactEmail: String, val note: String?)
+data class RecoveryCommand(
+    val principal: Principal,
+    val phone: PhoneNumber,
+    val contactEmail: String,
+    val note: String?,
+)
 
 data class ReleaseCommand(val principal: Principal, val verificationId: String, val confirmAbandon: Boolean)

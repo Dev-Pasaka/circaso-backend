@@ -38,26 +38,42 @@ class RequestSupportRecovery(
             return Resource.error(SharedError.RateLimited(86_400))
         }
         val target = accounts.findByPhone(command.phone)
-        if (target == null || target.verification != Verification.VERIFIED) return Resource.error(IdentityError.RecoveryNotEligible)
+        if (target == null ||
+            target.verification != Verification.VERIFIED
+        ) {
+            return Resource.error(IdentityError.RecoveryNotEligible)
+        }
 
         val newLogin = providers.links(command.principal.userId).firstOrNull()
-        val recovery = SupportRecovery(
-            userId = target.userId,
-            requestId = Uuid7.generate(),
-            status = RecoveryStatus.RECEIVED,
-            contactEmail = command.contactEmail,
-            note = command.note,
-            idCheck = null, selfieMatch = null, agentId = null, noticeSentAt = null, relinkAfter = null,
-            newProvider = newLogin?.provider,
-            newSubject = newLogin?.subject,
-        )
+        val recovery =
+            SupportRecovery(
+                userId = target.userId,
+                requestId = Uuid7.generate(),
+                status = RecoveryStatus.RECEIVED,
+                contactEmail = command.contactEmail,
+                note = command.note,
+                idCheck = null,
+                selfieMatch = null,
+                agentId = null,
+                noticeSentAt = null,
+                relinkAfter = null,
+                newProvider = newLogin?.provider,
+                newSubject = newLogin?.subject,
+            )
         store.commit(
             Changes(
                 recoveries = listOf(recovery),
-                securityEvents = listOf(SecurityEvent(target.userId, null, SecurityEventType.RECOVERY_REQUESTED, null, null)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(target.userId, null, SecurityEventType.RECOVERY_REQUESTED, null, null),
+                    ),
             ),
         )
-        providers.links(target.userId).firstNotNullOfOrNull { it.email }?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
+        providers
+            .links(
+                target.userId,
+            ).firstNotNullOfOrNull { it.email }
+            ?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
         return Resource.success(recovery)
     }
 

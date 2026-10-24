@@ -75,10 +75,11 @@ class RedisEventBus(
     private val config: EventRuntimeConfig = EventRuntimeConfig(),
     private val clock: Clock = Clock.systemUTC(),
     private val nodeId: String = UUID.randomUUID().toString(),
-) : EventBus, AutoCloseable {
-
+) : EventBus,
+    AutoCloseable {
     private class Consumption(val subscription: EventSubscription) {
         @Volatile var lastPollAt: Long = System.currentTimeMillis()
+
         @Volatile var job: Job? = null
         val lag = AtomicLong()
         val pending = AtomicLong()
@@ -103,17 +104,34 @@ class RedisEventBus(
     }
 
     /** `XADD` with the 7-day trim. False means it failed and the relay will publish it later; it never throws. */
-    internal suspend fun appendToStream(envelope: EventEnvelope): Boolean = try {
-        commands.xadd(envelope.stream, XAddArgs().minId(oldestKept()).approximateTrimming(), mapOf(ENVELOPE_FIELD to envelope.toJson()))
-        telemetry.count(Metrics.EVENTS_PUBLISHED, mapOf("stream" to envelope.stream, "type" to envelope.type))
-        log.info("published", kv("kind", "stream.publish"), kv("stream", envelope.stream), kv("eventType", envelope.type), kv("eventId", envelope.eventId))
-        true
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        log.warn("publish failed; the outbox relay will publish it", kv("kind", "stream.publish"), kv("stream", envelope.stream), kv("eventId", envelope.eventId), e)
-        false
-    }
+    internal suspend fun appendToStream(envelope: EventEnvelope): Boolean =
+        try {
+            commands.xadd(
+                envelope.stream,
+                XAddArgs().minId(oldestKept()).approximateTrimming(),
+                mapOf(ENVELOPE_FIELD to envelope.toJson()),
+            )
+            telemetry.count(Metrics.EVENTS_PUBLISHED, mapOf("stream" to envelope.stream, "type" to envelope.type))
+            log.info(
+                "published",
+                kv("kind", "stream.publish"),
+                kv("stream", envelope.stream),
+                kv("eventType", envelope.type),
+                kv("eventId", envelope.eventId),
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(
+                "publish failed; the outbox relay will publish it",
+                kv("kind", "stream.publish"),
+                kv("stream", envelope.stream),
+                kv("eventId", envelope.eventId),
+                e,
+            )
+            false
+        }
 
     /** Stamps `publishedAt` on the module's outbox row. A failure here only means the relay may publish it again. */
     internal suspend fun stampOutbox(envelope: EventEnvelope) {
@@ -123,12 +141,25 @@ class RedisEventBus(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("could not stamp the outbox row", kv("producer", envelope.producer), kv("eventId", envelope.eventId), e)
+            log.warn(
+                "could not stamp the outbox row",
+                kv("producer", envelope.producer),
+                kv("eventId", envelope.eventId),
+                e,
+            )
         }
     }
 
     internal fun noteRescued(producer: String, count: Long) {
-        outboxRescued.getOrPut(producer) { AtomicLong().also { holder -> telemetry.gauge(Metrics.OUTBOX_UNPUBLISHED, mapOf("module" to producer)) { holder.get().toDouble() } } }.set(count)
+        outboxRescued
+            .getOrPut(producer) {
+                AtomicLong().also { holder ->
+                    telemetry.gauge(
+                        Metrics.OUTBOX_UNPUBLISHED,
+                        mapOf("module" to producer),
+                    ) { holder.get().toDouble() }
+                }
+            }.set(count)
     }
 
     private fun oldestKept(): String = "${clock.instant().minus(config.retention).toEpochMilli()}-0"
@@ -138,7 +169,10 @@ class RedisEventBus(
     override fun subscribe(subscription: EventSubscription) {
         val consumption = Consumption(subscription)
         consumptions += consumption
-        telemetry.gauge(Metrics.EVENTS_LAG, mapOf("group" to subscription.group)) { consumption.lag.get().toDouble() + consumption.pending.get() }
+        telemetry.gauge(Metrics.EVENTS_LAG, mapOf("group" to subscription.group)) {
+            consumption.lag.get().toDouble() +
+                consumption.pending.get()
+        }
         scope?.let { launchConsumer(it, consumption) }
     }
 
@@ -174,16 +208,25 @@ class RedisEventBus(
             while (currentCoroutineContext().isActive) {
                 try {
                     claimStale(reader, consumer, subscription).forEach { handle(reader, subscription, it) }
-                    val fresh = reader.xreadgroup(
-                        consumer, XReadArgs.Builder.block(config.readBlock.toMillis()).count(config.batchSize.toLong()),
-                        XReadArgs.StreamOffset.lastConsumed(subscription.stream),
-                    ).toList()
+                    val fresh =
+                        reader
+                            .xreadgroup(
+                                consumer,
+                                XReadArgs.Builder.block(config.readBlock.toMillis()).count(config.batchSize.toLong()),
+                                XReadArgs.StreamOffset.lastConsumed(subscription.stream),
+                            ).toList()
                     fresh.forEach { handle(reader, subscription, it) }
                     consumption.lastPollAt = System.currentTimeMillis()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    log.warn("consumer loop failed; retrying", kv("kind", "stream.consume"), kv("group", subscription.group), kv("stream", subscription.stream), e)
+                    log.warn(
+                        "consumer loop failed; retrying",
+                        kv("kind", "stream.consume"),
+                        kv("group", subscription.group),
+                        kv("stream", subscription.stream),
+                        e,
+                    )
                     delay(1000)
                 }
             }
@@ -195,19 +238,33 @@ class RedisEventBus(
     private suspend fun ensureGroup(reader: RedisCoroutinesCommands<String, String>, subscription: EventSubscription) {
         try {
             // From the start of the stream, so a module that starts after the publisher still sees what is retained.
-            reader.xgroupCreate(XReadArgs.StreamOffset.from(subscription.stream, "0"), subscription.group, XGroupCreateArgs.Builder.mkstream())
+            reader.xgroupCreate(
+                XReadArgs.StreamOffset.from(subscription.stream, "0"),
+                subscription.group,
+                XGroupCreateArgs.Builder.mkstream(),
+            )
         } catch (e: RedisBusyException) {
             // the group exists already
         }
     }
 
     private suspend fun claimStale(
-        reader: RedisCoroutinesCommands<String, String>, consumer: Consumer<String>, subscription: EventSubscription,
+        reader: RedisCoroutinesCommands<String, String>,
+        consumer: Consumer<String>,
+        subscription: EventSubscription,
     ): List<StreamMessage<String, String>> =
-        reader.xautoclaim(subscription.stream, XAutoClaimArgs.Builder.xautoclaim(consumer, config.claimIdle, "0-0").count(config.batchSize.toLong()))
-            ?.messages.orEmpty()
+        reader
+            .xautoclaim(
+                subscription.stream,
+                XAutoClaimArgs.Builder.xautoclaim(consumer, config.claimIdle, "0-0").count(config.batchSize.toLong()),
+            )?.messages
+            .orEmpty()
 
-    private suspend fun handle(reader: RedisCoroutinesCommands<String, String>, subscription: EventSubscription, message: StreamMessage<String, String>) {
+    private suspend fun handle(
+        reader: RedisCoroutinesCommands<String, String>,
+        subscription: EventSubscription,
+        message: StreamMessage<String, String>,
+    ) {
         val stream = subscription.stream
         val raw = message.body[ENVELOPE_FIELD]
         val envelope = raw?.let { runCatching { EventEnvelope.fromJson(it) }.getOrNull() }
@@ -226,22 +283,49 @@ class RedisEventBus(
             return
         }
 
-        val attempt = redis.incrementWithTtl("evt:att:${subscription.group}:${envelope.eventId}", config.retention).toInt()
+        val attempt =
+            redis
+                .incrementWithTtl(
+                    "evt:att:${subscription.group}:${envelope.eventId}",
+                    config.retention,
+                ).toInt()
         val start = System.nanoTime()
-        val tags = arrayOf(kv("kind", "stream.consume"), kv("group", subscription.group), kv("eventType", envelope.type), kv("eventId", envelope.eventId), kv("attempt", attempt))
+        val tags =
+            arrayOf(
+                kv("kind", "stream.consume"),
+                kv("group", subscription.group),
+                kv("eventType", envelope.type),
+                kv("eventId", envelope.eventId),
+                kv("attempt", attempt),
+            )
         try {
             telemetry.span("event.${envelope.type}", mapOf("group" to subscription.group)) { handler.handle(envelope) }
             reader.set(doneKey, "1", SetArgs().px(config.retention.toMillis()))
             reader.xack(stream, subscription.group, message.id)
-            telemetry.record(Metrics.EVENTS_HANDLED_DURATION, (System.nanoTime() - start) / 1e9, mapOf("group" to subscription.group, "type" to envelope.type, "outcome" to "ok"))
+            telemetry.record(
+                Metrics.EVENTS_HANDLED_DURATION,
+                (System.nanoTime() - start) / 1e9,
+                mapOf("group" to subscription.group, "type" to envelope.type, "outcome" to "ok"),
+            )
             log.info("handled", *tags, kv("durationMs", 0L.millisSince(start)))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            telemetry.record(Metrics.EVENTS_HANDLED_DURATION, (System.nanoTime() - start) / 1e9, mapOf("group" to subscription.group, "type" to envelope.type, "outcome" to "error"))
+            telemetry.record(
+                Metrics.EVENTS_HANDLED_DURATION,
+                (System.nanoTime() - start) / 1e9,
+                mapOf("group" to subscription.group, "type" to envelope.type, "outcome" to "error"),
+            )
             if (attempt >= config.maxAttempts) {
                 log.error("dead-lettered", *tags, e)
-                deadLetter(reader, subscription, message, raw, "${e::class.simpleName}: ${e.message?.take(200)}", attempt)
+                deadLetter(
+                    reader,
+                    subscription,
+                    message,
+                    raw,
+                    "${e::class.simpleName}: ${e.message?.take(200)}",
+                    attempt,
+                )
             } else {
                 log.warn("failed; will be retried", *tags, e) // left unacknowledged: reclaimed after the idle time
             }
@@ -249,12 +333,24 @@ class RedisEventBus(
     }
 
     private suspend fun deadLetter(
-        reader: RedisCoroutinesCommands<String, String>, subscription: EventSubscription, message: StreamMessage<String, String>,
-        raw: String?, error: String, attempts: Int,
+        reader: RedisCoroutinesCommands<String, String>,
+        subscription: EventSubscription,
+        message: StreamMessage<String, String>,
+        raw: String?,
+        error: String,
+        attempts: Int,
     ) {
         reader.xadd(
-            DEAD_LETTER_STREAM, XAddArgs().minId(oldestKept()).approximateTrimming(),
-            mapOf("stream" to subscription.stream, "group" to subscription.group, "id" to message.id, "e" to (raw ?: ""), "error" to error, "attempts" to attempts.toString()),
+            DEAD_LETTER_STREAM,
+            XAddArgs().minId(oldestKept()).approximateTrimming(),
+            mapOf(
+                "stream" to subscription.stream,
+                "group" to subscription.group,
+                "id" to message.id,
+                "e" to (raw ?: ""),
+                "error" to error,
+                "attempts" to attempts.toString(),
+            ),
         )
         reader.xack(subscription.stream, subscription.group, message.id)
         dlqSize.incrementAndGet()
@@ -266,9 +362,12 @@ class RedisEventBus(
         try {
             dlqSize.set(commands.xlen(DEAD_LETTER_STREAM) ?: 0)
             for (consumption in consumptions) {
-                val group = commands.xinfoGroups(consumption.subscription.stream).orEmpty()
-                    .map { entry -> (entry as List<*>).chunked(2).associate { (k, v) -> k.toString() to v } }
-                    .firstOrNull { it["name"] == consumption.subscription.group } ?: continue
+                val group =
+                    commands
+                        .xinfoGroups(consumption.subscription.stream)
+                        .orEmpty()
+                        .map { entry -> (entry as List<*>).chunked(2).associate { (k, v) -> k.toString() to v } }
+                        .firstOrNull { it["name"] == consumption.subscription.group } ?: continue
                 consumption.pending.set((group["pending"] as? Number)?.toLong() ?: 0)
                 consumption.lag.set((group["lag"] as? Number)?.toLong() ?: 0)
             }
@@ -280,9 +379,10 @@ class RedisEventBus(
     }
 
     /** True when every consumer loop is alive and has polled recently. */
-    internal fun consumersHealthy(maxSilence: Duration = Duration.ofSeconds(60)): Boolean = consumptions.all {
-        it.job?.isActive == true && System.currentTimeMillis() - it.lastPollAt < maxSilence.toMillis()
-    }
+    internal fun consumersHealthy(maxSilence: Duration = Duration.ofSeconds(60)): Boolean =
+        consumptions.all {
+            it.job?.isActive == true && System.currentTimeMillis() - it.lastPollAt < maxSilence.toMillis()
+        }
 
     private companion object {
         const val ENVELOPE_FIELD = "e"
@@ -292,5 +392,12 @@ class RedisEventBus(
 class StreamConsumersHealth(private val bus: RedisEventBus) : HealthCheck {
     override val name = "streams"
 
-    override suspend fun check(): Resource<Unit> = if (bus.consumersHealthy()) Resource.success(Unit) else Resource.error(SharedError.Internal)
+    override suspend fun check(): Resource<Unit> =
+        if (bus.consumersHealthy()) {
+            Resource.success(
+                Unit,
+            )
+        } else {
+            Resource.error(SharedError.Internal)
+        }
 }

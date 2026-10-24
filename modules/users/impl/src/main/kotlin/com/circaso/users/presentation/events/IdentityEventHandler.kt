@@ -17,17 +17,18 @@ import com.circaso.users.presentation.services.IdentityEventsService
  * dead-lettered; every one is safe to run twice.
  */
 class IdentityEventHandler(private val events: IdentityEventsService) {
-
-    fun subscription() = EventSubscription(
-        group = "users",
-        stream = EventEnvelope.streamOf("identity"),
-        handlers = mapOf(
-            AccountActivated.TYPE to EventHandler { orThrow(events.accountActivated(it.decode())) },
-            PhoneChanged.TYPE to EventHandler { orThrow(events.phoneChanged(it.decode())) },
-            AccountStatusChanged.TYPE to EventHandler { orThrow(events.statusChanged(it.decode())) },
-            AccountDeleted.TYPE to EventHandler { orThrow(events.accountDeleted(it.decode())) },
-        ),
-    )
+    fun subscription() =
+        EventSubscription(
+            group = "users",
+            stream = EventEnvelope.streamOf("identity"),
+            handlers =
+                mapOf(
+                    AccountActivated.TYPE to EventHandler { orThrow(events.accountActivated(it.decode())) },
+                    PhoneChanged.TYPE to EventHandler { orThrow(events.phoneChanged(it.decode())) },
+                    AccountStatusChanged.TYPE to EventHandler { orThrow(events.statusChanged(it.decode())) },
+                    AccountDeleted.TYPE to EventHandler { orThrow(events.accountDeleted(it.decode())) },
+                ),
+        )
 
     private fun orThrow(result: Resource<Unit>) {
         if (result is Resource.Error) throw DomainException(result.error, result.cause)

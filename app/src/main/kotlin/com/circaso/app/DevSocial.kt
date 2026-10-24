@@ -22,7 +22,8 @@ fun Route.devSocialRoutes(googleClientId: String) {
     }
 }
 
-private val DEV_SOCIAL_PAGE = """
+private val DEV_SOCIAL_PAGE =
+    """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Circaso sign-up test</title>
@@ -101,4 +102,4 @@ document.getElementById("register").onclick = async () => {
 };
 boot();
 </script></body></html>
-""".trimIndent()
+    """.trimIndent()

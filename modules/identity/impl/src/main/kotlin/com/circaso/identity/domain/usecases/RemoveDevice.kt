@@ -29,10 +29,25 @@ class RemoveDevice(
 
         store.commit(
             Changes(
-                accounts = listOf(account.copy(activeDeviceId = if (account.activeDeviceId == device.deviceId) null else account.activeDeviceId)),
+                accounts =
+                    listOf(
+                        account.copy(
+                            activeDeviceId =
+                                if (account.activeDeviceId ==
+                                    device.deviceId
+                                ) {
+                                    null
+                                } else {
+                                    account.activeDeviceId
+                                },
+                        ),
+                    ),
                 devices = listOf(device.copy(status = DeviceStatus.REMOVED)),
                 sessions = listOfNotNull(session?.copy(status = SessionStatus.REVOKED)),
-                securityEvents = listOf(SecurityEvent(principal.userId, null, SecurityEventType.DEVICE_REMOVED, device.model, null)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(principal.userId, null, SecurityEventType.DEVICE_REMOVED, device.model, null),
+                    ),
             ),
         )
         cache.revoke(principal.sessionId)

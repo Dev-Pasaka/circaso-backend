@@ -63,10 +63,18 @@ data class WaitingContactRow(
 )
 
 @ScyllaTable(name = "blocks_by_user", keyspace = KS)
-data class BlockRow(@PartitionKey val userId: UUID, @ClusteringKey val blockedId: UUID, val blockedAt: Instant)
+data class BlockRow(
+    @PartitionKey val userId: UUID,
+    @ClusteringKey val blockedId: UUID,
+    val blockedAt: Instant,
+)
 
 @ScyllaTable(name = "blocked_by_user", keyspace = KS)
-data class BlockedByRow(@PartitionKey val blockedId: UUID, @ClusteringKey val userId: UUID, val blockedAt: Instant)
+data class BlockedByRow(
+    @PartitionKey val blockedId: UUID,
+    @ClusteringKey val userId: UUID,
+    val blockedAt: Instant,
+)
 
 @ScyllaTable(name = "invites", keyspace = KS)
 @Ttl(seconds = 60 * 60 * 24 * 7)

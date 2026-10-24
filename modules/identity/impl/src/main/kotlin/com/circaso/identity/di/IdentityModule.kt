@@ -26,8 +26,9 @@ import com.circaso.identity.data.repositories.ProviderRepositoryImpl
 import com.circaso.identity.data.repositories.RecoveryRepositoryImpl
 import com.circaso.identity.data.repositories.SecurityLogRepositoryImpl
 import com.circaso.identity.data.repositories.SessionRepositoryImpl
-import com.circaso.identity.data.security.Ed25519Tokens
+import com.circaso.identity.data.rows
 import com.circaso.identity.data.security.EcdsaDeviceKeyVerifier
+import com.circaso.identity.data.security.Ed25519Tokens
 import com.circaso.identity.data.security.KeyedPhoneProtection
 import com.circaso.identity.data.security.UnconfiguredAttestation
 import com.circaso.identity.domain.ports.AccessTokenVerifier
@@ -84,16 +85,16 @@ import com.circaso.identity.presentation.controllers.recoveryController
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
+import com.circaso.identity.presentation.services.DirectoryService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
-import com.circaso.identity.presentation.services.DirectoryService
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.KandraModuleSpec
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.web.RouteContributor
-import com.circaso.identity.data.rows
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -103,7 +104,7 @@ import java.time.Duration
 /** Identity's settings from the `identity` config section; attestation is enforced in production and only logged elsewhere. */
 fun identityConfig(config: Config): IdentityConfig {
     val section = config.section("identity")
-    val default = if (config.environment == com.circaso.infrastructure.api.Environment.PRODUCTION) "ENFORCE" else "LOG"
+    val default = if (config.environment == Environment.PRODUCTION) "ENFORCE" else "LOG"
     return IdentityConfig(
         attestation = AttestationMode.valueOf(section.string("attestation", default).uppercase()),
         smsRetrieverHash = section.string("sms-retriever-hash"),
@@ -112,92 +113,120 @@ fun identityConfig(config: Config): IdentityConfig {
 }
 
 /** Identity's Koin bindings: data, domain, presentation, its `api`, its Kandra spec and its outbox. */
-fun identityModule(config: Config): Module = module {
-    val clock = Clock.systemUTC()
-    val identity = identityConfig(config)
-    val local = config.environment.isLocal
+fun identityModule(config: Config): Module =
+    module {
+        val clock = Clock.systemUTC()
+        val identity = identityConfig(config)
+        val local = config.environment.isLocal
 
-    single { identity }
-    single { DeviceProofs(get<DeviceKeyVerifier>(), clock, identity.proofWindow) }
+        single { identity }
+        single { DeviceProofs(get<DeviceKeyVerifier>(), clock, identity.proofWindow) }
 
-    // data: security
-    single { Ed25519Tokens(get<Secrets>(), local, clock) }
-    single<TokenIssuer> { get<Ed25519Tokens>() }
-    single<AccessTokenVerifier> { get<Ed25519Tokens>() }
-    single<PhoneProtection> { KeyedPhoneProtection(get<Secrets>(), local) }
-    single<DeviceKeyVerifier> { EcdsaDeviceKeyVerifier() }
-    single<AttestationVerifier> { UnconfiguredAttestation() }
-    single<IdentityCache> { RedisIdentityCache(get<RedisScopes>().scope("idn")) }
+        // data: security
+        single { Ed25519Tokens(get<Secrets>(), local, clock) }
+        single<TokenIssuer> { get<Ed25519Tokens>() }
+        single<AccessTokenVerifier> { get<Ed25519Tokens>() }
+        single<PhoneProtection> { KeyedPhoneProtection(get<Secrets>(), local) }
+        single<DeviceKeyVerifier> { EcdsaDeviceKeyVerifier() }
+        single<AttestationVerifier> { UnconfiguredAttestation() }
+        single<IdentityCache> { RedisIdentityCache(get<RedisScopes>().scope("idn")) }
 
-    // data: repositories
-    single<AccountRepository> { AccountRepositoryImpl(rows<AccountRow>(), rows<PhoneClaimRow>()) }
-    single<ProviderRepository> { ProviderRepositoryImpl(rows<ProviderClaimRow>(), rows<ProviderLinkRow>()) }
-    single<DeviceRepository> { DeviceRepositoryImpl(rows<DeviceRow>()) }
-    single<SessionRepository> { SessionRepositoryImpl(rows<SessionRow>()) }
-    single<SecurityLogRepository> { SecurityLogRepositoryImpl(rows<SecurityEventRow>()) }
-    single<RecoveryRepository> { RecoveryRepositoryImpl(rows<SupportRecoveryRow>(), rows<RecoveryByRequestRow>()) }
-    single<IdentityStore> {
-        IdentityStoreImpl(
-            get(), rows<AccountRow>(), rows<DeviceRow>(), rows<SessionRow>(), rows<ProviderLinkRow>(), rows<SecurityEventRow>(),
-            rows<SupportRecoveryRow>(), rows<RecoveryByRequestRow>(), rows<IdentityOutboxRow>(), rows<ProviderClaimRow>(), get(),
-        )
-    }
-    single<OutboxStore>(named("identity.outbox")) { IdentityOutboxStore(rows<IdentityOutboxRow>()) }
-    single(named("identity.spec")) { KandraModuleSpec("circaso_identity", identityEntities, listOf(V001_CreateIdentityTables)) }
-
-    // domain: helpers and use cases
-    single { SessionOpener(get(), get(), get(), clock) }
-    single { PhoneOwnership(get(), get(), get(), get(), clock) }
-    single { IssueNonce(get()) }
-    single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-    single { StartPhoneVerification(get(), get(), get(), get(), get(), get()) }
-    single { VerifyPhoneCode(get(), get(), get(), get(), get(), get()) }
-    single { VerifyCarrierToken(get(), get(), get()) }
-    single { RegisterDevice(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-    single { RefreshSession(get(), get(), get(), get(), get(), get(), get()) }
-    single { SignOut(get(), get(), get()) }
-    single { UpdatePushToken(get(), get()) }
-    single { RemoveDevice(get(), get(), get(), get(), get()) }
-    single { GetSecurityOverview(get(), get(), get()) }
-    single { LinkProvider(get(), get(), get(), get(), clock) }
-    single { UnlinkProvider(get(), get()) }
-    single { ListSecurityEvents(get()) }
-    single { RequestAccountDeletion(get(), get(), getAll<DeletionGuard>(), get(), get(), get()) }
-    single { RequestSupportRecovery(get(), get(), get(), get(), get(), get()) }
-    single { RequestPhoneRelease(get(), get(), get(), get(), get(), get(), get(), clock) }
-    single { GetRecoveryCase(get(), get()) }
-    single { GetPublicKeys(get()) }
-    single { VerifyAccessToken(get(), get()) }
-    single { GetAccountStatus(get()) }
-    single { ResolvePhones(get()) }
-    single { VerifyDeviceSignature(get(), get()) }
-    single { GetPushTarget(get(), get()) }
-
-    // presentation
-    single { AuthService(get(), get(), get(), get(), get()) }
-    single { PhoneService(get(), get(), get(), get()) }
-    single { DeviceService(get(), get(), get()) }
-    single { AccountService(get(), get(), get(), get(), get()) }
-    single { RecoveryService(get(), get()) }
-    single { DirectoryService(get(), get(), get(), get(), get()) }
-    single<RouteContributor>(named("identity.routes")) {
-        val auth = get<AuthService>()
-        val phone = get<PhoneService>()
-        val devices = get<DeviceService>()
-        val account = get<AccountService>()
-        val recovery = get<RecoveryService>()
-        RouteContributor { route ->
-            route.authController(auth)
-            route.phoneController(phone)
-            route.deviceController(devices)
-            route.accountController(account)
-            route.recoveryController(recovery)
+        // data: repositories
+        single<AccountRepository> { AccountRepositoryImpl(rows<AccountRow>(), rows<PhoneClaimRow>()) }
+        single<ProviderRepository> { ProviderRepositoryImpl(rows<ProviderClaimRow>(), rows<ProviderLinkRow>()) }
+        single<DeviceRepository> { DeviceRepositoryImpl(rows<DeviceRow>()) }
+        single<SessionRepository> { SessionRepositoryImpl(rows<SessionRow>()) }
+        single<SecurityLogRepository> { SecurityLogRepositoryImpl(rows<SecurityEventRow>()) }
+        single<RecoveryRepository> { RecoveryRepositoryImpl(rows<SupportRecoveryRow>(), rows<RecoveryByRequestRow>()) }
+        single<IdentityStore> {
+            IdentityStoreImpl(
+                get(),
+                rows<AccountRow>(),
+                rows<DeviceRow>(),
+                rows<SessionRow>(),
+                rows<ProviderLinkRow>(),
+                rows<SecurityEventRow>(),
+                rows<SupportRecoveryRow>(),
+                rows<RecoveryByRequestRow>(),
+                rows<IdentityOutboxRow>(),
+                rows<ProviderClaimRow>(),
+                get(),
+            )
         }
-    }
+        single<OutboxStore>(named("identity.outbox")) { IdentityOutboxStore(rows<IdentityOutboxRow>()) }
+        single(named("identity.spec")) {
+            KandraModuleSpec("circaso_identity", identityEntities, listOf(V001_CreateIdentityTables))
+        }
 
-    // identity:api, for the gateway and the modules above
-    single<TokenVerifier> { TokenVerifierImpl(get()) }
-    single<AccountDirectory> { AccountDirectoryImpl(get()) }
-    single<DeviceSignatures> { DeviceSignaturesImpl(get()) }
-    single<PushRegistrations> { PushRegistrationsImpl(get()) }
-}
+        // domain: helpers and use cases
+        single { SessionOpener(get(), get(), get(), clock) }
+        single { PhoneOwnership(get(), get(), get(), get(), clock) }
+        single { IssueNonce(get()) }
+        single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { StartPhoneVerification(get(), get(), get(), get(), get(), get()) }
+        single { VerifyPhoneCode(get(), get(), get(), get(), get(), get()) }
+        single { VerifyCarrierToken(get(), get(), get()) }
+        single {
+            RegisterDevice(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                clock,
+            )
+        }
+        single { RefreshSession(get(), get(), get(), get(), get(), get(), get()) }
+        single { SignOut(get(), get(), get()) }
+        single { UpdatePushToken(get(), get()) }
+        single { RemoveDevice(get(), get(), get(), get(), get()) }
+        single { GetSecurityOverview(get(), get(), get()) }
+        single { LinkProvider(get(), get(), get(), get(), clock) }
+        single { UnlinkProvider(get(), get()) }
+        single { ListSecurityEvents(get()) }
+        single { RequestAccountDeletion(get(), get(), getAll<DeletionGuard>(), get(), get(), get()) }
+        single { RequestSupportRecovery(get(), get(), get(), get(), get(), get()) }
+        single { RequestPhoneRelease(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { GetRecoveryCase(get(), get()) }
+        single { GetPublicKeys(get()) }
+        single { VerifyAccessToken(get(), get()) }
+        single { GetAccountStatus(get()) }
+        single { ResolvePhones(get()) }
+        single { VerifyDeviceSignature(get(), get()) }
+        single { GetPushTarget(get(), get()) }
+
+        // presentation
+        single { AuthService(get(), get(), get(), get(), get()) }
+        single { PhoneService(get(), get(), get(), get()) }
+        single { DeviceService(get(), get(), get()) }
+        single { AccountService(get(), get(), get(), get(), get()) }
+        single { RecoveryService(get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get()) }
+        single<RouteContributor>(named("identity.routes")) {
+            val auth = get<AuthService>()
+            val phone = get<PhoneService>()
+            val devices = get<DeviceService>()
+            val account = get<AccountService>()
+            val recovery = get<RecoveryService>()
+            RouteContributor { route ->
+                route.authController(auth)
+                route.phoneController(phone)
+                route.deviceController(devices)
+                route.accountController(account)
+                route.recoveryController(recovery)
+            }
+        }
+
+        // identity:api, for the gateway and the modules above
+        single<TokenVerifier> { TokenVerifierImpl(get()) }
+        single<AccountDirectory> { AccountDirectoryImpl(get()) }
+        single<DeviceSignatures> { DeviceSignaturesImpl(get()) }
+        single<PushRegistrations> { PushRegistrationsImpl(get()) }
+    }

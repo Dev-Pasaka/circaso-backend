@@ -25,7 +25,11 @@ import org.koin.ktor.plugin.Koin
  * The web side: request id, JSON, StatusPages and the health routes. The gateway's `/v1` routing (M3) and each
  * module's routes (M4, M5) are added here as they arrive.
  */
-fun Application.circasoModule(config: AppConfig, healthChecks: List<HealthCheck> = emptyList(), devGoogleClientId: String? = null) {
+fun Application.circasoModule(
+    config: AppConfig,
+    healthChecks: List<HealthCheck> = emptyList(),
+    devGoogleClientId: String? = null,
+) {
     installRequestId()
     installJson()
     installStatusPages()
@@ -41,15 +45,31 @@ fun Application.circasoModule(config: AppConfig, healthChecks: List<HealthCheck>
  * the outbox relay, the scheduler); then the web side with every health check collected. [config] and [secrets] are
  * where settings come from; tests pass their own.
  */
-fun Application.circasoServe(app: AppConfig, config: Config, secrets: Secrets) {
+fun Application.circasoServe(
+    app: AppConfig,
+    config: Config,
+    secrets: Secrets,
+) {
     install(Koin) {
-        modules(observabilityModule, infrastructureModule(config, secrets), integrationsModule(config, secrets), gatewayModule(config))
+        modules(
+            observabilityModule,
+            infrastructureModule(config, secrets),
+            integrationsModule(config, secrets),
+            gatewayModule(config),
+        )
         modules(businessModules(config))
     }
     val koin = getKoin()
     installDatabase(koin.get<ScyllaSettings>(), koin.getAll<KandraModuleSpec>(), koin.get())
     startInfrastructure()
-    val googleClient = config.section("integrations").string("social.google.client-ids", "").split(',').map { it.trim() }.firstOrNull { it.isNotEmpty() }
+    val googleClient =
+        config
+            .section("integrations")
+            .string("social.google.client-ids", "")
+            .split(',')
+            .map {
+                it.trim()
+            }.firstOrNull { it.isNotEmpty() }
     circasoModule(app, koin.getAll<HealthCheck>(), googleClient)
     installGateway()
 }

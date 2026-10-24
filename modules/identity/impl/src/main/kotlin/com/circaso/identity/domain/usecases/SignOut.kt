@@ -22,7 +22,10 @@ class SignOut(
             store.commit(
                 Changes(
                     sessions = listOf(session.copy(status = SessionStatus.REVOKED)),
-                    securityEvents = listOf(SecurityEvent(principal.userId, null, SecurityEventType.SIGN_OUT, null, null)),
+                    securityEvents =
+                        listOf(
+                            SecurityEvent(principal.userId, null, SecurityEventType.SIGN_OUT, null, null),
+                        ),
                 ),
             )
         }

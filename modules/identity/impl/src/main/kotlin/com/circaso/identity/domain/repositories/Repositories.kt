@@ -31,7 +31,11 @@ interface ProviderRepository {
     suspend fun ownerOf(provider: SocialProvider, subject: String): UserId?
 
     /** True if the login is now claimed by [userId] (including already was). */
-    suspend fun claim(provider: SocialProvider, subject: String, userId: UserId): Boolean
+    suspend fun claim(
+        provider: SocialProvider,
+        subject: String,
+        userId: UserId,
+    ): Boolean
 
     suspend fun links(userId: UserId): List<ProviderLink>
 }
@@ -46,7 +50,11 @@ interface SessionRepository {
 
 interface SecurityLogRepository {
     /** Newest first; [before] is the last event id of the previous page. */
-    suspend fun list(userId: UserId, before: UUID?, limit: Int): List<SecurityEvent>
+    suspend fun list(
+        userId: UserId,
+        before: UUID?,
+        limit: Int,
+    ): List<SecurityEvent>
 }
 
 interface RecoveryRepository {

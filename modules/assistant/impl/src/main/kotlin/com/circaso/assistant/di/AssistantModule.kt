@@ -14,6 +14,7 @@ import com.circaso.assistant.data.repositories.AssistantOutboxStore
 import com.circaso.assistant.data.repositories.AssistantStoreImpl
 import com.circaso.assistant.data.repositories.ChatRepositoryImpl
 import com.circaso.assistant.data.repositories.EntitlementRepositoryImpl
+import com.circaso.assistant.data.rows
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.PendingTurns
@@ -49,59 +50,78 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.shared.EventSubscription
 import com.circaso.web.RouteContributor
-import com.circaso.assistant.data.rows
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import java.time.Clock
 
 /** The assistant's Koin bindings: data, domain, presentation, its Kandra spec, its outbox and its event subscription. */
-fun assistantModule(config: Config): Module = module {
-    val clock = Clock.systemUTC()
-    val assistant = config.section("assistant")
-    val local = config.environment.isLocal
-    val assistantConfig = AssistantConfig()
+fun assistantModule(config: Config): Module =
+    module {
+        val clock = Clock.systemUTC()
+        val assistant = config.section("assistant")
+        val local = config.environment.isLocal
+        val assistantConfig = AssistantConfig()
 
-    single { assistantConfig }
+        single { assistantConfig }
 
-    // data
-    single<TextVault> { AesTextVault(get<Secrets>(), local) }
-    single<QuotaCounters> { RedisQuotaCounters(get<RedisScopes>().scope("ast")) }
-    single<PendingTurns> { RedisPendingTurns(get<RedisScopes>().scope("ast")) }
-    single<ChatRepository> { ChatRepositoryImpl(rows<AshaMessageRow>(), get()) }
-    single<EntitlementRepository> { EntitlementRepositoryImpl(rows<EntitlementRow>()) }
-    single<AssistantStore> { AssistantStoreImpl(get(), rows<AshaMessageRow>(), rows<UsageDailyRow>(), rows<AssistantAuditRow>(), rows<AssistantOutboxRow>(), get(), get()) }
-    single<AgentTools> {
-        HttpAgentTools(get<HttpClients>().named("agent"), assistant.string("agent-base-url", "http://localhost:" + config.string("port", "8080")).trimEnd('/'))
-    }
-    single<OutboxStore>(named("assistant.outbox")) { AssistantOutboxStore(rows<AssistantOutboxRow>()) }
-    single(named("assistant.spec")) { KandraModuleSpec("circaso_assistant", assistantEntities, listOf(V001_CreateAssistantTables)) }
-
-    // domain
-    single { AshaAgent(get(), get(), get()) }
-    single { OrderedIds(clock) }
-    single { TurnRecorder(get(), get(), get(), get(), get(), clock) }
-    single { StartTurn(get(), get(), get(), get(), get(), get(), get(), clock) }
-    single { ContinueTurn(get(), get(), get(), get()) }
-    single { ListChat(get()) }
-    single { DeleteChat(get()) }
-    single { DeleteExchange(get(), get()) }
-    single { GetUsage(get(), get(), get(), clock) }
-    single { TranscribeVoice(get(), get(), get(), get(), clock) }
-    single { SynthesizeSpeech(get(), get(), get(), get(), clock) }
-    single { DeleteAssistantData(get()) }
-
-    // presentation
-    single { ChatService(get(), get(), get(), get(), get()) }
-    single { VoiceService(get(), get(), get()) }
-    single { IdentityEventsService(get()) }
-    single<RouteContributor>(named("assistant.routes")) {
-        val chat = get<ChatService>()
-        val voice = get<VoiceService>()
-        RouteContributor { route ->
-            route.chatController(chat)
-            route.voiceController(voice)
+        // data
+        single<TextVault> { AesTextVault(get<Secrets>(), local) }
+        single<QuotaCounters> { RedisQuotaCounters(get<RedisScopes>().scope("ast")) }
+        single<PendingTurns> { RedisPendingTurns(get<RedisScopes>().scope("ast")) }
+        single<ChatRepository> { ChatRepositoryImpl(rows<AshaMessageRow>(), get()) }
+        single<EntitlementRepository> { EntitlementRepositoryImpl(rows<EntitlementRow>()) }
+        single<AssistantStore> {
+            AssistantStoreImpl(
+                get(),
+                rows<AshaMessageRow>(),
+                rows<UsageDailyRow>(),
+                rows<AssistantAuditRow>(),
+                rows<AssistantOutboxRow>(),
+                get(),
+                get(),
+            )
         }
+        single<AgentTools> {
+            HttpAgentTools(
+                get<HttpClients>().named("agent"),
+                assistant
+                    .string(
+                        "agent-base-url",
+                        "http://localhost:" + config.string("port", "8080"),
+                    ).trimEnd('/'),
+            )
+        }
+        single<OutboxStore>(named("assistant.outbox")) { AssistantOutboxStore(rows<AssistantOutboxRow>()) }
+        single(named("assistant.spec")) {
+            KandraModuleSpec("circaso_assistant", assistantEntities, listOf(V001_CreateAssistantTables))
+        }
+
+        // domain
+        single { AshaAgent(get(), get(), get()) }
+        single { OrderedIds(clock) }
+        single { TurnRecorder(get(), get(), get(), get(), get(), clock) }
+        single { StartTurn(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ContinueTurn(get(), get(), get(), get()) }
+        single { ListChat(get()) }
+        single { DeleteChat(get()) }
+        single { DeleteExchange(get(), get()) }
+        single { GetUsage(get(), get(), get(), clock) }
+        single { TranscribeVoice(get(), get(), get(), get(), clock) }
+        single { SynthesizeSpeech(get(), get(), get(), get(), clock) }
+        single { DeleteAssistantData(get()) }
+
+        // presentation
+        single { ChatService(get(), get(), get(), get(), get()) }
+        single { VoiceService(get(), get(), get()) }
+        single { IdentityEventsService(get()) }
+        single<RouteContributor>(named("assistant.routes")) {
+            val chat = get<ChatService>()
+            val voice = get<VoiceService>()
+            RouteContributor { route ->
+                route.chatController(chat)
+                route.voiceController(voice)
+            }
+        }
+        single<EventSubscription>(named("assistant.identity-events")) { IdentityEventHandler(get()).subscription() }
     }
-    single<EventSubscription>(named("assistant.identity-events")) { IdentityEventHandler(get()).subscription() }
-}

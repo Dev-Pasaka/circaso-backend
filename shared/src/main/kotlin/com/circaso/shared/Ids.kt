@@ -1,8 +1,8 @@
 package com.circaso.shared
 
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -11,11 +11,8 @@ import kotlinx.serialization.encoding.Encoder
 import java.util.UUID
 
 /** Writes an id as its canonical UUID string and reads it back strictly. */
-abstract class UuidIdSerializer<T>(
-    name: String,
-    private val wrap: (UUID) -> T,
-    private val unwrap: (T) -> UUID,
-) : KSerializer<T> {
+abstract class UuidIdSerializer<T>(name: String, private val wrap: (UUID) -> T, private val unwrap: (T) -> UUID) :
+    KSerializer<T> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor(name, PrimitiveKind.STRING)
 
     override fun serialize(encoder: Encoder, value: T) = encoder.encodeString(unwrap(value).toString())
@@ -33,6 +30,7 @@ value class UserId(val value: UUID) {
 
     companion object {
         fun new(): UserId = UserId(Uuid7.generate())
+
         fun parse(raw: String): UserId? = Uuid7.parse(raw)?.let(::UserId)
     }
 
@@ -46,6 +44,7 @@ value class DeviceId(val value: UUID) {
 
     companion object {
         fun new(): DeviceId = DeviceId(Uuid7.generate())
+
         fun parse(raw: String): DeviceId? = Uuid7.parse(raw)?.let(::DeviceId)
     }
 
@@ -59,6 +58,7 @@ value class ConversationId(val value: UUID) {
 
     companion object {
         fun new(): ConversationId = ConversationId(Uuid7.generate())
+
         fun parse(raw: String): ConversationId? = Uuid7.parse(raw)?.let(::ConversationId)
     }
 
@@ -73,6 +73,7 @@ value class EventId(val value: UUID) {
 
     companion object {
         fun new(): EventId = EventId(Uuid7.generate())
+
         fun parse(raw: String): EventId? = Uuid7.parse(raw)?.let(::EventId)
     }
 

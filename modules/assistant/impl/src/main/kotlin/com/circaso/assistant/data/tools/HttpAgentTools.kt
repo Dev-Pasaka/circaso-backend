@@ -30,23 +30,43 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
 
     override fun handles(toolName: String) = toolName == "searchContacts" || toolName == "listContacts"
 
-    override suspend fun call(toolName: String, argumentsJson: String, agentToken: String): Resource<String> {
-        val arguments = runCatching { CircasoJson.parseToJsonElement(argumentsJson).jsonObject }.getOrDefault(JsonObject(emptyMap()))
-        val response = runCatching {
-            when (toolName) {
-                "searchContacts" -> http.get("$baseUrl/v1/agent/users/contacts/search") {
-                    header(HttpHeaders.Authorization, "Bearer $agentToken")
-                    parameter("q", (arguments["query"] as? JsonPrimitive)?.contentOrNull.orEmpty())
-                    parameter("limit", 5)
-                }
-                else -> http.get("$baseUrl/v1/agent/users/contacts") {
-                    header(HttpHeaders.Authorization, "Bearer $agentToken")
-                    parameter("limit", ((arguments["limit"] as? JsonPrimitive)?.intOrNull ?: 20).coerceIn(1, 50))
-                }
-            }
-        }.getOrElse { return Resource.error(IntegrationError.Unavailable("the contacts lookup"), it) }
+    override suspend fun call(
+        toolName: String,
+        argumentsJson: String,
+        agentToken: String,
+    ): Resource<String> {
+        val arguments =
+            runCatching {
+                CircasoJson.parseToJsonElement(argumentsJson).jsonObject
+            }.getOrDefault(JsonObject(emptyMap()))
+        val response =
+            runCatching {
+                when (toolName) {
+                    "searchContacts" -> {
+                        http.get("$baseUrl/v1/agent/users/contacts/search") {
+                            header(HttpHeaders.Authorization, "Bearer $agentToken")
+                            parameter("q", (arguments["query"] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                            parameter("limit", 5)
+                        }
+                    }
 
-        if (!response.status.isSuccess()) return Resource.error(IntegrationError.Rejected("status ${response.status.value}"))
+                    else -> {
+                        http.get("$baseUrl/v1/agent/users/contacts") {
+                            header(HttpHeaders.Authorization, "Bearer $agentToken")
+                            parameter(
+                                "limit",
+                                ((arguments["limit"] as? JsonPrimitive)?.intOrNull ?: 20).coerceIn(1, 50),
+                            )
+                        }
+                    }
+                }
+            }.getOrElse { return Resource.error(IntegrationError.Unavailable("the contacts lookup"), it) }
+
+        if (!response.status.isSuccess()) {
+            return Resource.error(
+                IntegrationError.Rejected("status ${response.status.value}"),
+            )
+        }
         // Only the envelope's data goes to the model.
         val data = runCatching { CircasoJson.parseToJsonElement(response.bodyAsText()).jsonObject["data"] }.getOrNull()
         return Resource.success(data?.toString().orEmpty())

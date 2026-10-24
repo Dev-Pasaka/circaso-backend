@@ -31,19 +31,33 @@ class PhoneOwnership(
     private val phones: PhoneProtection,
     private val clock: Clock,
 ) {
-    suspend fun confirm(account: Account, phone: PhoneNumber, deviceId: DeviceId): Resource<PhoneVerifiedResult> {
+    suspend fun confirm(
+        account: Account,
+        phone: PhoneNumber,
+        deviceId: DeviceId,
+    ): Resource<PhoneVerifiedResult> {
         return when (account.status) {
             AccountStatus.ACTIVE -> {
                 if (account.phone != phone) return Resource.error(IdentityError.PhoneMismatch)
                 cache.markPhoneVerified(account.userId, deviceId)
                 Resource.success(PhoneVerifiedResult(phone.masked(), NextStep.REGISTER_DEVICE))
             }
-            AccountStatus.PENDING_PHONE -> claimForSignUp(account, phone, deviceId)
-            else -> Resource.error(IdentityError.PhoneMismatch)
+
+            AccountStatus.PENDING_PHONE -> {
+                claimForSignUp(account, phone, deviceId)
+            }
+
+            else -> {
+                Resource.error(IdentityError.PhoneMismatch)
+            }
         }
     }
 
-    private suspend fun claimForSignUp(account: Account, phone: PhoneNumber, deviceId: DeviceId): Resource<PhoneVerifiedResult> {
+    private suspend fun claimForSignUp(
+        account: Account,
+        phone: PhoneNumber,
+        deviceId: DeviceId,
+    ): Resource<PhoneVerifiedResult> {
         if (!accounts.claimPhone(phone, account.userId)) {
             if (!takeOverIfReleased(phone, account.userId) || !accounts.claimPhone(phone, account.userId)) {
                 return Resource.error(IdentityError.PhoneTaken)
@@ -53,7 +67,10 @@ class PhoneOwnership(
         store.commit(
             Changes(
                 accounts = listOf(verified),
-                securityEvents = listOf(SecurityEvent(account.userId, null, SecurityEventType.PHONE_VERIFIED, null, null)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(account.userId, null, SecurityEventType.PHONE_VERIFIED, null, null),
+                    ),
             ),
         )
         cache.markPhoneVerified(account.userId, deviceId)
@@ -65,7 +82,9 @@ class PhoneOwnership(
         val release = cache.phoneRelease(phones.hmac(phone)) ?: return false
         if (release.requesterUserId != requester || release.releaseAtEpochMillis > clock.millis()) return false
         val owner = accounts.find(release.ownerUserId) ?: return false
-        store.commit(Changes(accounts = listOf(owner.copy(status = AccountStatus.DELETED, phone = null, activeDeviceId = null))))
+        store.commit(
+            Changes(accounts = listOf(owner.copy(status = AccountStatus.DELETED, phone = null, activeDeviceId = null))),
+        )
         accounts.releasePhone(phone)
         return true
     }

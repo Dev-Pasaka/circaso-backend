@@ -23,38 +23,38 @@ data class DefaultResponse<T>(
 )
 
 @Serializable
-data class ErrorDetailsDto(
-    val retryAfterSeconds: Long? = null,
-    val fields: Map<String, String> = emptyMap(),
-)
+data class ErrorDetailsDto(val retryAfterSeconds: Long? = null, val fields: Map<String, String> = emptyMap())
 
 fun ErrorDetails.toDto(): ErrorDetailsDto = ErrorDetailsDto(retryAfterSeconds, fields)
 
 /** The status comes from the error's kind, never chosen per route. */
-fun ErrorKind.httpStatus(): HttpStatusCode = when (this) {
-    ErrorKind.INVALID -> HttpStatusCode.BadRequest
-    ErrorKind.UNAUTHORIZED -> HttpStatusCode.Unauthorized
-    ErrorKind.FORBIDDEN -> HttpStatusCode.Forbidden
-    ErrorKind.NOT_FOUND -> HttpStatusCode.NotFound
-    ErrorKind.CONFLICT -> HttpStatusCode.Conflict
-    ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
-    ErrorKind.UPSTREAM -> HttpStatusCode.BadGateway
-    ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
-}
+fun ErrorKind.httpStatus(): HttpStatusCode =
+    when (this) {
+        ErrorKind.INVALID -> HttpStatusCode.BadRequest
+        ErrorKind.UNAUTHORIZED -> HttpStatusCode.Unauthorized
+        ErrorKind.FORBIDDEN -> HttpStatusCode.Forbidden
+        ErrorKind.NOT_FOUND -> HttpStatusCode.NotFound
+        ErrorKind.CONFLICT -> HttpStatusCode.Conflict
+        ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
+        ErrorKind.UPSTREAM -> HttpStatusCode.BadGateway
+        ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
+    }
 
 fun <T, R> Resource<T>.toDefaultResponse(
     successStatus: HttpStatusCode = HttpStatusCode.OK,
     transform: (T) -> R,
-): DefaultResponse<R> = when (this) {
-    is Resource.Success -> DefaultResponse(successStatus.value, true, message, data = transform(data))
-    is Resource.Error -> error.toDefaultResponse()
-}
+): DefaultResponse<R> =
+    when (this) {
+        is Resource.Success -> DefaultResponse(successStatus.value, true, message, data = transform(data))
+        is Resource.Error -> error.toDefaultResponse()
+    }
 
 /** The failure envelope for an error, whatever the success type would have been. */
-fun <R> DomainError.toDefaultResponse(): DefaultResponse<R> = DefaultResponse(
-    httpStatusCode = kind.httpStatus().value,
-    status = false,
-    message = message,
-    code = code,
-    details = details?.toDto(),
-)
+fun <R> DomainError.toDefaultResponse(): DefaultResponse<R> =
+    DefaultResponse(
+        httpStatusCode = kind.httpStatus().value,
+        status = false,
+        message = message,
+        code = code,
+        details = details?.toDto(),
+    )

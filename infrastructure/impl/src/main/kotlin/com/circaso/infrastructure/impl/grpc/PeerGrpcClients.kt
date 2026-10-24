@@ -37,17 +37,18 @@ class PeerGrpcClients(
     private val telemetry: Telemetry = NoopTelemetry,
     private val clock: Clock = Clock.systemUTC(),
     private val builderFor: (target: String) -> ManagedChannelBuilder<*> = { ManagedChannelBuilder.forTarget(it) },
-) : GrpcClients, AutoCloseable {
-
+) : GrpcClients,
+    AutoCloseable {
     private val channels = ConcurrentHashMap<String, ManagedChannel>()
 
     override fun channel(name: String, configure: GrpcClientConfig.() -> Unit): ManagedChannel =
         channels.computeIfAbsent(name) { build(name, GrpcClientConfig().apply(configure)) }
 
-    override fun close() = channels.values.forEach {
-        it.shutdown()
-        if (!it.awaitTermination(2, TimeUnit.SECONDS)) it.shutdownNow()
-    }
+    override fun close() =
+        channels.values.forEach {
+            it.shutdown()
+            if (!it.awaitTermination(2, TimeUnit.SECONDS)) it.shutdownNow()
+        }
 
     private fun build(peer: String, config: GrpcClientConfig): ManagedChannel {
         val target = requireNotNull(config.target) { "gRPC peer '$peer' needs a target" }
@@ -66,76 +67,155 @@ class PeerGrpcClients(
         )
     }
 
-    private fun retryOnUnavailable(maxAttempts: Int): Map<String, Any> = mapOf(
-        "methodConfig" to listOf(
-            mapOf(
-                "name" to listOf(emptyMap<String, Any>()), // every service and method
-                "retryPolicy" to mapOf(
-                    "maxAttempts" to maxAttempts.toDouble(),
-                    "initialBackoff" to "0.2s",
-                    "maxBackoff" to "5s",
-                    "backoffMultiplier" to 2.0,
-                    "retryableStatusCodes" to listOf("UNAVAILABLE"),
+    private fun retryOnUnavailable(maxAttempts: Int): Map<String, Any> =
+        mapOf(
+            "methodConfig" to
+                listOf(
+                    mapOf(
+                        "name" to listOf(emptyMap<String, Any>()), // every service and method
+                        "retryPolicy" to
+                            mapOf(
+                                "maxAttempts" to maxAttempts.toDouble(),
+                                "initialBackoff" to "0.2s",
+                                "maxBackoff" to "5s",
+                                "backoffMultiplier" to 2.0,
+                                "retryableStatusCodes" to listOf("UNAVAILABLE"),
+                            ),
+                    ),
                 ),
-            ),
-        ),
-    )
+        )
 
-    private fun deadlineInterceptor(config: GrpcClientConfig) = object : ClientInterceptor {
-        override fun <ReqT, RespT> interceptCall(method: MethodDescriptor<ReqT, RespT>, options: CallOptions, next: Channel): ClientCall<ReqT, RespT> {
-            val withDeadline = if (options.deadline == null) options.withDeadlineAfter(config.deadline.toMillis(), TimeUnit.MILLISECONDS) else options
-            return next.newCall(method, withDeadline)
+    private fun deadlineInterceptor(config: GrpcClientConfig) =
+        object : ClientInterceptor {
+            override fun <ReqT, RespT> interceptCall(
+                method: MethodDescriptor<ReqT, RespT>,
+                options: CallOptions,
+                next: Channel,
+            ): ClientCall<ReqT, RespT> {
+                val withDeadline =
+                    if (options.deadline ==
+                        null
+                    ) {
+                        options.withDeadlineAfter(config.deadline.toMillis(), TimeUnit.MILLISECONDS)
+                    } else {
+                        options
+                    }
+                return next.newCall(method, withDeadline)
+            }
         }
-    }
 
     /** Circuit breaker, log line and metric around each call. */
-    private fun guard(peer: String, breaker: CircuitBreaker) = object : ClientInterceptor {
-        override fun <ReqT, RespT> interceptCall(method: MethodDescriptor<ReqT, RespT>, options: CallOptions, next: Channel): ClientCall<ReqT, RespT> {
-            try {
-                breaker.beforeCall()
-            } catch (e: CircuitOpenException) {
-                telemetry.record(Metrics.INTEGRATION_DURATION, 0.0, mapOf("vendor" to peer, "operation" to method.fullMethodName, "outcome" to "circuit_open"))
-                return failedCall(Status.UNAVAILABLE.withDescription(e.message))
-            }
-            val start = System.nanoTime()
-            return object : ForwardingClientCall.SimpleForwardingClientCall<ReqT, RespT>(next.newCall(method, options)) {
-                override fun start(listener: Listener<RespT>, headers: Metadata) {
-                    super.start(object : ForwardingClientCallListener.SimpleForwardingClientCallListener<RespT>(listener) {
-                        override fun onClose(status: Status, trailers: Metadata) {
-                            val failed = status.code in FAILURES
-                            if (failed) breaker.onFailure() else breaker.onSuccess()
-                            val outcome = if (status.isOk) "ok" else if (failed) "failure" else "client_error"
-                            telemetry.record(Metrics.INTEGRATION_DURATION, (System.nanoTime() - start) / 1e9, mapOf("vendor" to peer, "operation" to method.fullMethodName, "outcome" to outcome))
-                            val line = arrayOf(kv("kind", "grpc"), kv("vendor", peer), kv("method", method.fullMethodName), kv("status", status.code.name), kv("durationMs", 0L.millisSince(start)))
-                            if (failed) log.warn("call", *line) else log.info("call", *line)
-                            super.onClose(status, trailers)
-                        }
-                    }, headers)
+    private fun guard(peer: String, breaker: CircuitBreaker) =
+        object : ClientInterceptor {
+            override fun <ReqT, RespT> interceptCall(
+                method: MethodDescriptor<ReqT, RespT>,
+                options: CallOptions,
+                next: Channel,
+            ): ClientCall<ReqT, RespT> {
+                try {
+                    breaker.beforeCall()
+                } catch (e: CircuitOpenException) {
+                    telemetry.record(
+                        Metrics.INTEGRATION_DURATION,
+                        0.0,
+                        mapOf(
+                            "vendor" to peer,
+                            "operation" to method.fullMethodName,
+                            "outcome" to "circuit_open",
+                        ),
+                    )
+                    return failedCall(Status.UNAVAILABLE.withDescription(e.message))
+                }
+                val start = System.nanoTime()
+                return object : ForwardingClientCall.SimpleForwardingClientCall<ReqT, RespT>(
+                    next.newCall(method, options),
+                ) {
+                    override fun start(listener: Listener<RespT>, headers: Metadata) {
+                        super.start(
+                            object : ForwardingClientCallListener.SimpleForwardingClientCallListener<RespT>(listener) {
+                                override fun onClose(status: Status, trailers: Metadata) {
+                                    val failed = status.code in FAILURES
+                                    if (failed) breaker.onFailure() else breaker.onSuccess()
+                                    val outcome =
+                                        if (status.isOk) {
+                                            "ok"
+                                        } else if (failed) {
+                                            "failure"
+                                        } else {
+                                            "client_error"
+                                        }
+                                    telemetry.record(
+                                        Metrics.INTEGRATION_DURATION,
+                                        (System.nanoTime() - start) / 1e9,
+                                        mapOf(
+                                            "vendor" to peer,
+                                            "operation" to method.fullMethodName,
+                                            "outcome" to outcome,
+                                        ),
+                                    )
+                                    val line =
+                                        arrayOf(
+                                            kv("kind", "grpc"),
+                                            kv("vendor", peer),
+                                            kv("method", method.fullMethodName),
+                                            kv("status", status.code.name),
+                                            kv("durationMs", 0L.millisSince(start)),
+                                        )
+                                    if (failed) log.warn("call", *line) else log.info("call", *line)
+                                    super.onClose(status, trailers)
+                                }
+                            },
+                            headers,
+                        )
+                    }
                 }
             }
         }
-    }
 
-    private fun <ReqT, RespT> failedCall(status: Status): ClientCall<ReqT, RespT> = object : ClientCall<ReqT, RespT>() {
-        override fun start(listener: Listener<RespT>, headers: Metadata) = listener.onClose(status, Metadata())
-        override fun request(numMessages: Int) = Unit
-        override fun cancel(message: String?, cause: Throwable?) = Unit
-        override fun halfClose() = Unit
-        override fun sendMessage(message: ReqT) = Unit
-    }
+    private fun <ReqT, RespT> failedCall(status: Status): ClientCall<ReqT, RespT> =
+        object : ClientCall<ReqT, RespT>() {
+            override fun start(listener: Listener<RespT>, headers: Metadata) = listener.onClose(status, Metadata())
+
+            override fun request(numMessages: Int) = Unit
+
+            override fun cancel(message: String?, cause: Throwable?) = Unit
+
+            override fun halfClose() = Unit
+
+            override fun sendMessage(message: ReqT) = Unit
+        }
 
     /** The peer is unwell, as opposed to the caller having asked for something wrong. */
-    private val FAILURES = setOf(Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED, Status.Code.INTERNAL, Status.Code.UNKNOWN)
+    private val FAILURES =
+        setOf(Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED, Status.Code.INTERNAL, Status.Code.UNKNOWN)
 
     /** A channel that sends every call through [interceptors]; shutdown goes to the real one. */
-    private class ChannelWithInterceptors(private val delegate: ManagedChannel, interceptors: List<ClientInterceptor>) : ManagedChannel() {
+    private class ChannelWithInterceptors(
+        private val delegate: ManagedChannel,
+        interceptors: List<ClientInterceptor>,
+    ) : ManagedChannel() {
         private val intercepted = ClientInterceptors.intercept(delegate, interceptors)
+
         override fun shutdown() = delegate.shutdown().let { this }
+
         override fun isShutdown() = delegate.isShutdown
+
         override fun isTerminated() = delegate.isTerminated
+
         override fun shutdownNow() = delegate.shutdownNow().let { this }
+
         override fun awaitTermination(timeout: Long, unit: TimeUnit) = delegate.awaitTermination(timeout, unit)
-        override fun <ReqT, RespT> newCall(method: MethodDescriptor<ReqT, RespT>, options: CallOptions): ClientCall<ReqT, RespT> = intercepted.newCall(method, options)
+
+        override fun <ReqT, RespT> newCall(
+            method: MethodDescriptor<ReqT, RespT>,
+            options: CallOptions,
+        ): ClientCall<ReqT, RespT> =
+            intercepted
+                .newCall(
+                    method,
+                    options,
+                )
+
         override fun authority(): String = delegate.authority()
     }
 }

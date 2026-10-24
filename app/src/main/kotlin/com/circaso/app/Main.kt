@@ -26,12 +26,18 @@ fun main() {
     val env = DotEnv.environment() // before anything logs
     val app = AppConfig.fromEnv(env)
     log().info("Starting", kv("environment", app.environment), kv("version", app.version), kv("port", app.port))
-    val server = embeddedServer(Netty, port = app.port, host = app.host) {
-        circasoServe(app, EnvConfig(env), EnvSecrets(env))
-    }
+    val server =
+        embeddedServer(Netty, port = app.port, host = app.host) {
+            circasoServe(app, EnvConfig(env), EnvSecrets(env))
+        }
     server.start(wait = false) // returns once the port is bound, so what is printed next is true
     Runtime.getRuntime().addShutdownHook(Thread { server.stop(gracePeriodMillis = 1_000, timeoutMillis = 5_000) })
-    log().info("Application started", kv("url", Banner.url(app.host, app.port)), kv("environment", app.environment), kv("version", app.version))
+    log().info(
+        "Application started",
+        kv("url", Banner.url(app.host, app.port)),
+        kv("environment", app.environment),
+        kv("version", app.version),
+    )
     Banner.print(app, env["LOG_FORMAT"])
     Thread.currentThread().join() // until the process is stopped; the hook above closes the server
 }
@@ -45,12 +51,13 @@ object Migrate {
     @JvmStatic
     fun main(args: Array<String>) {
         val env = DotEnv.environment()
-        val applied = try {
-            migrate(EnvConfig(env), EnvSecrets(env))
-        } catch (e: Exception) {
-            log().error("Migrations failed", e)
-            exitProcess(1)
-        }
+        val applied =
+            try {
+                migrate(EnvConfig(env), EnvSecrets(env))
+            } catch (e: Exception) {
+                log().error("Migrations failed", e)
+                exitProcess(1)
+            }
         log().info("Migrations applied", kv("count", applied))
     }
 }

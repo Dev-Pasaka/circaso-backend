@@ -9,14 +9,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EnvConfigTest {
-
-    private val env = mapOf(
-        "SCYLLA_CONTACT_POINTS" to "a:9042,b:9042",
-        "SCYLLA_TLS" to "true",
-        "INTEGRATIONS_SMS_PROVIDER" to "log",
-        "REDIS_POOL_SIZE" to "8",
-        "BLANK" to "  ",
-    )
+    private val env =
+        mapOf(
+            "SCYLLA_CONTACT_POINTS" to "a:9042,b:9042",
+            "SCYLLA_TLS" to "true",
+            "INTEGRATIONS_SMS_PROVIDER" to "log",
+            "REDIS_POOL_SIZE" to "8",
+            "BLANK" to "  ",
+        )
 
     @Test
     fun `a dotted key reads its upper-case variable, dashes included`() {
@@ -44,7 +44,12 @@ class EnvConfigTest {
         assertEquals(1, config.int("redis.missing", 1))
         assertTrue(config.boolean("scylla.tls", false))
         assertFalse(config.boolean("scylla.missing", false))
-        val bad = assertFailsWith<IllegalStateException> { EnvConfig(mapOf("REDIS_POOL_SIZE" to "many")).int("redis.pool-size", 1) }
+        val bad =
+            assertFailsWith<IllegalStateException> {
+                EnvConfig(
+                    mapOf("REDIS_POOL_SIZE" to "many"),
+                ).int("redis.pool-size", 1)
+            }
         assertTrue("redis.pool-size" in bad.message!!)
         assertFailsWith<IllegalStateException> { EnvConfig(mapOf("SCYLLA_TLS" to "yes")).boolean("scylla.tls", false) }
     }
@@ -61,7 +66,11 @@ class EnvConfigTest {
     fun `the environment comes from CIRCASO_ENV and defaults to local`() {
         assertEquals(Environment.LOCAL, EnvConfig(emptyMap()).environment)
         assertEquals(Environment.PRODUCTION, EnvConfig(mapOf("CIRCASO_ENV" to "Production")).environment)
-        assertEquals(Environment.STAGING, EnvConfig(mapOf("CIRCASO_ENV" to "staging")).section("x").environment, "a section keeps it")
+        assertEquals(
+            Environment.STAGING,
+            EnvConfig(mapOf("CIRCASO_ENV" to "staging")).section("x").environment,
+            "a section keeps it",
+        )
         assertFailsWith<IllegalArgumentException> { EnvConfig(mapOf("CIRCASO_ENV" to "prod")) }
     }
 

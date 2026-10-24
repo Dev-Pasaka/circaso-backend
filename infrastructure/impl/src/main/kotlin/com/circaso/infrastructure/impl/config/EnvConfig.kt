@@ -13,7 +13,6 @@ class EnvConfig(
     private val prefix: String = "",
     override val environment: Environment = env["CIRCASO_ENV"]?.let(Environment::parse) ?: Environment.LOCAL,
 ) : Config {
-
     override fun string(key: String): String? = env[variableName(prefix + key)]?.takeIf { it.isNotBlank() }
 
     override fun section(prefix: String): Config = EnvConfig(env, "${this.prefix}$prefix.", environment)

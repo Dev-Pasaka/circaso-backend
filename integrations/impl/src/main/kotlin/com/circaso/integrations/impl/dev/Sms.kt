@@ -13,7 +13,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 class LogSms : SmsGateway {
     private val log = LoggerFactory.getLogger(LogSms::class.java)
 
-    override suspend fun send(to: PhoneNumber, text: String, purpose: SmsPurpose): Resource<SmsReceipt> {
+    override suspend fun send(
+        to: PhoneNumber,
+        text: String,
+        purpose: SmsPurpose,
+    ): Resource<SmsReceipt> {
         log.info("sms to {} ({}): {}", to.masked(), purpose, text)
         return Resource.success(SmsReceipt(UUID.randomUUID().toString(), "log"))
     }
@@ -25,7 +29,11 @@ class FakeSms : SmsGateway {
 
     val sent: MutableList<Sent> = CopyOnWriteArrayList()
 
-    override suspend fun send(to: PhoneNumber, text: String, purpose: SmsPurpose): Resource<SmsReceipt> {
+    override suspend fun send(
+        to: PhoneNumber,
+        text: String,
+        purpose: SmsPurpose,
+    ): Resource<SmsReceipt> {
         sent += Sent(to, text, purpose)
         return Resource.success(SmsReceipt("fake-${sent.size}", "fake"))
     }

@@ -9,8 +9,16 @@ import java.util.UUID
 
 /** A1: the Asha chat, newest first, paged by an opaque cursor. */
 class ListChat(private val chat: ChatRepository) {
-    suspend operator fun invoke(userId: UserId, cursor: String?, limit: Int): Resource<ChatPage> {
-        val before = cursor?.let { runCatching { UUID.fromString(it) }.getOrNull() ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid"))) }
+    suspend operator fun invoke(
+        userId: UserId,
+        cursor: String?,
+        limit: Int,
+    ): Resource<ChatPage> {
+        val before =
+            cursor?.let {
+                runCatching { UUID.fromString(it) }.getOrNull()
+                    ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid")))
+            }
         val size = limit.coerceIn(1, 100)
         val rows = chat.list(userId, before, size + 1)
         val shown = rows.take(size)

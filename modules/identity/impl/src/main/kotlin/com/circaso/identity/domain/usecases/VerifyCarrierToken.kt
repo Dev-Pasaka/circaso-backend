@@ -17,11 +17,22 @@ class VerifyCarrierToken(
     private val ownership: PhoneOwnership,
 ) {
     suspend operator fun invoke(command: VerifyCarrierCommand): Resource<PhoneVerifiedResult> {
-        val phone = when (val verified = carrier.verify(command.carrierToken)) {
-            is Resource.Success -> verified.data
-            is Resource.Error ->
-                return if (verified.error is IntegrationError.Rejected) Resource.error(IdentityError.CarrierUnsupported) else verified
-        }
+        val phone =
+            when (val verified = carrier.verify(command.carrierToken)) {
+                is Resource.Success -> {
+                    verified.data
+                }
+
+                is Resource.Error -> {
+                    return if (verified.error is IntegrationError.Rejected) {
+                        Resource.error(
+                            IdentityError.CarrierUnsupported,
+                        )
+                    } else {
+                        verified
+                    }
+                }
+            }
         val account = accounts.find(command.principal.userId) ?: return Resource.error(SharedError.TokenInvalid)
         return ownership.confirm(account, phone, command.principal.deviceId)
     }

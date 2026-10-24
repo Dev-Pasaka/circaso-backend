@@ -47,7 +47,9 @@ class OutboxRelay(
         var buckets = 0
 
         // A bucket is swept only once it ended more than [margin] ago, so the normal publish path has had its chance.
-        while (buckets < maxBucketsPerSweep && !EventEnvelope.bucketStart(bucket).plusSeconds(60).isAfter(now.minus(margin))) {
+        while (buckets < maxBucketsPerSweep &&
+            !EventEnvelope.bucketStart(bucket).plusSeconds(60).isAfter(now.minus(margin))
+        ) {
             for (envelope in store.unpublished(bucket)) {
                 if (!bus.appendToStream(envelope)) {
                     bus.noteRescued(store.producer, published.toLong())
@@ -61,7 +63,11 @@ class OutboxRelay(
             buckets++
         }
         bus.noteRescued(store.producer, published.toLong())
-        if (published > 0) log.warn("rescued unpublished events", kv("producer", store.producer), kv("events", published))
+        if (published >
+            0
+        ) {
+            log.warn("rescued unpublished events", kv("producer", store.producer), kv("events", published))
+        }
         return published
     }
 }

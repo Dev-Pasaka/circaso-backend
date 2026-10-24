@@ -50,11 +50,22 @@ class SignInWithProvider(
     suspend operator fun invoke(command: SignInCommand): Resource<SignInResult> {
         if (!cache.consumeNonce(command.nonce)) return Resource.error(IdentityError.NonceInvalid)
 
-        val identity = when (val verified = social.verify(command.provider, command.idToken, command.nonce)) {
-            is Resource.Success -> verified.data
-            is Resource.Error ->
-                return if (verified.error is IntegrationError.Rejected) Resource.error(IdentityError.ProviderTokenInvalid) else verified
-        }
+        val identity =
+            when (val verified = social.verify(command.provider, command.idToken, command.nonce)) {
+                is Resource.Success -> {
+                    verified.data
+                }
+
+                is Resource.Error -> {
+                    return if (verified.error is IntegrationError.Rejected) {
+                        Resource.error(
+                            IdentityError.ProviderTokenInvalid,
+                        )
+                    } else {
+                        verified
+                    }
+                }
+            }
 
         val account = findOrCreate(command, identity)
         return when (account.status) {
@@ -81,8 +92,20 @@ class SignInWithProvider(
         store.commit(
             Changes(
                 accounts = listOf(account),
-                providerLinks = listOf(ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant())),
-                securityEvents = listOf(SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, command.device.model, command.provider.name)),
+                providerLinks =
+                    listOf(
+                        ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant()),
+                    ),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(
+                            userId,
+                            null,
+                            SecurityEventType.PROVIDER_LINKED,
+                            command.device.model,
+                            command.provider.name,
+                        ),
+                    ),
             ),
         )
         cache.saveHints(userId, command.appleName ?: identity.displayName, identity.pictureUrl)
@@ -90,16 +113,21 @@ class SignInWithProvider(
     }
 
     private suspend fun pendingPhone(account: Account, command: SignInCommand): Resource<SignInResult> {
-        val next = if (account.phone != null && cache.isPhoneVerified(account.userId, command.device.deviceId)) {
-            NextStep.REGISTER_DEVICE
-        } else {
-            NextStep.VERIFY_PHONE
-        }
+        val next =
+            if (account.phone != null && cache.isPhoneVerified(account.userId, command.device.deviceId)) {
+                NextStep.REGISTER_DEVICE
+            } else {
+                NextStep.VERIFY_PHONE
+            }
         return Resource.success(onboarding(account, command, next))
     }
 
     private suspend fun active(account: Account, command: SignInCommand): Resource<SignInResult> {
-        val registered = account.activeDeviceId?.takeIf { it == command.device.deviceId }?.let { devices.find(account.userId, it) }
+        val registered =
+            account.activeDeviceId
+                ?.takeIf {
+                    it == command.device.deviceId
+                }?.let { devices.find(account.userId, it) }
         val proof = command.proof
         if (proof == null || !proofs.valid(registered, DeviceProofs.signInPayload(command.nonce, proof), proof)) {
             return reverify(account, command)
@@ -109,18 +137,44 @@ class SignInWithProvider(
         store.commit(
             Changes(
                 sessions = opened.ended + opened.issued.session,
-                securityEvents = listOf(SecurityEvent(account.userId, null, SecurityEventType.SIGN_IN, registered?.model, null)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(account.userId, null, SecurityEventType.SIGN_IN, registered?.model, null),
+                    ),
             ),
         )
         sessions.afterCommit(account, opened)
-        return Resource.success(SignInResult(NextStep.DONE, account.phone?.masked(), opened.issued.appTokens(), opened.issued.agentTokens()))
+        return Resource.success(
+            SignInResult(
+                NextStep.DONE,
+                account.phone?.masked(),
+                opened.issued.appTokens(),
+                opened.issued.agentTokens(),
+            ),
+        )
     }
 
     private suspend fun reverify(account: Account, command: SignInCommand): Resource<SignInResult> =
         Resource.success(onboarding(account, command, NextStep.REVERIFY_PHONE))
 
-    private fun onboarding(account: Account, command: SignInCommand, next: NextStep): SignInResult {
-        val token = tokens.issue(account.userId, command.device.deviceId, SessionId.new(), Scope.ONBOARDING, account.sessionVersion)
-        return SignInResult(next, account.phone?.masked(), SessionTokens(token.token, null, token.expiresInSeconds, Scope.ONBOARDING.wire), null)
+    private fun onboarding(
+        account: Account,
+        command: SignInCommand,
+        next: NextStep,
+    ): SignInResult {
+        val token =
+            tokens.issue(
+                account.userId,
+                command.device.deviceId,
+                SessionId.new(),
+                Scope.ONBOARDING,
+                account.sessionVersion,
+            )
+        return SignInResult(
+            next,
+            account.phone?.masked(),
+            SessionTokens(token.token, null, token.expiresInSeconds, Scope.ONBOARDING.wire),
+            null,
+        )
     }
 }

@@ -15,9 +15,11 @@ data class AppConfig(
     companion object {
         fun fromEnv(env: Map<String, String> = System.getenv()): AppConfig {
             val defaults = AppConfig()
-            val port = env["PORT"]?.let {
-                it.toIntOrNull()?.takeIf { port -> port in 1..65535 } ?: throw IllegalArgumentException("PORT must be 1-65535 (was '$it')")
-            }
+            val port =
+                env["PORT"]?.let {
+                    it.toIntOrNull()?.takeIf { port -> port in 1..65535 }
+                        ?: throw IllegalArgumentException("PORT must be 1-65535 (was '$it')")
+                }
             return AppConfig(
                 environment = env["CIRCASO_ENV"]?.let(Environment::parse) ?: defaults.environment,
                 host = env["HOST"] ?: defaults.host,

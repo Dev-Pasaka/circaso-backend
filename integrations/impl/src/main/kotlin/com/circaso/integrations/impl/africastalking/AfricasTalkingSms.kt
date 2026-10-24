@@ -45,27 +45,34 @@ class AfricasTalkingSms(
 ) : SmsGateway {
     private val log = LoggerFactory.getLogger(AfricasTalkingSms::class.java)
 
-    override suspend fun send(to: PhoneNumber, text: String, purpose: SmsPurpose): Resource<SmsReceipt> {
-        val form = Parameters.build {
-            append("username", username)
-            append("to", to.e164)
-            append("message", text)
-            senderId?.takeIf { it.isNotBlank() }?.let { append("from", it) }
-        }
-        val (status, body) = try {
-            val response = http.post("/version1/messaging") {
-                operation("send_sms")
-                header("apiKey", apiKey)
-                header(HttpHeaders.Accept, "application/json")
-                setBody(FormDataContent(form))
+    override suspend fun send(
+        to: PhoneNumber,
+        text: String,
+        purpose: SmsPurpose,
+    ): Resource<SmsReceipt> {
+        val form =
+            Parameters.build {
+                append("username", username)
+                append("to", to.e164)
+                append("message", text)
+                senderId?.takeIf { it.isNotBlank() }?.let { append("from", it) }
             }
-            response.status.value to response.bodyAsText()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log.warn("africastalking unreachable: purpose={} error={}", purpose, e::class.simpleName)
-            return Resource.error(IntegrationError.Unavailable("Africa's Talking"), e)
-        }
+        val (status, body) =
+            try {
+                val response =
+                    http.post("/version1/messaging") {
+                        operation("send_sms")
+                        header("apiKey", apiKey)
+                        header(HttpHeaders.Accept, "application/json")
+                        setBody(FormDataContent(form))
+                    }
+                response.status.value to response.bodyAsText()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("africastalking unreachable: purpose={} error={}", purpose, e::class.simpleName)
+                return Resource.error(IntegrationError.Unavailable("Africa's Talking"), e)
+            }
 
         if (status == 401 || status == 403) {
             log.error("africastalking refused our credentials: status={}", status)
@@ -77,18 +84,30 @@ class AfricasTalkingSms(
             return Resource.error(IntegrationError.Rejected("The message could not be sent."))
         }
 
-        val recipient = runCatching {
-            Json.parseToJsonElement(body).jsonObject["SMSMessageData"]!!.jsonObject["Recipients"]!!.jsonArray.firstOrNull()?.jsonObject
-        }.getOrNull()
+        val recipient =
+            runCatching {
+                Json
+                    .parseToJsonElement(
+                        body,
+                    ).jsonObject["SMSMessageData"]!!
+                    .jsonObject["Recipients"]!!
+                    .jsonArray
+                    .firstOrNull()
+                    ?.jsonObject
+            }.getOrNull()
         val code = recipient?.get("statusCode")?.jsonPrimitive?.intOrNull
         val messageId = recipient?.get("messageId")?.jsonPrimitive?.content
 
         return when (code) {
-            100, 101, 102 -> Resource.success(SmsReceipt(messageId ?: "unknown", "africastalking"))
+            100, 101, 102 -> {
+                Resource.success(SmsReceipt(messageId ?: "unknown", "africastalking"))
+            }
+
             403, 404, 406, 407 -> {
                 log.info("africastalking would not deliver: code={} purpose={}", code, purpose)
                 Resource.error(IntegrationError.Rejected("That number cannot receive the message."))
             }
+
             else -> {
                 log.error("africastalking could not send: code={} purpose={}", code, purpose)
                 Resource.error(IntegrationError.Unavailable("Africa's Talking"))

@@ -19,7 +19,6 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.datab
  * because ScyllaDB Cloud's tablets reject SimpleStrategy).
  */
 class DatabaseMigrator(private val settings: ScyllaSettings) {
-
     /** Returns how many migrations were applied in all. */
     fun migrate(specs: List<KandraModuleSpec>): Int {
         if (specs.isEmpty()) return 0 // nothing to migrate, so nothing to connect to
@@ -43,7 +42,8 @@ class DatabaseMigrator(private val settings: ScyllaSettings) {
     private fun createLocalKeyspace(session: CqlSession, keyspace: String) {
         require(Regex("[a-z][a-z0-9_]*").matches(keyspace)) { "'$keyspace' is not a valid keyspace name" }
         session.execute(
-            "CREATE KEYSPACE IF NOT EXISTS $keyspace WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1} " +
+            "CREATE KEYSPACE IF NOT EXISTS $keyspace WITH replication = {'class': 'SimpleStrategy', " +
+                "'replication_factor': 1} " +
                 "AND tablets = {'enabled': false}",
         )
     }

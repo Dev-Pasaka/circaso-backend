@@ -14,6 +14,7 @@ import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.repositories.UsersChanges
 import com.circaso.users.domain.repositories.UsersStore
 import com.circaso.users.domain.repositories.WaitingContactRepository
+import java.security.SecureRandom
 import java.time.Clock
 import java.time.Duration
 import java.util.Base64
@@ -32,13 +33,24 @@ data class UsersConfig(
 fun fallbackProfile(userId: UserId) = PublicProfile(userId, DEFAULT_DISPLAY_NAME, null, null, null)
 
 /** A profile that is always there: if the activation event is late or lost, the first read creates an empty one. */
-class ProfileProvisioner(private val profiles: ProfileRepository, private val store: UsersStore, private val clock: Clock) {
+class ProfileProvisioner(
+    private val profiles: ProfileRepository,
+    private val store: UsersStore,
+    private val clock: Clock,
+) {
     suspend fun ensure(userId: UserId, displayName: String? = null): Profile {
         profiles.find(userId)?.let { return it }
-        val created = Profile(
-            userId, displayName?.trim()?.take(MAX_DISPLAY_NAME)?.takeIf { it.isNotEmpty() } ?: DEFAULT_DISPLAY_NAME,
-            null, null, null, null, Privacy(), clock.instant(),
-        )
+        val created =
+            Profile(
+                userId,
+                displayName?.trim()?.take(MAX_DISPLAY_NAME)?.takeIf { it.isNotEmpty() } ?: DEFAULT_DISPLAY_NAME,
+                null,
+                null,
+                null,
+                null,
+                Privacy(),
+                clock.instant(),
+            )
         store.commit(UsersChanges(profiles = listOf(created)))
         return profiles.find(userId) ?: created
     }
@@ -62,7 +74,17 @@ class WaitingContactMatcher(
         val fresh = rows.filter { contacts.find(it.ownerId, joined) == null }
         store.commit(
             UsersChanges(
-                contacts = fresh.map { Contact(it.ownerId, joined, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now) },
+                contacts =
+                    fresh.map {
+                        Contact(
+                            it.ownerId,
+                            joined,
+                            ContactSource.PHONEBOOK,
+                            ContactStatus.ACTIVE,
+                            null,
+                            now,
+                        )
+                    },
                 clearedWaiting = rows,
             ),
         )
@@ -72,6 +94,6 @@ class WaitingContactMatcher(
 }
 
 internal fun randomInviteToken(): String {
-    val bytes = ByteArray(24).also(java.security.SecureRandom()::nextBytes)
+    val bytes = ByteArray(24).also(SecureRandom()::nextBytes)
     return "inv_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 }

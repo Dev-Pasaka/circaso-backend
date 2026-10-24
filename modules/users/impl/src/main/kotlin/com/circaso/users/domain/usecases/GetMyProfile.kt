@@ -11,6 +11,8 @@ import com.circaso.users.domain.support.ProfileViews
 class GetMyProfile(private val provisioner: ProfileProvisioner, private val views: ProfileViews) {
     suspend operator fun invoke(userId: UserId): Resource<MyProfile> {
         val profile = provisioner.ensure(userId)
-        return Resource.success(MyProfile(profile, views.avatarUrl(profile), profile.handleChangedAt?.plus(HANDLE_COOLDOWN)))
+        return Resource.success(
+            MyProfile(profile, views.avatarUrl(profile), profile.handleChangedAt?.plus(HANDLE_COOLDOWN)),
+        )
     }
 }

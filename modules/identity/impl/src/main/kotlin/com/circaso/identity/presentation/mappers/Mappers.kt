@@ -5,11 +5,12 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.DeviceInfo
 import com.circaso.identity.domain.models.DeviceProof
 import com.circaso.identity.domain.models.LinkProviderCommand
+import com.circaso.identity.domain.models.PhoneVerifiedResult
 import com.circaso.identity.domain.models.RecoveryCommand
-import com.circaso.identity.domain.models.RegisterDeviceCommand
-import com.circaso.identity.domain.models.RegisteredDevice
 import com.circaso.identity.domain.models.RefreshCommand
 import com.circaso.identity.domain.models.RefreshedSession
+import com.circaso.identity.domain.models.RegisterDeviceCommand
+import com.circaso.identity.domain.models.RegisteredDevice
 import com.circaso.identity.domain.models.ReleaseCommand
 import com.circaso.identity.domain.models.SecurityOverview
 import com.circaso.identity.domain.models.SecurityPage
@@ -21,7 +22,6 @@ import com.circaso.identity.domain.models.StartPhoneResult
 import com.circaso.identity.domain.models.SupportRecovery
 import com.circaso.identity.domain.models.VerifyCarrierCommand
 import com.circaso.identity.domain.models.VerifyCodeCommand
-import com.circaso.identity.domain.models.PhoneVerifiedResult
 import com.circaso.identity.domain.ports.PublicKey
 import com.circaso.identity.presentation.dto.ActiveDeviceDto
 import com.circaso.identity.presentation.dto.CarrierRequest
@@ -63,7 +63,12 @@ import java.util.UUID
 
 // ---- request → command: shape checks live here and answer `request.malformed` ----
 
-private fun malformed(field: String, why: String = "is not valid") = Resource.error(SharedError.Malformed(mapOf(field to why)))
+private fun malformed(field: String, why: String = "is not valid") =
+    Resource.error(
+        SharedError.Malformed(
+            mapOf(field to why),
+        ),
+    )
 
 fun CallPrincipal.toPrincipal() = Principal(userId, deviceId, SessionId(sessionId), scope)
 
@@ -97,15 +102,34 @@ fun VerifyCodeRequest.toCommand(caller: CallPrincipal): Resource<VerifyCodeComma
 }
 
 fun CarrierRequest.toCommand(caller: CallPrincipal): Resource<VerifyCarrierCommand> =
-    if (carrierToken.isBlank()) malformed("carrierToken", "is required") else Resource.success(VerifyCarrierCommand(caller.toPrincipal(), carrierToken))
+    if (carrierToken.isBlank()) {
+        malformed(
+            "carrierToken",
+            "is required",
+        )
+    } else {
+        Resource.success(VerifyCarrierCommand(caller.toPrincipal(), carrierToken))
+    }
 
 /** `X-Client-Version` (`android/1.4.0`) tells the platform and app version I6 does not carry in its body. */
 fun RegisterDeviceRequest.toCommand(caller: CallPrincipal, clientVersion: String?): Resource<RegisterDeviceCommand> {
     val id = DeviceId.parse(deviceId) ?: return malformed("deviceId")
     if (publicKey.isBlank()) return malformed("publicKey", "is required")
-    val (platform, version) = clientVersion?.split('/', limit = 2)?.takeIf { it.size == 2 } ?: listOf("unknown", "unknown")
+    val (platform, version) =
+        clientVersion?.split('/', limit = 2)?.takeIf { it.size == 2 }
+            ?: listOf("unknown", "unknown")
     return Resource.success(
-        RegisterDeviceCommand(caller.toPrincipal(), id, publicKey, keyAlgorithm, pushToken, attestation, platform.lowercase(), model ?: "Unknown", version),
+        RegisterDeviceCommand(
+            caller.toPrincipal(),
+            id,
+            publicKey,
+            keyAlgorithm,
+            pushToken,
+            attestation,
+            platform.lowercase(),
+            model ?: "Unknown",
+            version,
+        ),
     )
 }
 
@@ -128,7 +152,12 @@ fun RecoveryRequest.toCommand(caller: CallPrincipal): Resource<RecoveryCommand> 
     return Resource.success(RecoveryCommand(caller.toPrincipal(), number, contactEmail, note?.take(500)))
 }
 
-fun ReleaseRequest.toCommand(caller: CallPrincipal) = ReleaseCommand(caller.toPrincipal(), verificationId, confirmAbandon)
+fun ReleaseRequest.toCommand(caller: CallPrincipal) =
+    ReleaseCommand(
+        caller.toPrincipal(),
+        verificationId,
+        confirmAbandon,
+    )
 
 fun parseUuid(raw: String?): UUID? = raw?.let(Uuid7::parse)
 
@@ -142,10 +171,13 @@ fun StartPhoneResult.toResponse() = StartPhoneResponse(verificationId, codeLengt
 
 fun PhoneVerifiedResult.toResponse() = PhoneVerifiedResponse(true, maskedPhone, next.name)
 
-fun RegisteredDevice.toResponse() = RegisterDeviceResponse(
-    UserStateDto(account.userId.toString(), account.status.name), session.toDto(), agentSession.toDto(),
-    replacedDevice?.let { ReplacedDeviceDto(it.model, it.lastSeenAt) },
-)
+fun RegisteredDevice.toResponse() =
+    RegisterDeviceResponse(
+        UserStateDto(account.userId.toString(), account.status.name),
+        session.toDto(),
+        agentSession.toDto(),
+        replacedDevice?.let { ReplacedDeviceDto(it.model, it.lastSeenAt) },
+    )
 
 fun RefreshedSession.toResponse() = RefreshResponse(session.toDto(), agentSession.toDto())
 
@@ -155,17 +187,27 @@ fun maskEmail(email: String): String {
     return name.take(2) + "•••@" + email.substringAfter('@', "")
 }
 
-fun SecurityOverview.toResponse() = SecurityOverviewResponse(
-    maskedPhone,
-    providers.map { ProviderDto(it.provider.name.lowercase(), it.email?.let(::maskEmail), it.linkedAt) },
-    device?.let { ActiveDeviceDto(it.model, it.registeredAt) },
-    verification.name,
-)
+fun SecurityOverview.toResponse() =
+    SecurityOverviewResponse(
+        maskedPhone,
+        providers.map { ProviderDto(it.provider.name.lowercase(), it.email?.let(::maskEmail), it.linkedAt) },
+        device?.let { ActiveDeviceDto(it.model, it.registeredAt) },
+        verification.name,
+    )
 
-fun SecurityPage.toResponse() = SecurityLogResponse(
-    events.map { SecurityEventDto(it.eventId.toString(), it.type.name, it.deviceModel, it.detail, it.eventId?.let(Uuid7::timestampOf) ?: Instant.EPOCH) },
-    nextCursor,
-)
+fun SecurityPage.toResponse() =
+    SecurityLogResponse(
+        events.map {
+            SecurityEventDto(
+                it.eventId.toString(),
+                it.type.name,
+                it.deviceModel,
+                it.detail,
+                it.eventId?.let(Uuid7::timestampOf) ?: Instant.EPOCH,
+            )
+        },
+        nextCursor,
+    )
 
 fun SupportRecovery.toResponse() = RecoveryResponse(requestId.toString(), status.name, noticeSentAt, relinkAfter)
 

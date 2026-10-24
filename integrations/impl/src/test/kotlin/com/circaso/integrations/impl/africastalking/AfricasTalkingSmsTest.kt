@@ -25,10 +25,18 @@ class AfricasTalkingSmsTest {
     private val clients = FakeHttpClients { _ -> if (down) throw IOException("down") else json(reply, status) }
     private val phone = PhoneNumber.parse("+254712345678")!!
 
-    private fun send(senderId: String? = null) = runBlocking {
-        AfricasTalkingSms("circaso", "key-1", clients.named("africastalking") { baseUrl = africasTalkingBaseUrl("circaso") }, senderId)
-            .send(phone, "Your Circaso code is 123456. Don't share it.", SmsPurpose.VERIFICATION)
-    }
+    private fun send(senderId: String? = null) =
+        runBlocking {
+            AfricasTalkingSms(
+                "circaso",
+                "key-1",
+                clients.named("africastalking") {
+                    baseUrl =
+                        africasTalkingBaseUrl("circaso")
+                },
+                senderId,
+            ).send(phone, "Your Circaso code is 123456. Don't share it.", SmsPurpose.VERIFICATION)
+        }
 
     @Test
     fun `sends the text to the number with the key in the header, and returns the message id`() {

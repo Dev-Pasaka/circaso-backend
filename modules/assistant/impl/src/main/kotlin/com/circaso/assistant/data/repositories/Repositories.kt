@@ -30,17 +30,25 @@ private val USER_ID = KandraColumnRef<UUID>("user_id")
 private val MESSAGE_ID = KandraColumnRef<UUID>("message_id")
 private val BUCKET = KandraColumnRef<String>("bucket")
 
-class ChatRepositoryImpl(private val messages: KandraSuspendRepository<AshaMessageRow>, private val vault: TextVault) : ChatRepository {
-    override suspend fun find(userId: UserId, messageId: UUID): ChatMessage? = messages.findById(userId.value, messageId)?.toModel(vault)
+class ChatRepositoryImpl(private val messages: KandraSuspendRepository<AshaMessageRow>, private val vault: TextVault) :
+    ChatRepository {
+    override suspend fun find(userId: UserId, messageId: UUID): ChatMessage? =
+        messages.findById(userId.value, messageId)?.toModel(vault)
 
-    override suspend fun list(userId: UserId, before: UUID?, limit: Int): List<ChatMessage> =
-        messages.findAll(limit) {
-            USER_ID eq userId.value
-            if (before != null) MESSAGE_ID lt before
-        }.map { it.toModel(vault) }
+    override suspend fun list(
+        userId: UserId,
+        before: UUID?,
+        limit: Int,
+    ): List<ChatMessage> =
+        messages
+            .findAll(limit) {
+                USER_ID eq userId.value
+                if (before != null) MESSAGE_ID lt before
+            }.map { it.toModel(vault) }
 }
 
-class EntitlementRepositoryImpl(private val entitlements: KandraSuspendRepository<EntitlementRow>) : EntitlementRepository {
+class EntitlementRepositoryImpl(private val entitlements: KandraSuspendRepository<EntitlementRow>) :
+    EntitlementRepository {
     override suspend fun planOf(userId: UserId): Plan {
         val row = entitlements.findById(userId.value) ?: return Plan.FREE
         val live = row.expiresAt == null || row.expiresAt.isAfter(Instant.now())
@@ -62,14 +70,21 @@ class AssistantStoreImpl(
     private val vault: TextVault,
     private val bus: EventBus,
 ) : AssistantStore {
-
     override suspend fun commit(changes: AssistantChanges) {
         if (changes == AssistantChanges()) return
         runtime.batch {
             changes.messages.forEach { messages.saveInBatch(it.toRow(vault)) }
             changes.deletedMessages.forEach { messages.deleteInBatch(it.toRow(vault)) }
-            changes.audit.forEach { audit.saveInBatch(AssistantAuditRow(it.userId.value, null, it.kind, it.detail, it.requestId)) }
-            changes.events.forEach { outbox.saveInBatch(AssistantOutboxRow(it.bucket, it.eventId.value, it.type, it.toJson())) }
+            changes.audit.forEach {
+                audit.saveInBatch(
+                    AssistantAuditRow(it.userId.value, null, it.kind, it.detail, it.requestId),
+                )
+            }
+            changes.events.forEach {
+                outbox.saveInBatch(
+                    AssistantOutboxRow(it.bucket, it.eventId.value, it.type, it.toJson()),
+                )
+            }
         }
         changes.events.forEach { bus.publish(it) }
     }
@@ -82,7 +97,15 @@ class AssistantStoreImpl(
         }
     }
 
-    override suspend fun saveUsage(userId: UserId, day: String, textTurns: Int, voiceSeconds: Int, inputTokens: Long, outputTokens: Long, at: Instant) {
+    override suspend fun saveUsage(
+        userId: UserId,
+        day: String,
+        textTurns: Int,
+        voiceSeconds: Int,
+        inputTokens: Long,
+        outputTokens: Long,
+        at: Instant,
+    ) {
         usage.save(UsageDailyRow(userId.value, day, textTurns, voiceSeconds, inputTokens, outputTokens, at))
     }
 

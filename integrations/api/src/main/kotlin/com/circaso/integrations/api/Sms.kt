@@ -5,7 +5,11 @@ import com.circaso.shared.Resource
 
 interface SmsGateway {
     /** Delivers [text] as written; the caller words it and owns the code, expiry and attempt limits. */
-    suspend fun send(to: PhoneNumber, text: String, purpose: SmsPurpose): Resource<SmsReceipt>
+    suspend fun send(
+        to: PhoneNumber,
+        text: String,
+        purpose: SmsPurpose,
+    ): Resource<SmsReceipt>
 }
 
 enum class SmsPurpose { VERIFICATION, SECURITY_ALERT, NOTIFICATION }

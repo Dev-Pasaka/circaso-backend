@@ -28,10 +28,16 @@ class RemoveAvatar(
 ) {
     suspend operator fun invoke(userId: UserId): Resource<MyProfile> {
         val old = provisioner.ensure(userId)
-        val key = old.avatarKey ?: return Resource.success(MyProfile(old, null, old.handleChangedAt?.plus(HANDLE_COOLDOWN)))
-        val saved = profiles.update(old, old.copy(avatarKey = null)) ?: return Resource.error(UsersError.VersionConflict)
+        val key =
+            old.avatarKey ?: return Resource.success(MyProfile(old, null, old.handleChangedAt?.plus(HANDLE_COOLDOWN)))
+        val saved =
+            profiles.update(old, old.copy(avatarKey = null)) ?: return Resource.error(UsersError.VersionConflict)
         storage.delete(key)
-        store.commit(UsersChanges(events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.AVATAR))))))
+        store.commit(
+            UsersChanges(
+                events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.AVATAR)))),
+            ),
+        )
         notifier.profileUpdated(userId, saved.version)
         return Resource.success(MyProfile(saved, views.avatarUrl(saved), saved.handleChangedAt?.plus(HANDLE_COOLDOWN)))
     }

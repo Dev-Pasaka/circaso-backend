@@ -11,14 +11,17 @@ import com.circaso.shared.decode
 
 /** The assistant's consumer group on `events:identity`: the chat goes with the account. */
 class IdentityEventHandler(private val events: IdentityEventsService) {
-    fun subscription() = EventSubscription(
-        group = "assistant",
-        stream = EventEnvelope.streamOf("identity"),
-        handlers = mapOf(
-            AccountDeleted.TYPE to EventHandler {
-                val result = events.accountDeleted(it.decode<AccountDeleted>())
-                if (result is Resource.Error) throw DomainException(result.error, result.cause)
-            },
-        ),
-    )
+    fun subscription() =
+        EventSubscription(
+            group = "assistant",
+            stream = EventEnvelope.streamOf("identity"),
+            handlers =
+                mapOf(
+                    AccountDeleted.TYPE to
+                        EventHandler {
+                            val result = events.accountDeleted(it.decode<AccountDeleted>())
+                            if (result is Resource.Error) throw DomainException(result.error, result.cause)
+                        },
+                ),
+        )
 }

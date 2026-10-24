@@ -8,7 +8,8 @@ enum class Scope(val wire: String) {
     ONBOARDING("onboarding"),
     APP("app"),
     AGENT("agent"),
-    OPS("ops");
+    OPS("ops"),
+    ;
 
     companion object {
         fun fromWire(raw: String): Scope? = entries.firstOrNull { it.wire == raw }

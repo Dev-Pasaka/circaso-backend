@@ -18,19 +18,21 @@ private val uuid = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-
  * through the MDC. Never the query string, a token, a phone number or an amount. Ids in the path are replaced by
  * `{id}`, so the line names a route rather than a person.
  */
-val RequestLog = createApplicationPlugin("CircasoRequestLog") {
-    onCall { call -> call.attributes.put(StartedAt, System.nanoTime()) }
-    on(ResponseSent) { call ->
-        val started = call.attributes.getOrNull(StartedAt) ?: return@on
-        val status = call.response.status()?.value ?: 0
-        val line = arrayOf(
-            kv("kind", "request"),
-            kv("http.method", call.request.httpMethod.value),
-            kv("http.route", uuid.replace(call.request.path(), "{id}")),
-            kv("http.status", status),
-            kv("durationMs", (System.nanoTime() - started) / 1_000_000),
-            kv("userId", call.principalOrNull()?.userId?.toString()),
-        )
-        if (status >= 500) log.warn("request", *line) else log.info("request", *line)
+val RequestLog =
+    createApplicationPlugin("CircasoRequestLog") {
+        onCall { call -> call.attributes.put(StartedAt, System.nanoTime()) }
+        on(ResponseSent) { call ->
+            val started = call.attributes.getOrNull(StartedAt) ?: return@on
+            val status = call.response.status()?.value ?: 0
+            val line =
+                arrayOf(
+                    kv("kind", "request"),
+                    kv("http.method", call.request.httpMethod.value),
+                    kv("http.route", uuid.replace(call.request.path(), "{id}")),
+                    kv("http.status", status),
+                    kv("durationMs", (System.nanoTime() - started) / 1_000_000),
+                    kv("userId", call.principalOrNull()?.userId?.toString()),
+                )
+            if (status >= 500) log.warn("request", *line) else log.info("request", *line)
+        }
     }
-}

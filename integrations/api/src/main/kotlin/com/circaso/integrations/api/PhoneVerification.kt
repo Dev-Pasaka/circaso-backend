@@ -31,6 +31,14 @@ enum class CodeCheck {
 /** The default: identity makes and checks codes itself. */
 object NoVendorVerification : PhoneVerificationGateway {
     override val managesCodes: Boolean = false
-    override suspend fun start(to: PhoneNumber, appHash: String?): Resource<Unit> = Resource.error(IntegrationError.NotImplemented("PhoneVerificationGateway", "none"))
-    override suspend fun check(to: PhoneNumber, code: String): Resource<CodeCheck> = Resource.error(IntegrationError.NotImplemented("PhoneVerificationGateway", "none"))
+
+    override suspend fun start(to: PhoneNumber, appHash: String?): Resource<Unit> =
+        Resource.error(
+            IntegrationError.NotImplemented("PhoneVerificationGateway", "none"),
+        )
+
+    override suspend fun check(to: PhoneNumber, code: String): Resource<CodeCheck> =
+        Resource.error(
+            IntegrationError.NotImplemented("PhoneVerificationGateway", "none"),
+        )
 }

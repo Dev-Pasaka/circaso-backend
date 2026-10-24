@@ -1,8 +1,8 @@
 package com.circaso.shared
 
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -17,7 +17,6 @@ import kotlinx.serialization.encoding.Encoder
 @Serializable(with = PhoneNumber.Serializer::class)
 @JvmInline
 value class PhoneNumber private constructor(val e164: String) {
-
     /** `+254 7•• ••• 678`: country code, first digit of the national number, last three digits. */
     fun masked(): String {
         val digits = e164.drop(1)
@@ -42,12 +41,13 @@ value class PhoneNumber private constructor(val e164: String) {
          * yet: the markets are African (`2xx`, except Egypt `20` and South Africa `27`), and for the rest
          * the common one-digit codes (`1`, `7`) and otherwise a mask that hides more rather than less.
          */
-        private fun countryCodeLength(digits: String): Int = when {
-            digits.startsWith("20") || digits.startsWith("27") -> 2
-            digits.startsWith("2") -> 3
-            digits.startsWith("1") || digits.startsWith("7") -> 1
-            else -> 3
-        }
+        private fun countryCodeLength(digits: String): Int =
+            when {
+                digits.startsWith("20") || digits.startsWith("27") -> 2
+                digits.startsWith("2") -> 3
+                digits.startsWith("1") || digits.startsWith("7") -> 1
+                else -> 3
+            }
     }
 
     object Serializer : KSerializer<PhoneNumber> {

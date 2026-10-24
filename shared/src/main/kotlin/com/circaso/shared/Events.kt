@@ -57,22 +57,22 @@ data class EventEnvelope(
 
         fun fromJson(raw: String): EventEnvelope = CircasoJson.decodeFromString(serializer(), raw)
 
-
         fun <E : DomainEvent> of(
             event: E,
             eventSerializer: KSerializer<E>,
             eventId: EventId = EventId.new(),
             occurredAt: Instant = Instant.now(),
             traceparent: String? = null,
-        ): EventEnvelope = EventEnvelope(
-            eventId = eventId,
-            type = event.type,
-            version = event.version,
-            occurredAt = occurredAt,
-            producer = event.producer,
-            traceparent = traceparent,
-            data = CircasoJson.encodeToJsonElement(eventSerializer, event),
-        )
+        ): EventEnvelope =
+            EventEnvelope(
+                eventId = eventId,
+                type = event.type,
+                version = event.version,
+                occurredAt = occurredAt,
+                producer = event.producer,
+                traceparent = traceparent,
+                data = CircasoJson.encodeToJsonElement(eventSerializer, event),
+            )
     }
 }
 

@@ -27,27 +27,38 @@ inline fun <reified Req, reified Res> Route.docs(
     /** False for the few routes that answer with the body itself rather than the [DefaultResponse] envelope (health). */
     envelope: Boolean = true,
 ): Route {
-    val stateChange = ((this as? RoutingNode)?.selector as? HttpMethodRouteSelector)?.method in setOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Patch, HttpMethod.Delete)
+    val stateChange =
+        ((this as? RoutingNode)?.selector as? HttpMethodRouteSelector)?.method in
+            setOf(HttpMethod.Post, HttpMethod.Put, HttpMethod.Patch, HttpMethod.Delete)
     val takesBody = Req::class != NoBody::class
     return describe {
         this.summary = summary
-        this.description = buildString {
-            notes?.let { appendLine(it).appendLine() }
-            if (errors.isNotEmpty()) append("**Errors:** ").append(errors.joinToString(", ") { "`$it`" })
-        }.trim().ifEmpty { null }
+        this.description =
+            buildString {
+                notes?.let { appendLine(it).appendLine() }
+                if (errors.isNotEmpty()) append("**Errors:** ").append(errors.joinToString(", ") { "`$it`" })
+            }.trim().ifEmpty { null }
         tag(tag)
         if (stateChange) {
             parameters {
                 header("Idempotency-Key") {
                     required = true
-                    description = "A UUID. A repeat within 24 hours returns the first response instead of running again."
+                    description =
+                        "A UUID. A repeat within 24 hours returns the first response instead of running again."
                 }
             }
         }
         if (takesBody) requestBody { schema = buildSchema(typeOf<Req>()) }
         responses {
             HttpStatusCode.OK {
-                description = if (envelope) "Always the DefaultResponse envelope; on a failure `status` is false and `code` names the error." else "The body itself, not the envelope."
+                description =
+                    if (envelope) {
+                        "Always the DefaultResponse envelope; on a failure `status` is false and `code` names " +
+                            "the error."
+                    } else {
+                        "The body " +
+                            "itself, not the envelope."
+                    }
                 schema = if (envelope) buildSchema(typeOf<DefaultResponse<Res>>()) else buildSchema(typeOf<Res>())
             }
         }

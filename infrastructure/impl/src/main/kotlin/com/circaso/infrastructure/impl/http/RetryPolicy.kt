@@ -12,6 +12,7 @@ import java.net.UnknownHostException
 import java.nio.channels.UnresolvedAddressException
 import kotlin.math.min
 import kotlin.random.Random
+import java.net.SocketTimeoutException as JdkSocketTimeoutException
 
 /**
  * The retry table (Architecture → Infrastructure → The shared HTTP client), because retrying the wrong call
@@ -26,8 +27,8 @@ import kotlin.random.Random
  * | `POST` without one that times out | no: the caller decides |
  */
 object RetryPolicy {
-
-    private val idempotentMethods = setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Put, HttpMethod.Delete, HttpMethod.Options)
+    private val idempotentMethods =
+        setOf(HttpMethod.Get, HttpMethod.Head, HttpMethod.Put, HttpMethod.Delete, HttpMethod.Options)
 
     fun retryAfterException(request: HttpRequestBuilder, cause: Throwable): Boolean {
         val chain = generateSequence(cause) { it.cause }.take(8).toList()
@@ -47,10 +48,14 @@ object RetryPolicy {
             e is UnresolvedAddressException || e is NoRouteToHostException
 
     private fun timedOut(e: Throwable) =
-        e is HttpRequestTimeoutException || e is SocketTimeoutException || e is java.net.SocketTimeoutException
+        e is HttpRequestTimeoutException || e is SocketTimeoutException || e is JdkSocketTimeoutException
 
     /** Exponential backoff with jitter: half the step plus a random half, capped. [retry] counts from 1. */
-    fun backoffMillis(retry: Int, baseMillis: Long, capMillis: Long = 5_000): Long {
+    fun backoffMillis(
+        retry: Int,
+        baseMillis: Long,
+        capMillis: Long = 5_000,
+    ): Long {
         val step = min(capMillis, baseMillis * (1L shl (retry - 1).coerceIn(0, 20)))
         return step / 2 + Random.nextLong(0, step / 2 + 1)
     }

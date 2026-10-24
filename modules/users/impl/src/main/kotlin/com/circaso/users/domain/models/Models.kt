@@ -1,6 +1,8 @@
 package com.circaso.users.domain.models
 
+import com.circaso.shared.PhoneNumber
 import com.circaso.shared.UserId
+import com.circaso.users.api.PublicProfile
 import java.time.Instant
 import java.util.UUID
 
@@ -40,16 +42,26 @@ data class Contact(
     val addedAt: Instant,
 )
 
-data class HandleClaim(val handle: String, val userId: UserId, val claimedAt: Instant, val releasedAt: Instant?)
+data class HandleClaim(
+    val handle: String,
+    val userId: UserId,
+    val claimedAt: Instant,
+    val releasedAt: Instant?,
+)
 
 data class Block(val userId: UserId, val blockedId: UserId, val blockedAt: Instant)
 
-data class Invite(val token: String, val ownerId: UserId, val kind: String, val createdAt: Instant)
+data class Invite(
+    val token: String,
+    val ownerId: UserId,
+    val kind: String,
+    val createdAt: Instant,
+)
 
 data class WaitingContact(val phoneHmac: String, val ownerId: UserId, val addedAt: Instant)
 
 /** A user's contact with the profile that goes with it. */
-data class ContactEntry(val contact: Contact, val profile: com.circaso.users.api.PublicProfile)
+data class ContactEntry(val contact: Contact, val profile: PublicProfile)
 
 data class ContactPage(val entries: List<ContactEntry>, val nextCursor: String?)
 
@@ -59,11 +71,16 @@ data class HandleCheck(val handle: String, val availability: HandleAvailability,
 
 enum class ConnectVia { HANDLE, QR, INVITE }
 
-data class Connection(val user: com.circaso.users.api.PublicProfile, val created: Boolean)
+data class Connection(val user: PublicProfile, val created: Boolean)
 
-data class InviteLink(val token: String, val url: String, val qrPayload: String, val expiresAt: Instant)
+data class InviteLink(
+    val token: String,
+    val url: String,
+    val qrPayload: String,
+    val expiresAt: Instant,
+)
 
-data class SyncMatch(val phone: com.circaso.shared.PhoneNumber, val user: com.circaso.users.api.PublicProfile)
+data class SyncMatch(val phone: PhoneNumber, val user: PublicProfile)
 
 data class UploadTarget(val uploadUrl: String, val objectKey: String, val expiresInSeconds: Long)
 
@@ -80,4 +97,10 @@ data class ProfileChange(
     val version: Long,
 )
 
-data class SyncCommand(val userId: UserId, val syncId: UUID, val batch: Int, val final: Boolean, val phones: Set<com.circaso.shared.PhoneNumber>)
+data class SyncCommand(
+    val userId: UserId,
+    val syncId: UUID,
+    val batch: Int,
+    val final: Boolean,
+    val phones: Set<PhoneNumber>,
+)

@@ -5,8 +5,8 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
-import com.circaso.shared.getOrNull
 import com.circaso.shared.Uuid7
+import com.circaso.shared.getOrNull
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
@@ -18,11 +18,18 @@ import java.time.Instant
 class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
     override suspend fun canReach(from: UserId, to: UserId): Boolean = directory.canReach(from, to).getOrNull() == true
 
-    override suspend fun reachable(from: UserId, to: Set<UserId>): Set<UserId> = directory.filterReachable(from, to).getOrNull().orEmpty()
+    override suspend fun reachable(from: UserId, to: Set<UserId>): Set<UserId> =
+        directory
+            .filterReachable(
+                from,
+                to,
+            ).getOrNull()
+            .orEmpty()
 }
 
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {
-    override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> = directory.getProfiles(ids).getOrNull().orEmpty()
+    override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
+        directory.getProfiles(ids).getOrNull().orEmpty()
 }
 
 /**
@@ -31,8 +38,20 @@ class ProfilesImpl(private val directory: DirectoryService) : Profiles {
  */
 class UsersRealtimeReplay(private val directory: DirectoryService) : RealtimeReplay {
     override suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>> {
-        val frames = directory.getMissedFrames(userId, seq).getOrNull()
-            ?: return Resource.success(listOf(RealtimeEnvelope("users", "resync", Uuid7.generate().toString(), seq, Instant.now(), JsonObject(emptyMap()))))
+        val frames =
+            directory.getMissedFrames(userId, seq).getOrNull()
+                ?: return Resource.success(
+                    listOf(
+                        RealtimeEnvelope(
+                            "users",
+                            "resync",
+                            Uuid7.generate().toString(),
+                            seq,
+                            Instant.now(),
+                            JsonObject(emptyMap()),
+                        ),
+                    ),
+                )
         return Resource.success(frames.map { CircasoJson.decodeFromString(RealtimeEnvelope.serializer(), it.json) })
     }
 }

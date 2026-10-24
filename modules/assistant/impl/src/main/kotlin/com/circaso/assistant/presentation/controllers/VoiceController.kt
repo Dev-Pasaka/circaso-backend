@@ -40,17 +40,30 @@ fun Route.voiceController(voice: VoiceService) {
                 val seconds = call.request.header("X-Duration-Seconds")?.toIntOrNull()
                 val result: Resource<Transcript> =
                     if (seconds == null || bytes.size > MAX_CLIP_BYTES) {
-                        Resource.error(SharedError.Malformed(mapOf("X-Duration-Seconds" to "is required, and the clip must be under 3 MB")))
+                        Resource.error(
+                            SharedError.Malformed(
+                                mapOf("X-Duration-Seconds" to "is required, and the clip must be under 3 MB"),
+                            ),
+                        )
                     } else {
                         voice.transcribe(
                             call.userId(),
-                            VoiceClip(bytes, call.request.header("Content-Type") ?: "audio/mp4", seconds, call.request.header("Accept-Language")),
+                            VoiceClip(
+                                bytes,
+                                call.request.header("Content-Type") ?: "audio/mp4",
+                                seconds,
+                                call.request.header("Accept-Language"),
+                            ),
                         )
                     }
                 call.respondDefault(result.toDefaultResponse { TranscriptResponse(it.text, it.seconds) })
             }.docs<NoBody, TranscriptResponse>(
-                "A3 · Transcribe a voice clip", TAG, listOf("assistant.voice_too_long", "assistant.quota_exceeded"),
-                notes = "$SCOPE The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio and `X-Duration-Seconds`.",
+                "A3 · Transcribe a voice clip",
+                TAG,
+                listOf("assistant.voice_too_long", "assistant.quota_exceeded"),
+                notes =
+                    "$SCOPE The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio " +
+                        "and `X-Duration-Seconds`.",
             )
 
             post("speech") {
@@ -60,9 +73,17 @@ fun Route.voiceController(voice: VoiceService) {
                         call.attributes.put(EnvelopeSent, true)
                         call.respondBytes(result.data.bytes, ContentType.parse(result.data.contentType))
                     }
-                    is Resource.Error -> call.respondError(result.error)
+
+                    is Resource.Error -> {
+                        call.respondError(result.error)
+                    }
                 }
-            }.docs<SpeechRequest, NoBody>("A4 · Turn a reply into audio", TAG, listOf("assistant.quota_exceeded"), notes = "$SCOPE The response is the audio itself; an error is the envelope.")
+            }.docs<SpeechRequest, NoBody>(
+                "A4 · Turn a reply into audio",
+                TAG,
+                listOf("assistant.quota_exceeded"),
+                notes = "$SCOPE The response is the audio itself; an error is the envelope.",
+            )
 
             get("usage") {
                 call.respondDefault(voice.getUsage(call.userId()).toDefaultResponse { it.toResponse() })

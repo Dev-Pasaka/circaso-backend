@@ -49,33 +49,74 @@ class TurnRecorder(
             is AgentOutcome.WaitingForDevice -> {
                 pending.save(
                     PendingTurn(
-                        userId, turnId, askedFrom, userText, turnId, outcome.call.id, outcome.call.name,
-                        outcome.conversation, readNote, outcome.steps,
+                        userId,
+                        turnId,
+                        askedFrom,
+                        userText,
+                        turnId,
+                        outcome.call.id,
+                        outcome.call.name,
+                        outcome.conversation,
+                        readNote,
+                        outcome.steps,
                     ),
                 )
-                Resource.success(TurnResult.NeedsDevice(turnId, outcome.call.id, outcome.call.name, outcome.call.argumentsJson))
+                Resource.success(
+                    TurnResult.NeedsDevice(turnId, outcome.call.id, outcome.call.name, outcome.call.argumentsJson),
+                )
             }
+
             is AgentOutcome.Answered -> {
                 val now = clock.instant()
-                val note = ReadNote(readNote.chatIds, readNote.messageCount, readNote.chatNames).takeIf { it.messageCount > 0 }
+                val note =
+                    ReadNote(readNote.chatIds, readNote.messageCount, readNote.chatNames).takeIf {
+                        it.messageCount >
+                            0
+                    }
                 val replyId = ids.next()
                 val question = ChatMessage(userId, turnId, Role.USER, userText, null, replyId, askedFrom, null, now)
-                val reply = ChatMessage(userId, replyId, Role.ASHA, outcome.text.ifBlank { "I don't have an answer for that." }, turnId, null, askedFrom, note, now)
+                val reply =
+                    ChatMessage(
+                        userId,
+                        replyId,
+                        Role.ASHA,
+                        outcome.text.ifBlank {
+                            "I don't have an answer for that."
+                        },
+                        turnId,
+                        null,
+                        askedFrom,
+                        note,
+                        now,
+                    )
                 store.commit(
                     AssistantChanges(
                         messages = listOf(question, reply),
-                        audit = listOf(
-                            AuditEntry(
-                                userId, "TURN",
-                                "prompt=${config.promptVersion} tools=${outcome.toolsUsed.joinToString(",").ifEmpty { "none" }} " +
-                                    "chatMessagesRead=${readNote.messageCount} in=${outcome.inputTokens} out=${outcome.outputTokens}",
-                                requestId,
+                        audit =
+                            listOf(
+                                AuditEntry(
+                                    userId,
+                                    "TURN",
+                                    "prompt=${config.promptVersion} tools=${outcome.toolsUsed.joinToString(
+                                        ",",
+                                    ).ifEmpty { "none" }} " +
+                                        "chatMessagesRead=${readNote.messageCount} in=${outcome.inputTokens} " +
+                                        "out=${outcome.outputTokens}",
+                                    requestId,
+                                ),
                             ),
-                        ),
                     ),
                 )
                 val (input, output) = quota.tokens(userId, day)
-                store.saveUsage(userId, day, quota.textTurns(userId, day).toInt(), quota.voiceSeconds(userId, day).toInt(), input, output, now)
+                store.saveUsage(
+                    userId,
+                    day,
+                    quota.textTurns(userId, day).toInt(),
+                    quota.voiceSeconds(userId, day).toInt(),
+                    input,
+                    output,
+                    now,
+                )
                 Resource.success(TurnResult.Answer(reply))
             }
         }

@@ -5,14 +5,14 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
-import com.circaso.integrations.api.SpeechToText
-import com.circaso.integrations.api.SpokenAudio
-import com.circaso.integrations.api.TextToSpeech
-import com.circaso.integrations.api.Transcript
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
 import com.circaso.integrations.api.PushReceipt
 import com.circaso.integrations.api.PushTarget
+import com.circaso.integrations.api.SpeechToText
+import com.circaso.integrations.api.SpokenAudio
+import com.circaso.integrations.api.TextToSpeech
+import com.circaso.integrations.api.Transcript
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 
@@ -40,8 +40,11 @@ class WorkersAiLanguageModel : LanguageModel {
 
 // TODO(vendor: Whisper on Workers AI; test Swahili quality before choosing)
 class WorkersAiSpeechToText : SpeechToText {
-    override suspend fun transcribe(audio: ByteArray, contentType: String, language: String?): Resource<Transcript> =
-        Resource.error(IntegrationError.NotImplemented("SpeechToText", "workers-ai"))
+    override suspend fun transcribe(
+        audio: ByteArray,
+        contentType: String,
+        language: String?,
+    ): Resource<Transcript> = Resource.error(IntegrationError.NotImplemented("SpeechToText", "workers-ai"))
 }
 
 // TODO(vendor: Workers AI text-to-speech voice; test Swahili quality before choosing)

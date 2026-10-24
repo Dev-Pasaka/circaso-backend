@@ -11,15 +11,38 @@ sealed class AssistantError(
     override val kind: ErrorKind,
     override val details: ErrorDetails? = null,
 ) : DomainError {
-    class QuotaExceeded(retryAfterSeconds: Long) : AssistantError(
-        "assistant.quota_exceeded", "You've used today's Asha allowance. Asha Plus gives you more.", ErrorKind.RATE_LIMITED,
-        ErrorDetails(retryAfterSeconds = retryAfterSeconds),
-    )
+    class QuotaExceeded(retryAfterSeconds: Long) :
+        AssistantError(
+            "assistant.quota_exceeded",
+            "You've used today's Asha allowance. Asha Plus gives you more.",
+            ErrorKind.RATE_LIMITED,
+            ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
+
     data object PlusRequired : AssistantError("assistant.plus_required", "That needs Asha Plus.", ErrorKind.FORBIDDEN)
-    data object VoiceTooLong : AssistantError("assistant.voice_too_long", "Voice clips can be up to 60 seconds.", ErrorKind.INVALID)
-    data object ProposalExpired : AssistantError("assistant.proposal_expired", "That proposal has expired.", ErrorKind.CONFLICT)
-    data object ModelUnavailable : AssistantError("assistant.model_unavailable", "Asha can't answer right now. Try again.", ErrorKind.UPSTREAM)
+
+    data object VoiceTooLong : AssistantError(
+        "assistant.voice_too_long",
+        "Voice clips can be up to 60 seconds.",
+        ErrorKind.INVALID,
+    )
+
+    data object ProposalExpired : AssistantError(
+        "assistant.proposal_expired",
+        "That proposal has expired.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object ModelUnavailable : AssistantError(
+        "assistant.model_unavailable",
+        "Asha can't answer right now. Try again.",
+        ErrorKind.UPSTREAM,
+    )
 
     /** The question to the phone was already answered or went stale; the app asks again. */
-    data object TurnNotFound : AssistantError("assistant.turn_not_found", "That question is no longer waiting.", ErrorKind.NOT_FOUND)
+    data object TurnNotFound : AssistantError(
+        "assistant.turn_not_found",
+        "That question is no longer waiting.",
+        ErrorKind.NOT_FOUND,
+    )
 }

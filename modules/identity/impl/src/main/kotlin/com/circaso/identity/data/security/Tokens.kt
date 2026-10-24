@@ -43,7 +43,10 @@ private fun rawKey(spki: ByteArray): ByteArray = spki.copyOfRange(ED25519_SPKI_P
 private fun publicKeyFromRaw(raw: ByteArray): JavaPublicKey =
     KeyFactory.getInstance("Ed25519").generatePublic(X509EncodedKeySpec(ED25519_SPKI_PREFIX + raw))
 
-private fun keyId(raw: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(raw).take(6).joinToString("") { "%02x".format(it) }
+private fun keyId(raw: ByteArray): String =
+    MessageDigest.getInstance("SHA-256").digest(raw).take(6).joinToString("") {
+        "%02x".format(it)
+    }
 
 /**
  * Access tokens: JWTs signed with an Ed25519 key held by identity, 15 minutes, with `sub` (user), `did` (device),
@@ -58,80 +61,110 @@ class Ed25519Tokens(
     local: Boolean,
     private val clock: Clock,
     private val lifetime: Duration = Duration.ofMinutes(15),
-) : TokenIssuer, AccessTokenVerifier {
-
+) : TokenIssuer,
+    AccessTokenVerifier {
     private val secretsPublic: String? = secrets.get("identity.signing-public-key")
 
-    private val pair: KeyPair = secrets.get("identity.signing-key")?.let(::load) ?: run {
-        check(local) { "Missing secret 'identity.signing-key'" }
-        log.warn("No identity.signing-key set; using a throwaway key, so every token dies on restart")
-        KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-    }
+    private val pair: KeyPair =
+        secrets.get("identity.signing-key")?.let(::load) ?: run {
+            check(local) { "Missing secret 'identity.signing-key'" }
+            log.warn("No identity.signing-key set; using a throwaway key, so every token dies on restart")
+            KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        }
     private val currentRaw = rawKey(pair.public.encoded)
     private val currentId = keyId(currentRaw)
-    private val keys: Map<String, JavaPublicKey> = buildMap {
-        put(currentId, pair.public)
-        secrets.get("identity.previous-public-key")?.let { previous ->
-            val raw = b64Decoder.decode(previous)
-            put(keyId(raw), publicKeyFromRaw(raw))
+    private val keys: Map<String, JavaPublicKey> =
+        buildMap {
+            put(currentId, pair.public)
+            secrets.get("identity.previous-public-key")?.let { previous ->
+                val raw = b64Decoder.decode(previous)
+                put(keyId(raw), publicKeyFromRaw(raw))
+            }
         }
-    }
 
     /** The JDK can't derive an Ed25519 public key from the private one, so the secret comes as a pair. */
     private fun load(privatePkcs8: String): KeyPair {
-        val private = KeyFactory.getInstance("Ed25519").generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(privatePkcs8)))
+        val private =
+            KeyFactory
+                .getInstance(
+                    "Ed25519",
+                ).generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(privatePkcs8)))
         val publicRaw = b64Decoder.decode(secretsPublic ?: error("Missing secret 'identity.signing-public-key'"))
         return KeyPair(publicKeyFromRaw(publicRaw), private)
     }
 
-    override fun issue(userId: UserId, deviceId: DeviceId, sessionId: SessionId, scope: Scope, sessionVersion: Int): IssuedToken {
+    override fun issue(
+        userId: UserId,
+        deviceId: DeviceId,
+        sessionId: SessionId,
+        scope: Scope,
+        sessionVersion: Int,
+    ): IssuedToken {
         val now = clock.instant()
-        val header = buildJsonObject { put("alg", "EdDSA"); put("typ", "JWT"); put("kid", currentId) }
-        val payload = buildJsonObject {
-            put("sub", userId.toString())
-            put("did", deviceId.toString())
-            put("sid", sessionId.toString())
-            put("scp", scope.wire)
-            put("ver", sessionVersion)
-            put("iat", now.epochSecond)
-            put("exp", now.plus(lifetime).epochSecond)
-        }
-        val signingInput = b64.encodeToString(header.toString().toByteArray()) + "." + b64.encodeToString(payload.toString().toByteArray())
-        val signature = Signature.getInstance("Ed25519").run {
-            initSign(pair.private)
-            update(signingInput.toByteArray())
-            sign()
-        }
+        val header =
+            buildJsonObject {
+                put("alg", "EdDSA")
+                put("typ", "JWT")
+                put("kid", currentId)
+            }
+        val payload =
+            buildJsonObject {
+                put("sub", userId.toString())
+                put("did", deviceId.toString())
+                put("sid", sessionId.toString())
+                put("scp", scope.wire)
+                put("ver", sessionVersion)
+                put("iat", now.epochSecond)
+                put("exp", now.plus(lifetime).epochSecond)
+            }
+        val signingInput =
+            b64.encodeToString(header.toString().toByteArray()) + "." +
+                b64.encodeToString(payload.toString().toByteArray())
+        val signature =
+            Signature.getInstance("Ed25519").run {
+                initSign(pair.private)
+                update(signingInput.toByteArray())
+                sign()
+            }
         return IssuedToken("$signingInput.${b64.encodeToString(signature)}", lifetime.seconds)
     }
 
-    override fun publicKeys(): List<PublicKey> = keys.map { (id, key) -> PublicKey(id, b64.encodeToString(rawKey(key.encoded))) }
-
-    override fun verify(token: String): AccessClaims? = runCatching {
-        val parts = token.split('.')
-        if (parts.size != 3) return null
-        val header = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[0]))) as JsonObject
-        if ((header["alg"] as? JsonPrimitive)?.contentOrNull != "EdDSA") return null
-        val key = keys[(header["kid"] as? JsonPrimitive)?.contentOrNull] ?: return null
-
-        val ok = Signature.getInstance("Ed25519").run {
-            initVerify(key)
-            update("${parts[0]}.${parts[1]}".toByteArray())
-            verify(b64Decoder.decode(parts[2]))
+    override fun publicKeys(): List<PublicKey> =
+        keys.map { (id, key) ->
+            PublicKey(
+                id,
+                b64.encodeToString(rawKey(key.encoded)),
+            )
         }
-        if (!ok) return null
 
-        val claims = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[1]))) as JsonObject
-        fun text(name: String) = (claims[name] as? JsonPrimitive)?.contentOrNull
-        val expires = (claims["exp"] as? JsonPrimitive)?.longOrNull ?: return null
-        if (clock.instant().epochSecond >= expires) return null
+    override fun verify(token: String): AccessClaims? =
+        runCatching {
+            val parts = token.split('.')
+            if (parts.size != 3) return null
+            val header = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[0]))) as JsonObject
+            if ((header["alg"] as? JsonPrimitive)?.contentOrNull != "EdDSA") return null
+            val key = keys[(header["kid"] as? JsonPrimitive)?.contentOrNull] ?: return null
 
-        AccessClaims(
-            userId = UserId.parse(text("sub") ?: return null) ?: return null,
-            deviceId = DeviceId.parse(text("did") ?: return null) ?: return null,
-            sessionId = SessionId.parse(text("sid") ?: return null) ?: return null,
-            scope = Scope.fromWire(text("scp") ?: return null) ?: return null,
-            sessionVersion = (claims["ver"] as? JsonPrimitive)?.intOrNull ?: return null,
-        )
-    }.getOrNull()
+            val ok =
+                Signature.getInstance("Ed25519").run {
+                    initVerify(key)
+                    update("${parts[0]}.${parts[1]}".toByteArray())
+                    verify(b64Decoder.decode(parts[2]))
+                }
+            if (!ok) return null
+
+            val claims = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[1]))) as JsonObject
+
+            fun text(name: String) = (claims[name] as? JsonPrimitive)?.contentOrNull
+            val expires = (claims["exp"] as? JsonPrimitive)?.longOrNull ?: return null
+            if (clock.instant().epochSecond >= expires) return null
+
+            AccessClaims(
+                userId = UserId.parse(text("sub") ?: return null) ?: return null,
+                deviceId = DeviceId.parse(text("did") ?: return null) ?: return null,
+                sessionId = SessionId.parse(text("sid") ?: return null) ?: return null,
+                scope = Scope.fromWire(text("scp") ?: return null) ?: return null,
+                sessionVersion = (claims["ver"] as? JsonPrimitive)?.intOrNull ?: return null,
+            )
+        }.getOrNull()
 }

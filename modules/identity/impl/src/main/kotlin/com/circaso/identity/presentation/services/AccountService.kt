@@ -21,8 +21,25 @@ class AccountService(
     private val requestAccountDeletion: RequestAccountDeletion,
 ) {
     suspend fun overview(principal: Principal): Resource<SecurityOverview> = getSecurityOverview(principal)
+
     suspend fun link(command: LinkProviderCommand): Resource<Unit> = linkProvider(command)
-    suspend fun unlink(principal: Principal, provider: SocialProvider): Resource<Unit> = unlinkProvider(principal, provider)
-    suspend fun securityLog(principal: Principal, cursor: String?, limit: Int): Resource<SecurityPage> = listSecurityEvents(principal, cursor, limit)
+
+    suspend fun unlink(principal: Principal, provider: SocialProvider): Resource<Unit> =
+        unlinkProvider(
+            principal,
+            provider,
+        )
+
+    suspend fun securityLog(
+        principal: Principal,
+        cursor: String?,
+        limit: Int,
+    ): Resource<SecurityPage> =
+        listSecurityEvents(
+            principal,
+            cursor,
+            limit,
+        )
+
     suspend fun delete(principal: Principal): Resource<Unit> = requestAccountDeletion(principal)
 }

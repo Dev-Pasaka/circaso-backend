@@ -1,6 +1,7 @@
 package com.circaso.assistant.domain.support
 
 import com.circaso.assistant.domain.errors.AssistantError
+import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.ReadNote
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.DeviceTools
@@ -42,11 +43,7 @@ sealed interface AgentOutcome {
  * asks the phone. Asha's own tools only read, and they run with the user's agent token, so the other modules'
  * routes refuse anything else; whatever the model says, it cannot write.
  */
-class AshaAgent(
-    private val model: LanguageModel,
-    private val tools: AgentTools,
-    private val config: AssistantConfig,
-) {
+class AshaAgent(private val model: LanguageModel, private val tools: AgentTools, private val config: AssistantConfig) {
     suspend fun run(
         history: List<ModelMessage>,
         agentToken: String?,
@@ -63,10 +60,11 @@ class AshaAgent(
         var steps = startSteps
         while (steps < config.maxToolSteps) {
             steps++
-            val response = when (val r = model.complete(ModelRequest(AshaPrompt.system, messages, specs))) {
-                is Resource.Success -> r.data
-                is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
-            }
+            val response =
+                when (val r = model.complete(ModelRequest(AshaPrompt.system, messages, specs))) {
+                    is Resource.Success -> r.data
+                    is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
+                }
             input += response.usage.inputTokens
             output += response.usage.outputTokens
 
@@ -81,20 +79,31 @@ class AshaAgent(
             used += call.name
 
             if (call.name in DeviceTools.names) {
-                skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }
-                return Resource.success(AgentOutcome.WaitingForDevice(call, messages.toPending(), steps, input, output, used))
+                skipped.forEach {
+                    messages +=
+                        ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.")
+                }
+                return Resource.success(
+                    AgentOutcome.WaitingForDevice(call, messages.toPending(), steps, input, output, used),
+                )
             }
 
             messages += ModelMessage.ToolResult(call.id, call.name, runServerTool(call, agentToken))
             skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }
         }
         return Resource.success(
-            AgentOutcome.Answered("I couldn't finish looking that up. Please try asking in a simpler way.", input, output, used),
+            AgentOutcome.Answered(
+                "I couldn't finish looking that up. Please try asking in a simpler way.",
+                input,
+                output,
+                used,
+            ),
         )
     }
 
     private fun specs(serverTools: Boolean, deviceTools: Boolean): List<ToolSpec> =
-        (if (serverTools) tools.specs() else emptyList()) + (if (deviceTools) listOf(AshaPrompt.searchChats, AshaPrompt.readChat) else emptyList())
+        (if (serverTools) tools.specs() else emptyList()) +
+            (if (deviceTools) listOf(AshaPrompt.searchChats, AshaPrompt.readChat) else emptyList())
 
     private suspend fun runServerTool(call: ToolCall, agentToken: String?): String {
         if (agentToken == null || !tools.handles(call.name)) return "That tool is not available."
@@ -106,12 +115,16 @@ class AshaAgent(
 
     companion object {
         /** The phone's snippets as the model sees them: clearly marked as other people's words. */
-        fun snippetsAsText(snippets: List<com.circaso.assistant.domain.models.ChatSnippet>): String =
-            if (snippets.isEmpty()) "No matching messages." else snippets.joinToString("\n", "<untrusted>\n", "\n</untrusted>") {
-                "[${it.chatName ?: it.chatId}] ${it.sender} (${it.at}): ${it.text}"
+        fun snippetsAsText(snippets: List<ChatSnippet>): String =
+            if (snippets.isEmpty()) {
+                "No matching messages."
+            } else {
+                snippets.joinToString("\n", "<untrusted>\n", "\n</untrusted>") {
+                    "[${it.chatName ?: it.chatId}] ${it.sender} (${it.at}): ${it.text}"
+                }
             }
 
-        fun noteOf(snippets: List<com.circaso.assistant.domain.models.ChatSnippet>, before: PendingReadNote): ReadNote {
+        fun noteOf(snippets: List<ChatSnippet>, before: PendingReadNote): ReadNote {
             val ids = (before.chatIds + snippets.map { it.chatId }).distinct()
             val names = (before.chatNames + snippets.mapNotNull { it.chatName }).distinct()
             return ReadNote(ids, before.messageCount + snippets.size, names)
@@ -119,18 +132,46 @@ class AshaAgent(
     }
 }
 
-internal fun List<ModelMessage>.toPending(): List<PendingMessage> = map {
-    when (it) {
-        is ModelMessage.User -> PendingMessage.User(it.text)
-        is ModelMessage.Assistant -> PendingMessage.Assistant(it.text, it.toolCalls.map { c -> PendingCall(c.id, c.name, c.argumentsJson) })
-        is ModelMessage.ToolResult -> PendingMessage.ToolResult(it.callId, it.name, it.content)
-    }
-}
+internal fun List<ModelMessage>.toPending(): List<PendingMessage> =
+    map {
+        when (it) {
+            is ModelMessage.User -> {
+                PendingMessage.User(it.text)
+            }
 
-internal fun List<PendingMessage>.toModel(): List<ModelMessage> = map {
-    when (it) {
-        is PendingMessage.User -> ModelMessage.User(it.text)
-        is PendingMessage.Assistant -> ModelMessage.Assistant(it.text, it.calls.map { c -> ToolCall(c.id, c.name, c.argumentsJson) })
-        is PendingMessage.ToolResult -> ModelMessage.ToolResult(it.callId, it.name, it.content)
+            is ModelMessage.Assistant -> {
+                PendingMessage.Assistant(
+                    it.text,
+                    it.toolCalls.map { c ->
+                        PendingCall(c.id, c.name, c.argumentsJson)
+                    },
+                )
+            }
+
+            is ModelMessage.ToolResult -> {
+                PendingMessage.ToolResult(it.callId, it.name, it.content)
+            }
+        }
     }
-}
+
+internal fun List<PendingMessage>.toModel(): List<ModelMessage> =
+    map {
+        when (it) {
+            is PendingMessage.User -> {
+                ModelMessage.User(it.text)
+            }
+
+            is PendingMessage.Assistant -> {
+                ModelMessage.Assistant(
+                    it.text,
+                    it.calls.map { c ->
+                        ToolCall(c.id, c.name, c.argumentsJson)
+                    },
+                )
+            }
+
+            is PendingMessage.ToolResult -> {
+                ModelMessage.ToolResult(it.callId, it.name, it.content)
+            }
+        }
+    }

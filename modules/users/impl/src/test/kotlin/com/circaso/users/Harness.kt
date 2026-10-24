@@ -63,12 +63,19 @@ import com.circaso.users.domain.usecases.UpdateProfile
 import kotlinx.serialization.KSerializer
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** One in-memory stand-in for every repository port. */
-class MemoryUsers : ProfileRepository, HandleRepository, ContactRepository, WaitingContactRepository, BlockRepository, UsersStore {
+class MemoryUsers :
+    ProfileRepository,
+    HandleRepository,
+    ContactRepository,
+    WaitingContactRepository,
+    BlockRepository,
+    UsersStore {
     val profiles = ConcurrentHashMap<UserId, Profile>()
     val handles = ConcurrentHashMap<String, HandleClaim>()
     val contacts = ConcurrentHashMap<Pair<UserId, UserId>, Contact>()
@@ -79,7 +86,9 @@ class MemoryUsers : ProfileRepository, HandleRepository, ContactRepository, Wait
     val events = CopyOnWriteArrayList<EventEnvelope>()
 
     override suspend fun find(userId: UserId) = profiles[userId]
+
     override suspend fun findAll(ids: Set<UserId>) = profiles.filterKeys { it in ids }
+
     override suspend fun update(old: Profile, new: Profile): Profile? {
         val stored = profiles[old.userId] ?: return null
         if (stored.version != old.version) return null
@@ -87,35 +96,67 @@ class MemoryUsers : ProfileRepository, HandleRepository, ContactRepository, Wait
     }
 
     override suspend fun find(handle: String) = handles[handle]
+
     override suspend fun claim(handle: String, userId: UserId): Boolean {
-        val existing = handles.putIfAbsent(handle, HandleClaim(handle, userId, java.time.Instant.now(), null)) ?: return true
+        val existing =
+            handles.putIfAbsent(handle, HandleClaim(handle, userId, Instant.now(), null)) ?: return true
         if (existing.userId != userId) return false
         if (existing.releasedAt != null) handles[handle] = existing.copy(releasedAt = null)
         return true
     }
 
     override suspend fun find(ownerId: UserId, contactId: UserId) = contacts[ownerId to contactId]
-    override suspend fun list(ownerId: UserId, after: UUID?, limit: Int) =
-        contacts.values.filter { it.ownerId == ownerId && (after == null || it.contactId.value > after) }.sortedBy { it.contactId.value }.take(limit)
-    override suspend fun ownersOf(contactId: UserId, limit: Int) = reverse.filter { it.first == contactId }.map { it.second }.take(limit)
+
+    override suspend fun list(
+        ownerId: UserId,
+        after: UUID?,
+        limit: Int,
+    ) = contacts.values
+        .filter {
+            it.ownerId == ownerId && (after == null || it.contactId.value > after)
+        }.sortedBy { it.contactId.value }
+        .take(limit)
+
+    override suspend fun ownersOf(contactId: UserId, limit: Int) =
+        reverse
+            .filter {
+                it.first == contactId
+            }.map { it.second }
+            .take(limit)
 
     override suspend fun waitingFor(phoneHmac: String) = waiting.filter { it.phoneHmac == phoneHmac }
 
     override suspend fun blocked(userId: UserId, blockedId: UserId) = blocks.containsKey(userId to blockedId)
+
     override suspend fun eitherWay(a: UserId, b: UserId) = blocked(a, b) || blocked(b, a)
+
     override suspend fun list(userId: UserId) = blocks.values.filter { it.userId == userId }
+
     override suspend fun blockedBy(userId: UserId) = blocks.values.filter { it.blockedId == userId }
 
-    val inviteRepo = object : InviteRepository { override suspend fun find(token: String) = invites[token] }
+    val inviteRepo =
+        object : InviteRepository {
+            override suspend fun find(token: String) = invites[token]
+        }
 
     override suspend fun commit(changes: UsersChanges) {
         changes.profiles.forEach { profiles[it.userId] = it }
         changes.deletedProfiles.forEach { profiles.remove(it) }
         changes.contacts.forEach {
             contacts[it.ownerId to it.contactId] = it
-            if (it.status == ContactStatus.ACTIVE) reverse += it.contactId to it.ownerId else reverse -= it.contactId to it.ownerId
+            if (it.status ==
+                ContactStatus.ACTIVE
+            ) {
+                reverse += it.contactId to it.ownerId
+            } else {
+                reverse -= it.contactId to it.ownerId
+            }
         }
-        changes.deletedContacts.forEach { (owner, contact) -> contacts.remove(owner to contact); reverse -= contact to owner }
+        changes.deletedContacts.forEach { (owner, contact) ->
+            contacts.remove(owner to contact)
+            reverse -=
+                contact to owner
+        }
         changes.blocks.forEach { blocks[it.userId to it.blockedId] = it }
         changes.unblocks.forEach { blocks.remove(it.userId to it.blockedId) }
         changes.invites.forEach { invites[it.token] = it }
@@ -131,48 +172,106 @@ class MemoryUsers : ProfileRepository, HandleRepository, ContactRepository, Wait
 
 class MemoryReachCache : ReachCache {
     private val decisions = ConcurrentHashMap<Pair<UserId, UserId>, Boolean>()
+
     override suspend fun get(from: UserId, to: UserId) = decisions[from to to]
-    override suspend fun put(from: UserId, to: UserId, reachable: Boolean) { decisions[from to to] = reachable }
-    override suspend fun invalidateTarget(target: UserId) { decisions.keys.removeIf { it.second == target } }
+
+    override suspend fun put(
+        from: UserId,
+        to: UserId,
+        reachable: Boolean,
+    ) {
+        decisions[from to to] = reachable
+    }
+
+    override suspend fun invalidateTarget(target: UserId) {
+        decisions.keys.removeIf { it.second == target }
+    }
 }
 
 class MemoryUsersCache : UsersCache {
     private val lookups = ConcurrentHashMap<UserId, Long>()
+
     override suspend fun countHandleLookup(userId: UserId) = lookups.merge(userId, 1L, Long::plus)!!
+
     override suspend fun handleLookupRetryAfter(userId: UserId): Duration? = Duration.ofMinutes(30)
-    override suspend fun recordSyncBatch(userId: UserId, syncId: UUID, final: Boolean) = Unit
+
+    override suspend fun recordSyncBatch(
+        userId: UserId,
+        syncId: UUID,
+        final: Boolean,
+    ) = Unit
 }
 
 class FakeDirectory : AccountDirectory {
     val numbers = ConcurrentHashMap<PhoneNumber, UserId>()
     val statuses = ConcurrentHashMap<UserId, AccountStatus>()
+
     override suspend fun status(userId: UserId) = statuses[userId]
-    override suspend fun resolvePhones(phones: Set<PhoneNumber>) = phones.mapNotNull { p -> numbers[p]?.takeIf { statuses[it] == AccountStatus.ACTIVE }?.let { p to it } }.toMap()
+
+    override suspend fun resolvePhones(phones: Set<PhoneNumber>) =
+        phones
+            .mapNotNull { p ->
+                numbers[p]
+                    ?.takeIf {
+                        statuses[it] ==
+                            AccountStatus.ACTIVE
+                    }?.let { p to it }
+            }.toMap()
 }
 
 class FakeAvatars : AvatarStorage {
     val objects = ConcurrentHashMap<String, StoredAvatar>()
     val deleted = CopyOnWriteArrayList<String>()
-    override suspend fun prepareUpload(userId: UserId, contentType: String, expiresIn: Duration) =
-        Resource.success(UploadedKey("https://upload.test/x", "avatars/$userId/${UUID.randomUUID()}.jpg"))
+
+    override suspend fun prepareUpload(
+        userId: UserId,
+        contentType: String,
+        expiresIn: Duration,
+    ) = Resource.success(UploadedKey("https://upload.test/x", "avatars/$userId/${UUID.randomUUID()}.jpg"))
+
     override suspend fun describe(key: String) = objects[key]
-    override suspend fun delete(key: String) { deleted += key; objects.remove(key) }
+
+    override suspend fun delete(key: String) {
+        deleted += key
+        objects.remove(key)
+    }
+
     override suspend fun urlOf(key: String): String? = "https://cdn.test/$key"
 }
 
-class RecordingFrames : RealtimeFrames, RealtimeLog {
+class RecordingFrames :
+    RealtimeFrames,
+    RealtimeLog {
     data class Sent(val to: UserId, val type: String, val data: Map<String, String>)
+
     val sent = CopyOnWriteArrayList<Sent>()
     var logged = listOf<LoggedFrame>()
     var latest: Long? = null
-    override suspend fun send(userId: UserId, type: String, data: Map<String, String>) { sent += Sent(userId, type, data) }
-    override suspend fun since(userId: UserId, seq: Long, limit: Int) = logged.filter { it.seq > seq }
+
+    override suspend fun send(
+        userId: UserId,
+        type: String,
+        data: Map<String, String>,
+    ) {
+        sent +=
+            Sent(userId, type, data)
+    }
+
+    override suspend fun since(
+        userId: UserId,
+        seq: Long,
+        limit: Int,
+    ) = logged.filter { it.seq > seq }
+
     override suspend fun latest(userId: UserId) = latest
 }
 
 class MemoryBus : EventBus {
-    override fun <E : DomainEvent> envelope(event: E, eventSerializer: KSerializer<E>) = EventEnvelope.of(event, eventSerializer)
+    override fun <E : DomainEvent> envelope(event: E, eventSerializer: KSerializer<E>) =
+        EventEnvelope.of(event, eventSerializer)
+
     override suspend fun publish(envelope: EventEnvelope) = Unit
+
     override fun subscribe(subscription: EventSubscription) = Unit
 }
 
@@ -186,7 +285,10 @@ class Harness {
     val bus = MemoryBus()
     private val clock = Clock.systemUTC()
     private val config = UsersConfig()
-    private val hasher = object : PhoneHasher { override fun hmac(phone: PhoneNumber) = "h:${phone.e164}" }
+    private val hasher =
+        object : PhoneHasher {
+            override fun hmac(phone: PhoneNumber) = "h:${phone.e164}"
+        }
 
     val reach = ReachRule(directory, users, users, reachCache)
     private val views = ProfileViews(avatars, users)
@@ -204,7 +306,21 @@ class Harness {
     val listContacts = ListContacts(users, users, views)
     val lookupHandle = LookupHandle(users, users, users, views, usersCache)
     val getPublicProfile = GetPublicProfile(reach, users, views)
-    val connect = Connect(users, users.inviteRepo, users, users, users, users, bus, reachCache, usersCache, views, notifier, clock)
+    val connect =
+        Connect(
+            users,
+            users.inviteRepo,
+            users,
+            users,
+            users,
+            users,
+            bus,
+            reachCache,
+            usersCache,
+            views,
+            notifier,
+            clock,
+        )
     val createInvite = CreateInvite(users, config, clock)
     val revokeInvite = RevokeInvite(users.inviteRepo, users)
     val listBlocks = ListBlocks(users, users, views)

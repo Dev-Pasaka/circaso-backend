@@ -18,7 +18,10 @@ class IdentityEventsService(
     private val deleteUserData: DeleteUserData,
 ) {
     suspend fun accountActivated(event: AccountActivated): Resource<Unit> = createProfileOnActivation(event)
+
     suspend fun phoneChanged(event: PhoneChanged): Resource<Unit> = recheckWaitingContacts(event)
+
     suspend fun statusChanged(event: AccountStatusChanged): Resource<Unit> = clearReachOnStatusChange(event)
+
     suspend fun accountDeleted(event: AccountDeleted): Resource<Unit> = deleteUserData(event)
 }

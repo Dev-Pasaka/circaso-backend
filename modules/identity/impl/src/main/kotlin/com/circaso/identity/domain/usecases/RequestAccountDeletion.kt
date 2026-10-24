@@ -43,7 +43,10 @@ class RequestAccountDeletion(
             Changes(
                 accounts = listOf(account.copy(status = AccountStatus.DELETED)),
                 sessions = listOfNotNull(session?.copy(status = SessionStatus.REVOKED)),
-                securityEvents = listOf(SecurityEvent(principal.userId, null, SecurityEventType.DELETION_REQUESTED, null, null)),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(principal.userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
+                    ),
                 events = listOf(bus.envelope(AccountStatusChanged(principal.userId, AccountStatus.DELETED))),
             ),
         )

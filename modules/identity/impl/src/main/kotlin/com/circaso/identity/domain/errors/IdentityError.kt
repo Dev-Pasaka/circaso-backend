@@ -11,28 +11,138 @@ sealed class IdentityError(
     override val kind: ErrorKind,
     override val details: ErrorDetails? = null,
 ) : DomainError {
-    data object NonceInvalid : IdentityError("identity.nonce_invalid", "That sign-in request expired. Try again.", ErrorKind.INVALID)
-    data object ProviderTokenInvalid : IdentityError("identity.provider_token_invalid", "We couldn't verify that sign-in.", ErrorKind.UNAUTHORIZED)
-    data object AccountSuspended : IdentityError("identity.account_suspended", "This account is suspended.", ErrorKind.FORBIDDEN)
-    data object AccountBlocked : IdentityError("identity.account_blocked", "This account is blocked.", ErrorKind.FORBIDDEN)
-    data object AccountDeleted : IdentityError("identity.account_deleted", "This account was deleted.", ErrorKind.NOT_FOUND)
-    data object RecoveryPending : IdentityError("identity.recovery_pending", "This account is being recovered.", ErrorKind.CONFLICT)
-    data object PhoneInvalid : IdentityError("identity.phone_invalid", "That isn't a valid phone number.", ErrorKind.INVALID)
-    data object PhoneTaken : IdentityError("identity.phone_taken", "This number already has a Circaso account.", ErrorKind.CONFLICT)
-    data object PhoneMismatch : IdentityError("identity.phone_mismatch", "That isn't the number on your account.", ErrorKind.CONFLICT)
-    class CodeInvalid(attemptsLeft: Int) : IdentityError("identity.code_invalid", "That code is wrong. $attemptsLeft tries left.", ErrorKind.INVALID)
-    data object CodeExpired : IdentityError("identity.code_expired", "That code has expired. Request a new one.", ErrorKind.INVALID)
-    class CodeLocked(retryAfterSeconds: Long) : IdentityError(
-        "identity.code_locked", "Too many wrong codes. Try again later.", ErrorKind.RATE_LIMITED, ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+    data object NonceInvalid : IdentityError(
+        "identity.nonce_invalid",
+        "That sign-in request expired. Try again.",
+        ErrorKind.INVALID,
     )
-    data object SmsUnavailable : IdentityError("identity.sms_unavailable", "We couldn't send the code. Try again.", ErrorKind.UPSTREAM)
-    data object CarrierUnsupported : IdentityError("identity.carrier_unsupported", "One-tap verification isn't available. Use a code instead.", ErrorKind.INVALID)
-    data object DeviceAttestationFailed : IdentityError("identity.device_attestation_failed", "Circaso can't run on this phone.", ErrorKind.FORBIDDEN)
-    data object DeviceProofInvalid : IdentityError("identity.device_proof_invalid", "This phone couldn't be verified.", ErrorKind.UNAUTHORIZED)
-    data object SessionRevoked : IdentityError("identity.session_revoked", "You were signed out.", ErrorKind.UNAUTHORIZED)
-    data object ProviderLast : IdentityError("identity.provider_last", "You need at least one sign-in account.", ErrorKind.CONFLICT)
-    data object ProviderInUse : IdentityError("identity.provider_in_use", "That sign-in belongs to another account.", ErrorKind.CONFLICT)
-    data object WalletNotEmpty : IdentityError("identity.wallet_not_empty", "Withdraw your funds before deleting the account.", ErrorKind.CONFLICT)
-    data object RecoveryNotEligible : IdentityError("identity.recovery_not_eligible", "This account can't be restored by support.", ErrorKind.FORBIDDEN)
-    data object ReleaseNotAllowed : IdentityError("identity.release_not_allowed", "This number can't be released. Ask support to recover the account.", ErrorKind.FORBIDDEN)
+
+    data object ProviderTokenInvalid : IdentityError(
+        "identity.provider_token_invalid",
+        "We couldn't verify that sign-in.",
+        ErrorKind.UNAUTHORIZED,
+    )
+
+    data object AccountSuspended : IdentityError(
+        "identity.account_suspended",
+        "This account is suspended.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object AccountBlocked : IdentityError(
+        "identity.account_blocked",
+        "This account is blocked.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object AccountDeleted : IdentityError(
+        "identity.account_deleted",
+        "This account was deleted.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    data object RecoveryPending : IdentityError(
+        "identity.recovery_pending",
+        "This account is being recovered.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object PhoneInvalid : IdentityError(
+        "identity.phone_invalid",
+        "That isn't a valid phone number.",
+        ErrorKind.INVALID,
+    )
+
+    data object PhoneTaken : IdentityError(
+        "identity.phone_taken",
+        "This number already has a Circaso account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object PhoneMismatch : IdentityError(
+        "identity.phone_mismatch",
+        "That isn't the number on your account.",
+        ErrorKind.CONFLICT,
+    )
+
+    class CodeInvalid(attemptsLeft: Int) :
+        IdentityError(
+            "identity.code_invalid",
+            "That code is wrong. $attemptsLeft tries left.",
+            ErrorKind.INVALID,
+        )
+
+    data object CodeExpired : IdentityError(
+        "identity.code_expired",
+        "That code has expired. Request a new one.",
+        ErrorKind.INVALID,
+    )
+
+    class CodeLocked(retryAfterSeconds: Long) :
+        IdentityError(
+            "identity.code_locked",
+            "Too many wrong codes. Try again later.",
+            ErrorKind.RATE_LIMITED,
+            ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
+
+    data object SmsUnavailable : IdentityError(
+        "identity.sms_unavailable",
+        "We couldn't send the code. Try again.",
+        ErrorKind.UPSTREAM,
+    )
+
+    data object CarrierUnsupported : IdentityError(
+        "identity.carrier_unsupported",
+        "One-tap verification isn't available. Use a code instead.",
+        ErrorKind.INVALID,
+    )
+
+    data object DeviceAttestationFailed : IdentityError(
+        "identity.device_attestation_failed",
+        "Circaso can't run on this phone.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object DeviceProofInvalid : IdentityError(
+        "identity.device_proof_invalid",
+        "This phone couldn't be verified.",
+        ErrorKind.UNAUTHORIZED,
+    )
+
+    data object SessionRevoked : IdentityError(
+        "identity.session_revoked",
+        "You were signed out.",
+        ErrorKind.UNAUTHORIZED,
+    )
+
+    data object ProviderLast : IdentityError(
+        "identity.provider_last",
+        "You need at least one sign-in account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object ProviderInUse : IdentityError(
+        "identity.provider_in_use",
+        "That sign-in belongs to another account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object WalletNotEmpty : IdentityError(
+        "identity.wallet_not_empty",
+        "Withdraw your funds before deleting the account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object RecoveryNotEligible : IdentityError(
+        "identity.recovery_not_eligible",
+        "This account can't be restored by support.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object ReleaseNotAllowed : IdentityError(
+        "identity.release_not_allowed",
+        "This number can't be released. Ask support to recover the account.",
+        ErrorKind.FORBIDDEN,
+    )
 }

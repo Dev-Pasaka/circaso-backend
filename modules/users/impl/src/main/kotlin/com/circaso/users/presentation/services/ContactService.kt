@@ -28,10 +28,43 @@ class ContactService(
     private val searchContacts: SearchContacts,
 ) {
     suspend fun sync(command: SyncCommand): Resource<List<SyncMatch>> = syncContacts(command)
-    suspend fun listContacts(userId: UserId, cursor: String?, limit: Int): Resource<ContactPage> = listContacts.invoke(userId, cursor, limit)
-    suspend fun connect(viewer: UserId, via: ConnectVia, value: String): Resource<Connection> = connect.invoke(viewer, via, value)
+
+    suspend fun listContacts(
+        userId: UserId,
+        cursor: String?,
+        limit: Int,
+    ): Resource<ContactPage> =
+        listContacts.invoke(
+            userId,
+            cursor,
+            limit,
+        )
+
+    suspend fun connect(
+        viewer: UserId,
+        via: ConnectVia,
+        value: String,
+    ): Resource<Connection> =
+        connect.invoke(
+            viewer,
+            via,
+            value,
+        )
+
     suspend fun createInvite(userId: UserId): Resource<InviteLink> = createInvite.invoke(userId)
+
     suspend fun revokeInvite(userId: UserId, token: String): Resource<Unit> = revokeInvite.invoke(userId, token)
+
     suspend fun remove(userId: UserId, contactId: UserId): Resource<Unit> = removeContact(userId, contactId)
-    suspend fun findContacts(userId: UserId, query: String, limit: Int): Resource<List<PublicProfile>> = searchContacts(userId, query, limit)
+
+    suspend fun findContacts(
+        userId: UserId,
+        query: String,
+        limit: Int,
+    ): Resource<List<PublicProfile>> =
+        searchContacts(
+            userId,
+            query,
+            limit,
+        )
 }

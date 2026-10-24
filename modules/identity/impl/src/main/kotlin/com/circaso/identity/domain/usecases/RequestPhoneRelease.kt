@@ -38,23 +38,47 @@ class RequestPhoneRelease(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(command: ReleaseCommand): Resource<Instant> {
-        if (!command.confirmAbandon) return Resource.error(SharedError.Malformed(mapOf("confirmAbandon" to "must be true")))
+        if (!command.confirmAbandon) {
+            return Resource.error(
+                SharedError.Malformed(
+                    mapOf("confirmAbandon" to "must be true"),
+                ),
+            )
+        }
         val userId = command.principal.userId
         val otp = cache.otp(command.verificationId)
         if (otp == null || !otp.proven || otp.userId != userId) return Resource.error(IdentityError.CodeExpired)
 
         val phone = phones.unseal(otp.sealedPhone) ?: return Resource.error(IdentityError.CodeExpired)
         val owner = accounts.findByPhone(phone) ?: return Resource.error(IdentityError.ReleaseNotAllowed)
-        if (owner.userId == userId || owner.verification == Verification.VERIFIED) return Resource.error(IdentityError.ReleaseNotAllowed)
-        if (!cache.countPhoneRelease(otp.phoneHmac)) return Resource.error(SharedError.RateLimited(config.phoneReleaseNotice.seconds))
+        if (owner.userId == userId ||
+            owner.verification == Verification.VERIFIED
+        ) {
+            return Resource.error(IdentityError.ReleaseNotAllowed)
+        }
+        if (!cache.countPhoneRelease(
+                otp.phoneHmac,
+            )
+        ) {
+            return Resource.error(SharedError.RateLimited(config.phoneReleaseNotice.seconds))
+        }
 
         val releaseAt = clock.instant().plus(config.phoneReleaseNotice)
         cache.savePhoneRelease(otp.phoneHmac, PhoneRelease(owner.userId, userId, releaseAt.toEpochMilli()))
         cache.deleteOtp(command.verificationId)
         store.commit(
-            Changes(securityEvents = listOf(SecurityEvent(owner.userId, null, SecurityEventType.PHONE_RELEASE_REQUESTED, null, null))),
+            Changes(
+                securityEvents =
+                    listOf(
+                        SecurityEvent(owner.userId, null, SecurityEventType.PHONE_RELEASE_REQUESTED, null, null),
+                    ),
+            ),
         )
-        providers.links(owner.userId).firstNotNullOfOrNull { it.email }?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
+        providers
+            .links(
+                owner.userId,
+            ).firstNotNullOfOrNull { it.email }
+            ?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
         return Resource.success(releaseAt)
     }
 }

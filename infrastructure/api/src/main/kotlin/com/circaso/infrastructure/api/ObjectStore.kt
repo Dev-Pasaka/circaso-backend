@@ -10,7 +10,11 @@ import java.time.Duration
  */
 interface ObjectStore {
     /** A URL the phone can PUT [contentType] bytes to until it expires. [key] is relative to the module's prefix. */
-    suspend fun presignUpload(key: String, contentType: String, expiresIn: Duration): Resource<String>
+    suspend fun presignUpload(
+        key: String,
+        contentType: String,
+        expiresIn: Duration,
+    ): Resource<String>
 
     /** What was uploaded at [key], or null if nothing is there. */
     suspend fun describe(key: String): StoredObject?
@@ -24,6 +28,6 @@ interface ObjectStore {
 data class StoredObject(val sizeBytes: Long, val contentType: String)
 
 /** Hands each module its own [ObjectStore]. [prefix] is the module's bucket prefix (`users`). */
-interface   ObjectStores {
+interface ObjectStores {
     fun scope(prefix: String): ObjectStore
 }

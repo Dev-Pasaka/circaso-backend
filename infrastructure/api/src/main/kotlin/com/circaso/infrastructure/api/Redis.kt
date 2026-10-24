@@ -14,10 +14,18 @@ interface RedisScope {
 
     suspend fun get(key: String): String?
 
-    suspend fun set(key: String, value: String, ttl: Duration)
+    suspend fun set(
+        key: String,
+        value: String,
+        ttl: Duration,
+    )
 
     /** `SET NX`: true if this call created the key. Used for claims, locks and "first time seen" markers. */
-    suspend fun setIfAbsent(key: String, value: String, ttl: Duration): Boolean
+    suspend fun setIfAbsent(
+        key: String,
+        value: String,
+        ttl: Duration,
+    ): Boolean
 
     /** Reads and deletes in one step, so a single-use value (a nonce) can't be used twice. */
     suspend fun getAndDelete(key: String): String?
@@ -30,12 +38,20 @@ interface RedisScope {
     suspend fun increment(key: String, ttl: Duration): Long
 
     /** Adds [by] to a counter, creating it with [ttl] on first use; like [increment], the expiry is not extended. */
-    suspend fun incrementBy(key: String, by: Long, ttl: Duration): Long
+    suspend fun incrementBy(
+        key: String,
+        by: Long,
+        ttl: Duration,
+    ): Long
 
     /** Like [increment], but every call pushes the expiry out to [ttl] again: a counter that must outlive its use (a `seq`). */
     suspend fun incrementRenewing(key: String, ttl: Duration): Long
 
-    suspend fun hashSet(key: String, fields: Map<String, String>, ttl: Duration)
+    suspend fun hashSet(
+        key: String,
+        fields: Map<String, String>,
+        ttl: Duration,
+    )
 
     suspend fun hashGetAll(key: String): Map<String, String>
 
@@ -43,7 +59,11 @@ interface RedisScope {
      * Adds [by] to one field of a hash that already exists; the hash keeps its expiry. Returns null when the
      * hash is gone (expired), rather than creating one that would never expire.
      */
-    suspend fun hashIncrement(key: String, field: String, by: Long = 1): Long?
+    suspend fun hashIncrement(
+        key: String,
+        field: String,
+        by: Long = 1,
+    ): Long?
 
     /** Time left, or null when the key doesn't exist. */
     suspend fun ttl(key: String): Duration?

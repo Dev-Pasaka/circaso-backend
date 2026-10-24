@@ -31,12 +31,21 @@ class SetAvatar(
     suspend operator fun invoke(userId: UserId, objectKey: String): Resource<MyProfile> {
         if (!objectKey.startsWith("avatars/$userId/")) return Resource.error(UsersError.AvatarInvalid)
         val stored = storage.describe(objectKey) ?: return Resource.error(UsersError.AvatarInvalid)
-        if (stored.contentType !in AVATAR_TYPES || stored.sizeBytes > config.maxAvatarBytes) return Resource.error(UsersError.AvatarInvalid)
+        if (stored.contentType !in AVATAR_TYPES ||
+            stored.sizeBytes > config.maxAvatarBytes
+        ) {
+            return Resource.error(UsersError.AvatarInvalid)
+        }
 
         val old = provisioner.ensure(userId)
-        val saved = profiles.update(old, old.copy(avatarKey = objectKey)) ?: return Resource.error(UsersError.VersionConflict)
+        val saved =
+            profiles.update(old, old.copy(avatarKey = objectKey)) ?: return Resource.error(UsersError.VersionConflict)
         old.avatarKey?.takeIf { it != objectKey }?.let { storage.delete(it) }
-        store.commit(UsersChanges(events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.AVATAR))))))
+        store.commit(
+            UsersChanges(
+                events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.AVATAR)))),
+            ),
+        )
         notifier.profileUpdated(userId, saved.version)
         return Resource.success(MyProfile(saved, views.avatarUrl(saved), saved.handleChangedAt?.plus(HANDLE_COOLDOWN)))
     }

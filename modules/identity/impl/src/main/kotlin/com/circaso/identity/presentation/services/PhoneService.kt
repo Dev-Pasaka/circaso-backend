@@ -21,7 +21,10 @@ class PhoneService(
     private val requestPhoneRelease: RequestPhoneRelease,
 ) {
     suspend fun start(command: StartPhoneCommand): Resource<StartPhoneResult> = startPhoneVerification(command)
+
     suspend fun verify(command: VerifyCodeCommand): Resource<PhoneVerifiedResult> = verifyPhoneCode(command)
+
     suspend fun carrier(command: VerifyCarrierCommand): Resource<PhoneVerifiedResult> = verifyCarrierToken(command)
+
     suspend fun release(command: ReleaseCommand): Resource<Instant> = requestPhoneRelease(command)
 }

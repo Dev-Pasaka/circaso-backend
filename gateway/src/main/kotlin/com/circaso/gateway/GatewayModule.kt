@@ -36,16 +36,20 @@ import kotlin.time.Duration.Companion.seconds
  * The gateway's Koin bindings: the socket hub, `Realtime` for every module to call, and the gateway's consumer
  * group on `events:identity`. Needs `TokenVerifier` and `PushRegistrations` (identity) and `PushGateway`.
  */
-fun gatewayModule(config: Config) = module {
-    single { GatewayConfig.from(config) }
-    single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    single {
-        val koin = this
-        SocketHub(get<RedisScopes>().scope("rt"), get<TokenVerifier>(), { koin.getAll<RealtimeModule>() }, get())
+fun gatewayModule(config: Config) =
+    module {
+        single { GatewayConfig.from(config) }
+        single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+        single {
+            val koin = this
+            SocketHub(get<RedisScopes>().scope("rt"), get<TokenVerifier>(), { koin.getAll<RealtimeModule>() }, get())
+        }
+        single<Realtime> { GatewayRealtime(get(), get<PushGateway>(), get<PushRegistrations>()) }
+        single<EventSubscription>(
+            org.koin.core.qualifier
+                .named("gateway.identity"),
+        ) { gatewayIdentitySubscription(get()) }
     }
-    single<Realtime> { GatewayRealtime(get(), get<PushGateway>(), get<PushRegistrations>()) }
-    single<EventSubscription>(org.koin.core.qualifier.named("gateway.identity")) { gatewayIdentitySubscription(get()) }
-}
 
 /**
  * Installs the edge: the gateway steps and request log on every call, then `/v1` with every module's routes,

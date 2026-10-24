@@ -4,7 +4,11 @@ import com.circaso.shared.Resource
 
 interface SocialSignIn {
     /** Checks signature, issuer, audience, expiry and [nonce] of a Google or Apple ID token. */
-    suspend fun verify(provider: SocialProvider, idToken: String, nonce: String): Resource<SocialIdentity>
+    suspend fun verify(
+        provider: SocialProvider,
+        idToken: String,
+        nonce: String,
+    ): Resource<SocialIdentity>
 
     /** Apple requires the sign-in grant to be revoked when the account is deleted. */
     suspend fun revokeApple(appleToken: String): Resource<Unit>

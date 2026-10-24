@@ -22,9 +22,17 @@ class DirectoryService(
     private val getPushTarget: GetPushTarget,
 ) {
     suspend fun verifyToken(token: String): Resource<Principal> = verifyAccessToken(token)
+
     suspend fun status(userId: UserId): Resource<AccountStatus?> = getAccountStatus(userId)
+
     suspend fun resolve(phones: Set<PhoneNumber>): Resource<Map<PhoneNumber, UserId>> = resolvePhones(phones)
-    suspend fun verifySignature(userId: UserId, deviceId: DeviceId, payload: ByteArray, signature: ByteArray): Resource<Unit> =
-        verifyDeviceSignature(userId, deviceId, payload, signature)
+
+    suspend fun verifySignature(
+        userId: UserId,
+        deviceId: DeviceId,
+        payload: ByteArray,
+        signature: ByteArray,
+    ): Resource<Unit> = verifyDeviceSignature(userId, deviceId, payload, signature)
+
     suspend fun pushTarget(userId: UserId): Resource<PushRegistration?> = getPushTarget(userId)
 }

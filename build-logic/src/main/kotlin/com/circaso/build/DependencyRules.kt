@@ -105,13 +105,16 @@ object DependencyRules {
                     is ProjectDependency -> {
                         val to = kindOf(dependency.path)
                         if (to != null && !allows(from, to)) {
-                            problems += "${project.path} may not depend on ${dependency.path} (configuration '${configuration.name}')"
+                            problems += "${project.path} may not depend on ${dependency.path} (configuration " +
+                                "'${configuration.name}')"
                         }
                     }
                     is ExternalModuleDependency -> {
                         if (!isTest && !libraryAllowed(from, dependency.group, dependency.name)) {
-                            problems += "${project.path} may not depend on library ${dependency.group}:${dependency.name} " +
-                                "(configuration '${configuration.name}'); it carries only the Kotlin standard library and kotlinx-serialization"
+                            problems += "${project.path} may not depend on library " +
+                                "${dependency.group}:${dependency.name} " +
+                                "(configuration '${configuration.name}'); it carries only the Kotlin standard " +
+                                "library and kotlinx-serialization"
                         }
                     }
                 }

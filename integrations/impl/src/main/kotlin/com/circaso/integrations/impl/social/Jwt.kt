@@ -29,16 +29,18 @@ class ParsedJwt private constructor(
     fun string(name: String): String? = (claims[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     /** `true` for a JSON boolean or the string "true": Apple sends `email_verified` both ways. */
-    fun flag(name: String): Boolean = (claims[name] as? JsonPrimitive)?.let { it.booleanOrNull ?: (it.contentOrNull == "true") } ?: false
+    fun flag(name: String): Boolean =
+        (claims[name] as? JsonPrimitive)?.let { it.booleanOrNull ?: (it.contentOrNull == "true") } ?: false
 
     fun seconds(name: String): Long? = (claims[name] as? JsonPrimitive)?.longOrNull
 
     /** The `aud` claim, which a provider may send as one string or as a list. */
-    fun audiences(): Set<String> = when (val aud = claims["aud"]) {
-        is JsonPrimitive -> setOf(aud.content)
-        null -> emptySet()
-        else -> runCatching { aud.jsonArray.map { it.jsonPrimitive.content }.toSet() }.getOrDefault(emptySet())
-    }
+    fun audiences(): Set<String> =
+        when (val aud = claims["aud"]) {
+            is JsonPrimitive -> setOf(aud.content)
+            null -> emptySet()
+            else -> runCatching { aud.jsonArray.map { it.jsonPrimitive.content }.toSet() }.getOrDefault(emptySet())
+        }
 
     fun verifyRs256(key: PublicKey): Boolean =
         runCatching {
@@ -71,13 +73,16 @@ class ParsedJwt private constructor(
 fun parseJwks(json: String): Map<String, PublicKey> {
     val factory = KeyFactory.getInstance("RSA")
     val decoder = Base64.getUrlDecoder()
-    return Json.parseToJsonElement(json).jsonObject["keys"]!!.jsonArray.mapNotNull { element ->
-        val jwk = element.jsonObject
-        if (jwk["kty"]?.jsonPrimitive?.content != "RSA") return@mapNotNull null
-        val kid = jwk["kid"]?.jsonPrimitive?.content ?: return@mapNotNull null
-        val n = BigInteger(1, decoder.decode(jwk["n"]!!.jsonPrimitive.content))
-        val e = BigInteger(1, decoder.decode(jwk["e"]!!.jsonPrimitive.content))
-        kid to factory.generatePublic(RSAPublicKeySpec(n, e))
-    }.toMap()
+    return Json
+        .parseToJsonElement(json)
+        .jsonObject["keys"]!!
+        .jsonArray
+        .mapNotNull { element ->
+            val jwk = element.jsonObject
+            if (jwk["kty"]?.jsonPrimitive?.content != "RSA") return@mapNotNull null
+            val kid = jwk["kid"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            val n = BigInteger(1, decoder.decode(jwk["n"]!!.jsonPrimitive.content))
+            val e = BigInteger(1, decoder.decode(jwk["e"]!!.jsonPrimitive.content))
+            kid to factory.generatePublic(RSAPublicKeySpec(n, e))
+        }.toMap()
 }
-

@@ -5,6 +5,7 @@ import com.circaso.shared.UserId
 /** Messaging, wallet and calls check this before one person touches another. */
 interface ReachPolicy {
     suspend fun canReach(from: UserId, to: UserId): Boolean
+
     suspend fun reachable(from: UserId, to: Set<UserId>): Set<UserId>
 }
 

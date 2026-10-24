@@ -26,29 +26,42 @@ data class ProfileUpdated(
 }
 
 @Serializable
-data class ConnectionAdded(val fromUserId: UserId, val toUserId: UserId, val source: String, val mutual: Boolean) : DomainEvent {
+data class ConnectionAdded(
+    val fromUserId: UserId,
+    val toUserId: UserId,
+    val source: String,
+    val mutual: Boolean,
+) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "users.ConnectionAdded" }
+    companion object {
+        const val TYPE = "users.ConnectionAdded"
+    }
 }
 
 @Serializable
 data class ContactRemoved(val ownerId: UserId, val contactId: UserId) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "users.ContactRemoved" }
+    companion object {
+        const val TYPE = "users.ContactRemoved"
+    }
 }
 
 @Serializable
 data class UserBlocked(val byUserId: UserId, val targetUserId: UserId) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "users.UserBlocked" }
+    companion object {
+        const val TYPE = "users.UserBlocked"
+    }
 }
 
 @Serializable
 data class UserUnblocked(val byUserId: UserId, val targetUserId: UserId) : DomainEvent {
     override val type: String get() = TYPE
 
-    companion object { const val TYPE = "users.UserUnblocked" }
+    companion object {
+        const val TYPE = "users.UserUnblocked"
+    }
 }

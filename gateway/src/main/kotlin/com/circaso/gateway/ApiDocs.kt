@@ -17,6 +17,8 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.openapi.OpenApiDocSource
 import io.ktor.server.routing.openapi.hide
 import io.ktor.server.routing.route
+import io.ktor.utils.io.ExperimentalKtorApi
+import java.security.MessageDigest
 
 /** Text and files the reader is built from, bundled in the gateway's resources (`docs/`). */
 private object DocsResources {
@@ -29,7 +31,14 @@ private object DocsResources {
 
 /** A strong ETag for a body, so a browser that has it asks "changed?" and gets a tiny 304. */
 private fun etagOf(bytes: ByteArray): String =
-    "\"" + java.security.MessageDigest.getInstance("SHA-256").digest(bytes).take(12).joinToString("") { "%02x".format(it) } + "\""
+    "\"" +
+        MessageDigest
+            .getInstance(
+                "SHA-256",
+            ).digest(bytes)
+            .take(12)
+            .joinToString("") { "%02x".format(it) } +
+        "\""
 
 /** A file of the reader (`docs-ui/` builds them), kept in memory with its ETag. */
 private class DocsAsset(name: String, val type: ContentType) {
@@ -37,10 +46,20 @@ private class DocsAsset(name: String, val type: ContentType) {
     val etag: String by lazy { etagOf(body) }
 }
 
-private suspend fun ApplicationCall.respondRevalidated(etag: String, type: ContentType, body: () -> ByteArray) {
+private suspend fun ApplicationCall.respondRevalidated(
+    etag: String,
+    type: ContentType,
+    body: () -> ByteArray,
+) {
     response.header(HttpHeaders.ETag, etag)
     response.header(HttpHeaders.CacheControl, "no-cache")
-    if (request.headers[HttpHeaders.IfNoneMatch] == etag) respond(HttpStatusCode.NotModified) else respondBytes(body(), type)
+    if (request.headers[HttpHeaders.IfNoneMatch] ==
+        etag
+    ) {
+        respond(HttpStatusCode.NotModified)
+    } else {
+        respondBytes(body(), type)
+    }
 }
 
 /**
@@ -53,6 +72,7 @@ private suspend fun ApplicationCall.respondRevalidated(etag: String, type: Conte
  * visit costs a few 304s. Both are off in production, and behind the `ops` scope outside local runs. The docs routes
  * are hidden from the spec itself.
  */
+@OptIn(ExperimentalKtorApi::class)
 fun Route.apiDocsRoutes(application: Application, config: ApiDocsConfig) {
     if (!config.enabled) return
     val base = OpenApiDoc(info = OpenApiInfo(title = "Circaso API", version = "v1"))
@@ -67,7 +87,12 @@ fun Route.apiDocsRoutes(application: Application, config: ApiDocsConfig) {
             get("app.js") { call.respondRevalidated(script.etag, script.type) { script.body } }.hide()
             get("app.css") { call.respondRevalidated(styles.etag, styles.type) { styles.body } }.hide()
             get("openapi.json") {
-                val json = ApiDocsCatalog.complete(source.read(application, base).content, DocsResources.guide).toByteArray()
+                val json =
+                    ApiDocsCatalog
+                        .complete(
+                            source.read(application, base).content,
+                            DocsResources.guide,
+                        ).toByteArray()
                 call.respondRevalidated(etagOf(json), ContentType.Application.Json) { json }
             }.hide()
         }

@@ -10,7 +10,9 @@ import com.circaso.shared.Resource
 class DeleteAssistantData(private val store: AssistantStore) {
     suspend operator fun invoke(event: AccountDeleted): Resource<Unit> {
         store.deleteChat(event.userId)
-        store.commit(AssistantChanges(audit = listOf(AuditEntry(event.userId, "ACCOUNT_DELETED", "chat removed", null))))
+        store.commit(
+            AssistantChanges(audit = listOf(AuditEntry(event.userId, "ACCOUNT_DELETED", "chat removed", null))),
+        )
         return Resource.success(Unit)
     }
 }

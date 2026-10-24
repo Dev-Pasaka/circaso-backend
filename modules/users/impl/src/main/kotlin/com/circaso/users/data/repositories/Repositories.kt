@@ -56,11 +56,12 @@ class ProfileRepositoryImpl(private val profiles: KandraSuspendRepository<Profil
         return profiles.findAll { USER_ID isIn ids.map { it.value } }.map { it.toModel() }.associateBy { it.userId }
     }
 
-    override suspend fun update(old: Profile, new: Profile): Profile? = try {
-        profiles.updateAndGet(old.toRow(), new.toRow()).toModel()
-    } catch (e: KandraOptimisticLockException) {
-        null
-    }
+    override suspend fun update(old: Profile, new: Profile): Profile? =
+        try {
+            profiles.updateAndGet(old.toRow(), new.toRow()).toModel()
+        } catch (e: KandraOptimisticLockException) {
+            null
+        }
 }
 
 class HandleRepositoryImpl(private val claims: KandraSuspendRepository<HandleClaimRow>) : HandleRepository {
@@ -80,19 +81,26 @@ class ContactRepositoryImpl(
     private val contacts: KandraSuspendRepository<ContactRow>,
     private val reverse: KandraSuspendRepository<ContactReverseRow>,
 ) : ContactRepository {
-    override suspend fun find(ownerId: UserId, contactId: UserId): Contact? = contacts.findById(ownerId.value, contactId.value)?.toModel()
+    override suspend fun find(ownerId: UserId, contactId: UserId): Contact? =
+        contacts.findById(ownerId.value, contactId.value)?.toModel()
 
-    override suspend fun list(ownerId: UserId, after: UUID?, limit: Int): List<Contact> =
-        contacts.findAll(limit) {
-            OWNER_ID eq ownerId.value
-            if (after != null) CONTACT_ID gt after
-        }.map { it.toModel() }
+    override suspend fun list(
+        ownerId: UserId,
+        after: UUID?,
+        limit: Int,
+    ): List<Contact> =
+        contacts
+            .findAll(limit) {
+                OWNER_ID eq ownerId.value
+                if (after != null) CONTACT_ID gt after
+            }.map { it.toModel() }
 
     override suspend fun ownersOf(contactId: UserId, limit: Int): List<UserId> =
         reverse.findAll(limit) { CONTACT_ID eq contactId.value }.map { UserId(it.ownerId) }
 }
 
-class WaitingContactRepositoryImpl(private val waiting: KandraSuspendRepository<WaitingContactRow>) : WaitingContactRepository {
+class WaitingContactRepositoryImpl(private val waiting: KandraSuspendRepository<WaitingContactRow>) :
+    WaitingContactRepository {
     override suspend fun waitingFor(phoneHmac: String): List<WaitingContact> =
         waiting.findAll { PHONE_HMAC eq phoneHmac }.map { it.toModel() }
 }
@@ -101,14 +109,25 @@ class BlockRepositoryImpl(
     private val blocks: KandraSuspendRepository<BlockRow>,
     private val blockedBy: KandraSuspendRepository<BlockedByRow>,
 ) : BlockRepository {
-    override suspend fun blocked(userId: UserId, blockedId: UserId): Boolean = blocks.findById(userId.value, blockedId.value) != null
+    override suspend fun blocked(userId: UserId, blockedId: UserId): Boolean =
+        blocks.findById(userId.value, blockedId.value) != null
 
     override suspend fun eitherWay(a: UserId, b: UserId): Boolean = blocked(a, b) || blocked(b, a)
 
-    override suspend fun list(userId: UserId): List<Block> = blocks.findAll { USER_ID eq userId.value }.map { it.toModel() }
+    override suspend fun list(userId: UserId): List<Block> =
+        blocks.findAll { USER_ID eq userId.value }.map {
+            it
+                .toModel()
+        }
 
     override suspend fun blockedBy(userId: UserId): List<Block> =
-        blockedBy.findAll { BLOCKED_ID eq userId.value }.map { Block(UserId(it.userId), UserId(it.blockedId), it.blockedAt) }
+        blockedBy.findAll { BLOCKED_ID eq userId.value }.map {
+            Block(
+                UserId(it.userId),
+                UserId(it.blockedId),
+                it.blockedAt,
+            )
+        }
 }
 
 class InviteRepositoryImpl(private val invites: KandraSuspendRepository<InviteRow>) : InviteRepository {
@@ -134,9 +153,14 @@ class UsersStoreImpl(
     private val outbox: KandraSuspendRepository<UsersOutboxRow>,
     private val bus: EventBus,
 ) : UsersStore {
-
     override suspend fun commit(changes: UsersChanges) {
-        val chunks = changes.contacts.chunked(CHUNK).size.coerceAtLeast(changes.deletedContacts.chunked(CHUNK).size).coerceAtLeast(1)
+        val chunks =
+            changes.contacts
+                .chunked(
+                    CHUNK,
+                ).size
+                .coerceAtLeast(changes.deletedContacts.chunked(CHUNK).size)
+                .coerceAtLeast(1)
         for (i in 0 until chunks) {
             val last = i == chunks - 1
             write(
@@ -164,14 +188,24 @@ class UsersStoreImpl(
         if (c == UsersChanges()) return
         runtime.batch {
             c.profiles.forEach { profiles.saveInBatch(it.toRow()) }
-            c.deletedProfiles.forEach { profiles.deleteInBatch(ProfileRow(it.value, "", null, null, null, null, "{}", Instant.EPOCH)) }
+            c.deletedProfiles.forEach {
+                profiles.deleteInBatch(ProfileRow(it.value, "", null, null, null, null, "{}", Instant.EPOCH))
+            }
             c.contacts.forEach { contact ->
                 contacts.saveInBatch(contact.toRow())
                 val reverseRow = ContactReverseRow(contact.contactId.value, contact.ownerId.value, contact.addedAt)
-                if (contact.status == ContactStatus.ACTIVE) reverse.saveInBatch(reverseRow) else reverse.deleteInBatch(reverseRow)
+                if (contact.status ==
+                    ContactStatus.ACTIVE
+                ) {
+                    reverse.saveInBatch(reverseRow)
+                } else {
+                    reverse.deleteInBatch(reverseRow)
+                }
             }
             c.deletedContacts.forEach { (owner, contact) ->
-                contacts.deleteInBatch(ContactRow(owner.value, contact.value, "PHONEBOOK", "ACTIVE", null, Instant.EPOCH))
+                contacts.deleteInBatch(
+                    ContactRow(owner.value, contact.value, "PHONEBOOK", "ACTIVE", null, Instant.EPOCH),
+                )
                 reverse.deleteInBatch(ContactReverseRow(contact.value, owner.value, Instant.EPOCH))
             }
             c.blocks.forEach {
@@ -185,9 +219,16 @@ class UsersStoreImpl(
             c.invites.forEach { invites.saveInBatch(InviteRow(it.token, it.ownerId.value, it.kind, it.createdAt)) }
             c.revokedInvites.forEach { invites.deleteInBatch(InviteRow(it, UUID(0, 0), "LINK", Instant.EPOCH)) }
             c.waiting.forEach { waiting.saveInBatch(WaitingContactRow(it.phoneHmac, it.ownerId.value, it.addedAt)) }
-            c.clearedWaiting.forEach { waiting.deleteInBatch(WaitingContactRow(it.phoneHmac, it.ownerId.value, it.addedAt)) }
+            c.clearedWaiting.forEach {
+                waiting.deleteInBatch(
+                    WaitingContactRow(it.phoneHmac, it.ownerId.value, it.addedAt),
+                )
+            }
             c.releasedHandles.forEach {
-                handles.saveInBatch(HandleClaimRow(it.handle, it.userId.value, it.claimedAt, it.releasedAt), ttlSeconds = HANDLE_HOLD_SECONDS)
+                handles.saveInBatch(
+                    HandleClaimRow(it.handle, it.userId.value, it.claimedAt, it.releasedAt),
+                    ttlSeconds = HANDLE_HOLD_SECONDS,
+                )
             }
             c.events.forEach { outbox.saveInBatch(it.toOutboxRow()) }
         }

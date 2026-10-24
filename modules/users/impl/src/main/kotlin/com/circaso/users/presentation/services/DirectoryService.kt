@@ -17,7 +17,10 @@ class DirectoryService(
     private val replayFrames: ReplayFrames,
 ) {
     suspend fun canReach(from: UserId, to: UserId): Resource<Boolean> = canReach.invoke(from, to)
+
     suspend fun filterReachable(from: UserId, to: Set<UserId>): Resource<Set<UserId>> = filterReachable.invoke(from, to)
+
     suspend fun getProfiles(ids: Set<UserId>): Resource<Map<UserId, PublicProfile>> = getProfiles.invoke(ids)
+
     suspend fun getMissedFrames(userId: UserId, seq: Long): Resource<List<LoggedFrame>?> = replayFrames(userId, seq)
 }

@@ -24,17 +24,41 @@ class LinkProvider(
 ) {
     suspend operator fun invoke(command: LinkProviderCommand): Resource<Unit> {
         if (!cache.consumeNonce(command.nonce)) return Resource.error(IdentityError.NonceInvalid)
-        val identity = when (val verified = social.verify(command.provider, command.idToken, command.nonce)) {
-            is Resource.Success -> verified.data
-            is Resource.Error ->
-                return if (verified.error is IntegrationError.Rejected) Resource.error(IdentityError.ProviderTokenInvalid) else verified
-        }
+        val identity =
+            when (val verified = social.verify(command.provider, command.idToken, command.nonce)) {
+                is Resource.Success -> {
+                    verified.data
+                }
+
+                is Resource.Error -> {
+                    return if (verified.error is IntegrationError.Rejected) {
+                        Resource.error(
+                            IdentityError.ProviderTokenInvalid,
+                        )
+                    } else {
+                        verified
+                    }
+                }
+            }
         val userId = command.principal.userId
-        if (!providers.claim(command.provider, identity.subject, userId)) return Resource.error(IdentityError.ProviderInUse)
+        if (!providers.claim(
+                command.provider,
+                identity.subject,
+                userId,
+            )
+        ) {
+            return Resource.error(IdentityError.ProviderInUse)
+        }
         store.commit(
             Changes(
-                providerLinks = listOf(ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant())),
-                securityEvents = listOf(SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name)),
+                providerLinks =
+                    listOf(
+                        ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant()),
+                    ),
+                securityEvents =
+                    listOf(
+                        SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name),
+                    ),
             ),
         )
         return Resource.success(Unit)

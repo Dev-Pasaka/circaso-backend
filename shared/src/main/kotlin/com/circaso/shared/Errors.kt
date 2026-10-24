@@ -36,14 +36,14 @@ sealed class SharedError(
     override val kind: ErrorKind,
     override val details: ErrorDetails? = null,
 ) : DomainError {
-
     /** A request that isn't shaped right: bad JSON, a missing field, a malformed value. Mappers return this. */
-    class Malformed(fields: Map<String, String> = emptyMap()) : SharedError(
-        code = "request.malformed",
-        message = "The request is not valid.",
-        kind = ErrorKind.INVALID,
-        details = fields.takeIf { it.isNotEmpty() }?.let { ErrorDetails(fields = it) },
-    )
+    class Malformed(fields: Map<String, String> = emptyMap()) :
+        SharedError(
+            code = "request.malformed",
+            message = "The request is not valid.",
+            kind = ErrorKind.INVALID,
+            details = fields.takeIf { it.isNotEmpty() }?.let { ErrorDetails(fields = it) },
+        )
 
     data object NotFound : SharedError("request.not_found", "That does not exist.", ErrorKind.NOT_FOUND)
 
@@ -51,21 +51,38 @@ sealed class SharedError(
 
     data object TokenMissing : SharedError("auth.token_missing", "Sign in to continue.", ErrorKind.UNAUTHORIZED)
 
-    data object TokenInvalid : SharedError("auth.token_invalid", "Your session is not valid. Sign in again.", ErrorKind.UNAUTHORIZED)
-
-    data object ScopeInsufficient : SharedError("auth.scope_insufficient", "You can't do that with this session.", ErrorKind.FORBIDDEN)
-
-    /** `request.client_outdated` is sent with 426 by the gateway, which is not the status its kind maps to. */
-    data object ClientOutdated : SharedError("request.client_outdated", "Update Circaso to continue.", ErrorKind.INVALID)
-
-    class RateLimited(retryAfterSeconds: Long) : SharedError(
-        code = "request.rate_limited",
-        message = "Too many requests. Try again shortly.",
-        kind = ErrorKind.RATE_LIMITED,
-        details = ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+    data object TokenInvalid : SharedError(
+        "auth.token_invalid",
+        "Your session is not valid. Sign in again.",
+        ErrorKind.UNAUTHORIZED,
     )
 
-    data object InProgress : SharedError("request.in_progress", "That request is still being processed.", ErrorKind.CONFLICT)
+    data object ScopeInsufficient : SharedError(
+        "auth.scope_insufficient",
+        "You can't do that with this session.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    /** `request.client_outdated` is sent with 426 by the gateway, which is not the status its kind maps to. */
+    data object ClientOutdated : SharedError(
+        "request.client_outdated",
+        "Update Circaso to continue.",
+        ErrorKind.INVALID,
+    )
+
+    class RateLimited(retryAfterSeconds: Long) :
+        SharedError(
+            code = "request.rate_limited",
+            message = "Too many requests. Try again shortly.",
+            kind = ErrorKind.RATE_LIMITED,
+            details = ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
+
+    data object InProgress : SharedError(
+        "request.in_progress",
+        "That request is still being processed.",
+        ErrorKind.CONFLICT,
+    )
 
     data object IdempotencyKeyMissing : SharedError(
         "request.malformed",

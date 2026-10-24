@@ -6,8 +6,8 @@ import com.circaso.identity.domain.models.StartPhoneCommand
 import com.circaso.identity.domain.models.StartPhoneResult
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PendingOtp
-import com.circaso.identity.domain.ports.VENDOR_CHECKED_CODE
 import com.circaso.identity.domain.ports.PhoneProtection
+import com.circaso.identity.domain.ports.VENDOR_CHECKED_CODE
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.randomToken
@@ -39,9 +39,16 @@ class StartPhoneVerification(
     suspend operator fun invoke(command: StartPhoneCommand): Resource<StartPhoneResult> {
         val userId = command.principal.userId
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
-        if (account.status == AccountStatus.ACTIVE && account.phone != command.phone) return Resource.error(IdentityError.PhoneMismatch)
+        if (account.status == AccountStatus.ACTIVE &&
+            account.phone != command.phone
+        ) {
+            return Resource.error(IdentityError.PhoneMismatch)
+        }
 
-        cache.codeLockRemaining(userId)?.let { return Resource.error(IdentityError.CodeLocked(it.seconds.coerceAtLeast(1))) }
+        cache
+            .codeLockRemaining(
+                userId,
+            )?.let { return Resource.error(IdentityError.CodeLocked(it.seconds.coerceAtLeast(1))) }
 
         val phoneHmac = phones.hmac(command.phone)
         if (cache.countCodeRequestForPhone(phoneHmac) > MAX_PER_PHONE) {
@@ -53,18 +60,35 @@ class StartPhoneVerification(
 
         if (verifier.managesCodes) return startWithVendor(command, phoneHmac)
 
-        val code = "%0${config.codeLength}d".format(random.nextInt(Math.pow(10.0, config.codeLength.toDouble()).toInt()))
+        val code =
+            "%0${config.codeLength}d".format(
+                random.nextInt(Math.pow(10.0, config.codeLength.toDouble()).toInt()),
+            )
         val verificationId = randomToken(16)
         cache.saveOtp(
             verificationId,
-            PendingOtp(phoneHmac, phones.seal(command.phone), sha256Hex("$verificationId:$code"), userId, command.principal.deviceId),
+            PendingOtp(
+                phoneHmac,
+                phones.seal(command.phone),
+                sha256Hex("$verificationId:$code"),
+                userId,
+                command.principal.deviceId,
+            ),
         )
 
         val text = "Your Circaso code is $code. Don't share it." + (config.smsRetrieverHash?.let { " $it" } ?: "")
         return when (sms.send(command.phone, text, SmsPurpose.VERIFICATION)) {
-            is Resource.Success -> Resource.success(
-                StartPhoneResult(verificationId, config.codeLength, config.codeTtl.seconds, config.resendAfter.seconds),
-            )
+            is Resource.Success -> {
+                Resource.success(
+                    StartPhoneResult(
+                        verificationId,
+                        config.codeLength,
+                        config.codeTtl.seconds,
+                        config.resendAfter.seconds,
+                    ),
+                )
+            }
+
             is Resource.Error -> {
                 cache.deleteOtp(verificationId)
                 Resource.error(IdentityError.SmsUnavailable)
@@ -80,7 +104,17 @@ class StartPhoneVerification(
             PendingOtp(phoneHmac, phones.seal(command.phone), VENDOR_CHECKED_CODE, userId, command.principal.deviceId),
         )
         return when (val started = verifier.start(command.phone, config.smsRetrieverHash)) {
-            is Resource.Success -> Resource.success(StartPhoneResult(verificationId, config.codeLength, config.codeTtl.seconds, config.resendAfter.seconds))
+            is Resource.Success -> {
+                Resource.success(
+                    StartPhoneResult(
+                        verificationId,
+                        config.codeLength,
+                        config.codeTtl.seconds,
+                        config.resendAfter.seconds,
+                    ),
+                )
+            }
+
             is Resource.Error -> {
                 cache.deleteOtp(verificationId)
                 // The vendor's own limit is the person's to wait out; anything else is ours to fix.

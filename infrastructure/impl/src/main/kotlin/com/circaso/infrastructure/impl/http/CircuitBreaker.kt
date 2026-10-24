@@ -39,7 +39,11 @@ class CircuitBreaker(
 
     @Synchronized
     fun onSuccess() {
-        if (openedAt != null) log.info("circuit closed", kv("kind", "http"), kv("vendor", vendor), kv("circuit", "closed"))
+        if (openedAt !=
+            null
+        ) {
+            log.info("circuit closed", kv("kind", "http"), kv("vendor", vendor), kv("circuit", "closed"))
+        }
         failures = 0
         openedAt = null
         probing = false
@@ -51,7 +55,14 @@ class CircuitBreaker(
         if (probing || (openedAt == null && failures >= threshold)) {
             openedAt = clock.instant()
             probing = false
-            log.error("circuit opened", kv("kind", "http"), kv("vendor", vendor), kv("circuit", "open"), kv("failures", failures), kv("openForSeconds", openFor.seconds))
+            log.error(
+                "circuit opened",
+                kv("kind", "http"),
+                kv("vendor", vendor),
+                kv("circuit", "open"),
+                kv("failures", failures),
+                kv("openForSeconds", openFor.seconds),
+            )
         }
     }
 }
@@ -61,19 +72,20 @@ class CircuitBreakerConfig {
 }
 
 /** Wraps each attempt, so when retries are installed around it every failed attempt counts. */
-val CircuitBreakerPlugin = createClientPlugin("CircuitBreaker", ::CircuitBreakerConfig) {
-    val breaker = pluginConfig.breaker
-    on(Send) { request ->
-        breaker.beforeCall()
-        try {
-            val call = proceed(request)
-            if (call.response.status.value >= 500) breaker.onFailure() else breaker.onSuccess()
-            call
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            breaker.onFailure()
-            throw e
+val CircuitBreakerPlugin =
+    createClientPlugin("CircuitBreaker", ::CircuitBreakerConfig) {
+        val breaker = pluginConfig.breaker
+        on(Send) { request ->
+            breaker.beforeCall()
+            try {
+                val call = proceed(request)
+                if (call.response.status.value >= 500) breaker.onFailure() else breaker.onSuccess()
+                call
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                breaker.onFailure()
+                throw e
+            }
         }
     }
-}

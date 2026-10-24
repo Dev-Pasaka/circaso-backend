@@ -7,9 +7,11 @@ import kotlin.test.assertTrue
 
 /** Runs every rule on the real sources. A violation here fails the build. */
 class ArchitectureTest {
-
-    private val files: List<KoFileDeclaration> = Konsist.scopeFromProject().files
-        .filter { "/src/main/" in it.path && "/architecture-tests/" !in it.path }
+    private val files: List<KoFileDeclaration> =
+        Konsist
+            .scopeFromProject()
+            .files
+            .filter { "/src/main/" in it.path && "/architecture-tests/" !in it.path }
 
     @Test
     fun `the scan sees the sources it is meant to guard`() {

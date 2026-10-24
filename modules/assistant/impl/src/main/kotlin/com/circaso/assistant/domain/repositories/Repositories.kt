@@ -11,8 +11,11 @@ interface ChatRepository {
     suspend fun find(userId: UserId, messageId: UUID): ChatMessage?
 
     /** Newest first; [before] is the last message id of the previous page. */
-    suspend fun list(userId: UserId, before: UUID?, limit: Int): List<ChatMessage>
-
+    suspend fun list(
+        userId: UserId,
+        before: UUID?,
+        limit: Int,
+    ): List<ChatMessage>
 }
 
 interface EntitlementRepository {
@@ -28,7 +31,12 @@ data class AssistantChanges(
 )
 
 /** An audit record says what happened, never what was said. */
-data class AuditEntry(val userId: UserId, val kind: String, val detail: String, val requestId: String?)
+data class AuditEntry(
+    val userId: UserId,
+    val kind: String,
+    val detail: String,
+    val requestId: String?,
+)
 
 interface AssistantStore {
     suspend fun commit(changes: AssistantChanges)
@@ -37,5 +45,13 @@ interface AssistantStore {
     suspend fun deleteChat(userId: UserId)
 
     /** A day's totals for cost reports. */
-    suspend fun saveUsage(userId: UserId, day: String, textTurns: Int, voiceSeconds: Int, inputTokens: Long, outputTokens: Long, at: Instant)
+    suspend fun saveUsage(
+        userId: UserId,
+        day: String,
+        textTurns: Int,
+        voiceSeconds: Int,
+        inputTokens: Long,
+        outputTokens: Long,
+        at: Instant,
+    )
 }

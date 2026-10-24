@@ -11,7 +11,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ResourceAndEventsTest {
-
     private object Taken : DomainError {
         override val code = "identity.phone_taken"
         override val message = "This number already has a Circaso account."
@@ -31,11 +30,12 @@ class ResourceAndEventsTest {
     }
 
     @Test
-    fun `flatMap lets the next step suspend`() = runTest {
-        val result = Resource.success(1).flatMap { next(it) }
+    fun `flatMap lets the next step suspend`() =
+        runTest {
+            val result = Resource.success(1).flatMap { next(it) }
 
-        assertEquals(2, result.getOrNull())
-    }
+            assertEquals(2, result.getOrNull())
+        }
 
     private suspend fun next(value: Int): Resource<Int> = Resource.success(value + 1)
 
@@ -66,10 +66,13 @@ class ResourceAndEventsTest {
         val userId = UserId.new()
         val at = Instant.parse("2026-10-21T18:07:12Z")
 
-        val envelope = EventEnvelope.of(
-            Activated(userId, "ab12"), Activated.serializer(),
-            occurredAt = at, traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-        )
+        val envelope =
+            EventEnvelope.of(
+                Activated(userId, "ab12"),
+                Activated.serializer(),
+                occurredAt = at,
+                traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            )
         val read = EventEnvelope.fromJson(envelope.toJson())
 
         assertEquals(envelope, read)
@@ -81,7 +84,12 @@ class ResourceAndEventsTest {
 
     @Test
     fun `an event is stored under its UTC minute bucket, and buckets step by a minute`() {
-        val envelope = EventEnvelope.of(Activated(UserId.new(), "ab12"), Activated.serializer(), occurredAt = Instant.parse("2026-10-21T18:06:59.999Z"))
+        val envelope =
+            EventEnvelope.of(
+                Activated(UserId.new(), "ab12"),
+                Activated.serializer(),
+                occurredAt = Instant.parse("2026-10-21T18:06:59.999Z"),
+            )
 
         assertEquals("2026-10-21T18:06", envelope.bucket)
         assertEquals(Instant.parse("2026-10-21T18:06:00Z"), EventEnvelope.bucketStart(envelope.bucket))
@@ -92,13 +100,23 @@ class ResourceAndEventsTest {
 
     @Test
     fun `the envelope has the documented field names and ISO time`() {
-        val envelope = EventEnvelope.of(Activated(UserId.new(), "ab12"), Activated.serializer(), occurredAt = Instant.parse("2026-10-21T18:07:12Z"))
+        val envelope =
+            EventEnvelope.of(
+                Activated(UserId.new(), "ab12"),
+                Activated.serializer(),
+                occurredAt = Instant.parse("2026-10-21T18:07:12Z"),
+            )
         val json = envelope.toJson()
 
-        val fields = listOf(
-            "\"eventId\"", "\"type\":\"identity.AccountActivated\"", "\"version\":1",
-            "\"occurredAt\":\"2026-10-21T18:07:12Z\"", "\"producer\":\"identity\"", "\"data\"",
-        )
+        val fields =
+            listOf(
+                "\"eventId\"",
+                "\"type\":\"identity.AccountActivated\"",
+                "\"version\":1",
+                "\"occurredAt\":\"2026-10-21T18:07:12Z\"",
+                "\"producer\":\"identity\"",
+                "\"data\"",
+            )
         fields.forEach { assertTrue(json.contains(it), "missing $it in $json") }
     }
 }

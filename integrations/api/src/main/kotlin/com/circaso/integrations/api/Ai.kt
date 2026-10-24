@@ -10,15 +10,13 @@ interface LanguageModel {
     suspend fun complete(request: ModelRequest): Resource<ModelResponse>
 }
 
-data class ModelRequest(
-    val system: String,
-    val messages: List<ModelMessage>,
-    val tools: List<ToolSpec> = emptyList(),
-)
+data class ModelRequest(val system: String, val messages: List<ModelMessage>, val tools: List<ToolSpec> = emptyList())
 
 sealed interface ModelMessage {
     data class User(val text: String) : ModelMessage
+
     data class Assistant(val text: String?, val toolCalls: List<ToolCall> = emptyList()) : ModelMessage
+
     data class ToolResult(val callId: String, val name: String, val content: String) : ModelMessage
 }
 
@@ -33,7 +31,11 @@ data class ModelUsage(val inputTokens: Int, val outputTokens: Int)
 
 interface SpeechToText {
     /** Turns a short clip into text; the audio is not kept. */
-    suspend fun transcribe(audio: ByteArray, contentType: String, language: String? = null): Resource<Transcript>
+    suspend fun transcribe(
+        audio: ByteArray,
+        contentType: String,
+        language: String? = null,
+    ): Resource<Transcript>
 }
 
 data class Transcript(val text: String, val seconds: Int)

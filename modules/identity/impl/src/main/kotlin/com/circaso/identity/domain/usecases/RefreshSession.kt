@@ -33,9 +33,14 @@ class RefreshSession(
     private val proofs: DeviceProofs,
 ) {
     suspend operator fun invoke(command: RefreshCommand): Resource<RefreshedSession> {
-        val sessionId = SessionOpener.sessionIdOf(command.refreshToken) ?: return Resource.error(IdentityError.SessionRevoked)
+        val sessionId =
+            SessionOpener.sessionIdOf(command.refreshToken) ?: return Resource.error(IdentityError.SessionRevoked)
         val session = sessions.find(sessionId) ?: return Resource.error(IdentityError.SessionRevoked)
-        if (session.status != SessionStatus.ACTIVE || session.deviceId != command.deviceId) return Resource.error(IdentityError.SessionRevoked)
+        if (session.status != SessionStatus.ACTIVE ||
+            session.deviceId != command.deviceId
+        ) {
+            return Resource.error(IdentityError.SessionRevoked)
+        }
 
         val account = accounts.find(session.userId)
         val device = devices.find(session.userId, session.deviceId)
@@ -52,7 +57,10 @@ class RefreshSession(
             store.commit(
                 Changes(
                     sessions = listOf(session.copy(status = SessionStatus.REVOKED)),
-                    securityEvents = listOf(SecurityEvent(session.userId, null, SecurityEventType.SESSION_REUSE, device?.model, null)),
+                    securityEvents =
+                        listOf(
+                            SecurityEvent(session.userId, null, SecurityEventType.SESSION_REUSE, device?.model, null),
+                        ),
                 ),
             )
             cache.revoke(session.sessionId)

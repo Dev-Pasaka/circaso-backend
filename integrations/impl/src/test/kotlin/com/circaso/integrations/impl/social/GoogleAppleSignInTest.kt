@@ -9,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.Signature
 import java.security.interfaces.RSAPublicKey
 import java.time.Clock
@@ -29,47 +30,86 @@ class GoogleAppleSignInTest {
     private val other = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
 
     private fun jwks(kid: String, key: RSAPublicKey = pair.public as RSAPublicKey) =
-        """{"keys":[{"kty":"RSA","kid":"$kid","alg":"RS256","use":"sig","n":"${enc.encodeToString(key.modulus.toByteArray().dropWhile { it == 0.toByte() }.toByteArray())}","e":"${enc.encodeToString(key.publicExponent.toByteArray())}"}]}"""
+        """{"keys":[{"kty":"RSA","kid":"$kid","alg":"RS256","use":"sig","n":"${enc.encodeToString(
+            key.modulus
+                .toByteArray()
+                .dropWhile { it == 0.toByte() }
+                .toByteArray(),
+        )}","e":"${enc.encodeToString(key.publicExponent.toByteArray())}"}]}"""
 
     private var fetches = 0
     private var served = jwks("k1")
     private var down = false
 
-    private fun verifier() = GoogleAppleSignIn(
-        google = ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client", "android-client")),
-        apple = ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("com.circaso.app")),
-        clients = FakeHttpClients { _ ->
-            fetches++
-            if (down) throw IOException("down")
-            json(served)
-        },
-        clock = clock,
-    )
+    private fun verifier() =
+        GoogleAppleSignIn(
+            google = ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client", "android-client")),
+            apple = ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("com.circaso.app")),
+            clients =
+                FakeHttpClients { _ ->
+                    fetches++
+                    if (down) throw IOException("down")
+                    json(served)
+                },
+            clock = clock,
+        )
 
     private fun token(
         claims: Map<String, Any?>,
         kid: String? = "k1",
         alg: String = "RS256",
-        signWith: java.security.PrivateKey = pair.private,
+        signWith: PrivateKey = pair.private,
     ): String {
-        fun json(v: Any?): String = when (v) {
-            null -> "null"
-            is Number, is Boolean -> v.toString()
-            else -> "\"$v\""
-        }
-        val header = buildString { append("{\"alg\":\"$alg\""); if (kid != null) append(",\"kid\":\"$kid\""); append("}") }
+        fun json(v: Any?): String =
+            when (v) {
+                null -> "null"
+                is Number, is Boolean -> v.toString()
+                else -> "\"$v\""
+            }
+        val header =
+            buildString {
+                append("{\"alg\":\"$alg\"")
+                if (kid !=
+                    null
+                ) {
+                    append(",\"kid\":\"$kid\"")
+                }
+                append("}")
+            }
         val payload = claims.entries.joinToString(",", "{", "}") { "\"${it.key}\":${json(it.value)}" }
         val input = enc.encodeToString(header.toByteArray()) + "." + enc.encodeToString(payload.toByteArray())
-        val sig = Signature.getInstance("SHA256withRSA").run { initSign(signWith); update(input.toByteArray()); sign() }
+        val sig =
+            Signature.getInstance("SHA256withRSA").run {
+                initSign(signWith)
+                update(input.toByteArray())
+                sign()
+            }
         return "$input.${enc.encodeToString(sig)}"
     }
 
-    private fun google(extra: Map<String, Any?> = emptyMap()) = mapOf(
-        "iss" to "https://accounts.google.com", "aud" to "web-client", "sub" to "1100", "iat" to now.epochSecond, "exp" to now.epochSecond + 3600,
-        "nonce" to "N1", "email" to "amina@gmail.com", "email_verified" to true, "name" to "Amina Otieno", "picture" to "https://lh3.googleusercontent.com/a",
-    ) + extra
+    private fun google(extra: Map<String, Any?> = emptyMap()) =
+        mapOf(
+            "iss" to "https://accounts.google.com",
+            "aud" to "web-client",
+            "sub" to "1100",
+            "iat" to now.epochSecond,
+            "exp" to now.epochSecond + 3600,
+            "nonce" to "N1",
+            "email" to "amina@gmail.com",
+            "email_verified" to true,
+            "name" to "Amina Otieno",
+            "picture" to "https://lh3.googleusercontent.com/a",
+        ) + extra
 
-    private fun verify(provider: SocialProvider, token: String, nonce: String = "N1", v: GoogleAppleSignIn = verifier()) = runBlocking { v.verify(provider, token, nonce) }
+    private fun verify(
+        provider: SocialProvider,
+        token: String,
+        nonce: String = "N1",
+        v: GoogleAppleSignIn = verifier(),
+    ) = runBlocking {
+        v.verify(provider, token, nonce)
+    }
+
     private fun rejected(r: Resource<*>) = assertIs<IntegrationError.Rejected>((r as Resource.Error).error)
 
     @Test
@@ -84,9 +124,22 @@ class GoogleAppleSignInTest {
 
     @Test
     fun `an Apple token takes the raw nonce or its SHA-256, and email_verified as a string`() {
-        val hashed = MessageDigest.getInstance("SHA-256").digest("N1".toByteArray()).joinToString("") { "%02x".format(it) }
-        val apple = mapOf("iss" to "https://appleid.apple.com", "aud" to "com.circaso.app", "sub" to "00.abc", "iat" to now.epochSecond, "exp" to now.epochSecond + 3600,
-            "email" to "x@privaterelay.appleid.com", "email_verified" to "true")
+        val hashed =
+            MessageDigest
+                .getInstance(
+                    "SHA-256",
+                ).digest("N1".toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        val apple =
+            mapOf(
+                "iss" to "https://appleid.apple.com",
+                "aud" to "com.circaso.app",
+                "sub" to "00.abc",
+                "iat" to now.epochSecond,
+                "exp" to now.epochSecond + 3600,
+                "email" to "x@privaterelay.appleid.com",
+                "email_verified" to "true",
+            )
         val a = (verify(SocialProvider.APPLE, token(apple + ("nonce" to hashed))) as Resource.Success).data
         assertEquals("00.abc", a.subject)
         assertTrue(a.emailVerified)
@@ -115,13 +168,30 @@ class GoogleAppleSignInTest {
     @Test
     fun `a token for Apple is not accepted as Google's, and the other way round`() {
         rejected(verify(SocialProvider.APPLE, token(google())))
-        val apple = mapOf("iss" to "https://appleid.apple.com", "aud" to "com.circaso.app", "sub" to "s", "iat" to now.epochSecond, "exp" to now.epochSecond + 3600, "nonce" to "N1")
+        val apple =
+            mapOf(
+                "iss" to "https://appleid.apple.com",
+                "aud" to "com.circaso.app",
+                "sub" to "s",
+                "iat" to now.epochSecond,
+                "exp" to now.epochSecond + 3600,
+                "nonce" to "N1",
+            )
         rejected(verify(SocialProvider.GOOGLE, token(apple)))
     }
 
     @Test
     fun `a provider with no client id configured accepts nothing`() {
-        val none = GoogleAppleSignIn(ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, emptySet()), ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, emptySet()), clients = FakeHttpClients { _ -> json(served) }, clock = clock)
+        val none =
+            GoogleAppleSignIn(
+                ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, emptySet()),
+                ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, emptySet()),
+                clients =
+                    FakeHttpClients { _ ->
+                        json(served)
+                    },
+                clock = clock,
+            )
         rejected(verify(SocialProvider.GOOGLE, token(google()), v = none))
     }
 
@@ -136,12 +206,22 @@ class GoogleAppleSignInTest {
         rejected(verify(SocialProvider.GOOGLE, token(google(), kid = "k2"), v = v))
         assertEquals(1, fetches, "a new key id inside a minute does not refetch")
 
-        val later = GoogleAppleSignIn(
-            ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client")), ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("x")),
-            clients = FakeHttpClients { _ -> fetches++; json(served) }, clock = clock,
-        )
+        val later =
+            GoogleAppleSignIn(
+                ProviderSpec("g", GoogleAppleSignIn.GOOGLE_ISSUERS, setOf("web-client")),
+                ProviderSpec("a", GoogleAppleSignIn.APPLE_ISSUERS, setOf("x")),
+                clients =
+                    FakeHttpClients { _ ->
+                        fetches++
+                        json(served)
+                    },
+                clock = clock,
+            )
         fetches = 0
-        assertIs<Resource.Success<*>>(verify(SocialProvider.GOOGLE, token(google(), kid = "k2"), v = later), "a rotated key is picked up")
+        assertIs<Resource.Success<*>>(
+            verify(SocialProvider.GOOGLE, token(google(), kid = "k2"), v = later),
+            "a rotated key is picked up",
+        )
         assertEquals(1, fetches)
     }
 
@@ -152,7 +232,8 @@ class GoogleAppleSignInTest {
     }
 
     @Test
-    fun `revoking Apple without its key is Unavailable so deletion can retry later`() = runBlocking<Unit> {
-        assertIs<IntegrationError.Unavailable>((verifier().revokeApple("refresh") as Resource.Error).error)
-    }
+    fun `revoking Apple without its key is Unavailable so deletion can retry later`() =
+        runBlocking<Unit> {
+            assertIs<IntegrationError.Unavailable>((verifier().revokeApple("refresh") as Resource.Error).error)
+        }
 }

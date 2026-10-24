@@ -22,8 +22,30 @@ class ChatService(
     private val deleteExchange: DeleteExchange,
 ) {
     suspend fun ask(command: TurnCommand): Resource<TurnResult> = startTurn(command)
+
     suspend fun answerDevice(result: DeviceToolResult): Resource<TurnResult> = continueTurn(result)
-    suspend fun listChat(userId: UserId, cursor: String?, limit: Int): Resource<ChatPage> = listChat.invoke(userId, cursor, limit)
+
+    suspend fun listChat(
+        userId: UserId,
+        cursor: String?,
+        limit: Int,
+    ): Resource<ChatPage> =
+        listChat.invoke(
+            userId,
+            cursor,
+            limit,
+        )
+
     suspend fun deleteAll(userId: UserId, requestId: String?): Resource<Unit> = deleteChat(userId, requestId)
-    suspend fun deleteOne(userId: UserId, messageId: UUID, requestId: String?): Resource<Unit> = deleteExchange(userId, messageId, requestId)
+
+    suspend fun deleteOne(
+        userId: UserId,
+        messageId: UUID,
+        requestId: String?,
+    ): Resource<Unit> =
+        deleteExchange(
+            userId,
+            messageId,
+            requestId,
+        )
 }

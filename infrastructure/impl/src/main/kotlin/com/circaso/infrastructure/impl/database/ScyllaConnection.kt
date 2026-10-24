@@ -36,7 +36,11 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
     val autoCreateKeyspaces: Boolean = local
 
     /** ScyllaDB Cloud uses tablets, which reject SimpleStrategy; the local node is told not to use them. */
-    val localReplication: ReplicationStrategy = ReplicationStrategy.SimpleStrategy(replicationFactor = 1, disableTablets = true)
+    val localReplication: ReplicationStrategy =
+        ReplicationStrategy.SimpleStrategy(
+            replicationFactor = 1,
+            disableTablets = true,
+        )
 
     fun credentials(): KandraCredentials =
         KandraCredentials(secrets.get("scylla.username").orEmpty(), secrets.get("scylla.password").orEmpty())
@@ -45,11 +49,12 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
 
     fun trustStorePassword(): String? = secrets.get("scylla.truststore-password")
 
-    fun addresses(): List<InetSocketAddress> = contactPoints.split(',').map { entry ->
-        val host = entry.trim().substringBeforeLast(':', entry.trim())
-        val port = entry.trim().substringAfterLast(':', "9042").toIntOrNull() ?: 9042
-        InetSocketAddress(host, port)
-    }
+    fun addresses(): List<InetSocketAddress> =
+        contactPoints.split(',').map { entry ->
+            val host = entry.trim().substringBeforeLast(':', entry.trim())
+            val port = entry.trim().substringAfterLast(':', "9042").toIntOrNull() ?: 9042
+            InetSocketAddress(host, port)
+        }
 
     fun sslContext(): SSLContext? {
         if (!tls) return null
@@ -58,8 +63,15 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
         if (path == null) {
             context.init(null, null, null) // the JVM's trust store
         } else {
-            val store = KeyStore.getInstance("JKS").apply { FileInputStream(path).use { load(it, trustStorePassword()?.toCharArray()) } }
-            val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
+            val store =
+                KeyStore.getInstance("JKS").apply {
+                    FileInputStream(path).use { load(it, trustStorePassword()?.toCharArray()) }
+                }
+            val factory =
+                TrustManagerFactory
+                    .getInstance(
+                        TrustManagerFactory.getDefaultAlgorithm(),
+                    ).apply { init(store) }
             context.init(null, factory.trustManagers, null)
         }
         return context
@@ -67,15 +79,18 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
 
     /** A plain driver session, for `migrate`. [keyspace] null opens one with no keyspace set. */
     fun openSession(keyspace: String? = null): CqlSession {
-        val builder = CqlSession.builder()
-            .addContactPoints(addresses())
-            .withLocalDatacenter(datacenter)
-            .withConfigLoader(
-                DriverConfigLoader.programmaticBuilder()
-                    .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(30)) // DDL is slow
-                    .withDuration(DefaultDriverOption.CONNECTION_CONNECT_TIMEOUT, Duration.ofSeconds(10))
-                    .build(),
-            )
+        val builder =
+            CqlSession
+                .builder()
+                .addContactPoints(addresses())
+                .withLocalDatacenter(datacenter)
+                .withConfigLoader(
+                    DriverConfigLoader
+                        .programmaticBuilder()
+                        .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, Duration.ofSeconds(30)) // DDL is slow
+                        .withDuration(DefaultDriverOption.CONNECTION_CONNECT_TIMEOUT, Duration.ofSeconds(10))
+                        .build(),
+                )
         credentials().takeIf { it.username.isNotBlank() }?.let { builder.withAuthCredentials(it.username, it.password) }
         sslContext()?.let { builder.withSslContext(it) }
         keyspace?.let { builder.withKeyspace(it) }

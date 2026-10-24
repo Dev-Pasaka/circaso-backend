@@ -32,7 +32,11 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.datab
  * credentials from `Secrets` (see [ScyllaSettings]).
  */
 @OptIn(ExperimentalKandraApi::class)
-fun Application.installDatabase(settings: ScyllaSettings, specs: List<KandraModuleSpec>, telemetry: Telemetry) {
+fun Application.installDatabase(
+    settings: ScyllaSettings,
+    specs: List<KandraModuleSpec>,
+    telemetry: Telemetry,
+) {
     if (specs.isEmpty()) {
         // Kandra needs a keyspace to start; until a module contributes one there is nothing to connect to.
         log.info("No module declares a keyspace; Kandra is not installed")
@@ -55,9 +59,17 @@ fun Application.installDatabase(settings: ScyllaSettings, specs: List<KandraModu
         debug { logSlowQueriesMs = 50 }
         metrics {
             enabled = true
-            recorder = KandraMetrics { table, operation, durationMs ->
-                telemetry.record(Metrics.KANDRA_QUERY_DURATION, durationMs / 1000.0, mapOf("table" to table, "op" to operation))
-            }
+            recorder =
+                KandraMetrics { table, operation, durationMs ->
+                    telemetry.record(
+                        Metrics.KANDRA_QUERY_DURATION,
+                        durationMs / 1000.0,
+                        mapOf(
+                            "table" to table,
+                            "op" to operation,
+                        ),
+                    )
+                }
         }
     }
     kandraKoin()
@@ -65,13 +77,15 @@ fun Application.installDatabase(settings: ScyllaSettings, specs: List<KandraModu
 }
 
 /** The Kandra runtime, so a module's data layer can write several tables in one batch. */
-private fun kandraRuntimeModule(application: Application): Module = module {
-    single { application.kandraRuntime }
-}
+private fun kandraRuntimeModule(application: Application): Module =
+    module {
+        single { application.kandraRuntime }
+    }
 
-private fun scyllaHealthModule(application: Application): Module = module {
-    single<HealthCheck>(named("scylla")) { ScyllaHealth(application) }
-}
+private fun scyllaHealthModule(application: Application): Module =
+    module {
+        single<HealthCheck>(named("scylla")) { ScyllaHealth(application) }
+    }
 
 class ScyllaHealth(private val application: Application) : HealthCheck {
     override val name = "scylla"

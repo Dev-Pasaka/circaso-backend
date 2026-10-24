@@ -42,11 +42,23 @@ class ClaimHandle(
         if (changeable != null && now.isBefore(changeable)) return Resource.error(UsersError.HandleCooldown)
 
         if (!handles.claim(handle, userId)) return Resource.error(UsersError.HandleTaken)
-        val saved = profiles.update(old, old.copy(handle = handle, handleChangedAt = now)) ?: return Resource.error(UsersError.VersionConflict)
+        val saved =
+            profiles.update(old, old.copy(handle = handle, handleChangedAt = now))
+                ?: return Resource.error(UsersError.VersionConflict)
 
         store.commit(
             UsersChanges(
-                releasedHandles = listOfNotNull(old.handle?.let { HandleClaim(it, userId, old.handleChangedAt ?: old.createdAt, now) }),
+                releasedHandles =
+                    listOfNotNull(
+                        old.handle?.let {
+                            HandleClaim(
+                                it,
+                                userId,
+                                old.handleChangedAt ?: old.createdAt,
+                                now,
+                            )
+                        },
+                    ),
                 events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.HANDLE)))),
             ),
         )

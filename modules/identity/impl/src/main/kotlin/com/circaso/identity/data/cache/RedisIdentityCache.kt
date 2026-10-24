@@ -12,20 +12,24 @@ import java.time.Duration
 
 /** Identity's Redis keys (`idn:` prefix, set by the scope); every key has an expiry. */
 class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
-
     override suspend fun saveNonce(nonce: String) = redis.set("nonce:$nonce", "1", NONCE_TTL)
 
     override suspend fun consumeNonce(nonce: String): Boolean = redis.getAndDelete("nonce:$nonce") != null
 
-    override suspend fun saveOtp(verificationId: String, otp: PendingOtp) = redis.hashSet(
-        "otp:$verificationId",
-        mapOf(
-            "phoneHmac" to otp.phoneHmac, "sealedPhone" to otp.sealedPhone, "codeHash" to otp.codeHash,
-            "userId" to otp.userId.toString(), "deviceId" to otp.deviceId.toString(),
-            "proven" to if (otp.proven) "1" else "0", "attempts" to otp.attempts.toString(),
-        ),
-        OTP_TTL,
-    )
+    override suspend fun saveOtp(verificationId: String, otp: PendingOtp) =
+        redis.hashSet(
+            "otp:$verificationId",
+            mapOf(
+                "phoneHmac" to otp.phoneHmac,
+                "sealedPhone" to otp.sealedPhone,
+                "codeHash" to otp.codeHash,
+                "userId" to otp.userId.toString(),
+                "deviceId" to otp.deviceId.toString(),
+                "proven" to if (otp.proven) "1" else "0",
+                "attempts" to otp.attempts.toString(),
+            ),
+            OTP_TTL,
+        )
 
     override suspend fun otp(verificationId: String): PendingOtp? {
         val h = redis.hashGetAll("otp:$verificationId")
@@ -41,7 +45,11 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
         )
     }
 
-    override suspend fun recordWrongAttempt(verificationId: String): Long? = redis.hashIncrement("otp:$verificationId", "attempts")
+    override suspend fun recordWrongAttempt(verificationId: String): Long? =
+        redis.hashIncrement(
+            "otp:$verificationId",
+            "attempts",
+        )
 
     override suspend fun markOtpProven(verificationId: String) {
         val left = redis.ttl("otp:$verificationId") ?: return
@@ -52,9 +60,17 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
         redis.delete("otp:$verificationId")
     }
 
-    override suspend fun countCodeRequestForPhone(phoneHmac: String): Long = redis.increment("otp-rate:phone:$phoneHmac", PHONE_RATE_TTL)
+    override suspend fun countCodeRequestForPhone(phoneHmac: String): Long =
+        redis.increment(
+            "otp-rate:phone:$phoneHmac",
+            PHONE_RATE_TTL,
+        )
 
-    override suspend fun countCodeRequestForDevice(deviceId: DeviceId): Long = redis.increment("otp-rate:device:$deviceId", DEVICE_RATE_TTL)
+    override suspend fun countCodeRequestForDevice(deviceId: DeviceId): Long =
+        redis.increment(
+            "otp-rate:device:$deviceId",
+            DEVICE_RATE_TTL,
+        )
 
     override suspend fun codeRequestRetryAfter(phoneHmac: String): Duration? = redis.ttl("otp-rate:phone:$phoneHmac")
 
@@ -62,22 +78,40 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
 
     override suspend fun codeLockRemaining(userId: UserId): Duration? = redis.ttl("otp-lock:$userId")
 
-    override suspend fun markPhoneVerified(userId: UserId, deviceId: DeviceId) = redis.set("phone-ok:$userId:$deviceId", "1", PHONE_OK_TTL)
+    override suspend fun markPhoneVerified(userId: UserId, deviceId: DeviceId) =
+        redis.set(
+            "phone-ok:$userId:$deviceId",
+            "1",
+            PHONE_OK_TTL,
+        )
 
-    override suspend fun isPhoneVerified(userId: UserId, deviceId: DeviceId): Boolean = redis.exists("phone-ok:$userId:$deviceId")
+    override suspend fun isPhoneVerified(userId: UserId, deviceId: DeviceId): Boolean =
+        redis.exists(
+            "phone-ok:$userId:$deviceId",
+        )
 
     override suspend fun revoke(sessionId: SessionId) = redis.set("revoked:$sessionId", "1", REVOKED_TTL)
 
     override suspend fun isRevoked(sessionId: SessionId): Boolean = redis.exists("revoked:$sessionId")
 
-    override suspend fun rememberDeviceSession(userId: UserId, deviceId: DeviceId, sessionId: SessionId) =
-        redis.set("dev-session:$userId:$deviceId", sessionId.toString(), SESSION_TTL)
+    override suspend fun rememberDeviceSession(
+        userId: UserId,
+        deviceId: DeviceId,
+        sessionId: SessionId,
+    ) = redis.set("dev-session:$userId:$deviceId", sessionId.toString(), SESSION_TTL)
 
     override suspend fun deviceSession(userId: UserId, deviceId: DeviceId): SessionId? =
         redis.get("dev-session:$userId:$deviceId")?.let(SessionId::parse)
 
-    override suspend fun saveHints(userId: UserId, displayName: String?, avatarUrl: String?) =
-        redis.hashSet("hints:$userId", mapOf("displayName" to displayName.orEmpty(), "avatarUrl" to avatarUrl.orEmpty()), HINTS_TTL)
+    override suspend fun saveHints(
+        userId: UserId,
+        displayName: String?,
+        avatarUrl: String?,
+    ) = redis.hashSet(
+        "hints:$userId",
+        mapOf("displayName" to displayName.orEmpty(), "avatarUrl" to avatarUrl.orEmpty()),
+        HINTS_TTL,
+    )
 
     override suspend fun hints(userId: UserId): Hints? {
         val h = redis.hashGetAll("hints:$userId")
@@ -85,13 +119,22 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
         return Hints(h["displayName"]?.takeIf { it.isNotEmpty() }, h["avatarUrl"]?.takeIf { it.isNotEmpty() })
     }
 
-    override suspend fun countRecoveryRequest(phoneHmac: String): Long = redis.increment("recovery-rate:$phoneHmac", Duration.ofDays(1))
+    override suspend fun countRecoveryRequest(phoneHmac: String): Long =
+        redis.increment(
+            "recovery-rate:$phoneHmac",
+            Duration.ofDays(1),
+        )
 
-    override suspend fun savePhoneRelease(phoneHmac: String, release: PhoneRelease) = redis.hashSet(
-        "phone-release:$phoneHmac",
-        mapOf("owner" to release.ownerUserId.toString(), "requester" to release.requesterUserId.toString(), "at" to release.releaseAtEpochMillis.toString()),
-        RELEASE_TTL,
-    )
+    override suspend fun savePhoneRelease(phoneHmac: String, release: PhoneRelease) =
+        redis.hashSet(
+            "phone-release:$phoneHmac",
+            mapOf(
+                "owner" to release.ownerUserId.toString(),
+                "requester" to release.requesterUserId.toString(),
+                "at" to release.releaseAtEpochMillis.toString(),
+            ),
+            RELEASE_TTL,
+        )
 
     override suspend fun phoneRelease(phoneHmac: String): PhoneRelease? {
         val h = redis.hashGetAll("phone-release:$phoneHmac")
@@ -103,7 +146,12 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
         )
     }
 
-    override suspend fun countPhoneRelease(phoneHmac: String): Boolean = redis.setIfAbsent("phone-release-rate:$phoneHmac", "1", RELEASE_RATE_TTL)
+    override suspend fun countPhoneRelease(phoneHmac: String): Boolean =
+        redis.setIfAbsent(
+            "phone-release-rate:$phoneHmac",
+            "1",
+            RELEASE_RATE_TTL,
+        )
 
     private companion object {
         val NONCE_TTL: Duration = Duration.ofMinutes(5)

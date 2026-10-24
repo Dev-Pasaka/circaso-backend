@@ -12,7 +12,11 @@ import java.util.UUID
 
 /** A6: deletes one exchange, the question and the answer to it, whichever of the two is named. */
 class DeleteExchange(private val chat: ChatRepository, private val store: AssistantStore) {
-    suspend operator fun invoke(userId: UserId, messageId: UUID, requestId: String?): Resource<Unit> {
+    suspend operator fun invoke(
+        userId: UserId,
+        messageId: UUID,
+        requestId: String?,
+    ): Resource<Unit> {
         val named = chat.find(userId, messageId) ?: return Resource.error(SharedError.NotFound)
         val question = if (named.role == Role.USER) named else named.replyTo?.let { chat.find(userId, it) }
         val answer = if (named.role == Role.ASHA) named else named.answeredBy?.let { chat.find(userId, it) }

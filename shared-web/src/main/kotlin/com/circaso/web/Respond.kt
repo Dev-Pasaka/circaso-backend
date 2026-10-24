@@ -4,8 +4,8 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.plugins.callid.callId
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.util.AttributeKey
@@ -32,7 +32,10 @@ suspend inline fun <reified R> ApplicationCall.respondDefault(body: DefaultRespo
     attributes.put(EnvelopeSent, true)
     body.details?.retryAfterSeconds?.let { response.header(HttpHeaders.RetryAfter, it.toString()) }
     val sent = body.copy(requestId = callId)
-    attributes.getOrNull(ResponseRecorderKey)?.record(sent.httpStatusCode, CircasoJson.encodeToString(serializer<DefaultResponse<R>>(), sent))
+    attributes
+        .getOrNull(
+            ResponseRecorderKey,
+        )?.record(sent.httpStatusCode, CircasoJson.encodeToString(serializer<DefaultResponse<R>>(), sent))
     respond(HttpStatusCode.fromValue(sent.httpStatusCode), sent)
 }
 

@@ -10,7 +10,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MoneyAndPhoneNumberTest {
-
     @Test
     fun `money adds and subtracts in minor units`() {
         val a = Money(1_500_000, Asset.USDC)
@@ -73,6 +72,11 @@ class MoneyAndPhoneNumberTest {
 
         assertEquals("\"+254712345678\"", json)
         assertEquals(phone, CircasoJson.decodeFromString(PhoneNumber.serializer(), json))
-        assertFailsWith<SerializationException> { CircasoJson.decodeFromString(PhoneNumber.serializer(), "\"0712345678\"") }
+        assertFailsWith<SerializationException> {
+            CircasoJson.decodeFromString(
+                PhoneNumber.serializer(),
+                "\"0712345678\"",
+            )
+        }
     }
 }

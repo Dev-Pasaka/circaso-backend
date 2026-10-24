@@ -12,6 +12,7 @@ import com.circaso.integrations.api.ToolCall
 import com.circaso.integrations.api.Transcript
 import com.circaso.shared.Resource
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Local runs: a stand-in for Asha's model that needs no provider. It answers plainly, and it uses tools so the whole
@@ -24,9 +25,22 @@ class LogLanguageModel : LanguageModel {
         val usage = ModelUsage(request.messages.sumOf { it.length() } / 4 + 1, 20)
         return Resource.success(
             when (last) {
-                is ModelMessage.User -> userTurn(last.text, usage)
-                is ModelMessage.ToolResult -> ModelResponse("I looked that up and got ${last.content.length} characters of results. (This is the development model.)", emptyList(), usage)
-                is ModelMessage.Assistant -> ModelResponse(last.text ?: "", emptyList(), usage)
+                is ModelMessage.User -> {
+                    userTurn(last.text, usage)
+                }
+
+                is ModelMessage.ToolResult -> {
+                    ModelResponse(
+                        "I looked that up and got ${last.content.length} characters of results. (This is the " +
+                            "development model.)",
+                        emptyList(),
+                        usage,
+                    )
+                }
+
+                is ModelMessage.Assistant -> {
+                    ModelResponse(last.text ?: "", emptyList(), usage)
+                }
             },
         )
     }
@@ -35,27 +49,38 @@ class LogLanguageModel : LanguageModel {
         // a question asked from another chat arrives with a marker in front
         val words = text.replace(Regex("^\\[Asked from the chat \"[^\"]*\"] "), "").trim()
         return when {
-            words.startsWith("find ", ignoreCase = true) ->
+            words.startsWith("find ", ignoreCase = true) -> {
                 call("searchContacts", """{"query":"${words.substring(5).trim().replace("\"", "")}"}""", usage)
-            words.startsWith("chat ", ignoreCase = true) ->
+            }
+
+            words.startsWith("chat ", ignoreCase = true) -> {
                 call("searchChats", """{"query":"${words.substring(5).trim().replace("\"", "")}"}""", usage)
-            else -> ModelResponse("Hi, I'm Asha. (This is the development model.) You said: $words", emptyList(), usage)
+            }
+
+            else -> {
+                ModelResponse("Hi, I'm Asha. (This is the development model.) You said: $words", emptyList(), usage)
+            }
         }
     }
 
-    private fun call(name: String, arguments: String, usage: ModelUsage) =
-        ModelResponse(null, listOf(ToolCall(UUID.randomUUID().toString(), name, arguments)), usage)
+    private fun call(
+        name: String,
+        arguments: String,
+        usage: ModelUsage,
+    ) = ModelResponse(null, listOf(ToolCall(UUID.randomUUID().toString(), name, arguments)), usage)
 
-    private fun ModelMessage.length() = when (this) {
-        is ModelMessage.User -> text.length
-        is ModelMessage.Assistant -> text?.length ?: 0
-        is ModelMessage.ToolResult -> content.length
-    }
+    private fun ModelMessage.length() =
+        when (this) {
+            is ModelMessage.User -> text.length
+            is ModelMessage.Assistant -> text?.length ?: 0
+            is ModelMessage.ToolResult -> content.length
+        }
 }
 
 /** Tests: answers from a script, one entry per call, and records every request. */
-class FakeLanguageModel(private val script: MutableList<(ModelRequest) -> Resource<ModelResponse>> = mutableListOf()) : LanguageModel {
-    val requests = java.util.concurrent.CopyOnWriteArrayList<ModelRequest>()
+class FakeLanguageModel(private val script: MutableList<(ModelRequest) -> Resource<ModelResponse>> = mutableListOf()) :
+    LanguageModel {
+    val requests = CopyOnWriteArrayList<ModelRequest>()
 
     fun then(step: (ModelRequest) -> Resource<ModelResponse>) = apply { script += step }
 
@@ -63,16 +88,22 @@ class FakeLanguageModel(private val script: MutableList<(ModelRequest) -> Resour
 
     override suspend fun complete(request: ModelRequest): Resource<ModelResponse> {
         requests += request
-        return script.removeFirstOrNull()?.invoke(request) ?: Resource.success(ModelResponse("(nothing scripted)", emptyList(), ModelUsage(1, 1)))
+        return script.removeFirstOrNull()?.invoke(request)
+            ?: Resource.success(ModelResponse("(nothing scripted)", emptyList(), ModelUsage(1, 1)))
     }
 }
 
 /** Local runs and tests: the clip's text is its bytes, so a test can say what was "spoken". */
 class FakeSpeechToText : SpeechToText {
-    override suspend fun transcribe(audio: ByteArray, contentType: String, language: String?): Resource<Transcript> =
+    override suspend fun transcribe(
+        audio: ByteArray,
+        contentType: String,
+        language: String?,
+    ): Resource<Transcript> =
         Resource.success(Transcript(String(audio), seconds = (audio.size / 1000).coerceAtLeast(1)))
 }
 
 class FakeTextToSpeech : TextToSpeech {
-    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> = Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
+    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> =
+        Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
 }

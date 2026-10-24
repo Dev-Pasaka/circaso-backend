@@ -40,11 +40,12 @@ return value
  */
 @OptIn(ExperimentalLettuceCoroutinesApi::class)
 class RedisConnection(url: String) : AutoCloseable {
-    private val client: RedisClient = RedisClient.create(RedisURI.create(url).also { it.timeout = Duration.ofSeconds(5) }).also {
-        // Lettuce 7 greets the server with `CLIENT MAINT_NOTIFICATIONS`, which Redis Enterprise understands and
-        // Valkey and open-source Redis answer with "unknown subcommand". Nothing here needs maintenance events.
-        it.options = ClientOptions.builder().maintNotificationsConfig(MaintNotificationsConfig.disabled()).build()
-    }
+    private val client: RedisClient =
+        RedisClient.create(RedisURI.create(url).also { it.timeout = Duration.ofSeconds(5) }).also {
+            // Lettuce 7 greets the server with `CLIENT MAINT_NOTIFICATIONS`, which Redis Enterprise understands and
+            // Valkey and open-source Redis answer with "unknown subcommand". Nothing here needs maintenance events.
+            it.options = ClientOptions.builder().maintNotificationsConfig(MaintNotificationsConfig.disabled()).build()
+        }
     private val shared: StatefulRedisConnection<String, String> = client.connect()
 
     val commands: RedisCoroutinesCommands<String, String> = shared.coroutines()
@@ -53,8 +54,18 @@ class RedisConnection(url: String) : AutoCloseable {
     suspend fun incrementWithTtl(key: String, ttl: Duration): Long =
         commands.eval<Long>(INCREMENT_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
 
-    suspend fun incrementByWithTtl(key: String, by: Long, ttl: Duration): Long =
-        commands.eval<Long>(INCREMENT_BY_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString(), by.toString())!!
+    suspend fun incrementByWithTtl(
+        key: String,
+        by: Long,
+        ttl: Duration,
+    ): Long =
+        commands.eval<Long>(
+            INCREMENT_BY_WITH_TTL,
+            ScriptOutputType.INTEGER,
+            arrayOf(key),
+            ttl.toMillis().toString(),
+            by.toString(),
+        )!!
 
     suspend fun incrementAndRenew(key: String, ttl: Duration): Long =
         commands.eval<Long>(INCREMENT_AND_RENEW, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
