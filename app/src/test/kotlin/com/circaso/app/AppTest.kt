@@ -37,6 +37,15 @@ class AppTest {
     }
 
     @Test
+    fun `the root redirects to the website and is not in the spec`() =
+        testApplication {
+            application { circasoModule(AppConfig()) }
+            val response = createClient { followRedirects = false }.get("/")
+            assertEquals(HttpStatusCode.Found, response.status)
+            assertEquals("https://circaso.com", response.headers["Location"])
+        }
+
+    @Test
     fun `live answers 200 whatever the connections are doing`() =
         testApplication {
             application { circasoModule(AppConfig(), listOf(check("scylla") { Resource.error(Down) })) }

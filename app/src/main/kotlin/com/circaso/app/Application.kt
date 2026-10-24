@@ -34,6 +34,7 @@ fun Application.circasoModule(
     installJson()
     installStatusPages()
     routing {
+        homeRoute()
         healthRoutes(healthChecks)
         if (config.environment.isLocal && devGoogleClientId != null) devSocialRoutes(devGoogleClientId)
     }
