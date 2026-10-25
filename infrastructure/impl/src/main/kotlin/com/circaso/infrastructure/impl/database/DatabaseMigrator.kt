@@ -15,8 +15,9 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.datab
  * the old containers keep serving.
  *
  * Migrations name their tables with the keyspace and use `IF NOT EXISTS`; an applied migration is never edited.
- * Locally the keyspaces are created first; elsewhere they are provisioned ahead of time (NetworkTopologyStrategy,
- * because ScyllaDB Cloud's tablets reject SimpleStrategy).
+ * Each module's keyspace is created first if it is missing, in every environment, so a new module doesn't stop the
+ * deploy (`KandraMigrationRunner` needs the keyspace for its lock table). The replication comes from
+ * [ScyllaSettings.keyspaceReplication]; a keyspace that already exists is never altered.
  */
 class DatabaseMigrator(private val settings: ScyllaSettings) {
     /** Returns how many migrations were applied in all. */
@@ -28,7 +29,7 @@ class DatabaseMigrator(private val settings: ScyllaSettings) {
     internal fun migrate(session: CqlSession, specs: List<KandraModuleSpec>): Int {
         var applied = 0
         for (spec in specs) {
-            if (settings.autoCreateKeyspaces) createLocalKeyspace(session, spec.keyspace)
+            ensureKeyspace(session, spec.keyspace)
             val runner = KandraMigrationRunner(session, keyspace = spec.keyspace)
             val before = runner.history().size
             runner.run(*spec.migrations.toTypedArray())
@@ -39,12 +40,22 @@ class DatabaseMigrator(private val settings: ScyllaSettings) {
         return applied
     }
 
-    private fun createLocalKeyspace(session: CqlSession, keyspace: String) {
-        require(Regex("[a-z][a-z0-9_]*").matches(keyspace)) { "'$keyspace' is not a valid keyspace name" }
-        session.execute(
-            "CREATE KEYSPACE IF NOT EXISTS $keyspace WITH replication = {'class': 'SimpleStrategy', " +
-                "'replication_factor': 1} " +
-                "AND tablets = {'enabled': false}",
+    private fun ensureKeyspace(session: CqlSession, keyspace: String) {
+        if (keyspaceExists(session, keyspace)) {
+            log.info("keyspace already exists", kv("keyspace", keyspace))
+            return
+        }
+        session.execute(settings.keyspaceReplication.createKeyspaceCql(keyspace))
+        log.info(
+            "keyspace created",
+            kv("keyspace", keyspace),
+            kv("strategy", settings.keyspaceReplication.strategy.name),
+            kv("factor", settings.keyspaceReplication.factor),
         )
     }
+
+    private fun keyspaceExists(session: CqlSession, keyspace: String): Boolean =
+        session
+            .execute("SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = ?", keyspace)
+            .one() != null
 }
