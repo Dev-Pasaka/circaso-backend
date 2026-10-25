@@ -66,7 +66,13 @@ object Migrate {
 fun migrate(config: Config, secrets: Secrets): Int {
     // The specs are plain values in each module's Koin module; nothing else of the module is started.
     val specs = koinApplication { modules(businessModules(config)) }.koin.getAll<KandraModuleSpec>()
-    val applied = DatabaseMigrator(ScyllaSettings(config, secrets)).migrate(specs)
-    log().info("Migrations done", kv("keyspaces", specs.size), kv("applied", applied))
-    return applied
+    val outcome = DatabaseMigrator(ScyllaSettings(config, secrets)).migrate(specs)
+    // on the app logger, so the deploy's log tail shows a created keyspace whatever LOG_LEVEL_DATABASE is
+    log().info(
+        "Migrations done",
+        kv("keyspaces", specs.size),
+        kv("applied", outcome.applied),
+        kv("created", outcome.createdKeyspaces),
+    )
+    return outcome.applied
 }

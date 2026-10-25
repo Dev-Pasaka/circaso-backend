@@ -2,6 +2,7 @@ package com.circaso.infrastructure.impl.database
 
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
+import com.circaso.infrastructure.impl.database.KeyspaceReplication.Strategy
 import io.kandra.ktor.SchemaMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -61,5 +62,38 @@ class ScyllaSettingsTest {
                 "SCYLLA_CREATE_SCHEMA" to "false",
             ).createsSchemaOnStart,
         )
+    }
+
+    @Test
+    fun `migrate's keyspaces are SimpleStrategy only on a node on this machine`() {
+        val onThisMachine = settings("CIRCASO_ENV" to "local", "SCYLLA_CONTACT_POINTS" to "localhost:9042")
+        val laptopToCloud =
+            settings("CIRCASO_ENV" to "local", "SCYLLA_CONTACT_POINTS" to cloud, "SCYLLA_DATACENTER" to "AWS_EU_WEST_1")
+        val staging = settings("CIRCASO_ENV" to "staging", "SCYLLA_DATACENTER" to "AWS_EU_WEST_1")
+
+        assertEquals(
+            KeyspaceReplication(Strategy.SimpleStrategy, 1, "datacenter1", tablets = false),
+            onThisMachine.keyspaceReplication,
+        )
+        for (remote in listOf(laptopToCloud, staging)) {
+            assertEquals(
+                KeyspaceReplication(Strategy.NetworkTopologyStrategy, 1, "AWS_EU_WEST_1", tablets = false),
+                remote.keyspaceReplication,
+            )
+        }
+    }
+
+    @Test
+    fun `the keyspace replication is read from its settings`() {
+        val replication =
+            settings(
+                "CIRCASO_ENV" to "production",
+                "SCYLLA_DATACENTER" to "dc-east",
+                "SCYLLA_KEYSPACE_REPLICATION_CLASS" to "SimpleStrategy",
+                "SCYLLA_KEYSPACE_REPLICATION_FACTOR" to "3",
+                "SCYLLA_KEYSPACE_TABLETS" to "true",
+            ).keyspaceReplication
+
+        assertEquals(KeyspaceReplication(Strategy.SimpleStrategy, 3, "dc-east", tablets = true), replication)
     }
 }

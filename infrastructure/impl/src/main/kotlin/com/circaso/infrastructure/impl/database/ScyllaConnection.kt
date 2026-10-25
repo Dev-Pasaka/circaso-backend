@@ -2,6 +2,7 @@ package com.circaso.infrastructure.impl.database
 
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.impl.database.KeyspaceReplication.Strategy
 import com.datastax.oss.driver.api.core.CqlSession
 import com.datastax.oss.driver.api.core.config.DefaultDriverOption
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader
@@ -53,8 +54,28 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
             else -> SchemaMode.VALIDATE
         }
 
-    /** Keyspaces follow the tables: created on demand where the schema is, provisioned ahead of time everywhere else. */
+    /**
+     * Whether a start creates the keyspaces: only where it creates the tables. Elsewhere a start never does; the
+     * deploy's `migrate` step creates any keyspace that is missing, with [keyspaceReplication].
+     */
     val autoCreateKeyspaces: Boolean = createsSchemaOnStart
+
+    /**
+     * The replication `migrate` gives a keyspace it creates. SimpleStrategy by default only for a node on this machine;
+     * NetworkTopologyStrategy in [datacenter] for any other cluster, even migrated from a laptop, so a keyspace created
+     * on a remote cluster always has the same form. Factor 1 and tablets off unless configured.
+     */
+    val keyspaceReplication: KeyspaceReplication =
+        KeyspaceReplication(
+            strategy =
+                scylla
+                    .string("keyspace-replication-class")
+                    ?.let { Strategy.parse(it) }
+                    ?: if (createsSchemaOnStart) Strategy.SimpleStrategy else Strategy.NetworkTopologyStrategy,
+            factor = scylla.int("keyspace-replication-factor", 1),
+            datacenter = datacenter,
+            tablets = scylla.boolean("keyspace-tablets", false),
+        )
 
     /** ScyllaDB Cloud uses tablets, which reject SimpleStrategy; the local node is told not to use them. */
     val localReplication: ReplicationStrategy =
