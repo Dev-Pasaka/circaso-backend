@@ -71,8 +71,8 @@ internal sealed interface NodeMessage {
     data class Frames(val userIds: List<UserId>, val frame: RealtimeEnvelope) : NodeMessage
 
     /**
-     * Tell the user's sockets they are revoked, then close them: only [deviceId]'s when set (a replaced phone), only
-     * [sessionId]'s when set (a sign-out), every socket of the user when both are null.
+     * On `rt:fanout`: tell the user's sockets this node holds they are revoked, then close them: only [deviceId]'s when
+     * set (a replaced phone), only [sessionId]'s when set (a sign-out), every socket of the user when both are null.
      */
     @Serializable
     data class Revoke(val userId: UserId, val deviceId: DeviceId? = null, val sessionId: SessionId? = null) :
@@ -84,7 +84,7 @@ internal sealed interface NodeMessage {
  * token, the app sends its last `seq` per module and gets what it missed from each module's [RealtimeReplay],
  * then frames flow until the phone closes it. Each node records the sockets it holds in `rt:conn:{userId}` and
  * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket. A
- * frame for many users goes once on `rt:fanout`, which every node reads.
+ * frame for many users, and every revoke, goes once on `rt:fanout`, which every node reads.
  * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name, at most
  * [FrameRateLimiter.FRAMES_PER_SECOND] a second per socket.
  */
@@ -181,21 +181,23 @@ class SocketHub(
     }
 
     /**
-     * Sends `system/session.revoked` and closes the socket, on whichever node holds it: only [deviceId]'s sockets
-     * when given (a replaced phone), only [sessionId]'s when given (a sign-out), otherwise every socket of the user.
+     * Sends `system/session.revoked` and closes the matching sockets: only [deviceId]'s when given (a replaced phone),
+     * only [sessionId]'s when given (a sign-out), otherwise every socket of the user. It goes on `rt:fanout` and every
+     * node, this one included, checks the sockets it holds (decision 2026-10-25): `rt:conn:{userId}` names only the
+     * node of the newest socket, so an old session's socket on another node would be missed.
      */
     suspend fun revoke(
         userId: UserId,
         deviceId: DeviceId? = null,
         sessionId: SessionId? = null,
     ) {
-        val node = redis.get("conn:$userId") ?: return
-        val message = NodeMessage.Revoke(userId, deviceId, sessionId)
-        if (node == nodeId) {
-            revokeLocal(message)
-        } else {
-            redis.publish("node:$node", CircasoJson.encodeToString(NodeMessage.serializer(), message))
-        }
+        val message =
+            NodeMessage.Revoke(
+                userId,
+                deviceId,
+                sessionId,
+            )
+        redis.publish(FANOUT_CHANNEL, CircasoJson.encodeToString(NodeMessage.serializer(), message))
     }
 
     /** The next `seq` for the gateway's own `system` frames, which are not replayed. */

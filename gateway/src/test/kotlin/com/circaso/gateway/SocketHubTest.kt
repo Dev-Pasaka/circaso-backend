@@ -4,6 +4,7 @@ import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
+import com.circaso.identity.api.DeviceReplaced
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.PushRegistration
 import com.circaso.identity.api.PushRegistrations
@@ -78,13 +79,14 @@ class SocketHubTest {
         private fun channel(name: String) =
             channels.computeIfAbsent(name) { MutableSharedFlow(extraBufferCapacity = 64) }
 
-        /** Waits until [channel] has a listener and [key] holds [value], so a publish is not lost on a busy build. */
+        /** Waits until [channel] has [listeners] and [key] holds [value], so a publish is not lost on a busy build. */
         suspend fun awaitReady(
             channel: String,
+            listeners: Int,
             key: String,
             value: String,
         ) = withTimeout(3000) {
-            while (channel(channel).subscriptionCount.value == 0 || values[key] != value) delay(10)
+            while (channel(channel).subscriptionCount.value < listeners || values[key] != value) delay(10)
         }
 
         override suspend fun get(key: String): String? {
@@ -197,6 +199,7 @@ class SocketHubTest {
     private val device = DeviceId.new()
     private val session = SessionId.new()
     private val laterSession = SessionId.new()
+    private val newDevice = DeviceId.new()
     private val otherUser = UserId.new()
 
     private val verifier =
@@ -207,6 +210,8 @@ class SocketHubTest {
 
                     // The same phone after signing out and back in: a new session.
                     "later" -> Resource.success(Principal(user, device, laterSession, Scope.APP))
+
+                    "new-phone" -> Resource.success(Principal(user, newDevice, SessionId.new(), Scope.APP))
 
                     "other" -> Resource.success(Principal(otherUser, DeviceId.new(), SessionId.new(), Scope.APP))
 
@@ -629,7 +634,9 @@ class SocketHubTest {
     @Test
     fun `signing out sends session revoked and closes only that session's socket`() =
         testApplication {
-            val hub = hub()
+            val redis = MemoryRedis()
+            val hub = hub(redis)
+            hub.start()
             serve(hub)
             val signedOut = gatewayIdentitySubscription(hub).handlers.getValue(SignedOut.TYPE)
             val client = createClient { install(ClientWebSockets) }
@@ -639,6 +646,7 @@ class SocketHubTest {
                 authenticate("good")
                 client.webSocket("/v1/ws") {
                     authenticate("later")
+                    redis.awaitReady("fanout", 1, "conn:$user", "node-1")
 
                     signedOut.handle(EventEnvelope.of(SignedOut(user, session), SignedOut.serializer()))
 
@@ -653,31 +661,78 @@ class SocketHubTest {
         }
 
     @Test
-    fun `a sign-out reaches the session's socket on another node`() =
+    fun `a sign-out reaches the old session's socket on node one while rt conn points at node two`() =
         testApplication {
             val redis = MemoryRedis()
-            val nodeOne = hub(redis, nodeId = "node-1")
-            val nodeTwo = hub(redis, nodeId = "node-2")
-            nodeTwo.start()
-            application {
-                install(WebSockets)
-                routing { route("/two") { nodeTwo.routes(this) } }
-            }
+            val (nodeOne, nodeTwo) = twoNodes(redis)
             val client = createClient { install(ClientWebSockets) }
 
-            client.webSocket("/two/ws") {
+            client.webSocket("/one/ws") {
+                val ended = this
                 authenticate("good")
-                redis.awaitReady("node:node-2", "conn:$user", "node-2")
+                client.webSocket("/two/ws") {
+                    authenticate("later")
+                    redis.awaitReady("fanout", 2, "conn:$user", "node-2")
 
-                gatewayIdentitySubscription(nodeOne)
-                    .handlers
-                    .getValue(SignedOut.TYPE)
-                    .handle(EventEnvelope.of(SignedOut(user, session), SignedOut.serializer()))
+                    gatewayIdentitySubscription(nodeTwo)
+                        .handlers
+                        .getValue(SignedOut.TYPE)
+                        .handle(EventEnvelope.of(SignedOut(user, session), SignedOut.serializer()))
 
-                assertEquals("session.revoked", nextFrame().type)
-                assertEquals("session revoked", closedWith()?.message)
-                val revoke = CircasoJson.decodeFromString(NodeMessage.serializer(), redis.published.single().second)
-                assertEquals(NodeMessage.Revoke(user, sessionId = session), revoke, "by session, not by phone")
+                    assertEquals("session.revoked", ended.nextFrame().type)
+                    assertEquals("session revoked", ended.closedWith()?.message)
+                    val revoke = CircasoJson.decodeFromString(NodeMessage.serializer(), redis.published.single().second)
+                    assertEquals("fanout", redis.published.single().first, "one publish every node reads")
+                    assertEquals(NodeMessage.Revoke(user, sessionId = session), revoke, "by session, not by phone")
+
+                    assertTrue(nodeOne.deliver(user, frame(9)))
+                    assertEquals(9, nextFrame().seq, "the newer session's socket on node two stays open")
+                }
             }
         }
+
+    @Test
+    fun `a replaced phone's socket on node one is revoked while the new phone's on node two stays open`() =
+        testApplication {
+            val redis = MemoryRedis()
+            val (_, nodeTwo) = twoNodes(redis)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/one/ws") {
+                val oldPhone = this
+                authenticate("good")
+                client.webSocket("/two/ws") {
+                    authenticate("new-phone")
+                    redis.awaitReady("fanout", 2, "conn:$user", "node-2")
+
+                    gatewayIdentitySubscription(nodeTwo)
+                        .handlers
+                        .getValue(DeviceReplaced.TYPE)
+                        .handle(
+                            EventEnvelope.of(DeviceReplaced(user, device, newDevice), DeviceReplaced.serializer()),
+                        )
+
+                    assertEquals("session.revoked", oldPhone.nextFrame().type)
+                    assertEquals("session revoked", oldPhone.closedWith()?.message)
+                    assertTrue(nodeTwo.deliver(user, frame(3)))
+                    assertEquals(3, nextFrame().seq, "the new phone's socket stays open")
+                }
+            }
+        }
+
+    /** Two nodes sharing [redis], both listening, served at `/one/ws` and `/two/ws`. */
+    private fun ApplicationTestBuilder.twoNodes(redis: MemoryRedis): Pair<SocketHub, SocketHub> {
+        val nodeOne = hub(redis, nodeId = "node-1")
+        val nodeTwo = hub(redis, nodeId = "node-2")
+        nodeOne.start()
+        nodeTwo.start()
+        application {
+            install(WebSockets)
+            routing {
+                route("/one") { nodeOne.routes(this) }
+                route("/two") { nodeTwo.routes(this) }
+            }
+        }
+        return nodeOne to nodeTwo
+    }
 }
