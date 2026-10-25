@@ -1,0 +1,163 @@
+package com.circaso.integrations.impl.fcm
+
+import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.PushMessage
+import com.circaso.integrations.api.PushPlatform
+import com.circaso.integrations.api.PushTarget
+import com.circaso.integrations.impl.FakeHttpClients
+import com.circaso.integrations.impl.FakeHttpClients.Companion.json
+import com.circaso.integrations.impl.form
+import com.circaso.integrations.impl.text
+import com.circaso.shared.Resource
+import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.io.IOException
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
+import java.util.Base64
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+
+class FcmPushTest {
+    private val keys = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+    private val pem =
+        "-----BEGIN PRIVATE KEY-----\n" +
+            Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keys.private.encoded) +
+            "\n-----END PRIVATE KEY-----\n"
+    private val file =
+        buildJsonObject {
+            put("project_id", "circaso-dev")
+            put("client_email", "push@circaso-dev.iam.gserviceaccount.com")
+            put("private_key", pem)
+        }.toString()
+
+    private var now = Instant.parse("2026-10-25T10:00:00Z")
+    private val clock =
+        object : Clock() {
+            override fun getZone() = ZoneOffset.UTC
+
+            override fun withZone(zone: java.time.ZoneId?) = this
+
+            override fun instant(): Instant = now
+        }
+    private var sendStatus = 200
+    private var sendReply = """{"name":"projects/circaso-dev/messages/0:abc"}"""
+    private var down = false
+
+    private val clients =
+        FakeHttpClients { request ->
+            when {
+                down -> {
+                    throw IOException("down")
+                }
+
+                request.url.host == "oauth2.googleapis.com" -> {
+                    json("""{"access_token":"ya29.token","expires_in":3600}""")
+                }
+
+                else -> {
+                    json(sendReply, sendStatus)
+                }
+            }
+        }
+    private val push =
+        FcmPush(
+            ServiceAccount.parse(file),
+            clients.named("fcm") { baseUrl = "https://fcm.googleapis.com" },
+            clients.named("google-oauth"),
+            clock,
+        )
+    private val target = PushTarget(PushPlatform.IOS, "device-token")
+    private val message = PushMessage("Circaso", "Amina is on Circaso", mapOf("route" to "contacts"))
+
+    private fun sends() = clients.requests.filter { it.url.host == "fcm.googleapis.com" }
+
+    @Test
+    fun `sends the notification to FCM with a bearer token and returns the message id`() =
+        runBlocking<Unit> {
+            val result = push.send(target, message)
+
+            assertEquals("0:abc", (result as Resource.Success).data.messageId)
+            val request = sends().single()
+            assertEquals("https://fcm.googleapis.com/v1/projects/circaso-dev/messages:send", request.url.toString())
+            assertEquals("Bearer ya29.token", request.headers[HttpHeaders.Authorization])
+            val body = Json.parseToJsonElement(request.text()).jsonObject["message"]!!.jsonObject
+            assertEquals("device-token", body["token"]!!.jsonPrimitive.content)
+            assertEquals("Amina is on Circaso", body["notification"]!!.jsonObject["body"]!!.jsonPrimitive.content)
+            assertEquals("contacts", body["data"]!!.jsonObject["route"]!!.jsonPrimitive.content)
+        }
+
+    @Test
+    fun `the access token request is a signed assertion that Google can verify`() =
+        runBlocking<Unit> {
+            push.send(target, message)
+
+            val form = clients.requests.first { it.url.host == "oauth2.googleapis.com" }.form()
+            assertEquals("urn:ietf:params:oauth:grant-type:jwt-bearer", form["grant_type"])
+            val (header, claims, signature) = form["assertion"]!!.split('.')
+            val decoded = Json.parseToJsonElement(String(Base64.getUrlDecoder().decode(claims))).jsonObject
+            assertEquals("push@circaso-dev.iam.gserviceaccount.com", decoded["iss"]!!.jsonPrimitive.content)
+            assertEquals("https://www.googleapis.com/auth/firebase.messaging", decoded["scope"]!!.jsonPrimitive.content)
+            val verified =
+                Signature.getInstance("SHA256withRSA").run {
+                    initVerify(keys.public)
+                    update("$header.$claims".toByteArray())
+                    verify(Base64.getUrlDecoder().decode(signature))
+                }
+            assertTrue(verified)
+        }
+
+    @Test
+    fun `the access token is reused until it is about to expire`() =
+        runBlocking<Unit> {
+            push.send(target, message)
+            push.send(target, message)
+            assertEquals(1, clients.requests.count { it.url.host == "oauth2.googleapis.com" })
+
+            now = now.plusSeconds(3400)
+            push.send(target, message)
+            assertEquals(2, clients.requests.count { it.url.host == "oauth2.googleapis.com" })
+        }
+
+    @Test
+    fun `a token FCM no longer knows is rejected so the caller can drop it`() =
+        runBlocking<Unit> {
+            sendStatus = 404
+            sendReply = """{"error":{"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}"""
+
+            assertIs<IntegrationError.Rejected>((push.send(target, message) as Resource.Error).error)
+        }
+
+    @Test
+    fun `our own refused credentials and a busy FCM are unavailable, not the caller's fault`() =
+        runBlocking<Unit> {
+            for (status in listOf(401, 403, 429, 503)) {
+                sendStatus = status
+                sendReply = """{"error":{"status":"UNAUTHENTICATED"}}"""
+                assertIs<IntegrationError.Unavailable>((push.send(target, message) as Resource.Error).error)
+            }
+        }
+
+    @Test
+    fun `a network failure is unavailable`() =
+        runBlocking<Unit> {
+            down = true
+            assertIs<IntegrationError.Unavailable>((push.send(target, message) as Resource.Error).error)
+        }
+
+    @Test
+    fun `the service account can be given as base64 too`() {
+        val account = ServiceAccount.parse(Base64.getEncoder().encodeToString(file.toByteArray()))
+        assertEquals("circaso-dev", account.projectId)
+    }
+}

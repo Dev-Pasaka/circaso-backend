@@ -13,3 +13,6 @@ build/
 !.env.example
 
 node_modules/
+
+# Firebase / Google service-account keys
+*-firebase-adminsdk-*.json

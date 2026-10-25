@@ -5,10 +5,6 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
-import com.circaso.integrations.api.PushGateway
-import com.circaso.integrations.api.PushMessage
-import com.circaso.integrations.api.PushReceipt
-import com.circaso.integrations.api.PushTarget
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.TextToSpeech
@@ -24,12 +20,6 @@ import com.circaso.shared.Resource
 class FirebaseCarrierPhoneVerification : CarrierPhoneVerification {
     override suspend fun verify(carrierToken: String): Resource<PhoneNumber> =
         Resource.error(IntegrationError.NotImplemented("CarrierPhoneVerification", "firebase"))
-}
-
-// TODO(vendor: FCM service account and APNs key)
-class FcmApnsPush : PushGateway {
-    override suspend fun send(target: PushTarget, message: PushMessage): Resource<PushReceipt> =
-        Resource.error(IntegrationError.NotImplemented("PushGateway", "fcm-apns"))
 }
 
 // TODO(vendor: Cloudflare account id, AI Gateway and a tool-calling model id for Workers AI, through Koog's OpenAI client)

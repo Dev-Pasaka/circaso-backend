@@ -15,6 +15,7 @@ import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SmsPurpose
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
+import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.shared.PhoneNumber
@@ -86,10 +87,18 @@ class IntegrationsModuleTest {
     @Test
     fun `a vendor placeholder fails loudly instead of pretending to deliver`() =
         runTest {
-            val push = koin("integrations.push.provider" to "fcm-apns").get<PushGateway>()
-            val result = push.send(PushTarget(PushPlatform.ANDROID, "t"), PushMessage("Hi", "there"))
+            val stt = koin("integrations.stt.provider" to "workers-ai").get<SpeechToText>()
+            val result = stt.transcribe(ByteArray(1), "audio/mpeg", null)
             assertEquals("integrations.not_implemented", (result as Resource.Error).error.code)
         }
+
+    @Test
+    fun `fcm refuses to start without its service account`() {
+        val e = assertFailsWith<Exception> { koin("integrations.push.provider" to "fcm").get<PushGateway>() }
+        assertTrue(
+            "fcm.service-account" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
+        )
+    }
 
     @Test
     fun `africastalking refuses to start without its username and key`() {

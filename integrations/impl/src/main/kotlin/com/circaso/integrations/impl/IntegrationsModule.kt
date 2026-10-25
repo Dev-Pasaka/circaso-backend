@@ -28,7 +28,8 @@ import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
-import com.circaso.integrations.impl.placeholder.FcmApnsPush
+import com.circaso.integrations.impl.fcm.FcmPush
+import com.circaso.integrations.impl.fcm.ServiceAccount
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
 import com.circaso.integrations.impl.placeholder.WorkersAiLanguageModel
 import com.circaso.integrations.impl.placeholder.WorkersAiSpeechToText
@@ -42,7 +43,7 @@ import org.koin.dsl.module
 
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
- * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm-apns`) and, for the
+ * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `stt` and `tts` (`workers-ai`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
@@ -124,7 +125,15 @@ fun integrationsModule(config: Config, secrets: Secrets) =
             )
         }
         single<PushGateway> {
-            pick("push", providers = mapOf("log" to ::LogPush, "fake" to ::FakePush, "fcm-apns" to ::FcmApnsPush))
+            pick(
+                "push",
+                providers =
+                    mapOf(
+                        "log" to ::LogPush,
+                        "fake" to ::FakePush,
+                        "fcm" to { fcmPush(integrations.section("push"), secrets, get()) },
+                    ),
+            )
         }
         single<LanguageModel> {
             pick<LanguageModel>(
@@ -254,4 +263,19 @@ private fun twilioVerify(
     serviceSid = config.requireString("twilio.verify-service-sid"),
     http = clients.named("twilio") { baseUrl = "https://verify.twilio.com" },
     locale = config.string("twilio.verify-locale"),
+)
+
+/**
+ * FCM needs the secret `FCM_SERVICE_ACCOUNT`: the service-account JSON from Firebase console > Project settings > Service accounts >
+ * Generate new private key, as one line of JSON or as base64 of the file. iOS pushes also need the APNs key uploaded under Project
+ * settings > Cloud Messaging, once. `INTEGRATIONS_PUSH_BASE_URL` overrides the FCM address (tests, a local fake).
+ */
+private fun fcmPush(
+    push: Config,
+    secrets: Secrets,
+    clients: HttpClients,
+) = FcmPush(
+    account = ServiceAccount.parse(secrets.require("fcm.service-account")),
+    http = clients.named("fcm") { baseUrl = push.string("base-url", "https://fcm.googleapis.com") },
+    oauth = clients.named("google-oauth"),
 )
