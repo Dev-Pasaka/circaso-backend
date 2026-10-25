@@ -1,9 +1,13 @@
 package com.circaso.messaging.data.migrations
 
+import com.circaso.messaging.data.entities.ChatRow
+import com.circaso.messaging.data.entities.DirectChatClaimRow
 import com.circaso.messaging.data.entities.KeyBundleRow
+import com.circaso.messaging.data.entities.MemberRow
 import com.circaso.messaging.data.entities.MessagingOutboxRow
 import com.circaso.messaging.data.entities.MessagingRealtimeRow
 import com.circaso.messaging.data.entities.OneTimePreKeyRow
+import com.circaso.messaging.data.entities.UserChatRow
 import com.datastax.oss.driver.api.core.CqlSession
 import io.kandra.migrate.KandraMigration
 
@@ -13,6 +17,10 @@ val messagingEntities =
         MessagingOutboxRow::class,
         KeyBundleRow::class,
         OneTimePreKeyRow::class,
+        ChatRow::class,
+        DirectChatClaimRow::class,
+        MemberRow::class,
+        UserChatRow::class,
     )
 
 /**
@@ -49,6 +57,30 @@ object V002_CreateKeyDirectoryTables : KandraMigration(version = 2, name = "crea
                 "signed_pre_key_signature TEXT, PRIMARY KEY (user_id))",
             "CREATE TABLE IF NOT EXISTS circaso_messaging.one_time_prekeys (user_id UUID, key_id INT, public_key " +
                 "TEXT, PRIMARY KEY (user_id, key_id)) WITH CLUSTERING ORDER BY (key_id ASC)",
+        )
+
+    override fun up(session: CqlSession) {
+        for (statement in statements) {
+            session.execute(statement)
+        }
+    }
+}
+
+/** Chats and membership (MS3): the chat, the direct-chat pair claim, members and each user's chat list. */
+object V003_CreateChatTables : KandraMigration(version = 3, name = "create chat tables") {
+    // A plain loop, as in V001 (docs/kandra-bugs.md #5).
+    private val statements =
+        listOf(
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.chats (chat_id UUID, avatar_media_id UUID, created_at " +
+                "TIMESTAMP, created_by UUID, kind TEXT, member_count INT, meta_version INT, sealed_meta TEXT, " +
+                "settings TEXT, version BIGINT, PRIMARY KEY (chat_id))",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.direct_chats_by_pair (pair TEXT, chat_id UUID, " +
+                "PRIMARY KEY (pair))",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.members_by_chat (chat_id UUID, user_id UUID, joined_at " +
+                "TIMESTAMP, role TEXT, PRIMARY KEY (chat_id, user_id)) WITH CLUSTERING ORDER BY (user_id ASC)",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.chats_by_user (user_id UUID, chat_id UUID, joined_at " +
+                "TIMESTAMP, kind TEXT, last_message_id UUID, read_up_to UUID, PRIMARY KEY (user_id, chat_id)) " +
+                "WITH CLUSTERING ORDER BY (chat_id ASC)",
         )
 
     override fun up(session: CqlSession) {

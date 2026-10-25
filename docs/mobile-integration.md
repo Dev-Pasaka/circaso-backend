@@ -11,7 +11,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **50** routes the phone calls: **37 READY**, **8 PARTIAL**, **5 DEV STUB**.
+Of the **58** routes the phone calls: **45 READY**, **8 PARTIAL**, **5 DEV STUB**.
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -23,14 +23,15 @@ Of the **50** routes the phone calls: **37 READY**, **8 PARTIAL**, **5 DEV STUB*
 | Session refresh, sign out, forget device | **READY** | Needs the device-key signature (section 5). |
 | Profile, @handle, avatar | **READY** | |
 | Contacts sync, connections, invites, blocks, reach | **READY** | |
-| Realtime socket | **READY**, few frames | Only 4 frame types exist (section 8). |
+| Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
 | Asha chat (text), voice, speech | **DEV STUB** | Protocol final; the model, speech-to-text and text-to-speech are stubs on dev. |
 | Push notifications | **MISSING** | The token is stored; nothing is ever sent. |
 | Account security, linked logins, security log | **READY** | |
 | Account deletion | **PARTIAL** | Schedules only; completion and recovery window not decided. |
 | Account recovery | **PARTIAL** | A case can be opened and read; no support tool resolves it yet. |
-| Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key in `X-Device-Timestamp` / `X-Device-Signature` headers over the raw, uncompressed body (section 5). The shared-group way to fetch a bundle comes with chats. |
-| Messaging between people (1:1 and group chat), media | **MISSING** | Designed (end-to-end encrypted); being built in slices. Only the key directory exists so far. |
+| Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key in `X-Device-Timestamp` / `X-Device-Signature` headers over the raw, uncompressed body (section 5). A bundle can be fetched by someone who can reach the person or shares a group with them. |
+| Chats and members (direct chats, groups, roles) | **READY** | Membership only: sending, the inbox and media come next. The owner can't leave while others remain (provisional). |
+| Messages between people (sending, delivery, receipts), media | **MISSING** | Designed (end-to-end encrypted); being built in slices. |
 | Payments, wallet, money movement, chamas | **MISSING** | Not designed yet; `identity.wallet_not_empty` is a placeholder. |
 | Calls | **MISSING** | Not designed yet. |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
@@ -280,7 +281,22 @@ Chats are end-to-end encrypted on the phone with libsignal (X3DH, double ratchet
 | `PUT /v1/keys`<br>**M1** Publish this phone's identity key, signed prekey and up to 100 one-time prekeys | `app` | PublishKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the `X-Device-Timestamp` and `X-Device-Signature` headers (section 5, key uploads). Replaces the whole set: one-time prekeys from an earlier upload are deleted, so send fresh ones with it. Publish after registering the device, and again every 7 days to rotate the signed prekey. Errors: `messaging.keys_proof_invalid`, `messaging.too_many_prekeys` (more than 100 keys), `request.malformed`. |
 | `POST /v1/keys/one-time`<br>**M1** Top up one-time prekeys | `app` | AddOneTimeKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the same headers. Top up when `GET /v1/keys/me` shows fewer than 20. At most 100 are kept at once; an upload that would pass that is refused whole with `messaging.too_many_prekeys`. Resending a key id that is already stored is refused whole with `messaging.prekey_id_exists` (409): use new ids. The 100 cap is only enforced for one top-up at a time, so send top-ups one after another. Errors: `messaging.keys_proof_invalid`, `messaging.keys_not_found` (this phone has not published with `PUT /v1/keys`), `messaging.too_many_prekeys`, `messaging.prekey_id_exists`, `request.malformed`. |
 | `GET /v1/keys/me`<br>**M2** One-time prekeys left and when the signed prekey was set | `app` | — → KeyStatusResponse | **READY** | `messaging.keys_not_found` until this phone has published its own keys (also after a new phone, whose keys must be published again). |
-| `GET /v1/keys/{userId}`<br>**M3** A person's key bundle, to start an encrypted session | `app` | — → KeyBundleResponse | **READY** | Uses up one of their one-time prekeys; `oneTimePreKey` is missing or null when none are left, which X3DH allows. You must be able to reach the person (the shared-group way comes with group chats). 60 bundles per user per hour. Errors: `users.not_reachable`, `messaging.keys_not_found`, `messaging.rate_limited`. |
+| `GET /v1/keys/{userId}`<br>**M3** A person's key bundle, to start an encrypted session | `app` | — → KeyBundleResponse | **READY** | Uses up one of their one-time prekeys; `oneTimePreKey` is missing or null when none are left, which X3DH allows. You must be able to reach the person, or share a group with them (group members start sessions with each other to hand over sender keys). 60 bundles per user per hour. Errors: `users.not_reachable`, `messaging.keys_not_found`, `messaging.rate_limited`. |
+
+### Chats and members
+
+A direct chat is exactly two people, one chat per pair. A group holds up to 1,000 people with one `OWNER`, any number of `ADMIN`s and `MEMBER`s. The group's name and avatar are encrypted on the phone under the group metadata key and sent as `sealedMeta` (base64, at most 4 KB decoded); the server stores it and never reads it. Membership changes arrive as `member.added` / `member.removed` frames (section 8): on `member.removed`, every remaining phone makes a new sender key before its next group message; on `member.added`, send the new member your current sender key. Every response is a ChatDto: `members` carry public profiles and roles, `version` is what `PATCH` sends back, `metaVersion` rises each time the name is re-sealed.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/chats/direct`<br>**M4** Open the direct chat with a person, or get the one you already have | `app` | OpenDirectChatRequest → ChatDto | **READY** | You must be able to reach the person. `created` is true on the first open, false after; two people opening it at the same moment get the same chat. `sealedMeta` is null. Errors: `users.not_reachable`, `request.malformed` (your own id). |
+| `POST /v1/chats/groups`<br>**M5** Create a group | `app` | CreateGroupRequest → ChatDto | **READY** | You become the owner. People you can't reach are left out and listed in `notAdded`, with no reason (don't show one). At most 1,000 people, you included, counting everyone you asked for. Admins add members by default (`settings.membersCanAdd` false). Errors: `messaging.group_invalid`, `messaging.group_full`, `request.malformed`. |
+| `GET /v1/chats`<br>**M6** Every chat you are in | `app` | — → ChatsResponse | **READY** | With members' public profiles and `lastMessageId` (null until sending exists). Sort and count unread on the phone. |
+| `GET /v1/chats/{chatId}`<br>**M7** One chat with members and roles | `app` | — → ChatDto | **READY** | Errors: `messaging.chat_not_found` (also when you're not in it). |
+| `PATCH /v1/chats/{chatId}`<br>**M8** Change the sealed name and avatar, or `settings.membersCanAdd` | `app` | UpdateGroupRequest → ChatDto | **READY** | Admins only. Send the `version` you last read; any change to the group since (members included) answers `messaging.version_conflict`: reload with `GET` and retry. A new `sealedMeta` raises `metaVersion`. Members get `chat.updated`. Errors: `messaging.chat_not_found`, `messaging.not_admin`, `messaging.group_invalid`, `messaging.version_conflict`. |
+| `POST /v1/chats/{chatId}/members`<br>**M9** Add people to a group | `app` | AddMembersRequest → ChatDto | **READY** | Admins, or anyone when `settings.membersCanAdd` is on. People you can't reach are listed in `notAdded`; people already in are skipped. One `member.added` frame per person added. Errors: `messaging.chat_not_found`, `messaging.not_admin`, `messaging.group_full`. |
+| `DELETE /v1/chats/{chatId}/members/{userId}`<br>**M10** Remove someone, or leave (your own id) | `app` | — → MemberRemovedResponse | **READY** | Admins remove admins and members; nobody removes the owner. The owner can't leave while others remain: hand over ownership first (provisional, pending a decision). The last member leaving deletes the group. After a removal, the admin's phone makes a new group metadata key and re-seals the name (`PATCH`); after a leave, the owner's phone does. Errors: `messaging.chat_not_found`, `messaging.not_admin`, `messaging.owner_must_hand_over`. |
+| `PUT /v1/chats/{chatId}/members/{userId}/role`<br>**M11** Make someone an admin or a member, or hand over ownership | `app` | SetRoleRequest → ChatDto | **READY** | Admins set `ADMIN` or `MEMBER` on anyone but the owner (an admin may step down). Only the owner sets `OWNER`, and becomes an admin. No frame tells the others yet (pending a decision): reload the chat when you need roles. Errors: `messaging.chat_not_found`, `messaging.not_admin`, `request.malformed`. |
 
 ### Asha chat
 
@@ -325,7 +341,7 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 ```json
 { "type": "auth", "accessToken": "<app token>", "last": { "users": 1042 } }
 ```
-`last` maps each module to the last `seq` the app saw (omit or send `{}` on first connect). Only an **app**-scope token is accepted. The server then replays what was missed and sends live frames:
+`last` maps each module to the last `seq` the app saw, for example `{ "users": 1042, "messaging": 17 }` (omit or send `{}` on first connect). Only an **app**-scope token is accepted. The server then replays what was missed and sends live frames:
 ```json
 { "module": "users", "type": "contact.joined", "id": "0193…", "seq": 1043, "ts": "2026-10-24T18:07:12Z", "data": { "userId": "…", "displayName": "Amina" } }
 ```
@@ -351,6 +367,9 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `users` / `contact.joined` | `userId`, `displayName` | Someone from your phone book joined: add them to the contacts list. |
 | `users` / `connection.added` | `userId`, `displayName` | Someone connected with you (QR or invite). |
 | `users` / `profile.updated` | `userId`, `version` | A contact changed their profile: reload that profile if `version` is newer than yours. |
+| `messaging` / `member.added` | `chatId`, `userId` (the person added), `byUserId` | One frame per person added, to every member and the person. Send the newcomer your current sender key; if it is you, load the chat (`GET /v1/chats/{chatId}`). Pushed to the person added when offline ("You were added to a group"). |
+| `messaging` / `member.removed` | `chatId`, `userId` (the person removed or who left), `byUserId` | To every member and the person. Remaining phones make a new sender key before their next group message; if it is you, drop the chat. |
+| `messaging` / `chat.updated` | `chatId`, `metaVersion` (number), `version` (number) | The sealed name, avatar or settings changed: reload the chat if `version` is newer than yours. |
 
 **Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **Limits:** at most 100 frames per second per socket (frames over it are dropped silently, the socket stays open, so batch acks and throttle typing) and at most 64 KB per frame (a bigger frame closes the socket with 1009). **MISSING** until messaging delivery is built: no module takes phone frames yet (messaging's `ack`, `read` and `typing` come with sending and delivery).
 
@@ -375,7 +394,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 ## 10. Not built yet, and a suggested order
 
 **Backend MISSING (do not call, do not invent endpoints; stub the UI behind a feature flag):**
-1. Messaging between people (1:1 and group), media, delivery and read state. **Not designed yet.**
+1. Sending messages, the inbox, delivery and read state, media and history (chats and membership exist).
 2. Payments, wallet, sending and receiving money, chamas. Not designed yet.
 3. Calls. Not designed yet.
 4. Push delivery (FCM/APNs sender). The token endpoint exists, nothing is sent.
@@ -383,7 +402,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 6. Production device attestation (Play Integrity, App Attest) and real carrier phone verification (Firebase).
 7. Real Asha model, speech-to-text and text-to-speech (stubs on dev).
 8. Support tools that resolve account-recovery cases; finishing account deletion.
-9. Realtime frames beyond the four in section 8.
+9. Realtime frames beyond those in section 8.
 
 **Backend behaviours that will look odd on dev:** email (welcome and security notices) is logged, not sent; push is logged; Asha's answers are canned; the carrier check accepts the number itself as the token.
 
@@ -409,6 +428,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 Generated from the spec. `?` marks an optional field. Every response is wrapped in the envelope from section 3, and the type named in the catalogue is what sits in `data`.
 
 - **ActiveDeviceDto** — `model`: string; `activeSince`: string
+- **AddMembersRequest** — `memberIds`: [string]
 - **AddOneTimeKeysRequest** — `oneTimePreKeys`: [OneTimePreKeyDto]
 - **AgentContactDto** — `userId`: string; `displayName`: string; `handle`?: string|null
 - **AgentContactsResponse** — `contacts`: [AgentContactDto]; `nextCursor`?: string|null
@@ -416,13 +436,19 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **AskedFromDto** — `chatId`: string; `chatName`?: string|null
 - **BlocksResponse** — `blocks`: [PublicProfileDto2]
 - **CarrierRequest** — `carrierToken`: string
+- **ChatDto** — `chatId`: string; `kind`: string (`DIRECT` | `GROUP`); `sealedMeta`?: string|null; `metaVersion`: integer; `members`: [ChatMemberDto]; `settings`: ChatSettingsDto; `lastMessageId`?: string|null; `version`: integer; `created`?: boolean|null (M4 only); `notAdded`?: [string]|null (M5, M9 only)
+- **ChatMemberDto** — `user`: ChatProfileDto; `role`: string (`OWNER` | `ADMIN` | `MEMBER`); `joinedAt`: string
 - **ChatMessageDto** — `messageId`: string; `role`: string; `text`: string; `replyTo`?: string|null; `askedFrom`?: string|null; `readNote`?: ReadNoteDto; `at`: string
+- **ChatProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null
 - **ChatResponse** — `messages`: [ChatMessageDto]; `nextCursor`?: string|null
+- **ChatSettingsDto** — `membersCanAdd`?: boolean
+- **ChatsResponse** — `chats`: [ChatDto]
 - **ClaimHandleRequest** — `handle`: string
 - **ConnectRequest** — `via`: string; `value`: string
 - **ConnectResponse** — `user`: PublicProfileDto2; `created`: boolean
 - **ContactDto** — `user`: PublicProfileDto2; `source`: string; `addedAt`: string
 - **ContactsResponse** — `contacts`: [ContactDto]; `nextCursor`?: string|null
+- **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
 - **DeviceProofDto** — `timestamp`: string; `signature`: string
 - **ErrorDetailsDto** — `retryAfterSeconds`?: integer|null; `fields`?: map<string,string>
@@ -434,11 +460,13 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
 - **KeyStatusResponse** — `oneTimePreKeysLeft`: integer; `signedPreKeyAt`: string
 - **LinkProviderRequest** — `provider`: string; `idToken`: string; `nonce`: string
+- **MemberRemovedResponse** — `removed`: boolean
 - **MyProfileResponse** — `userId`: string; `displayName`: string; `about`?: string|null; `handle`?: string|null; `handleChangeableAt`?: string|null; `avatarUrl`?: string|null; `privacy`: PrivacyDto; `version`: integer
 - **NoBody** — `unused`?: string|null
 - **NonceResponse** — `nonce`: string; `expiresInSeconds`: integer
 - **OneTimePreKeyDto** — `keyId`: integer; `publicKey`: string
 - **OneTimePreKeysLeftResponse** — `oneTimePreKeysLeft`: integer
+- **OpenDirectChatRequest** — `userId`: string
 - **PhoneVerifiedResponse** — `phoneVerified`: boolean; `maskedPhone`: string; `next`: string
 - **PrivacyChangeDto** — `avatar`?: string|null; `about`?: string|null; `handleLookup`?: boolean|null
 - **PrivacyDto** — `avatar`: string; `about`: string; `handleLookup`: boolean
@@ -466,6 +494,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SessionDto** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string
 - **SessionDto2** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string
 - **SetAvatarRequest** — `objectKey`: string
+- **SetRoleRequest** — `role`: string (`OWNER` | `ADMIN` | `MEMBER`)
 - **SignedPreKeyDto** — `keyId`: integer; `publicKey`: string; `signature`: string
 - **SignInResponse** — `next`: string; `maskedPhone`?: string|null; `session`: SessionDto; `agentSession`?: SessionDto2
 - **SnippetDto** — `chatId`: string; `chatName`?: string|null; `sender`: string; `at`: string; `text`: string
@@ -478,6 +507,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SyncResponse** — `matches`: [SyncMatchDto]
 - **ToolResultsRequest** — `callId`: string; `snippets`?: [SnippetDto]
 - **TranscriptResponse** — `text`: string; `seconds`: integer
+- **UpdateGroupRequest** — `sealedMeta`?: string|null; `settings`?: ChatSettingsDto|null; `version`: integer
 - **UpdateProfileRequest** — `displayName`?: string|null; `about`?: string|null; `privacy`?: PrivacyChangeDto; `version`: integer
 - **UploadUrlRequest** — `contentType`: string; `sizeBytes`: integer
 - **UploadUrlResponse** — `uploadUrl`: string; `objectKey`: string; `expiresInSeconds`: integer

@@ -3,6 +3,7 @@ package com.circaso.messaging
 import com.circaso.messaging.domain.models.FetchedBundle
 import com.circaso.messaging.domain.support.KeyProofs
 import com.circaso.messaging.domain.support.MessagingConfig
+import com.circaso.messaging.domain.support.SharedGroups
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetKeyStatus
@@ -48,7 +49,7 @@ class KeyDirectoryTest {
     private val publishKeys = PublishKeys(keys, proofs, clock)
     private val addOneTimeKeys = AddOneTimeKeys(keys, proofs, config)
     private val getKeyStatus = GetKeyStatus(keys)
-    private val fetchKeyBundle = FetchKeyBundle(keys, reach, rateLimit, config)
+    private val fetchKeyBundle = FetchKeyBundle(keys, reach, SharedGroups(MemoryChats()), rateLimit, config)
 
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 
