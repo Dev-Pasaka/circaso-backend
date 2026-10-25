@@ -70,6 +70,16 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
 
     override suspend fun get(key: String): String? = timed("GET", key) { commands.get(key(key)) }
 
+    override suspend fun getMany(keys: List<String>): List<String?> {
+        if (keys.isEmpty()) return emptyList()
+        return timed("MGET", keys.first()) {
+            commands
+                .mget(*keys.map(::key).toTypedArray())
+                .toList()
+                .map { it.getValueOrElse(null) }
+        }
+    }
+
     override suspend fun set(
         key: String,
         value: String,

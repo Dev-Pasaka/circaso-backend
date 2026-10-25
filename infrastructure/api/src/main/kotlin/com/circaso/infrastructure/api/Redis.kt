@@ -14,6 +14,9 @@ interface RedisScope {
 
     suspend fun get(key: String): String?
 
+    /** `MGET`: one round trip for many keys. The values come back in the order of [keys], null where a key is missing. */
+    suspend fun getMany(keys: List<String>): List<String?>
+
     suspend fun set(
         key: String,
         value: String,

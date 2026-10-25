@@ -4,8 +4,10 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.ClientFrame
 import com.circaso.shared.DeviceId
 import com.circaso.shared.RealtimeEnvelope
+import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
@@ -18,6 +20,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
@@ -49,6 +52,10 @@ internal sealed interface NodeMessage {
     @Serializable
     data class Frame(val userId: UserId, val frame: RealtimeEnvelope) : NodeMessage
 
+    /** One frame for every user in [userIds] whose socket this node holds: one publish per node, not per user. */
+    @Serializable
+    data class Frames(val userIds: List<UserId>, val frame: RealtimeEnvelope) : NodeMessage
+
     /** Tell [deviceId]'s socket (or every socket of the user when null) it is revoked, then close it. */
     @Serializable
     data class Revoke(val userId: UserId, val deviceId: DeviceId? = null) : NodeMessage
@@ -59,12 +66,15 @@ internal sealed interface NodeMessage {
  * token, the app sends its last `seq` per module and gets what it missed from each module's [RealtimeReplay],
  * then frames flow until the phone closes it. Each node records the sockets it holds in `rt:conn:{userId}` and
  * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket.
+ * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name.
  */
 class SocketHub(
     private val redis: RedisScope,
     private val verifier: TokenVerifier,
     /** Looked up when a phone connects, not when the hub is built: the modules that replay also send through the hub. */
     private val replays: () -> List<RealtimeModule>,
+    /** The modules that take frames from the phone, looked up the same way as [replays]. */
+    private val inbound: () -> List<RealtimeInboundModule>,
     private val scope: CoroutineScope,
     val nodeId: String = Uuid7.generate().toString(),
 ) {
@@ -90,7 +100,8 @@ class SocketHub(
 
     private suspend fun handle(message: NodeMessage) {
         when (message) {
-            is NodeMessage.Frame -> connections[message.userId]?.toList()?.forEach { send(it, message.frame) }
+            is NodeMessage.Frame -> sendLocal(message.userId, message.frame)
+            is NodeMessage.Frames -> message.userIds.forEach { sendLocal(it, message.frame) }
             is NodeMessage.Revoke -> revokeLocal(message.userId, message.deviceId)
         }
     }
@@ -107,6 +118,36 @@ class SocketHub(
             )
         }
         return true
+    }
+
+    /**
+     * Hands one frame to many users: every user's node is read with one `MGET` of `rt:conn:{userId}`, then each node
+     * gets one publish listing the users it holds. Returns the users no node holds (the caller falls back to push).
+     */
+    suspend fun deliverMany(userIds: Collection<UserId>, frame: RealtimeEnvelope): List<UserId> {
+        val users = userIds.distinct()
+        if (users.isEmpty()) return emptyList()
+        val nodes = redis.getMany(users.map { "conn:$it" })
+        val offline = users.filterIndexed { index, _ -> nodes[index] == null }
+        users
+            .zip(nodes)
+            .filter { (_, node) -> node != null }
+            .groupBy({ (_, node) -> node!! }, { (user, _) -> user })
+            .forEach { (node, held) -> sendToNode(node, held, frame) }
+        return offline
+    }
+
+    private suspend fun sendToNode(
+        node: String,
+        userIds: List<UserId>,
+        frame: RealtimeEnvelope,
+    ) {
+        val message = NodeMessage.Frames(userIds, frame)
+        if (node == nodeId) {
+            handle(message)
+        } else {
+            redis.publish("node:$node", CircasoJson.encodeToString(NodeMessage.serializer(), message))
+        }
     }
 
     /** Sends `system/session.revoked` to the phone and closes its socket, on whichever node holds it. */
@@ -143,6 +184,10 @@ class SocketHub(
             send(it, frame)
             runCatching { it.session.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked")) }
         }
+    }
+
+    private suspend fun sendLocal(userId: UserId, frame: RealtimeEnvelope) {
+        connections[userId]?.toList()?.forEach { send(it, frame) }
     }
 
     private suspend fun send(connection: Connection, frame: RealtimeEnvelope) {
@@ -208,8 +253,7 @@ class SocketHub(
                 try {
                     replay(connection, hello.last)
                     for (frame in incoming) {
-                        // Only typing, read receipts, presence and acks travel this way; none are handled yet.
-                        if (frame is Frame.Text) log.debug("client frame ignored")
+                        if (frame is Frame.Text) receive(connection, frame.readText())
                     }
                 } finally {
                     heartbeat.cancel()
@@ -217,6 +261,37 @@ class SocketHub(
                 }
             }
         }
+
+    /**
+     * A frame from an authenticated phone (typing, read receipts, presence, acks), handed to the module it names. A
+     * frame that names no registered module, or isn't a [ClientFrame] at all (a pong), is dropped. A failing handler
+     * never closes the socket.
+     */
+    private suspend fun receive(connection: Connection, text: String) {
+        val frame = runCatching { CircasoJson.decodeFromString(ClientFrame.serializer(), text) }.getOrNull()
+        val handler = frame?.let { incoming -> inbound().firstOrNull { it.module == incoming.module } }
+        if (frame == null || handler == null) {
+            log.debug("client frame ignored")
+            return
+        }
+        val result =
+            try {
+                handler.inbound.receive(connection.userId, connection.deviceId, frame)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log.warn(
+                    "client frame failed: module={} type={} error={}",
+                    frame.module,
+                    frame.type,
+                    failure.javaClass.name,
+                )
+                return
+            }
+        if (result is Resource.Error) {
+            log.debug("client frame refused: module={} type={} code={}", frame.module, frame.type, result.error.code)
+        }
+    }
 
     private suspend fun replay(connection: Connection, last: Map<String, Long>) {
         for (module in replays()) {

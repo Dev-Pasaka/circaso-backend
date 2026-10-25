@@ -316,6 +316,8 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 | `users` / `connection.added` | `userId`, `displayName` | Someone connected with you (QR or invite). |
 | `users` / `profile.updated` | `userId`, `version` | A contact changed their profile: reload that profile if `version` is newer than yours. |
 
+**Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **MISSING** until messaging delivery is built: no module takes phone frames yet (messaging's `ack`, `read` and `typing` come with sending and delivery).
+
 ## 9. Asha (the assistant)
 
 **Status: DEV STUB.** The routes and event format below are final; on the dev server the language model, speech-to-text and text-to-speech are stubs, so replies are canned. Build the full client now.

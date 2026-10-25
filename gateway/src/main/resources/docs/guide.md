@@ -180,6 +180,8 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 
 `seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds.
 
+After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped.
+
 ## Health and webhooks
 
 `GET /health/live` and `GET /health/ready` need no token and are for load balancers and monitoring. Vendors (SMS delivery, email, payments) call `POST /v1/hooks/{vendor}`; the gateway checks their signature, rejects old or repeated deliveries and answers `200` at once. These are in the **Infrastructure** section.

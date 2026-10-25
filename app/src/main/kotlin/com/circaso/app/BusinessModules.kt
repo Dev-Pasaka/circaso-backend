@@ -3,6 +3,7 @@ package com.circaso.app
 import com.circaso.assistant.di.assistantModule
 import com.circaso.identity.di.identityModule
 import com.circaso.infrastructure.api.Config
+import com.circaso.messaging.di.messagingModule
 import com.circaso.users.di.usersModule
 import org.koin.core.module.Module
 
@@ -15,5 +16,6 @@ fun businessModules(config: Config): List<Module> =
     listOf(
         identityModule(config),
         usersModule(config),
+        messagingModule(config),
         assistantModule(config),
     )
