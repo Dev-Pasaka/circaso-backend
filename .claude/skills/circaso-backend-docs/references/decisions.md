@@ -6,6 +6,7 @@ Every architecture decision, newest first, with the reason it was made. A decisi
 
 | Decided | Decision | Why | Where it applies |
 | --- | --- | --- | --- |
+| 2026-10-25 | Key uploads are proven with headers `X-Device-Timestamp` and `X-Device-Signature` over timestamp + `\n` + hex SHA-256 of the raw body; `PUT /keys` replaces old one-time prekeys; new code `messaging.too_many_prekeys`; another device's bundle answers `keys_not_found`; the bundle rate limit counts the caller | The raw body needs no JSON canonicalisation (iOS escapes `/`), the timestamp is signed against replay; the rest closes gaps found building MS2 | Messaging → Encryption, M1–M3 |
 | 2026-10-25 | Signing out (I8) closes the socket of that session, after a `system.session.revoked` frame | A signed-out session must not keep receiving frames until the phone happens to disconnect | Identity → I8; Architecture → Realtime and push |
 | 2026-10-25 | A phone may send at most 100 frames per second over its socket; frames over the limit are dropped (not answered, socket kept open), with a counter metric | Bounds what one phone can make the server do through `ack`, `read` and `typing`, without cutting off a busy but honest client | Architecture → Realtime and push; Messaging → Socket frames |
 | 2026-10-25 | Group fan-out uses Redis pub/sub: one `PUBLISH` on `rt:fanout` that every node reads and delivers to its own sockets; no multi-key `MGET` | Works unchanged on a Redis cluster (a plain `PUBLISH` reaches every node); replaces the one-`MGET` design | Messaging; Architecture → Realtime and push |

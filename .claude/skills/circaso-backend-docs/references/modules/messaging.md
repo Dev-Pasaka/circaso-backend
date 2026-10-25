@@ -37,7 +37,12 @@ Signal-style, done entirely on the phone with libsignal (or an equivalent implem
 
 **Key changes:** when a person's phone is replaced (`identity.DeviceReplaced`), their old keys are deleted, everyone who shares a chat with them gets `messaging.keys.changed`, and their phones show "Amina's security code changed". Sessions restart with the new bundle. Messages that were waiting for the old phone can't be decrypted by the new one, so they're dropped and each sender gets `messaging.message.undeliverable` and resends from its own copy.
 
-**Identity key upload is device-signed.** M1 must carry a signature from the phone's hardware-backed device key, checked through `identity.DeviceSignatures`. A stolen access token alone can't swap someone's keys and read their next messages.
+**Identity key upload is device-signed.** M1 (both routes) must carry a signature from the phone's hardware-backed device key, checked through `identity.DeviceSignatures`. A stolen access token alone can't swap someone's keys and read their next messages. The proof travels in two headers, never in the body (decision 2026-10-25):
+
+- `X-Device-Timestamp`: ISO-8601 UTC, accepted within ±5 minutes of the server clock (as identity's device proofs).
+- `X-Device-Signature`: base64 signature by the device key over the UTF-8 bytes of `<X-Device-Timestamp>` + `"\n"` + lowercase hex SHA-256 of the **exact request body bytes** as sent.
+
+The server hashes the raw bytes it received, so nothing is re-encoded or canonicalised, and the timestamp is covered by the signature.
 
 ### History and the history key
 
@@ -125,13 +130,14 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 {
   "identityKey": "BcF2…",                                  // base64 Curve25519 public key
   "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" },   // signed by the identity key
-  "oneTimePreKeys": [ { "keyId": 101, "publicKey": "BQm…" } ],               // up to 100
-  "deviceProof": { "timestamp": "2026-10-25T09:00:00Z", "signature": "MEUC…" } // device key over the SHA-256 of the body without this field
+  "oneTimePreKeys": [ { "keyId": 101, "publicKey": "BQm…" } ]                // up to 100
 }
+// headers: X-Device-Timestamp: 2026-10-25T09:00:00Z
+//          X-Device-Signature: MEUC…   (over "2026-10-25T09:00:00Z\n" + hex(SHA-256(body bytes)))
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -140,7 +146,7 @@ The phone rotates the signed prekey every 7 days and tops up one-time prekeys wh
 { "userId": "0193…", "identityKey": "BcF2…", "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" }, "oneTimePreKey": { "keyId": 101, "publicKey": "BQm…" } }
 ```
 
-Rate-limited to 60 bundles per user per hour, so nobody can drain someone's one-time prekeys.
+Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), so nobody can drain someone's one-time prekeys; a per-target limit would let anyone block a person's key fetches.
 
 ### M4–M5 Chats
 
@@ -454,8 +460,9 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 | `messaging.message_too_large` | INVALID → 400 | Ciphertext over 64 KB |
 | `messaging.recipients_mismatch` | INVALID → 400 | A direct or `SENDER_KEY` send whose recipients aren't members of the chat |
 | `messaging.delete_window_passed` | CONFLICT → 409 | Delete for everyone after 48 hours, or by someone other than the sender |
-| `messaging.keys_not_found` | NOT_FOUND → 404 | The person has no key bundle yet |
-| `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without a valid device signature |
+| `messaging.keys_not_found` | NOT_FOUND → 404 | The person has no key bundle yet, or (M2, top-up) the stored bundle belongs to another device |
+| `messaging.too_many_prekeys` | INVALID → 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
+| `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without valid `X-Device-Timestamp` / `X-Device-Signature` headers |
 | `messaging.media_invalid` | INVALID → 400 | Over 500 MB, upload missing, or a multipart upload with missing parts |
 | `messaging.media_gone` | NOT_FOUND → 404 | Already downloaded by everyone, expired, or not for this user |
 | `messaging.history_too_large` | INVALID → 400 | Over 200 entries, or an entry over 64 KB |
