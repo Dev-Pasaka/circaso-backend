@@ -4,8 +4,10 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.ClientFrame
 import com.circaso.shared.DeviceId
 import com.circaso.shared.RealtimeEnvelope
+import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
@@ -18,6 +20,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
@@ -43,11 +46,18 @@ private val HEARTBEAT_MILLIS = 25_000L
 private val CONN_TTL: Duration = Duration.ofSeconds(60)
 private val SEQ_TTL: Duration = Duration.ofDays(8)
 
-/** What one node publishes on `rt:node:{nodeId}` for the node that holds the user's socket. */
+/** `rt:fanout`: every node subscribes, so one publish reaches a frame's users wherever their sockets are. */
+private const val FANOUT_CHANNEL = "fanout"
+
+/** What a node publishes on `rt:node:{nodeId}` for the node that holds the user's socket, or on `rt:fanout` for all. */
 @Serializable
 internal sealed interface NodeMessage {
     @Serializable
     data class Frame(val userId: UserId, val frame: RealtimeEnvelope) : NodeMessage
+
+    /** On `rt:fanout`: every node writes [frame] to the sockets it holds for [userIds] and ignores the rest. */
+    @Serializable
+    data class Frames(val userIds: List<UserId>, val frame: RealtimeEnvelope) : NodeMessage
 
     /** Tell [deviceId]'s socket (or every socket of the user when null) it is revoked, then close it. */
     @Serializable
@@ -58,13 +68,17 @@ internal sealed interface NodeMessage {
  * The WebSocket hub (Realtime and push). One socket per phone: the first frame authenticates with the access
  * token, the app sends its last `seq` per module and gets what it missed from each module's [RealtimeReplay],
  * then frames flow until the phone closes it. Each node records the sockets it holds in `rt:conn:{userId}` and
- * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket.
+ * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket. A
+ * frame for many users goes once on `rt:fanout`, which every node reads.
+ * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name.
  */
 class SocketHub(
     private val redis: RedisScope,
     private val verifier: TokenVerifier,
     /** Looked up when a phone connects, not when the hub is built: the modules that replay also send through the hub. */
     private val replays: () -> List<RealtimeModule>,
+    /** The modules that take frames from the phone, looked up the same way as [replays]. */
+    private val inbound: () -> List<RealtimeInboundModule>,
     private val scope: CoroutineScope,
     val nodeId: String = Uuid7.generate().toString(),
 ) {
@@ -77,10 +91,15 @@ class SocketHub(
 
     private val connections = ConcurrentHashMap<UserId, MutableSet<Connection>>()
 
-    /** Starts listening on this node's channel. Called once, when the application starts. */
+    /** Starts listening on this node's channel and on the fan-out channel. Called once, when the application starts. */
     fun start() {
+        listen("node:$nodeId")
+        listen(FANOUT_CHANNEL)
+    }
+
+    private fun listen(channel: String) {
         redis
-            .subscribe("node:$nodeId")
+            .subscribe(channel)
             .onEach { raw ->
                 runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
                     .onSuccess { handle(it) }
@@ -90,7 +109,8 @@ class SocketHub(
 
     private suspend fun handle(message: NodeMessage) {
         when (message) {
-            is NodeMessage.Frame -> connections[message.userId]?.toList()?.forEach { send(it, message.frame) }
+            is NodeMessage.Frame -> sendLocal(message.userId, message.frame)
+            is NodeMessage.Frames -> message.userIds.forEach { sendLocal(it, message.frame) }
             is NodeMessage.Revoke -> revokeLocal(message.userId, message.deviceId)
         }
     }
@@ -107,6 +127,29 @@ class SocketHub(
             )
         }
         return true
+    }
+
+    /**
+     * Hands one frame to many users with one publish on `rt:fanout` and no Redis read: every node, this one included
+     * (through its own subscription), writes it to the sockets it holds for those users. A plain `PUBLISH` reaches
+     * every node of a Redis cluster too.
+     */
+    suspend fun deliverMany(userIds: Collection<UserId>, frame: RealtimeEnvelope) {
+        val users = userIds.distinct()
+        if (users.isEmpty()) return
+        val message = NodeMessage.Frames(users, frame)
+        redis.publish(FANOUT_CHANNEL, CircasoJson.encodeToString(NodeMessage.serializer(), message))
+    }
+
+    /**
+     * Of [userIds], those no node holds a socket for, from single-key `GET`s of `rt:conn:{userId}` sent as one
+     * pipeline. Only asked for frames worth a push, so receipts and typing never read Redis.
+     */
+    suspend fun withoutSocket(userIds: Collection<UserId>): List<UserId> {
+        val users = userIds.distinct()
+        if (users.isEmpty()) return emptyList()
+        val nodes = redis.getPipelined(users.map { "conn:$it" })
+        return users.filterIndexed { index, _ -> nodes[index] == null }
     }
 
     /** Sends `system/session.revoked` to the phone and closes its socket, on whichever node holds it. */
@@ -143,6 +186,10 @@ class SocketHub(
             send(it, frame)
             runCatching { it.session.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked")) }
         }
+    }
+
+    private suspend fun sendLocal(userId: UserId, frame: RealtimeEnvelope) {
+        connections[userId]?.toList()?.forEach { send(it, frame) }
     }
 
     private suspend fun send(connection: Connection, frame: RealtimeEnvelope) {
@@ -208,8 +255,7 @@ class SocketHub(
                 try {
                     replay(connection, hello.last)
                     for (frame in incoming) {
-                        // Only typing, read receipts, presence and acks travel this way; none are handled yet.
-                        if (frame is Frame.Text) log.debug("client frame ignored")
+                        if (frame is Frame.Text) receive(connection, frame.readText())
                     }
                 } finally {
                     heartbeat.cancel()
@@ -217,6 +263,38 @@ class SocketHub(
                 }
             }
         }
+
+    /**
+     * A frame from an authenticated phone (typing, read receipts, presence, acks), handed to the module it names. A
+     * frame that names no registered module, or isn't a [ClientFrame] at all (a pong), is dropped. A failing handler
+     * never closes the socket.
+     */
+    private suspend fun receive(connection: Connection, text: String) {
+        // TODO(decision: rate limit on phone frames; proposed 30 per second per socket, excess dropped, before MS4)
+        val frame = runCatching { CircasoJson.decodeFromString(ClientFrame.serializer(), text) }.getOrNull()
+        val handler = frame?.let { incoming -> inbound().firstOrNull { it.module == incoming.module } }
+        if (frame == null || handler == null) {
+            log.debug("client frame ignored")
+            return
+        }
+        val result =
+            try {
+                handler.inbound.receive(connection.userId, connection.deviceId, frame)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                log.warn(
+                    "client frame failed: module={} type={} error={}",
+                    frame.module,
+                    frame.type,
+                    failure.javaClass.name,
+                )
+                return
+            }
+        if (result is Resource.Error) {
+            log.debug("client frame refused: module={} type={} code={}", frame.module, frame.type, result.error.code)
+        }
+    }
 
     private suspend fun replay(connection: Connection, last: Map<String, Long>) {
         for (module in replays()) {

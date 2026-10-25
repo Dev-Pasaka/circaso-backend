@@ -20,6 +20,7 @@ class LogLevelsTest {
             "LOG_LEVEL_GATEWAY",
             "LOG_LEVEL_IDENTITY",
             "LOG_LEVEL_USERS",
+            "LOG_LEVEL_MESSAGING",
             "LOG_LEVEL_ASSISTANT",
             "LOG_LEVEL_INTEGRATIONS",
             "LOG_LEVEL_EVENTS",
@@ -92,6 +93,7 @@ class LogLevelsTest {
             "LOG_LEVEL_HTTP" to "INFO",
             "LOG_LEVEL_INTEGRATIONS" to "DEBUG",
             "LOG_LEVEL_USERS" to "INFO",
+            "LOG_LEVEL_MESSAGING" to "ERROR",
             "LOG_LEVEL_ASSISTANT" to "OFF",
             "LOG_LEVEL_GATEWAY" to "DEBUG",
         )
@@ -114,6 +116,7 @@ class LogLevelsTest {
         assertEquals(Level.DEBUG, levelOf("com.circaso.integrations.impl.dev.LogSms"))
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.http.VendorHttpClients"))
         assertEquals(Level.INFO, levelOf("com.circaso.users.domain.usecases.SyncContacts"))
+        assertEquals(Level.ERROR, levelOf("com.circaso.messaging.domain.usecases.SendMessage"))
         assertEquals(Level.OFF, levelOf("com.circaso.assistant.domain.usecases.StartTurn"))
         assertEquals(Level.WARN, levelOf("com.circaso.app.Main"), "anything else of Circaso follows LOG_LEVEL")
     }

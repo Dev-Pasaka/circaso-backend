@@ -302,6 +302,7 @@ class ServeTest {
                     "Authentication",
                     "Your profile",
                     "People",
+                    "Chats",
                     "Asha",
                     "Account",
                     "Assistant tools",

@@ -10,6 +10,7 @@ import io.lettuce.core.RedisClient
 import io.lettuce.core.RedisURI
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.api.StatefulRedisConnection
+import io.lettuce.core.api.async.RedisAsyncCommands
 import io.lettuce.core.api.coroutines
 import io.lettuce.core.api.coroutines.RedisCoroutinesCommands
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection
@@ -49,6 +50,9 @@ class RedisConnection(url: String) : AutoCloseable {
     private val shared: StatefulRedisConnection<String, String> = client.connect()
 
     val commands: RedisCoroutinesCommands<String, String> = shared.coroutines()
+
+    /** The same connection, for commands sent back to back without waiting for each reply (a pipeline). */
+    val async: RedisAsyncCommands<String, String> = shared.async()
 
     /** INCR that sets the expiry in the same step, so a crash between the two can't leave a key that never expires. */
     suspend fun incrementWithTtl(key: String, ttl: Duration): Long =

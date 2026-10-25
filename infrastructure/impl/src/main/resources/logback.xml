@@ -35,7 +35,7 @@
     One service at a time, each overriding LOG_LEVEL for its part of Circaso:
     LOG_LEVEL_REQUESTS         the one line per HTTP request
     LOG_LEVEL_GATEWAY          auth, limits, idempotency, WebSockets, webhooks
-    LOG_LEVEL_IDENTITY, LOG_LEVEL_USERS, LOG_LEVEL_ASSISTANT    the business modules
+    LOG_LEVEL_IDENTITY, LOG_LEVEL_USERS, LOG_LEVEL_MESSAGING, LOG_LEVEL_ASSISTANT    the business modules
     LOG_LEVEL_INTEGRATIONS     SMS, email, push and the other vendors, and the HTTP calls to them
     LOG_LEVEL_EVENTS           the outbox relay and the stream consumers
     LOG_LEVEL_SCHEDULER        scheduled jobs
@@ -54,6 +54,7 @@
   <logger name="com.circaso.gateway" level="${LOG_LEVEL_GATEWAY:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.identity" level="${LOG_LEVEL_IDENTITY:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.users" level="${LOG_LEVEL_USERS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.messaging" level="${LOG_LEVEL_MESSAGING:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.assistant" level="${LOG_LEVEL_ASSISTANT:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.integrations" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.infrastructure.impl.http" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>

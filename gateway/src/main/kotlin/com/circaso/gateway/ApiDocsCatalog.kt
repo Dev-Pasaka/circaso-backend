@@ -212,6 +212,68 @@ internal object ApiDocsCatalog {
                 ),
             ),
             DocGroup(
+                "Chats",
+                listOf(
+                    DocTag(
+                        "Encryption keys",
+                        "Chats are end-to-end encrypted on the phone, Signal-style; the server only stores and " +
+                            "forwards bytes it cannot read. These routes are the public-key directory.\n\n" +
+                            "- **Publish** this phone's identity key, signed prekey and up to 100 one-time prekeys. " +
+                            "The upload must be signed by the phone's device key, so a stolen access token alone " +
+                            "cannot swap anyone's keys.\n" +
+                            "- **Key status** says how many one-time prekeys are left and when the signed prekey " +
+                            "was set: top up below 20, rotate every 7 days.\n" +
+                            "- **Fetch a bundle** to start a session with someone you can reach or share a group " +
+                            "with. Each fetch uses up one one-time prekey; 60 bundles per hour.",
+                    ),
+                    DocTag(
+                        "Chats and members",
+                        "Direct chats (exactly two people, one chat per pair) and groups of up to 1,000 people " +
+                            "with an owner, admins and members.\n\n" +
+                            "- Opening a direct chat needs reach, as in People; opening it twice returns the same " +
+                            "chat.\n" +
+                            "- A group's name and avatar are encrypted on the phone under the group's metadata " +
+                            "key; the server stores them sealed and never sees them.\n" +
+                            "- Admins add and remove members (or anyone, if the group allows it); each person " +
+                            "added must be reachable by whoever adds them. Changes use the `version` you last " +
+                            "read.\n" +
+                            "- Someone you can't reach is left out and listed in `notAdded`, without a reason.",
+                    ),
+                    DocTag(
+                        "Messages and delivery",
+                        "Sending encrypted messages and catching up on the ones waiting for you.\n\n" +
+                            "- **Send** one ciphertext (up to 64 KB) with a `clientMessageId` made on the phone, " +
+                            "so a retry returns the first result.\n" +
+                            "- While the socket is open, messages arrive as `messaging.message.new` frames and " +
+                            "acknowledgements, read receipts and typing go back over the socket. The **inbox** " +
+                            "is for catching up and for push wakes: a push carries only ids, and the app fetches, " +
+                            "decrypts and shows the notification itself.\n" +
+                            "- A message is deleted from the server once it is acknowledged, and after 30 days " +
+                            "at the latest. The sender can delete for everyone within 48 hours.\n" +
+                            "- Read receipts and typing indicators can be turned off.",
+                    ),
+                    DocTag(
+                        "Chat media",
+                        "Photos, video and files, encrypted on the phone with a key that travels inside the " +
+                            "message, and uploaded straight to storage through pre-signed URLs.\n\n" +
+                            "- Up to 500 MB per file; over 50 MB the upload goes in 16 MB parts, so a dropped " +
+                            "connection resumes from the last part.\n" +
+                            "- Recipients are fixed at upload. Each one confirms the download, and the file is " +
+                            "deleted when the last one has it, or after 30 days.",
+                    ),
+                    DocTag(
+                        "Chat history",
+                        "Your own copy of your chats, sealed on the phone under your history key, so a new " +
+                            "phone can restore it. The server stores only ciphertext and only you can read or " +
+                            "delete it.\n\n" +
+                            "- **Append** sealed entries in batches and **read** a chat newest first; clear a chat " +
+                            "or delete one message for yourself.\n" +
+                            "- **Key backup** keeps the history key sealed under a passkey and/or a recovery key, " +
+                            "for when the old phone is gone. Fetching it is limited to 5 times a day.",
+                    ),
+                ),
+            ),
+            DocGroup(
                 "Asha",
                 listOf(
                     DocTag(

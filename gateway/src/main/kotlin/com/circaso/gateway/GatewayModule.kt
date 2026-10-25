@@ -11,6 +11,7 @@ import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
+import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
 import com.circaso.web.RouteContributor
 import io.ktor.server.application.Application
@@ -42,7 +43,13 @@ fun gatewayModule(config: Config) =
         single { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
         single {
             val koin = this
-            SocketHub(get<RedisScopes>().scope("rt"), get<TokenVerifier>(), { koin.getAll<RealtimeModule>() }, get())
+            SocketHub(
+                get<RedisScopes>().scope("rt"),
+                get<TokenVerifier>(),
+                { koin.getAll<RealtimeModule>() },
+                { koin.getAll<RealtimeInboundModule>() },
+                get(),
+            )
         }
         single<Realtime> { GatewayRealtime(get(), get<PushGateway>(), get<PushRegistrations>()) }
         single<EventSubscription>(

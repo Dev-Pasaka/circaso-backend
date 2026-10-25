@@ -38,6 +38,8 @@ dependencies {
     implementation(project(":modules:identity:impl"))
     implementation(project(":modules:users:api"))
     implementation(project(":modules:users:impl"))
+    implementation(project(":modules:messaging:api"))
+    implementation(project(":modules:messaging:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
 

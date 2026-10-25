@@ -53,6 +53,21 @@ class RedisScopeTest {
         }
 
     @Test
+    fun `getPipelined reads many keys in one round trip, in order, with null for the missing ones`() =
+        runBlocking<Unit> {
+            idn.set("conn:a$id", "node-1", Duration.ofSeconds(30))
+            idn.set("conn:c$id", "node-2", Duration.ofSeconds(30))
+            scopes.scope("usr").set("conn:b$id", "elsewhere", Duration.ofSeconds(30))
+
+            assertEquals(
+                listOf("node-1", null, "node-2"),
+                idn.getPipelined(listOf("conn:a$id", "conn:b$id", "conn:c$id")),
+                "another module's key with the same name is not read",
+            )
+            assertEquals(emptyList(), idn.getPipelined(emptyList()))
+        }
+
+    @Test
     fun `setIfAbsent claims a key once`() =
         runBlocking<Unit> {
             assertTrue(idn.setIfAbsent("claim:$id", "first", Duration.ofSeconds(30)))

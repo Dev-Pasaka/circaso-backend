@@ -14,6 +14,13 @@ interface RedisScope {
 
     suspend fun get(key: String): String?
 
+    /**
+     * One `GET` per key, sent as a pipeline: one round trip for many keys, and no multi-key command, so it works on a
+     * Redis cluster where the keys live in different slots. The values come back in the order of [keys], null where a
+     * key is missing.
+     */
+    suspend fun getPipelined(keys: List<String>): List<String?>
+
     suspend fun set(
         key: String,
         value: String,

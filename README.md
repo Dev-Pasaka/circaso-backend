@@ -12,7 +12,7 @@ Problems found in Kandra are in [`docs/kandra-bugs.md`](docs/kandra-bugs.md).
 | `infrastructure` | Kandra/ScyllaDB, Redis, event bus and outbox, scheduler, HTTP clients, config, file storage (Cloudflare R2 through the AWS SDK for Kotlin; see `STORAGE_*` and `R2_*` in `.env.example`) |
 | `integrations` | Contracts for SMS, email, social sign-in, carrier check and push; `dev` (log/fake) and placeholder vendors |
 | `gateway` | Version check, auth and scopes, rate limits, idempotency, webhooks, WebSocket hub, the OpenAPI spec, the error pages |
-| `modules/identity`, `modules/users` | Business modules: `api` (the contract) and `impl` (presentation, domain, data, di) |
+| `modules/identity`, `modules/users`, `modules/messaging` | Business modules: `api` (the contract) and `impl` (presentation, domain, data, di); messaging has its foundation only (keyspace, outbox, `ChatDirectory`) |
 | `app` | `serve` and `migrate`; the only place that knows the implementations |
 | `architecture-tests` | Konsist rules that fail the build on a boundary breach |
 

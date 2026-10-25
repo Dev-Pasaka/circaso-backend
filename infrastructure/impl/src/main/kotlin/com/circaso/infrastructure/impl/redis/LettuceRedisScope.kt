@@ -70,6 +70,15 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
 
     override suspend fun get(key: String): String? = timed("GET", key) { commands.get(key(key)) }
 
+    override suspend fun getPipelined(keys: List<String>): List<String?> {
+        if (keys.isEmpty()) return emptyList()
+        return timed("GET*${keys.size}", keys.first()) {
+            // Every GET is written before any reply is awaited: Lettuce pipelines them on the shared connection.
+            val replies = keys.map { redis.async.get(key(it)) }
+            replies.map { it.await() }
+        }
+    }
+
     override suspend fun set(
         key: String,
         value: String,
