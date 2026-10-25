@@ -16,3 +16,6 @@ node_modules/
 
 # Firebase / Google service-account keys
 *-firebase-adminsdk-*.json
+
+# agent worktrees (Claude Code)
+.claude/worktrees/
