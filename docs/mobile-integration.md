@@ -121,6 +121,7 @@ Each phone holds one **hardware-backed ECDSA P-256 key**. Its public half is reg
       ```
 
     - Headers: `X-Device-Timestamp: 2026-10-25T09:00:00Z` and `X-Device-Signature: <base64 DER signature over those 85 bytes>`.
+  - **After a refused top-up** (`messaging.prekey_id_exists`), keep that request's private keys; don't delete them yet. A fetch can claim one of them in the moment before the server undoes the refused upload, and a sender may then start a session with it. Keep them at least until your next `GET /v1/keys/me`; note that it reports how many keys are stored, not which ids. `PUT /v1/keys` is unaffected.
 - **`timestamp`:** an ISO-8601 UTC string, for example `2026-10-24T18:58:25Z`. **Send exactly the string you signed.** The server rejects a proof more than **5 minutes** away from its own clock, so a phone with a wrong clock cannot sign in or upload keys: show a "check your date and time" message for `identity.device_proof_invalid` and `messaging.keys_proof_invalid`.
 - **`deviceId`:** a UUID the app generates **once per install** and stores next to the key. Reuse it in every request. On Android it is lost with the app data; on iOS the Keychain may keep it across reinstall, and that is fine.
 - A lost or replaced key is not an error to fix in code: the next social sign-in answers `next: REVERIFY_PHONE` and the person verifies the number again.

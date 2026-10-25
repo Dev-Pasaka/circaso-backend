@@ -27,6 +27,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -168,6 +169,63 @@ class DataLayerTest {
             val stored = (1..10).map { keys.claimOneTimeKey(amina)!! }
             assertEquals((1..10).map { "r${winners.single()}-$it" }, stored.map { it.publicKey })
             assertNull(keys.claimOneTimeKey(amina))
+        }
+
+    /** A repository whose [failAt]-th insert fails in the given way, the real `IF NOT EXISTS` insert otherwise. */
+    private fun failingKeys(
+        failAt: Int,
+        failure: suspend (row: OneTimePreKeyRow, insert: suspend () -> Boolean) -> Boolean,
+    ): KeyRepositoryImpl {
+        val rows = db.suspendRepository<OneTimePreKeyRow>()
+        val calls = AtomicInteger()
+        return KeyRepositoryImpl(db.runtime, db.suspendRepository(), rows) { row ->
+            val insert: suspend () -> Boolean = { rows.saveIfNotExists(row) }
+            if (calls.incrementAndGet() == failAt) failure(row, insert) else insert()
+        }
+    }
+
+    private suspend fun topUpLeavesNothing(repository: KeyRepositoryImpl): Result<Boolean> {
+        val amina = UserId.new()
+        keys.publish(bundle(amina), emptyList(), staleKeyIds = emptySet())
+
+        val result = runCatching { repository.addOneTimeKeys(amina, oneTime(1..5)) }
+
+        assertEquals(emptySet(), keys.oneTimeKeyIds(amina), "nothing from the failed top-up remains")
+        return result
+    }
+
+    @Test
+    fun `a top-up whose third insert fails before writing leaves nothing`() =
+        runBlocking<Unit> {
+            val result = topUpLeavesNothing(failingKeys(3) { _, _ -> throw IllegalStateException("timed out") })
+
+            assertEquals("timed out", result.exceptionOrNull()?.message)
+        }
+
+    @Test
+    fun `a top-up whose third insert times out after it applied leaves nothing`() =
+        runBlocking<Unit> {
+            val repository =
+                failingKeys(3) { _, insert ->
+                    insert()
+                    throw IllegalStateException("timed out")
+                }
+
+            val result = topUpLeavesNothing(repository)
+
+            assertEquals("timed out", result.exceptionOrNull()?.message)
+        }
+
+    @Test
+    fun `a retried insert that answers exists for its own row leaves nothing`() =
+        runBlocking<Unit> {
+            val repository =
+                failingKeys(3) { _, insert ->
+                    insert()
+                    false
+                }
+
+            assertEquals(false, topUpLeavesNothing(repository).getOrThrow())
         }
 
     @Test

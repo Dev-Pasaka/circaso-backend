@@ -19,7 +19,9 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import io.ktor.utils.io.ClosedByteChannelException
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.util.zip.GZIPOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,6 +43,14 @@ class RequestDecodingTest {
                 routing {
                     post("/echo") { call.respondText(call.receiveText()) }
                     post("/broken") { error("a bug, not the caller") }
+                    post("/wrapped-bug") {
+                        call.receiveText()
+                        throw IllegalStateException("bug", ClosedByteChannelException(IOException("connection reset")))
+                    }
+                    post("/channel-bug") {
+                        call.receiveText()
+                        throw ClosedByteChannelException(IllegalStateException("bug"))
+                    }
                 }
             }
             block()
@@ -88,5 +98,20 @@ class RequestDecodingTest {
             val broken = client.post("/broken") { setBody("x") }
             assertEquals(HttpStatusCode.InternalServerError, broken.status)
             assertTrue("internal.error" in broken.bodyAsText())
+        }
+
+    @Test
+    fun `on a decoded request, channel exceptions that are not the decoder's stay 500`() =
+        app {
+            for (path in listOf("/wrapped-bug", "/channel-bug")) {
+                val response =
+                    client.post(path) {
+                        header(HttpHeaders.ContentEncoding, "gzip")
+                        setBody(gzip("fine"))
+                    }
+
+                assertEquals(HttpStatusCode.InternalServerError, response.status, path)
+                assertTrue("internal.error" in response.bodyAsText())
+            }
         }
 }

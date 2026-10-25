@@ -15,6 +15,7 @@ import io.kandra.runtime.KandraRuntime
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.dsl.KandraRawQuery
 import io.kandra.runtime.repository.KandraSuspendRepository
+import org.slf4j.LoggerFactory
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -28,11 +29,25 @@ private val USER_ID = KandraColumnRef<UUID>("user_id")
 private const val CLAIM_CQL =
     "DELETE FROM circaso_messaging.one_time_prekeys WHERE user_id = ? AND key_id = ? IF EXISTS"
 
+/**
+ * Rolls back a top-up's own row: a lightweight transaction like the insert (a plain delete mixed with it could lose
+ * to clock skew and leave the row), and only if the row still holds the public key this request wrote.
+ */
+private const val ROLL_BACK_CQL =
+    "DELETE FROM circaso_messaging.one_time_prekeys WHERE user_id = ? AND key_id = ? IF public_key = ?"
+
+private val log = LoggerFactory.getLogger("com.circaso.messaging.data")
+
+/**
+ * The key directory on Kandra. [insertIfAbsent] is the `IF NOT EXISTS` insert of one one-time prekey; tests replace
+ * it to fail part-way through a top-up.
+ */
 @OptIn(ExperimentalKandraApi::class)
 class KeyRepositoryImpl(
     private val runtime: KandraRuntime,
     private val bundles: KandraSuspendRepository<KeyBundleRow>,
     private val prekeys: KandraSuspendRepository<OneTimePreKeyRow>,
+    private val insertIfAbsent: suspend (OneTimePreKeyRow) -> Boolean = { prekeys.saveIfNotExists(it) },
 ) : KeyRepository {
     override suspend fun bundle(userId: UserId): KeyBundle? = bundles.findById(userId.value)?.toModel()
 
@@ -58,34 +73,59 @@ class KeyRepositoryImpl(
     /**
      * One `IF NOT EXISTS` insert per key, in key-id order, stopping at the first id already stored. With the same
      * order everywhere, of several identical top-ups racing only the one that wins the lowest id gets further, so
-     * exactly one succeeds. A failed call deletes the rows it inserted (it won those ids, so they are its own).
+     * exactly one succeeds.
+     *
+     * A failed call rolls back every row it attempted, the one in flight included: an insert that timed out may have
+     * applied, and Kandra retries `IF NOT EXISTS`, so a retry can answer "exists" for a row this call wrote. The
+     * rollback deletes only rows still holding this call's public key. The one case it can't tell apart is a racing
+     * top-up that sent the very same key for the same id: that twin row may go too, which loses a key but never
+     * serves a wrong one.
      */
     override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean {
-        val inserted = mutableListOf<OneTimePreKeyRow>()
+        val attempted = mutableListOf<OneTimePreKeyRow>()
         try {
             for (key in keys.sortedBy { it.keyId }) {
                 val row = key.toRow(userId)
-                if (!prekeys.saveIfNotExists(row)) {
-                    rollBack(inserted)
+                attempted += row
+                if (!insertIfAbsent(row)) {
+                    val failed = rollBack(attempted)
+                    if (failed.isNotEmpty()) log.warn("prekey rollback failed: user={} keyIds={}", userId, failed)
                     return false
                 }
-                inserted += row
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // A timed-out insert may or may not have applied; only the rows known to be ours are removed.
-            rollBack(inserted)
+            for (keyId in rollBack(attempted)) {
+                e.addSuppressed(RollbackFailed(keyId))
+            }
             throw e
         }
         return true
     }
 
-    private suspend fun rollBack(rows: List<OneTimePreKeyRow>) {
+    /** Conditionally deletes each row; returns the key ids whose delete failed. */
+    private suspend fun rollBack(rows: List<OneTimePreKeyRow>): List<Int> {
+        val failed = mutableListOf<Int>()
         for (row in rows) {
-            prekeys.delete(row)
+            val query =
+                KandraRawQuery
+                    .cql(ROLL_BACK_CQL)
+                    .bind(row.userId, row.keyId, row.publicKey)
+                    .build()
+            try {
+                prekeys.rawQuery(query)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed += row.keyId
+            }
         }
+        return failed
     }
+
+    /** Names only the key id, never key material; added as suppressed so the original exception stays the error. */
+    private class RollbackFailed(keyId: Int) : RuntimeException("prekey rollback failed for keyId $keyId")
 
     /**
      * Reads the first few keys and tries to delete them in order; the first delete that applies is ours. A caller
