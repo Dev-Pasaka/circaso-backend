@@ -31,7 +31,10 @@ class AddOneTimeKeys(
         val total = stored.size + command.oneTimePreKeys.size
         if (total > config.maxOneTimePreKeys) return Resource.error(MessagingError.TooManyPrekeys)
 
-        keys.addOneTimeKeys(command.userId, command.oneTimePreKeys)
+        // The check above is the fast path; a racing top-up with the same ids is caught by the insert itself.
+        if (!keys.addOneTimeKeys(command.userId, command.oneTimePreKeys)) {
+            return Resource.error(MessagingError.PrekeyIdExists)
+        }
         return Resource.success(total)
     }
 }

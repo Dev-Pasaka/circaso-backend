@@ -16,6 +16,7 @@ import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.dsl.KandraRawQuery
 import io.kandra.runtime.repository.KandraSuspendRepository
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 // Column name Kandra derives from the entity property (camelCase to snake_case).
 private val USER_ID = KandraColumnRef<UUID>("user_id")
@@ -54,8 +55,36 @@ class KeyRepositoryImpl(
         }
     }
 
-    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>) {
-        prekeys.saveAll(keys.map { it.toRow(userId) })
+    /**
+     * One `IF NOT EXISTS` insert per key, in key-id order, stopping at the first id already stored. With the same
+     * order everywhere, of several identical top-ups racing only the one that wins the lowest id gets further, so
+     * exactly one succeeds. A failed call deletes the rows it inserted (it won those ids, so they are its own).
+     */
+    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean {
+        val inserted = mutableListOf<OneTimePreKeyRow>()
+        try {
+            for (key in keys.sortedBy { it.keyId }) {
+                val row = key.toRow(userId)
+                if (!prekeys.saveIfNotExists(row)) {
+                    rollBack(inserted)
+                    return false
+                }
+                inserted += row
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A timed-out insert may or may not have applied; only the rows known to be ours are removed.
+            rollBack(inserted)
+            throw e
+        }
+        return true
+    }
+
+    private suspend fun rollBack(rows: List<OneTimePreKeyRow>) {
+        for (row in rows) {
+            prekeys.delete(row)
+        }
     }
 
     /**

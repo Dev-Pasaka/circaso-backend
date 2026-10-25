@@ -30,6 +30,7 @@ import java.time.temporal.ChronoUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -109,7 +110,7 @@ class DataLayerTest {
             assertEquals(8, keys.bundle(amina)!!.signedPreKey.keyId)
             assertEquals((4..8).toSet(), keys.oneTimeKeyIds(amina), "rewritten ids stay, stale ones go")
 
-            keys.addOneTimeKeys(amina, oneTime(9..10))
+            assertTrue(keys.addOneTimeKeys(amina, oneTime(9..10)))
             assertEquals((4..10).toSet(), keys.oneTimeKeyIds(amina))
         }
 
@@ -132,6 +133,41 @@ class DataLayerTest {
             // a claim that times out under contention may delete a key without handing it out, never twice
             assertTrue((ids + left).all { it in 1..20 })
             assertTrue(claimed.all { it.publicKey == "BQm${it.keyId}" })
+        }
+
+    @Test
+    fun `a top-up with a stored id keeps nothing of its own and overwrites nothing`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+            keys.publish(bundle(amina), oneTime(1..5), staleKeyIds = emptySet())
+
+            val added = keys.addOneTimeKeys(amina, (3..8).map { OneTimePreKey(it, "other$it") })
+
+            assertFalse(added)
+            assertEquals((1..5).toSet(), keys.oneTimeKeyIds(amina), "ids 3 to 5 stay, 6 to 8 were not kept")
+            val claimed = (1..5).map { keys.claimOneTimeKey(amina)!! }
+            assertTrue(claimed.all { it.publicKey == "BQm${it.keyId}" }, "no stored key was overwritten")
+        }
+
+    @Test
+    fun `of identical top-ups racing, exactly one succeeds and its keys are the ones stored`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+            keys.publish(bundle(amina), emptyList(), staleKeyIds = emptySet())
+
+            val results =
+                (1..8)
+                    .map { request ->
+                        async(Dispatchers.IO) {
+                            request to keys.addOneTimeKeys(amina, (1..10).map { OneTimePreKey(it, "r$request-$it") })
+                        }
+                    }.awaitAll()
+
+            val winners = results.filter { it.second }.map { it.first }
+            assertEquals(1, winners.size, "results: $results")
+            val stored = (1..10).map { keys.claimOneTimeKey(amina)!! }
+            assertEquals((1..10).map { "r${winners.single()}-$it" }, stored.map { it.publicKey })
+            assertNull(keys.claimOneTimeKey(amina))
         }
 
     @Test

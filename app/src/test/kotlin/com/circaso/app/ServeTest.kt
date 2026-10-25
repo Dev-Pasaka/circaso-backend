@@ -678,6 +678,19 @@ class ServeTest {
             val unsigned = send(HttpMethod.Put, "/v1/keys", amina.app, keys)
             assertEquals(HttpStatusCode.Forbidden, unsigned.status)
             assertEquals("messaging.keys_proof_invalid", code(unsigned))
+            // a body that claims to be gzip but isn't is the caller's mistake, not a server error
+            val garbled =
+                client.request("/v1/keys") {
+                    method = HttpMethod.Put
+                    contentType(ContentType.Application.Json)
+                    header("Authorization", "Bearer ${amina.app}")
+                    header("Idempotency-Key", UUID.randomUUID().toString())
+                    header("Content-Encoding", "gzip")
+                    keyProof(amina.pair, keys).forEach { (name, value) -> header(name, value) }
+                    setBody(keys.toByteArray())
+                }
+            assertEquals(HttpStatusCode.BadRequest, garbled.status, garbled.bodyAsText())
+            assertEquals("request.malformed", code(garbled))
             val otherKey = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
             val forged = send(HttpMethod.Put, "/v1/keys", amina.app, keys, keyProof(otherKey, keys))
             assertEquals(HttpStatusCode.Forbidden, forged.status)

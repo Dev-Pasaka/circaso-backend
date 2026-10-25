@@ -38,9 +38,12 @@ class MemoryKeys : KeyRepository {
         for (key in oneTimePreKeys) keys[key.keyId] = key
     }
 
-    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>) =
+    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean =
         synchronized(this) {
-            for (key in keys) of(userId)[key.keyId] = key
+            val stored = of(userId)
+            if (keys.any { it.keyId in stored }) return false
+            for (key in keys) stored[key.keyId] = key
+            true
         }
 
     override suspend fun claimOneTimeKey(userId: UserId): OneTimePreKey? =

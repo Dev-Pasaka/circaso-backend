@@ -22,7 +22,12 @@ interface KeyRepository {
         staleKeyIds: Set<Int>,
     )
 
-    suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>)
+    /**
+     * Inserts each key only if its id is not stored, so a stored key is never overwritten. True when every key was
+     * new; otherwise the keys this call did insert are deleted again and it answers false, so the top-up is refused
+     * whole.
+     */
+    suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean
 
     /**
      * Takes one one-time prekey and deletes it with a lightweight transaction, so two callers never get the same

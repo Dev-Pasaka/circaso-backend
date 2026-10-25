@@ -73,6 +73,7 @@ fun Application.installGateway() {
         deflate { priority = 0.5 }
         minimumSize(1_024)
     }
+    installRequestDecodingErrors()
     install(RequestLog)
     installGatewayEdge(deps)
     install(WebSockets) { pingPeriod = 25.seconds }
