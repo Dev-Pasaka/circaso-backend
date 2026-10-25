@@ -1,6 +1,7 @@
 package com.circaso.integrations.impl.dev
 
 import com.circaso.integrations.api.ImageInput
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelRequest
@@ -106,9 +107,17 @@ class FakeSpeechToText : SpeechToText {
         Resource.success(Transcript(String(audio), seconds = (audio.size / 1000).coerceAtLeast(1)))
 }
 
+/**
+ * Local runs, the dev server and tests: the audio is the text's bytes. Like Aura it speaks English only, so the app's
+ * Swahili path (`assistant.language_not_supported`, then the phone's own voice) can be tried without a provider.
+ */
 class FakeTextToSpeech : TextToSpeech {
-    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> =
-        Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
+    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
+        if (language != null && !language.lowercase().startsWith("en")) {
+            return Resource.error(IntegrationError.UnsupportedLanguage(language))
+        }
+        return Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
+    }
 }
 
 /** Local runs and tests: says what it was given, so a photo turn can be driven without a provider. */

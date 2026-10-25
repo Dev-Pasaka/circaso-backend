@@ -7,6 +7,7 @@ import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ImageInput
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelRequest
@@ -148,6 +149,20 @@ class IntegrationsModuleTest {
         runTest {
             val answer = koin().get<VisionModel>().describe(ImageInput(byteArrayOf(1, 2), "image/png"), "Describe it")
             assertIs<Resource.Success<*>>(answer)
+        }
+
+    @Test
+    fun `the development voice speaks English only, like Aura, so the Swahili path works on dev`() =
+        runTest {
+            for (provider in listOf("log", "fake")) {
+                val voice = koin("integrations.tts.provider" to provider).get<TextToSpeech>()
+
+                assertIs<Resource.Success<*>>(voice.speak("How are you", null), provider)
+                assertIs<Resource.Success<*>>(voice.speak("How are you", "en-KE"), provider)
+                val swahili = voice.speak("Habari yako", "sw") as Resource.Error
+                assertIs<IntegrationError.UnsupportedLanguage>(swahili.error, provider)
+                stopKoin()
+            }
         }
 
     @Test
