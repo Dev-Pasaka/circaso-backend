@@ -41,6 +41,7 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 | Id | Slice | Done when |
 | --- | --- | --- |
 | GW1 | Phone frames: at most 100 per second per socket (excess dropped and counted, socket stays open), a maximum frame size on the WebSocket plugin (proposed 64 KB, the largest chat ciphertext), a clear close reason for a malformed `last` in the auth frame; sign-out (I8) sends `system.session.revoked` and closes that session's socket | Tests for each; done before MS4 |
+| GW2 | Idempotency replays non-envelope responses (A4 audio, A2 SSE): today a repeated `Idempotency-Key` after success gets `409 request.in_progress` until expiry, so a phone can't recover a lost response; store a replayable result or answer `409` with a clear "already done" code. Voice quota refusals (A3, A4) give `retryAfterSeconds` until the reset, not a fixed 3600 (`RESET_HINT_SECONDS`) | Tests for replay of each response kind; quota hint equals seconds to reset |
 
 ### Wallet
 
