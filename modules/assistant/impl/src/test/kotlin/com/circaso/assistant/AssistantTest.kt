@@ -557,4 +557,15 @@ class AssistantTest {
                 "600 characters is about 40 s, over the 30 s left",
             )
         }
+
+    @Test
+    fun `speech in a language the voice can't speak is refused as such, and costs nothing`() =
+        runTest {
+            val h = Harness(smallLimits())
+            h.speech.unspoken = setOf("sw")
+
+            assertEquals("assistant.language_not_supported", h.speak(me, "Habari yako", "sw").errorCode())
+            assertEquals(0, h.usage(me).data().voiceSecondsUsed)
+            assertEquals("audio/mpeg", h.speak(me, "How are you", "en").data().contentType)
+        }
 }

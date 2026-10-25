@@ -14,6 +14,7 @@ import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.TextToSpeech
+import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
@@ -24,6 +25,7 @@ import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeSpeechToText
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
+import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
@@ -31,26 +33,30 @@ import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
-import com.circaso.integrations.impl.placeholder.WorkersAiLanguageModel
-import com.circaso.integrations.impl.placeholder.WorkersAiSpeechToText
-import com.circaso.integrations.impl.placeholder.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.social.AppleRevocation
 import com.circaso.integrations.impl.social.GoogleAppleSignIn
 import com.circaso.integrations.impl.social.ProviderSpec
 import com.circaso.integrations.impl.twilio.TwilioVerify
+import com.circaso.integrations.impl.workersai.WorkersAiGateway
+import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
+import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
+import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
+import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
 import org.koin.dsl.module
+import java.time.Duration
 
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
- * assistant, `llm`, `stt` and `tts` (`workers-ai`).
+ * assistant, `llm`, `vision`, `stt` and `tts` (`workers-ai`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
 fun integrationsModule(config: Config, secrets: Secrets) =
     module {
         val integrations = config.section("integrations")
+        val ai = integrations.section("ai")
 
         fun <T> pick(
             contract: String,
@@ -142,7 +148,29 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     mapOf(
                         "log" to ::LogLanguageModel,
                         "fake" to { FakeLanguageModel() },
-                        "workers-ai" to ::WorkersAiLanguageModel,
+                        "workers-ai" to {
+                            WorkersAiLanguageModel(
+                                workersAi(config, secrets, get()),
+                                ai.string("model.text", WORKERS_AI_TEXT_MODEL),
+                                maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
+                            )
+                        },
+                    ),
+            )
+        }
+        single<VisionModel> {
+            pick(
+                "vision",
+                providers =
+                    mapOf(
+                        "log" to ::FakeVisionModel,
+                        "fake" to ::FakeVisionModel,
+                        "workers-ai" to {
+                            WorkersAiVisionModel(
+                                workersAi(config, secrets, get()),
+                                ai.string("model.vision", WORKERS_AI_VISION_MODEL),
+                            )
+                        },
                     ),
             )
         }
@@ -153,7 +181,12 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     mapOf(
                         "log" to ::FakeSpeechToText,
                         "fake" to ::FakeSpeechToText,
-                        "workers-ai" to ::WorkersAiSpeechToText,
+                        "workers-ai" to {
+                            WorkersAiSpeechToText(
+                                workersAi(config, secrets, get()),
+                                ai.string("model.stt", WORKERS_AI_STT_MODEL),
+                            )
+                        },
                     ),
             )
         }
@@ -164,7 +197,12 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     mapOf(
                         "log" to ::FakeTextToSpeech,
                         "fake" to ::FakeTextToSpeech,
-                        "workers-ai" to ::WorkersAiTextToSpeech,
+                        "workers-ai" to {
+                            WorkersAiTextToSpeech(
+                                workersAi(config, secrets, get()),
+                                ai.string("model.tts", WORKERS_AI_TTS_MODEL),
+                            )
+                        },
                     ),
             )
         }
@@ -279,3 +317,34 @@ private fun fcmPush(
     http = clients.named("fcm") { baseUrl = push.string("base-url", "https://fcm.googleapis.com") },
     oauth = clients.named("google-oauth"),
 )
+
+// Asha's models on Workers AI, each overridable by its INTEGRATIONS_AI_MODEL_* setting. Ids from developers.cloudflare.com/workers-ai/models/.
+private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
+private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
+private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
+
+// A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
+private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 4096
+
+/**
+ * Every Workers AI model needs `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY` (the AI Gateway's name) and the secret
+ * `CLOUDFLARE_AI_TOKEN` (an API token with Workers AI Read). One shared `workers-ai` client: a reasoning model can take
+ * longer than the usual 15 s, so it waits up to a minute.
+ */
+private fun workersAi(
+    config: Config,
+    secrets: Secrets,
+    clients: HttpClients,
+): WorkersAiGateway {
+    val accountId = config.requireString("cloudflare.account-id")
+    return WorkersAiGateway(
+        http =
+            clients.named("workers-ai") {
+                baseUrl = WorkersAiGateway.baseUrl(accountId)
+                requestTimeout = Duration.ofSeconds(60)
+            },
+        token = secrets.require("cloudflare.ai-token"),
+        gateway = config.requireString("integrations.ai.gateway"),
+    )
+}

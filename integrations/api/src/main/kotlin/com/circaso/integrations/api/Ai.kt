@@ -41,7 +41,21 @@ interface SpeechToText {
 data class Transcript(val text: String, val seconds: Int)
 
 interface TextToSpeech {
+    /** A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage], before any vendor call. */
     suspend fun speak(text: String, language: String? = null): Resource<SpokenAudio>
 }
 
 class SpokenAudio(val bytes: ByteArray, val contentType: String)
+
+/**
+ * Reads a photo for Asha, in our language: an image and what to look for go in, text comes out. The assistant
+ * puts that text into the conversation for [LanguageModel], so the text model never needs to see images.
+ */
+interface VisionModel {
+    suspend fun describe(image: ImageInput, instruction: String): Resource<VisionAnswer>
+}
+
+/** A photo as its bytes: the assistant reads it from storage itself, so no provider ever fetches our files. */
+class ImageInput(val bytes: ByteArray, val contentType: String)
+
+data class VisionAnswer(val text: String, val usage: ModelUsage)

@@ -81,8 +81,10 @@ fun Route.voiceController(voice: VoiceService) {
             }.docs<SpeechRequest, NoBody>(
                 "A4 · Turn a reply into audio",
                 TAG,
-                listOf("assistant.quota_exceeded"),
-                notes = "$SCOPE The response is the audio itself; an error is the envelope.",
+                listOf("assistant.quota_exceeded", "assistant.language_not_supported", "assistant.model_unavailable"),
+                notes =
+                    "$SCOPE The response is the audio itself; an error is the envelope. The server voice speaks " +
+                        "English only: speak a Swahili reply with the phone's own text-to-speech.",
             )
 
             get("usage") {
