@@ -83,7 +83,7 @@ Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below)
 - **Push wording per module**: messaging's entries go in `GatewayRealtime.pushFor`. `message.new` frame data carries `pushable`; `member.added` carries the added `userId`.
 - **Data-only pushes** (decision 2026-10-25): `PushMessage` in `integrations:api` gets a data-only option. FCM sends a data message on Android and, on iOS, an alert with `mutable-content` and the fallback text, so the Notification Service Extension can decrypt and replace it. Built in MS4.
 - **Phone frame wire shape:** `{"module": "messaging", "type": "ack", "data": {…}}`, the same fields as the server envelope without `id`, `seq` and `ts`.
-- **Fan-out to many users at once**: `Realtime.deliver` handles one user at a time, which means one `rt:conn` lookup and one publish per member: 999 of each for a message in a full group. Messaging needs `Realtime.deliverMany(userIds, envelope)`: the gateway reads every member's node with one `MGET` of `rt:conn:{userId}`, publishes once per node on `rt:node:{nodeId}` with the list of users that node holds, and hands the rest to push (in batches). Group messages, receipts and typing all go out this way.
+- **Fan-out to many users at once**: `Realtime.deliver` handles one user at a time, which means one `rt:conn` lookup and one publish per member: 999 of each for a message in a full group. Messaging needs `Realtime.deliverMany(userIds, envelope)`, built on Redis pub/sub so it works the same on standalone Redis and on a cluster (decision 2026-10-25): the gateway publishes the frame once, with the list of users, on the broadcast channel `rt:fanout`, which every node subscribes to; each node writes it to the sockets it holds for those users, from its own in-memory connection table, with no Redis read. Only when the frame type is push-worthy (`message.new`, `member.added`) does the gateway find the members with no socket, with single-key `GET`s of `rt:conn:{userId}` sent as one pipeline (no multi-key command, so it works across cluster slots), and hands them to push in batches of 100. Receipts and typing cost one publish and no reads.
 
 ## Endpoints
 
@@ -266,7 +266,7 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 
 The `member.added` push is ids-only once pushes are data-only (MS4): the phone words it from the sealed group name. Until then the server sends "You were added to a group", never the group name.
 
-Group frames go out through `Realtime.deliverMany`, so a message, receipt batch or typing signal to a full group costs one Redis read and one publish per node, not per member. Group read receipts collect in `msg:receipts:{messageId}` and are sent to the sender as one `receipt` frame every 5 seconds.
+Group frames go out through `Realtime.deliverMany`, so a message, receipt batch or typing signal to a full group costs one publish, not one per member; only push-worthy frames also look up who is offline. Group read receipts collect in `msg:receipts:{messageId}` and are sent to the sender as one `receipt` frame every 5 seconds.
 
 Frames marked "Replayed" are kept 7 days in `realtime_by_user` for `RealtimeReplay`, as in users. `message.new` isn't replayed because the inbox already holds every undelivered message for up to 30 days.
 

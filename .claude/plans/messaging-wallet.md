@@ -21,7 +21,7 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 
 | Id | Slice | Done when |
 | --- | --- | --- |
-| MS1 | Foundation: `RealtimeInbound` + `ClientFrame` in `shared`, hub routing of phone frames, `Realtime.deliverMany` (one `MGET`, one publish per node), push wording entries; `modules/messaging/{api,impl}` skeleton, keyspace `circaso_messaging`, DI, `LOG_LEVEL_MESSAGING`, OpenAPI tags in `ApiDocsCatalog` | Existing tests green; new hub and fan-out tests; Konsist passes |
+| MS1 | Foundation: `RealtimeInbound` + `ClientFrame` in `shared`, hub routing of phone frames, `Realtime.deliverMany` (one publish on the `rt:fanout` pub/sub channel every node reads; pipelined single-key offline lookups only for push-worthy frames), push wording entries; `modules/messaging/{api,impl}` skeleton, keyspace `circaso_messaging`, DI, `LOG_LEVEL_MESSAGING`, OpenAPI tags in `ApiDocsCatalog` | Existing tests green; new hub and fan-out tests; Konsist passes |
 | MS2 | Key directory M1–M3 (device-signed upload via `identity.DeviceSignatures`, one-time prekey claim with LWT, bundle rate limit) | Tests for proof failure, prekey exhaustion, rate limit, reach |
 | MS3 | Chats and membership M4–M11, `ChatDirectory`, `msg:members` cache, reach on add, 1,000 cap, roles, sealed metadata, `member.*` and `chat.updated` frames | Tests for pair claim race, cap, admin rules, leave, not-reachable |
 | MS4 | Sending and delivery M12–M14: data-only option on `PushMessage` + `FcmPush`, inbox, group body + pointer rows, idempotent send, socket `ack` / `read` / `typing`, receipts batched 5 s, typing ≤ 50 members, data-only push, `RealtimeReplay`, undeliverable on `DeviceReplaced` | Tests for fan-out, ack deletion, group body deletion, replay, blocks |
