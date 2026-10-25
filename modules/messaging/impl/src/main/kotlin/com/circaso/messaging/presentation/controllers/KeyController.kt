@@ -63,11 +63,13 @@ fun Route.keyController(keys: KeyService) {
                     "messaging.keys_proof_invalid",
                     "messaging.keys_not_found",
                     "messaging.too_many_prekeys",
+                    "messaging.prekey_id_exists",
                     "request.malformed",
                 ),
                 notes =
                     "$SCOPE $SIGNED At most 100 are kept at once; an upload that would pass that is refused " +
-                        "whole (`messaging.too_many_prekeys`). Top up when `GET /keys/me` shows fewer than 20.",
+                        "whole (`messaging.too_many_prekeys`), and so is one that resends a stored key id " +
+                        "(`messaging.prekey_id_exists`). Top up when `GET /keys/me` shows fewer than 20.",
             )
 
             get("me") {
@@ -97,7 +99,10 @@ fun Route.keyController(keys: KeyService) {
     }
 }
 
-/** The exact bytes Ktor received, before anything is deserialised, with the proof headers. */
+/**
+ * The body bytes as Ktor hands them over, before anything is deserialised, with the proof headers. That is after
+ * any content decoding (a compressed body is hashed decompressed), so phones send key uploads uncompressed.
+ */
 private suspend fun ApplicationCall.signedUpload() =
     SignedUpload(
         body = receive<ByteArray>(),

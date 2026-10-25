@@ -147,6 +147,21 @@ class KeyDirectoryTest {
         }
 
     @Test
+    fun `the string to sign is the one in the mobile guide's example, byte for byte`() {
+        val body =
+            """{"oneTimePreKeys":[{"keyId":101,"publicKey":"BQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g"}]}"""
+        val upload = SignedUpload(body.toByteArray(), "2026-10-25T09:00:00Z", b64(ByteArray(70) { 1 }))
+
+        val command = addOneTimeKeysCommand(Phone().principal, upload).data()
+
+        assertEquals(93, body.toByteArray().size)
+        assertEquals(
+            "2026-10-25T09:00:00Z\n94a80dfab795f31ad61df91575b9a16e6c60ba7e0b056b80b7ed87536b08660a",
+            command.proof.signedPayload.decodeToString(),
+        )
+    }
+
+    @Test
     fun `a body changed after it was signed is refused`() =
         runTest {
             val amina = Phone()
@@ -266,12 +281,16 @@ class KeyDirectoryTest {
         }
 
     @Test
-    fun `a top-up that resends keys already stored counts each once`() =
+    fun `a top-up that resends a stored key id is refused whole`() =
         runTest {
             val amina = Phone()
-            publish(amina, amina.sign(publishBody(oneTimeIds = 1..90))).data()
+            publish(amina, amina.sign(publishBody(oneTimeIds = 1..10))).data()
 
-            assertEquals(100, topUp(amina, amina.sign(topUpBody(81..100))).data())
+            val result = topUp(amina, amina.sign(topUpBody(10..20)))
+
+            assertEquals("messaging.prekey_id_exists", result.errorCode())
+            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(amina.userId), "nothing from the refused upload is kept")
+            assertEquals(20, topUp(amina, amina.sign(topUpBody(11..20))).data())
         }
 
     @Test

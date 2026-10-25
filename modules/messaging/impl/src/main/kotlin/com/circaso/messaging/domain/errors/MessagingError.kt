@@ -29,6 +29,12 @@ sealed class MessagingError(
         ErrorKind.INVALID,
     )
 
+    data object PrekeyIdExists : MessagingError(
+        "messaging.prekey_id_exists",
+        "One of those one-time prekey ids is already stored. Send new ids.",
+        ErrorKind.CONFLICT,
+    )
+
     class RateLimited(retryAfterSeconds: Long) :
         MessagingError(
             "messaging.rate_limited",

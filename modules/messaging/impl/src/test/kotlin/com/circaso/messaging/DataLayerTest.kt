@@ -33,7 +33,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Messaging's data layer against a real Cassandra-compatible container: the migrations, the outbox, the key directory. */
+/**
+ * Messaging's data layer against a real Cassandra-compatible container: the migrations, the outbox, the key
+ * directory.
+ */
 class DataLayerTest {
     private val db: KandraRuntimeHandle =
         run {

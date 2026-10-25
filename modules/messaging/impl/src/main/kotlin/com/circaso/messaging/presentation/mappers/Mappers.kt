@@ -77,7 +77,7 @@ private fun List<OneTimePreKeyDto>.toModels(): List<OneTimePreKey>? {
 
 private const val ONE_TIME_WHY = "each key needs its own keyId and a base64 key"
 
-/** M1 `PUT /keys`: the proof first, so an unsigned upload is refused whatever its body. */
+/** M1 `PUT /keys`: missing or unreadable proof headers are refused before the body is read. */
 fun publishKeysCommand(caller: CallPrincipal, upload: SignedUpload): Resource<PublishKeysCommand> {
     val proof = upload.toProof() ?: return Resource.error(MessagingError.KeysProofInvalid)
     val request = upload.decode(PublishKeysRequest.serializer()) ?: return malformed("body")
@@ -97,7 +97,7 @@ fun publishKeysCommand(caller: CallPrincipal, upload: SignedUpload): Resource<Pu
     )
 }
 
-/** M1 `POST /keys/one-time`, proof first as for `PUT /keys`. */
+/** M1 `POST /keys/one-time`: as `PUT /keys`, the proof headers are read before the body. */
 fun addOneTimeKeysCommand(caller: CallPrincipal, upload: SignedUpload): Resource<AddOneTimeKeysCommand> {
     val proof = upload.toProof() ?: return Resource.error(MessagingError.KeysProofInvalid)
     val request = upload.decode(AddOneTimeKeysRequest.serializer()) ?: return malformed("body")

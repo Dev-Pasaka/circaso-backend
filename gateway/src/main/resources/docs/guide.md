@@ -157,6 +157,7 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.keys_not_found` | 404 | The person has not published encryption keys yet, or this phone has not published its own |
 | `messaging.keys_proof_invalid` | 403 | A key upload without valid `X-Device-Timestamp` / `X-Device-Signature` headers, or one more than 5 minutes off the server clock |
 | `messaging.too_many_prekeys` | 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
+| `messaging.prekey_id_exists` | 409 | A top-up resends a one-time prekey id that is already stored |
 | `messaging.rate_limited` | 429 | More than 60 key bundles in an hour; `retryAfterSeconds` says when to try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
