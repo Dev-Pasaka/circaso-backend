@@ -22,7 +22,9 @@ val assistantEntities =
  * and later. Phase B adds the proposals table.
  */
 object V001_CreateAssistantTables : KandraMigration(version = 1, name = "create assistant tables") {
-    override fun up(session: CqlSession) {
+    // Run with a plain loop, never forEach or another inline call: an inline call leaves Kotlin's line table in
+    // the class, and the checksum would then change whenever these lines move (docs/kandra-bugs.md #5).
+    private val statements =
         listOf(
             "CREATE TABLE IF NOT EXISTS circaso_assistant.asha_messages_by_user (user_id UUID, message_id UUID, " +
                 "answered_by UUID, asked_from TEXT, body TEXT, created_at TIMESTAMP, read_note TEXT, reply_to " +
@@ -43,6 +45,11 @@ object V001_CreateAssistantTables : KandraMigration(version = 1, name = "create 
                 "published_at TIMESTAMP, type TEXT, PRIMARY KEY (bucket, event_id)) WITH CLUSTERING ORDER BY " +
                 "(event_id " +
                 "ASC) AND default_time_to_live = 604800",
-        ).forEach { session.execute(it) }
+        )
+
+    override fun up(session: CqlSession) {
+        for (statement in statements) {
+            session.execute(statement)
+        }
     }
 }

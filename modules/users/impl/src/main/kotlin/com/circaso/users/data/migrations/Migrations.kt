@@ -32,7 +32,9 @@ val usersEntities =
  * keyspace and use IF NOT EXISTS. Never edit it once applied; changes go in V002 and later.
  */
 object V001_CreateUsersTables : KandraMigration(version = 1, name = "create users tables") {
-    override fun up(session: CqlSession) {
+    // Run with a plain loop, never forEach or another inline call: an inline call leaves Kotlin's line table in
+    // the class, and the checksum would then change whenever these lines move (docs/kandra-bugs.md #5).
+    private val statements =
         listOf(
             "CREATE TABLE IF NOT EXISTS circaso_users.profiles (user_id UUID, about TEXT, avatar_key TEXT, " +
                 "created_at TIMESTAMP, display_name TEXT, handle TEXT, handle_changed_at TIMESTAMP, privacy TEXT, " +
@@ -58,6 +60,11 @@ object V001_CreateUsersTables : KandraMigration(version = 1, name = "create user
             "CREATE TABLE IF NOT EXISTS circaso_users.outbox (bucket TEXT, event_id UUID, payload TEXT, published_at " +
                 "TIMESTAMP, type TEXT, PRIMARY KEY (bucket, event_id)) WITH CLUSTERING ORDER BY (event_id ASC) AND " +
                 "default_time_to_live = 604800",
-        ).forEach { session.execute(it) }
+        )
+
+    override fun up(session: CqlSession) {
+        for (statement in statements) {
+            session.execute(statement)
+        }
     }
 }
