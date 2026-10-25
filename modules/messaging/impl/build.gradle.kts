@@ -9,11 +9,13 @@ dependencies {
     implementation(libs.kandra.runtime)
     implementation(libs.kandra.migrate)
 
+    implementation(libs.ktor.server.core)
     implementation(libs.koin.core)
 
     testImplementation(platform(libs.kandra.bom))
     testImplementation(libs.kandra.test)
     testImplementation(libs.kotlinx.coroutines.core)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.cassandra)
 }

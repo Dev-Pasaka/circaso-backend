@@ -31,7 +31,11 @@ import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.scylladb.ScyllaDBContainer
 import org.testcontainers.utility.DockerImageName
+import java.security.KeyPair
 import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import kotlin.test.AfterTest
@@ -365,6 +369,10 @@ class ServeTest {
                 "/v1/account/security",
                 "/v1/recovery/requests",
                 "/v1/agent/users/contacts",
+                "/v1/keys",
+                "/v1/keys/one-time",
+                "/v1/keys/me",
+                "/v1/keys/{userId}",
             ).forEach { assertTrue(it in paths.keys, "$it is documented") }
 
             // the journey order: infrastructure, then nonce before social sign-in before the phone before the device
@@ -422,7 +430,12 @@ class ServeTest {
             )
         }
 
-    private class Person(val userId: String, val app: String, val agent: String)
+    private class Person(
+        val userId: String,
+        val app: String,
+        val agent: String,
+        val pair: KeyPair,
+    )
 
     /** Sign-up over HTTP (Google, SMS code, device key) to an active session; returns the user id and the app token. */
     private suspend fun ApplicationTestBuilder.signUp(
@@ -476,6 +489,7 @@ class ServeTest {
             registered["user"]!!.jsonObject["userId"]!!.jsonPrimitive.content,
             registered["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content,
             registered["agentSession"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content,
+            pair,
         )
     }
 
@@ -604,6 +618,120 @@ class ServeTest {
                 get("/v1/agent/users/contacts", amina.app).status,
                 "the user token does not open the agent routes",
             )
+        }
+
+    /** M1 proof headers as the phone sends them: the device key over `timestamp + "\n" + hex(SHA-256(body))`. */
+    private fun keyProof(pair: KeyPair, body: String): Map<String, String> {
+        val timestamp = Instant.now().toString()
+        val digest = MessageDigest.getInstance("SHA-256").digest(body.toByteArray())
+        val payload = timestamp + "\n" + digest.joinToString("") { "%02x".format(it) }
+        val signature =
+            Signature.getInstance("SHA256withECDSA").run {
+                initSign(pair.private)
+                update(payload.toByteArray())
+                sign()
+            }
+        return mapOf(
+            "X-Device-Timestamp" to timestamp,
+            "X-Device-Signature" to Base64.getEncoder().encodeToString(signature),
+        )
+    }
+
+    @Test
+    fun `keys are published device-signed and fetched only by someone who can reach the person`() =
+        testApplication {
+            var sms: FakeSms? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+                sms = getKoin().get<SmsGateway>() as FakeSms
+            }
+            client.get("/health/live")
+            val amina = signUp(sms!!, "Amina Otieno", "+254712${(100000..999999).random()}")
+            val brian = signUp(sms!!, "Brian Mwangi", "+254733${(100000..999999).random()}")
+
+            suspend fun get(path: String, token: String) = client.get(path) { header("Authorization", "Bearer $token") }
+
+            suspend fun send(
+                method: HttpMethod,
+                path: String,
+                token: String,
+                body: String = "{}",
+                proof: Map<String, String> = emptyMap(),
+            ) = client.request(path) {
+                this.method = method
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $token")
+                header("Idempotency-Key", UUID.randomUUID().toString())
+                proof.forEach { (name, value) -> header(name, value) }
+                setBody(body)
+            }
+
+            suspend fun code(response: HttpResponse) = json(response)["code"]!!.jsonPrimitive.content
+
+            val key = Base64.getEncoder().encodeToString(ByteArray(33) { 5 })
+            val oneTime = (1..3).joinToString(",") { """{"keyId":$it,"publicKey":"$key"}""" }
+            val keys =
+                """{"identityKey":"$key","signedPreKey":{"keyId":7,"publicKey":"$key","signature":"$key"},""" +
+                    """"oneTimePreKeys":[$oneTime]}"""
+
+            // an unsigned upload or one signed by another key is refused; one signed by Amina's own phone is taken
+            val unsigned = send(HttpMethod.Put, "/v1/keys", amina.app, keys)
+            assertEquals(HttpStatusCode.Forbidden, unsigned.status)
+            assertEquals("messaging.keys_proof_invalid", code(unsigned))
+            // a body that claims to be gzip but isn't is the caller's mistake, not a server error
+            val garbled =
+                client.request("/v1/keys") {
+                    method = HttpMethod.Put
+                    contentType(ContentType.Application.Json)
+                    header("Authorization", "Bearer ${amina.app}")
+                    header("Idempotency-Key", UUID.randomUUID().toString())
+                    header("Content-Encoding", "gzip")
+                    keyProof(amina.pair, keys).forEach { (name, value) -> header(name, value) }
+                    setBody(keys.toByteArray())
+                }
+            assertEquals(HttpStatusCode.BadRequest, garbled.status, garbled.bodyAsText())
+            assertEquals("request.malformed", code(garbled))
+            val otherKey = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+            val forged = send(HttpMethod.Put, "/v1/keys", amina.app, keys, keyProof(otherKey, keys))
+            assertEquals(HttpStatusCode.Forbidden, forged.status)
+            assertEquals("messaging.keys_proof_invalid", code(forged))
+            val published = send(HttpMethod.Put, "/v1/keys", amina.app, keys, keyProof(amina.pair, keys))
+            assertEquals(HttpStatusCode.OK, published.status, published.bodyAsText())
+            assertEquals("3", json(published)["data"]!!.jsonObject["oneTimePreKeysLeft"]!!.jsonPrimitive.content)
+            val status = get("/v1/keys/me", amina.app)
+            assertEquals("3", json(status)["data"]!!.jsonObject["oneTimePreKeysLeft"]!!.jsonPrimitive.content)
+
+            // the agent token can't publish or read keys
+            assertEquals(HttpStatusCode.Forbidden, get("/v1/keys/me", amina.agent).status)
+            assertEquals(HttpStatusCode.Forbidden, get("/v1/keys/${brian.userId}", amina.agent).status)
+            val asAgent = send(HttpMethod.Put, "/v1/keys", amina.agent, keys, keyProof(amina.pair, keys))
+            assertEquals(HttpStatusCode.Forbidden, asAgent.status)
+
+            // Brian can't reach Amina yet
+            val unreachable = get("/v1/keys/${amina.userId}", brian.app)
+            assertEquals(HttpStatusCode.Forbidden, unreachable.status)
+            assertEquals("users.not_reachable", code(unreachable))
+
+            // an invite connects them both ways; each fetch takes one prekey until none are left
+            val invite = json(send(HttpMethod.Post, "/v1/invites", amina.app))["data"]!!.jsonObject
+            val token = invite["token"]!!.jsonPrimitive.content
+            val connected =
+                send(HttpMethod.Post, "/v1/connections", brian.app, """{"via":"invite","value":"$token"}""")
+            assertEquals(HttpStatusCode.OK, connected.status, connected.bodyAsText())
+            val fetched =
+                (1..4).map {
+                    val bundle = get("/v1/keys/${amina.userId}", brian.app)
+                    assertEquals(HttpStatusCode.OK, bundle.status, bundle.bodyAsText())
+                    json(bundle)["data"]!!.jsonObject
+                }
+            assertEquals(
+                listOf("1", "2", "3", null),
+                fetched.map { (it["oneTimePreKey"] as? JsonObject)?.get("keyId")?.jsonPrimitive?.content },
+            )
+            assertEquals(amina.userId, fetched.first()["userId"]!!.jsonPrimitive.content)
+
+            // Brian has published nothing yet
+            assertEquals("messaging.keys_not_found", code(get("/v1/keys/${brian.userId}", amina.app)))
         }
 
     @Test
