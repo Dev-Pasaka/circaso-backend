@@ -106,9 +106,9 @@ class DatabaseTest {
     fun `migrate creates each module's keyspace and tables, with a history per keyspace`() {
         val migrator = DatabaseMigrator(TestScylla.settings())
 
-        val applied = migrator.migrate(listOf(alpha, beta))
+        val outcome = migrator.migrate(listOf(alpha, beta))
 
-        assertEquals(3, applied)
+        assertEquals(3, outcome.applied)
         withSession { session ->
             assertTrue(tableExists(session, "circaso_test_alpha", "things_by_id"))
             assertTrue(tableExists(session, "circaso_test_beta", "things_by_id"))
@@ -130,7 +130,10 @@ class DatabaseTest {
         val migrator = DatabaseMigrator(TestScylla.settings())
         migrator.migrate(listOf(alpha, beta))
 
-        assertEquals(0, migrator.migrate(listOf(alpha, beta)))
+        val again = migrator.migrate(listOf(alpha, beta))
+
+        assertEquals(0, again.applied)
+        assertEquals(emptyList(), again.createdKeyspaces, "both keyspaces exist by now")
     }
 
     private fun replicationOf(session: CqlSession, keyspace: String): Map<String, String>? =
@@ -141,9 +144,10 @@ class DatabaseTest {
 
     @Test
     fun `outside local migrate creates a missing keyspace with the configured replication, then migrates it`() {
-        val applied = DatabaseMigrator(TestScylla.settings(environment = "staging")).migrate(listOf(beta))
+        val outcome = DatabaseMigrator(TestScylla.settings(environment = "staging")).migrate(listOf(beta))
 
-        assertEquals(2, applied)
+        assertEquals(2, outcome.applied)
+        assertEquals(listOf("circaso_test_beta"), outcome.createdKeyspaces)
         withSession { session ->
             val replication = replicationOf(session, "circaso_test_beta")
             assertEquals("org.apache.cassandra.locator.NetworkTopologyStrategy", replication?.get("class"))
@@ -162,9 +166,10 @@ class DatabaseTest {
             )
         }
 
-        val applied = DatabaseMigrator(TestScylla.settings(environment = "staging")).migrate(listOf(alpha))
+        val outcome = DatabaseMigrator(TestScylla.settings(environment = "staging")).migrate(listOf(alpha, beta))
 
-        assertEquals(1, applied)
+        assertEquals(3, outcome.applied)
+        assertEquals(listOf("circaso_test_beta"), outcome.createdKeyspaces, "only the missing keyspace is reported")
         withSession { session ->
             val replication = replicationOf(session, "circaso_test_alpha")
             assertEquals("org.apache.cassandra.locator.SimpleStrategy", replication?.get("class"))

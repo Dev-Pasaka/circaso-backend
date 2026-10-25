@@ -61,8 +61,9 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
     val autoCreateKeyspaces: Boolean = createsSchemaOnStart
 
     /**
-     * The replication `migrate` gives a keyspace it creates. SimpleStrategy by default locally (the single node it has
-     * always used), NetworkTopologyStrategy in [datacenter] elsewhere; factor 1 and tablets off unless configured.
+     * The replication `migrate` gives a keyspace it creates. SimpleStrategy by default only for a node on this machine;
+     * NetworkTopologyStrategy in [datacenter] for any other cluster, even migrated from a laptop, so a keyspace created
+     * on a remote cluster always has the same form. Factor 1 and tablets off unless configured.
      */
     val keyspaceReplication: KeyspaceReplication =
         KeyspaceReplication(
@@ -70,7 +71,7 @@ class ScyllaSettings(config: Config, private val secrets: Secrets) {
                 scylla
                     .string("keyspace-replication-class")
                     ?.let { Strategy.parse(it) }
-                    ?: if (local) Strategy.SimpleStrategy else Strategy.NetworkTopologyStrategy,
+                    ?: if (createsSchemaOnStart) Strategy.SimpleStrategy else Strategy.NetworkTopologyStrategy,
             factor = scylla.int("keyspace-replication-factor", 1),
             datacenter = datacenter,
             tablets = scylla.boolean("keyspace-tablets", false),

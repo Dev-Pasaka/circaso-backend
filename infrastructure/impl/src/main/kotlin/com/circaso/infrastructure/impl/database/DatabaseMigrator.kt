@@ -8,6 +8,9 @@ import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.database.Migrator")
 
+/** What one `migrate` run did: how many migrations it applied, and which keyspaces it had to create first. */
+data class MigrationOutcome(val applied: Int, val createdKeyspaces: List<String>)
+
 /**
  * Runs each module's migrations once per deploy, one `kandra-migrate` runner per keyspace so identity and users
  * number theirs independently, each with its own checksummed history. Only `app migrate` calls this: containers
@@ -20,16 +23,16 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.datab
  * [ScyllaSettings.keyspaceReplication]; a keyspace that already exists is never altered.
  */
 class DatabaseMigrator(private val settings: ScyllaSettings) {
-    /** Returns how many migrations were applied in all. */
-    fun migrate(specs: List<KandraModuleSpec>): Int {
-        if (specs.isEmpty()) return 0 // nothing to migrate, so nothing to connect to
+    fun migrate(specs: List<KandraModuleSpec>): MigrationOutcome {
+        if (specs.isEmpty()) return MigrationOutcome(0, emptyList()) // nothing to migrate, so nothing to connect to
         return settings.openSession().use { session -> migrate(session, specs) }
     }
 
-    internal fun migrate(session: CqlSession, specs: List<KandraModuleSpec>): Int {
+    internal fun migrate(session: CqlSession, specs: List<KandraModuleSpec>): MigrationOutcome {
         var applied = 0
+        val created = mutableListOf<String>()
         for (spec in specs) {
-            ensureKeyspace(session, spec.keyspace)
+            if (ensureKeyspace(session, spec.keyspace)) created += spec.keyspace
             val runner = KandraMigrationRunner(session, keyspace = spec.keyspace)
             val before = runner.history().size
             runner.run(*spec.migrations.toTypedArray())
@@ -37,13 +40,14 @@ class DatabaseMigrator(private val settings: ScyllaSettings) {
             applied += now - before
             log.info("migrated", kv("keyspace", spec.keyspace), kv("applied", now - before), kv("total", now))
         }
-        return applied
+        return MigrationOutcome(applied, created)
     }
 
-    private fun ensureKeyspace(session: CqlSession, keyspace: String) {
+    /** Creates [keyspace] if it is missing; returns whether it did. */
+    private fun ensureKeyspace(session: CqlSession, keyspace: String): Boolean {
         if (keyspaceExists(session, keyspace)) {
-            log.info("keyspace already exists", kv("keyspace", keyspace))
-            return
+            log.debug("keyspace already exists", kv("keyspace", keyspace))
+            return false
         }
         session.execute(settings.keyspaceReplication.createKeyspaceCql(keyspace))
         log.info(
@@ -52,6 +56,7 @@ class DatabaseMigrator(private val settings: ScyllaSettings) {
             kv("strategy", settings.keyspaceReplication.strategy.name),
             kv("factor", settings.keyspaceReplication.factor),
         )
+        return true
     }
 
     private fun keyspaceExists(session: CqlSession, keyspace: String): Boolean =

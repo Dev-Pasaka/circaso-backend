@@ -65,15 +65,22 @@ class ScyllaSettingsTest {
     }
 
     @Test
-    fun `migrate's keyspaces default to SimpleStrategy locally and NetworkTopologyStrategy elsewhere`() {
-        val local = settings("CIRCASO_ENV" to "local").keyspaceReplication
-        val staging = settings("CIRCASO_ENV" to "staging", "SCYLLA_DATACENTER" to "AWS_EU_WEST_1").keyspaceReplication
+    fun `migrate's keyspaces are SimpleStrategy only on a node on this machine`() {
+        val onThisMachine = settings("CIRCASO_ENV" to "local", "SCYLLA_CONTACT_POINTS" to "localhost:9042")
+        val laptopToCloud =
+            settings("CIRCASO_ENV" to "local", "SCYLLA_CONTACT_POINTS" to cloud, "SCYLLA_DATACENTER" to "AWS_EU_WEST_1")
+        val staging = settings("CIRCASO_ENV" to "staging", "SCYLLA_DATACENTER" to "AWS_EU_WEST_1")
 
-        assertEquals(KeyspaceReplication(Strategy.SimpleStrategy, 1, "datacenter1", tablets = false), local)
         assertEquals(
-            KeyspaceReplication(Strategy.NetworkTopologyStrategy, 1, "AWS_EU_WEST_1", tablets = false),
-            staging,
+            KeyspaceReplication(Strategy.SimpleStrategy, 1, "datacenter1", tablets = false),
+            onThisMachine.keyspaceReplication,
         )
+        for (remote in listOf(laptopToCloud, staging)) {
+            assertEquals(
+                KeyspaceReplication(Strategy.NetworkTopologyStrategy, 1, "AWS_EU_WEST_1", tablets = false),
+                remote.keyspaceReplication,
+            )
+        }
     }
 
     @Test
