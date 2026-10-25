@@ -251,6 +251,21 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 | `member.added` / `member.removed` | Members, and the person themselves; tells phones to send or rotate sender keys | Yes for the person added | Yes |
 | `keys.changed` | Everyone who shares a chat with the person | No | Yes |
 
+**Frame data** (the gateway's push logic reads `pushable` and `userId`):
+
+| Type | `data` |
+| --- | --- |
+| `message.new` | `messageId`, `chatId`, `senderId`, `kind`, `pushable` (missing means `false`), `sentAt`; the ciphertext is fetched from the inbox (M13) when it doesn't fit in the frame |
+| `message.deleted` | `chatId`, `messageId` |
+| `message.undeliverable` | `chatId`, `messageId`, `recipientId` |
+| `receipt` | `chatId`, `receipts: [{ messageId, userId, status: DELIVERED \| READ, at }]` |
+| `typing` | `chatId`, `userId`, `on` |
+| `chat.updated` | `chatId`, `metaVersion`, `version` |
+| `member.added` / `member.removed` | `chatId`, `userId` (the person added or removed), `byUserId`; one frame per person, so adding five people sends five frames |
+| `keys.changed` | `userId` |
+
+The `member.added` push is ids-only once pushes are data-only (MS4): the phone words it from the sealed group name. Until then the server sends "You were added to a group", never the group name.
+
 Group frames go out through `Realtime.deliverMany`, so a message, receipt batch or typing signal to a full group costs one Redis read and one publish per node, not per member. Group read receipts collect in `msg:receipts:{messageId}` and are sent to the sender as one `receipt` frame every 5 seconds.
 
 Frames marked "Replayed" are kept 7 days in `realtime_by_user` for `RealtimeReplay`, as in users. `message.new` isn't replayed because the inbox already holds every undelivered message for up to 30 days.

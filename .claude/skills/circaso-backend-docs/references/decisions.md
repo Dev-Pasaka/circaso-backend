@@ -85,6 +85,8 @@ Not decided yet. Where code depends on one of these, build behind an interface o
 - [ ] **Wallet: record retention** after account deletion.
 - [ ] **Wallet: deletion error code.** `identity.wallet_not_empty` (published to the app) or the guard's own `wallet.funds_remaining` (the `DeletionGuard` contract).
 - [ ] **Wallet: showing KES.** A rate source for KES amounts next to USDC.
+- [ ] **Messaging: rate limit on phone frames.** The gateway has no limit for frames a phone sends over the socket; `typing` is deduplicated, `ack` and `read` are not. Proposed: 30 frames per second per socket, excess dropped, settled before MS4.
+- [ ] **Redis cluster.** `Realtime.deliverMany` uses one multi-key `MGET`, which works on standalone Redis/Valkey only; cluster mode would need hash tags on `rt:conn` keys.
 - [ ] **Messaging: passkey domain files.** `circaso.com` must serve `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` for the backup passkey; who owns the site and the app's signing fingerprint and team id.
 - [ ] **Payment hold after a support restore.** The sign-in flow keeps a 48-hour hold on outgoing transfers after an account is relinked (ID-23), on top of the 48-hour notice before it. Identity has no status for it yet. Keep it (it would live in the wallet, keyed on `AccountRelinked`) or drop it because the notice already gives the owner time to cancel?
 - [x] **The assistant's name.** Decided 2026-10-22: Asha.
