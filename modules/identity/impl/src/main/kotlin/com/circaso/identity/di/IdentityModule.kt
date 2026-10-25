@@ -184,7 +184,7 @@ fun identityModule(config: Config): Module =
             )
         }
         single { RefreshSession(get(), get(), get(), get(), get(), get(), get()) }
-        single { SignOut(get(), get(), get()) }
+        single { SignOut(get(), get(), get(), get()) }
         single { UpdatePushToken(get(), get()) }
         single { RemoveDevice(get(), get(), get(), get(), get()) }
         single { GetSecurityOverview(get(), get(), get()) }

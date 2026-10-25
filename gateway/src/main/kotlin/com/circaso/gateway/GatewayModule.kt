@@ -9,6 +9,7 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.observability.api.Telemetry
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeInboundModule
@@ -49,6 +50,7 @@ fun gatewayModule(config: Config) =
                 { koin.getAll<RealtimeModule>() },
                 { koin.getAll<RealtimeInboundModule>() },
                 get(),
+                get<Telemetry>(),
             )
         }
         single<Realtime> { GatewayRealtime(get(), get<PushGateway>(), get<PushRegistrations>()) }
@@ -76,7 +78,10 @@ fun Application.installGateway() {
     installRequestDecodingErrors()
     install(RequestLog)
     installGatewayEdge(deps)
-    install(WebSockets) { pingPeriod = 25.seconds }
+    install(WebSockets) {
+        pingPeriod = 25.seconds
+        maxFrameSize = SocketHub.MAX_FRAME_BYTES
+    }
 
     hub.start()
     monitor.subscribe(ApplicationStopping) { koin.get<CoroutineScope>().cancel() }

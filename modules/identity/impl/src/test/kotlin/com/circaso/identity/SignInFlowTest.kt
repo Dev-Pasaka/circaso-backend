@@ -1,6 +1,7 @@
 package com.circaso.identity
 
 import com.circaso.identity.api.AccountStatus
+import com.circaso.identity.api.SignedOut
 import com.circaso.identity.domain.errors.IdentityError
 import com.circaso.identity.domain.models.DeviceProof
 import com.circaso.identity.domain.models.DeviceStatus
@@ -17,6 +18,7 @@ import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
+import com.circaso.shared.decode
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
 import kotlin.test.Test
@@ -139,6 +141,22 @@ class SignInFlowTest {
             h.signOut(principal)
 
             assertEquals("identity.session_revoked", h.verifyToken(registered.session.accessToken).errorCode())
+        }
+
+    @Test
+    fun `a sign-out tells the gateway which session ended, once`() =
+        runTest {
+            val h = Harness()
+            val phone = Phone()
+            val registered = h.signUp("amina", phone, number)
+            val principal = h.principalOf(registered.session.accessToken)
+
+            h.signOut(principal)
+            h.signOut(principal)
+
+            val signedOut = h.store.events.filter { it.type == SignedOut.TYPE }
+            assertEquals(1, signedOut.size, "a session that already ended is not announced again")
+            assertEquals(SignedOut(principal.userId, principal.sessionId), signedOut.single().decode<SignedOut>())
         }
 
     @Test

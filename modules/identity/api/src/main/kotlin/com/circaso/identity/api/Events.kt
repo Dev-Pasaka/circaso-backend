@@ -37,6 +37,16 @@ data class DeviceReplaced(val userId: UserId, val oldDeviceId: DeviceId, val new
     }
 }
 
+/** I8: the phone signed out of [sessionId]; the gateway closes that session's socket (decision 2026-10-25). */
+@Serializable
+data class SignedOut(val userId: UserId, val sessionId: SessionId) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "identity.SignedOut"
+    }
+}
+
 @Serializable
 data class AccountStatusChanged(val userId: UserId, val status: AccountStatus) : DomainEvent {
     override val type: String get() = TYPE

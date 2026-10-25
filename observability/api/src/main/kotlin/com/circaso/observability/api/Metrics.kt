@@ -18,6 +18,7 @@ object Metrics {
     const val OUTBOX_UNPUBLISHED = "circaso_outbox_unpublished" // module (gauge)
     const val KANDRA_QUERY_DURATION = "kandra_query_duration_seconds" // table, op
     const val CONTACTS_SYNC_MATCHES_RATIO = "circaso_contacts_sync_matches_ratio"
+    const val GATEWAY_SOCKET_FRAMES_DROPPED = "circaso_gateway_socket_frames_dropped_total" // reason
 
     /** Label keys that would leak personal data or explode the series count; the implementation rejects them. */
     val forbiddenLabels: Set<String> = setOf("userId", "user", "phone", "handle", "email", "ip", "token", "deviceId")

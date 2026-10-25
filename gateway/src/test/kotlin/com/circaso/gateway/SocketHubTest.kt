@@ -3,19 +3,25 @@ package com.circaso.gateway
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
 import com.circaso.gateway.realtime.SocketHub
+import com.circaso.gateway.realtime.gatewayIdentitySubscription
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.PushRegistration
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.identity.api.SessionId
+import com.circaso.identity.api.SignedOut
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
 import com.circaso.integrations.api.PushReceipt
 import com.circaso.integrations.api.PushTarget
+import com.circaso.observability.api.Metrics
+import com.circaso.observability.api.NoopTelemetry
+import com.circaso.observability.api.Telemetry
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.ClientFrame
 import com.circaso.shared.DeviceId
+import com.circaso.shared.EventEnvelope
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeInbound
 import com.circaso.shared.RealtimeInboundModule
@@ -33,6 +39,7 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.ktor.server.websocket.WebSockets
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +59,7 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -69,6 +77,15 @@ class SocketHubTest {
 
         private fun channel(name: String) =
             channels.computeIfAbsent(name) { MutableSharedFlow(extraBufferCapacity = 64) }
+
+        /** Waits until [channel] has a listener and [key] holds [value], so a publish is not lost on a busy build. */
+        suspend fun awaitReady(
+            channel: String,
+            key: String,
+            value: String,
+        ) = withTimeout(3000) {
+            while (channel(channel).subscriptionCount.value == 0 || values[key] != value) delay(10)
+        }
 
         override suspend fun get(key: String): String? {
             singleReads.incrementAndGet()
@@ -163,16 +180,36 @@ class SocketHubTest {
             override suspend fun pushTarget(userId: UserId) = PushRegistration("android", "token-$userId")
         }
 
+    /** Counts what the hub reports, by metric name and labels. */
+    private class RecordingTelemetry : Telemetry by NoopTelemetry {
+        val counts = ConcurrentHashMap<Pair<String, Map<String, String>>, Long>()
+
+        override fun count(
+            metric: String,
+            labels: Map<String, String>,
+            by: Long,
+        ) {
+            counts.merge(metric to labels, by, Long::plus)
+        }
+    }
+
     private val user = UserId.new()
     private val device = DeviceId.new()
+    private val session = SessionId.new()
+    private val laterSession = SessionId.new()
     private val otherUser = UserId.new()
 
     private val verifier =
         object : TokenVerifier {
             override suspend fun verify(accessToken: String): Resource<Principal> =
                 when (accessToken) {
-                    "good" -> Resource.success(Principal(user, device, SessionId.new(), Scope.APP))
+                    "good" -> Resource.success(Principal(user, device, session, Scope.APP))
+
+                    // The same phone after signing out and back in: a new session.
+                    "later" -> Resource.success(Principal(user, device, laterSession, Scope.APP))
+
                     "other" -> Resource.success(Principal(otherUser, DeviceId.new(), SessionId.new(), Scope.APP))
+
                     else -> Resource.error(SharedError.TokenInvalid)
                 }
         }
@@ -200,21 +237,32 @@ class SocketHubTest {
         replays: List<RealtimeModule> = emptyList(),
         inbound: List<RealtimeInboundModule> = emptyList(),
         nodeId: String = "node-1",
+        telemetry: Telemetry = NoopTelemetry,
+        nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
     ) = SocketHub(
         redis,
         verifier,
         { replays },
         { inbound },
         CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        telemetry,
         nodeId,
+        nowMillis,
     )
 
     private fun ApplicationTestBuilder.serve(hub: SocketHub) {
         application {
-            install(WebSockets)
+            install(WebSockets) { maxFrameSize = SocketHub.MAX_FRAME_BYTES }
             routing { route("/v1") { hub.routes(this) } }
         }
     }
+
+    private suspend fun DefaultClientWebSocketSession.closedWith(): CloseReason? =
+        withTimeout(3000) {
+            // Drain until the server's close arrives; the reason is only complete once incoming ends.
+            while (incoming.receiveCatching().isSuccess) Unit
+            closeReason.await()
+        }
 
     private suspend fun DefaultClientWebSocketSession.nextFrame(): RealtimeEnvelope =
         CircasoJson.decodeFromString(
@@ -468,5 +516,168 @@ class SocketHubTest {
             realtime.deliver(UserId.new(), frame(2, "messaging", "typing"))
 
             assertTrue(push.sent.isEmpty())
+        }
+
+    @Test
+    fun `the 101st phone frame in a second is dropped and counted, and the socket stays open`() =
+        testApplication {
+            val messaging = RecordingInbound()
+            val telemetry = RecordingTelemetry()
+            val clock = AtomicLong(0)
+            val hub =
+                hub(
+                    inbound = listOf(RealtimeInboundModule("messaging", messaging)),
+                    telemetry = telemetry,
+                    nowMillis = { clock.get() },
+                )
+            serve(hub)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                repeat(101) { send(Frame.Text("""{"module":"messaging","type":"read","data":{"n":$it}}""")) }
+
+                val received = List(100) { withTimeout(3000) { messaging.received.receive() }.third }
+                assertEquals("""{"n":99}""", received.last().data.toString(), "the first 100 went through in order")
+                assertNull(withTimeoutOrNull(300) { messaging.received.receive() }, "the 101st was dropped")
+                val dropped = Metrics.GATEWAY_SOCKET_FRAMES_DROPPED to mapOf("reason" to "rate_limited")
+                assertEquals(1L, telemetry.counts[dropped])
+
+                assertTrue(hub.deliver(user, frame(5)), "the socket is still registered")
+                assertEquals(5, nextFrame().seq, "and still open")
+
+                clock.set(1_000)
+                send(Frame.Text("""{"module":"messaging","type":"read","data":{"n":"next second"}}"""))
+                assertEquals("read", withTimeout(3000) { messaging.received.receive() }.third.type)
+            }
+        }
+
+    @Test
+    fun `a frame over 64 KB closes only that socket with too big, and the hub keeps serving`() =
+        testApplication {
+            val messaging = RecordingInbound()
+            val hub = hub(inbound = listOf(RealtimeInboundModule("messaging", messaging)))
+            serve(hub)
+            val client = createClient { install(ClientWebSockets) }
+            val padding = "x".repeat(SocketHub.MAX_FRAME_BYTES.toInt())
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                send(Frame.Text("""{"module":"messaging","type":"read","data":{"p":"$padding"}}"""))
+
+                assertEquals(CloseReason.Codes.TOO_BIG.code, closedWith()?.code)
+            }
+            assertNull(withTimeoutOrNull(300) { messaging.received.receive() }, "the frame reached no module")
+            delay(200)
+            assertEquals(false, hub.deliver(user, frame(1)), "the closed socket was unregistered")
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                assertTrue(hub.deliver(user, frame(2)))
+                assertEquals(2, nextFrame().seq, "a new socket works as before")
+            }
+        }
+
+    @Test
+    fun `an auth frame over 64 KB is closed with too big`() =
+        testApplication {
+            serve(hub())
+            val client = createClient { install(ClientWebSockets) }
+            val padding = "x".repeat(SocketHub.MAX_FRAME_BYTES.toInt())
+
+            client.webSocket("/v1/ws") {
+                send(Frame.Text("""{"type":"auth","accessToken":"$padding"}"""))
+
+                assertEquals(CloseReason.Codes.TOO_BIG.code, closedWith()?.code)
+            }
+        }
+
+    @Test
+    fun `a malformed last is closed with invalid last, not auth required`() =
+        testApplication {
+            serve(hub())
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                send(Frame.Text("""{"type":"auth","accessToken":"good","last":{"users":"x"}}"""))
+
+                assertEquals(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "invalid last"), closedWith())
+            }
+        }
+
+    @Test
+    fun `each refused auth frame gets its own close reason`() =
+        testApplication {
+            serve(hub())
+            val client = createClient { install(ClientWebSockets) }
+            val cases =
+                mapOf(
+                    """{"module":"messaging","type":"ack"}""" to "auth required",
+                    "not json" to "auth required",
+                    """{"type":"auth","accessToken":"good","last":[1]}""" to "invalid last",
+                    """{"type":"auth","accessToken":"bad","last":{"users":4}}""" to "unauthorized",
+                )
+
+            cases.forEach { (first, reason) ->
+                client.webSocket("/v1/ws") {
+                    send(Frame.Text(first))
+                    assertEquals(reason, closedWith()?.message, first)
+                }
+            }
+        }
+
+    @Test
+    fun `signing out sends session revoked and closes only that session's socket`() =
+        testApplication {
+            val hub = hub()
+            serve(hub)
+            val signedOut = gatewayIdentitySubscription(hub).handlers.getValue(SignedOut.TYPE)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                val ended = this
+                authenticate("good")
+                client.webSocket("/v1/ws") {
+                    authenticate("later")
+
+                    signedOut.handle(EventEnvelope.of(SignedOut(user, session), SignedOut.serializer()))
+
+                    val revoked = ended.nextFrame()
+                    assertEquals("system" to "session.revoked", revoked.module to revoked.type)
+                    assertEquals(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked"), ended.closedWith())
+
+                    assertTrue(hub.deliver(user, frame(9)))
+                    assertEquals(9, nextFrame().seq, "the new session's socket stays open")
+                }
+            }
+        }
+
+    @Test
+    fun `a sign-out reaches the session's socket on another node`() =
+        testApplication {
+            val redis = MemoryRedis()
+            val nodeOne = hub(redis, nodeId = "node-1")
+            val nodeTwo = hub(redis, nodeId = "node-2")
+            nodeTwo.start()
+            application {
+                install(WebSockets)
+                routing { route("/two") { nodeTwo.routes(this) } }
+            }
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/two/ws") {
+                authenticate("good")
+                redis.awaitReady("node:node-2", "conn:$user", "node-2")
+
+                gatewayIdentitySubscription(nodeOne)
+                    .handlers
+                    .getValue(SignedOut.TYPE)
+                    .handle(EventEnvelope.of(SignedOut(user, session), SignedOut.serializer()))
+
+                assertEquals("session.revoked", nextFrame().type)
+                assertEquals("session revoked", closedWith()?.message)
+                val revoke = CircasoJson.decodeFromString(NodeMessage.serializer(), redis.published.single().second)
+                assertEquals(NodeMessage.Revoke(user, sessionId = session), revoke, "by session, not by phone")
+            }
         }
 }
