@@ -87,7 +87,7 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 1. The phone streams Opus audio (16 kHz mono, about 24 kbit/s, so roughly 2 MB per 10 minutes of talking) in binary frames; the assistant relays them to `LiveTranscription` (Nova-3, `encoding=opus`) and sends interim transcripts back as JSON frames.
 2. When Nova-3 reports the end of the turn (`speech_final` after `endpointing`, or an utterance-end event), the final transcript becomes an Asha turn exactly like A2 (tools, limits, audit).
 3. The reply streams back as text frames and, sentence by sentence, through `LiveSpeech` (Aura) as binary audio frames. If the user starts talking again, the server stops the speech (barge-in) and starts a new turn.
-4. Usage counts voice seconds both ways; the socket closes at the allowance or after 30 s of silence. Audio is never stored.
+4. Frames on this socket are at most 64 KB, like the main socket (Opus frames are far smaller). Usage counts voice seconds both ways; the socket closes at the allowance or after 30 s of silence. Audio is never stored.
 5. For Swahili (the user's language setting) the live path isn't used: the phone records a clip for A3 (Whisper) and speaks the reply with its own voice.
 
 **Phase 2, WebRTC:** when the calls module brings in Cloudflare Realtime, the phone side moves to WebRTC (Opus, jitter buffer, better on poor networks) and Cloudflare forwards the audio to the assistant; the server-side transcription and speech stay the same.
