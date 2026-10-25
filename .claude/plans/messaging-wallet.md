@@ -28,6 +28,12 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 | MS5 | Media M15–M17: presigned single and multipart (> 50 MB, 16 MB parts, 500 MB cap), recipients fixed at upload, delete on last ack, `MediaSweep` daily job, group avatars | Tests with the R2 fake; sweep test |
 | MS6 | History M18–M20, key backup M21 (passkey and recovery-key wraps), settings M22, agent route, consumed events (`DeviceReplaced`, `AccountStatusChanged`, `AccountDeleted`), published events | Tests for ownership, rate limits, deletion cascade |
 
+### Gateway follow-ups (from MS1 QA, decided 2026-10-25)
+
+| Id | Slice | Done when |
+| --- | --- | --- |
+| GW1 | Phone frames: at most 100 per second per socket (excess dropped and counted, socket stays open), a maximum frame size on the WebSocket plugin (proposed 64 KB, the largest chat ciphertext), a clear close reason for a malformed `last` in the auth frame; sign-out (I8) sends `system.session.revoked` and closes that session's socket | Tests for each; done before MS4 |
+
 ### Wallet
 
 | Id | Slice | Done when |

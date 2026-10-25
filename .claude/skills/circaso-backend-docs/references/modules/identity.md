@@ -76,7 +76,7 @@ Seventeen routes: seven take a person from Google/Apple sign-in to an active ses
 | I5 | `POST /auth/phone/carrier` | onboarding | `VerifyCarrierToken` | Same as I4, from a Firebase PNV token, no SMS |
 | I6 | `POST /devices` | onboarding | `RegisterDevice` | Registers the phone's public key; activates the account on sign-up; issues the `app` session |
 | I7 | `POST /auth/refresh` | none (device-signed) | `RefreshSession` | New token pair; old refresh token dies |
-| I8 | `POST /auth/signout` | app | `SignOut` | Ends the session; the phone stays registered |
+| I8 | `POST /auth/signout` | app | `SignOut` | Ends the session; the phone stays registered; the gateway closes that session's open socket (decision 2026-10-25) |
 | I9 | `PUT /devices/current/push-token` | app | `UpdatePushToken` | Stores the FCM/APNs token |
 | I10 | `DELETE /devices/current` | app | `RemoveDevice` | Forgets this phone; next sign-in anywhere re-verifies the number |
 | I11 | `GET /account/security` | app | `GetSecurityOverview` | Phone, linked providers, this phone, verification status |

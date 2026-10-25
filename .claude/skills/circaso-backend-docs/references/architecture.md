@@ -947,7 +947,7 @@ Each phone keeps one WebSocket open to the gateway while the app is in the foreg
 
 | Module | Type | Goes to | Push if offline |
 | --- | --- | --- | --- |
-| `system` | `session.revoked` | The replaced or removed phone | Yes |
+| `system` | `session.revoked` | The replaced or removed phone, and the phone that signed out (its socket for that session is then closed) | Yes, except after its own sign-out |
 | `system` | `force.update` | All connected phones on old versions | No |
 | `users` | `contact.joined` | Everyone who has the new user's number | Yes ("Amina is on Circaso") |
 | `users` | `profile.updated` | The user's contacts | No |

@@ -6,6 +6,7 @@ Every architecture decision, newest first, with the reason it was made. A decisi
 
 | Decided | Decision | Why | Where it applies |
 | --- | --- | --- | --- |
+| 2026-10-25 | Signing out (I8) closes the socket of that session, after a `system.session.revoked` frame | A signed-out session must not keep receiving frames until the phone happens to disconnect | Identity → I8; Architecture → Realtime and push |
 | 2026-10-25 | A phone may send at most 100 frames per second over its socket; frames over the limit are dropped (not answered, socket kept open), with a counter metric | Bounds what one phone can make the server do through `ack`, `read` and `typing`, without cutting off a busy but honest client | Architecture → Realtime and push; Messaging → Socket frames |
 | 2026-10-25 | Group fan-out uses Redis pub/sub: one `PUBLISH` on `rt:fanout` that every node reads and delivers to its own sockets; no multi-key `MGET` | Works unchanged on a Redis cluster (a plain `PUBLISH` reaches every node); replaces the one-`MGET` design | Messaging; Architecture → Realtime and push |
 | 2026-10-25 | Phone-frame handlers get `userId` and `deviceId`, not `Principal`; chat ids are `ChatId` in `messaging:api` (the unused `ConversationId` in `shared` is removed); `PushMessage` gets a data-only option for chat pushes | `shared` can't depend on `identity:api`; ids live with the module that owns them, as `SessionId` does; the phone must decrypt before showing a chat notification | Messaging; Architecture → Realtime and push, Conventions → Ids |
