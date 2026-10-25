@@ -8,8 +8,8 @@ One file per business module, each in the same shape, so a new module is a new f
 | --- | --- | --- | --- | --- | --- |
 | identity | Designed — [identity.md](identity.md), screens in [identity-signin-flow.md](identity-signin-flow.md) | `circaso_identity` | `events:identity` | Accounts, Google/Apple sign-in, phone, devices, sessions, support recovery | — |
 | users | Designed — [users.md](users.md) | `circaso_users` | `events:users` | Profiles, handles, contacts, blocks, the reach rule | identity |
-| messaging | Next | `circaso_messaging` | `events:messaging` | 1:1 and group chats, messages, delivery, push for chat | users |
-| wallet | Planned | `circaso_wallet` | `events:wallet` | Circle user-controlled wallets, transaction records, statements | identity, users |
+| messaging | Draft — [messaging.md](messaging.md) | `circaso_messaging` | `events:messaging` | 1:1 and group chats, messages, delivery, push for chat | users |
+| wallet | Draft — [wallet.md](wallet.md) | `circaso_wallet` | `events:wallet` | Circle user-controlled wallets, transaction records, statements | identity, users, messaging |
 | calls | Planned | `circaso_calls` | `events:calls` | 1:1 and group calls on Cloudflare Realtime, contributions during calls | users |
 | assistant (Asha) | Outlined — [assistant.md](assistant.md) | `circaso_assistant` | `events:assistant` | Asha conversations, voice, usage and Asha Plus, proposals, audit trail | identity, users; later messaging, wallet |
 
