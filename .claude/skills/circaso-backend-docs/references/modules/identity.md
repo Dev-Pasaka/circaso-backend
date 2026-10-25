@@ -329,6 +329,7 @@ All on stream `events:identity`, in the envelope described on the Architecture t
 | `identity.AccountActivated` v1 | First device registered at sign-up (I6) | `userId`, `phoneHmac`, `hints: { displayName?, avatarUrl? }` | users: create the profile (prefilled from hints), turn waiting contacts for this number into contacts, send `contact.joined`; wallet later |
 | `identity.PhoneChanged` v1 | Number changed through support recovery | `userId`, `oldPhoneHmac`, `newPhoneHmac` | users: re-check waiting contacts for the new number |
 | `identity.DeviceReplaced` v1 | A new phone registered on an active account | `userId`, `oldDeviceId`, `newDeviceId` | gateway: close the old phone's socket, send `system.session.revoked` |
+| `identity.SignedOut` v1 | A session signed out (I8), only when it goes from active to revoked | `userId`, `sessionId` | gateway: send `system.session.revoked` to that session's socket and close it (no push) |
 | `identity.AccountStatusChanged` v1 | Suspended, reinstated, blocked | `userId`, `status` | users: hide or restore the profile, clear cached reach decisions; gateway: close sockets when not active |
 | `identity.AccountRelinked` v1 | Support recovery completed after the 48-hour notice | `userId`, `provider` | gateway: close old sockets; the user id is unchanged, so the Circle user and wallets carry over |
 | `identity.AccountDeleted` v1 | Deletion completed | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |

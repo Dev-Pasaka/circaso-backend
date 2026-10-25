@@ -688,6 +688,7 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 | `circaso_events_published_total` | counter | stream, type | Event volume |
 | `circaso_events_handled_duration_seconds` | histogram | group, type, outcome | Handler time and failures |
 | `circaso_events_lag` | gauge | group | Pending and unread messages per consumer group |
+| `circaso_gateway_socket_frames_dropped_total` | counter | reason | Phone frames dropped by the gateway (`rate_limited`) |
 | `circaso_events_dlq` | gauge | stream | Events that gave up |
 | `circaso_outbox_unpublished` | gauge | module | Events the relay had to rescue |
 | `kandra_query_duration_seconds` | histogram | table, op | Database latency per table |
@@ -939,7 +940,7 @@ Each phone keeps one WebSocket open to the gateway while the app is in the foreg
 
 **Sending to many users** (a group): `Realtime.deliverMany(userIds, envelope)` publishes the frame once, with the user list, on the broadcast channel `rt:fanout`, which every node subscribes to beside its own channel. Each node writes it to the sockets it holds for those users, from its in-memory connection table, with no Redis read. Only for push-worthy frames does the gateway look up who has no socket (single-key `GET`s of `rt:conn:{userId}` in one pipeline, never a multi-key command, so it works on a Redis cluster) and push them in batches of 100.
 
-**From the phone**: a frame `{"module": "messaging", "type": "ack", "data": {…}}` after the auth frame goes to the module that registered a `RealtimeInbound` for that `module`, with the token's user and device; unknown modules and unreadable frames are dropped and the socket stays open. A socket may send at most 100 frames per second; frames over the limit are dropped the same way and counted. The `rt:` prefix belongs to the gateway.
+**From the phone**: a frame `{"module": "messaging", "type": "ack", "data": {…}}` after the auth frame goes to the module that registered a `RealtimeInbound` for that `module`, with the token's user and device; unknown modules and unreadable frames are dropped and the socket stays open. A socket may send at most 100 frames per second; frames over the limit are dropped the same way and counted. A frame may be at most 64 KB; a larger one closes the socket with 1009. The `rt:` prefix belongs to the gateway.
 
 **Catching up after a gap**: every module that sends frames implements `RealtimeReplay` from `shared`, `suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>>`. The module takes `seq` from a per-user counter under its own Redis prefix (`usr:seq:{userId}`) and keeps what it sent in its own keyspace for 7 days (`realtime_by_user`). On reconnect the gateway calls each module's replay with the app's last `seq`; if the gap is older than 7 days, the module answers with a `resync` frame and the app reloads that module's data over HTTP.
 
