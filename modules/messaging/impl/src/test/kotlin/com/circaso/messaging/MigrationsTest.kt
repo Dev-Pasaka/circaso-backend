@@ -1,6 +1,7 @@
 package com.circaso.messaging
 
 import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
+import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
 import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import io.kandra.test.FakeKandraSession
 import kotlin.test.Test
@@ -20,6 +21,15 @@ class MigrationsTest {
                 "(event_id ASC) AND default_time_to_live = 604800",
         )
 
+    private val v002 =
+        listOf(
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.key_bundles (user_id UUID, device_id UUID, identity_key " +
+                "TEXT, signed_pre_key TEXT, signed_pre_key_at TIMESTAMP, signed_pre_key_id INT, " +
+                "signed_pre_key_signature TEXT, PRIMARY KEY (user_id))",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.one_time_prekeys (user_id UUID, key_id INT, public_key " +
+                "TEXT, PRIMARY KEY (user_id, key_id)) WITH CLUSTERING ORDER BY (key_id ASC)",
+        )
+
     @Test
     fun `V001 runs exactly the statements it was applied with`() {
         val session = FakeKandraSession()
@@ -27,5 +37,14 @@ class MigrationsTest {
         V001_CreateMessagingTables.up(session)
 
         assertEquals(v001, session.capturedStatements().map { (it as SimpleStatement).query })
+    }
+
+    @Test
+    fun `V002 runs exactly the statements it was applied with`() {
+        val session = FakeKandraSession()
+
+        V002_CreateKeyDirectoryTables.up(session)
+
+        assertEquals(v002, session.capturedStatements().map { (it as SimpleStatement).query })
     }
 }

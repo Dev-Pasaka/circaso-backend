@@ -97,6 +97,7 @@ When a limit is hit the answer is `429` with `request.rate_limited`, `details.re
 | Wrong codes | 5, then the account is locked for 10 minutes |
 | Contact sync | 5 per user per hour |
 | `@handle` lookups | 30 per user per hour |
+| Key bundles (`GET /v1/keys/{userId}`) | 60 per user per hour, answered with `messaging.rate_limited` |
 | Support recovery requests | 3 per number per day, 5 per IP per day |
 | Phone release | 1 per number per 7 days |
 | Asha's agent token (all `/v1/agent/` routes) | 60 per user per minute, in its own bucket |
@@ -153,6 +154,9 @@ The shared ones, then each area's own. Codes are stable.
 | `users.invite_invalid` | 404 | The invite expired or was revoked |
 | `users.sync_too_large` | 400 | More than 1,000 numbers in one batch |
 | `users.cannot_block_self` | 400 | You cannot block yourself |
+| `messaging.keys_not_found` | 404 | The person has not published encryption keys yet, or this phone has not published its own |
+| `messaging.keys_proof_invalid` | 403 | A key upload without a valid device signature, or one more than 5 minutes off the server clock |
+| `messaging.rate_limited` | 429 | More than 60 key bundles in an hour; `retryAfterSeconds` says when to try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
