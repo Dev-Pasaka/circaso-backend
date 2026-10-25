@@ -1,6 +1,6 @@
 # Assistant module (Asha)
 
-Asha answers "what do I want to know or do, said in my own words": she is Circaso's in-app assistant, by text or voice, built with Koog. She reads the user's own data through read-only routes, and later drafts messages and payments that only the user can confirm. Keyspace `circaso_assistant`, Redis prefix `ast:`, stream `events:assistant`. Status: planned; Phase A (read) first, Phase B (act) next.
+Asha answers "what do I want to know or do, said in my own words": she is Circaso's in-app assistant, by text or voice, on Cloudflare Workers AI models. She reads the user's own data through read-only routes, and later drafts messages and payments that only the user can confirm. Keyspace `circaso_assistant`, Redis prefix `ast:`, stream `events:assistant`. Status: planned; Phase A (read) first, Phase B (act) next.
 
 ## Overview
 
@@ -68,7 +68,7 @@ Asha's runtime (the Koog agent, prompts, tools and memory of the conversation) l
 
 **Every model runs on Cloudflare Workers AI, through AI Gateway** (decision 2026-10-25); each model id is a setting, so swapping one is a config change. No Workers AI voice speaks Swahili and Deepgram's live models don't transcribe it, so Swahili uses clip transcription (Whisper) and the phone's own text-to-speech.
 
-The integrations call Workers AI through AI Gateway (`https://gateway.ai.cloudflare.com/v1/<accountId>/<gateway>/workers-ai/…`) with `HttpClients.named("workers-ai")`: the OpenAI-compatible chat completions route for the text and image models, the model routes for Whisper and Aura clips, and WebSocket connections for Flux and Aura streaming. Settings: `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY`, the secret `CLOUDFLARE_AI_TOKEN`, and one `INTEGRATIONS_AI_MODEL_*` per model. AI Gateway logging is off for Asha's routes (inputs aren't kept). Every Deepgram call (Flux, Nova-3, Aura) sends `mip_opt_out=true`, so audio never enters Deepgram's model improvement programme (it defaults to opted in).
+The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accounts/<accountId>/ai/` through AI Gateway (the gateway named in the `cf-aig-gateway-id` header, logging off per request with `cf-aig-collect-log: false`) with `HttpClients.named("workers-ai")`: `v1/chat/completions` (OpenAI-compatible) for the text and image models, `run/@cf/<model>` for Whisper and Aura clips, and WebSocket connections for live voice (AI2). No agent framework: the assistant calls `LanguageModel` directly. Kimi K2.6 needs paid Workers AI (the Workers Paid plan, or AI Gateway credits with unified billing). Settings: `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY`, the secret `CLOUDFLARE_AI_TOKEN`, and one `INTEGRATIONS_AI_MODEL_*` per model. AI Gateway logging is off for Asha's routes (inputs aren't kept). Every Deepgram call (Flux, Nova-3, Aura) sends `mip_opt_out=true`, so audio never enters Deepgram's model improvement programme (it defaults to opted in).
 
 ### Depends on
 
@@ -162,3 +162,4 @@ The user talks to Asha with the **user** token; Asha's tools call other modules 
 | `assistant.voice_too_long` | INVALID → 400 | Clip over 60 s |
 | `assistant.proposal_expired` | CONFLICT → 409 | Confirming after 10 minutes |
 | `assistant.model_unavailable` | UPSTREAM → 502 | The model provider is down |
+| `assistant.language_not_supported` | INVALID → 400 | A4 asked for speech in a language the server voice doesn't speak (Swahili: the phone speaks it) |
