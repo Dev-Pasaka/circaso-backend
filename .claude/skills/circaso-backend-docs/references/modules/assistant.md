@@ -68,7 +68,7 @@ Asha's runtime (the Koog agent, prompts, tools and memory of the conversation) l
 
 **Every model runs on Cloudflare Workers AI, through AI Gateway** (decision 2026-10-25); each model id is a setting, so swapping one is a config change. No Workers AI voice speaks Swahili and Deepgram's live models don't transcribe it, so Swahili uses clip transcription (Whisper) and the phone's own text-to-speech.
 
-The integrations call Workers AI through AI Gateway (`https://gateway.ai.cloudflare.com/v1/<accountId>/<gateway>/workers-ai/…`) with `HttpClients.named("workers-ai")`: the OpenAI-compatible chat completions route for the text and image models, the model routes for Whisper and Aura clips, and WebSocket connections for Flux and Aura streaming. Settings: `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY`, the secret `CLOUDFLARE_AI_TOKEN`, and one `INTEGRATIONS_AI_MODEL_*` per model. AI Gateway logging is off for Asha's routes (inputs aren't kept).
+The integrations call Workers AI through AI Gateway (`https://gateway.ai.cloudflare.com/v1/<accountId>/<gateway>/workers-ai/…`) with `HttpClients.named("workers-ai")`: the OpenAI-compatible chat completions route for the text and image models, the model routes for Whisper and Aura clips, and WebSocket connections for Flux and Aura streaming. Settings: `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY`, the secret `CLOUDFLARE_AI_TOKEN`, and one `INTEGRATIONS_AI_MODEL_*` per model. AI Gateway logging is off for Asha's routes (inputs aren't kept). Every Deepgram call (Flux, Nova-3, Aura) sends `mip_opt_out=true`, so audio never enters Deepgram's model improvement programme (it defaults to opted in).
 
 ### Depends on
 
