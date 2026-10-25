@@ -101,7 +101,7 @@ unless `org.testcontainers:cassandra` is added to the test classpath by hand. `k
 
 **Status:** reproduced (compiled `75a8a9d` and the next commit, same source except layout, and compared the class files), and hit in production-like use: on 2026-10-25 the sandbox deploy's migration step stopped on `users` v1 (stored `11f51c29…8658`, computed `6f5bf8e7…6d83`) after the repository-wide reformat in `b9a7eee` moved the migration's lines. Nothing was restarted; the old version kept serving.
 
-A migration whose `up()` uses an inline function (`listOf(...).forEach { session.execute(it) }`) gets Kotlin's source-line table (the SMAP) as a text entry in the class's constant pool. `BytecodeNormalizer` removes the `SourceDebugExtension` and `LineNumberTable` attributes, but not that constant, so the checksum depends on which lines the code is on. Reformatting the file, or adding a KDoc line above the migration, makes `KandraMigrationRunner` fail on an already-applied migration:
+A migration whose `up()` uses an inline function (`listOf(...).forEach { session.execute(it) }`) gets Kotlin's source-line table (the SMAP) as a text entry in the class's constant pool. `BytecodeNormalizer` removes the `SourceDebugExtension` and `LineNumberTable` attributes, but not that constant, so the checksum depends on which lines the code is on. The constant stays because Kotlin also writes the SMAP into a `@kotlin.jvm.internal.SourceDebugExtension` annotation on the class, and the normalizer keeps annotations. The SMAP records the file's total line count too (`1#1,64:1`), so a line added anywhere in the file, even below the migration, changes the checksum. Reformatting the file, or adding a KDoc line above the migration, makes `KandraMigrationRunner` fail on an already-applied migration:
 
 ```
 KandraMigrationException: Migration v1 ('create users tables') checksum mismatch — the migration was modified after being applied.
@@ -109,7 +109,7 @@ KandraMigrationException: Migration v1 ('create users tables') checksum mismatch
 
 The SQL and the instructions were identical; only `line 25: 0` became `line 34: 0` in the javap output.
 
-**What we do:** migrations avoid inline functions (a plain `for` loop), so their classes carry no line table. A checksum that already changed is updated once in `kandra_migrations`, as Kandra's own recovery note says, after confirming the CQL the migration runs is unchanged. Until 2026-10-25 every module's `V001` (identity, users, assistant, messaging) still used `listOf(…).forEach { session.execute(it) }`, which is why the reformat broke them; they are being moved to `for` loops.
+**What we do:** migrations avoid inline functions (a plain `for` loop), so their classes carry no line table. A checksum that already changed is updated once in `kandra_migrations`, as Kandra's own recovery note says, after confirming the CQL the migration runs is unchanged. Until 2026-10-25 every module's `V001` (identity, users, assistant, messaging) still used `listOf(…).forEach { session.execute(it) }`, which is why the reformat broke them. On branch `fix/migration-checksums` they run a `for` loop; `MigrationClassesTest` (app) fails if any migration class has a `SMAP` constant, and each module's `MigrationsTest` pins the CQL its `V001` runs.
 
 ## Not bugs, but surprises worth a line in the docs
 
