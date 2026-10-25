@@ -45,3 +45,20 @@ interface TextToSpeech {
 }
 
 class SpokenAudio(val bytes: ByteArray, val contentType: String)
+
+/**
+ * Reads a photo for Asha, in our language: an image and what to look for go in, text comes out. The assistant
+ * puts that text into the conversation for [LanguageModel], so the text model never needs to see images.
+ */
+interface VisionModel {
+    suspend fun describe(image: ImageInput, instruction: String): Resource<VisionAnswer>
+}
+
+/** A photo as its bytes (what an upload gives us) or as an address the provider can fetch. */
+sealed interface ImageInput {
+    class Bytes(val bytes: ByteArray, val contentType: String) : ImageInput
+
+    data class Url(val url: String) : ImageInput
+}
+
+data class VisionAnswer(val text: String, val usage: ModelUsage)

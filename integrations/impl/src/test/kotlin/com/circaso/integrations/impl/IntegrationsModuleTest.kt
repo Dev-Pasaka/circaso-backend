@@ -6,6 +6,10 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
+import com.circaso.integrations.api.ImageInput
+import com.circaso.integrations.api.LanguageModel
+import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
@@ -16,8 +20,14 @@ import com.circaso.integrations.api.SmsPurpose
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
+import com.circaso.integrations.api.TextToSpeech
+import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
+import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
+import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
+import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
+import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import io.ktor.client.engine.mock.respondOk
@@ -85,11 +95,58 @@ class IntegrationsModuleTest {
         }
 
     @Test
-    fun `a vendor placeholder fails loudly instead of pretending to deliver`() =
+    fun `workers-ai refuses to start without the account, the gateway and the token`() {
+        val e = assertFailsWith<Exception> { koin("integrations.stt.provider" to "workers-ai").get<SpeechToText>() }
+        assertTrue(
+            "cloudflare.account-id" in
+                generateSequence<Throwable>(
+                    e,
+                ) { it.cause }.joinToString { it.message.orEmpty() },
+        )
+    }
+
+    @Test
+    fun `workers-ai serves every Asha model through one gateway once configured`() =
         runTest {
-            val stt = koin("integrations.stt.provider" to "workers-ai").get<SpeechToText>()
-            val result = stt.transcribe(ByteArray(1), "audio/mpeg", null)
-            assertEquals("integrations.not_implemented", (result as Resource.Error).error.code)
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                startKoin {
+                    modules(
+                        integrationsModule(
+                            MapConfig(
+                                mapOf(
+                                    "cloudflare.account-id" to "acc123",
+                                    "integrations.ai.gateway" to "asha",
+                                    "integrations.ai.model.text" to "@cf/zai-org/glm-5.2",
+                                    "integrations.llm.provider" to "workers-ai",
+                                    "integrations.vision.provider" to "workers-ai",
+                                    "integrations.stt.provider" to "workers-ai",
+                                    "integrations.tts.provider" to "workers-ai",
+                                ),
+                            ),
+                            object : Secrets {
+                                override fun get(name: String): String? =
+                                    "cf-token".takeIf { name == "cloudflare.ai-token" }
+                            },
+                        ),
+                        org.koin.dsl.module { single<HttpClients> { clients } },
+                    )
+                }.koin
+
+            assertIs<WorkersAiLanguageModel>(koin.get<LanguageModel>())
+            assertIs<WorkersAiVisionModel>(koin.get<VisionModel>())
+            assertIs<WorkersAiSpeechToText>(koin.get<SpeechToText>())
+            assertIs<WorkersAiTextToSpeech>(koin.get<TextToSpeech>())
+            koin.get<LanguageModel>().complete(ModelRequest("s", listOf(ModelMessage.User("u"))))
+            assertTrue(clients.names.all { it == "workers-ai" })
+            assertTrue("glm-5.2" in clients.last.text(), "a model id setting replaces the default")
+        }
+
+    @Test
+    fun `vision defaults to its development model`() =
+        runTest {
+            val answer = koin().get<VisionModel>().describe(ImageInput.Url("https://x.example/p.png"), "Describe it")
+            assertIs<Resource.Success<*>>(answer)
         }
 
     @Test

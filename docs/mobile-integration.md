@@ -273,7 +273,7 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `POST /v1/assistant/voice`<br>**A3** Transcribe a voice clip | `app` | — → TranscriptResponse | **DEV STUB** | (the user token). The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio and `X-Duration-Seconds`. Raw audio body, up to 60 s and 3 MB, with `Content-Type` and `X-Duration-Seconds`. Speech-to-text is a stub on dev. Errors: `assistant.voice_too_long`, `assistant.quota_exceeded`. |
-| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **DEV STUB** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. Text-to-speech is a stub on dev. Errors: `assistant.quota_exceeded`. |
+| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **DEV STUB** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. Text-to-speech is a stub on dev. The server voice (Workers AI Aura) speaks English only: speak a Swahili reply with the phone's own text-to-speech instead of calling this route (with `"language": "sw"` the real provider answers `assistant.model_unavailable`). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`. |
 | `GET /v1/assistant/usage`<br>**A7** Today's allowance used and left, and the plan | `app` | — → UsageResponse | **PARTIAL** | (the user token). Works; the free allowance numbers and the paid plan are not decided yet, so show what the server returns and nothing hard-coded. |
 
 ### Account and security
@@ -332,7 +332,7 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 | `done` | `{"message": {…}}` | The reply is complete and saved. |
 
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
-- **Voice out:** `POST /v1/assistant/speech` `{ "text", "language"? }` → audio bytes (not the envelope).
+- **Voice out:** `POST /v1/assistant/speech` `{ "text", "language"? }` → audio bytes (not the envelope). English only; Swahili replies are spoken by the phone's own voice.
 - **Allowance:** `GET /v1/assistant/usage` → used, left and plan. Show what the server says; the free allowance is not decided yet, so hard-code nothing. `assistant.quota_exceeded` carries `retryAfterSeconds` for the reset.
 - The **agent** token only works on `GET /v1/agent/...` routes and exists for Asha's own tools; the app never calls those directly.
 
