@@ -127,6 +127,8 @@ class SocketHub(
     suspend fun deliverMany(userIds: Collection<UserId>, frame: RealtimeEnvelope): List<UserId> {
         val users = userIds.distinct()
         if (users.isEmpty()) return emptyList()
+        // TODO(decision: Redis cluster; one multi-key MGET works on standalone Redis/Valkey only, cluster mode
+        //  needs hash tags on rt:conn keys)
         val nodes = redis.getMany(users.map { "conn:$it" })
         val offline = users.filterIndexed { index, _ -> nodes[index] == null }
         users
@@ -268,6 +270,7 @@ class SocketHub(
      * never closes the socket.
      */
     private suspend fun receive(connection: Connection, text: String) {
+        // TODO(decision: rate limit on phone frames; proposed 30 per second per socket, excess dropped, before MS4)
         val frame = runCatching { CircasoJson.decodeFromString(ClientFrame.serializer(), text) }.getOrNull()
         val handler = frame?.let { incoming -> inbound().firstOrNull { it.module == incoming.module } }
         if (frame == null || handler == null) {

@@ -78,9 +78,12 @@ class GatewayRealtime(
         }
     }
 
-    /** Only when the sender marked it `pushable`: sender keys and control messages wake nobody. */
+    /**
+     * Only when the sender marked it `pushable`; a frame without the field wakes nobody (Messaging → Frame data), so
+     * sender keys and control messages never do.
+     */
     private fun newMessagePush(data: JsonObject?): PushMessage? {
-        val pushable = (data?.get("pushable") as? JsonPrimitive)?.booleanOrNull ?: true
+        val pushable = (data?.get("pushable") as? JsonPrimitive)?.booleanOrNull ?: false
         if (!pushable) return null
         return PushMessage("Circaso", NEW_MESSAGE, ids(data, "chatId", "messageId"))
     }
@@ -88,7 +91,7 @@ class GatewayRealtime(
     /** Only the person added is woken (`userId` in the frame); the other members just see it next time. */
     private fun addedToGroupPush(data: JsonObject?, recipient: UserId): PushMessage? {
         if (data.text("userId") != recipient.toString()) return null
-        // TODO(decision: wording of the member.added push; the spec says "Yes for the person added" and nothing more)
+        // Never the group name, which is sealed; once pushes are data-only (MS4) the phone words it itself.
         return PushMessage("Circaso", "You were added to a group", ids(data, "chatId"))
     }
 

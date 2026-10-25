@@ -51,20 +51,6 @@ value class DeviceId(val value: UUID) {
     object Serializer : UuidIdSerializer<DeviceId>("DeviceId", ::DeviceId, DeviceId::value)
 }
 
-@Serializable(with = ConversationId.Serializer::class)
-@JvmInline
-value class ConversationId(val value: UUID) {
-    override fun toString(): String = value.toString()
-
-    companion object {
-        fun new(): ConversationId = ConversationId(Uuid7.generate())
-
-        fun parse(raw: String): ConversationId? = Uuid7.parse(raw)?.let(::ConversationId)
-    }
-
-    object Serializer : UuidIdSerializer<ConversationId>("ConversationId", ::ConversationId, ConversationId::value)
-}
-
 /** Identifies one domain event; consumers record it to skip repeats. */
 @Serializable(with = EventId.Serializer::class)
 @JvmInline

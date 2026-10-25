@@ -361,7 +361,7 @@ class SocketHubTest {
         }
 
     @Test
-    fun `offline members of a group get a data-only new-message push, online ones none`() =
+    fun `offline members of a group get an ids-only new-message push, online ones none`() =
         runBlocking {
             val redis = MemoryRedis()
             val push = RecordingPush()
@@ -391,6 +391,21 @@ class SocketHubTest {
                 List(3) { UserId.new() },
                 frame(1, "messaging", "message.new", mapOf("chatId" to "c1", "messageId" to "m1", "pushable" to false)),
             )
+
+            assertTrue(push.sent.isEmpty())
+        }
+
+    @Test
+    fun `a new-message frame without pushable wakes nobody`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+
+            realtime.deliverMany(
+                List(3) { UserId.new() },
+                frame(1, "messaging", "message.new", mapOf("chatId" to "c1", "messageId" to "m1")),
+            )
+            realtime.deliver(UserId.new(), frame(2, "messaging", "message.new", mapOf("chatId" to "c1")))
 
             assertTrue(push.sent.isEmpty())
         }
