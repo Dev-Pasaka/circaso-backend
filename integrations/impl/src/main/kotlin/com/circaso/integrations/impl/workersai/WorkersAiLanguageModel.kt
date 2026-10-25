@@ -25,8 +25,15 @@ import org.slf4j.LoggerFactory
  * conversation becomes OpenAI messages: the system prompt first, a tool call the model made earlier goes back as an
  * assistant message with `tool_calls`, and its result as a `tool` message with the same call id, so a round trip of
  * tool calls reads to the model exactly as it happened. Nothing of the conversation is logged.
+ *
+ * [maxOutputTokens] caps the answer, reasoning included, as `max_completion_tokens` (Kimi K2.6 documents `max_tokens`
+ * as its deprecated alias). The call is never retried: one turn waits at most the client's 60 s.
  */
-class WorkersAiLanguageModel(private val gateway: WorkersAiGateway, private val model: String) : LanguageModel {
+class WorkersAiLanguageModel(
+    private val gateway: WorkersAiGateway,
+    private val model: String,
+    private val maxOutputTokens: Int,
+) : LanguageModel {
     private val log = LoggerFactory.getLogger(WorkersAiLanguageModel::class.java)
 
     override suspend fun complete(request: ModelRequest): Resource<ModelResponse> {
@@ -40,16 +47,18 @@ class WorkersAiLanguageModel(private val gateway: WorkersAiGateway, private val 
         val body =
             buildJsonObject {
                 put("model", model)
+                put("max_completion_tokens", maxOutputTokens)
                 put("messages", messagesJson(request))
                 if (tools.isNotEmpty()) put("tools", JsonArray(tools))
             }
 
-        return when (val reply = gateway.post(CHAT_COMPLETIONS, "chat_completion", body)) {
+        return when (val reply = gateway.post(CHAT_COMPLETIONS, "chat_completion", body, retried = false)) {
             is Resource.Success -> read(reply.data)
             is Resource.Error -> reply
         }
     }
 
+    /** An answer with neither text nor a tool call (the budget spent on reasoning, say) is no answer at all. */
     private fun read(reply: GatewayReply): Resource<ModelResponse> {
         val answer = reply.json()
         val message = answer?.firstMessage()
@@ -57,7 +66,13 @@ class WorkersAiLanguageModel(private val gateway: WorkersAiGateway, private val 
             log.warn("workers-ai chat completion had no message")
             return Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         }
-        return Resource.success(ModelResponse(message.contentText(), toolCalls(message), answer.usage()))
+        val text = message.contentText()?.takeIf { it.isNotBlank() }
+        val toolCalls = toolCalls(message)
+        if (text == null && toolCalls.isEmpty()) {
+            log.warn("workers-ai chat completion was empty: finish_reason={}", answer.finishReason())
+            return Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
+        }
+        return Resource.success(ModelResponse(text, toolCalls, answer.usage()))
     }
 
     private fun toolCalls(message: JsonObject): List<ToolCall> =

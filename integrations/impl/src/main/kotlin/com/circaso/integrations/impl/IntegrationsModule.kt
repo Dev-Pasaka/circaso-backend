@@ -152,6 +152,7 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                             WorkersAiLanguageModel(
                                 workersAi(config, secrets, get()),
                                 ai.string("model.text", WORKERS_AI_TEXT_MODEL),
+                                maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
                             )
                         },
                     ),
@@ -200,7 +201,6 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                             WorkersAiTextToSpeech(
                                 workersAi(config, secrets, get()),
                                 ai.string("model.tts", WORKERS_AI_TTS_MODEL),
-                                mipOptOut = ai.boolean("tts.mip-opt-out", true),
                             )
                         },
                     ),
@@ -323,6 +323,9 @@ private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
+
+// A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
+private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 4096
 
 /**
  * Every Workers AI model needs `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY` (the AI Gateway's name) and the secret

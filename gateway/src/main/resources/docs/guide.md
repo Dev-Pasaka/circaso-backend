@@ -157,6 +157,7 @@ The shared ones, then each area's own. Codes are stable.
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
 | `assistant.model_unavailable` | 502 | Asha's model is down; try again |
+| `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself |
 
 ## Talking to Asha: streaming and the phone's help
 

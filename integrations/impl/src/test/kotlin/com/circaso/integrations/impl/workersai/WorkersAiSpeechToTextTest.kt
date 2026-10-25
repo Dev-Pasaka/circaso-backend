@@ -47,10 +47,21 @@ class WorkersAiSpeechToTextTest {
         }
 
     @Test
-    fun `without a hint Whisper detects the language itself`() =
+    fun `the hint is the first Accept-Language range without its region`() =
         runBlocking<Unit> {
-            stt.transcribe(clip, "audio/mp4", null)
-            assertNull(clients.last.json()["language"])
+            fun hintFor(acceptLanguage: String?): String? {
+                runBlocking { stt.transcribe(clip, "audio/mp4", acceptLanguage) }
+                return clients.last
+                    .json()["language"]
+                    ?.jsonPrimitive
+                    ?.content
+            }
+
+            assertEquals("sw", hintFor("sw,en;q=0.9"))
+            assertEquals("en", hintFor("en-KE;q=1.0, sw-KE;q=0.9"))
+            assertNull(hintFor("*"), "no language named, so Whisper detects it")
+            assertNull(hintFor(null))
+            assertNull(hintFor("not a language"))
         }
 
     @Test

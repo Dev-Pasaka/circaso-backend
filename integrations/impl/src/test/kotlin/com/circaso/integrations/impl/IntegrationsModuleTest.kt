@@ -34,6 +34,7 @@ import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
+import org.koin.dsl.module
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -64,7 +65,7 @@ class IntegrationsModuleTest {
                         override fun get(name: String): String? = null
                     },
                 ),
-                org.koin.dsl.module {
+                module {
                     single<HttpClients> {
                         FakeHttpClients { _ ->
                             respondOk()
@@ -129,7 +130,7 @@ class IntegrationsModuleTest {
                                     "cf-token".takeIf { name == "cloudflare.ai-token" }
                             },
                         ),
-                        org.koin.dsl.module { single<HttpClients> { clients } },
+                        module { single<HttpClients> { clients } },
                     )
                 }.koin
 
@@ -145,7 +146,7 @@ class IntegrationsModuleTest {
     @Test
     fun `vision defaults to its development model`() =
         runTest {
-            val answer = koin().get<VisionModel>().describe(ImageInput.Url("https://x.example/p.png"), "Describe it")
+            val answer = koin().get<VisionModel>().describe(ImageInput(byteArrayOf(1, 2), "image/png"), "Describe it")
             assertIs<Resource.Success<*>>(answer)
         }
 

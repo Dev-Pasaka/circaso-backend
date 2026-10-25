@@ -14,6 +14,7 @@ import com.circaso.shared.Resource
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,7 +30,8 @@ class WorkersAiLanguageModelTest {
             val (body, status) = replies.removeFirst()
             json(body, status)
         }
-    private val model = WorkersAiLanguageModel(WorkersAiKit.gateway(clients), "@cf/moonshotai/kimi-k2.6")
+    private val model =
+        WorkersAiLanguageModel(WorkersAiKit.gateway(clients), "@cf/moonshotai/kimi-k2.6", maxOutputTokens = 4096)
 
     private val searchContacts =
         ToolSpec(
@@ -62,11 +64,27 @@ class WorkersAiLanguageModelTest {
             assertEquals("/client/v4/accounts/acc123/ai/v1/chat/completions", request.url.encodedPath)
             val body = request.json()
             assertEquals("@cf/moonshotai/kimi-k2.6", body["model"]!!.jsonPrimitive.content)
+            assertEquals(4096, body["max_completion_tokens"]!!.jsonPrimitive.int, "the answer is always capped")
             val messages = body["messages"]!!.jsonArray.map { it.jsonObject }
             assertEquals(listOf("system", "user"), messages.map { it["role"]!!.jsonPrimitive.content })
             assertEquals("You are Asha.", messages[0]["content"]!!.jsonPrimitive.content)
             assertEquals("Hello", messages[1]["content"]!!.jsonPrimitive.content)
             assertNull(body["tools"], "no tools, no tools field")
+        }
+
+    @Test
+    fun `a reply with neither text nor a tool call is Unavailable`() =
+        runBlocking<Unit> {
+            val request = ModelRequest("s", listOf(ModelMessage.User("u")))
+            replies +=
+                """
+                {"choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"length"}],
+                 "usage":{"prompt_tokens":50,"completion_tokens":4096}}
+                """.trimIndent() to 200
+            assertIs<IntegrationError.Unavailable>((model.complete(request) as Resource.Error).error)
+
+            replies += completion("""{"role":"assistant","content":"  ","tool_calls":[]}""") to 200
+            assertIs<IntegrationError.Unavailable>((model.complete(request) as Resource.Error).error)
         }
 
     @Test

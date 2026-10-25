@@ -15,7 +15,8 @@ import java.util.Base64
 /**
  * Reads a photo with the image model (`@cf/meta/llama-4-scout-17b-16e-instruct` by default) on the OpenAI-compatible
  * chat completions route: one user message holding the instruction as a `text` part and the photo as an `image_url`
- * part (a `data:` URL for bytes, the address itself for a URL). Neither the photo nor the answer is logged.
+ * part with a `data:` URL. Like the text model it is never retried, so a photo turn waits at most the client's 60 s.
+ * Neither the photo nor the answer is logged.
  */
 class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val model: String) : VisionModel {
     private val log = LoggerFactory.getLogger(WorkersAiVisionModel::class.java)
@@ -40,7 +41,7 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
                                 add(
                                     buildJsonObject {
                                         put("type", "image_url")
-                                        putJsonObject("image_url") { put("url", address(image)) }
+                                        putJsonObject("image_url") { put("url", dataUrl(image)) }
                                     },
                                 )
                             }
@@ -49,7 +50,7 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
                 }
             }
 
-        return when (val reply = gateway.post(CHAT_COMPLETIONS, "describe_image", body)) {
+        return when (val reply = gateway.post(CHAT_COMPLETIONS, "describe_image", body, retried = false)) {
             is Resource.Success -> read(reply.data)
             is Resource.Error -> reply
         }
@@ -59,17 +60,14 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
         val answer = reply.json()
         val text = answer?.firstMessage()?.contentText()
         if (answer == null || text.isNullOrBlank()) {
-            log.warn("workers-ai image answer had no text")
+            log.warn("workers-ai image answer had no text: finish_reason={}", answer?.finishReason())
             return Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         }
         return Resource.success(VisionAnswer(text, answer.usage()))
     }
 
-    private fun address(image: ImageInput): String =
-        when (image) {
-            is ImageInput.Url -> image.url
-            is ImageInput.Bytes -> "data:${image.contentType};base64,${Base64.getEncoder().encodeToString(image.bytes)}"
-        }
+    private fun dataUrl(image: ImageInput) =
+        "data:${image.contentType};base64,${Base64.getEncoder().encodeToString(image.bytes)}"
 
     private companion object {
         const val MAX_TOKENS = 1024

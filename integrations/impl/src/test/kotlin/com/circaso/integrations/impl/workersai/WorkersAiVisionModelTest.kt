@@ -43,7 +43,7 @@ class WorkersAiVisionModelTest {
         runBlocking<Unit> {
             val jpeg = byteArrayOf(-1, -40, -1, -32, 1, 2, 3)
 
-            val result = vision.describe(ImageInput.Bytes(jpeg, "image/jpeg"), "What does this receipt say?")
+            val result = vision.describe(ImageInput(jpeg, "image/jpeg"), "What does this receipt say?")
 
             val answer = (result as Resource.Success).data
             assertEquals("A Naivas receipt for KES 1,250.", answer.text)
@@ -63,23 +63,11 @@ class WorkersAiVisionModelTest {
         }
 
     @Test
-    fun `a photo at an address is passed as that address`() =
-        runBlocking<Unit> {
-            vision.describe(ImageInput.Url("https://files.example.com/p.png?sig=abc"), "Describe it")
-
-            val image = sentParts()[1]
-            assertEquals(
-                "https://files.example.com/p.png?sig=abc",
-                image["image_url"]!!.jsonObject["url"]!!.jsonPrimitive.content,
-            )
-        }
-
-    @Test
     fun `an answer with no text is Unavailable`() =
         runBlocking<Unit> {
             reply = """{"choices":[{"index":0,"message":{"role":"assistant","content":""}}]}"""
 
-            val result = vision.describe(ImageInput.Url("https://x.example/p.png"), "Describe it")
+            val result = vision.describe(ImageInput(byteArrayOf(1, 2), "image/png"), "Describe it")
 
             assertIs<IntegrationError.Unavailable>((result as Resource.Error).error)
         }

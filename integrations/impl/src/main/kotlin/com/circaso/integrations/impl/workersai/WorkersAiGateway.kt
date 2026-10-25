@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.shared.Resource
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.retry
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -44,17 +45,23 @@ class GatewayReply(val bytes: ByteArray, val contentType: String?) {
 class WorkersAiGateway(private val http: HttpClient, private val token: String, private val gateway: String) {
     private val log = LoggerFactory.getLogger(WorkersAiGateway::class.java)
 
-    /** POSTs [body] to [path] (relative to the AI REST API, like `v1/chat/completions`). */
+    /**
+     * POSTs [body] to [path] (relative to the AI REST API, like `v1/chat/completions`). With [retried] false the
+     * shared retry rules are off for this call: a model turn can already run to the 60 s timeout, and a user
+     * shouldn't wait for several of them (Architecture → Infrastructure, the shared HTTP client).
+     */
     suspend fun post(
         path: String,
         operation: String,
         body: JsonObject,
+        retried: Boolean = true,
     ): Resource<GatewayReply> {
         val (status, reply) =
             try {
                 val response =
                     http.post(path) {
                         operation(operation)
+                        if (!retried) retry { noRetry() }
                         header(HttpHeaders.Authorization, "Bearer $token")
                         header(GATEWAY_HEADER, gateway)
                         header(COLLECT_LOG_HEADER, "false")

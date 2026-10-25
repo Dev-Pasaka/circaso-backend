@@ -14,6 +14,10 @@ internal const val CHAT_COMPLETIONS = "v1/chat/completions"
 internal fun JsonObject.firstMessage(): JsonObject? =
     ((this["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
 
+/** Why the model stopped (`stop`, `length`, `tool_calls`): the only part of an empty answer worth logging. */
+internal fun JsonObject.finishReason(): String? =
+    ((this["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.text("finish_reason")
+
 /** The message's text; null when the model answered only with tool calls. */
 internal fun JsonObject.contentText(): String? =
     when (val content = this["content"]) {

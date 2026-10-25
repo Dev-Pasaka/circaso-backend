@@ -117,11 +117,7 @@ class FakeVisionModel : VisionModel {
 
     override suspend fun describe(image: ImageInput, instruction: String): Resource<VisionAnswer> {
         instructions += instruction
-        val what =
-            when (image) {
-                is ImageInput.Bytes -> "a ${image.contentType} photo of ${image.bytes.size} bytes"
-                is ImageInput.Url -> "a photo at an address"
-            }
+        val what = "a ${image.contentType} photo of ${image.bytes.size} bytes"
         return Resource.success(VisionAnswer("(development model) I see $what.", ModelUsage(100, 10)))
     }
 }

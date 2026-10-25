@@ -17,7 +17,8 @@ import kotlin.math.ceil
 /**
  * Voice clips to text with Whisper (`@cf/openai/whisper-large-v3-turbo` by default), the one Workers AI model that
  * transcribes Swahili, on its model route `run/<model>`. The clip goes as base64 (Whisper reads the format from the
- * bytes, so the content type isn't sent) with the language hint as Whisper's two-letter code (`sw-KE` becomes `sw`).
+ * bytes, so the content type isn't sent) with the language hint as Whisper's code (`sw-KE` becomes `sw`). Clips keep
+ * the shared retry rules: a retried clip costs seconds, not a user's minute.
  * The length comes from Whisper's own measure of the audio, so usage is billed on what was heard, not on what the
  * phone claimed. Neither the audio nor the transcript is logged.
  */
@@ -62,11 +63,21 @@ class WorkersAiSpeechToText(private val gateway: WorkersAiGateway, private val m
         return ceil(duration ?: lastEnd ?: 0.0).toInt().coerceAtLeast(1)
     }
 
-    private fun whisperLanguage(language: String?): String? =
-        language
+    /**
+     * The hint arrives as the phone's `Accept-Language`: its first range, without weight or region, if it is a plain
+     * language code (`sw,en;q=0.9` → `sw`). Anything else (`*`, garbage) sends no hint and Whisper detects the language.
+     */
+    private fun whisperLanguage(acceptLanguage: String?): String? =
+        acceptLanguage
+            ?.substringBefore(',')
+            ?.substringBefore(';')
             ?.substringBefore('-')
             ?.substringBefore('_')
             ?.trim()
             ?.lowercase()
-            ?.takeIf { it.isNotEmpty() }
+            ?.takeIf { LANGUAGE_CODE.matches(it) }
+
+    private companion object {
+        val LANGUAGE_CODE = Regex("[a-z]{2,3}")
+    }
 }

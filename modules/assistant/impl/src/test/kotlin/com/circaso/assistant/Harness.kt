@@ -199,10 +199,13 @@ class RecordingSpeech :
         Transcript(String(audio), seconds),
     )
 
-    override suspend fun speak(text: String, language: String?) =
-        Resource.success(
-            SpokenAudio(text.toByteArray(), "audio/mpeg"),
-        )
+    /** Languages this voice refuses, like Aura refusing Swahili. */
+    var unspoken: Set<String> = emptySet()
+
+    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
+        if (language in unspoken) return Resource.error(IntegrationError.UnsupportedLanguage(language.orEmpty()))
+        return Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
+    }
 }
 
 class Harness(config: AssistantConfig = AssistantConfig()) {

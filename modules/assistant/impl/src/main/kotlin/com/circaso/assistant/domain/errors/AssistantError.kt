@@ -39,6 +39,13 @@ sealed class AssistantError(
         ErrorKind.UPSTREAM,
     )
 
+    /** A4 asked for speech in a language the server voice doesn't speak; the phone speaks it with its own voice. */
+    data object LanguageNotSupported : AssistantError(
+        "assistant.language_not_supported",
+        "Asha's voice doesn't speak that language yet. Your phone can read the reply aloud.",
+        ErrorKind.INVALID,
+    )
+
     /** The question to the phone was already answered or went stale; the app asks again. */
     data object TurnNotFound : AssistantError(
         "assistant.turn_not_found",

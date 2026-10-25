@@ -16,6 +16,14 @@ sealed class IntegrationError(override val code: String, override val message: S
     /** The vendor looked at what we sent and refused it (a number it can't reach, a token it doesn't accept). */
     class Rejected(message: String) : IntegrationError("integrations.rejected", message, ErrorKind.INVALID)
 
+    /** The provider can't work in this language (a voice that speaks English only, asked for Swahili). */
+    class UnsupportedLanguage(language: String) :
+        IntegrationError(
+            "integrations.unsupported_language",
+            "The provider doesn't support the language '$language'.",
+            ErrorKind.INVALID,
+        )
+
     /** The configured provider has no implementation yet; only placeholders return this. */
     class NotImplemented(contract: String, provider: String) :
         IntegrationError(

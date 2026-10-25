@@ -41,6 +41,7 @@ interface SpeechToText {
 data class Transcript(val text: String, val seconds: Int)
 
 interface TextToSpeech {
+    /** A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage], before any vendor call. */
     suspend fun speak(text: String, language: String? = null): Resource<SpokenAudio>
 }
 
@@ -54,11 +55,7 @@ interface VisionModel {
     suspend fun describe(image: ImageInput, instruction: String): Resource<VisionAnswer>
 }
 
-/** A photo as its bytes (what an upload gives us) or as an address the provider can fetch. */
-sealed interface ImageInput {
-    class Bytes(val bytes: ByteArray, val contentType: String) : ImageInput
-
-    data class Url(val url: String) : ImageInput
-}
+/** A photo as its bytes: the assistant reads it from storage itself, so no provider ever fetches our files. */
+class ImageInput(val bytes: ByteArray, val contentType: String)
 
 data class VisionAnswer(val text: String, val usage: ModelUsage)

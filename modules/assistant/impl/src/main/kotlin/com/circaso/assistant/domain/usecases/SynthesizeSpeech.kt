@@ -5,6 +5,7 @@ import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.today
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.shared.Resource
@@ -52,8 +53,15 @@ class SynthesizeSpeech(
                 r
             }
 
+            // Nothing is metered on a failure; a language the voice can't speak is the phone's job, not an outage.
             is Resource.Error -> {
-                Resource.error(AssistantError.ModelUnavailable, r.cause)
+                val error =
+                    if (r.error is IntegrationError.UnsupportedLanguage) {
+                        AssistantError.LanguageNotSupported
+                    } else {
+                        AssistantError.ModelUnavailable
+                    }
+                Resource.error(error, r.cause)
             }
         }
     }

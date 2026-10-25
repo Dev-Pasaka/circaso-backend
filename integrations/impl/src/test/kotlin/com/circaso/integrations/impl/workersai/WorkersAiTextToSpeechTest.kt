@@ -17,7 +17,6 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 
 class WorkersAiTextToSpeechTest {
     private val mp3 = byteArrayOf(0x49, 0x44, 0x33, 4, 0, 0, 1, 2, 3)
@@ -52,20 +51,25 @@ class WorkersAiTextToSpeechTest {
         }
 
     @Test
-    fun `the opt-out can be switched off if Workers AI refuses it`() =
+    fun `the opt-out goes with every call, whatever the language`() =
         runBlocking<Unit> {
-            val plain =
-                WorkersAiTextToSpeech(WorkersAiKit.gateway(clients), "@cf/deepgram/aura-2-en", mipOptOut = false)
-            plain.speak("Hello", null)
-            assertNull(clients.last.json()["mip_opt_out"])
+            tts.speak("Hello", null)
+            assertEquals(
+                true,
+                clients.last
+                    .json()["mip_opt_out"]!!
+                    .jsonPrimitive.boolean,
+            )
         }
 
     @Test
-    fun `Aura speaks English only, so Swahili is refused without calling`() =
+    fun `Aura speaks English only, so Swahili is UnsupportedLanguage without calling`() =
         runBlocking<Unit> {
             val result = tts.speak("Habari yako", "sw")
 
-            assertIs<IntegrationError.Rejected>((result as Resource.Error).error)
+            val error = (result as Resource.Error).error
+            assertIs<IntegrationError.UnsupportedLanguage>(error)
+            assertEquals("integrations.unsupported_language", error.code)
             assertEquals(0, clients.requests.size)
         }
 
