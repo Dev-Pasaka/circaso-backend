@@ -42,7 +42,7 @@ Signal-style, done entirely on the phone with libsignal (or an equivalent implem
 - `X-Device-Timestamp`: ISO-8601 UTC, accepted within ±5 minutes of the server clock (as identity's device proofs).
 - `X-Device-Signature`: base64 signature by the device key over the UTF-8 bytes of `<X-Device-Timestamp>` + `"\n"` + lowercase hex SHA-256 of the **exact request body bytes** as sent.
 
-The server hashes the raw bytes it received, so nothing is re-encoded or canonicalised, and the timestamp is covered by the signature.
+The server hashes the raw bytes it received (after any content decoding; phones send key uploads uncompressed), so nothing is re-encoded or canonicalised, and the timestamp is covered by the signature.
 
 ### History and the history key
 
@@ -137,7 +137,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). The 100 cap is soft under concurrent top-ups; the phone tops up one request at a time. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -461,6 +461,7 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 | `messaging.recipients_mismatch` | INVALID → 400 | A direct or `SENDER_KEY` send whose recipients aren't members of the chat |
 | `messaging.delete_window_passed` | CONFLICT → 409 | Delete for everyone after 48 hours, or by someone other than the sender |
 | `messaging.keys_not_found` | NOT_FOUND → 404 | The person has no key bundle yet, or (M2, top-up) the stored bundle belongs to another device |
+| `messaging.prekey_id_exists` | CONFLICT → 409 | A top-up resends a one-time prekey id that is already stored |
 | `messaging.too_many_prekeys` | INVALID → 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
 | `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without valid `X-Device-Timestamp` / `X-Device-Signature` headers |
 | `messaging.media_invalid` | INVALID → 400 | Over 500 MB, upload missing, or a multipart upload with missing parts |
