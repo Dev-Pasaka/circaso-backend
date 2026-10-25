@@ -129,10 +129,31 @@ class SocketHub(
         redis
             .subscribe(channel)
             .onEach { raw ->
-                runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
-                    .onSuccess { handle(it) }
-                    .onFailure { log.warn("unreadable node message", it) }
+                val message =
+                    runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
+                        .onFailure { log.warn("unreadable node message: error={}", it.javaClass.name) }
+                        .getOrNull()
+                if (message != null) handleSafely(message)
             }.launchIn(scope)
+    }
+
+    /**
+     * One message that fails (a Redis error while revoking, say) is logged and skipped: an exception escaping the
+     * collector would end the subscription for good, and on `rt:fanout` stop every group frame on this node. The log
+     * carries the message kind only, never its users or frame.
+     */
+    private suspend fun handleSafely(message: NodeMessage) {
+        try {
+            handle(message)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            log.warn(
+                "node message failed: type={} error={}",
+                message.javaClass.simpleName,
+                failure.javaClass.name,
+            )
+        }
     }
 
     private suspend fun handle(message: NodeMessage) {

@@ -4,6 +4,7 @@ import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
+import com.circaso.identity.api.AccountRelinked
 import com.circaso.identity.api.DeviceReplaced
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.PushRegistration
@@ -59,6 +60,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
@@ -74,6 +76,9 @@ class SocketHubTest {
         val published = CopyOnWriteArrayList<Pair<String, String>>()
         val singleReads = AtomicInteger()
         val pipelinedReads = AtomicInteger()
+
+        /** Set to make the next `incrementRenewing` (the `system` frame's `seq`) fail, as a Redis error would. */
+        val failNextIncrement = AtomicBoolean(false)
         private val channels = ConcurrentHashMap<String, MutableSharedFlow<String>>()
 
         private fun channel(name: String) =
@@ -127,7 +132,10 @@ class SocketHubTest {
             ttl: Duration,
         ): Long = values.merge(key, by.toString()) { a, b -> (a.toLong() + b.toLong()).toString() }!!.toLong()
 
-        override suspend fun incrementRenewing(key: String, ttl: Duration): Long = increment(key, ttl)
+        override suspend fun incrementRenewing(key: String, ttl: Duration): Long {
+            if (failNextIncrement.compareAndSet(true, false)) error("redis down")
+            return increment(key, ttl)
+        }
 
         override suspend fun hashSet(
             key: String,
@@ -717,6 +725,62 @@ class SocketHubTest {
                     assertTrue(nodeTwo.deliver(user, frame(3)))
                     assertEquals(3, nextFrame().seq, "the new phone's socket stays open")
                 }
+            }
+        }
+
+    @Test
+    fun `a relinked account has every socket of that user closed on every node, and nobody else's`() =
+        testApplication {
+            val redis = MemoryRedis()
+            val (nodeOne, _) = twoNodes(redis)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/one/ws") {
+                val first = this
+                authenticate("good")
+                client.webSocket("/two/ws") {
+                    val second = this
+                    authenticate("new-phone")
+                    client.webSocket("/two/ws") {
+                        authenticate("other")
+                        redis.awaitReady("fanout", 2, "conn:$otherUser", "node-2")
+
+                        gatewayIdentitySubscription(nodeOne)
+                            .handlers
+                            .getValue(AccountRelinked.TYPE)
+                            .handle(EventEnvelope.of(AccountRelinked(user, "google"), AccountRelinked.serializer()))
+
+                        listOf(first, second).forEach { socket ->
+                            assertEquals("session.revoked", socket.nextFrame().type)
+                            assertEquals("session revoked", socket.closedWith()?.message)
+                        }
+                        assertTrue(nodeOne.deliver(otherUser, frame(4)))
+                        assertEquals(4, nextFrame().seq, "another user's socket stays open")
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun `a node message that fails is skipped and the channel keeps delivering`() =
+        testApplication {
+            val redis = MemoryRedis()
+            val hub = hub(redis)
+            hub.start()
+            serve(hub)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                redis.awaitReady("fanout", 1, "conn:$user", "node-1")
+                redis.failNextIncrement.set(true)
+
+                hub.revoke(user)
+                hub.deliverMany(listOf(user), frame(6, "messaging", "receipt"))
+
+                assertEquals(6, nextFrame().seq, "the fan-out listener survived the failed revoke")
+                assertTrue(hub.deliver(user, frame(7)))
+                assertEquals(7, nextFrame().seq)
             }
         }
 
