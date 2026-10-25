@@ -35,7 +35,7 @@ Circle splits each wallet key between Circle and the user (2-of-2 MPC). Every ac
 - **Base:** low fees, native USDC, and Circle supports user-controlled wallets and Gas Station on it. Dev and staging use `BASE-SEPOLIA` with test USDC.
 - **SCA:** an ERC-4337 account, which Gas Station needs on EVM chains. Users never hold ETH or see a gas fee.
 - **Gas Station:** Circaso pays the gas plus Circle's 5% fee on it, billed to the Circle account, under a sponsorship policy with per-wallet limits set in Circle's console.
-- **Multi-chain ready:** every wallet row carries its `blockchain`, so a second chain (Solana, or Arc if it fits) is a new row and a config value, not a new model. v1 creates one wallet per user on one chain.
+- **Multi-chain ready:** the chain, account type and token are integration settings (`INTEGRATIONS_CUSTODY_*`, below), and every wallet row stores the `blockchain` the contract returned, so a second chain (Solana, or Arc if it fits) is a config value and a new row, not a new model. v1 creates one wallet per user on one chain.
 - **Asset:** USDC only in v1 (`Asset.USDC`, 6 decimals, already in `shared`). `USDT` stays in the enum but isn't offered.
 
 ### Paying a person
@@ -58,25 +58,42 @@ Wallet also implements identity's `DeletionGuard` (refuses while the wallet hold
 
 ### Integrations used
 
-`StablecoinCustody` in `integrations:api`, implemented by `CircleCustody` in `integrations/impl/.../circle/` over `HttpClients.named("circle")`, base URL `https://api.circle.com`, API key from `Secrets` (`CIRCLE_API_KEY`; testnet and mainnet keys are separate). Our language in and out:
+**All Circle setup and configuration lives in integrations, as for every other vendor; the wallet module only calls the contract.** The wallet never sees the Circle API key, the app id, the chain name, the account type, the USDC token id or a Circle user token's lifetime: `CircleCustody` reads them from its own settings and `Secrets`, and the wallet stores whatever the contract returns (wallet id, address, chain).
+
+`StablecoinCustody` in `integrations:api`, implemented by `CircleCustody` in `integrations/impl/.../circle/` over `HttpClients.named("circle")`, base URL `https://api.circle.com`. Chosen and configured like the others:
+
+| Setting | Example | Purpose |
+| --- | --- | --- |
+| `INTEGRATIONS_CUSTODY_PROVIDER` | `log` \| `fake` \| `circle` | `log` locally, `fake` in tests and on the sandbox until Circle keys are set |
+| `CIRCLE_API_KEY` (secret) | `TEST_API_KEY:…` | Circle API key; testnet and mainnet keys are separate |
+| `INTEGRATIONS_CUSTODY_APP_ID` | `…` | Circle app id, handed to the phone's SDK |
+| `INTEGRATIONS_CUSTODY_BLOCKCHAIN` | `BASE-SEPOLIA` (`BASE` in production) | Chain new wallets are created on |
+| `INTEGRATIONS_CUSTODY_ACCOUNT_TYPE` | `SCA` | Account type for new wallets |
+| `INTEGRATIONS_CUSTODY_USDC_TOKEN_ID` | `…` | Circle's token id for USDC on that chain |
+
+Our language in and out. Circle user tokens are the vendor's business: `CircleCustody` asks Circle for one when it needs it and keeps it in memory per node until 5 minutes before it expires, so the wallet only passes our `circleUserId`. Where the phone needs to run a challenge, the result carries the SDK values with it.
 
 ```kotlin
 interface StablecoinCustody {
-    suspend fun createUser(circleUserId: String): Resource<Unit>                      // already-exists is success
-    suspend fun session(circleUserId: String): Resource<CustodySession>               // userToken, encryptionKey, expiresAt
-    suspend fun initialize(session: CustodySession, chain: Chain, idempotencyKey: UUID): Resource<ChallengeId>
-    suspend fun wallets(session: CustodySession): Resource<List<CustodyWallet>>       // id, address, chain, state
-    suspend fun balance(session: CustodySession, walletId: String, asset: Asset): Resource<Money>
-    suspend fun prepareTransfer(session: CustodySession, request: TransferRequest): Resource<ChallengeId> // idempotencyKey, refId
-    suspend fun transaction(session: CustodySession, circleTxId: String): Resource<CustodyTransaction>
-    suspend fun validateAddress(chain: Chain, address: String): Resource<Boolean>
-    suspend fun pinChallenge(session: CustodySession, kind: PinChallenge, idempotencyKey: UUID): Resource<ChallengeId>
+    suspend fun createUser(circleUserId: String): Resource<Unit>                              // already-exists is success
+    suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge> // initialize, on the configured chain
+    suspend fun sdkSession(circleUserId: String): Resource<SdkSession>                        // appId, userToken, encryptionKey, expiresAt
+    suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>                  // id, address, chain, state
+    suspend fun balance(circleUserId: String, walletId: String, asset: Asset): Resource<Money>
+    suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> // idempotencyKey, refId
+    suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
+    suspend fun validateAddress(address: String): Resource<Boolean>                           // on the configured chain
+    suspend fun pinChallenge(circleUserId: String, kind: PinChallenge, idempotencyKey: UUID): Resource<Challenge>
 }
+
+data class Challenge(val challengeId: String, val sdk: SdkSession)
 
 interface CustodyNotifications {     // implemented by wallet, wired in app; integrations never depend on wallet
     suspend fun onTransaction(update: CustodyTransaction): Resource<Unit>
 }
 ```
+
+The `log` provider answers with made-up wallets and challenges and prints what it was asked; `fake` records calls for tests.
 
 Circle's error codes stay inside the vendor package. "User already initialized" (`155106`) becomes success with the existing wallet; a locked PIN, insufficient funds or an invalid address become `ErrorKind.INVALID` with a wallet code; everything else is `UPSTREAM`. Every POST to Circle carries the idempotency key in the body, so the HTTP client may retry it.
 
@@ -100,7 +117,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 | --- | --- | --- | --- |
 | W1 | `GET /wallet` | `GetWallet` | Status (`NONE`, `SETTING_UP`, `ACTIVE`), address, USDC balance from Circle, and any hold |
 | W2 | `POST /wallet` | `CreateWallet` | Creates the Circle user if needed and the initialize challenge; returns what the SDK needs |
-| W3 | `POST /wallet/session` | `OpenSession` | A fresh `userToken` and `encryptionKey` for the SDK |
+| W3 | `POST /wallet/session` | `OpenSession` | The SDK values (`appId`, `userToken`, `encryptionKey`) from `StablecoinCustody.sdkSession` |
 | W4 | `POST /wallet/transfers` | `PrepareTransfer` | Checks the rules and creates a transfer challenge for the user to sign |
 | W5 | `GET /wallet/transfers/{transferId}` | `GetTransfer` | One transfer and its state |
 | W6 | `GET /wallet/transactions?month=2026-10` | `ListTransactions` | The user's transactions for a month, newest first, paged |
@@ -138,7 +155,7 @@ The app runs the challenge; the user sets the PIN and security questions. When C
 { "transferId": "0193…", "challengeId": "c7a2…", "sdk": { "userToken": "eyJ…", "encryptionKey": "Pq1…" }, "fee": { "amountMinor": 0, "asset": "USDC" }, "expiresAt": "2026-10-25T09:15:00Z" }
 ```
 
-Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and Circle's transfer challenge is created with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`.
+Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and `StablecoinCustody.prepareTransfer` creates Circle's transfer challenge with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`.
 
 **Transfer states:** `AWAITING_SIGNATURE` → `SUBMITTED` (Circle `INITIATED`, `QUEUED`, `SENT`) → `CONFIRMED` (`CONFIRMED`, `COMPLETE`) or `FAILED` (`FAILED`, `DENIED`, `CANCELLED`); `EXPIRED` if never signed; `STUCK` is shown as submitted and handled by the stuck-transfer job.
 
@@ -253,7 +270,6 @@ A payment between two Circaso users writes two `TransactionRow`s: the sender's `
 
 | Key | Value | Expiry | Purpose |
 | --- | --- | --- | --- |
-| `wal:session:{userId}` | Circle `userToken` and `encryptionKey`, AES-GCM sealed (as identity seals the OTP phone) | 55 min | One Circle session per user per hour, not one per call |
 | `wal:balance:{circleWalletId}` | balance in minor units | 15 s, cleared on any webhook for the wallet | W1 without calling Circle on every open |
 | `wal:sent:{userId}:{date}` | minor units sent today | 2 days | Daily limit |
 | `wal:remind:{from}:{to}` | `1` | 24 h | W10 once a day per pair |

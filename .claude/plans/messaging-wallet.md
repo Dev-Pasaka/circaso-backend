@@ -32,8 +32,8 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 
 | Id | Slice | Done when |
 | --- | --- | --- |
-| WS1 | Integrations: `StablecoinCustody`, `CircleCustody` over `HttpClients.named("circle")` (MockEngine tests), `fake` provider, `CircleWebhook` (ECDSA P-256/SHA-256, key by `X-Circle-Key-Id` cached), `WebhookVendor` able to fetch a key, `CustodyNotifications`; `INTEGRATIONS_CUSTODY_PROVIDER`, `CIRCLE_API_KEY`, `CIRCLE_APP_ID`, chain setting in `.env.example` | MockEngine tests for every call and error mapping; webhook signature tests |
-| WS2 | Wallet module skeleton, W1–W3, `DeletionGuard`, `wal:session` sealed cache | Tests for create, re-create while setting up, already exists, guard |
+| WS1 | Integrations: `StablecoinCustody`, `CircleCustody` over `HttpClients.named("circle")` (MockEngine tests), `fake` provider, `CircleWebhook` (ECDSA P-256/SHA-256, key by `X-Circle-Key-Id` cached), `WebhookVendor` able to fetch a key, `CustodyNotifications`; all Circle configuration in integrations (`INTEGRATIONS_CUSTODY_PROVIDER` = log | fake | circle, `CIRCLE_API_KEY`, `INTEGRATIONS_CUSTODY_APP_ID`, `_BLOCKCHAIN`, `_ACCOUNT_TYPE`, `_USDC_TOKEN_ID` in `.env.example`), Circle user tokens cached inside `CircleCustody`; the wallet module never reads a Circle setting | MockEngine tests for every call and error mapping; webhook signature tests |
+| WS2 | Wallet module skeleton, W1–W3 calling only `StablecoinCustody`, `DeletionGuard` | Tests for create, re-create while setting up, already exists, guard |
 | WS3 | Transfers W4, W5, W9–W11: rule order, idempotency, `refId`, states, webhook updates, frames, push, published events, remind | Tests for each rule, webhook ordering, duplicates |
 | WS4 | Transactions W6–W7, jobs (`ExpireUnsignedTransfers`, `StuckTransfers`, `ReconcileWallets`), payment hold on `AccountRelinked`, agent routes | Tests for statements, jobs, hold |
 
