@@ -6,6 +6,7 @@ Every architecture decision, newest first, with the reason it was made. A decisi
 
 | Decided | Decision | Why | Where it applies |
 | --- | --- | --- | --- |
+| 2026-10-25 | A phone may send at most 100 frames per second over its socket; frames over the limit are dropped (not answered, socket kept open), with a counter metric | Bounds what one phone can make the server do through `ack`, `read` and `typing`, without cutting off a busy but honest client | Architecture → Realtime and push; Messaging → Socket frames |
 | 2026-10-25 | Group fan-out uses Redis pub/sub: one `PUBLISH` on `rt:fanout` that every node reads and delivers to its own sockets; no multi-key `MGET` | Works unchanged on a Redis cluster (a plain `PUBLISH` reaches every node); replaces the one-`MGET` design | Messaging; Architecture → Realtime and push |
 | 2026-10-25 | Phone-frame handlers get `userId` and `deviceId`, not `Principal`; chat ids are `ChatId` in `messaging:api` (the unused `ConversationId` in `shared` is removed); `PushMessage` gets a data-only option for chat pushes | `shared` can't depend on `identity:api`; ids live with the module that owns them, as `SessionId` does; the phone must decrypt before showing a chat notification | Messaging; Architecture → Realtime and push, Conventions → Ids |
 | 2026-10-25 | Expired chat media is removed from R2 by a daily job, not an R2 lifecycle rule | R2 objects have no TTL; a job follows the per-file expiry and leaves group avatars alone | Messaging → Data |
@@ -86,7 +87,7 @@ Not decided yet. Where code depends on one of these, build behind an interface o
 - [ ] **Wallet: record retention** after account deletion.
 - [ ] **Wallet: deletion error code.** `identity.wallet_not_empty` (published to the app) or the guard's own `wallet.funds_remaining` (the `DeletionGuard` contract).
 - [ ] **Wallet: showing KES.** A rate source for KES amounts next to USDC.
-- [ ] **Messaging: rate limit on phone frames.** The gateway has no limit for frames a phone sends over the socket; `typing` is deduplicated, `ack` and `read` are not. Proposed: 30 frames per second per socket, excess dropped, settled before MS4.
+- [x] **Messaging: rate limit on phone frames.** Decided 2026-10-25: at most 100 frames per second per socket.
 - [ ] **Messaging: passkey domain files.** `circaso.com` must serve `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` for the backup passkey; who owns the site and the app's signing fingerprint and team id.
 - [ ] **Payment hold after a support restore.** The sign-in flow keeps a 48-hour hold on outgoing transfers after an account is relinked (ID-23), on top of the 48-hour notice before it. Identity has no status for it yet. Keep it (it would live in the wallet, keyed on `AccountRelinked`) or drop it because the notice already gives the owner time to cancel?
 - [x] **The assistant's name.** Decided 2026-10-22: Asha.
