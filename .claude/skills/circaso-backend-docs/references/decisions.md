@@ -6,6 +6,7 @@ Every architecture decision, newest first, with the reason it was made. A decisi
 
 | Decided | Decision | Why | Where it applies |
 | --- | --- | --- | --- |
+| 2026-10-25 | Phone-frame handlers get `userId` and `deviceId`, not `Principal`; chat ids are `ChatId` in `messaging:api` (the unused `ConversationId` in `shared` is removed); `PushMessage` gets a data-only option for chat pushes | `shared` can't depend on `identity:api`; ids live with the module that owns them, as `SessionId` does; the phone must decrypt before showing a chat notification | Messaging; Architecture → Realtime and push, Conventions → Ids |
 | 2026-10-25 | Expired chat media is removed from R2 by a daily job, not an R2 lifecycle rule | R2 objects have no TTL; a job follows the per-file expiry and leaves group avatars alone | Messaging → Data |
 | 2026-10-25 | Group names and avatars are encrypted on the phone under a group metadata key shared with the sender keys; the server stores them sealed | Pushes are data-only and phones decrypt before showing anything, so the server never needs them; a database copy doesn't reveal what groups are about | Messaging |
 | 2026-10-25 | The history-key backup is sealed under a passkey (WebAuthn PRF, synced by iCloud Keychain or Google Password Manager), with a generated 64-character recovery key as the fallback; no user-chosen passphrase | A database copy holds nothing guessable; the recovery key covers phones without PRF and moves between Android and iPhone | Messaging → History |

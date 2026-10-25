@@ -981,7 +981,7 @@ These apply to every module from the first line of code, so later modules look l
 | Topic | Convention |
 | --- | --- |
 | Base URL | `https://api.circaso.com/v1` |
-| Ids | UUIDv7 everywhere (time-ordered, sorts well as a clustering key; `@GeneratedUuid` in Kandra), wrapped in typed value classes: `UserId`, `DeviceId`, `ConversationId` |
+| Ids | UUIDv7 everywhere (time-ordered, sorts well as a clustering key; `@GeneratedUuid` in Kandra), wrapped in typed value classes: `UserId` and `DeviceId` in `shared`; ids a module owns live in its `api` (`SessionId` in identity, `ChatId` in messaging) |
 | Money | Integer minor units plus asset (`Money(amountMinor, USDT)`); never floating point |
 | Phone numbers | E.164 only, parsed once at the edge into `PhoneNumber`; masked in responses (`+254 7•• ••• 678`); never logged in full |
 | Time | ISO-8601 UTC strings in the API (`2026-10-21T18:06:00Z`); epoch milliseconds in storage; the app formats for the user |

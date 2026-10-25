@@ -79,8 +79,10 @@ Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below)
 
 ### New in `shared` and the gateway
 
-- **`RealtimeInbound`**: the socket hub ignores frames sent by the phone today (`SocketHub`: "client frame ignored"). Messaging needs a contract in `shared`, `suspend fun receive(principal: Principal, frame: ClientFrame): Resource<Unit>`, registered per module like `RealtimeModule`, so the hub can route `messaging.*` frames from the phone. Only acknowledgements, read receipts and typing come this way (Architecture → Realtime: commands stay on HTTP).
-- **Push wording per module**: `GatewayRealtime.pushFor` is a fixed `when` today. Messaging's frames need their own entries, and push data that carries ids, not text.
+- **`RealtimeInbound`**: the socket hub ignores frames sent by the phone today (`SocketHub`: "client frame ignored"). Messaging needs a contract in `shared`, `suspend fun receive(userId: UserId, deviceId: DeviceId, frame: ClientFrame): Resource<Unit>` (not `Principal`, which lives in `identity:api`; decision 2026-10-25), registered per module like `RealtimeModule`, so the hub can route `messaging.*` frames from the phone. Only acknowledgements, read receipts and typing come this way (Architecture → Realtime: commands stay on HTTP).
+- **Push wording per module**: messaging's entries go in `GatewayRealtime.pushFor`. `message.new` frame data carries `pushable`; `member.added` carries the added `userId`.
+- **Data-only pushes** (decision 2026-10-25): `PushMessage` in `integrations:api` gets a data-only option. FCM sends a data message on Android and, on iOS, an alert with `mutable-content` and the fallback text, so the Notification Service Extension can decrypt and replace it. Built in MS4.
+- **Phone frame wire shape:** `{"module": "messaging", "type": "ack", "data": {…}}`, the same fields as the server envelope without `id`, `seq` and `ts`.
 - **Fan-out to many users at once**: `Realtime.deliver` handles one user at a time, which means one `rt:conn` lookup and one publish per member: 999 of each for a message in a full group. Messaging needs `Realtime.deliverMany(userIds, envelope)`: the gateway reads every member's node with one `MGET` of `rt:conn:{userId}`, publishes once per node on `rt:node:{nodeId}` with the list of users that node holds, and hands the rest to push (in batches). Group messages, receipts and typing all go out this way.
 
 ## Endpoints
