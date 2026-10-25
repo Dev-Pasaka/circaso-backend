@@ -28,6 +28,14 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 | MS5 | Media M15–M17: presigned single and multipart (> 50 MB, 16 MB parts, 500 MB cap), recipients fixed at upload, delete on last ack, `MediaSweep` daily job, group avatars | Tests with the R2 fake; sweep test |
 | MS6 | History M18–M20, key backup M21 (passkey and recovery-key wraps), settings M22, agent route, consumed events (`DeviceReplaced`, `AccountStatusChanged`, `AccountDeleted`), published events | Tests for ownership, rate limits, deletion cascade |
 
+### Asha on Workers AI (decided 2026-10-25, runs beside messaging)
+
+| Id | Slice | Done when |
+| --- | --- | --- |
+| AI1 | Integrations on Workers AI through AI Gateway (`HttpClients.named("workers-ai")`): `LanguageModel` (kimi-k2.6, tool calls), new `VisionModel` (llama-4-scout), `SpeechToText` (whisper-large-v3-turbo clips), `TextToSpeech` (aura-2-en); provider `workers-ai` for `INTEGRATIONS_LLM/STT/TTS/VISION_PROVIDER`; settings in `.env.example` | MockEngine tests for each call, tool-call round trip, error mapping; a manual smoke test against the real gateway once credentials exist |
+| AI2 | Live voice: `LiveTranscription` (Flux) and `LiveSpeech` (Aura) over Ktor WebSocket client; assistant A11 socket with turn detection, barge-in, metering, silence close; Swahili falls back to clips | Tests with fake streams; a local end-to-end run |
+| AI3 | Images: A10 upload URL, A2 with `imageKey`, `VisionModel` description into the turn, deletion after the turn, metering | Tests for size/type, deletion, metering |
+
 ### Gateway follow-ups (from MS1 QA, decided 2026-10-25)
 
 | Id | Slice | Done when |

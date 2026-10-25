@@ -59,14 +59,16 @@ Asha's runtime (the Koog agent, prompts, tools and memory of the conversation) l
 
 | Contract (`integrations:api`) | Used for | Provider to start | Can swap to |
 | --- | --- | --- | --- |
-| `LanguageModel` | Asha's reasoning and tool calls (through Koog) | Cloudflare Workers AI, through AI Gateway | Anthropic, OpenAI, behind the same gateway |
-| `SpeechToText` | Voice in | On-device first (Android SpeechRecognizer, iOS Speech) for free use; server Whisper on Workers AI for Plus and for languages the phone handles badly | Other STT vendors |
-| `TextToSpeech` | Voice out | Workers AI text-to-speech | Other TTS vendors |
+| `LanguageModel` | Asha's reasoning and tool calls (text model) | Workers AI `kimi-k2.6`, through AI Gateway | Another Workers AI model with tool calling (setting) |
+| `VisionModel` | Reading a photo the user sends (image model) | Workers AI `llama-4-scout-17b-16e-instruct` | Another Workers AI vision model (setting) |
+| `SpeechToText` | A voice clip to text | On-device first; Workers AI `whisper-large-v3-turbo` on the server (the only Workers AI model that handles Swahili) | — |
+| `LiveTranscription` | Live voice in, with end-of-turn detection | Workers AI `@cf/deepgram/flux` over a WebSocket through AI Gateway (`nova-3` as the setting's alternative) | — |
+| `TextToSpeech` / `LiveSpeech` | Voice out, whole reply / streamed sentence by sentence | Workers AI `@cf/deepgram/aura-2-en` (English); Swahili replies are spoken by the phone's own TTS | — |
 | `StoreBilling` (later) | Asha Plus subscription state | Google Play Billing, App Store server notifications | — |
 
-Swahili voice quality differs a lot between vendors; test it before choosing.
+**Every model runs on Cloudflare Workers AI, through AI Gateway** (decision 2026-10-25); each model id is a setting, so swapping one is a config change. No Workers AI voice speaks Swahili and Deepgram's live models don't transcribe it, so Swahili uses clip transcription (Whisper) and the phone's own text-to-speech.
 
-Koog talks to Workers AI through its OpenAI client with a custom base URL (`OpenAIClientSettings(baseUrl = "https://api.cloudflare.com/client/v4/accounts/<accountId>/ai")`) and an `LLModel` declared for the Cloudflare model id. Check that the chosen model supports tool calling before relying on it.
+The integrations call Workers AI through AI Gateway (`https://gateway.ai.cloudflare.com/v1/<accountId>/<gateway>/workers-ai/…`) with `HttpClients.named("workers-ai")`: the OpenAI-compatible chat completions route for the text and image models, the model routes for Whisper and Aura clips, and WebSocket connections for Flux and Aura streaming. Settings: `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY`, the secret `CLOUDFLARE_AI_TOKEN`, and one `INTEGRATIONS_AI_MODEL_*` per model. AI Gateway logging is off for Asha's routes (inputs aren't kept).
 
 ### Depends on
 
@@ -78,7 +80,23 @@ Koog talks to Workers AI through its OpenAI client with a custom base URL (`Open
 2. **Reply.** Text first, streamed, so the user sees Asha answer at once.
 3. **Voice out.** On request, or when the user spoke, `TextToSpeech` turns the reply into audio streamed back to the app. Short replies can be cached by text hash for a day.
 
-Voice seconds are metered separately from text, because they cost more.
+### Live voice (decision 2026-10-25)
+
+**Phase 1, WebSocket:** while the user talks to Asha, the phone opens a dedicated socket `wss://api.circaso.com/v1/assistant/voice/live` (an exception to one socket per phone: audio is a heavy binary stream and lives only for the conversation), authenticated like the main socket with the user token.
+
+1. The phone streams 16 kHz mono 16-bit PCM in binary frames; the assistant relays them to `LiveTranscription` (Flux) and sends interim transcripts back as JSON frames.
+2. When Flux reports the end of the turn, the final transcript becomes an Asha turn exactly like A2 (tools, limits, audit).
+3. The reply streams back as text frames and, sentence by sentence, through `LiveSpeech` (Aura) as binary audio frames. If the user starts talking again, the server stops the speech (barge-in) and starts a new turn.
+4. Usage counts voice seconds both ways; the socket closes at the allowance or after 30 s of silence. Audio is never stored.
+5. For Swahili (the user's language setting) the live path isn't used: the phone records a clip for A3 (Whisper) and speaks the reply with its own voice.
+
+**Phase 2, WebRTC:** when the calls module brings in Cloudflare Realtime, the phone side moves to WebRTC (Opus, jitter buffer, better on poor networks) and Cloudflare forwards the audio to the assistant; the server-side transcription and speech stay the same.
+
+### Images
+
+The user can send Asha a photo (a receipt, a screenshot, a document): the app uploads it straight to R2 with a presigned URL (A10), then sends the turn with its key. `VisionModel` reads it and its description joins the conversation for the text model; the photo is deleted from R2 after the turn and never kept in the Asha chat (the chat shows "Photo" and Asha's reading of it). JPEG, PNG or WebP, up to 10 MB.
+
+Voice seconds and images are metered separately from text, because they cost more.
 
 ## Usage limits and Asha Plus
 
@@ -126,6 +144,8 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A7 | `GET /v1/assistant/usage` | app | Today's allowance used and left, and the plan |
 | A8 | `GET /v1/assistant/proposals/{id}` / `POST …/decline` | app | Read or decline a proposal (Phase B) |
 | A9 | `POST /v1/assistant/chat/messages/{messageId}/tool-results` | app | The phone's answer to a device tool (decrypted chat snippets); the reply then continues |
+| A10 | `POST /v1/assistant/images/upload-url` | app | Presigned R2 upload for one photo; A2 then carries its `imageKey` |
+| A11 | `GET /v1/assistant/voice/live` (WebSocket) | app | Live voice conversation (Phase 1) |
 
 The user talks to Asha with the **user** token; Asha's tools call other modules with the **agent** token.
 
