@@ -53,7 +53,7 @@ class RedisScopeTest {
         }
 
     @Test
-    fun `getMany reads many keys in one step, in order, with null for the missing ones`() =
+    fun `getPipelined reads many keys in one round trip, in order, with null for the missing ones`() =
         runBlocking<Unit> {
             idn.set("conn:a$id", "node-1", Duration.ofSeconds(30))
             idn.set("conn:c$id", "node-2", Duration.ofSeconds(30))
@@ -61,10 +61,10 @@ class RedisScopeTest {
 
             assertEquals(
                 listOf("node-1", null, "node-2"),
-                idn.getMany(listOf("conn:a$id", "conn:b$id", "conn:c$id")),
+                idn.getPipelined(listOf("conn:a$id", "conn:b$id", "conn:c$id")),
                 "another module's key with the same name is not read",
             )
-            assertEquals(emptyList(), idn.getMany(emptyList()))
+            assertEquals(emptyList(), idn.getPipelined(emptyList()))
         }
 
     @Test

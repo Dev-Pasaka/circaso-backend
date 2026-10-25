@@ -44,7 +44,7 @@ class GatewayTest {
 
         override suspend fun get(key: String) = values[key]
 
-        override suspend fun getMany(keys: List<String>) = keys.map { values[it] }
+        override suspend fun getPipelined(keys: List<String>) = keys.map { values[it] }
 
         override suspend fun set(
             key: String,

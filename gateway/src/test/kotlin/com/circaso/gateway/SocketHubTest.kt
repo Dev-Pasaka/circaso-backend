@@ -41,7 +41,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -64,15 +64,19 @@ class SocketHubTest {
         val values = ConcurrentHashMap<String, String>()
         val published = CopyOnWriteArrayList<Pair<String, String>>()
         val singleReads = AtomicInteger()
-        val multiReads = AtomicInteger()
+        val pipelinedReads = AtomicInteger()
+        private val channels = ConcurrentHashMap<String, MutableSharedFlow<String>>()
+
+        private fun channel(name: String) =
+            channels.computeIfAbsent(name) { MutableSharedFlow(extraBufferCapacity = 64) }
 
         override suspend fun get(key: String): String? {
             singleReads.incrementAndGet()
             return values[key]
         }
 
-        override suspend fun getMany(keys: List<String>): List<String?> {
-            multiReads.incrementAndGet()
+        override suspend fun getPipelined(keys: List<String>): List<String?> {
+            pipelinedReads.incrementAndGet()
             return keys.map { values[it] }
         }
 
@@ -124,9 +128,10 @@ class SocketHubTest {
 
         override suspend fun publish(channel: String, message: String) {
             published += channel to message
+            channel(channel).emit(message)
         }
 
-        override fun subscribe(channel: String): Flow<String> = emptyFlow()
+        override fun subscribe(channel: String): Flow<String> = channel(channel)
     }
 
     /** What a module's [RealtimeInbound] was handed, in order. */
@@ -160,14 +165,15 @@ class SocketHubTest {
 
     private val user = UserId.new()
     private val device = DeviceId.new()
+    private val otherUser = UserId.new()
 
     private val verifier =
         object : TokenVerifier {
             override suspend fun verify(accessToken: String): Resource<Principal> =
-                if (accessToken == "good") {
-                    Resource.success(Principal(user, device, SessionId.new(), Scope.APP))
-                } else {
-                    Resource.error(SharedError.TokenInvalid)
+                when (accessToken) {
+                    "good" -> Resource.success(Principal(user, device, SessionId.new(), Scope.APP))
+                    "other" -> Resource.success(Principal(otherUser, DeviceId.new(), SessionId.new(), Scope.APP))
+                    else -> Resource.error(SharedError.TokenInvalid)
                 }
         }
 
@@ -193,13 +199,14 @@ class SocketHubTest {
         redis: RedisScope = MemoryRedis(),
         replays: List<RealtimeModule> = emptyList(),
         inbound: List<RealtimeInboundModule> = emptyList(),
+        nodeId: String = "node-1",
     ) = SocketHub(
         redis,
         verifier,
         { replays },
         { inbound },
         CoroutineScope(SupervisorJob() + Dispatchers.Default),
-        "node-1",
+        nodeId,
     )
 
     private fun ApplicationTestBuilder.serve(hub: SocketHub) {
@@ -215,8 +222,8 @@ class SocketHubTest {
             withTimeout(3000) { (incoming.receive() as Frame.Text).readText() },
         )
 
-    private suspend fun DefaultClientWebSocketSession.authenticate() {
-        send(Frame.Text("""{"type":"auth","accessToken":"good"}"""))
+    private suspend fun DefaultClientWebSocketSession.authenticate(token: String = "good") {
+        send(Frame.Text("""{"type":"auth","accessToken":"$token"}"""))
         // The socket is registered once auth is read; give the server a moment before frames are sent its way.
         delay(200)
     }
@@ -313,41 +320,56 @@ class SocketHubTest {
         }
 
     @Test
-    fun `deliverMany reads every node in one step and publishes once per node`() =
+    fun `a typing frame to a group is one publish on rt fanout and no Redis read`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val members = List(50) { UserId.new() }
+
+            realtime.deliverMany(members, frame(1, "messaging", "typing", mapOf("chatId" to "c1", "on" to true)))
+
+            assertEquals(listOf("fanout"), redis.published.map { it.first })
+            val message = CircasoJson.decodeFromString(NodeMessage.serializer(), redis.published.single().second)
+            assertEquals(members, (message as NodeMessage.Frames).userIds)
+            assertEquals(0, redis.singleReads.get(), "no GET")
+            assertEquals(0, redis.pipelinedReads.get(), "no lookup of who is offline")
+            assertTrue(push.sent.isEmpty())
+        }
+
+    @Test
+    fun `every node writes a fan-out frame to its own sockets only`() =
         testApplication {
             val redis = MemoryRedis()
-            val hub = hub(redis)
-            serve(hub)
+            val nodeOne = hub(redis, nodeId = "node-1")
+            val nodeTwo = hub(redis, nodeId = "node-2")
+            nodeOne.start()
+            nodeTwo.start()
+            application {
+                install(WebSockets)
+                routing {
+                    route("/one") { nodeOne.routes(this) }
+                    route("/two") { nodeTwo.routes(this) }
+                }
+            }
             val client = createClient { install(ClientWebSockets) }
-            val (onNodeTwo, alsoOnNodeTwo, onNodeThree, offline) = List(4) { UserId.new() }
-            redis.values["conn:$onNodeTwo"] = "node-2"
-            redis.values["conn:$alsoOnNodeTwo"] = "node-2"
-            redis.values["conn:$onNodeThree"] = "node-3"
 
-            client.webSocket("/v1/ws") {
-                authenticate()
-                val readsBefore = redis.singleReads.get()
+            client.webSocket("/one/ws") {
+                val first = this
+                authenticate("good")
+                client.webSocket("/two/ws") {
+                    authenticate("other")
+                    val readsBefore = redis.singleReads.get()
 
-                val missed =
-                    hub.deliverMany(
-                        listOf(user, onNodeTwo, alsoOnNodeTwo, onNodeThree, offline, user),
-                        frame(7, "messaging", "message.new"),
-                    )
+                    nodeOne.deliverMany(listOf(user, otherUser, UserId.new()), frame(7, "messaging", "receipt"))
 
-                assertEquals(listOf(offline), missed, "only the user no node holds is left for push")
-                assertEquals(7, nextFrame().seq, "this node writes to its own socket without publishing")
-                assertEquals(1, redis.multiReads.get(), "one MGET for every user")
-                assertEquals(readsBefore, redis.singleReads.get(), "no GET per user")
-                val byChannel =
-                    redis.published.associate { (channel, raw) ->
-                        channel to CircasoJson.decodeFromString(NodeMessage.serializer(), raw)
-                    }
-                assertEquals(2, redis.published.size, "one publish per other node")
-                assertEquals(
-                    listOf(onNodeTwo, alsoOnNodeTwo),
-                    (byChannel["node:node-2"] as NodeMessage.Frames).userIds,
-                )
-                assertEquals(listOf(onNodeThree), (byChannel["node:node-3"] as NodeMessage.Frames).userIds)
+                    assertEquals(7, first.nextFrame().seq, "node one wrote to its socket")
+                    assertEquals(7, nextFrame().seq, "node two wrote to its socket")
+                    assertNull(withTimeoutOrNull(300) { first.incoming.receive() }, "and only once")
+                    assertNull(withTimeoutOrNull(300) { incoming.receive() }, "and only once")
+                    assertEquals(readsBefore, redis.singleReads.get(), "from memory, with no Redis read")
+                    assertEquals(1, redis.published.size)
+                }
             }
         }
 
@@ -356,8 +378,9 @@ class SocketHubTest {
         runBlocking {
             val redis = MemoryRedis()
 
-            assertEquals(emptyList(), hub(redis).deliverMany(emptyList(), frame(1)))
-            assertEquals(0, redis.multiReads.get())
+            hub(redis).deliverMany(emptyList(), frame(1))
+
+            assertTrue(redis.published.isEmpty())
         }
 
     @Test
@@ -375,6 +398,8 @@ class SocketHubTest {
             )
 
             assertEquals(setOf("token-$offline", "token-$alsoOffline"), push.sent.map { it.first.token }.toSet())
+            assertEquals(1, redis.pipelinedReads.get(), "who is offline, in one pipelined lookup")
+            assertEquals(0, redis.singleReads.get())
             push.sent.forEach { (_, message) ->
                 assertEquals(mapOf("chatId" to "c1", "messageId" to "m1"), message.data)
                 assertEquals("New message", message.body, "no text from the chat")
@@ -382,10 +407,11 @@ class SocketHubTest {
         }
 
     @Test
-    fun `a message that is not pushable wakes nobody`() =
+    fun `a message that is not pushable wakes nobody and looks nobody up`() =
         runBlocking {
+            val redis = MemoryRedis()
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(redis), push, registrations)
 
             realtime.deliverMany(
                 List(3) { UserId.new() },
@@ -393,6 +419,7 @@ class SocketHubTest {
             )
 
             assertTrue(push.sent.isEmpty())
+            assertEquals(0, redis.pipelinedReads.get())
         }
 
     @Test

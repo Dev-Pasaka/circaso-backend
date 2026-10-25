@@ -25,8 +25,8 @@ interface Realtime {
 
     /**
      * The same frame to many users at once (a group message, a receipt batch, typing). [deliver] costs one Redis
-     * read and one publish per user, 999 of each for a full group; this reads every user's node in one step and
-     * publishes once per node, then hands the users with no socket to push when the frame is push-worthy.
+     * read and one publish per user, 999 of each for a full group; this publishes once for every node to read, and
+     * looks up who has no socket, to push them, only when the frame is push-worthy.
      */
     suspend fun deliverMany(userIds: Collection<UserId>, envelope: RealtimeEnvelope): Resource<Unit>
 }

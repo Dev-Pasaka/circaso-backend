@@ -46,13 +46,16 @@ private val HEARTBEAT_MILLIS = 25_000L
 private val CONN_TTL: Duration = Duration.ofSeconds(60)
 private val SEQ_TTL: Duration = Duration.ofDays(8)
 
-/** What one node publishes on `rt:node:{nodeId}` for the node that holds the user's socket. */
+/** `rt:fanout`: every node subscribes, so one publish reaches a frame's users wherever their sockets are. */
+private const val FANOUT_CHANNEL = "fanout"
+
+/** What a node publishes on `rt:node:{nodeId}` for the node that holds the user's socket, or on `rt:fanout` for all. */
 @Serializable
 internal sealed interface NodeMessage {
     @Serializable
     data class Frame(val userId: UserId, val frame: RealtimeEnvelope) : NodeMessage
 
-    /** One frame for every user in [userIds] whose socket this node holds: one publish per node, not per user. */
+    /** On `rt:fanout`: every node writes [frame] to the sockets it holds for [userIds] and ignores the rest. */
     @Serializable
     data class Frames(val userIds: List<UserId>, val frame: RealtimeEnvelope) : NodeMessage
 
@@ -65,7 +68,8 @@ internal sealed interface NodeMessage {
  * The WebSocket hub (Realtime and push). One socket per phone: the first frame authenticates with the access
  * token, the app sends its last `seq` per module and gets what it missed from each module's [RealtimeReplay],
  * then frames flow until the phone closes it. Each node records the sockets it holds in `rt:conn:{userId}` and
- * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket.
+ * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket. A
+ * frame for many users goes once on `rt:fanout`, which every node reads.
  * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name.
  */
 class SocketHub(
@@ -87,10 +91,15 @@ class SocketHub(
 
     private val connections = ConcurrentHashMap<UserId, MutableSet<Connection>>()
 
-    /** Starts listening on this node's channel. Called once, when the application starts. */
+    /** Starts listening on this node's channel and on the fan-out channel. Called once, when the application starts. */
     fun start() {
+        listen("node:$nodeId")
+        listen(FANOUT_CHANNEL)
+    }
+
+    private fun listen(channel: String) {
         redis
-            .subscribe("node:$nodeId")
+            .subscribe(channel)
             .onEach { raw ->
                 runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
                     .onSuccess { handle(it) }
@@ -121,35 +130,26 @@ class SocketHub(
     }
 
     /**
-     * Hands one frame to many users: every user's node is read with one `MGET` of `rt:conn:{userId}`, then each node
-     * gets one publish listing the users it holds. Returns the users no node holds (the caller falls back to push).
+     * Hands one frame to many users with one publish on `rt:fanout` and no Redis read: every node, this one included
+     * (through its own subscription), writes it to the sockets it holds for those users. A plain `PUBLISH` reaches
+     * every node of a Redis cluster too.
      */
-    suspend fun deliverMany(userIds: Collection<UserId>, frame: RealtimeEnvelope): List<UserId> {
+    suspend fun deliverMany(userIds: Collection<UserId>, frame: RealtimeEnvelope) {
         val users = userIds.distinct()
-        if (users.isEmpty()) return emptyList()
-        // TODO(decision: Redis cluster; one multi-key MGET works on standalone Redis/Valkey only, cluster mode
-        //  needs hash tags on rt:conn keys)
-        val nodes = redis.getMany(users.map { "conn:$it" })
-        val offline = users.filterIndexed { index, _ -> nodes[index] == null }
-        users
-            .zip(nodes)
-            .filter { (_, node) -> node != null }
-            .groupBy({ (_, node) -> node!! }, { (user, _) -> user })
-            .forEach { (node, held) -> sendToNode(node, held, frame) }
-        return offline
+        if (users.isEmpty()) return
+        val message = NodeMessage.Frames(users, frame)
+        redis.publish(FANOUT_CHANNEL, CircasoJson.encodeToString(NodeMessage.serializer(), message))
     }
 
-    private suspend fun sendToNode(
-        node: String,
-        userIds: List<UserId>,
-        frame: RealtimeEnvelope,
-    ) {
-        val message = NodeMessage.Frames(userIds, frame)
-        if (node == nodeId) {
-            handle(message)
-        } else {
-            redis.publish("node:$node", CircasoJson.encodeToString(NodeMessage.serializer(), message))
-        }
+    /**
+     * Of [userIds], those no node holds a socket for, from single-key `GET`s of `rt:conn:{userId}` sent as one
+     * pipeline. Only asked for frames worth a push, so receipts and typing never read Redis.
+     */
+    suspend fun withoutSocket(userIds: Collection<UserId>): List<UserId> {
+        val users = userIds.distinct()
+        if (users.isEmpty()) return emptyList()
+        val nodes = redis.getPipelined(users.map { "conn:$it" })
+        return users.filterIndexed { index, _ -> nodes[index] == null }
     }
 
     /** Sends `system/session.revoked` to the phone and closes its socket, on whichever node holds it. */

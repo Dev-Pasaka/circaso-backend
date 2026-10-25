@@ -44,8 +44,12 @@ class GatewayRealtime(
     }
 
     override suspend fun deliverMany(userIds: Collection<UserId>, envelope: RealtimeEnvelope): Resource<Unit> {
-        val offline = hub.deliverMany(userIds, envelope)
-        val pushes = offline.mapNotNull { userId -> pushFor(envelope, userId)?.let { userId to it } }
+        hub.deliverMany(userIds, envelope)
+        // Only users this frame would push to are looked up, so receipts and typing cost one publish and no reads.
+        val candidates = userIds.distinct().mapNotNull { userId -> pushFor(envelope, userId)?.let { userId to it } }
+        if (candidates.isEmpty()) return Resource.success(Unit)
+        val offline = hub.withoutSocket(candidates.map { it.first }).toSet()
+        val pushes = candidates.filter { (userId, _) -> userId in offline }
         pushes.chunked(PUSH_BATCH).forEach { batch ->
             coroutineScope {
                 batch.map { (userId, message) -> async { pushTo(userId, message) } }.awaitAll()
