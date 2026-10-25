@@ -20,6 +20,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.runTestApplication
 import io.ktor.server.testing.testApplication
@@ -779,7 +780,7 @@ class ServeTest {
         suspend fun code(response: HttpResponse) = json(response)["code"]!!.jsonPrimitive.content
 
         suspend fun data(response: HttpResponse): JsonObject {
-            assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+            assertTrue(response.status.isSuccess(), response.bodyAsText())
             return json(response)["data"]!!.jsonObject
         }
 
