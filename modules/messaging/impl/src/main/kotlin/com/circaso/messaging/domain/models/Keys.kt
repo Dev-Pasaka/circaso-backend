@@ -19,10 +19,11 @@ data class KeyBundle(
 )
 
 /**
- * The phone's device-key signature over an upload: [digest] is the SHA-256 of the request body without
- * `deviceProof`, as the presentation mapper computed it from the bytes that arrived.
+ * The phone's device-key signature over an upload (Messaging → Encryption): [signedPayload] is the UTF-8 of
+ * `X-Device-Timestamp + "\n" + hex(SHA-256(body bytes))`, built by the presentation mapper from the bytes that
+ * arrived; [timestamp] is that header parsed.
  */
-class KeyUploadProof(val digest: ByteArray, val timestamp: Instant, val signature: ByteArray)
+class KeyUploadProof(val signedPayload: ByteArray, val timestamp: Instant, val signature: ByteArray)
 
 /** M1 `PUT /keys`: the whole key set, replacing the one before. */
 data class PublishKeysCommand(

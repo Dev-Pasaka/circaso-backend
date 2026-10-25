@@ -4,30 +4,26 @@ import com.circaso.shared.InstantSerializer
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
-/** Keys are standard base64; the signed prekey's signature is made by the identity key, on the phone. */
+/**
+ * Keys are standard base64. Uploads carry no proof in the body: it travels in `X-Device-Timestamp` and
+ * `X-Device-Signature`, over the exact body bytes. The signed prekey's signature is made by the identity key, on
+ * the phone.
+ */
 @Serializable
 data class SignedPreKeyDto(val keyId: Int, val publicKey: String, val signature: String)
 
 @Serializable
 data class OneTimePreKeyDto(val keyId: Int, val publicKey: String)
 
-/** The device key's ES256 signature (base64 DER) over the SHA-256 of the request body without this field. */
-@Serializable
-data class KeyUploadProofDto(
-    @Serializable(with = InstantSerializer::class) val timestamp: Instant,
-    val signature: String,
-)
-
 @Serializable
 data class PublishKeysRequest(
     val identityKey: String,
     val signedPreKey: SignedPreKeyDto,
     val oneTimePreKeys: List<OneTimePreKeyDto> = emptyList(),
-    val deviceProof: KeyUploadProofDto,
 )
 
 @Serializable
-data class AddOneTimeKeysRequest(val oneTimePreKeys: List<OneTimePreKeyDto>, val deviceProof: KeyUploadProofDto)
+data class AddOneTimeKeysRequest(val oneTimePreKeys: List<OneTimePreKeyDto>)
 
 @Serializable
 data class OneTimePreKeysLeftResponse(val oneTimePreKeysLeft: Int)

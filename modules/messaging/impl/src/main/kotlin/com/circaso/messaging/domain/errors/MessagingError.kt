@@ -23,6 +23,12 @@ sealed class MessagingError(
         ErrorKind.FORBIDDEN,
     )
 
+    data object TooManyPrekeys : MessagingError(
+        "messaging.too_many_prekeys",
+        "At most 100 one-time prekeys can be kept at once.",
+        ErrorKind.INVALID,
+    )
+
     class RateLimited(retryAfterSeconds: Long) :
         MessagingError(
             "messaging.rate_limited",

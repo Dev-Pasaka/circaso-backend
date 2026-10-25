@@ -8,7 +8,9 @@ import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.repositories.KeyRepository
 import com.circaso.shared.UserId
+import com.datastax.oss.driver.api.core.servererrors.WriteTimeoutException
 import io.kandra.core.ExperimentalKandraApi
+import io.kandra.core.exception.KandraQueryException
 import io.kandra.runtime.KandraRuntime
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.dsl.KandraRawQuery
@@ -70,13 +72,24 @@ class KeyRepositoryImpl(
         return null
     }
 
+    /**
+     * A lightweight transaction that times out under contention may or may not have applied. It counts as lost
+     * either way: at worst that key is deleted without being handed out, never handed out twice.
+     */
     private suspend fun delete(row: OneTimePreKeyRow): Boolean {
         val query =
             KandraRawQuery
                 .cql(CLAIM_CQL)
                 .bind(row.userId, row.keyId)
                 .build()
-        return prekeys.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
+        return try {
+            prekeys.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
+        } catch (e: WriteTimeoutException) {
+            false
+        } catch (e: KandraQueryException) {
+            if (e.cause !is WriteTimeoutException) throw e
+            false
+        }
     }
 
     private companion object {

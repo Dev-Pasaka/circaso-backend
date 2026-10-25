@@ -620,18 +620,21 @@ class ServeTest {
             )
         }
 
-    /** M1 body as the phone sends it: the SHA-256 of the body without `deviceProof`, signed by the device key. */
-    private fun signedKeys(pair: KeyPair, unsigned: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(unsigned.toByteArray())
+    /** M1 proof headers as the phone sends them: the device key over `timestamp + "\n" + hex(SHA-256(body))`. */
+    private fun keyProof(pair: KeyPair, body: String): Map<String, String> {
+        val timestamp = Instant.now().toString()
+        val digest = MessageDigest.getInstance("SHA-256").digest(body.toByteArray())
+        val payload = timestamp + "\n" + digest.joinToString("") { "%02x".format(it) }
         val signature =
             Signature.getInstance("SHA256withECDSA").run {
                 initSign(pair.private)
-                update(digest)
+                update(payload.toByteArray())
                 sign()
             }
-        val encoded = Base64.getEncoder().encodeToString(signature)
-        return unsigned.removeSuffix("}") +
-            ""","deviceProof":{"timestamp":"${Instant.now()}","signature":"$encoded"}}"""
+        return mapOf(
+            "X-Device-Timestamp" to timestamp,
+            "X-Device-Signature" to Base64.getEncoder().encodeToString(signature),
+        )
     }
 
     @Test
@@ -653,11 +656,13 @@ class ServeTest {
                 path: String,
                 token: String,
                 body: String = "{}",
+                proof: Map<String, String> = emptyMap(),
             ) = client.request(path) {
                 this.method = method
                 contentType(ContentType.Application.Json)
                 header("Authorization", "Bearer $token")
                 header("Idempotency-Key", UUID.randomUUID().toString())
+                proof.forEach { (name, value) -> header(name, value) }
                 setBody(body)
             }
 
@@ -669,12 +674,15 @@ class ServeTest {
                 """{"identityKey":"$key","signedPreKey":{"keyId":7,"publicKey":"$key","signature":"$key"},""" +
                     """"oneTimePreKeys":[$oneTime]}"""
 
-            // an upload signed by another key is refused; one signed by Amina's own phone is taken
+            // an unsigned upload or one signed by another key is refused; one signed by Amina's own phone is taken
+            val unsigned = send(HttpMethod.Put, "/v1/keys", amina.app, keys)
+            assertEquals(HttpStatusCode.Forbidden, unsigned.status)
+            assertEquals("messaging.keys_proof_invalid", code(unsigned))
             val otherKey = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
-            val forged = send(HttpMethod.Put, "/v1/keys", amina.app, signedKeys(otherKey, keys))
+            val forged = send(HttpMethod.Put, "/v1/keys", amina.app, keys, keyProof(otherKey, keys))
             assertEquals(HttpStatusCode.Forbidden, forged.status)
             assertEquals("messaging.keys_proof_invalid", code(forged))
-            val published = send(HttpMethod.Put, "/v1/keys", amina.app, signedKeys(amina.pair, keys))
+            val published = send(HttpMethod.Put, "/v1/keys", amina.app, keys, keyProof(amina.pair, keys))
             assertEquals(HttpStatusCode.OK, published.status, published.bodyAsText())
             assertEquals("3", json(published)["data"]!!.jsonObject["oneTimePreKeysLeft"]!!.jsonPrimitive.content)
             val status = get("/v1/keys/me", amina.app)
@@ -683,7 +691,7 @@ class ServeTest {
             // the agent token can't publish or read keys
             assertEquals(HttpStatusCode.Forbidden, get("/v1/keys/me", amina.agent).status)
             assertEquals(HttpStatusCode.Forbidden, get("/v1/keys/${brian.userId}", amina.agent).status)
-            val asAgent = send(HttpMethod.Put, "/v1/keys", amina.agent, signedKeys(amina.pair, keys))
+            val asAgent = send(HttpMethod.Put, "/v1/keys", amina.agent, keys, keyProof(amina.pair, keys))
             assertEquals(HttpStatusCode.Forbidden, asAgent.status)
 
             // Brian can't reach Amina yet

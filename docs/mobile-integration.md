@@ -29,7 +29,7 @@ Of the **50** routes the phone calls: **37 READY**, **8 PARTIAL**, **5 DEV STUB*
 | Account security, linked logins, security log | **READY** | |
 | Account deletion | **PARTIAL** | Schedules only; completion and recovery window not decided. |
 | Account recovery | **PARTIAL** | A case can be opened and read; no support tool resolves it yet. |
-| Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key over a SHA-256 of the body (section 5). The shared-group way to fetch a bundle comes with chats. |
+| Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key in `X-Device-Timestamp` / `X-Device-Signature` headers over the raw body (section 5). The shared-group way to fetch a bundle comes with chats. |
 | Messaging between people (1:1 and group chat), media | **MISSING** | Designed (end-to-end encrypted); being built in slices. Only the key directory exists so far. |
 | Payments, wallet, money movement, chamas | **MISSING** | Not designed yet; `identity.wallet_not_empty` is a placeholder. |
 | Calls | **MISSING** | Not designed yet. |
@@ -110,7 +110,7 @@ Each phone holds one **hardware-backed ECDSA P-256 key**. Its public half is reg
 - **Payloads (concatenate exactly, no spaces or newlines):**
   - Same-phone sign-in (`deviceProof` on `POST /v1/auth/social`): `nonce + timestamp`.
   - Refresh (`POST /v1/auth/refresh`): `refreshToken + "|" + timestamp`.
-  - Key uploads (`deviceProof` on `PUT /v1/keys` and `POST /v1/keys/one-time`): the **32-byte SHA-256 of the request body without `deviceProof`**. Build the body without `deviceProof` as **compact JSON** (no spaces or newlines), fields in the order you will send them, strings escaped only where JSON requires it (**no `\/`**: on iOS use `JSONEncoder.OutputFormatting.withoutEscapingSlashes`, since base64 keys contain `/`). Hash those UTF-8 bytes, sign the 32-byte digest with `SHA256withECDSA` / `.ecdsaSignatureMessageX962SHA256` as above (the signer hashes it again, and so does the server), then add `"deviceProof":{"timestamp":"…","signature":"…"}` to the object and send it. The timestamp is not part of the signed bytes but must still be within 5 minutes. Failure: `messaging.keys_proof_invalid` (403).
+  - Key uploads (`PUT /v1/keys` and `POST /v1/keys/one-time`): `timestamp + "\n" + hex(SHA-256(body))`, where `body` is the **exact bytes you send** as the request body and the hash is written as 64 lowercase hex characters. The proof goes in two headers, never in the body: `X-Device-Timestamp: <timestamp>` and `X-Device-Signature: <base64 DER signature>`. Serialise the body once, keep those bytes, hash them, sign, and send the same bytes (any re-serialisation after signing breaks it). Example: for the body `{"oneTimePreKeys":[]}` sent at `2026-10-25T09:00:00Z`, the string to sign is `2026-10-25T09:00:00Z` + a newline (one `\n` byte, 0x0A) + the hex SHA-256 of those 21 bytes. Missing headers, a bad signature or a timestamp more than 5 minutes off answer `messaging.keys_proof_invalid` (403).
 - **`timestamp`:** an ISO-8601 UTC string, for example `2026-10-24T18:58:25Z`. **Send exactly the string you signed.** The server rejects a proof more than **5 minutes** away from its own clock, so a phone with a wrong clock cannot sign in: show a "check your date and time" message for `identity.device_proof_invalid`.
 - **`deviceId`:** a UUID the app generates **once per install** and stores next to the key. Reuse it in every request. On Android it is lost with the app data; on iOS the Keychain may keep it across reinstall, and that is fine.
 - A lost or replaced key is not an error to fix in code: the next social sign-in answers `next: REVERIFY_PHONE` and the person verifies the number again.
@@ -266,8 +266,8 @@ Chats are end-to-end encrypted on the phone with libsignal (X3DH, double ratchet
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `PUT /v1/keys`<br>**M1** Publish this phone's identity key, signed prekey and up to 100 one-time prekeys | `app` | PublishKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed (section 5, key uploads). Replaces the whole set: one-time prekeys from an earlier upload are deleted, so send fresh ones with it. Publish after registering the device, and again every 7 days to rotate the signed prekey. Errors: `messaging.keys_proof_invalid`, `request.malformed`. |
-| `POST /v1/keys/one-time`<br>**M1** Top up one-time prekeys | `app` | AddOneTimeKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed. Top up when `GET /v1/keys/me` shows fewer than 20. At most 100 are kept at once; an upload that would pass that is refused whole with `request.malformed`. Keys with an id already stored replace it. Errors: `messaging.keys_proof_invalid`, `messaging.keys_not_found` (this phone has not published with `PUT /v1/keys`), `request.malformed`. |
+| `PUT /v1/keys`<br>**M1** Publish this phone's identity key, signed prekey and up to 100 one-time prekeys | `app` | PublishKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the `X-Device-Timestamp` and `X-Device-Signature` headers (section 5, key uploads). Replaces the whole set: one-time prekeys from an earlier upload are deleted, so send fresh ones with it. Publish after registering the device, and again every 7 days to rotate the signed prekey. Errors: `messaging.keys_proof_invalid`, `messaging.too_many_prekeys` (more than 100 keys), `request.malformed`. |
+| `POST /v1/keys/one-time`<br>**M1** Top up one-time prekeys | `app` | AddOneTimeKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the same headers. Top up when `GET /v1/keys/me` shows fewer than 20. At most 100 are kept at once; an upload that would pass that is refused whole with `messaging.too_many_prekeys`. Keys with an id already stored replace it. Errors: `messaging.keys_proof_invalid`, `messaging.keys_not_found` (this phone has not published with `PUT /v1/keys`), `messaging.too_many_prekeys`, `request.malformed`. |
 | `GET /v1/keys/me`<br>**M2** One-time prekeys left and when the signed prekey was set | `app` | — → KeyStatusResponse | **READY** | `messaging.keys_not_found` until this phone has published its own keys (also after a new phone, whose keys must be published again). |
 | `GET /v1/keys/{userId}`<br>**M3** A person's key bundle, to start an encrypted session | `app` | — → KeyBundleResponse | **READY** | Uses up one of their one-time prekeys; `oneTimePreKey` is missing or null when none are left, which X3DH allows. You must be able to reach the person (the shared-group way comes with group chats). 60 bundles per user per hour. Errors: `users.not_reachable`, `messaging.keys_not_found`, `messaging.rate_limited`. |
 
@@ -386,7 +386,7 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 Generated from the spec. `?` marks an optional field. Every response is wrapped in the envelope from section 3, and the type named in the catalogue is what sits in `data`.
 
 - **ActiveDeviceDto** — `model`: string; `activeSince`: string
-- **AddOneTimeKeysRequest** — `oneTimePreKeys`: [OneTimePreKeyDto]; `deviceProof`: KeyUploadProofDto
+- **AddOneTimeKeysRequest** — `oneTimePreKeys`: [OneTimePreKeyDto]
 - **AgentContactDto** — `userId`: string; `displayName`: string; `handle`?: string|null
 - **AgentContactsResponse** — `contacts`: [AgentContactDto]; `nextCursor`?: string|null
 - **AppleNameDto** — `given`?: string|null; `family`?: string|null
@@ -410,7 +410,6 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **JwksResponse** — `keys`: [JwkDto]
 - **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
 - **KeyStatusResponse** — `oneTimePreKeysLeft`: integer; `signedPreKeyAt`: string
-- **KeyUploadProofDto** — `timestamp`: string; `signature`: string
 - **LinkProviderRequest** — `provider`: string; `idToken`: string; `nonce`: string
 - **MyProfileResponse** — `userId`: string; `displayName`: string; `about`?: string|null; `handle`?: string|null; `handleChangeableAt`?: string|null; `avatarUrl`?: string|null; `privacy`: PrivacyDto; `version`: integer
 - **NoBody** — `unused`?: string|null
@@ -423,7 +422,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ProviderDto** — `provider`: string; `maskedEmail`?: string|null; `linkedAt`: string
 - **PublicProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null
 - **PublicProfileDto2** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null
-- **PublishKeysRequest** — `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKeys`?: [OneTimePreKeyDto]; `deviceProof`: KeyUploadProofDto
+- **PublishKeysRequest** — `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKeys`?: [OneTimePreKeyDto]
 - **PushTokenRequest** — `pushToken`: string
 - **ReachResponse** — `reachable`: boolean
 - **ReadNoteDto** — `chatIds`: [string]; `chatNames`?: [string]; `messageCount`: integer

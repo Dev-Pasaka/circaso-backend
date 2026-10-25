@@ -12,7 +12,8 @@ import java.time.Duration
 /**
  * "This key upload comes from my registered phone" (Messaging → Encryption): the signature is checked by identity
  * against the phone's hardware-backed device key, so a stolen access token alone can't swap someone's keys. The
- * timestamp must be within the window identity uses for its own device proofs.
+ * timestamp is part of the signed payload, so a captured upload can't be replayed with a fresh one, and it must be
+ * within the window identity uses for its own device proofs.
  */
 class KeyProofs(private val signatures: DeviceSignatures, private val clock: Clock, private val window: Duration) {
     suspend fun check(
@@ -23,10 +24,7 @@ class KeyProofs(private val signatures: DeviceSignatures, private val clock: Clo
         if (Duration.between(proof.timestamp, clock.instant()).abs() > window) {
             return Resource.error(MessagingError.KeysProofInvalid)
         }
-        // TODO(decision: the proof covers the SHA-256 of the body without `deviceProof`, so its timestamp is not
-        //  signed and the window check can't stop a captured upload being replayed with a fresh timestamp; should
-        //  the signed payload include the timestamp, as identity's proofs do?)
-        return when (signatures.verify(userId, deviceId, proof.digest, proof.signature)) {
+        return when (signatures.verify(userId, deviceId, proof.signedPayload, proof.signature)) {
             is Resource.Success -> Resource.success(Unit)
             is Resource.Error -> Resource.error(MessagingError.KeysProofInvalid)
         }

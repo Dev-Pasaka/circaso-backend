@@ -7,6 +7,7 @@ import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.PublishKeys
+import com.circaso.messaging.presentation.mappers.SignedUpload
 import com.circaso.messaging.presentation.mappers.addOneTimeKeysCommand
 import com.circaso.messaging.presentation.mappers.publishKeysCommand
 import com.circaso.shared.DeviceId
@@ -70,23 +71,29 @@ class KeyDirectoryTest {
 
         val principal get() = CallPrincipal(userId, deviceId, UUID.randomUUID(), Scope.APP)
 
-        /** Signs the SHA-256 of [unsigned], then adds `deviceProof` as the last field, as the app does. */
+        /** Signs `timestamp + "\n" + hex(SHA-256(body))` and sends the proof in the two headers, as the app does. */
         fun sign(
-            unsigned: String,
+            body: String,
             at: Instant = now,
             with: KeyPair = pair,
-        ): String {
-            val digest = MessageDigest.getInstance("SHA-256").digest(unsigned.toByteArray())
+        ): SignedUpload {
+            val digest = MessageDigest.getInstance("SHA-256").digest(body.toByteArray())
+            val payload = "$at\n" + digest.joinToString("") { "%02x".format(it) }
             val signature =
                 Signature.getInstance("SHA256withECDSA").run {
                     initSign(with.private)
-                    update(digest)
+                    update(payload.toByteArray())
                     sign()
                 }
-            val proof = """"deviceProof":{"timestamp":"$at","signature":"${b64(signature)}"}"""
-            return unsigned.removeSuffix("}") + ",$proof}"
+            return SignedUpload(body.toByteArray(), at.toString(), b64(signature))
         }
     }
+
+    private fun SignedUpload.withBody(changed: String) = SignedUpload(changed.toByteArray(), timestamp, signature)
+
+    private fun SignedUpload.withTimestamp(changed: String?) = SignedUpload(body, changed, signature)
+
+    private fun SignedUpload.withSignature(changed: String?) = SignedUpload(body, timestamp, changed)
 
     private fun newPair(): KeyPair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
 
@@ -98,11 +105,11 @@ class KeyDirectoryTest {
 
     private fun topUpBody(ids: IntRange) = """{"oneTimePreKeys":[${oneTimeJson(ids)}]}"""
 
-    private suspend fun publish(phone: Phone, body: String) =
-        publishKeysCommand(phone.principal, body).flatMap { publishKeys(it) }
+    private suspend fun publish(phone: Phone, upload: SignedUpload) =
+        publishKeysCommand(phone.principal, upload).flatMap { publishKeys(it) }
 
-    private suspend fun topUp(phone: Phone, body: String) =
-        addOneTimeKeysCommand(phone.principal, body).flatMap { addOneTimeKeys(it) }
+    private suspend fun topUp(phone: Phone, upload: SignedUpload) =
+        addOneTimeKeysCommand(phone.principal, upload).flatMap { addOneTimeKeys(it) }
 
     // ---- M1 publish ----
 
@@ -120,15 +127,12 @@ class KeyDirectoryTest {
         }
 
     @Test
-    fun `the proof may come anywhere in the body`() =
+    fun `the body is hashed exactly as sent, whitespace and field order included`() =
         runTest {
             val amina = Phone()
-            val signed = amina.sign(publishBody())
-            val proof = signed.substring(signed.indexOf(",\"deviceProof\"") + 1, signed.length - 1)
+            val spaced = publishBody().replace(",", ", ").replace("{", "{ ")
 
-            val proofFirst = "{" + proof + "," + publishBody().removePrefix("{")
-
-            assertEquals(10, publish(amina, proofFirst).data())
+            assertEquals(10, publish(amina, amina.sign(spaced)).data())
         }
 
     @Test
@@ -146,9 +150,42 @@ class KeyDirectoryTest {
     fun `a body changed after it was signed is refused`() =
         runTest {
             val amina = Phone()
-            val tampered = amina.sign(publishBody()).replace(key(1), key(9))
+            val signed = amina.sign(publishBody())
+
+            val tampered = signed.withBody(publishBody().replace(key(1), key(9)))
+            val reformatted = signed.withBody(publishBody() + "\n")
 
             assertEquals("messaging.keys_proof_invalid", publish(amina, tampered).errorCode())
+            assertEquals("messaging.keys_proof_invalid", publish(amina, reformatted).errorCode())
+        }
+
+    @Test
+    fun `the timestamp is covered by the signature`() =
+        runTest {
+            val amina = Phone()
+            val signed = amina.sign(publishBody(), at = now.minus(Duration.ofMinutes(1)))
+
+            val moved = signed.withTimestamp(now.toString())
+
+            assertEquals("messaging.keys_proof_invalid", publish(amina, moved).errorCode())
+            assertEquals(10, publish(amina, signed).data())
+        }
+
+    @Test
+    fun `missing or unreadable proof headers are a failed proof`() =
+        runTest {
+            val amina = Phone()
+            val signed = amina.sign(publishBody())
+
+            for (upload in listOf(
+                signed.withTimestamp(null),
+                signed.withSignature(null),
+                signed.withTimestamp("yesterday"),
+                signed.withSignature("not base64!"),
+            )) {
+                assertEquals("messaging.keys_proof_invalid", publish(amina, upload).errorCode())
+            }
+            assertEquals("messaging.keys_proof_invalid", topUp(amina, signed.withSignature(null)).errorCode())
         }
 
     @Test
@@ -192,18 +229,27 @@ class KeyDirectoryTest {
         }
 
     @Test
-    fun `an upload is shape-checked before anything else`() =
+    fun `a signed upload is shape-checked`() =
         runTest {
             val amina = Phone()
 
-            assertEquals("request.malformed", publish(amina, "not json").errorCode())
-            assertEquals("request.malformed", publish(amina, amina.sign(publishBody(oneTimeIds = 1..101))).errorCode())
-            val duplicate =
-                publishBody().replace(""""keyId":102""", """"keyId":101""")
+            assertEquals("request.malformed", publish(amina, amina.sign("not json")).errorCode())
+            val duplicate = publishBody().replace(""""keyId":102""", """"keyId":101""")
             assertEquals("request.malformed", publish(amina, amina.sign(duplicate)).errorCode())
             val notBase64 = publishBody().replace(key(1), "not base64!")
             assertEquals("request.malformed", publish(amina, amina.sign(notBase64)).errorCode())
-            assertEquals("request.malformed", publish(amina, publishBody()).errorCode(), "no deviceProof")
+        }
+
+    @Test
+    fun `more than 100 one-time prekeys in one upload is too many`() =
+        runTest {
+            val amina = Phone()
+
+            val result = publish(amina, amina.sign(publishBody(oneTimeIds = 1..101)))
+
+            assertEquals("messaging.too_many_prekeys", result.errorCode())
+            assertEquals(100, publish(amina, amina.sign(publishBody(oneTimeIds = 1..100))).data())
+            assertEquals("messaging.too_many_prekeys", topUp(amina, amina.sign(topUpBody(201..301))).errorCode())
         }
 
     // ---- M1 top-up ----
@@ -215,7 +261,7 @@ class KeyDirectoryTest {
             publish(amina, amina.sign(publishBody(oneTimeIds = 1..60))).data()
 
             assertEquals(100, topUp(amina, amina.sign(topUpBody(61..100))).data())
-            assertEquals("request.malformed", topUp(amina, amina.sign(topUpBody(101..101))).errorCode())
+            assertEquals("messaging.too_many_prekeys", topUp(amina, amina.sign(topUpBody(101..101))).errorCode())
             assertEquals(100, keys.oneTimeKeyIds(amina.userId).size)
         }
 
