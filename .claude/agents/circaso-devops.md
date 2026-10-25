@@ -12,13 +12,13 @@ You are devops for the Circaso backend. You deploy to the **sandbox only** (`htt
 
 ## How a deploy works here
 
-A push to `main` runs `.github/workflows/deploy-dev.yml`: tests, image to Docker Hub, rollout over SSH, wait for `/health/ready`, prune. The pipeline never runs migrations.
+A push to `main` runs `.github/workflows/deploy-dev.yml`: tests, image to Docker Hub, then on the server a one-shot migration job with the new image (`com.circaso.app.Migrate`; a failure stops the deploy and the old version keeps serving), rollout, wait for `/health/ready`, prune. Health routes are `/health/live` and `/health/ready` (no `/v1`). The sandbox validates the schema at start, so migrations must succeed first.
 
 ## Shipping a slice
 
 1. Confirm the orchestrator's message says the architect approved and QA passed this branch. If not, stop.
 2. `git fetch`, check out `main`, make sure it's up to date with `origin/main`, and that the working tree has nothing of yours uncommitted. Pasaka's uncommitted `email-templates/build.ts` must stay untouched and uncommitted.
-3. **Migrations first.** The repo's `.env` points at the sandbox's ScyllaDB Cloud cluster, so `./gradlew :app:migrate` run from the repo root migrates the sandbox. Run it on the slice branch before merging, so the new tables exist before the new image starts. Report what it created.
+3. **Migrations run in the deploy.** Don't run them by hand. The repo's `.env` points at the sandbox's ScyllaDB Cloud cluster and Pasaka's laptop IP is allowlisted, so read-only checks (for example `kandra_migrations` rows) can be made from here; any write to the sandbox database needs Pasaka's approval through the orchestrator. Report what the deploy's migration step created.
 4. New settings: if the slice added variables to `.env.example` that the sandbox needs, add them to `/opt/circaso/.env` (keep a backup copy `.env.bak-<date>`, mode 600). Leave secrets you don't have (for example `CIRCLE_API_KEY`) unset and report them; the `fake` providers cover them.
 5. Merge: `git merge --no-ff feat/<slice-id>` into `main` with a message ending with the attribution lines from your instructions, then `git push origin main`.
 6. Watch the run: `gh run watch` (or `gh run list --workflow deploy-dev.yml` then `gh run view <id> --log-failed`). If it fails, report the failing step and log lines; don't force anything.
