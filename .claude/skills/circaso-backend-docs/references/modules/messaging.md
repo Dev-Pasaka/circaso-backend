@@ -167,7 +167,7 @@ Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), s
 }
 ```
 
-A direct chat's id comes from a claim on the pair (`direct_chats_by_pair`, `saveIfNotExists`), so two people opening a chat at the same moment get the same one.
+A group's id is derived from the creator and the request's `Idempotency-Key`, so a retried create resumes the same group; a resume only completes a create that nothing else has changed since (otherwise it returns the group as it is), so it never re-adds someone who left. A direct chat's id comes from a claim on the pair (`direct_chats_by_pair`, `saveIfNotExists`), so two people opening a chat at the same moment get the same one.
 
 A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP_AVATAR"`: it has no recipients and is never deleted on download, only when the avatar changes or the group is deleted. A phone without the current metadata key shows "Group" and a placeholder until it gets one.
 
@@ -301,6 +301,7 @@ data class ChatRow(
     val avatarMediaId: UUID = NIL_UUID,         // the encrypted avatar file, deleted when replaced
     val settings: String,                       // JSON: membersCanAdd
     val memberCount: Int,
+    val ownerId: UUID = NIL_UUID,               // groups: the owner; ownership changes go through the version check (V004); nil for direct
     val createdBy: UUID,
     val createdAt: Instant,
     @Version val version: Long = 0,
@@ -418,7 +419,7 @@ data class MessagingSettingsRow(@PartitionKey val userId: UUID, val readReceipts
 | Key | Value | Expiry | Purpose |
 | --- | --- | --- | --- |
 | `msg:pending:{messageId}` | count of members yet to ack | 30 days | Deletes the group body on the last ack |
-| `msg:members:{chatId}` | set of userIds | 10 min, cleared on change | Membership for sends and fan-out without reading `members_by_chat` each time |
+| `msg:members:{chatId}` | userIds, one comma-separated value | 10 min; a change writes a 5 s marker and readers fill only with set-if-absent | Membership for sends and fan-out without reading `members_by_chat` each time |
 | `msg:receipts:{messageId}` | hash userId → `delivered` / `read` | 10 s | Group receipts collected for the 5-second batch to the sender |
 | `msg:bundle-rate:{userId}` | counter | 1 h | 60 key bundles per user per hour |
 | `msg:hk-fetch:{userId}` | counter | 24 h | 5 backup fetches per user per day |
@@ -453,6 +454,7 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 
 | Code | Kind → status | When |
 | --- | --- | --- |
+| `messaging.not_a_group` | INVALID → 400 | Leaving a direct chat, or removing someone from one |
 | `messaging.chat_not_found` | NOT_FOUND → 404 | No such chat, or the user isn't in it (the two look the same) |
 | `messaging.not_admin` | FORBIDDEN → 403 | A member-only user tries an admin action |
 | `messaging.group_full` | CONFLICT → 409 | Adding would pass 1,000 members |
