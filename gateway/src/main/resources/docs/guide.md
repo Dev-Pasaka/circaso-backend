@@ -188,7 +188,7 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `transcript` `{text, final}` | server | The words heard so far. |
 | `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
 | `reply` `{text}` | server | One sentence of the answer; its audio follows. |
-| `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat. |
+| `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
 | `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
 | `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
 | `error` `{code, message}` | server | One answer failed; keep talking. |
@@ -196,7 +196,7 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
 | `end` | phone | Hang up. |
 
-The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `frame too large` and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 

@@ -39,7 +39,8 @@ class TranscribeVoice(
                 is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
             }
         if (transcript.seconds > config.maxVoiceSeconds) return Resource.error(AssistantError.VoiceTooLong)
-        quota.addVoiceSeconds(userId, day, transcript.seconds)
+        // the clip's real length may be longer than claimed: charged up to the cap, never past it
+        quota.addVoiceSecondsUpTo(userId, day, transcript.seconds, limit)
         return Resource.success(transcript)
     }
 

@@ -26,6 +26,7 @@ import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.FrameTooBigException
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
@@ -37,6 +38,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.circaso.assistant.presentation.controllers.LiveVoice")
@@ -63,7 +66,12 @@ fun Route.liveVoiceController(live: LiveVoiceService) {
 }
 
 private suspend fun DefaultWebSocketServerSession.serve(live: LiveVoiceService) {
-    val auth = readAuth() ?: return close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "auth required"))
+    val auth = readAuth()
+    if (auth == null) {
+        // the socket may already be closed (a first frame over 64 KB)
+        runCatching { close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "auth required")) }
+        return
+    }
     val conversation =
         when (val opened = live.open(auth.toRequest(call.callId))) {
             is Resource.Success -> opened.data
@@ -96,6 +104,11 @@ private suspend fun DefaultWebSocketServerSession.serve(live: LiveVoiceService) 
 private suspend fun DefaultWebSocketServerSession.say(end: LiveEnd) {
     if (end is LiveEnd.SessionRevoked) {
         runCatching { close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "unauthorized")) }
+        return
+    }
+    if (end is LiveEnd.FrameTooBig) {
+        // Ktor's own close reason, kept for the backstop; already sent when the plugin limit closed the socket
+        end.bytes?.let { runCatching { close(CloseReason(CloseReason.Codes.TOO_BIG, "Frame is too big: $it")) } }
         return
     }
     val closing = end.toClosing() ?: return
@@ -148,16 +161,23 @@ private suspend fun DefaultWebSocketServerSession.converse(conversation: LiveCon
     }
 
 private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveConversation) {
-    for (frame in incoming) {
-        if (frame.data.size > MAX_FRAME_BYTES) {
-            close(CloseReason(CloseReason.Codes.TOO_BIG, "frame too large"))
-            break
+    try {
+        for (frame in incoming) {
+            if (frame.data.size > MAX_FRAME_BYTES) {
+                // the gateway's plugin limit closes first; this is the backstop, with the same reason
+                conversation.hangUp(LiveEnd.FrameTooBig(frame.data.size.toLong()))
+                return
+            }
+            when (frame) {
+                is Frame.Binary -> conversation.audio(frame.readBytes())
+                is Frame.Text -> phoneSaid(frame.readText(), conversation)
+                else -> Unit
+            }
         }
-        when (frame) {
-            is Frame.Binary -> conversation.audio(frame.readBytes())
-            is Frame.Text -> phoneSaid(frame.readText(), conversation)
-            else -> Unit
-        }
+    } catch (_: FrameTooBigException) {
+        // Ktor has already closed the socket with 1009 "Frame is too big: N"; this ends the conversation normally
+        conversation.hangUp(LiveEnd.FrameTooBig(null))
+        return
     }
     conversation.hangUp(LiveEnd.PhoneGone)
 }
@@ -167,7 +187,12 @@ private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveCo
  * is ignored, as on the main socket.
  */
 private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conversation: LiveConversation) {
-    val frame = runCatching { CircasoJson.decodeFromString(LiveClientFrame.serializer(), text) }.getOrNull() ?: return
+    val frame = runCatching { CircasoJson.decodeFromString(LiveClientFrame.serializer(), text) }.getOrNull()
+    if (frame == null) {
+        // a `tool_results` the phone got wrong is answered, so the phone can send it again; the turn keeps waiting
+        if (typeOf(text) == "tool_results") sendError(SharedError.Malformed(mapOf("snippets" to "are not valid")))
+        return
+    }
     when (frame.type) {
         "end" -> {
             conversation.hangUp()
@@ -225,6 +250,16 @@ private suspend fun DefaultWebSocketServerSession.sendError(error: DomainError) 
             CircasoJson.encodeToString(LiveErrorFrame.serializer(), LiveErrorFrame(error.code, error.message)),
         ),
     )
+
+/** The `type` of a frame that didn't decode as a whole, if it is JSON with one. */
+private fun typeOf(text: String): String? =
+    runCatching {
+        CircasoJson
+            .parseToJsonElement(text)
+            .jsonObject["type"]
+            ?.jsonPrimitive
+            ?.content
+    }.getOrNull()
 
 private fun LiveEnd.closeCode(): CloseReason.Codes =
     when (this) {

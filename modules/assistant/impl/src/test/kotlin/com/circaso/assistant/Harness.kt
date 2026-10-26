@@ -144,6 +144,8 @@ class MemoryPending : PendingTurns {
         turns[turn.userId to turn.turnId] = turn
     }
 
+    override suspend fun callIdOf(userId: UserId, turnId: UUID) = turns[userId to turnId]?.callId
+
     override suspend fun take(userId: UserId, turnId: UUID) = turns.remove(userId to turnId)
 }
 

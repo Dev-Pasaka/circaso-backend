@@ -31,9 +31,13 @@ class ContinueTurn(
         if (!isOwnAgentToken(verifier, result.userId, result.agentToken)) {
             return Resource.error(SharedError.TokenInvalid)
         }
-        val turn =
-            pending.take(result.userId, result.turnId)?.takeIf { it.callId == result.callId }
-                ?: return Resource.error(AssistantError.TurnNotFound)
+        // a wrong call id is the phone's mistake: the turn stays waiting for the right answer
+        val waitingOn =
+            pending.callIdOf(result.userId, result.turnId) ?: return Resource.error(AssistantError.TurnNotFound)
+        if (waitingOn != result.callId) {
+            return Resource.error(SharedError.Malformed(mapOf("callId" to "is not the call this turn waits on")))
+        }
+        val turn = pending.take(result.userId, result.turnId) ?: return Resource.error(AssistantError.TurnNotFound)
 
         val snippets =
             result.snippets

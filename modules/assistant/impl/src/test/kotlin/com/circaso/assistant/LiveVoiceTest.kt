@@ -332,12 +332,29 @@ class LiveVoiceTest {
                 auth()
                 readUntil(got) { it.ofType("ready").isNotEmpty() }
                 live.ears.session().push(TranscriptionEvent.Final("talk to me", endOfTurn = true))
-                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == long.length - 1 }
 
                 send(Frame.Binary(true, ByteArray(64 * 1024 + 1)))
                 val closed = readToClose(got)
                 assertEquals(CloseReason.Codes.TOO_BIG.code, closed?.code)
+                assertEquals("Frame is too big: ${64 * 1024 + 1}", closed?.message, "Ktor's own reason")
             }
+            assertTrue(got.ofType("closing").isEmpty(), "1009 sends no closing frame")
+            eventually {
+                live.ears.sessions
+                    .single()
+                    .isClosed &&
+                    live.voice.sessions
+                        .single()
+                        .isClosed
+            }
+            val lines = logs.list.map { it.level.toString() + " " + it.formattedMessage }
+            eventually { logs.list.any { "live voice closed" in it.formattedMessage } }
+            assertTrue(
+                logs.list.any { "live voice closed" in it.formattedMessage && "FrameTooBig" in it.formattedMessage },
+                "the normal closed line, with the reason",
+            )
+            assertTrue(lines.none { it.startsWith("ERROR") }, "no error log")
             val audio = got.frames.filterIsInstance<ByteArray>()
             assertTrue(audio.all { it.size <= 64 * 1024 })
             assertTrue(audio.size > 2, "the long sentence was split")
@@ -561,12 +578,21 @@ class LiveVoiceTest {
                 readUntil(got) { it.ofType("ready").isNotEmpty() }
                 val ears = live.ears.session()
                 ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
-                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 160_000 }
                 delay(1_000)
+                assertTrue(got.ofType("reply_done").isEmpty(), "reply_done waits until the audio has played")
                 ears.push(TranscriptionEvent.SpeechStarted)
-                readUntil(got) { it.ofType("interrupted").isNotEmpty() }
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
                 hangUp(got)
             }
+            assertEquals(
+                false,
+                got
+                    .ofType("reply_done")
+                    .single()["spoken"]!!
+                    .jsonPrimitive.boolean,
+                "talked over while it played",
+            )
             val charged = voiceSeconds(live)
             assertTrue(charged in 1..2, "only what played before the barge-in is charged (was $charged)")
         }
@@ -1133,5 +1159,33 @@ class LiveVoiceTest {
                 hangUp(got)
             }
             assertEquals(3, voiceSeconds(live), "exactly the 3 s span the transcriber timed")
+        }
+
+    @Test
+    fun `a tool_results with the wrong call id is malformed and the turn keeps waiting`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .call("searchChats")
+                .say("Found it.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("search my chats", endOfTurn = true))
+                readUntil(got) { it.ofType("tool_request").isNotEmpty() }
+                val request = got.ofType("tool_request").single()
+                val turnId = request.text("turnId")
+
+                send(Frame.Text("""{"type":"tool_results","turnId":"$turnId","callId":"wrong","snippets":[]}"""))
+                readUntil(got) { it.ofType("error").isNotEmpty() }
+                send(Frame.Text("""{"type":"tool_results","turnId":"$turnId","callId":"${request.text("callId")}"}"""))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+            assertEquals("request.malformed", got.ofType("error").single().text("code"))
+            assertEquals("Found it.", got.ofType("reply").single().text("text"))
         }
 }

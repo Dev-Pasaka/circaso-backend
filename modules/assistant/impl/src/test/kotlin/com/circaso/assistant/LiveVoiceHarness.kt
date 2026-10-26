@@ -196,7 +196,8 @@ class LiveHarness(val h: Harness) {
 
     fun serve(builder: ApplicationTestBuilder) =
         builder.application {
-            install(WebSockets)
+            // as the gateway installs it: 64 KB frames on every socket
+            install(WebSockets) { maxFrameSize = 64 * 1024 }
             routing { route("/v1") { liveVoiceController(service) } }
         }
 }

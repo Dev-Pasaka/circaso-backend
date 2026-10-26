@@ -131,7 +131,7 @@ fun Route.chatController(chat: ChatService) {
                     }.docs<ToolResultsRequest, NoBody>(
                         "A9 · The phone's answer to a device tool; the reply then continues as server-sent events",
                         TAG,
-                        listOf("assistant.turn_not_found", "auth.token_invalid"),
+                        listOf("assistant.turn_not_found", "auth.token_invalid", "request.malformed"),
                         notes =
                             "$SCOPE `messageId` is the `turnId` from the `tool_request` event. At most 30 short " +
                                 "snippets; they are used for this turn and never stored.",

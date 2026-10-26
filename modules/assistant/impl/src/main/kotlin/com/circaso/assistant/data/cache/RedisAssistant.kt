@@ -147,6 +147,11 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
         redis.set("turn:${turn.userId}:${turn.turnId}", CircasoJson.encodeToString(PendingJson.serializer(), json), TTL)
     }
 
+    override suspend fun callIdOf(userId: UserId, turnId: UUID): String? {
+        val raw = redis.get("turn:$userId:$turnId") ?: return null
+        return runCatching { CircasoJson.decodeFromString(PendingJson.serializer(), raw) }.getOrNull()?.callId
+    }
+
     override suspend fun take(userId: UserId, turnId: UUID): PendingTurn? {
         val raw = redis.getAndDelete("turn:$userId:$turnId") ?: return null
         val j = runCatching { CircasoJson.decodeFromString(PendingJson.serializer(), raw) }.getOrNull() ?: return null

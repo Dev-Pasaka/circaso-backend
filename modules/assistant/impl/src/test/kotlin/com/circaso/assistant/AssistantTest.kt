@@ -9,11 +9,13 @@ import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import kotlinx.coroutines.test.runTest
+import java.time.Clock
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -325,10 +327,14 @@ class AssistantTest {
             val paused = h.start(ask("q")).data() as TurnResult.NeedsDevice
 
             assertEquals(
-                "assistant.turn_not_found",
+                "request.malformed",
                 h.resume(DeviceToolResult(me, paused.turnId, "other-call", emptyList(), null, null)).errorCode(),
+                "a wrong call id leaves the turn waiting",
             )
-            // the wrong call id used up the parked turn, as a stale or guessed answer should
+            assertIs<TurnResult.Answer>(
+                h.resume(DeviceToolResult(me, paused.turnId, "c1", emptyList(), null, null)).data(),
+            )
+            // answered once: the parked turn is gone
             assertEquals(
                 "assistant.turn_not_found",
                 h.resume(DeviceToolResult(me, paused.turnId, "c1", emptyList(), null, null)).errorCode(),
@@ -587,5 +593,32 @@ class AssistantTest {
             assertEquals("auth.token_invalid", h.resume(reply("other-agent")).errorCode())
             h.model.say("Nothing found.")
             assertIs<TurnResult.Answer>(h.resume(reply("agent-token")).data(), "the turn was still waiting")
+        }
+
+    @Test
+    fun `an A9 answer with the wrong call id is malformed and leaves the turn waiting`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.call("searchChats")
+            val waiting = h.start(ask("what did the chama agree?")).data() as TurnResult.NeedsDevice
+
+            val wrong = DeviceToolResult(me, waiting.turnId, "not-the-call", emptyList(), "agent-token", "req-2")
+            assertEquals("request.malformed", h.resume(wrong).errorCode())
+
+            h.model.say("Nothing found.")
+            val right = wrong.copy(callId = waiting.callId)
+            assertIs<TurnResult.Answer>(h.resume(right).data(), "still waiting for the right answer")
+        }
+
+    @Test
+    fun `a clip longer than claimed is charged up to the cap, never past it`() =
+        runTest {
+            val h = Harness(smallLimits(), owner = me) // 30 voice seconds a day
+            h.quota.addVoiceSeconds(me, Clock.systemUTC().today(), 28)
+            h.speech.seconds = 4 // the clip claimed 2 s, but runs 4
+
+            h.transcribe(me, VoiceClip("hello".toByteArray(), "audio/mp4", 2, null)).data()
+
+            assertEquals(30, h.quota.voiceSeconds(me, Clock.systemUTC().today()))
         }
 }

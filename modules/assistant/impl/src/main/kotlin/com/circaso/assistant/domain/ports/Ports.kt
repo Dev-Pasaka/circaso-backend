@@ -59,6 +59,9 @@ data class PendingReadNote(val chatIds: List<String>, val chatNames: List<String
 interface PendingTurns {
     suspend fun save(turn: PendingTurn)
 
+    /** The call the turn waits on, without taking it: a wrong `callId` must leave the turn waiting. */
+    suspend fun callIdOf(userId: UserId, turnId: UUID): String?
+
     /** Reads and removes it, so an answer can't be used twice. */
     suspend fun take(userId: UserId, turnId: UUID): PendingTurn?
 }

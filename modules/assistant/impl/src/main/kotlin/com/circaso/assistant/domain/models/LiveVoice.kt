@@ -79,4 +79,7 @@ sealed interface LiveEnd {
 
     /** The user's session was revoked (signed out, phone replaced, account deleted), or its token can't be checked. */
     data object SessionRevoked : LiveEnd
+
+    /** The phone sent a frame over 64 KB; [bytes] is its size when known. */
+    data class FrameTooBig(val bytes: Long?) : LiveEnd
 }

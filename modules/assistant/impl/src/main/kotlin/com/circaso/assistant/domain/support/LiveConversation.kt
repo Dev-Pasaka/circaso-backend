@@ -10,6 +10,8 @@ import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.TranscriptionEvent
+import com.circaso.shared.DomainError
+import com.circaso.shared.ErrorKind
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import kotlinx.coroutines.CompletableDeferred
@@ -78,6 +80,9 @@ class LiveConversation(
     private val generation = AtomicInteger()
     private val unmeteredMicros = AtomicLong()
     private val pendingFlushes = AtomicInteger()
+
+    /** Replies whose audio is sent and still playing on the phone: `reply_done` goes once it has all played. */
+    private val playingReplies = ConcurrentLinkedQueue<LiveEvent.ReplyDone>()
 
     /** Sentences sent to the voice and not yet heard: each goes to the phone as its audio starts, so they line up. */
     private val captions = ConcurrentLinkedQueue<LiveEvent>()
@@ -179,9 +184,24 @@ class LiveConversation(
             emit(LiveEvent.TurnFailed(AssistantError.TurnNotFound))
             return
         }
-        deviceGeneration = -1
-        answer(asked, checked = false) { answerDevice(result) }
+        answering = asked
+        turns.launch {
+            val answer = withContext(NonCancellable) { answerDevice(result) }
+            if (answer is Resource.Error && answer.error is SharedError.Malformed) {
+                // a wrong call id: the turn keeps waiting for the right answer
+                if (answering == asked) answering = -1
+                emit(LiveEvent.TurnFailed(answer.error))
+                return@launch
+            }
+            state.withLock { if (deviceGeneration == asked) deviceGeneration = -1 }
+            conclude(asked, answer)
+            if (answering == asked) answering = -1
+        }
     }
+
+    /** Why a turn was refused is the token's fault: closed like a revoked session. */
+    private fun isTokenFailure(error: DomainError) =
+        error.kind == ErrorKind.UNAUTHORIZED || error === SharedError.ScopeInsufficient
 
     /**
      * Fresh tokens from the phone (access tokens live 15 minutes, a conversation can last longer). A token that isn't
@@ -344,6 +364,7 @@ class LiveConversation(
         pendingFlushes.set(0)
         // a reply cut off half way is still saved: the phone hears of it, unspoken
         captions.filterIsInstance<LiveEvent.ReplyDone>().forEach { emit(it.copy(spoken = false)) }
+        generateSequence { playingReplies.poll() }.forEach { emit(it.copy(spoken = false)) }
         captions.clear()
         captionShown = false
         playingUntil = 0
@@ -401,8 +422,9 @@ class LiveConversation(
             hangUp(LiveEnd.OutOfAllowance(result.error))
             return
         }
-        // the agent token isn't the user's own (decision 2026-10-26): closed like a revoked session
-        if (result.error is SharedError) {
+        // a token that isn't valid or isn't the user's own (decision 2026-10-26) closes like a revoked session; any
+        // other refusal (a question over the length limit) is that turn's error, and the conversation goes on
+        if (isTokenFailure(result.error)) {
             hangUp(LiveEnd.SessionRevoked)
             return
         }
@@ -448,8 +470,8 @@ class LiveConversation(
         return state.withLock {
             if (asked != generation.get()) return@withLock false
             val done = LiveEvent.ReplyDone(reply, spoken = true)
-            // everything may already have been heard; otherwise it follows the last sentence's audio
-            if (pendingFlushes.get() == 0 && captions.isEmpty()) emit(done) else captions.add(done)
+            // it follows the last sentence's audio, and goes once that has played ([deliverPlayedReplies])
+            if (pendingFlushes.get() == 0 && captions.isEmpty()) playingReplies.add(done) else captions.add(done)
             true
         }
     }
@@ -470,7 +492,7 @@ class LiveConversation(
             if (!captionShown) caption()
             captionShown = false
             pendingFlushes.updateAndGet { (it - 1).coerceAtLeast(0) }
-            while (captions.peek() is LiveEvent.ReplyDone) emit(captions.poll())
+            while (captions.peek() is LiveEvent.ReplyDone) playingReplies.add(captions.poll() as LiveEvent.ReplyDone)
         }
 
     /** The next sentence's text, if it is next in line (not a `reply_done` waiting for audio still to come). */
@@ -498,6 +520,7 @@ class LiveConversation(
         while (true) {
             delay(TICK_MILLIS)
             carrySpeech()
+            deliverPlayedReplies()
             settle(final = false)?.let { return hangUp(it) }
             if (isSessionRevoked()) return hangUp(LiveEnd.SessionRevoked)
             expireDeviceWait()
@@ -505,6 +528,13 @@ class LiveConversation(
             if (!isAshaBusy() && nowMillis() - quietSince >= line.silence.toMillis()) return hangUp(LiveEnd.Silence)
         }
     }
+
+    /** `reply_done` (spoken) for each reply whose audio has finished playing on the phone. */
+    private suspend fun deliverPlayedReplies() =
+        state.withLock {
+            if (playingReplies.isEmpty() || pendingFlushes.get() > 0 || nowMillis() < playingUntil) return@withLock
+            generateSequence { playingReplies.poll() }.forEach { emit(it) }
+        }
 
     private suspend fun isSessionRevoked(): Boolean {
         val now = nowMillis()
@@ -517,7 +547,8 @@ class LiveConversation(
     private suspend fun expireDeviceWait() {
         val expired =
             state.withLock {
-                val waiting = deviceGeneration >= 0
+                // not while the phone's answer is being worked on
+                val waiting = deviceGeneration >= 0 && answering != deviceGeneration
                 val late = nowMillis() - deviceAskedAt >= line.deviceToolTimeout.toMillis()
                 if (waiting && late) deviceGeneration = -1
                 waiting && late

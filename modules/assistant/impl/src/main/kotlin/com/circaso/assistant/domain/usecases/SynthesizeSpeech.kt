@@ -49,7 +49,7 @@ class SynthesizeSpeech(
 
         return when (val r = speech.speak(spoken, language)) {
             is Resource.Success -> {
-                quota.addVoiceSeconds(userId, day, seconds)
+                quota.addVoiceSecondsUpTo(userId, day, seconds, limit)
                 r
             }
 
