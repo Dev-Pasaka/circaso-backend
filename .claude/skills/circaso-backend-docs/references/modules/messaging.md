@@ -267,10 +267,11 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 | `receipt` | `chatId`, `receipts: [{ messageId, userId, status: DELIVERED \| READ, at }]` |
 | `typing` | `chatId`, `userId`, `on` |
 | `chat.updated` | `chatId`, `metaVersion`, `version` |
-| `member.added` / `member.removed` | `chatId`, `userId` (the person added or removed), `byUserId`; one frame per person, so adding five people sends five frames |
+| `member.added` | `chatId`, `userIds` (everyone added in that action, sorted), `byUserId`; one frame per member per action (decision 2026-10-26) |
+| `member.removed` | `chatId`, `userId` (the person removed or who left), `byUserId`; one frame per person |
 | `keys.changed` | `userId` |
 
-The `member.added` push is ids-only once pushes are data-only (MS4): the phone words it from the sealed group name. Until then the server sends "You were added to a group", never the group name.
+The `member.added` push goes only to the people in `userIds`, and is ids-only once pushes are data-only (MS4): the phone words it from the sealed group name. Until then the server sends "You were added to a group", never the group name.
 
 Group frames go out through `Realtime.deliverMany`, so a message, receipt batch or typing signal to a full group costs one publish, not one per member; only push-worthy frames also look up who is offline. Group read receipts collect in `msg:receipts:{messageId}` and are sent to the sender as one `receipt` frame every 5 seconds.
 
