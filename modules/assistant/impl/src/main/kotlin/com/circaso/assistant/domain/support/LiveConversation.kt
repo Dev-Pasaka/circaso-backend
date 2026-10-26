@@ -1,14 +1,17 @@
 package com.circaso.assistant.domain.support
 
 import com.circaso.assistant.domain.errors.AssistantError
+import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.TurnResult
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,8 +48,10 @@ fun interface LiveOutput {
  *   provider's queue, tells the phone to stop playing, and makes the stale reply silent; the new words become the
  *   next turn. The generation check and the queueing of each sentence happen under the same lock as the barge-in, so
  *   a sentence of a reply the user talked over can't slip through.
- * - **Metering** (decision 2026-10-26). Voice seconds count only speech: from the moment the transcriber reports the
- *   user speaking to their last word, and the playing time of Asha's audio. An open mic, silence and pauses are free.
+ * - **Metering** (decisions 2026-10-26). Voice seconds count only speech. The user's is measured on the transcriber's
+ *   own clock, from the first word's start to the last word's end of each stretch of speech, so a burst of late events
+ *   can't stretch or shrink it (arrival time is the fallback for a provider without timestamps). Asha's is charged as
+ *   it plays on the phone, so what a barge-in cuts off is never charged. An open mic, silence and pauses are free.
  *   Seconds go to [meter] as they gather and are taken off only once it accepts them; once it refuses, the socket
  *   closes at the allowance.
  * - **The session is re-checked** at each turn and every [LiveVoiceLine.sessionRecheck]; a revoked session (signed
@@ -62,8 +67,8 @@ class LiveConversation(
     private val ask: suspend (String, String?) -> Resource<TurnResult>,
     private val answerDevice: suspend (DeviceToolResult) -> Resource<TurnResult>,
     private val meter: suspend (Int) -> Resource<Long>,
-    /** Whether this access token is still a valid user token of the line's user. */
-    private val checkSession: suspend (String) -> Boolean,
+    /** Whether this access token (and agent token, when given) are still valid tokens of the line's user. */
+    private val checkSession: suspend (String, String?) -> Boolean,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val ended = CompletableDeferred<LiveEnd>()
@@ -75,7 +80,7 @@ class LiveConversation(
     private val pendingFlushes = AtomicInteger()
 
     /** Sentences sent to the voice and not yet heard: each goes to the phone as its audio starts, so they line up. */
-    private val captions = ConcurrentLinkedQueue<String>()
+    private val captions = ConcurrentLinkedQueue<LiveEvent>()
 
     @Volatile private var captionShown = false
 
@@ -99,9 +104,19 @@ class LiveConversation(
 
     @Volatile private var lastSessionCheck = 0L
 
-    /** The start of the speech being heard now (-1 when nobody speaks), and the time of its latest word. */
+    /**
+     * Fallback for a provider without timestamps: the arrival time of the speech being heard now (-1 when nobody
+     * speaks), and of its latest word.
+     */
     private var speechStart = -1L
     private var lastSpeechAt = 0L
+
+    /** The user's speech on the transcriber's clock, in stream seconds: charged up to [audioFrom], heard up to [audioTo]. */
+    private var audioFrom = -1.0
+    private var audioTo = 0.0
+
+    /** Asha's audio sent to the phone and not yet played there; charged as [playingUntil] approaches. */
+    private val unplayedMicros = AtomicLong()
 
     /** The user's current tokens: the phone replaces them on the socket before they expire ([refresh]). */
     @Volatile var accessToken: String = line.start.accessToken
@@ -167,7 +182,7 @@ class LiveConversation(
      * the same user's valid user token ends the conversation as `unauthorized`.
      */
     suspend fun refresh(accessToken: String, agentToken: String?) {
-        if (!checkSession(accessToken)) return hangUp(LiveEnd.SessionRevoked)
+        if (!checkSession(accessToken, agentToken)) return hangUp(LiveEnd.SessionRevoked)
         this.accessToken = accessToken
         if (agentToken != null) this.agentToken = agentToken
     }
@@ -178,7 +193,10 @@ class LiveConversation(
 
     private suspend fun finish(end: LiveEnd) {
         ended.complete(end)
-        state.withLock { closeSpeech() }
+        state.withLock {
+            closeSpeech()
+            settlePlayback(dropUnplayed = true)
+        }
         // the last part second counts, unless the allowance or a revoked session ended it
         if (end !is LiveEnd.OutOfAllowance && end !is LiveEnd.SessionRevoked) settle(final = true)
         release()
@@ -205,7 +223,7 @@ class LiveConversation(
             }
 
             is TranscriptionEvent.Interim -> {
-                userSpoke()
+                userSpoke(audio = event.audio)
                 emit(LiveEvent.Transcript(joined(event.text), isFinal = false))
             }
 
@@ -213,7 +231,7 @@ class LiveConversation(
                 if (event.text.isNotBlank()) {
                     // a final settles words already heard as interims, after the pause that ended them: it starts
                     // speech only when nothing was heard before it, and never stretches it over that pause
-                    userSpoke(isWord = speechStart < 0)
+                    userSpoke(isWord = speechStart < 0, audio = event.audio)
                     utterance.append(' ').append(event.text.trim())
                     emit(LiveEvent.Transcript(utterance.trim().toString(), isFinal = true))
                 }
@@ -232,26 +250,64 @@ class LiveConversation(
 
     private fun joined(interim: String) = (utterance.toString() + " " + interim).trim()
 
-    private suspend fun userSpoke(isWord: Boolean = true) {
+    private suspend fun userSpoke(isWord: Boolean = true, audio: AudioSpan? = null) {
         val now = nowMillis()
         lastActivity = now
-        if (isWord) {
-            if (speechStart < 0) speechStart = now
-            lastSpeechAt = now
+        when {
+            audio != null -> {
+                heardAudio(audio)
+            }
+
+            isWord -> {
+                if (speechStart < 0) speechStart = now
+                lastSpeechAt = now
+            }
         }
         if (isAshaBusy()) bargeIn()
     }
 
+    /** Words on the transcriber's clock. A gap of more than a second starts a new stretch; the gap isn't charged. */
+    private fun heardAudio(span: AudioSpan) {
+        if (audioFrom < 0 || span.startSeconds - audioTo > AUDIO_GAP_SECONDS) {
+            chargeAudio()
+            audioFrom = span.startSeconds
+            audioTo = span.startSeconds
+        }
+        audioTo = max(audioTo, span.endSeconds)
+    }
+
+    private fun chargeAudio() {
+        if (audioFrom < 0 || audioTo <= audioFrom) return
+        unmeteredMicros.addAndGet(((audioTo - audioFrom) * MICROS).roundToLong())
+        audioFrom = audioTo
+    }
+
     /** Ends the speech being heard, counting it up to its last word. Called with [state] held. */
     private fun closeSpeech() {
+        chargeAudio()
+        audioFrom = -1.0
         if (speechStart < 0) return
         unmeteredMicros.addAndGet((lastSpeechAt - speechStart) * 1_000)
         speechStart = -1
     }
 
+    /**
+     * Charges the part of Asha's audio that has played by now. [dropUnplayed] forgets the rest: talked over, or the
+     * conversation ended before the phone played it. Called with [state] held.
+     */
+    private fun settlePlayback(dropUnplayed: Boolean = false) {
+        val stillToPlay = (playingUntil - nowMillis()).coerceAtLeast(0) * 1_000
+        val played = (unplayedMicros.get() - stillToPlay).coerceAtLeast(0)
+        unplayedMicros.addAndGet(-played)
+        unmeteredMicros.addAndGet(played)
+        if (dropUnplayed) unplayedMicros.set(0)
+    }
+
     /** Moves the speech heard so far into the meter; speech with no new word for a while has ended. */
     private suspend fun carrySpeech() =
         state.withLock {
+            settlePlayback()
+            chargeAudio()
             if (speechStart < 0) return@withLock
             if (nowMillis() - lastSpeechAt > SPEECH_IDLE_MILLIS) {
                 closeSpeech()
@@ -267,11 +323,14 @@ class LiveConversation(
 
     /** Called with [state] held. */
     private suspend fun bargeIn() {
+        settlePlayback(dropUnplayed = true)
         generation.incrementAndGet()
         answering = -1
         deviceGeneration = -1
         dropAudio = true
         pendingFlushes.set(0)
+        // a reply cut off half way is still saved: the phone hears of it, unspoken
+        captions.filterIsInstance<LiveEvent.ReplyDone>().forEach { emit(it.copy(spoken = false)) }
         captions.clear()
         captionShown = false
         playingUntil = 0
@@ -304,7 +363,7 @@ class LiveConversation(
     ) {
         if (asked >= 0) answering = asked
         turns.launch {
-            if (checked && !checkSession(accessToken)) {
+            if (checked && !checkSession(accessToken, null)) {
                 hangUp(LiveEnd.SessionRevoked)
                 return@launch
             }
@@ -329,14 +388,18 @@ class LiveConversation(
             hangUp(LiveEnd.OutOfAllowance(result.error))
             return
         }
+        // the agent token isn't the user's own (decision 2026-10-26): closed like a revoked session
+        if (result.error is SharedError) {
+            hangUp(LiveEnd.SessionRevoked)
+            return
+        }
         emit(LiveEvent.TurnFailed(result.error))
     }
 
     private suspend fun answered(asked: Int, result: TurnResult) {
         when (result) {
             is TurnResult.Answer -> {
-                val spoken = speak(asked, result.message.text)
-                emit(LiveEvent.ReplyDone(result.message, spoken))
+                if (!speak(asked, result.message)) emit(LiveEvent.ReplyDone(result.message, spoken = false))
             }
 
             is TurnResult.NeedsDevice -> {
@@ -351,14 +414,17 @@ class LiveConversation(
         }
     }
 
-    /** Sentence by sentence, so the first is heard while the rest is made; false if the user talked over it. */
-    private suspend fun speak(asked: Int, reply: String): Boolean {
-        for (sentence in sentences(reply)) {
+    /**
+     * Sentence by sentence, so the first is heard while the rest is made. Each sentence's text goes to the phone as its
+     * audio starts, and `reply_done` after the last sentence's audio. False if the user talked over it first.
+     */
+    private suspend fun speak(asked: Int, reply: ChatMessage): Boolean {
+        for (sentence in sentences(reply.text)) {
             val queued =
                 state.withLock {
                     if (asked != generation.get() || ended.isCompleted) return@withLock false
                     dropAudio = false
-                    captions.add(sentence)
+                    captions.add(LiveEvent.ReplyText(sentence))
                     pendingFlushes.incrementAndGet()
                     line.speech.speak(sentence)
                     line.speech.flush()
@@ -366,7 +432,13 @@ class LiveConversation(
                 }
             if (!queued) return false
         }
-        return asked == generation.get()
+        return state.withLock {
+            if (asked != generation.get()) return@withLock false
+            val done = LiveEvent.ReplyDone(reply, spoken = true)
+            // everything may already have been heard; otherwise it follows the last sentence's audio
+            if (pendingFlushes.get() == 0 && captions.isEmpty()) emit(done) else captions.add(done)
+            true
+        }
     }
 
     private suspend fun relaySpeech() {
@@ -380,26 +452,31 @@ class LiveConversation(
         }
     }
 
-    private suspend fun flushed() {
-        if (!captionShown) caption()
-        captionShown = false
-        pendingFlushes.updateAndGet { (it - 1).coerceAtLeast(0) }
-    }
+    private suspend fun flushed() =
+        state.withLock {
+            if (!captionShown) caption()
+            captionShown = false
+            pendingFlushes.updateAndGet { (it - 1).coerceAtLeast(0) }
+            while (captions.peek() is LiveEvent.ReplyDone) emit(captions.poll())
+        }
 
+    /** The next sentence's text, if it is next in line (not a `reply_done` waiting for audio still to come). */
     private suspend fun caption() {
-        captions.poll()?.let { emit(LiveEvent.ReplyText(it)) }
+        if (captions.peek() is LiveEvent.ReplyText) emit(captions.poll())
     }
 
     private suspend fun played(bytes: ByteArray) {
-        if (dropAudio) return
-        if (!captionShown) {
-            caption()
-            captionShown = true
+        val micros = (line.speech.format.seconds(bytes.size.toLong()) * MICROS).roundToLong()
+        state.withLock {
+            if (dropAudio) return@withLock
+            if (!captionShown) {
+                caption()
+                captionShown = true
+            }
+            unplayedMicros.addAndGet(micros)
+            playingUntil = max(playingUntil, nowMillis()) + micros / 1_000
+            emit(LiveEvent.ReplyAudio(bytes))
         }
-        val micros = (line.speech.format.seconds(bytes.size.toLong()) * 1_000_000).roundToLong()
-        unmeteredMicros.addAndGet(micros)
-        playingUntil = max(playingUntil, nowMillis()) + micros / 1_000
-        emit(LiveEvent.ReplyAudio(bytes))
     }
 
     // ---- the clock: metering, silence, session and device waits --------------------------------------------
@@ -420,7 +497,7 @@ class LiveConversation(
         val now = nowMillis()
         if (now - lastSessionCheck < line.sessionRecheck.toMillis()) return false
         lastSessionCheck = now
-        return !checkSession(accessToken)
+        return !checkSession(accessToken, null)
     }
 
     /** A device tool the phone never answered ends its turn, so the conversation (and its silence timer) goes on. */
@@ -461,6 +538,9 @@ class LiveConversation(
     private companion object {
         const val TICK_MILLIS = 250L
         const val MICROS = 1_000_000L
+
+        /** A pause longer than this between words on the transcriber's clock starts a new stretch of speech. */
+        const val AUDIO_GAP_SECONDS = 1.0
 
         /** No new word for this long and the speech being heard has ended, even without an end-of-turn event. */
         const val SPEECH_IDLE_MILLIS = 2_000L

@@ -1,6 +1,7 @@
 package com.circaso.integrations.impl.workersai
 
 import com.circaso.integrations.api.AudioEncoding
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LiveTranscription
 import com.circaso.integrations.api.LiveTranscriptionOptions
@@ -18,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -149,12 +151,35 @@ class WorkersAiLiveTranscription(
                 }.getOrNull().orEmpty().trim()
             val isFinal = message.flag("is_final")
             val speechFinal = message.flag("speech_final")
+            val audio = if (transcript.isEmpty()) null else wordsSpan(message) ?: windowSpan(message)
             return when {
-                isFinal || speechFinal -> TranscriptionEvent.Final(transcript, endOfTurn = speechFinal)
-                transcript.isNotEmpty() -> TranscriptionEvent.Interim(transcript)
+                isFinal || speechFinal -> TranscriptionEvent.Final(transcript, endOfTurn = speechFinal, audio = audio)
+                transcript.isNotEmpty() -> TranscriptionEvent.Interim(transcript, audio)
                 else -> null
             }
         }
+
+        /** The first word's `start` to the last word's `end`, in seconds from the start of the stream. */
+        private fun wordsSpan(message: JsonObject): AudioSpan? =
+            runCatching {
+                val words =
+                    message["channel"]!!
+                        .jsonObject["alternatives"]!!
+                        .jsonArray
+                        .first()
+                        .jsonObject["words"]!!
+                        .jsonArray
+                AudioSpan(words.first().jsonObject.number("start"), words.last().jsonObject.number("end"))
+            }.getOrNull()
+
+        /** Without words, the result's own window (`start`, `duration`), which may hold some silence. */
+        private fun windowSpan(message: JsonObject): AudioSpan? =
+            runCatching {
+                val start = message.number("start")
+                AudioSpan(start, start + message.number("duration"))
+            }.getOrNull()
+
+        private fun JsonObject.number(name: String): Double = get(name)!!.jsonPrimitive.double
 
         private fun JsonObject.string(name: String): String? =
             runCatching { get(name)!!.jsonPrimitive.content }.getOrNull()

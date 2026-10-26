@@ -20,10 +20,13 @@ class MeterLiveVoice(private val quota: QuotaCounters, private val clock: Clock)
         dailyLimit: Int,
     ): Resource<Long> {
         val day = clock.today()
-        val before = quota.voiceSeconds(userId, day)
-        // never past the cap: the seconds over it end the conversation instead of being charged
-        val charged = seconds.coerceAtMost((dailyLimit - before).toInt()).coerceAtLeast(0)
-        val used = if (charged > 0) quota.addVoiceSeconds(userId, day, charged) else before
+        // never past the cap, even with two sockets open: the seconds over it end the conversation instead
+        val used =
+            if (seconds > 0) {
+                quota.addVoiceSecondsUpTo(userId, day, seconds, dailyLimit)
+            } else {
+                quota.voiceSeconds(userId, day)
+            }
         val left = dailyLimit - used
         if (left <= 0) return Resource.error(AssistantError.QuotaExceeded(clock.secondsUntilReset()))
         return Resource.success(left)

@@ -43,20 +43,31 @@ sealed interface TranscriptionEvent {
     /** The user started speaking (voice activity); the assistant uses it to stop its own voice at once. */
     data object SpeechStarted : TranscriptionEvent
 
-    /** Words so far for the part being spoken; replaced by the next [Interim] or settled by a [Final]. */
-    data class Interim(val text: String) : TranscriptionEvent
+    /**
+     * Words so far for the part being spoken; replaced by the next [Interim] or settled by a [Final]. [audio] is where
+     * those words lie in the stream, when the provider says (it is what live voice is metered on).
+     */
+    data class Interim(val text: String, val audio: AudioSpan? = null) : TranscriptionEvent
 
     /**
      * Settled words for a stretch of audio. [endOfTurn] is true when the provider also judged the user done
      * (Nova-3's `speech_final` after its `endpointing` pause).
      */
-    data class Final(val text: String, val endOfTurn: Boolean) : TranscriptionEvent
+    data class Final(val text: String, val endOfTurn: Boolean, val audio: AudioSpan? = null) : TranscriptionEvent
 
     /** The user has been quiet long enough after their last word (Nova-3's `UtteranceEnd`): the turn is over. */
     data object TurnEnded : TranscriptionEvent
 
     /** The vendor ended the session on its side; [next] returns null after this. */
     data class Failed(val error: IntegrationError) : TranscriptionEvent
+}
+
+/**
+ * Where words lie in a live stream, in seconds from its start: the first word's start to the last word's end. Silence
+ * before and after them is outside it.
+ */
+data class AudioSpan(val startSeconds: Double, val endSeconds: Double) {
+    val seconds: Double get() = (endSeconds - startSeconds).coerceAtLeast(0.0)
 }
 
 /**

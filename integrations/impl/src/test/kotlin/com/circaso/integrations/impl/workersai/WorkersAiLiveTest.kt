@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.integrations.api.AudioEncoding
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LiveAudioFormat
 import com.circaso.integrations.api.LiveTranscriptionOptions
@@ -96,9 +97,11 @@ class WorkersAiLiveTest {
         text: String,
         isFinal: Boolean,
         speechFinal: Boolean = false,
+        words: String = "",
     ) = Frame.Text(
-        """{"type":"Results","channel":{"alternatives":[{"transcript":"$text","confidence":0.9}]},""" +
-            """"is_final":$isFinal,"speech_final":$speechFinal,"start":0.0,"duration":1.2}""",
+        """{"type":"Results","channel":{"alternatives":[{"transcript":"$text","confidence":0.9""" +
+            (if (words.isEmpty()) "" else ""","words":[$words]""") +
+            """}]},"is_final":$isFinal,"speech_final":$speechFinal,"start":0.5,"duration":1.2}""",
     )
 
     @Test
@@ -134,7 +137,13 @@ class WorkersAiLiveTest {
                 send(Frame.Text("""{"type":"SpeechStarted","channel":[0],"timestamp":0.1}"""))
                 send(results("", isFinal = false))
                 send(results("how much did", isFinal = false))
-                send(results("how much did I send", isFinal = true))
+                send(
+                    results(
+                        "how much did I send",
+                        isFinal = true,
+                        words = """{"word":"how","start":0.62,"end":0.8},{"word":"send","start":1.3,"end":1.55}""",
+                    ),
+                )
                 send(results("mum", isFinal = true, speechFinal = true))
                 send(Frame.Text("""{"type":"UtteranceEnd","channel":[0,1],"last_word_end":2.1}"""))
             }
@@ -149,9 +158,17 @@ class WorkersAiLiveTest {
             assertContentEquals(byteArrayOf(1, 2, 3), vendor.received.next().readBytes())
 
             assertEquals(TranscriptionEvent.SpeechStarted, session.next())
-            assertEquals(TranscriptionEvent.Interim("how much did"), session.next(), "an empty interim is skipped")
-            assertEquals(TranscriptionEvent.Final("how much did I send", endOfTurn = false), session.next())
-            assertEquals(TranscriptionEvent.Final("mum", endOfTurn = true), session.next())
+            assertEquals(
+                TranscriptionEvent.Interim("how much did", AudioSpan(0.5, 1.7)),
+                session.next(),
+                "an empty interim is skipped; without words the result's window is the span",
+            )
+            assertEquals(
+                TranscriptionEvent.Final("how much did I send", endOfTurn = false, audio = AudioSpan(0.62, 1.55)),
+                session.next(),
+                "the first word's start to the last word's end",
+            )
+            assertEquals(TranscriptionEvent.Final("mum", endOfTurn = true, audio = AudioSpan(0.5, 1.7)), session.next())
             assertEquals(TranscriptionEvent.TurnEnded, session.next())
 
             session.close()

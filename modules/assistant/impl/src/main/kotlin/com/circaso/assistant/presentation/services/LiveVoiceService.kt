@@ -34,7 +34,7 @@ class LiveVoiceService(
             ask = { text, agentToken -> startTurn(turn(line, text, agentToken)) },
             answerDevice = { result -> continueTurn(result) },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
-            checkSession = { token -> checkLiveSession(line.userId, token) is Resource.Success },
+            checkSession = { access, agent -> checkLiveSession(line.userId, access, agent) is Resource.Success },
         )
 
     private fun turn(

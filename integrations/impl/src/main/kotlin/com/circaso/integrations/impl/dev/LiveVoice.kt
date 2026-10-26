@@ -1,6 +1,7 @@
 package com.circaso.integrations.impl.dev
 
 import com.circaso.integrations.api.AudioEncoding
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LiveAudioFormat
 import com.circaso.integrations.api.LiveSpeech
@@ -47,6 +48,9 @@ class FakeLiveTranscriptionSession : LiveTranscriptionSession {
     private val events = Channel<TranscriptionEvent>(Channel.UNLIMITED)
     val framesReceived = AtomicInteger()
 
+    /** Where the stream is, in seconds: each spoken word takes [SECONDS_PER_WORD] of it, as if said at a steady pace. */
+    @Volatile private var streamSeconds = 0.0
+
     @Volatile var isClosed = false
         private set
 
@@ -59,9 +63,12 @@ class FakeLiveTranscriptionSession : LiveTranscriptionSession {
         if (isClosed) return
         framesReceived.incrementAndGet()
         val words = readableText(audio) ?: return
+        val start = streamSeconds
+        streamSeconds += words.split(Regex("\\s+")).size * SECONDS_PER_WORD
+        val span = AudioSpan(start, streamSeconds)
         push(TranscriptionEvent.SpeechStarted)
-        push(TranscriptionEvent.Interim(words))
-        push(TranscriptionEvent.Final(words, endOfTurn = true))
+        push(TranscriptionEvent.Interim(words, span))
+        push(TranscriptionEvent.Final(words, endOfTurn = true, audio = span))
     }
 
     override suspend fun next(): TranscriptionEvent? = events.receiveCatching().getOrNull()
@@ -69,6 +76,10 @@ class FakeLiveTranscriptionSession : LiveTranscriptionSession {
     override suspend fun close() {
         isClosed = true
         events.close()
+    }
+
+    private companion object {
+        const val SECONDS_PER_WORD = 0.4
     }
 
     /** Text the fake treats as speech: valid UTF-8 of printable characters, not binary audio. */

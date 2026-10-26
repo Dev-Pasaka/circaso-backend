@@ -6,6 +6,7 @@ import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.secondsUntilReset
 import com.circaso.assistant.domain.support.today
 import com.circaso.assistant.domain.support.verifiedUser
@@ -39,6 +40,7 @@ class OpenLiveVoice(
 ) {
     suspend operator fun invoke(start: LiveVoiceStart): Resource<LiveVoiceLine> {
         val userId = verifiedUser(verifier, start.accessToken) ?: return Resource.error(SharedError.TokenInvalid)
+        if (!isOwnAgentToken(verifier, userId, start.agentToken)) return Resource.error(SharedError.TokenInvalid)
         val limit = config.limitsOf(entitlements.planOf(userId)).voiceSecondsPerDay
         val left = limit - quota.voiceSeconds(userId, clock.today())
         if (left <= 0) return Resource.error(AssistantError.QuotaExceeded(clock.secondsUntilReset()))

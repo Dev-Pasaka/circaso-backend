@@ -78,6 +78,17 @@ interface QuotaCounters {
 
     suspend fun voiceSeconds(userId: UserId, day: String): Long
 
+    /**
+     * Adds up to [seconds], never taking the day's count past [cap], even with two sockets metering at once; the count
+     * after. Seconds over the cap are not charged: they end the conversation instead.
+     */
+    suspend fun addVoiceSecondsUpTo(
+        userId: UserId,
+        day: String,
+        seconds: Int,
+        cap: Int,
+    ): Long
+
     suspend fun addTokens(
         userId: UserId,
         day: String,

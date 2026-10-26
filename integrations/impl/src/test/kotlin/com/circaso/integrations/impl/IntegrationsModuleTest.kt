@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ImageInput
@@ -192,8 +193,11 @@ class IntegrationsModuleTest {
             session.send("hello Asha".toByteArray())
             session.send(byteArrayOf(-1, -2, 0, 7))
             assertEquals(TranscriptionEvent.SpeechStarted, session.next())
-            assertEquals(TranscriptionEvent.Interim("hello Asha"), session.next())
-            assertEquals(TranscriptionEvent.Final("hello Asha", endOfTurn = true), session.next())
+            assertEquals(TranscriptionEvent.Interim("hello Asha", AudioSpan(0.0, 0.8)), session.next())
+            assertEquals(
+                TranscriptionEvent.Final("hello Asha", endOfTurn = true, audio = AudioSpan(0.0, 0.8)),
+                session.next(),
+            )
             session.close()
             assertEquals(null, session.next(), "binary audio is silence to the fake")
 

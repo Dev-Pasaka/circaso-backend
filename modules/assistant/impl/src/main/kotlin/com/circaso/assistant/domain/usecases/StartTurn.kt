@@ -13,7 +13,9 @@ import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
+import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.today
+import com.circaso.identity.api.TokenVerifier
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -24,9 +26,10 @@ import java.time.ZoneOffset
 /**
  * A2: one question to Asha. It counts against the day's allowance, gives the model the recent part of the chat as
  * context (a few exchanges on the free plan, many on Asha Plus) and runs the agent. The answer, or a question for
- * the phone, comes back.
+ * the phone, comes back. The agent token, which Asha's tools act with, must be the user's own (decision 2026-10-26).
  */
 class StartTurn(
+    private val verifier: TokenVerifier,
     private val chat: ChatRepository,
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
@@ -46,6 +49,7 @@ class StartTurn(
             )
         }
         val userId = command.userId
+        if (!isOwnAgentToken(verifier, userId, command.agentToken)) return Resource.error(SharedError.TokenInvalid)
         val limits = config.limitsOf(entitlements.planOf(userId))
         if (quota.countTextTurn(userId, clock.today()) > limits.textTurnsPerDay) {
             return Resource.error(AssistantError.QuotaExceeded(secondsUntilReset()))

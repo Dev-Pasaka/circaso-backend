@@ -32,6 +32,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.websocket.WebSockets
 import kotlinx.coroutines.channels.Channel
 import java.time.Clock
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -123,12 +124,19 @@ class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
 }
 
 /**
- * `user-token` and `fresh-token` are the user's app tokens, `agent-token` the same user's agent token, `revoked-token`
- * one of a revoked session (identity's own error, not a shared one); anything else is refused. [revoked] revokes the
- * user's session, so every token of it fails from then on.
+ * Tokens for the tests:
+ * - `user-token` and `fresh-token`: the user's app tokens; `agent-token`, `agent-tok` and `agent-2` the user's agent
+ *   tokens, told apart by their text;
+ * - `other-user-token` and `other-agent`: another user's app and agent tokens, both valid;
+ * - `revoked-token`: a token of a revoked session (identity's own error, not a shared one); `boom`: the check fails.
+ * Anything else, or a token in [expired], is refused. [revoked] revokes the user's session: every token of it fails.
  */
 class TestVerifier(val userId: UserId) : TokenVerifier {
+    val otherUser: UserId = UserId.new()
+
     @Volatile var revoked = false
+
+    val expired: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private data object SessionRevoked : DomainError {
         override val code = "identity.session_revoked"
@@ -138,7 +146,10 @@ class TestVerifier(val userId: UserId) : TokenVerifier {
 
     override suspend fun verify(accessToken: String): Resource<Principal> =
         when {
-            revoked || accessToken == "revoked-token" -> Resource.error(SessionRevoked)
+            accessToken == "revoked-token" -> Resource.error(SessionRevoked)
+            accessToken.startsWith("other") -> otherPrincipal(accessToken)
+            revoked -> Resource.error(SessionRevoked)
+            accessToken in expired -> Resource.error(SharedError.TokenInvalid)
             accessToken == "boom" -> error("the deny-list is unreachable")
             else -> principal(accessToken)
         }
@@ -151,7 +162,7 @@ class TestVerifier(val userId: UserId) : TokenVerifier {
                 )
             }
 
-            "agent-token" -> {
+            "agent-token", "agent-tok", "agent-2" -> {
                 Resource.success(Principal(userId, DeviceId.new(), SessionId.new(), Scope.AGENT))
             }
 
@@ -161,11 +172,17 @@ class TestVerifier(val userId: UserId) : TokenVerifier {
         }
 }
 
+private fun TestVerifier.otherPrincipal(token: String): Resource<Principal> {
+    val scope = if (token == "other-agent") Scope.AGENT else Scope.APP
+    return Resource.success(Principal(otherUser, DeviceId.new(), SessionId.new(), scope))
+}
+
 /** The assistant's A11 socket over the [Harness], served at `/v1/assistant/voice/live` on Ktor's test host. */
-class LiveHarness(val h: Harness, val userId: UserId = UserId.new()) {
+class LiveHarness(val h: Harness) {
+    val userId: UserId = h.owner
     val ears = ScriptedEars()
     val voice = RecordingVoice()
-    val verifier = TestVerifier(userId)
+    val verifier = h.verifier
     private val clock = Clock.systemUTC()
 
     val service =

@@ -35,7 +35,7 @@ A signed-in app then does the rest: set a name and an `@handle` (**Profile**, **
 | `Authorization` | `Bearer <accessToken>` on every route that needs a token. |
 | `X-Client-Version` | The app and its version, for example `android/1.4.0`. An app older than the minimum answers `426` with code `request.client_outdated`, and the app shows its update screen. |
 | `Idempotency-Key` | A UUID on every `POST`, `PUT`, `PATCH` and `DELETE`. See below. |
-| `X-Agent-Token` | Only when talking to Asha: the session's read-only agent token, so her tools can read your contacts. |
+| `X-Agent-Token` | Only when talking to Asha: the session's read-only agent token (it must be your own: another user's is refused with `auth.token_invalid`), so her tools can read your contacts. |
 
 Times are ISO-8601 UTC (`2026-10-21T18:06:00Z`). Ids are UUIDs. Phone numbers are E.164 (`+254712345678`) and are never shown to other people: they see a name, an `@handle` and a picture. JSON is camelCase and unknown fields are ignored.
 
@@ -196,7 +196,7 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
 | `end` | phone | Hang up. |
 
-The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `frame too large` and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, while the transcriber hears it, and Asha's playing time; an open mic is free. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `frame too large` and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 

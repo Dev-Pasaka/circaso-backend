@@ -106,8 +106,8 @@ fun assistantModule(config: Config): Module =
         single { AshaAgent(get(), get(), get()) }
         single { OrderedIds(clock) }
         single { TurnRecorder(get(), get(), get(), get(), get(), clock) }
-        single { StartTurn(get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { ContinueTurn(get(), get(), get(), get()) }
+        single { StartTurn(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ContinueTurn(get(), get(), get(), get(), get()) }
         single { ListChat(get()) }
         single { DeleteChat(get()) }
         single { DeleteExchange(get(), get()) }

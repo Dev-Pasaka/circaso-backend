@@ -112,6 +112,17 @@ class MemoryQuota : QuotaCounters {
 
     override suspend fun voiceSeconds(userId: UserId, day: String) = counters["v:$userId:$day"] ?: 0
 
+    override suspend fun addVoiceSecondsUpTo(
+        userId: UserId,
+        day: String,
+        seconds: Int,
+        cap: Int,
+    ): Long =
+        synchronized(counters) {
+            val now = counters["v:$userId:$day"] ?: 0
+            (now + seconds.coerceAtMost((cap - now).toInt()).coerceAtLeast(0)).also { counters["v:$userId:$day"] = it }
+        }
+
     override suspend fun addTokens(
         userId: UserId,
         day: String,
@@ -208,7 +219,9 @@ class RecordingSpeech :
     }
 }
 
-class Harness(config: AssistantConfig = AssistantConfig()) {
+class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = UserId.new()) {
+    /** Knows [owner]'s tokens (see [TestVerifier]); A2, A9 and A11 check the agent token with it. */
+    val verifier = TestVerifier(owner)
     val memory = MemoryAssistant()
     val quota = MemoryQuota()
     val pending = MemoryPending()
@@ -223,8 +236,8 @@ class Harness(config: AssistantConfig = AssistantConfig()) {
     private val ids = OrderedIds(clock)
     private val recorder = TurnRecorder(memory, pending, quota, config, ids, clock)
 
-    val start = StartTurn(memory, plans, quota, agent, recorder, config, ids, clock)
-    val resume = ContinueTurn(pending, agent, recorder, config)
+    val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
+    val resume = ContinueTurn(verifier, pending, agent, recorder, config)
     val list = ListChat(memory)
     val deleteAll = DeleteChat(memory)
     val deleteOne = DeleteExchange(memory, memory)

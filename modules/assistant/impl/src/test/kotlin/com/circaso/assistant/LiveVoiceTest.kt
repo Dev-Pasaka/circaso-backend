@@ -12,6 +12,7 @@ import com.circaso.assistant.domain.models.Role
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.LiveConversation
 import com.circaso.assistant.domain.support.today
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.ModelResponse
 import com.circaso.integrations.api.ModelUsage
@@ -539,9 +540,80 @@ class LiveVoiceTest {
                 readUntil(got) { it.ofType("ready").isNotEmpty() }
                 live.ears.session().push(TranscriptionEvent.Final("read me something", endOfTurn = true))
                 readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                delay(2_400) // let the phone play it all: audio is charged as it plays
                 hangUp(got)
             }
             assertEquals(16_000, got.frames.filterIsInstance<ByteArray>().sumOf { it.size })
+            assertEquals(2, voiceSeconds(live))
+        }
+
+    @Test
+    fun `a long reply talked over after about a second charges about a second`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("a".repeat(159_999) + ".") // 20 s of 8 kHz mulaw
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                delay(1_000)
+                ears.push(TranscriptionEvent.SpeechStarted)
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() }
+                hangUp(got)
+            }
+            val charged = voiceSeconds(live)
+            assertTrue(charged in 1..2, "only what played before the barge-in is charged (was $charged)")
+        }
+
+    @Test
+    fun `speech is metered on the transcriber's clock, not on when its events arrive`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .say("Ok.")
+                .say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                // a burst: 5 s of speech reported all at once
+                ears.push(
+                    TranscriptionEvent.SpeechStarted,
+                    TranscriptionEvent.Interim("one", AudioSpan(1.0, 1.4)),
+                    TranscriptionEvent.Interim("one two three", AudioSpan(1.0, 3.5)),
+                    TranscriptionEvent.Final("one two three four", endOfTurn = true, audio = AudioSpan(1.0, 6.0)),
+                )
+                readUntil(got) { it.ofType("reply_done").size == 1 }
+                hangUp(got)
+            }
+            assertEquals(5, voiceSeconds(live), "the burst's 5 s of audio time")
+        }
+
+    @Test
+    fun `a turn heard only as a final charges its duration`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(
+                    TranscriptionEvent.Final("send Mum 500", endOfTurn = true, audio = AudioSpan(10.0, 12.0)),
+                )
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
             assertEquals(2, voiceSeconds(live))
         }
 
@@ -606,16 +678,27 @@ class LiveVoiceTest {
         testApplication {
             val live = LiveHarness(Harness(AssistantConfig(liveSessionRecheck = Duration.ofMillis(300))))
             live.serve(this)
-            live.h.model.say("Still here.")
+            live.h.model
+                .call("searchContacts", """{"query":"mum"}""")
+                .say("Still here.")
             val got = Received()
 
             phone().webSocket("/v1/assistant/voice/live") {
                 auth()
                 readUntil(got) { it.ofType("ready").isNotEmpty() }
                 send(Frame.Text("""{"type":"auth","accessToken":"fresh-token","agentToken":"agent-2"}"""))
+                delay(200)
+                live.verifier.expired += "user-token" // the first token's 15 minutes are up
                 delay(700)
-                live.ears.session().push(TranscriptionEvent.Final("are you there", endOfTurn = true))
+                live.ears.session().push(TranscriptionEvent.Final("who is mum", endOfTurn = true))
                 readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                assertEquals(
+                    "agent-2",
+                    live.h.tools.calls
+                        .single()
+                        .token,
+                    "the tools act with the fresh agent token",
+                )
 
                 live.verifier.revoked = true
                 val closed = readToClose(got)
@@ -891,7 +974,7 @@ class LiveVoiceTest {
                     ask = { _, _ -> error("not asked") },
                     answerDevice = { error("not asked") },
                     meter = { Resource.success(100L) },
-                    checkSession = { true },
+                    checkSession = { _, _ -> true },
                 )
             }
 
@@ -920,5 +1003,47 @@ class LiveVoiceTest {
                 }
             assertEquals(LiveEnd.HungUp, end)
             assertTrue(hungUp.isReleased())
+        }
+
+    // ---- the agent token is the user's own --------------------------------------------------------------------
+
+    @Test
+    fun `a refresh with someone else's token, or an agent token as the access token, closes as unauthorized`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+
+            for (refresh in listOf(
+                """{"type":"auth","accessToken":"other-user-token"}""",
+                """{"type":"auth","accessToken":"agent-token"}""",
+                """{"type":"auth","accessToken":"fresh-token","agentToken":"other-agent"}""",
+            )) {
+                val got = Received()
+                phone().webSocket("/v1/assistant/voice/live") {
+                    auth()
+                    readUntil(got) { it.ofType("ready").isNotEmpty() }
+                    send(Frame.Text(refresh))
+                    val closed = readToClose(got)
+
+                    assertEquals(CloseReason.Codes.VIOLATED_POLICY.code, closed?.code, refresh)
+                    assertEquals("unauthorized", closed?.message, refresh)
+                }
+                assertTrue(got.ofType("closing").isEmpty(), refresh)
+            }
+        }
+
+    @Test
+    fun `an agent token that isn't the user's own is refused at the opening`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth(agentToken = "other-agent")
+                assertEquals("unauthorized", readToClose(got)?.message)
+            }
+            assertTrue(got.frames.isEmpty())
+            assertTrue(live.ears.sessions.isEmpty())
         }
 }

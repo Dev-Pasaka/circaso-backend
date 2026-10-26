@@ -85,9 +85,15 @@ fun Route.chatController(chat: ChatService) {
                 }.docs<SendMessageRequest, NoBody>(
                     "A2 · Ask Asha; the reply streams as server-sent events",
                     TAG,
-                    listOf("assistant.quota_exceeded", "assistant.model_unavailable", "request.malformed"),
+                    listOf(
+                        "assistant.quota_exceeded",
+                        "assistant.model_unavailable",
+                        "auth.token_invalid",
+                        "request.malformed",
+                    ),
                     notes =
-                        "$SCOPE Send the user's agent token in `X-Agent-Token` so Asha's tools can read " +
+                        "$SCOPE Send the user's own agent token in `X-Agent-Token` (another user's is refused) " +
+                            "so Asha's tools can read " +
                             "contacts. " +
                             "The response is `text/event-stream`, not the envelope (errors before any text are " +
                             "the " +
@@ -125,7 +131,7 @@ fun Route.chatController(chat: ChatService) {
                     }.docs<ToolResultsRequest, NoBody>(
                         "A9 · The phone's answer to a device tool; the reply then continues as server-sent events",
                         TAG,
-                        listOf("assistant.turn_not_found"),
+                        listOf("assistant.turn_not_found", "auth.token_invalid"),
                         notes =
                             "$SCOPE `messageId` is the `turnId` from the `tool_request` event. At most 30 short " +
                                 "snippets; they are used for this turn and never stored.",
