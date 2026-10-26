@@ -169,6 +169,8 @@ Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), s
 
 A group's id is derived from the creator and the request's `Idempotency-Key`, so a retried create resumes the same group; a resume only completes a create that nothing else has changed since (otherwise it returns the group as it is), so it never re-adds someone who left. A direct chat's id comes from a claim on the pair (`direct_chats_by_pair`, `saveIfNotExists`), so two people opening a chat at the same moment get the same one.
 
+**Leaving and removing (M10):** the chat-list line delete and `MemberRemoved` (event id from chat, user and `joinedAt`) are written first, then the member row is claimed with `DELETE … IF EXISTS`; only the claim's winner sends `member.removed` and updates the chat through its version check (count, successor when the owner left, deleting the group when empty), so a failure at any point can be retried by either party. **Roles (M11, succession)** are written with `UPDATE … IF EXISTS`, so a role write never brings back a member who left; the chat's `ownerId` is the authority on who owns it.
+
 A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP_AVATAR"`: it has no recipients and is never deleted on download, only when the avatar changes or the group is deleted. A phone without the current metadata key shows "Group" and a placeholder until it gets one.
 
 ### M12 Send a message
