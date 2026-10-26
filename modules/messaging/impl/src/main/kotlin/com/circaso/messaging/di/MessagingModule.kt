@@ -139,14 +139,14 @@ fun messagingModule(config: Config): Module =
         single { GetKeyStatus(get()) }
         single { FetchKeyBundle(get(), get<ReachPolicy>(), get(), get(), get()) }
         single { OpenDirectChat(get(), get(), get<ReachPolicy>(), get(), get(), clock) }
-        single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
+        single { CreateGroup(get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
         single { UpdateGroup(get(), get(), get(), get(), get()) }
         single { AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock) }
         single { RemoveMember(get(), get()) }
         single { LeaveGroup(get(), get()) }
-        single { SetRole(get(), get(), get(), get(), get(), get()) }
+        single { SetRole(get(), get(), get(), get(), get()) }
         single { GetMembers(get()) }
         single { ReplayFrames(get()) }
 

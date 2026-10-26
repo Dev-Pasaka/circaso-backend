@@ -69,6 +69,13 @@ interface ChatRepository {
      */
     suspend fun claimRemoval(chatId: ChatId, userId: UserId): Boolean
 
+    /**
+     * Sets [member]'s role only if their row still exists (`IF EXISTS`), so a role written after the person left
+     * never puts their row back. False when it was gone; the chat's `ownerId` is what counts, so a skipped OWNER
+     * row is harmless.
+     */
+    suspend fun updateRole(member: Member): Boolean
+
     /** The user's chat list. */
     suspend fun chatsOf(userId: UserId): List<UserChat>
 
@@ -79,18 +86,21 @@ interface ChatRepository {
 /** Someone joining a chat: their member row and chat-list line, with the event that says so. */
 data class Join(val member: Member, val kind: ChatKind, val event: EventEnvelope? = null)
 
-/** Someone leaving or removed: both their rows go, with the event that says so. */
+/**
+ * Someone leaving or removed: their chat-list line goes, with the event that says so. The member row is not part of
+ * it: [ChatRepository.claimRemoval] deletes that afterwards, so a failed batch leaves the person a member and a
+ * retry completes the removal.
+ */
 data class Leave(val member: Member, val event: EventEnvelope? = null)
 
 /**
  * One operation's rows and its outbox rows. [chats] are new chats (later changes go through
- * [ChatRepository.updateChat]); [roles] rewrite member rows only, so a chat-list line keeps its message markers.
+ * [ChatRepository.updateChat]); roles change through [ChatRepository.updateRole].
  */
 data class ChatChanges(
     val chats: List<Chat> = emptyList(),
     val deletedChats: List<ChatId> = emptyList(),
     val joins: List<Join> = emptyList(),
-    val roles: List<Member> = emptyList(),
     val leaves: List<Leave> = emptyList(),
     /** Chat-level events (`ChatCreated`, `GroupDeleted`); a member's own event rides with its [Join] or [Leave]. */
     val events: List<EventEnvelope> = emptyList(),

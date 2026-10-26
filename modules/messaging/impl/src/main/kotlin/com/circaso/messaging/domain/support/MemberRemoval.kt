@@ -12,16 +12,21 @@ import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.Leave
 import com.circaso.messaging.domain.repositories.MessagingStore
 import com.circaso.shared.EventBus
+import com.circaso.shared.EventEnvelope
+import com.circaso.shared.EventId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
+import java.util.UUID
 
 /**
  * Takes someone out of a group, for a leave and for a removal alike (decision 2026-10-26):
  *
- * 1. The member row is deleted with a lightweight transaction, so of a remove and a leave of the same person racing,
- *    only one goes on: one `MemberRemoved`, one decrement.
- * 2. Their chat-list line goes with `MemberRemoved` in one batch.
+ * 1. Their chat-list line goes with `MemberRemoved` in one batch. The event's id is made from the chat, the person
+ *    and when they joined: one event per membership, however many removals of it are tried.
+ * 2. Then the member row is deleted with a lightweight transaction (`IF EXISTS`): of a remove and a leave of the
+ *    same person racing, only one goes on to the next step, and only it sends frames. If anything fails before
+ *    this, the person is still a member, so a retry by either of them completes the removal.
  * 3. Only then the chat changes, through its version, deciding on the rows as they are now: the member count goes
  *    down (never below the rows), a group whose owner is gone gets the longest-serving admin, or else member, as
  *    owner, and a group with nobody left is deleted.
@@ -39,15 +44,8 @@ class MemberRemoval(
 ) {
     suspend fun remove(member: Member, by: UserId): Resource<Unit> {
         val chatId = member.chatId
+        store.commit(ChatChanges(leaves = listOf(Leave(member, removedEvent(member, by)))))
         if (!chats.claimRemoval(chatId, member.userId)) return Resource.error(MessagingError.ChatNotFound)
-        val removed =
-            MemberRemoved(
-                chatId,
-                member.userId,
-                by,
-            )
-        val event = bus.envelope(removed)
-        store.commit(ChatChanges(leaves = listOf(Leave(member, event))))
         membership.changed(chatId)
 
         val outcome = Outcome()
@@ -62,6 +60,17 @@ class MemberRemoval(
             by = by,
         )
         return Resource.success(Unit)
+    }
+
+    private fun removedEvent(member: Member, by: UserId): EventEnvelope {
+        val removed =
+            MemberRemoved(
+                member.chatId,
+                member.userId,
+                by,
+            )
+        val once = "${MemberRemoved.TYPE}:${member.chatId}:${member.userId}:${member.joinedAt.toEpochMilli()}"
+        return bus.envelope(removed).copy(eventId = EventId(UUID.nameUUIDFromBytes(once.toByteArray())))
     }
 
     /** What the last run of [decide] chose; it runs again on every attempt, so it starts over each time. */
@@ -113,9 +122,12 @@ class MemberRemoval(
         membership.changed(chatId)
     }
 
-    /** The owner row mirrors [Chat.ownerId], which the version check already set. */
+    /**
+     * The owner row mirrors [Chat.ownerId], which the version check already set. Written only if the successor is
+     * still a member: one who left in the meantime isn't put back, and their own leave chose the next owner.
+     */
     private suspend fun handOver(chat: Chat, successor: Member) {
-        store.commit(ChatChanges(roles = listOf(successor)))
+        chats.updateRole(successor)
         notifier.chatUpdated(membership.members(chat.chatId), chat)
     }
 }

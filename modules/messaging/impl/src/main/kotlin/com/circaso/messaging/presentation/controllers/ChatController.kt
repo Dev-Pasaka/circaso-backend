@@ -83,7 +83,8 @@ fun Route.chatController(chats: ChatService) {
                     "$SCOPE $SEALED You become the owner. $NOT_ADDED At most 1,000 people, you included. Every " +
                         "member gets one `member.added` frame listing everyone added in `userIds`. The group's id " +
                         "comes from the `Idempotency-Key`: if a create fails part-way, retry with the same key and " +
-                        "it carries on with the same group.",
+                        "it carries on with the same group, unless the group changed in the meantime: then it is " +
+                        "returned as it is.",
             )
 
             route("/{chatId}") {

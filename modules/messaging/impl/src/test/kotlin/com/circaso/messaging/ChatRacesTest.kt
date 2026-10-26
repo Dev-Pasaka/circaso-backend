@@ -37,6 +37,8 @@ class ChatRacesTest {
         chats.commits
             .flatMap { commit -> commit.leaves.mapNotNull { it.event } }
             .filter { it.type == MemberRemoved.TYPE && userId.toString() in it.data.toString() }
+            .map { it.eventId }
+            .toSet()
 
     // ---- ownership ----
 
@@ -138,8 +140,63 @@ class ChatRacesTest {
 
             assertEquals(1, results.count { it is Resource.Success })
             assertEquals("messaging.chat_not_found", results.single { it is Resource.Error }.errorCode())
-            assertEquals(1, h.removedEvents(chidi).size, "one MemberRemoved")
+            assertEquals(1, h.removedEvents(chidi).size, "one MemberRemoved id, however many batches carried it")
             assertEquals(2, h.chats.chats[chatId]!!.memberCount, "one decrement")
+        }
+
+    @Test
+    fun `a removal whose batch failed is finished by a retry, with one event`() =
+        runTest {
+            val h = ChatHarness()
+            val chatId = h.group(amina, listOf(brian, chidi)).chat.chatId
+            h.chats.failCommits = 1
+
+            assertFailsWith<IllegalStateException> { h.leaveGroup(chidi, chatId) }
+            assertEquals(Role.MEMBER, h.role(chatId, chidi), "still a member, so the retry can run")
+            h.removeMember(amina, chatId, chidi).data()
+
+            assertNull(h.role(chatId, chidi))
+            assertNull(h.chats.userChat(chidi, chatId))
+            assertEquals(1, h.removedEvents(chidi).size)
+            assertEquals(2, h.chats.chats[chatId]!!.memberCount)
+        }
+
+    @Test
+    fun `a role written as the person leaves doesn't put them back`() =
+        runTest {
+            val h = ChatHarness()
+            val chatId = h.group(amina, listOf(brian, chidi)).chat.chatId
+            h.chats.beforeRoleWrite = {
+                h.chats.beforeRoleWrite = {}
+                h.leaveGroup(brian, chatId).data()
+            }
+
+            h.setRole(amina, chatId, brian, Role.ADMIN).data()
+
+            assertNull(h.chats.members[chatId]!![brian])
+            assertNull(h.role(chatId, brian))
+        }
+
+    @Test
+    fun `a successor who leaves just after being chosen isn't put back, and the next in line takes over`() =
+        runTest {
+            val h = ChatHarness()
+            val chatId = h.group(amina, listOf(brian)).chat.chatId
+            h.setRole(amina, chatId, brian, Role.ADMIN).data()
+            h.clock.advance()
+            h.connect(amina, chidi)
+            h.addMembers(amina, chatId, setOf(chidi)).data()
+            h.chats.beforeRoleWrite = {
+                h.chats.beforeRoleWrite = {}
+                h.leaveGroup(brian, chatId).data()
+            }
+
+            h.leaveGroup(amina, chatId).data()
+
+            assertNull(h.chats.members[chatId]!![brian], "brian, chosen then gone, is not written back")
+            assertEquals(chidi, h.chats.chats[chatId]!!.ownerId)
+            assertEquals(Role.OWNER, h.role(chatId, chidi))
+            assertEquals(1, h.chats.chats[chatId]!!.memberCount)
         }
 
     // ---- creates and failed writes ----
@@ -164,18 +221,53 @@ class ChatRacesTest {
         }
 
     @Test
-    fun `a create whose write failed is resumed by its retry`() =
+    fun `a create that failed part-way is finished by its retry`() =
         runTest {
             val h = ChatHarness()
-            h.connect(amina, brian)
+            h.connect(amina, listOf(brian, chidi))
             val key = UUID.randomUUID().toString()
-            h.chats.failCommits = 1
+            h.chats.partialJoins = 2
 
-            assertFailsWith<IllegalStateException> { h.createGroup(h.command(amina, setOf(brian), key = key)) }
-            val retried = h.createGroup(h.command(amina, setOf(brian), key = key)).data()
+            assertFailsWith<IllegalStateException> { h.createGroup(h.command(amina, setOf(brian, chidi), key = key)) }
+            val chatId =
+                h.chats.chats.keys
+                    .single()
+            assertEquals(3, h.chats.chats[chatId]!!.memberCount, "the planned total, above the two rows written")
+            val retried = h.createGroup(h.command(amina, setOf(brian, chidi), key = key)).data()
 
-            assertEquals(2, h.chats.members(retried.chat.chatId).size)
-            assertEquals(2, retried.chat.memberCount)
+            assertEquals(chatId, retried.chat.chatId)
+            assertEquals(
+                setOf(amina, brian, chidi),
+                h.chats
+                    .members(chatId)
+                    .map { it.userId }
+                    .toSet(),
+            )
+            assertEquals(3, retried.chat.memberCount)
+        }
+
+    @Test
+    fun `a retried create never puts back someone who left in between`() =
+        runTest {
+            val h = ChatHarness()
+            h.connect(amina, listOf(brian, chidi))
+            val key = UUID.randomUUID().toString()
+            h.chats.partialJoins = 2
+
+            assertFailsWith<IllegalStateException> { h.createGroup(h.command(amina, setOf(brian, chidi), key = key)) }
+            val chatId =
+                h.chats.chats.keys
+                    .single()
+            val written =
+                h.chats
+                    .members(chatId)
+                    .map { it.userId }
+                    .single { it != amina }
+            h.leaveGroup(written, chatId).data()
+            val retried = h.createGroup(h.command(amina, setOf(brian, chidi), key = key)).data()
+
+            assertEquals(chatId, retried.chat.chatId)
+            assertEquals(listOf(amina), h.chats.members(chatId).map { it.userId }, "nobody re-added, nobody new")
         }
 
     @Test

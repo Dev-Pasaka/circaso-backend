@@ -58,7 +58,6 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val createGroup =
         CreateGroup(
             chats,
-            writer,
             chats,
             reach,
             views,
@@ -73,7 +72,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val addMembers = AddMembers(chats, writer, chats, reach, membership, views, notifier, bus, config, clock)
     val removeMember = RemoveMember(chats, removal)
     val leaveGroup = LeaveGroup(chats, removal)
-    val setRole = SetRole(chats, writer, chats, membership, views, notifier)
+    val setRole = SetRole(chats, writer, membership, views, notifier)
     val replayFrames = ReplayFrames(frames)
     val fetchKeyBundle = FetchKeyBundle(keys, reach, SharedGroups(chats), MemoryRateLimit(), config)
     val service =

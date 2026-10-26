@@ -43,7 +43,6 @@ class MessagingStoreImpl(
                     chats = if (first) changes.chats else emptyList(),
                     deletedChats = if (first) changes.deletedChats else emptyList(),
                     joins = joins.getOrElse(index) { emptyList() },
-                    roles = if (first) changes.roles else emptyList(),
                     leaves = leaves.getOrElse(index) { emptyList() },
                     events = if (first) changes.events else emptyList(),
                 ),
@@ -64,11 +63,8 @@ class MessagingStoreImpl(
                 userChats.saveInBatch(join.member.toUserChatRow(join.kind))
                 join.event?.let { outbox.saveInBatch(it.toOutboxRow()) }
             }
-            for (member in changes.roles) members.saveInBatch(member.toRow())
             for (leave in changes.leaves) {
-                val member = leave.member
-                members.deleteInBatch(member.toRow())
-                userChats.deleteInBatch(deletedLine(member))
+                userChats.deleteInBatch(deletedLine(leave.member))
                 leave.event?.let { outbox.saveInBatch(it.toOutboxRow()) }
             }
             for (event in changes.events) outbox.saveInBatch(event.toOutboxRow())

@@ -17,7 +17,6 @@ import com.circaso.messaging.domain.repositories.Join
 import com.circaso.messaging.domain.repositories.MessagingStore
 import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
-import com.circaso.messaging.domain.support.ChatWriter
 import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.messaging.domain.support.groupChatId
 import com.circaso.messaging.domain.support.isValidSealedMeta
@@ -28,7 +27,6 @@ import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ReachPolicy
 import java.time.Clock
-import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * M5 `POST /chats/groups`: a group with its creator as owner and the people they can reach. Anyone they can't reach
@@ -36,12 +34,12 @@ import kotlin.coroutines.cancellation.CancellationException
  * the answer doesn't depend on who turned out to be reachable.
  *
  * A big group is written in several batches, so a create can fail part-way. The chat id comes from the request's
- * `Idempotency-Key` (decision 2026-10-26): the retry finds the chat and writes only the members still missing, and
- * after a failed write the member count is set to the rows there are. `ChatCreated` has one id per chat.
+ * `Idempotency-Key` (decision 2026-10-26): the retry finds the chat and writes only the members still missing. A
+ * failed write leaves the count at the planned total, above the rows written, rather than recounting: a recount
+ * would move the version on and stop the retry from finishing. `ChatCreated` has one id per chat.
  */
 class CreateGroup(
     private val chats: ChatRepository,
-    private val writer: ChatWriter,
     private val store: MessagingStore,
     private val reach: ReachPolicy,
     private val views: ChatViews,
@@ -100,7 +98,7 @@ class CreateGroup(
         memberCount = memberCount,
         createdBy = command.creator,
         createdAt = clock.instant(),
-        version = 1,
+        version = CREATED_VERSION,
         ownerId = command.creator,
     )
 
@@ -118,13 +116,18 @@ class CreateGroup(
                 joins = listOf(owner) + joins(chat, added),
                 events = listOf(bus.envelope(created).oncePerChat(chat.chatId)),
             )
-        writeOrRecount(chat.chatId, changes)
+        store.commit(changes)
         notifyAdded(chat, added)
         return Resource.success(chat)
     }
 
-    /** A retry of the same request: the chat exists, so only the people with no member row yet are written. */
+    /**
+     * A retry of the same request finds the chat. It finishes only if nothing else changed the group since: its
+     * version is still the one the create wrote (decision 2026-10-26), so someone who left in between is never put
+     * back. Then only the people with no member row yet are written, and the count is set to at least the rows.
+     */
     private suspend fun resume(chat: Chat, added: Set<UserId>): Resource<Chat> {
+        if (chat.version != CREATED_VERSION) return Resource.success(chat)
         val present = chats.members(chat.chatId).map { it.userId }.toSet()
         val ownerJoin =
             if (chat.createdBy in present) {
@@ -133,25 +136,11 @@ class CreateGroup(
                 listOf(Join(owner(chat), ChatKind.GROUP))
             }
         val missing = added - present
-        writeOrRecount(chat.chatId, ChatChanges(joins = ownerJoin + joins(chat, missing)))
-        val counted =
-            writer.update(chat.chatId) { latest ->
-                Resource.success(latest.copy(memberCount = maxOf(latest.memberCount, chats.members(chat.chatId).size)))
-            }
+        store.commit(ChatChanges(joins = ownerJoin + joins(chat, missing)))
+        val rows = chats.members(chat.chatId).size
+        val counted = chats.updateChat(chat, chat.copy(memberCount = maxOf(chat.memberCount, rows)))
         notifyAdded(chat, missing)
-        return counted
-    }
-
-    /** Writes [changes]; if a batch fails, the count is set to the rows written before the error goes on. */
-    private suspend fun writeOrRecount(chatId: ChatId, changes: ChatChanges) {
-        try {
-            store.commit(changes)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            writer.recount(chatId)
-            throw e
-        }
+        return Resource.success(counted ?: chats.chat(chat.chatId) ?: chat)
     }
 
     private fun joins(chat: Chat, people: Set<UserId>): List<Join> =
@@ -188,5 +177,10 @@ class CreateGroup(
             added = added,
             by = chat.createdBy,
         )
+    }
+
+    private companion object {
+        /** The version a chat is written with; any change after moves it on. */
+        const val CREATED_VERSION = 1L
     }
 }

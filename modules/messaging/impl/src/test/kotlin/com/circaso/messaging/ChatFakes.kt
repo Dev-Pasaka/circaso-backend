@@ -27,7 +27,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * Chats in memory, with the same rules as the tables: the pair claim, the removal claim and the versioned update
  * are atomic, and a commit applies one [ChatChanges] as a unit (what the logged batch does). Every call yields
  * first, so coroutines started together interleave at each step, as requests do. [beforeUpdate] runs just before a
- * versioned update, so a test can change the chat in between; [failCommits] makes the next commits throw.
+ * versioned update, so a test can change the chat in between, and [beforeRoleWrite] just before a role is written;
+ * [failCommits] makes the next commits throw, and [partialJoins] makes the next commit write the chats and only that
+ * many joins before it throws (a create that failed part-way).
  */
 class MemoryChats :
     ChatRepository,
@@ -39,6 +41,8 @@ class MemoryChats :
     val commits = CopyOnWriteArrayList<ChatChanges>()
     var beforeUpdate: suspend () -> Unit = {}
     var failCommits = 0
+    var partialJoins: Int? = null
+    var beforeRoleWrite: suspend () -> Unit = {}
 
     override suspend fun claimPair(pair: String, chatId: ChatId): Boolean {
         yield()
@@ -76,6 +80,17 @@ class MemoryChats :
         return synchronized(this) { members[chatId]?.remove(userId) != null }
     }
 
+    override suspend fun updateRole(member: Member): Boolean {
+        beforeRoleWrite()
+        yield()
+        synchronized(this) {
+            val rows = members[member.chatId] ?: return false
+            if (member.userId !in rows) return false
+            rows[member.userId] = member
+            return true
+        }
+    }
+
     override suspend fun chatsOf(userId: UserId) = synchronized(this) { lines[userId]?.values?.toList().orEmpty() }
 
     override suspend fun userChat(userId: UserId, chatId: ChatId) = synchronized(this) { lines[userId]?.get(chatId) }
@@ -86,6 +101,15 @@ class MemoryChats :
             failCommits--
             error("batch failed")
         }
+        partialJoins?.let { written ->
+            partialJoins = null
+            apply(changes.copy(joins = changes.joins.take(written), leaves = emptyList(), events = emptyList()))
+            error("batch failed part-way")
+        }
+        apply(changes)
+    }
+
+    private fun apply(changes: ChatChanges) {
         synchronized(this) {
             commits += changes
             for (chat in changes.chats) chats[chat.chatId] = chat
@@ -96,11 +120,7 @@ class MemoryChats :
                 lines.getOrPut(member.userId) { mutableMapOf() }[member.chatId] =
                     UserChat(member.userId, member.chatId, join.kind, null, null, member.joinedAt)
             }
-            for (member in changes.roles) members.getOrPut(member.chatId) { mutableMapOf() }[member.userId] = member
-            for (leave in changes.leaves) {
-                members[leave.member.chatId]?.remove(leave.member.userId)
-                lines[leave.member.userId]?.remove(leave.member.chatId)
-            }
+            for (leave in changes.leaves) lines[leave.member.userId]?.remove(leave.member.chatId)
         }
     }
 

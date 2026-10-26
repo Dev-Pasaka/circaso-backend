@@ -257,18 +257,38 @@ class ChatDataLayerTest {
         }
 
     @Test
-    fun `a leave deletes both rows and a deleted chat is gone`() =
+    fun `a leave takes the chat-list line and leaves the member row to the claim`() =
         runBlocking<Unit> {
             val amina = UserId.new()
             val chat = group(amina)
             val owner = join(chat, amina, Role.OWNER, false)
             store.commit(ChatChanges(chats = listOf(chat), joins = listOf(owner)))
 
-            store.commit(ChatChanges(deletedChats = listOf(chat.chatId), leaves = listOf(Leave(owner.member))))
-
-            assertNull(chats.chat(chat.chatId))
-            assertNull(chats.member(chat.chatId, amina))
+            store.commit(ChatChanges(leaves = listOf(Leave(owner.member))))
             assertNull(chats.userChat(amina, chat.chatId))
+            assertEquals(owner.member, chats.member(chat.chatId, amina), "still a member until the claim")
+
+            assertTrue(chats.claimRemoval(chat.chatId, amina))
+            store.commit(ChatChanges(deletedChats = listOf(chat.chatId)))
+            assertNull(chats.member(chat.chatId, amina))
+            assertNull(chats.chat(chat.chatId))
+        }
+
+    @Test
+    fun `a role is set only on a member row that exists`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+            val brian = UserId.new()
+            val chat = group(amina)
+            store.commit(ChatChanges(chats = listOf(chat), joins = listOf(join(chat, brian))))
+
+            assertTrue(chats.updateRole(chats.member(chat.chatId, brian)!!.copy(role = Role.ADMIN)))
+            assertEquals(Role.ADMIN, chats.member(chat.chatId, brian)!!.role)
+
+            assertTrue(chats.claimRemoval(chat.chatId, brian))
+            val late = Member(chat.chatId, brian, Role.OWNER, now)
+            assertFalse(chats.updateRole(late), "nobody to update")
+            assertNull(chats.member(chat.chatId, brian), "and the row is not put back")
         }
 
     @Test

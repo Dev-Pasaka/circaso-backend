@@ -8,9 +8,7 @@ import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.RoleChange
-import com.circaso.messaging.domain.repositories.ChatChanges
 import com.circaso.messaging.domain.repositories.ChatRepository
-import com.circaso.messaging.domain.repositories.MessagingStore
 import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.ChatWriter
@@ -27,12 +25,12 @@ import com.circaso.shared.UserId
  *
  * The decision is made inside the version check (decision 2026-10-26): every attempt re-reads both member rows and
  * the chat's owner, so of two handovers at once only one wins and the other is refused. The new owner is the chat's
- * `ownerId`, written by that check; the member rows follow. Members get `chat.updated`.
+ * `ownerId`, written by that check; the member rows follow, each only if it still exists (`IF EXISTS`), so a role
+ * written as someone leaves never puts them back. Members get `chat.updated`.
  */
 class SetRole(
     private val chats: ChatRepository,
     private val writer: ChatWriter,
-    private val store: MessagingStore,
     private val membership: Membership,
     private val views: ChatViews,
     private val notifier: ChatNotifier,
@@ -76,7 +74,7 @@ class SetRole(
                 }
             }
         if (written is Resource.Success) {
-            store.commit(ChatChanges(roles = rows))
+            for (row in rows) chats.updateRole(row)
             notifier.chatUpdated(membership.members(chatId), chat)
         }
         return Resource.success(views.view(chat, chats.userChat(caller, chatId)?.lastMessageId))

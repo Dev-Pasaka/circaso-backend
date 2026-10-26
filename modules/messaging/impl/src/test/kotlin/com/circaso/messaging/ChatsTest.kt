@@ -416,14 +416,7 @@ class ChatsTest {
             assertEquals(Role.ADMIN, h.role(chatId, dalia))
             assertNull(h.role(chatId, amina))
             assertEquals(chidi, h.chats.chats[chatId]!!.ownerId, "the chat names the new owner")
-            assertEquals(
-                listOf(chidi),
-                h.chats.commits
-                    .last()
-                    .roles
-                    .map { it.userId },
-                "and the row mirrors it",
-            )
+            assertEquals(Role.OWNER, h.chats.members[chatId]!![chidi]!!.role, "and the row mirrors it")
             val updated = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(brian, chidi, dalia), updated.map { it.to }.toSet())
             assertEquals(h.chats.chats[chatId]!!.version, updated.first().data["version"])
@@ -476,13 +469,8 @@ class ChatsTest {
 
             assertEquals(Role.OWNER, h.role(chatId, brian))
             assertEquals(Role.ADMIN, h.role(chatId, amina))
-            assertEquals(
-                2,
-                h.chats.commits
-                    .last()
-                    .roles.size,
-                "both rows in one commit",
-            )
+            assertEquals(Role.OWNER, h.chats.members[chatId]!![brian]!!.role, "the rows follow the chat")
+            assertEquals(Role.ADMIN, h.chats.members[chatId]!![amina]!!.role)
             assertEquals(1, handed.members.count { it.role == Role.OWNER })
             assertEquals(group.chat.version + 1, handed.chat.version, "a role change moves the version on")
             val updated = h.frames.sent.filter { it.type == "chat.updated" }

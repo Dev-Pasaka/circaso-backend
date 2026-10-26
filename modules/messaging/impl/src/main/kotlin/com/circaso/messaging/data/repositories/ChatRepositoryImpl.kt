@@ -22,6 +22,10 @@ import java.util.UUID
 private val CHAT_ID = KandraColumnRef<UUID>("chat_id")
 private val USER_ID = KandraColumnRef<UUID>("user_id")
 
+/** A role is only ever set on a row that exists: `IF EXISTS` keeps a late write from putting a member back. */
+private const val UPDATE_ROLE_CQL =
+    "UPDATE circaso_messaging.members_by_chat SET role = ? WHERE chat_id = ? AND user_id = ? IF EXISTS"
+
 /**
  * Kandra has no conditional delete, so the claim is written as CQL. `IF EXISTS` makes it a lightweight transaction:
  * of a remove and a leave of the same person racing, only one sees `[applied] = true`.
@@ -63,6 +67,18 @@ class ChatRepositoryImpl(
                 .cql(CLAIM_REMOVAL_CQL)
                 .bind(chatId.value, userId.value)
                 .build()
+        return members.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
+    }
+
+    override suspend fun updateRole(member: Member): Boolean {
+        val query =
+            KandraRawQuery
+                .cql(UPDATE_ROLE_CQL)
+                .bind(
+                    member.role.name,
+                    member.chatId.value,
+                    member.userId.value,
+                ).build()
         return members.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
     }
 
