@@ -304,6 +304,10 @@ internal object ApiDocsCatalog {
                             "the audio is not kept; a reply can be read aloud. Voice has its own daily " +
                             "allowance, " +
                             "separate from text.\n\n" +
+                            "**Live voice** is a WebSocket, `wss://…/v1/assistant/voice/live`, open only while " +
+                            "talking hands-free: Opus in, Asha's voice back sentence by sentence, and talking over " +
+                            "her stops her. Its frames are in the guide (Talking to Asha live); Swahili uses clips " +
+                            "instead.\n\n" +
                             "**Usage** shows what you have used today, what is left, your plan and when the " +
                             "allowance resets.",
                     ),

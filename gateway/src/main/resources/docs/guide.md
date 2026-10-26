@@ -163,7 +163,7 @@ The shared ones, then each area's own. Codes are stable.
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
 | `assistant.model_unavailable` | 502 | Asha's model is down; try again |
-| `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself |
+| `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself. On the live voice socket it is the close reason instead |
 
 ## Talking to Asha: streaming and the phone's help
 
@@ -176,6 +176,26 @@ The shared ones, then each area's own. Codes are stable.
 | `done` | `{"message": {…}}` | The reply is complete and saved. |
 
 The phone sends back at most 30 short snippets. They are used for that answer and never stored; Asha keeps only a note of which chats and how many messages she read, and the answer says so ("Asha read 4 messages from Family").
+
+## Talking to Asha live
+
+While the user talks with Asha hands-free, the phone opens a second WebSocket, `wss://api.circaso.com/v1/assistant/voice/live`, only for that conversation. Like the main socket, the first frame authenticates, with the user token only: `{"type":"auth","accessToken":"…","agentToken":"…","language":"en","chatReading":true}`. The server answers `{"type":"ready","voiceSecondsLeft":…,"audio":{"encoding":"linear16","sampleRate":16000}}`.
+
+Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as 16-bit PCM at the `ready` frame's sample rate. Text frames are JSON with a `type`:
+
+| `type` | From | Meaning |
+| --- | --- | --- |
+| `transcript` `{text, final}` | server | The words heard so far. |
+| `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
+| `reply` `{text}` | server | One sentence of the answer; its audio follows. |
+| `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat. |
+| `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route; answer with a `tool_results` frame `{turnId, callId, snippets}`. |
+| `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
+| `error` `{code, message}` | server | One answer failed; keep talking. |
+| `closing` `{reason, message?, retryAfterSeconds?}` | server | The server is about to close; `reason` is also the close reason. |
+| `end` | phone | Hang up. |
+
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`). Voice seconds count both ways. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 

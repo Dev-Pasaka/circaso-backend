@@ -23,6 +23,7 @@ dependencies {
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.client.websockets) // vendors reached over a live socket (`webSockets = true`)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.koin.core)
     implementation(libs.koin.ktor)
@@ -32,6 +33,7 @@ dependencies {
 
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.server.websockets)
     testImplementation(libs.kandra.test)
     testImplementation(libs.grpc.stub)
     testImplementation(libs.grpc.inprocess)

@@ -12,9 +12,12 @@ dependencies {
 
     // What the vendor code itself uses, declared here rather than inherited from another module. Versions are in gradle/libs.versions.toml.
     implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.websockets) // Workers AI live voice sockets
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)
+    testImplementation(libs.ktor.server.test.host) // a fake vendor WebSocket server for the live voice tests
+    testImplementation(libs.ktor.server.websockets)
 }

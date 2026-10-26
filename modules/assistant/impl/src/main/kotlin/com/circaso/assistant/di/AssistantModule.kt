@@ -33,14 +33,18 @@ import com.circaso.assistant.domain.usecases.DeleteChat
 import com.circaso.assistant.domain.usecases.DeleteExchange
 import com.circaso.assistant.domain.usecases.GetUsage
 import com.circaso.assistant.domain.usecases.ListChat
+import com.circaso.assistant.domain.usecases.MeterLiveVoice
+import com.circaso.assistant.domain.usecases.OpenLiveVoice
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
 import com.circaso.assistant.domain.usecases.TranscribeVoice
 import com.circaso.assistant.presentation.controllers.chatController
+import com.circaso.assistant.presentation.controllers.liveVoiceController
 import com.circaso.assistant.presentation.controllers.voiceController
 import com.circaso.assistant.presentation.events.IdentityEventHandler
 import com.circaso.assistant.presentation.services.ChatService
 import com.circaso.assistant.presentation.services.IdentityEventsService
+import com.circaso.assistant.presentation.services.LiveVoiceService
 import com.circaso.assistant.presentation.services.VoiceService
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
@@ -110,17 +114,22 @@ fun assistantModule(config: Config): Module =
         single { TranscribeVoice(get(), get(), get(), get(), clock) }
         single { SynthesizeSpeech(get(), get(), get(), get(), clock) }
         single { DeleteAssistantData(get()) }
+        single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), clock) }
+        single { MeterLiveVoice(get(), clock) }
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
         single { VoiceService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
+        single { LiveVoiceService(get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
             val voice = get<VoiceService>()
+            val live = get<LiveVoiceService>()
             RouteContributor { route ->
                 route.chatController(chat)
                 route.voiceController(voice)
+                route.liveVoiceController(live)
             }
         }
         single<EventSubscription>(named("assistant.identity-events")) { IdentityEventHandler(get()).subscription() }

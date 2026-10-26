@@ -7,6 +7,8 @@ import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
 import com.circaso.integrations.api.LanguageModel
+import com.circaso.integrations.api.LiveSpeech
+import com.circaso.integrations.api.LiveTranscription
 import com.circaso.integrations.api.NoVendorVerification
 import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.api.PushGateway
@@ -20,6 +22,8 @@ import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeLanguageModel
+import com.circaso.integrations.impl.dev.FakeLiveSpeech
+import com.circaso.integrations.impl.dev.FakeLiveTranscription
 import com.circaso.integrations.impl.dev.FakePush
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
@@ -40,6 +44,9 @@ import com.circaso.integrations.impl.social.ProviderSpec
 import com.circaso.integrations.impl.twilio.TwilioVerify
 import com.circaso.integrations.impl.workersai.WorkersAiGateway
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
+import com.circaso.integrations.impl.workersai.WorkersAiLiveSocket
+import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
+import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
@@ -49,7 +56,7 @@ import java.time.Duration
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
- * assistant, `llm`, `vision`, `stt` and `tts` (`workers-ai`).
+ * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
@@ -206,6 +213,49 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        single<LiveTranscription> {
+            pick(
+                "live-stt",
+                providers =
+                    mapOf(
+                        "log" to ::FakeLiveTranscription,
+                        "fake" to ::FakeLiveTranscription,
+                        "workers-ai" to {
+                            WorkersAiLiveTranscription(
+                                workersAiLive(config, secrets, get()),
+                                ai.string("model.live-stt", WORKERS_AI_LIVE_STT_MODEL),
+                                endpointingMillis =
+                                    ai.int(
+                                        "live.endpointing-ms",
+                                        WorkersAiLiveTranscription.DEFAULT_ENDPOINTING_MILLIS,
+                                    ),
+                                utteranceEndMillis =
+                                    ai.int(
+                                        "live.utterance-end-ms",
+                                        WorkersAiLiveTranscription.DEFAULT_UTTERANCE_END_MILLIS,
+                                    ),
+                            )
+                        },
+                    ),
+            )
+        }
+        single<LiveSpeech> {
+            pick(
+                "live-tts",
+                providers =
+                    mapOf(
+                        "log" to { FakeLiveSpeech() },
+                        "fake" to { FakeLiveSpeech() },
+                        "workers-ai" to {
+                            WorkersAiLiveSpeech(
+                                workersAiLive(config, secrets, get()),
+                                ai.string("model.live-tts", WORKERS_AI_TTS_MODEL),
+                                sampleRate = ai.int("live.sample-rate", WorkersAiLiveSpeech.DEFAULT_SAMPLE_RATE),
+                            )
+                        },
+                    ),
+            )
+        }
     }
 
 /**
@@ -323,6 +373,7 @@ private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
+private const val WORKERS_AI_LIVE_STT_MODEL = "@cf/deepgram/nova-3"
 
 // A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
 private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 4096
@@ -346,5 +397,24 @@ private fun workersAi(
             },
         token = secrets.require("cloudflare.ai-token"),
         gateway = config.requireString("integrations.ai.gateway"),
+    )
+}
+
+/**
+ * Live voice opens Workers AI sockets, on its own `workers-ai-live` client: `webSockets = true` installs the WebSockets
+ * plugin, keeps retries and the circuit breaker away from the socket and times only its opening. It can't share
+ * `workers-ai`, whose settings were fixed by whichever contract asked for it first. Same account, gateway and token.
+ */
+private fun workersAiLive(
+    config: Config,
+    secrets: Secrets,
+    clients: HttpClients,
+): WorkersAiLiveSocket {
+    val accountId = config.requireString("cloudflare.account-id")
+    return WorkersAiLiveSocket(
+        http = clients.named("workers-ai-live") { webSockets = true },
+        token = secrets.require("cloudflare.ai-token"),
+        gateway = config.requireString("integrations.ai.gateway"),
+        socketBase = WorkersAiLiveSocket.socketBase(accountId),
     )
 }
