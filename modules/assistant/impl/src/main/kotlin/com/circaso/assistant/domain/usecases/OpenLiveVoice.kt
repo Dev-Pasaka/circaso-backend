@@ -8,6 +8,7 @@ import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.secondsUntilReset
 import com.circaso.assistant.domain.support.today
+import com.circaso.assistant.domain.support.verifiedUser
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.IntegrationError
@@ -16,13 +17,13 @@ import com.circaso.integrations.api.LiveTranscription
 import com.circaso.integrations.api.LiveTranscriptionOptions
 import com.circaso.shared.DomainError
 import com.circaso.shared.Resource
-import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import java.time.Clock
 
 /**
- * A11, opening: the live voice socket's first frame. The user token is checked like on the main socket (the agent
- * token is refused: Asha can't open a conversation with herself), then the voice allowance, then the language: the
+ * A11, opening: the live voice socket's first frame. The user token is checked like on the main socket; any failure
+ * there (a bad, expired, revoked or agent token, or the check itself failing) is one outcome, `TokenInvalid`, which
+ * closes the socket as `unauthorized`. Then the voice allowance, then the language: the
  * live path only exists where both the live transcription and the live voice speak the user's language, so Swahili is
  * refused and the phone records clips for A3 and speaks the reply itself (Assistant → Live voice, step 5). Only then
  * are the provider sessions opened.
@@ -37,14 +38,7 @@ class OpenLiveVoice(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(start: LiveVoiceStart): Resource<LiveVoiceLine> {
-        val principal =
-            when (val verified = verifier.verify(start.accessToken)) {
-                is Resource.Success -> verified.data
-                is Resource.Error -> return verified
-            }
-        if (principal.scope != Scope.APP) return Resource.error(SharedError.ScopeInsufficient)
-
-        val userId = principal.userId
+        val userId = verifiedUser(verifier, start.accessToken) ?: return Resource.error(SharedError.TokenInvalid)
         val limit = config.limitsOf(entitlements.planOf(userId)).voiceSecondsPerDay
         val left = limit - quota.voiceSeconds(userId, clock.today())
         if (left <= 0) return Resource.error(AssistantError.QuotaExceeded(clock.secondsUntilReset()))
@@ -69,7 +63,17 @@ class OpenLiveVoice(
                 }
             }
         return Resource.success(
-            LiveVoiceLine(userId, start, listening, speaking, left, limit, config.liveSilence),
+            LiveVoiceLine(
+                userId,
+                start,
+                listening,
+                speaking,
+                left,
+                limit,
+                config.liveSilence,
+                config.liveSessionRecheck,
+                config.liveDeviceToolTimeout,
+            ),
         )
     }
 

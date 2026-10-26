@@ -14,10 +14,15 @@ data class LiveAuthFrame(
     val chatReading: Boolean = true,
 )
 
-/** The phone's later text frames: `tool_results` (the answer to a `tool_request`) and `end` (hang up). */
+/**
+ * The phone's later text frames: `tool_results` (the answer to a `tool_request`), `auth` (fresh tokens before the
+ * access token's 15 minutes are up) and `end` (hang up).
+ */
 @Serializable
 data class LiveClientFrame(
     val type: String,
+    val accessToken: String = "",
+    val agentToken: String? = null,
     val turnId: String? = null,
     val callId: String = "",
     val snippets: List<SnippetDto> = emptyList(),

@@ -31,9 +31,11 @@ import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 
@@ -44,14 +46,14 @@ private const val AUTH_WINDOW_MILLIS = 10_000L
 
 /**
  * Frames on this socket are at most 64 KB both ways, like the main socket (decision 2026-10-25). Opus packets are far
- * smaller; Asha's PCM is split to fit.
+ * smaller; Asha's audio is split to fit. A frame over the limit closes with 1009 and no `closing` frame.
  */
 internal const val MAX_FRAME_BYTES = 64 * 1024
 
 /**
  * A11: the live voice socket, `wss://…/v1/assistant/voice/live` (Assistant → Live voice, Phase 1). Like the main
  * socket it authenticates with its first frame, not a header, and takes the user token only. Binary frames are audio
- * both ways (Opus from the phone, Asha's PCM back); text frames are JSON with a `type` (the protocol is in
+ * both ways (Opus from the phone, Asha's mulaw back); text frames are JSON with a `type` (the protocol is in
  * docs/mobile-integration.md). Nothing said is logged, and no audio is kept.
  */
 fun Route.liveVoiceController(live: LiveVoiceService) {
@@ -68,15 +70,16 @@ private suspend fun DefaultWebSocketServerSession.serve(live: LiveVoiceService) 
             is Resource.Error -> return refuse(opened.error)
         }
 
-    send(Frame.Text(conversation.line.toReadyJson()))
-    log.info("live voice opened: user={}", conversation.line.userId)
-    val end = converse(conversation)
-    end.toClosing()?.let { closing ->
-        runCatching {
-            send(Frame.Text(closing.toJson()))
-            close(CloseReason(end.closeCode(), closing.reason))
+    val end =
+        try {
+            send(Frame.Text(conversation.line.toReadyJson()))
+            log.info("live voice opened: user={}", conversation.line.userId)
+            converse(conversation)
+        } finally {
+            // from a successful opening on, the provider sessions are closed however this ends
+            withContext(NonCancellable) { conversation.release() }
         }
-    }
+    say(end)
     log.info(
         "live voice closed: user={} end={} turns={} voiceSeconds={}",
         conversation.line.userId,
@@ -84,6 +87,22 @@ private suspend fun DefaultWebSocketServerSession.serve(live: LiveVoiceService) 
         conversation.turnsAsked.get(),
         conversation.secondsMetered.get(),
     )
+}
+
+/**
+ * Tells the phone why the server is closing, then closes. A revoked session closes like a bad token on the main socket:
+ * 1008 `unauthorized` and no frame.
+ */
+private suspend fun DefaultWebSocketServerSession.say(end: LiveEnd) {
+    if (end is LiveEnd.SessionRevoked) {
+        runCatching { close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "unauthorized")) }
+        return
+    }
+    val closing = end.toClosing() ?: return
+    runCatching {
+        send(Frame.Text(closing.toJson()))
+        close(CloseReason(end.closeCode(), closing.reason))
+    }
 }
 
 private suspend fun DefaultWebSocketServerSession.readAuth(): LiveAuthFrame? {
@@ -143,7 +162,10 @@ private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveCo
     conversation.hangUp(LiveEnd.PhoneGone)
 }
 
-/** `end` hangs up; `tool_results` answers a `tool_request`. Anything else is ignored, as on the main socket. */
+/**
+ * `end` hangs up; `tool_results` answers a `tool_request`; `auth` replaces the tokens before they expire. Anything else
+ * is ignored, as on the main socket.
+ */
 private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conversation: LiveConversation) {
     val frame = runCatching { CircasoJson.decodeFromString(LiveClientFrame.serializer(), text) }.getOrNull() ?: return
     when (frame.type) {
@@ -151,14 +173,17 @@ private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conver
             conversation.hangUp()
         }
 
+        "auth" -> {
+            conversation.refresh(frame.accessToken, frame.agentToken?.takeIf { it.isNotBlank() })
+        }
+
         "tool_results" -> {
-            val start = conversation.line.start
             val result =
                 ToolResultsRequest(frame.callId, frame.snippets).toCommand(
                     conversation.line.userId,
                     frame.turnId,
-                    start.agentToken,
-                    start.requestId,
+                    conversation.agentToken,
+                    conversation.line.start.requestId,
                 )
             when (result) {
                 is Resource.Success -> conversation.deviceResult(result.data)

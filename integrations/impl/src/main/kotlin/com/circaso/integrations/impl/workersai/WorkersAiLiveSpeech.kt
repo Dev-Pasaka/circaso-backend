@@ -27,28 +27,34 @@ import java.util.concurrent.atomic.AtomicBoolean
  * been sent when the user talks over Asha.
  *
  * Aura's live socket only makes uncompressed audio (Deepgram's streaming encodings are `linear16`, `mulaw` and
- * `alaw`), so the phone receives 16-bit PCM at [sampleRate]. Aura speaks English only: another language is refused
+ * `alaw`). The phone receives mulaw at 8 kHz by default, 64 kbit/s and clear enough for speech (decision 2026-10-26);
+ * [encoding] and [sampleRate] are settings, so it can be raised to 16-bit PCM. Aura speaks English only: another language is refused
  * before any vendor call, and the phone speaks it with its own voice (decision 2026-10-25). `mip_opt_out=true` is
  * always sent. Neither the text nor the audio is logged.
  */
 class WorkersAiLiveSpeech(
     private val socket: WorkersAiLiveSocket,
     private val model: String,
+    private val encoding: AudioEncoding = DEFAULT_ENCODING,
     private val sampleRate: Int = DEFAULT_SAMPLE_RATE,
 ) : LiveSpeech {
+    init {
+        require(encoding != AudioEncoding.OPUS) { "Aura's live socket makes linear16 or mulaw, not Opus" }
+    }
+
     override suspend fun open(language: String?): Resource<LiveSpeechSession> {
         if (language != null && !language.lowercase().startsWith("en")) {
             return Resource.error(IntegrationError.UnsupportedLanguage(language))
         }
         val query =
             mapOf(
-                "encoding" to "linear16",
+                "encoding" to encoding.name.lowercase(),
                 "sample_rate" to sampleRate.toString(),
                 "mip_opt_out" to "true",
             )
         return when (val opened = socket.open(model, "live_speak", query)) {
             is Resource.Success -> {
-                Resource.success(AuraSession(opened.data, LiveAudioFormat(AudioEncoding.LINEAR16, sampleRate)))
+                Resource.success(AuraSession(opened.data, LiveAudioFormat(encoding, sampleRate)))
             }
 
             is Resource.Error -> {
@@ -143,8 +149,9 @@ class WorkersAiLiveSpeech(
     }
 
     companion object {
-        /** 16 kHz PCM is about 256 kbit/s: half of Aura's 24 kHz default, and still clear for speech. */
-        const val DEFAULT_SAMPLE_RATE = 16_000
+        /** mulaw at 8 kHz: 64 kbit/s, a quarter of 16 kHz PCM, on a phone's data bundle (decision 2026-10-26). */
+        val DEFAULT_ENCODING = AudioEncoding.MULAW
+        const val DEFAULT_SAMPLE_RATE = 8_000
 
         private const val FLUSH = """{"type":"Flush"}"""
         private const val CLEAR = """{"type":"Clear"}"""

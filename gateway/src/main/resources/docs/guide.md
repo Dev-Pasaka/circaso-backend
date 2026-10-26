@@ -179,9 +179,9 @@ The phone sends back at most 30 short snippets. They are used for that answer an
 
 ## Talking to Asha live
 
-While the user talks with Asha hands-free, the phone opens a second WebSocket, `wss://api.circaso.com/v1/assistant/voice/live`, only for that conversation. Like the main socket, the first frame authenticates, with the user token only: `{"type":"auth","accessToken":"…","agentToken":"…","language":"en","chatReading":true}`. The server answers `{"type":"ready","voiceSecondsLeft":…,"audio":{"encoding":"linear16","sampleRate":16000}}`.
+While the user talks with Asha hands-free, the phone opens a second WebSocket, `wss://api.circaso.com/v1/assistant/voice/live`, only for that conversation. Like the main socket, the first frame authenticates, with the user token only: `{"type":"auth","accessToken":"…","agentToken":"…","language":"en","chatReading":true}`. The server answers `{"type":"ready","voiceSecondsLeft":…,"audio":{"encoding":"mulaw","sampleRate":8000}}`. Access tokens last 15 minutes: send the same `auth` frame again with fresh tokens before they expire.
 
-Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as 16-bit PCM at the `ready` frame's sample rate. No frame is larger than 64 KB, either way. Text frames are JSON with a `type`:
+Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as mulaw at 8 kHz (as the `ready` frame says). No frame is larger than 64 KB, either way. Text frames are JSON with a `type`:
 
 | `type` | From | Meaning |
 | --- | --- | --- |
@@ -189,13 +189,14 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
 | `reply` `{text}` | server | One sentence of the answer; its audio follows. |
 | `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat. |
-| `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route; answer with a `tool_results` frame `{turnId, callId, snippets}`. |
+| `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
 | `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
 | `error` `{code, message}` | server | One answer failed; keep talking. |
 | `closing` `{reason, message?, retryAfterSeconds?}` | server | The server is about to close; `reason` is also the close reason. |
+| `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
 | `end` | phone | Hang up. |
 
-The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`). Voice seconds count both ways. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `frame too large` and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, while the transcriber hears it, and Asha's playing time; an open mic is free. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 

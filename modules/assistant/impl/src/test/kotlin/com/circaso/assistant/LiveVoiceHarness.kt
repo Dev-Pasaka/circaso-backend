@@ -1,5 +1,6 @@
 package com.circaso.assistant
 
+import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
 import com.circaso.assistant.presentation.controllers.liveVoiceController
@@ -18,6 +19,8 @@ import com.circaso.integrations.api.LiveTranscriptionSession
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.shared.DeviceId
+import com.circaso.shared.DomainError
+import com.circaso.shared.ErrorKind
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
@@ -36,6 +39,9 @@ import java.util.concurrent.atomic.AtomicInteger
 class ScriptedEars : LiveTranscription {
     val sessions = CopyOnWriteArrayList<Session>()
     val opened = Channel<Session>(Channel.UNLIMITED)
+
+    /** Makes the next opens fail as if Nova-3 were down. */
+    @Volatile var unavailable = false
 
     class Session : LiveTranscriptionSession {
         private val events = Channel<TranscriptionEvent>(Channel.UNLIMITED)
@@ -60,12 +66,16 @@ class ScriptedEars : LiveTranscription {
     override suspend fun open(options: LiveTranscriptionOptions): Resource<LiveTranscriptionSession> {
         val language = options.language ?: "en"
         if (!language.startsWith("en")) return Resource.error(IntegrationError.UnsupportedLanguage(language))
+        if (unavailable) return Resource.error(IntegrationError.Unavailable("nova-3"))
         return Resource.success(Session().also { sessions += it }.also { opened.trySend(it) })
     }
 }
 
-/** The live voice: a sentence's audio is its text's bytes, sent on `flush`. English only, like Aura. */
-class RecordingVoice(private val sampleRate: Int = 16_000) : LiveSpeech {
+/**
+ * The live voice: a sentence's audio is its text's bytes, sent on `flush`, as 8 kHz mulaw (Aura's default), so a byte
+ * plays for 1/8000 s. English only, like Aura.
+ */
+class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
     val sessions = CopyOnWriteArrayList<Session>()
 
     inner class Session : LiveSpeechSession {
@@ -76,7 +86,7 @@ class RecordingVoice(private val sampleRate: Int = 16_000) : LiveSpeech {
 
         @Volatile var isClosed = false
 
-        override val format = LiveAudioFormat(AudioEncoding.LINEAR16, sampleRate)
+        override val format = LiveAudioFormat(AudioEncoding.MULAW, sampleRate)
 
         override suspend fun speak(text: String) {
             spoken += text
@@ -112,28 +122,59 @@ class RecordingVoice(private val sampleRate: Int = 16_000) : LiveSpeech {
     }
 }
 
-/** `user-token` is the user's app token, `agent-token` the same user's agent token; anything else is refused. */
+/**
+ * `user-token` and `fresh-token` are the user's app tokens, `agent-token` the same user's agent token, `revoked-token`
+ * one of a revoked session (identity's own error, not a shared one); anything else is refused. [revoked] revokes the
+ * user's session, so every token of it fails from then on.
+ */
 class TestVerifier(val userId: UserId) : TokenVerifier {
+    @Volatile var revoked = false
+
+    private data object SessionRevoked : DomainError {
+        override val code = "identity.session_revoked"
+        override val message = "Signed out."
+        override val kind = ErrorKind.UNAUTHORIZED
+    }
+
     override suspend fun verify(accessToken: String): Resource<Principal> =
+        when {
+            revoked || accessToken == "revoked-token" -> Resource.error(SessionRevoked)
+            accessToken == "boom" -> error("the deny-list is unreachable")
+            else -> principal(accessToken)
+        }
+
+    private fun principal(accessToken: String): Resource<Principal> =
         when (accessToken) {
-            "user-token" -> Resource.success(Principal(userId, DeviceId.new(), SessionId.new(), Scope.APP))
-            "agent-token" -> Resource.success(Principal(userId, DeviceId.new(), SessionId.new(), Scope.AGENT))
-            else -> Resource.error(SharedError.TokenInvalid)
+            "user-token", "fresh-token" -> {
+                Resource.success(
+                    Principal(userId, DeviceId.new(), SessionId.new(), Scope.APP),
+                )
+            }
+
+            "agent-token" -> {
+                Resource.success(Principal(userId, DeviceId.new(), SessionId.new(), Scope.AGENT))
+            }
+
+            else -> {
+                Resource.error(SharedError.TokenInvalid)
+            }
         }
 }
 
 /** The assistant's A11 socket over the [Harness], served at `/v1/assistant/voice/live` on Ktor's test host. */
-class LiveHarness(val h: Harness, val userId: UserId = UserId.new(), voiceSampleRate: Int = 16_000) {
+class LiveHarness(val h: Harness, val userId: UserId = UserId.new()) {
     val ears = ScriptedEars()
-    val voice = RecordingVoice(voiceSampleRate)
+    val voice = RecordingVoice()
+    val verifier = TestVerifier(userId)
     private val clock = Clock.systemUTC()
 
     val service =
         LiveVoiceService(
-            OpenLiveVoice(TestVerifier(userId), ears, voice, h.plans, h.quota, h.config, clock),
+            OpenLiveVoice(verifier, ears, voice, h.plans, h.quota, h.config, clock),
             MeterLiveVoice(h.quota, clock),
             h.start,
             h.resume,
+            CheckLiveSession(verifier),
         )
 
     fun serve(builder: ApplicationTestBuilder) =

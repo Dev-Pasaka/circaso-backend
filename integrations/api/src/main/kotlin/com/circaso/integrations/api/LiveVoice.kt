@@ -70,9 +70,17 @@ interface LiveSpeech {
 
 /** What the audio frames of a [LiveSpeechSession] hold, so the phone can play them and the assistant can meter them. */
 data class LiveAudioFormat(val encoding: AudioEncoding, val sampleRate: Int) {
-    /** How long [bytes] of this audio plays, in seconds. Only meaningful for uncompressed audio. */
+    /**
+     * How long [bytes] of this audio plays, in seconds: 16-bit PCM is two bytes a sample, mulaw one (8 kHz mulaw is
+     * 8,000 bytes a second). Opus is compressed, so its length can't be told from its size.
+     */
     fun seconds(bytes: Long): Double {
-        val bytesPerSample = if (encoding == AudioEncoding.LINEAR16) 2 else 1
+        val bytesPerSample =
+            when (encoding) {
+                AudioEncoding.LINEAR16 -> 2
+                AudioEncoding.MULAW -> 1
+                AudioEncoding.OPUS -> error("Opus audio can't be timed by its size")
+            }
         return bytes.toDouble() / (sampleRate.toLong() * bytesPerSample)
     }
 }

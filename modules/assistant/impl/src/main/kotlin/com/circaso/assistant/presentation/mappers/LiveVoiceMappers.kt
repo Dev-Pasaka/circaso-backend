@@ -87,6 +87,7 @@ fun LiveEnd.toClosing(): LiveClosingFrame? =
         is LiveEnd.Silence -> LiveClosingFrame("silence")
         is LiveEnd.OutOfAllowance -> error.toClosing()
         is LiveEnd.ProviderFailed -> AssistantError.ModelUnavailable.toClosing()
+        is LiveEnd.SessionRevoked -> null
     }
 
 fun DomainError.toClosing() = LiveClosingFrame(code, message, details?.retryAfterSeconds)

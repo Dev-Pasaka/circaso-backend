@@ -90,11 +90,11 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 4. Frames on this socket are at most 64 KB, like the main socket (Opus frames are far smaller). Usage counts voice seconds both ways; the socket closes at the allowance or after 30 s of silence. Audio is never stored.
 5. For Swahili (the user's language setting) the live path isn't used: the phone records a clip for A3 (Whisper) and speaks the reply with its own voice.
 
-**Frames (A11, built in AI2).** Every frame is at most 64 KB both ways (a bigger one from the phone closes the socket with 1009 `frame too large`; Asha's audio is split to fit). Binary frames are audio both ways: Opus packets from the phone (16 kHz mono), and Asha's speech to the phone as 16-bit little-endian PCM, mono, at the sample rate the `ready` frame names (Aura's live socket makes only uncompressed audio). Text frames are JSON with a `type`:
+**Frames (A11, built in AI2).** Every frame is at most 64 KB both ways; a bigger one from the phone closes the socket with 1009 `frame too large` and **no** `closing` frame, and Asha's audio is split to fit. Binary frames are audio both ways: Opus packets from the phone (16 kHz mono), and Asha's speech to the phone as mulaw, mono, 8 kHz by default (64 kbit/s; the encoding and rate are settings, named in the `ready` frame). Text frames are JSON with a `type`:
 
 | Direction | `type` | Fields | Meaning |
 | --- | --- | --- | --- |
-| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true) | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting |
+| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true) | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting. Sent again later with fresh tokens (`accessToken`, `agentToken`) before the 15-minute access token expires |
 | phone → server | `tool_results` | `turnId`, `callId`, `snippets` | The answer to a `tool_request` (as A9) |
 | phone → server | `end` | | Hang up |
 | server → phone | `ready` | `voiceSecondsLeft`, `audio: {encoding, sampleRate}` | Accepted; start streaming |
@@ -102,12 +102,14 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 | server → phone | `turn` | `text` | The user finished; this question now goes through A2 |
 | server → phone | `reply` | `text` | One sentence of the reply, sent as its audio starts; the audio follows in binary frames |
 | server → phone | `reply_done` | `message` (as A1), `spoken` | The reply as saved in the Asha chat; `spoken` false if the user talked over it |
-| server → phone | `tool_request` | `turnId`, `callId`, `name`, `arguments` | A device tool, as on A2 |
+| server → phone | `tool_request` | `turnId`, `callId`, `name`, `arguments` (a JSON string, as on A2) | A device tool; unanswered after 30 s, the turn ends with an `error` frame `assistant.turn_not_found` |
 | server → phone | `interrupted` | | Barge-in: stop playing what is buffered |
-| server → phone | `error` | `code`, `message` | One turn failed (the model was down); the conversation goes on |
+| server → phone | `error` | `code`, `message` | One turn failed (`assistant.model_unavailable`, `assistant.turn_not_found`, `request.malformed` for a bad `tool_results`); the conversation goes on |
 | server → phone | `closing` | `reason`, `message`?, `retryAfterSeconds`? | Sent before the server closes; `reason` is also the close reason |
 
-Closing: a bad or agent token, or no auth frame, closes with 1008 `unauthorized` / `auth required`, as the main socket does. Otherwise a `closing` frame comes first: `assistant.language_not_supported` (1008, the phone uses A3 and its own voice), `assistant.quota_exceeded` (1008, with `retryAfterSeconds`; voice allowance at the start or reached during the conversation, or the text allowance on a turn), `assistant.model_unavailable` (1011, a provider dropped the session), `silence` (1000, nobody spoke for 30 s) or `ended` (1000, after the phone's `end`). Voice seconds count the time the phone streams audio plus the playing time of Asha's speech, metered each second against the day's voice allowance.
+Closing: a bad, expired, revoked or agent token, or no auth frame, closes with 1008 `unauthorized` / `auth required` and no frame, as the main socket does. The session is re-checked at each turn and every 60 s; once it is revoked (sign-out, replaced phone, account deletion) or its token has expired without a fresh `auth` frame, the socket closes the same way, 1008 `unauthorized`, no frame. A frame over 64 KB closes with 1009 `frame too large`, no frame. Otherwise a `closing` frame comes first: `assistant.language_not_supported` (1008, the phone uses A3 and its own voice), `assistant.quota_exceeded` (1008, with `retryAfterSeconds`; voice allowance at the start or reached during the conversation, or the text allowance on a turn), `assistant.model_unavailable` (1011, a provider is down at the start or dropped the session), `silence` (1000, nobody spoke for 30 s) or `ended` (1000, after the phone's `end`).
+
+Metering (decision 2026-10-26): voice seconds count only the user's speech, from when the transcriber reports it starting (`SpeechStarted` or the first words) to its last word, and the playing time of Asha's audio; an open mic, silence and the pause before the end of a turn are never charged. They are metered against the day's voice allowance as they gather, never past it.
 
 **Phase 2, WebRTC:** when the calls module brings in Cloudflare Realtime, the phone side moves to WebRTC (Opus, jitter buffer, better on poor networks) and Cloudflare forwards the audio to the assistant; the server-side transcription and speech stay the same.
 

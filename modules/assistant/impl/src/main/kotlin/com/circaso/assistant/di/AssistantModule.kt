@@ -27,6 +27,7 @@ import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
+import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
@@ -116,12 +117,13 @@ fun assistantModule(config: Config): Module =
         single { DeleteAssistantData(get()) }
         single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), clock) }
         single { MeterLiveVoice(get(), clock) }
+        single { CheckLiveSession(get()) }
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
         single { VoiceService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
-        single { LiveVoiceService(get(), get(), get(), get()) }
+        single { LiveVoiceService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
             val voice = get<VoiceService>()

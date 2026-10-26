@@ -27,6 +27,10 @@ class LiveVoiceLine(
     val voiceSecondsPerDay: Int,
     /** Quiet this long (nobody speaking, Asha included) and the socket closes. */
     val silence: Duration,
+    /** How often the session is re-checked between turns (decision 2026-10-26). */
+    val sessionRecheck: Duration,
+    /** How long a device tool may wait for the phone before its turn ends with an error. */
+    val deviceToolTimeout: Duration,
 )
 
 /** What the conversation tells the phone; the controller turns each into a frame. */
@@ -72,4 +76,7 @@ sealed interface LiveEnd {
 
     /** The transcription or speech provider dropped the session. */
     data object ProviderFailed : LiveEnd
+
+    /** The user's session was revoked (signed out, phone replaced, account deleted), or its token can't be checked. */
+    data object SessionRevoked : LiveEnd
 }

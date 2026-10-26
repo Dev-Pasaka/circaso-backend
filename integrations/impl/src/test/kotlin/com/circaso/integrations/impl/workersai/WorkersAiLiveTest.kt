@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.LiveAudioFormat
 import com.circaso.integrations.api.LiveTranscriptionOptions
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.TranscriptionEvent
@@ -214,7 +215,7 @@ class WorkersAiLiveTest {
         }
 
     @Test
-    fun `aura speaks sentence by sentence as 16-bit PCM, and flush, clear and close are Deepgram's messages`() =
+    fun `aura speaks sentence by sentence as 8 kHz mulaw, and flush, clear and close are Deepgram's messages`() =
         testApplication {
             val vendor = vendor()
             vendor.script = {
@@ -227,11 +228,11 @@ class WorkersAiLiveTest {
             val (path, query, _) = vendor.opened.next()
 
             assertEquals("/client/v4/accounts/acc123/ai/run/@cf/deepgram/aura-2-en", path.replace("%40", "@"))
-            assertEquals("linear16", query["encoding"])
-            assertEquals("16000", query["sample_rate"])
+            assertEquals("mulaw", query["encoding"])
+            assertEquals("8000", query["sample_rate"])
             assertEquals("true", query["mip_opt_out"])
-            assertEquals(AudioEncoding.LINEAR16, session.format.encoding)
-            assertEquals(0.5, session.format.seconds(16_000))
+            assertEquals(AudioEncoding.MULAW, session.format.encoding)
+            assertEquals(2.0, session.format.seconds(16_000))
             assertContentEquals(byteArrayOf(9, 8, 7, 6), assertIs<SpeechEvent.Audio>(session.next()).bytes)
             assertEquals(SpeechEvent.Flushed, session.next())
             assertEquals(SpeechEvent.Cleared, session.next())
@@ -249,5 +250,26 @@ class WorkersAiLiveTest {
             assertEquals("""{"type":"Close"}""", (vendor.received.next() as Frame.Text).readText())
 
             assertTrue(logs.list.none { "shillings" in it.formattedMessage }, "reply text never reaches a log")
+        }
+
+    @Test
+    fun `audio length is told from its size, a byte a sample for mulaw and two for 16-bit PCM`() {
+        assertEquals(1.0, LiveAudioFormat(AudioEncoding.MULAW, 8_000).seconds(8_000))
+        assertEquals(0.5, LiveAudioFormat(AudioEncoding.LINEAR16, 16_000).seconds(16_000))
+    }
+
+    @Test
+    fun `aura can be set to 16-bit PCM`() =
+        testApplication {
+            val vendor = vendor()
+            val speech = WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en", AudioEncoding.LINEAR16, 16_000)
+
+            val session = (speech.open(null) as Resource.Success).data
+            val (_, query, _) = vendor.opened.next()
+
+            assertEquals("linear16", query["encoding"])
+            assertEquals("16000", query["sample_rate"])
+            assertEquals(AudioEncoding.LINEAR16, session.format.encoding)
+            session.close()
         }
 }

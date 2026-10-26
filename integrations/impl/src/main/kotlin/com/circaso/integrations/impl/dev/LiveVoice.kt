@@ -91,15 +91,16 @@ class FakeLiveTranscriptionSession : LiveTranscriptionSession {
 
 /**
  * Local runs, the dev server and tests: the spoken audio of a sentence is its text's bytes, sent as one frame per
- * sentence on `flush`. English only, like Aura. [sampleRate] sets how many seconds those bytes count for when metered.
+ * sentence on `flush`. English only, like Aura. Its format is Aura's default, mulaw at 8 kHz, so each byte counts
+ * 1/8000 of a second when metered.
  */
-class FakeLiveSpeech(private val sampleRate: Int = 16_000) : LiveSpeech {
+class FakeLiveSpeech(private val sampleRate: Int = 8_000) : LiveSpeech {
     val sessions = CopyOnWriteArrayList<FakeLiveSpeechSession>()
 
     override suspend fun open(language: String?): Resource<LiveSpeechSession> {
         if (!isEnglish(language)) return Resource.error(IntegrationError.UnsupportedLanguage(language!!))
         return Resource.success(
-            FakeLiveSpeechSession(LiveAudioFormat(AudioEncoding.LINEAR16, sampleRate)).also { sessions += it },
+            FakeLiveSpeechSession(LiveAudioFormat(AudioEncoding.MULAW, sampleRate)).also { sessions += it },
         )
     }
 }

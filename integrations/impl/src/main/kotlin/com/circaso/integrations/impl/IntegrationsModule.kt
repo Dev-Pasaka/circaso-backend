@@ -3,6 +3,7 @@ package com.circaso.integrations.impl
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
@@ -250,7 +251,12 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                             WorkersAiLiveSpeech(
                                 workersAiLive(config, secrets, get()),
                                 ai.string("model.live-tts", WORKERS_AI_TTS_MODEL),
-                                sampleRate = ai.int("live.sample-rate", WorkersAiLiveSpeech.DEFAULT_SAMPLE_RATE),
+                                encoding = liveSpeechEncoding(ai.string("live.tts-encoding", "mulaw")),
+                                sampleRate =
+                                    ai.int(
+                                        "live.tts-sample-rate",
+                                        WorkersAiLiveSpeech.DEFAULT_SAMPLE_RATE,
+                                    ),
                             )
                         },
                     ),
@@ -418,3 +424,11 @@ private fun workersAiLive(
         socketBase = WorkersAiLiveSocket.socketBase(accountId),
     )
 }
+
+/** `INTEGRATIONS_AI_LIVE_TTS_ENCODING`: `mulaw` (the default) or `linear16`. Anything else stops startup. */
+private fun liveSpeechEncoding(name: String): AudioEncoding =
+    when (name.lowercase()) {
+        "mulaw" -> AudioEncoding.MULAW
+        "linear16" -> AudioEncoding.LINEAR16
+        else -> throw IllegalStateException("integrations.ai.live.tts-encoding must be mulaw or linear16 (was '$name')")
+    }

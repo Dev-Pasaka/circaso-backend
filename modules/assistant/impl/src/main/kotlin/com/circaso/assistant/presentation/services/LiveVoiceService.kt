@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.support.LiveConversation
+import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
@@ -19,6 +20,7 @@ class LiveVoiceService(
     private val meterLiveVoice: MeterLiveVoice,
     private val startTurn: StartTurn,
     private val continueTurn: ContinueTurn,
+    private val checkLiveSession: CheckLiveSession,
 ) {
     suspend fun open(start: LiveVoiceStart): Resource<LiveConversation> =
         when (val opened = openLiveVoice(start)) {
@@ -29,18 +31,22 @@ class LiveVoiceService(
     private fun conversation(line: LiveVoiceLine) =
         LiveConversation(
             line,
-            ask = { text -> startTurn(turn(line, text)) },
+            ask = { text, agentToken -> startTurn(turn(line, text, agentToken)) },
             answerDevice = { result -> continueTurn(result) },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
+            checkSession = { token -> checkLiveSession(line.userId, token) is Resource.Success },
         )
 
-    private fun turn(line: LiveVoiceLine, text: String) =
-        TurnCommand(
-            line.userId,
-            text,
-            askedFrom = null,
-            chatReading = line.start.chatReading,
-            agentToken = line.start.agentToken,
-            requestId = line.start.requestId,
-        )
+    private fun turn(
+        line: LiveVoiceLine,
+        text: String,
+        agentToken: String?,
+    ) = TurnCommand(
+        line.userId,
+        text,
+        askedFrom = null,
+        chatReading = line.start.chatReading,
+        agentToken = agentToken,
+        requestId = line.start.requestId,
+    )
 }
