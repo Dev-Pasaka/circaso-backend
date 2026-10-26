@@ -20,8 +20,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.server.testing.ApplicationTestBuilder
+import io.ktor.server.testing.runTestApplication
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -373,6 +376,13 @@ class ServeTest {
                 "/v1/keys/one-time",
                 "/v1/keys/me",
                 "/v1/keys/{userId}",
+                "/v1/chats",
+                "/v1/chats/direct",
+                "/v1/chats/groups",
+                "/v1/chats/{chatId}",
+                "/v1/chats/{chatId}/members",
+                "/v1/chats/{chatId}/members/{userId}",
+                "/v1/chats/{chatId}/members/{userId}/role",
             ).forEach { assertTrue(it in paths.keys, "$it is documented") }
 
             // the journey order: infrastructure, then nonce before social sign-in before the phone before the device
@@ -733,6 +743,129 @@ class ServeTest {
             // Brian has published nothing yet
             assertEquals("messaging.keys_not_found", code(get("/v1/keys/${brian.userId}", amina.app)))
         }
+
+    @Test
+    fun `direct chats and groups need reach, keep names sealed, and follow admin, handover and leave rules`() =
+        // No 1-minute test timeout: whichever test runs first creates every table in a fresh container.
+        runBlocking<Unit> {
+            runTestApplication { chatsJourney() }
+        }
+
+    private suspend fun ApplicationTestBuilder.chatsJourney() {
+        var sms: FakeSms? = null
+        application {
+            circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+            sms = getKoin().get<SmsGateway>() as FakeSms
+        }
+        client.get("/health/live")
+        val amina = signUp(sms!!, "Amina Otieno", "+254712${(100000..999999).random()}")
+        val brian = signUp(sms!!, "Brian Mwangi", "+254733${(100000..999999).random()}")
+        val chidi = signUp(sms!!, "Chidi Okafor", "+254744${(100000..999999).random()}")
+
+        suspend fun get(path: String, token: String) = client.get(path) { header("Authorization", "Bearer $token") }
+
+        suspend fun send(
+            method: HttpMethod,
+            path: String,
+            token: String,
+            body: String = "{}",
+        ) = client.request(path) {
+            this.method = method
+            contentType(ContentType.Application.Json)
+            header("Authorization", "Bearer $token")
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            setBody(body)
+        }
+
+        suspend fun code(response: HttpResponse) = json(response)["code"]!!.jsonPrimitive.content
+
+        suspend fun data(response: HttpResponse): JsonObject {
+            assertTrue(response.status.isSuccess(), response.bodyAsText())
+            return json(response)["data"]!!.jsonObject
+        }
+
+        // a direct chat needs reach; once connected, opening it twice gives the same chat
+        val refused = send(HttpMethod.Post, "/v1/chats/direct", amina.app, """{"userId":"${brian.userId}"}""")
+        assertEquals(HttpStatusCode.Forbidden, refused.status)
+        assertEquals("users.not_reachable", code(refused))
+        val token = data(send(HttpMethod.Post, "/v1/invites", amina.app))["token"]!!.jsonPrimitive.content
+        data(send(HttpMethod.Post, "/v1/connections", brian.app, """{"via":"invite","value":"$token"}"""))
+        val direct = data(send(HttpMethod.Post, "/v1/chats/direct", amina.app, """{"userId":"${brian.userId}"}"""))
+        assertEquals("true", direct["created"]!!.jsonPrimitive.content)
+        val again = data(send(HttpMethod.Post, "/v1/chats/direct", brian.app, """{"userId":"${amina.userId}"}"""))
+        assertEquals(direct["chatId"], again["chatId"])
+        assertEquals("false", again["created"]!!.jsonPrimitive.content)
+
+        // a group: Chidi can't be reached by Amina, so he is listed in notAdded
+        val sealed = Base64.getEncoder().encodeToString(ByteArray(48) { 1 })
+        val group =
+            data(
+                send(
+                    HttpMethod.Post,
+                    "/v1/chats/groups",
+                    amina.app,
+                    """{"sealedMeta":"$sealed","memberIds":["${brian.userId}","${chidi.userId}"]}""",
+                ),
+            )
+        val chatId = group["chatId"]!!.jsonPrimitive.content
+        assertEquals(listOf(chidi.userId), group["notAdded"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(sealed, group["sealedMeta"]!!.jsonPrimitive.content)
+        assertTrue("OWNER" in group["members"].toString() && "Brian Mwangi" in group["members"].toString())
+        val oversized = Base64.getEncoder().encodeToString(ByteArray(5_000))
+        val invalid = send(HttpMethod.Post, "/v1/chats/groups", amina.app, """{"sealedMeta":"$oversized"}""")
+        assertEquals("messaging.group_invalid", code(invalid))
+
+        // the agent token reaches none of it
+        assertEquals(HttpStatusCode.Forbidden, get("/v1/chats", amina.agent).status)
+        assertEquals(HttpStatusCode.Forbidden, get("/v1/chats/$chatId", amina.agent).status)
+        val asAgent = send(HttpMethod.Post, "/v1/chats/groups", amina.agent, """{"sealedMeta":"$sealed"}""")
+        assertEquals(HttpStatusCode.Forbidden, asAgent.status)
+
+        // Brian is a member, not an admin; Chidi isn't in it at all
+        val version = group["version"]!!.jsonPrimitive.content
+        val notAdmin = send(HttpMethod.Patch, "/v1/chats/$chatId", brian.app, """{"version":$version}""")
+        assertEquals(HttpStatusCode.Forbidden, notAdmin.status)
+        assertEquals("messaging.not_admin", code(notAdmin))
+        assertEquals("messaging.chat_not_found", code(get("/v1/chats/$chatId", chidi.app)))
+
+        // Amina re-seals the name; an old version is refused
+        val resealed = Base64.getEncoder().encodeToString(ByteArray(48) { 2 })
+        val updated =
+            data(
+                send(
+                    HttpMethod.Patch,
+                    "/v1/chats/$chatId",
+                    amina.app,
+                    """{"sealedMeta":"$resealed","version":$version}""",
+                ),
+            )
+        assertEquals("2", updated["metaVersion"]!!.jsonPrimitive.content)
+        val stale = send(HttpMethod.Patch, "/v1/chats/$chatId", amina.app, """{"version":$version}""")
+        assertEquals(HttpStatusCode.Conflict, stale.status)
+        assertEquals("messaging.version_conflict", code(stale))
+
+        // she makes Brian an admin, then leaves: ownership passes to him
+        data(
+            send(
+                HttpMethod.Put,
+                "/v1/chats/$chatId/members/${brian.userId}/role",
+                amina.app,
+                """{"role":"ADMIN"}""",
+            ),
+        )
+        data(send(HttpMethod.Delete, "/v1/chats/$chatId/members/${amina.userId}", amina.app))
+        assertEquals("messaging.chat_not_found", code(get("/v1/chats/$chatId", amina.app)))
+        val members = data(get("/v1/chats/$chatId", brian.app))["members"]!!.jsonArray
+        assertEquals(
+            "OWNER",
+            members
+                .single()
+                .jsonObject["role"]!!
+                .jsonPrimitive.content,
+        )
+        val brianChats = data(get("/v1/chats", brian.app))["chats"]!!.jsonArray
+        assertEquals(2, brianChats.size, "the direct chat and the group")
+    }
 
     @Test
     fun `Asha answers over server-sent events, asks the phone for a chat, and forgets on request`() =

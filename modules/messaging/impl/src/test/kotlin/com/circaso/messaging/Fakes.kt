@@ -58,13 +58,16 @@ class MemoryRateLimit : BundleRateLimit {
     override suspend fun retryAfter(userId: UserId): Duration? = Duration.ofMinutes(42)
 }
 
-/** Reach as users would answer it: only the pairs added here. */
+/** Reach as users would answer it: only the pairs added here, and the blocks (blocker to blocked). */
 class FakeReach : ReachPolicy {
     val pairs = ConcurrentHashMap.newKeySet<Pair<UserId, UserId>>()
+    val blocks = ConcurrentHashMap.newKeySet<Pair<UserId, UserId>>()
 
     override suspend fun canReach(from: UserId, to: UserId) = (from to to) in pairs
 
     override suspend fun reachable(from: UserId, to: Set<UserId>) = to.filter { canReach(from, it) }.toSet()
+
+    override suspend fun blockedEitherWay(a: UserId, b: UserId) = (a to b) in blocks || (b to a) in blocks
 }
 
 /** Identity's `DeviceSignatures` with real ES256 checks against the keys registered here, one active phone each. */

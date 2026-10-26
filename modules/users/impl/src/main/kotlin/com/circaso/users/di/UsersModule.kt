@@ -58,6 +58,7 @@ import com.circaso.users.domain.support.UsersConfig
 import com.circaso.users.domain.support.WaitingContactMatcher
 import com.circaso.users.domain.usecases.BlockUser
 import com.circaso.users.domain.usecases.CanReach
+import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckHandle
 import com.circaso.users.domain.usecases.CheckReach
 import com.circaso.users.domain.usecases.ClaimHandle
@@ -178,6 +179,7 @@ fun usersModule(config: Config): Module =
         single { RemoveContact(get(), get(), get(), get(), clock) }
         single { SearchContacts(get(), get(), get()) }
         single { CanReach(get()) }
+        single { CheckBlockedEitherWay(get()) }
         single { FilterReachable(get()) }
         single { GetProfiles(get(), get()) }
         single { ReplayFrames(get()) }
@@ -191,7 +193,7 @@ fun usersModule(config: Config): Module =
         single { HandleService(get(), get(), get()) }
         single { ContactService(get(), get(), get(), get(), get(), get(), get()) }
         single { BlockService(get(), get(), get(), get()) }
-        single { DirectoryService(get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get(), get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
             val profiles = get<ProfileService>()

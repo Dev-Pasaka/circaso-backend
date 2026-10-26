@@ -1,10 +1,15 @@
 package com.circaso.messaging.data.migrations
 
+import com.circaso.messaging.data.entities.ChatRow
+import com.circaso.messaging.data.entities.DirectChatClaimRow
 import com.circaso.messaging.data.entities.KeyBundleRow
+import com.circaso.messaging.data.entities.MemberRow
 import com.circaso.messaging.data.entities.MessagingOutboxRow
 import com.circaso.messaging.data.entities.MessagingRealtimeRow
 import com.circaso.messaging.data.entities.OneTimePreKeyRow
+import com.circaso.messaging.data.entities.UserChatRow
 import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import io.kandra.migrate.KandraMigration
 
 val messagingEntities =
@@ -13,6 +18,10 @@ val messagingEntities =
         MessagingOutboxRow::class,
         KeyBundleRow::class,
         OneTimePreKeyRow::class,
+        ChatRow::class,
+        DirectChatClaimRow::class,
+        MemberRow::class,
+        UserChatRow::class,
     )
 
 /**
@@ -54,6 +63,70 @@ object V002_CreateKeyDirectoryTables : KandraMigration(version = 2, name = "crea
     override fun up(session: CqlSession) {
         for (statement in statements) {
             session.execute(statement)
+        }
+    }
+}
+
+/** Chats and membership (MS3): the chat, the direct-chat pair claim, members and each user's chat list. */
+object V003_CreateChatTables : KandraMigration(version = 3, name = "create chat tables") {
+    // A plain loop, as in V001 (docs/kandra-bugs.md #5).
+    private val statements =
+        listOf(
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.chats (chat_id UUID, avatar_media_id UUID, created_at " +
+                "TIMESTAMP, created_by UUID, kind TEXT, member_count INT, meta_version INT, sealed_meta TEXT, " +
+                "settings TEXT, version BIGINT, PRIMARY KEY (chat_id))",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.direct_chats_by_pair (pair TEXT, chat_id UUID, " +
+                "PRIMARY KEY (pair))",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.members_by_chat (chat_id UUID, user_id UUID, joined_at " +
+                "TIMESTAMP, role TEXT, PRIMARY KEY (chat_id, user_id)) WITH CLUSTERING ORDER BY (user_id ASC)",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.chats_by_user (user_id UUID, chat_id UUID, joined_at " +
+                "TIMESTAMP, kind TEXT, last_message_id UUID, read_up_to UUID, PRIMARY KEY (user_id, chat_id)) " +
+                "WITH CLUSTERING ORDER BY (chat_id ASC)",
+        )
+
+    override fun up(session: CqlSession) {
+        for (statement in statements) {
+            session.execute(statement)
+        }
+    }
+}
+
+/**
+ * The group owner on the chat row (decision 2026-10-26), filled for groups made before it from their OWNER member
+ * row. A one-off read of every chat: tables are designed around queries, but a migration runs once. The column is
+ * added only if missing, because a local run may have created the table from the entity already. Never edit it once
+ * applied.
+ */
+object V004_AddChatOwner : KandraMigration(version = 4, name = "add chat owner") {
+    private const val HAS_OWNER_COLUMN =
+        "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'circaso_messaging' AND " +
+            "table_name = 'chats' AND column_name = 'owner_id'"
+    private const val ADD_OWNER_COLUMN = "ALTER TABLE circaso_messaging.chats ADD owner_id UUID"
+    private const val CHATS = "SELECT chat_id, kind FROM circaso_messaging.chats"
+    private const val MEMBERS = "SELECT user_id, role FROM circaso_messaging.members_by_chat WHERE chat_id = ?"
+    private const val SET_OWNER = "UPDATE circaso_messaging.chats SET owner_id = ? WHERE chat_id = ?"
+
+    // Plain loops and ifs only, no inline calls, as in V001 (docs/kandra-bugs.md #5).
+    override fun up(session: CqlSession) {
+        if (session.execute(HAS_OWNER_COLUMN).one() == null) {
+            session.execute(ADD_OWNER_COLUMN)
+        }
+        for (chat in session.execute(CHATS)) {
+            if (chat.getString("kind") != "GROUP") {
+                continue
+            }
+            val chatId = chat.getUuid("chat_id")
+            for (member in session.execute(SimpleStatement.newInstance(MEMBERS, chatId))) {
+                if (member.getString("role") == "OWNER") {
+                    val owner =
+                        SimpleStatement.newInstance(
+                            SET_OWNER,
+                            member.getUuid("user_id"),
+                            chatId,
+                        )
+                    session.execute(owner)
+                }
+            }
         }
     }
 }

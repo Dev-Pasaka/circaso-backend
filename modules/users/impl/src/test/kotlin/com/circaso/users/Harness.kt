@@ -40,6 +40,7 @@ import com.circaso.users.domain.support.UserNotifier
 import com.circaso.users.domain.support.UsersConfig
 import com.circaso.users.domain.support.WaitingContactMatcher
 import com.circaso.users.domain.usecases.BlockUser
+import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckHandle
 import com.circaso.users.domain.usecases.ClaimHandle
 import com.circaso.users.domain.usecases.Connect
@@ -331,6 +332,7 @@ class Harness {
     val onActivated = CreateProfileOnActivation(provisioner, matcher, notifier)
     val deleteData = DeleteUserData(users, users, users, avatars, users, reachCache, clock)
     val replay = ReplayFrames(frames)
+    val blockedEitherWay = CheckBlockedEitherWay(users)
 
     /** An active account with a profile named [name] and the number [phone]. */
     suspend fun person(name: String, phone: String? = null): UserId {

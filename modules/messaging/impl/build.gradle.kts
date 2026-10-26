@@ -11,6 +11,7 @@ dependencies {
 
     implementation(libs.ktor.server.core)
     implementation(libs.koin.core)
+    implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(platform(libs.kandra.bom))
     testImplementation(libs.kandra.test)

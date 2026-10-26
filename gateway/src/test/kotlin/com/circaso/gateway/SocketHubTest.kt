@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Duration
@@ -240,7 +241,11 @@ class SocketHubTest {
         Instant.now(),
         JsonObject(
             data.mapValues { (_, value) ->
-                if (value is Boolean) JsonPrimitive(value) else JsonPrimitive(value.toString())
+                when (value) {
+                    is Boolean -> JsonPrimitive(value)
+                    is List<*> -> JsonArray(value.map { JsonPrimitive(it.toString()) })
+                    else -> JsonPrimitive(value.toString())
+                }
             },
         ),
     )
@@ -499,24 +504,40 @@ class SocketHubTest {
         }
 
     @Test
-    fun `only the person added to a group is pushed for member added`() =
+    fun `only the people added to a group are pushed for member added`() =
         runBlocking {
             val push = RecordingPush()
             val realtime = GatewayRealtime(hub(), push, registrations)
-            val (added, member) = List(2) { UserId.new() }
+            val (first, second, member) = List(3) { UserId.new() }
 
             realtime.deliverMany(
-                listOf(added, member),
-                frame(1, "messaging", "member.added", mapOf("chatId" to "c1", "userId" to added)),
+                listOf(first, second, member),
+                frame(1, "messaging", "member.added", mapOf("chatId" to "c1", "userIds" to listOf(first, second))),
             )
 
-            assertEquals(listOf("token-$added"), push.sent.map { it.first.token })
+            assertEquals(setOf("token-$first", "token-$second"), push.sent.map { it.first.token }.toSet())
+            assertEquals(2, push.sent.size, "the member already in is not woken")
             assertEquals(
                 mapOf("chatId" to "c1"),
                 push.sent
-                    .single()
+                    .first()
                     .second.data,
             )
+        }
+
+    @Test
+    fun `a member added frame without userIds wakes nobody`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val added = UserId.new()
+
+            realtime.deliverMany(
+                listOf(added),
+                frame(1, "messaging", "member.added", mapOf("chatId" to "c1", "userId" to added)),
+            )
+
+            assertTrue(push.sent.isEmpty())
         }
 
     @Test

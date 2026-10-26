@@ -43,6 +43,44 @@ sealed class MessagingError(
             ErrorDetails(retryAfterSeconds = retryAfterSeconds),
         )
 
+    /** No such chat, or the caller isn't in it: the two look the same, so nobody learns which chats exist. */
+    data object ChatNotFound : MessagingError(
+        "messaging.chat_not_found",
+        "That chat doesn't exist, or you're not in it.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    data object NotAdmin : MessagingError(
+        "messaging.not_admin",
+        "Only a group admin can do that.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object GroupFull : MessagingError(
+        "messaging.group_full",
+        "A group holds at most 1,000 people.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object GroupInvalid : MessagingError(
+        "messaging.group_invalid",
+        "The group's sealed name and avatar are missing or larger than 4 KB.",
+        ErrorKind.INVALID,
+    )
+
+    data object VersionConflict : MessagingError(
+        "messaging.version_conflict",
+        "The group changed since you last loaded it. Load it again and retry.",
+        ErrorKind.CONFLICT,
+    )
+
+    /** Leaving or removing someone only makes sense in a group; a direct chat stays two people. */
+    data object NotAGroup : MessagingError(
+        "messaging.not_a_group",
+        "That only works in a group.",
+        ErrorKind.INVALID,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

@@ -6,12 +6,16 @@ import io.kandra.core.annotations.PartitionKey
 import io.kandra.core.annotations.ScyllaTable
 import io.kandra.core.annotations.Sensitive
 import io.kandra.core.annotations.Ttl
+import io.kandra.core.annotations.Version
 import java.time.Instant
 import java.util.UUID
 
 const val KS = "circaso_messaging"
 
-/** The frames `messaging` sent, kept 7 days for its `RealtimeReplay` (MS4): newest first per user. */
+/** Stands for "none" in a UUID column: a null through Kandra's save leaves the old value (docs/kandra-bugs.md). */
+val NIL_UUID: UUID = UUID(0, 0)
+
+/** The frames `messaging` sent that are replayed, kept 7 days for its `RealtimeReplay`: newest first per user. */
 @ScyllaTable(name = "realtime_by_user", keyspace = KS)
 @Ttl(seconds = 60 * 60 * 24 * 7)
 data class MessagingRealtimeRow(
@@ -51,4 +55,58 @@ data class OneTimePreKeyRow(
     @PartitionKey val userId: UUID,
     @ClusteringKey val keyId: Int,
     @Sensitive val publicKey: String,
+)
+
+/**
+ * One chat, direct or group. Every write after the first goes through [version] (Kandra's `IF version = ?`), the
+ * member count included, so a settings change can never overwrite a count written in between, and the 1,000 cap
+ * holds under concurrent adds.
+ */
+@ScyllaTable(name = "chats", keyspace = KS)
+data class ChatRow(
+    @PartitionKey val chatId: UUID,
+    /** `DIRECT` or `GROUP`. */
+    val kind: String,
+    /** Groups only: name and avatar sealed on the phone under the group metadata key; empty for direct. */
+    val sealedMeta: String = "",
+    val metaVersion: Int = 0,
+    /** The encrypted avatar file (chat media, MS5); the nil UUID until one is set. */
+    val avatarMediaId: UUID = NIL_UUID,
+    /** JSON: `membersCanAdd`. */
+    val settings: String,
+    val memberCount: Int,
+    val createdBy: UUID,
+    val createdAt: Instant,
+    @Version val version: Long = 0,
+    /** Groups only: the owner, so a change of owner goes through [version] (V004); the nil UUID for direct. */
+    val ownerId: UUID = NIL_UUID,
+)
+
+/** One direct chat per pair, claimed with `saveIfNotExists`, so two people opening it at once get the same one. */
+@ScyllaTable(name = "direct_chats_by_pair", keyspace = KS)
+data class DirectChatClaimRow(
+    /** `<smaller userId>:<larger userId>`. */
+    @PartitionKey val pair: String,
+    val chatId: UUID,
+)
+
+@ScyllaTable(name = "members_by_chat", keyspace = KS)
+data class MemberRow(
+    @PartitionKey val chatId: UUID,
+    @ClusteringKey val userId: UUID,
+    /** `OWNER`, `ADMIN` or `MEMBER`. */
+    val role: String,
+    val joinedAt: Instant,
+)
+
+/** The chat list; written with its [MemberRow] in one batch. */
+@ScyllaTable(name = "chats_by_user", keyspace = KS)
+data class UserChatRow(
+    @PartitionKey val userId: UUID,
+    @ClusteringKey val chatId: UUID,
+    val kind: String,
+    /** Sentinel, not null: a null through Kandra's save doesn't clear (docs/kandra-bugs.md). */
+    val lastMessageId: UUID = NIL_UUID,
+    val readUpTo: UUID = NIL_UUID,
+    val joinedAt: Instant,
 )

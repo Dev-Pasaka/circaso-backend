@@ -13,6 +13,7 @@ import com.circaso.users.api.ReachPolicy
 import com.circaso.users.presentation.services.DirectoryService
 import kotlinx.serialization.json.JsonObject
 import java.time.Instant
+import kotlin.coroutines.cancellation.CancellationException
 
 /** users:api for messaging, wallet and calls. Every call goes through a service, like any other way in. */
 class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
@@ -25,6 +26,19 @@ class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
                 to,
             ).getOrNull()
             .orEmpty()
+
+    /**
+     * Fails closed: when users can't answer (an error, or the database down), the two count as blocked, so a shared
+     * group never stands in for reach on a guess.
+     */
+    override suspend fun blockedEitherWay(a: UserId, b: UserId): Boolean =
+        try {
+            directory.blockedEitherWay(a, b).getOrNull() ?: true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            true
+        }
 }
 
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {
