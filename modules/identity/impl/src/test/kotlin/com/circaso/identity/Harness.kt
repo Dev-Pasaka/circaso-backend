@@ -217,7 +217,7 @@ class Harness(
             clock,
         )
     val refresh = RefreshSession(store, store, store, store, cache, opener, proofs)
-    val signOut = SignOut(store, store, cache)
+    val signOut = SignOut(store, store, cache, bus)
     val verifyToken = VerifyAccessToken(tokens, cache)
     val overview = GetSecurityOverview(store, store, store)
     val link = LinkProvider(cache, FakeSocial(), store, store, clock)

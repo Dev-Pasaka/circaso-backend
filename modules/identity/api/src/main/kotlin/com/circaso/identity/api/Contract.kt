@@ -6,8 +6,11 @@ import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import com.circaso.shared.UuidIdSerializer
+import kotlinx.serialization.Serializable
 import java.util.UUID
 
+@Serializable(with = SessionId.Serializer::class)
 @JvmInline
 value class SessionId(val value: UUID) {
     override fun toString(): String = value.toString()
@@ -17,6 +20,8 @@ value class SessionId(val value: UUID) {
 
         fun parse(raw: String): SessionId? = Uuid7.parse(raw)?.let(::SessionId)
     }
+
+    object Serializer : UuidIdSerializer<SessionId>("SessionId", ::SessionId, SessionId::value)
 }
 
 /** Who a verified access token belongs to. */

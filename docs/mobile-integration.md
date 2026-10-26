@@ -209,7 +209,7 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 | `POST /v1/auth/nonce`<br>**I1** One-time nonce for the Google or Apple request, valid 5 minutes | `none` | — → NonceResponse | **READY** | Valid 5 minutes, single use. |
 | `POST /v1/auth/social`<br>**I2** Verify the Google or Apple ID token and learn the next step | `none` | SocialSignInRequest → SignInResponse | **READY** | `next` is `VERIFY_PHONE`, `REVERIFY_PHONE`, `REGISTER_DEVICE` or `DONE`; the session is an `onboarding` session unless `next` is `DONE`. Google verified on the dev server. Apple: the iOS bundle id `com.circaso.app` is configured, not yet tried with a real token. Errors: `identity.nonce_invalid`, `identity.provider_token_invalid`, `identity.recovery_pending`, `identity.account_suspended`, `identity.account_blocked`, `identity.account_deleted`. |
 | `POST /v1/auth/refresh`<br>**I7** New token pair for a signed refresh request; the old refresh token dies | `none` | RefreshRequest → RefreshResponse | **READY** | No bearer token; the phone proves itself by signing `refreshToken\|timestamp` with its device key. Needs the device-key signature (section 5). Errors: `identity.session_revoked`, `identity.device_proof_invalid`. |
-| `POST /v1/auth/signout`<br>**I8** End this session; the phone stays registered | `app` | — → NoBody | **READY** | The phone stays registered. |
+| `POST /v1/auth/signout`<br>**I8** End this session; the phone stays registered | `app` | — → NoBody | **READY** | The phone stays registered. The server then sends `system` / `session.revoked` on this session's socket and closes it (section 8); no push follows. |
 | `GET /v1/.well-known/jwks.json`<br>Public keys the access tokens are signed with | `none` | — → JwksResponse | **READY** | The app does not need it; the server verifies its own tokens. |
 
 ### Phone verification
@@ -331,16 +331,28 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 ```
 `seq` rises per user per module: a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module over HTTP. Reconnect with backoff and send your `last` values again. Refresh the access token **before** reconnecting if it has expired.
 
+**Close reasons.** When the server closes the socket, the close code and reason tell you what to do:
+
+| Code | Reason | Do |
+| --- | --- | --- |
+| 1008 | `auth required` | The first frame wasn't `{"type":"auth",…}` or came after 10 seconds. Fix the client; reconnecting with the same frame fails again. |
+| 1008 | `invalid last` | `last` isn't an object of module name to whole number (`{"users":"x"}` is refused). Send `{}` or valid numbers. |
+| 1008 | `unauthorized` | The token is expired, revoked or not an `app` token. Refresh, then reconnect; if refresh fails, show sign-in. |
+| 1008 | `session revoked` | Comes right after a `system` / `session.revoked` frame. Clear tokens, show sign-in; don't reconnect. |
+| 1009 | `Frame is too big: …` | You sent a frame over 64 KB. A client bug: don't resend it. |
+
+Any other close (network drop, server restart) means reconnect with backoff.
+
 **Frames that exist today (everything else is MISSING):**
 
 | `module` / `type` | `data` | Do |
 | --- | --- | --- |
-| `system` / `session.revoked` | empty | The session ended. Clear tokens, show sign-in. (The socket then closes.) |
+| `system` / `session.revoked` | empty | The session ended: you signed out (on this socket's session), a new phone took over, or the account was closed. Clear tokens, show sign-in. The socket then closes with `session revoked`. |
 | `users` / `contact.joined` | `userId`, `displayName` | Someone from your phone book joined: add them to the contacts list. |
 | `users` / `connection.added` | `userId`, `displayName` | Someone connected with you (QR or invite). |
 | `users` / `profile.updated` | `userId`, `version` | A contact changed their profile: reload that profile if `version` is newer than yours. |
 
-**Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **MISSING** until messaging delivery is built: no module takes phone frames yet (messaging's `ack`, `read` and `typing` come with sending and delivery).
+**Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **Limits:** at most 100 frames per second per socket (frames over it are dropped silently, the socket stays open, so batch acks and throttle typing) and at most 64 KB per frame (a bigger frame closes the socket with 1009). **MISSING** until messaging delivery is built: no module takes phone frames yet (messaging's `ack`, `read` and `typing` come with sending and delivery).
 
 ## 9. Asha (the assistant)
 

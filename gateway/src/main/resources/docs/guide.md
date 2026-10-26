@@ -189,6 +189,20 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 
 After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped.
 
+A socket may send at most **100 frames per second**. Frames over the limit are dropped without a reply and the socket stays open, so slow down rather than reconnect. A single frame may be at most **64 KB** (65,536 bytes); a bigger one closes the socket.
+
+When the server closes the socket it says why:
+
+| Code | Reason | Meaning |
+| --- | --- | --- |
+| 1008 | `auth required` | The first frame wasn't an auth frame, or didn't arrive within 10 seconds |
+| 1008 | `invalid last` | The auth frame's `last` isn't an object of module name to whole number, such as `{"users":1042}` |
+| 1008 | `unauthorized` | The access token is expired, revoked or not an app token: refresh it, then reconnect |
+| 1008 | `session revoked` | Sent after a `system` / `session.revoked` frame: this session ended (signed out, a new phone, or the account closed) |
+| 1009 | `Frame is too big: …` | A frame over 64 KB |
+
+Signing out (`POST /v1/auth/signout`) closes that session's socket the same way, after the `session.revoked` frame.
+
 ## Health and webhooks
 
 `GET /health/live` and `GET /health/ready` need no token and are for load balancers and monitoring. Vendors (SMS delivery, email, payments) call `POST /v1/hooks/{vendor}`; the gateway checks their signature, rejects old or repeated deliveries and answers `200` at once. These are in the **Infrastructure** section.

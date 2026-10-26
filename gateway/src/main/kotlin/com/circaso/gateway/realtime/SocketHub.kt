@@ -1,8 +1,11 @@
 package com.circaso.gateway.realtime
 
+import com.circaso.identity.api.Principal
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
+import com.circaso.observability.api.Metrics
+import com.circaso.observability.api.Telemetry
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.ClientFrame
 import com.circaso.shared.DeviceId
@@ -17,11 +20,13 @@ import io.ktor.server.routing.Route
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.FrameTooBigException
 import io.ktor.websocket.WebSocketSession
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -32,8 +37,6 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
@@ -49,6 +52,14 @@ private val SEQ_TTL: Duration = Duration.ofDays(8)
 /** `rt:fanout`: every node subscribes, so one publish reaches a frame's users wherever their sockets are. */
 private const val FANOUT_CHANNEL = "fanout"
 
+/** Close reasons the phone can tell apart (Mobile integration → Realtime socket). */
+private const val AUTH_REQUIRED = "auth required"
+private const val INVALID_LAST = "invalid last"
+private const val UNAUTHORIZED = "unauthorized"
+private const val SESSION_REVOKED = "session revoked"
+
+private val lastSerializer = MapSerializer(String.serializer(), Long.serializer())
+
 /** What a node publishes on `rt:node:{nodeId}` for the node that holds the user's socket, or on `rt:fanout` for all. */
 @Serializable
 internal sealed interface NodeMessage {
@@ -59,9 +70,13 @@ internal sealed interface NodeMessage {
     @Serializable
     data class Frames(val userIds: List<UserId>, val frame: RealtimeEnvelope) : NodeMessage
 
-    /** Tell [deviceId]'s socket (or every socket of the user when null) it is revoked, then close it. */
+    /**
+     * On `rt:fanout`: tell the user's sockets this node holds they are revoked, then close them: only [deviceId]'s when
+     * set (a replaced phone), only [sessionId]'s when set (a sign-out), every socket of the user when both are null.
+     */
     @Serializable
-    data class Revoke(val userId: UserId, val deviceId: DeviceId? = null) : NodeMessage
+    data class Revoke(val userId: UserId, val deviceId: DeviceId? = null, val sessionId: SessionId? = null) :
+        NodeMessage
 }
 
 /**
@@ -69,8 +84,9 @@ internal sealed interface NodeMessage {
  * token, the app sends its last `seq` per module and gets what it missed from each module's [RealtimeReplay],
  * then frames flow until the phone closes it. Each node records the sockets it holds in `rt:conn:{userId}` and
  * listens on its own channel `rt:node:{nodeId}`, so a frame published from any node reaches the right socket. A
- * frame for many users goes once on `rt:fanout`, which every node reads.
- * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name.
+ * frame for many users, and every revoke, goes once on `rt:fanout`, which every node reads.
+ * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name, at most
+ * [FrameRateLimiter.FRAMES_PER_SECOND] a second per socket.
  */
 class SocketHub(
     private val redis: RedisScope,
@@ -80,7 +96,10 @@ class SocketHub(
     /** The modules that take frames from the phone, looked up the same way as [replays]. */
     private val inbound: () -> List<RealtimeInboundModule>,
     private val scope: CoroutineScope,
+    private val telemetry: Telemetry,
     val nodeId: String = Uuid7.generate().toString(),
+    /** Monotonic milliseconds for the per-socket frame limit; tests pass their own. */
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private class Connection(
         val userId: UserId,
@@ -88,6 +107,15 @@ class SocketHub(
         val sessionId: SessionId,
         val session: WebSocketSession,
     )
+
+    /** How the auth frame went: a phone to serve, a reason to close with, or a socket that is already closing. */
+    private sealed interface Auth {
+        data class Accepted(val principal: Principal, val last: Map<String, Long>) : Auth
+
+        data class Refused(val reason: String) : Auth
+
+        data object Gone : Auth
+    }
 
     private val connections = ConcurrentHashMap<UserId, MutableSet<Connection>>()
 
@@ -101,17 +129,38 @@ class SocketHub(
         redis
             .subscribe(channel)
             .onEach { raw ->
-                runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
-                    .onSuccess { handle(it) }
-                    .onFailure { log.warn("unreadable node message", it) }
+                val message =
+                    runCatching { CircasoJson.decodeFromString(NodeMessage.serializer(), raw) }
+                        .onFailure { log.warn("unreadable node message: error={}", it.javaClass.name) }
+                        .getOrNull()
+                if (message != null) handleSafely(message)
             }.launchIn(scope)
+    }
+
+    /**
+     * One message that fails (a Redis error while revoking, say) is logged and skipped: an exception escaping the
+     * collector would end the subscription for good, and on `rt:fanout` stop every group frame on this node. The log
+     * carries the message kind only, never its users or frame.
+     */
+    private suspend fun handleSafely(message: NodeMessage) {
+        try {
+            handle(message)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            log.warn(
+                "node message failed: type={} error={}",
+                message.javaClass.simpleName,
+                failure.javaClass.name,
+            )
+        }
     }
 
     private suspend fun handle(message: NodeMessage) {
         when (message) {
             is NodeMessage.Frame -> sendLocal(message.userId, message.frame)
             is NodeMessage.Frames -> message.userIds.forEach { sendLocal(it, message.frame) }
-            is NodeMessage.Revoke -> revokeLocal(message.userId, message.deviceId)
+            is NodeMessage.Revoke -> revokeLocal(message)
         }
     }
 
@@ -152,17 +201,24 @@ class SocketHub(
         return users.filterIndexed { index, _ -> nodes[index] == null }
     }
 
-    /** Sends `system/session.revoked` to the phone and closes its socket, on whichever node holds it. */
-    suspend fun revoke(userId: UserId, deviceId: DeviceId? = null) {
-        val node = redis.get("conn:$userId") ?: return
-        if (node == nodeId) {
-            revokeLocal(userId, deviceId)
-        } else {
-            redis.publish(
-                "node:$node",
-                CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Revoke(userId, deviceId)),
+    /**
+     * Sends `system/session.revoked` and closes the matching sockets: only [deviceId]'s when given (a replaced phone),
+     * only [sessionId]'s when given (a sign-out), otherwise every socket of the user. It goes on `rt:fanout` and every
+     * node, this one included, checks the sockets it holds (decision 2026-10-25): `rt:conn:{userId}` names only the
+     * node of the newest socket, so an old session's socket on another node would be missed.
+     */
+    suspend fun revoke(
+        userId: UserId,
+        deviceId: DeviceId? = null,
+        sessionId: SessionId? = null,
+    ) {
+        val message =
+            NodeMessage.Revoke(
+                userId,
+                deviceId,
+                sessionId,
             )
-        }
+        redis.publish(FANOUT_CHANNEL, CircasoJson.encodeToString(NodeMessage.serializer(), message))
     }
 
     /** The next `seq` for the gateway's own `system` frames, which are not replayed. */
@@ -171,20 +227,25 @@ class SocketHub(
         return redis.incrementRenewing(key, SEQ_TTL)
     }
 
-    private suspend fun revokeLocal(userId: UserId, deviceId: DeviceId?) {
-        val targets = connections[userId]?.filter { deviceId == null || it.deviceId == deviceId } ?: return
+    private suspend fun revokeLocal(message: NodeMessage.Revoke) {
+        val targets =
+            connections[message.userId]
+                ?.filter { message.deviceId == null || it.deviceId == message.deviceId }
+                ?.filter { message.sessionId == null || it.sessionId == message.sessionId }
+                .orEmpty()
+        if (targets.isEmpty()) return
         val frame =
             RealtimeEnvelope(
                 "system",
                 "session.revoked",
                 Uuid7.generate().toString(),
-                nextSystemSeq(userId),
+                nextSystemSeq(message.userId),
                 Instant.now(),
                 JsonObject(emptyMap()),
             )
         targets.forEach {
             send(it, frame)
-            runCatching { it.session.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked")) }
+            runCatching { it.session.close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, SESSION_REVOKED)) }
         }
     }
 
@@ -217,29 +278,10 @@ class SocketHub(
     fun routes(route: Route) =
         with(route) {
             webSocket("ws") {
-                val first = withTimeoutOrNull(AUTH_WINDOW_MILLIS) { incoming.receive() as? Frame.Text }
-                val hello =
-                    first?.let {
-                        runCatching {
-                            CircasoJson.decodeFromString(
-                                Hello.serializer(),
-                                it.readText(),
-                            )
-                        }.getOrNull()
-                    }
-                if (hello == null || hello.type != "auth") {
-                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "auth required"))
-                    return@webSocket
-                }
-                val principal =
-                    (verifier.verify(hello.accessToken) as? Resource.Success)?.data?.takeIf {
-                        it.scope ==
-                            Scope.APP
-                    }
-                if (principal == null) {
-                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "unauthorized"))
-                    return@webSocket
-                }
+                val auth = authenticate()
+                if (auth is Auth.Refused) close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, auth.reason))
+                if (auth !is Auth.Accepted) return@webSocket
+                val principal = auth.principal
 
                 val connection = Connection(principal.userId, principal.deviceId, principal.sessionId, this)
                 register(connection)
@@ -253,10 +295,8 @@ class SocketHub(
                         }
                     }
                 try {
-                    replay(connection, hello.last)
-                    for (frame in incoming) {
-                        if (frame is Frame.Text) receive(connection, frame.readText())
-                    }
+                    replay(connection, auth.last)
+                    readFrames(connection)
                 } finally {
                     heartbeat.cancel()
                     unregister(connection)
@@ -265,12 +305,72 @@ class SocketHub(
         }
 
     /**
+     * Reads the auth frame. Anything but an auth frame is refused with `auth required`; an auth frame whose `last`
+     * isn't a map of module to `seq` with `invalid last`, so the phone can tell a bug in its own frame from a missing
+     * token; a token that doesn't verify as an app token with `unauthorized`.
+     */
+    private suspend fun WebSocketSession.authenticate(): Auth {
+        val text = firstText() ?: return Auth.Gone
+        val hello =
+            runCatching { CircasoJson.decodeFromString(Hello.serializer(), text) }
+                .getOrNull()
+                ?.takeIf { it.type == "auth" }
+                ?: return Auth.Refused(AUTH_REQUIRED)
+        val last = parseLast(hello.last) ?: return Auth.Refused(INVALID_LAST)
+        val principal =
+            (verifier.verify(hello.accessToken) as? Resource.Success)
+                ?.data
+                ?.takeIf { it.scope == Scope.APP }
+                ?: return Auth.Refused(UNAUTHORIZED)
+        return Auth.Accepted(principal, last)
+    }
+
+    /** The phone's last `seq` per module: empty when it sent none, null when it isn't a map of module to number. */
+    private fun parseLast(raw: JsonElement?): Map<String, Long>? {
+        if (raw == null) return emptyMap()
+        return runCatching { CircasoJson.decodeFromJsonElement(lastSerializer, raw) }.getOrNull()
+    }
+
+    /**
+     * The first frame as text: an empty string for a frame that isn't text or doesn't arrive within the auth window,
+     * so it is refused; null when the socket is already closing (the phone left, or Ktor closed it for a frame over
+     * [MAX_FRAME_BYTES] with 1009 "too big"), when there is no one to tell.
+     */
+    private suspend fun WebSocketSession.firstText(): String? =
+        try {
+            withTimeoutOrNull(AUTH_WINDOW_MILLIS) { (incoming.receive() as? Frame.Text)?.readText() } ?: ""
+        } catch (_: ClosedReceiveChannelException) {
+            null
+        } catch (_: FrameTooBigException) {
+            null
+        }
+
+    /**
+     * Hands the phone's frames to their modules until the socket closes. Frames over the per-socket limit are dropped
+     * unread and counted (decision 2026-10-25). A frame over [MAX_FRAME_BYTES] makes Ktor close the socket with 1009
+     * "too big" and end [incoming] with [FrameTooBigException], which ends this socket alone.
+     */
+    private suspend fun WebSocketSession.readFrames(connection: Connection) {
+        val limiter = FrameRateLimiter(nowMillis = nowMillis)
+        try {
+            for (frame in incoming) {
+                if (!limiter.tryAcquire()) {
+                    telemetry.count(Metrics.GATEWAY_SOCKET_FRAMES_DROPPED, mapOf("reason" to "rate_limited"))
+                    continue
+                }
+                if (frame is Frame.Text) receive(connection, frame.readText())
+            }
+        } catch (_: FrameTooBigException) {
+            log.debug("socket closed: frame too big")
+        }
+    }
+
+    /**
      * A frame from an authenticated phone (typing, read receipts, presence, acks), handed to the module it names. A
      * frame that names no registered module, or isn't a [ClientFrame] at all (a pong), is dropped. A failing handler
      * never closes the socket.
      */
     private suspend fun receive(connection: Connection, text: String) {
-        // TODO(decision: rate limit on phone frames; proposed 30 per second per socket, excess dropped, before MS4)
         val frame = runCatching { CircasoJson.decodeFromString(ClientFrame.serializer(), text) }.getOrNull()
         val handler = frame?.let { incoming -> inbound().firstOrNull { it.module == incoming.module } }
         if (frame == null || handler == null) {
@@ -306,6 +406,12 @@ class SocketHub(
         }
     }
 
+    /** `last` stays raw here so a malformed one is told apart from a frame that isn't an auth frame at all. */
     @Serializable
-    private data class Hello(val type: String, val accessToken: String = "", val last: Map<String, Long> = emptyMap())
+    private data class Hello(val type: String, val accessToken: String = "", val last: JsonElement? = null)
+
+    companion object {
+        /** The largest frame a phone may send (plan GW1: 64 KB, the largest chat ciphertext). */
+        const val MAX_FRAME_BYTES = 64L * 1024
+    }
 }
