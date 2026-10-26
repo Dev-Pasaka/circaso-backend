@@ -11,7 +11,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **50** routes the phone calls: **37 READY**, **8 PARTIAL**, **5 DEV STUB**.
+Of the **51** routes the phone calls: **37 READY**, **8 PARTIAL**, **6 DEV STUB**.
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -25,6 +25,7 @@ Of the **50** routes the phone calls: **37 READY**, **8 PARTIAL**, **5 DEV STUB*
 | Contacts sync, connections, invites, blocks, reach | **READY** | |
 | Realtime socket | **READY**, few frames | Only 4 frame types exist (section 8). |
 | Asha chat (text), voice, speech | **DEV STUB** | Protocol final; the model, speech-to-text and text-to-speech are stubs on dev. |
+| Asha live voice (socket) | **DEV STUB** | Protocol final (section 9); on dev a **binary** frame holding UTF-8 words stands in for speech, and the voice's "audio" is the text's bytes. |
 | Push notifications | **MISSING** | The token is stored; nothing is ever sent. |
 | Account security, linked logins, security log | **READY** | |
 | Account deletion | **PARTIAL** | Schedules only; completion and recovery window not decided. |
@@ -317,6 +318,7 @@ Chats are end-to-end encrypted on the phone with libsignal (X3DH, double ratchet
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `POST /v1/recovery/requests`<br>**I15** Open a support case for a lost Google or Apple login | `onboarding` | RecoveryRequest → RecoveryResponse | **PARTIAL** | Opens a support case. The support-side tools to resolve it are not built, so nothing completes it yet. Errors: `identity.recovery_not_eligible`, `request.rate_limited`. |
+| `wss://<host>/v1/assistant/voice/live`<br>**A11** Live voice with Asha (WebSocket) | `app` (in the first frame) | frames, see section 9 | **DEV STUB** | A second socket, open only while talking to Asha hands-free. Authenticate with the first frame, not a header, and send fresh tokens in a new `auth` frame before the access token's 15 minutes are up. Opus in, mulaw 8 kHz out. On dev the transcription treats a **binary** frame holding UTF-8 words as one spoken turn, and the voice sends the sentence's text bytes as its "audio". Swahili is refused (close reason `assistant.language_not_supported`): use A3 and the phone's own voice. Close reasons: `unauthorized` and `auth required` (1008, no frame), `Frame is too big: N` (1009, Ktor's reason, no frame), and after a `closing` frame `assistant.language_not_supported`, `assistant.quota_exceeded`, `assistant.model_unavailable`, `silence`, `ended`. |
 | `GET /v1/recovery/requests/{requestId}`<br>**I17** Status of your own support case | `onboarding` | — → RecoveryResponse | **PARTIAL** | Status of your own case. |
 
 ## 8. Realtime socket
@@ -368,6 +370,24 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `done` | `{"message": {…}}` | The reply is complete and saved. |
 
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
+- **Live voice (hands-free):** open `wss://<host>/v1/assistant/voice/live` for the length of the conversation and close it when the user leaves the voice screen. Not when the language is Swahili: then record clips (Voice in) and speak replies with the phone's own text-to-speech.
+  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true }`. An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
+  2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "mulaw", "sampleRate": 8000 } }`. Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame.
+  3. Server text frames (JSON, routed on `type`):
+
+| `type` | Fields | Do |
+| --- | --- | --- |
+| `transcript` | `text`, `final` | Show the live caption; `final: false` may still change. |
+| `turn` | `text` | The question Asha is answering (also saved in the Asha chat). |
+| `reply` | `text` | One sentence of the answer, sent about when the audio reaches it (show it as a caption; the timing is approximate). The audio comes as **binary** frames: mulaw (G.711 µ-law), mono, at `audio.sampleRate` (8 kHz), as `audio.encoding` says. Queue the audio and play it in order. |
+| `reply_done` | `message` (as in A1), `spoken` | The answer as saved, sent once its audio has finished playing; `spoken: false` means the user talked over it (show it, don't play it). |
+| `tool_request` | `turnId`, `callId`, `name`, `arguments` | As on A2 (`arguments` is a JSON **string**): run the device tool, answer on this socket within 30 s with `{ "type": "tool_results", "turnId", "callId", "snippets": [...] }`. A frame that doesn't decode, or the wrong `callId`, gets `error` `request.malformed` and the turn keeps waiting: send it again. Later than that the turn ends with an `error` frame `assistant.turn_not_found`. |
+| `interrupted` | — | The user talked over Asha: drop the audio queued and stop playing at once. |
+| `error` | `code`, `message` | That answer failed (`assistant.model_unavailable`, `assistant.turn_not_found`, or `request.malformed` for a bad `tool_results`); the conversation goes on. |
+| `closing` | `reason`, `message`?, `retryAfterSeconds`? | The server is closing; `reason` is also the WebSocket close reason. |
+
+  4. Access tokens last 15 minutes: before yours expires, refresh it over HTTP and send `{ "type": "auth", "accessToken": "<new app token>", "agentToken": "<new agent token>" }` on this socket. The server re-checks the session at each turn and every minute, and closes with 1008 `unauthorized` (no frame) once it is signed out, replaced or expired.
+  5. To hang up send `{ "type": "end" }` (the server answers `closing` `ended`) or just close the socket. The server closes on its own after 30 s with nobody speaking (`silence`, 1000), when the voice allowance runs out (`assistant.quota_exceeded`, 1008, with `retryAfterSeconds`: show the Asha Plus offer), or when a speech provider fails (`assistant.model_unavailable`, 1011: fall back to clips). Voice seconds count only speech: yours, timed by the transcriber from your first word to your last, and Asha's audio as it plays (what you talk over is free); an open mic and silence are free. The agent token is checked at every turn and every `auth` frame: it must be this user's own, or the socket closes with 1008 `unauthorized` (on A2 and A9 the error is `auth.token_invalid`). Audio is never stored.
 - **Voice out:** `POST /v1/assistant/speech` `{ "text", "language"? }` → audio bytes (not the envelope). English only; Swahili replies are spoken by the phone's own voice (asking the server gives `assistant.language_not_supported`).
 - **Allowance:** `GET /v1/assistant/usage` → used, left and plan. Show what the server says; the free allowance is not decided yet, so hard-code nothing. `assistant.quota_exceeded` carries `retryAfterSeconds` for the reset.
 - The **agent** token only works on `GET /v1/agent/...` routes and exists for Asha's own tools; the app never calls those directly.

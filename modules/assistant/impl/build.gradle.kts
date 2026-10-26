@@ -9,6 +9,7 @@ dependencies {
     implementation(libs.kandra.migrate)
 
     implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.websockets) // the live voice socket (A11); the gateway installs the plugin
     implementation(libs.ktor.client.core)
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines.core)
@@ -17,6 +18,7 @@ dependencies {
     testImplementation(platform(libs.kandra.bom))
     testImplementation(libs.kandra.test)
     testImplementation(libs.ktor.server.test.host)
+    testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)

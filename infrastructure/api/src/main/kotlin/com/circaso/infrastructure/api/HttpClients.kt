@@ -10,6 +10,9 @@ const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
 /** Thrown without calling the vendor while its circuit is open; integrations turn it into `ErrorKind.UPSTREAM`. */
 class CircuitOpenException(val vendor: String) : RuntimeException("The '$vendor' circuit is open")
 
+/** Thrown when a vendor's socket doesn't open within its handshake timeout; integrations treat it as `Unavailable`. */
+class HandshakeTimeoutException(val vendor: String) : RuntimeException("The '$vendor' socket didn't open in time")
+
 /** Names the vendor operation (`send_sms`) on a request, for the duration metric and the log line. */
 val HttpOperation = AttributeKey<String>("circaso.http.operation")
 
@@ -27,6 +30,20 @@ class VendorHttpConfig {
     /** Failures in a row that open the circuit, and for how long it stays open. */
     var circuitFailureThreshold: Int = 5
     var circuitOpenFor: Duration = Duration.ofSeconds(30)
+
+    /**
+     * Installs Ktor's WebSockets plugin, for a vendor reached over a live socket (Workers AI live voice). On such a
+     * client a WebSocket upgrade is never retried and never counts toward the circuit: a socket that fails half way
+     * through a conversation can't be replayed, and the caller decides whether to open another. [requestTimeout]
+     * doesn't apply to a socket either; only its opening is bounded, by [connectTimeout] and [handshakeTimeout].
+     */
+    var webSockets: Boolean = false
+
+    /** How long opening a socket may take, from the first byte to the `101 Switching Protocols`. */
+    var handshakeTimeout: Duration = Duration.ofSeconds(10)
+
+    /** How often an open socket pings the vendor, so neither side nor a proxy takes a quiet socket for a dead one. */
+    var pingInterval: Duration = Duration.ofSeconds(20)
 }
 
 /**

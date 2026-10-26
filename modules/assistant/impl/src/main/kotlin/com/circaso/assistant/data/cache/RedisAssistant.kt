@@ -37,6 +37,25 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
 
     override suspend fun voiceSeconds(userId: UserId, day: String): Long = read(key("voice", userId, day))
 
+    /**
+     * `INCRBY` first, then give back what went over the cap. Each caller gives back at most its own seconds, and only
+     * the part over the cap it saw, so concurrent callers together end exactly at the cap: never above it once they
+     * have all returned, and never below what was charged before them.
+     */
+    override suspend fun addVoiceSecondsUpTo(
+        userId: UserId,
+        day: String,
+        seconds: Int,
+        cap: Int,
+    ): Long {
+        val key = key("voice", userId, day)
+        val wanted = seconds.coerceAtLeast(0).toLong()
+        val after = redis.incrementBy(key, wanted, TTL)
+        val over = (after - cap).coerceIn(0, wanted)
+        if (over == 0L) return after
+        return redis.incrementBy(key, -over, TTL).coerceAtMost(cap.toLong())
+    }
+
     override suspend fun addTokens(
         userId: UserId,
         day: String,
@@ -126,6 +145,11 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
                 turn.steps,
             )
         redis.set("turn:${turn.userId}:${turn.turnId}", CircasoJson.encodeToString(PendingJson.serializer(), json), TTL)
+    }
+
+    override suspend fun callIdOf(userId: UserId, turnId: UUID): String? {
+        val raw = redis.get("turn:$userId:$turnId") ?: return null
+        return runCatching { CircasoJson.decodeFromString(PendingJson.serializer(), raw) }.getOrNull()?.callId
     }
 
     override suspend fun take(userId: UserId, turnId: UUID): PendingTurn? {

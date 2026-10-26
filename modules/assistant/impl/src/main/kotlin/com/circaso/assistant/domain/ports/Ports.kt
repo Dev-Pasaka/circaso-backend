@@ -59,6 +59,9 @@ data class PendingReadNote(val chatIds: List<String>, val chatNames: List<String
 interface PendingTurns {
     suspend fun save(turn: PendingTurn)
 
+    /** The call the turn waits on, without taking it: a wrong `callId` must leave the turn waiting. */
+    suspend fun callIdOf(userId: UserId, turnId: UUID): String?
+
     /** Reads and removes it, so an answer can't be used twice. */
     suspend fun take(userId: UserId, turnId: UUID): PendingTurn?
 }
@@ -77,6 +80,17 @@ interface QuotaCounters {
     ): Long
 
     suspend fun voiceSeconds(userId: UserId, day: String): Long
+
+    /**
+     * Adds up to [seconds], never taking the day's count past [cap], even with two sockets metering at once; the count
+     * after. Seconds over the cap are not charged: they end the conversation instead.
+     */
+    suspend fun addVoiceSecondsUpTo(
+        userId: UserId,
+        day: String,
+        seconds: Int,
+        cap: Int,
+    ): Long
 
     suspend fun addTokens(
         userId: UserId,

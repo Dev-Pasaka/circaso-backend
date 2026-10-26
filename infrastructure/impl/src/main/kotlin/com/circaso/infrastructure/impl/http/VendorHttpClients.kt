@@ -1,6 +1,7 @@
 package com.circaso.infrastructure.impl.http
 
 import com.circaso.infrastructure.api.CircuitOpenException
+import com.circaso.infrastructure.api.HandshakeTimeoutException
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.HttpOperation
 import com.circaso.infrastructure.api.VendorHttpConfig
@@ -19,11 +20,14 @@ import io.ktor.client.plugins.api.Send
 import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.http.encodedPath
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.time.Clock
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 
 private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.http.Vendor")
@@ -61,21 +65,36 @@ class VendorHttpClients(
                 requestTimeoutMillis = config.requestTimeout.toMillis()
             }
             defaultRequest { config.baseUrl?.let { url(it) } }
+            if (config.webSockets) install(WebSockets) { pingIntervalMillis = config.pingInterval.toMillis() }
 
             // Installed from the outside in: retries wrap the breaker, which wraps the logging of each attempt,
             // so every attempt is logged, counted by the breaker, and a failing vendor is cut off between retries.
             install(HttpRequestRetry) {
                 maxRetries = config.maxAttempts - 1
                 retryOnExceptionIf { request, cause -> RetryPolicy.retryAfterException(request, cause) }
-                retryIf { _, response -> RetryPolicy.retryAfterStatus(response.status.value) }
+                retryIf { request, response -> RetryPolicy.retryAfterStatus(request, response.status.value) }
                 delayMillis(
                     respectRetryAfterHeader = true,
                 ) { retry -> RetryPolicy.backoffMillis(retry, retryBaseMillis) }
             }
             install(CircuitBreakerPlugin) { this.breaker = breaker }
+            if (config.webSockets) install(handshakeTimeout(vendor, config.handshakeTimeout))
             install(attemptLogging(vendor, breaker))
         }
     }
+
+    /**
+     * Bounds the opening of a socket only. `HttpTimeout`'s request timeout leaves WebSockets alone, so without this a
+     * vendor that accepted the connection but never answered the upgrade would hold the caller forever. Once the
+     * `101` is in, the socket lives as long as the conversation.
+     */
+    private fun handshakeTimeout(vendor: String, timeout: Duration) =
+        createClientPlugin("VendorHandshake-$vendor") {
+            on(Send) { request ->
+                if (!request.isWebSocketUpgrade()) return@on proceed(request)
+                withTimeoutOrNull(timeout.toMillis()) { proceed(request) } ?: throw HandshakeTimeoutException(vendor)
+            }
+        }
 
     private fun attemptLogging(vendor: String, breaker: CircuitBreaker) =
         createClientPlugin("VendorLogging-$vendor") {

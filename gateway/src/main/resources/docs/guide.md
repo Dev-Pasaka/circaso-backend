@@ -35,7 +35,7 @@ A signed-in app then does the rest: set a name and an `@handle` (**Profile**, **
 | `Authorization` | `Bearer <accessToken>` on every route that needs a token. |
 | `X-Client-Version` | The app and its version, for example `android/1.4.0`. An app older than the minimum answers `426` with code `request.client_outdated`, and the app shows its update screen. |
 | `Idempotency-Key` | A UUID on every `POST`, `PUT`, `PATCH` and `DELETE`. See below. |
-| `X-Agent-Token` | Only when talking to Asha: the session's read-only agent token, so her tools can read your contacts. |
+| `X-Agent-Token` | Only when talking to Asha: the session's read-only agent token (it must be your own: another user's is refused with `auth.token_invalid`), so her tools can read your contacts. |
 
 Times are ISO-8601 UTC (`2026-10-21T18:06:00Z`). Ids are UUIDs. Phone numbers are E.164 (`+254712345678`) and are never shown to other people: they see a name, an `@handle` and a picture. JSON is camelCase and unknown fields are ignored.
 
@@ -163,7 +163,7 @@ The shared ones, then each area's own. Codes are stable.
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
 | `assistant.model_unavailable` | 502 | Asha's model is down; try again |
-| `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself |
+| `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself. On the live voice socket it is the close reason instead |
 
 ## Talking to Asha: streaming and the phone's help
 
@@ -176,6 +176,27 @@ The shared ones, then each area's own. Codes are stable.
 | `done` | `{"message": {…}}` | The reply is complete and saved. |
 
 The phone sends back at most 30 short snippets. They are used for that answer and never stored; Asha keeps only a note of which chats and how many messages she read, and the answer says so ("Asha read 4 messages from Family").
+
+## Talking to Asha live
+
+While the user talks with Asha hands-free, the phone opens a second WebSocket, `wss://api.circaso.com/v1/assistant/voice/live`, only for that conversation. Like the main socket, the first frame authenticates, with the user token only: `{"type":"auth","accessToken":"…","agentToken":"…","language":"en","chatReading":true}`. The server answers `{"type":"ready","voiceSecondsLeft":…,"audio":{"encoding":"mulaw","sampleRate":8000}}`. Access tokens last 15 minutes: send the same `auth` frame again with fresh tokens before they expire.
+
+Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as mulaw at 8 kHz (as the `ready` frame says). No frame is larger than 64 KB, either way. Text frames are JSON with a `type`:
+
+| `type` | From | Meaning |
+| --- | --- | --- |
+| `transcript` `{text, final}` | server | The words heard so far. |
+| `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
+| `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). |
+| `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
+| `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
+| `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
+| `error` `{code, message}` | server | One answer failed; keep talking. |
+| `closing` `{reason, message?, retryAfterSeconds?}` | server | The server is about to close; `reason` is also the close reason. |
+| `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
+| `end` | phone | Hang up. |
+
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 

@@ -71,11 +71,15 @@ class CircuitBreakerConfig {
     lateinit var breaker: CircuitBreaker
 }
 
-/** Wraps each attempt, so when retries are installed around it every failed attempt counts. */
+/**
+ * Wraps each attempt, so when retries are installed around it every failed attempt counts. A WebSocket upgrade is left
+ * out: a live socket is opened once per conversation, and its failures say little about the vendor's HTTP API.
+ */
 val CircuitBreakerPlugin =
     createClientPlugin("CircuitBreaker", ::CircuitBreakerConfig) {
         val breaker = pluginConfig.breaker
         on(Send) { request ->
+            if (request.isWebSocketUpgrade()) return@on proceed(request)
             breaker.beforeCall()
             try {
                 val call = proceed(request)

@@ -27,11 +27,13 @@ class FakeHttpClients(private val handler: suspend MockRequestHandleScope.(HttpR
     HttpClients {
     val requests = mutableListOf<HttpRequestData>()
     val names = mutableListOf<String>()
+    val configs = mutableMapOf<String, VendorHttpConfig>()
     val last: HttpRequestData get() = requests.last()
 
     override fun named(name: String, configure: VendorHttpConfig.() -> Unit): HttpClient {
         names += name
         val config = VendorHttpConfig().apply(configure)
+        configs.putIfAbsent(name, config)
         return HttpClient(
             MockEngine { request ->
                 requests += request

@@ -4,11 +4,15 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
+import com.circaso.integrations.api.LiveSpeech
+import com.circaso.integrations.api.LiveTranscription
+import com.circaso.integrations.api.LiveTranscriptionOptions
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.PhoneVerificationGateway
@@ -20,12 +24,16 @@ import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SmsPurpose
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
+import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.TextToSpeech
+import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
+import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
+import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
@@ -142,6 +150,67 @@ class IntegrationsModuleTest {
             koin.get<LanguageModel>().complete(ModelRequest("s", listOf(ModelMessage.User("u"))))
             assertTrue(clients.names.all { it == "workers-ai" })
             assertTrue("glm-5.2" in clients.last.text(), "a model id setting replaces the default")
+        }
+
+    @Test
+    fun `live voice runs on its own workers-ai-live client, with the WebSockets flag`() {
+        val clients = FakeHttpClients { _ -> respondOk() }
+        val koin =
+            startKoin {
+                modules(
+                    integrationsModule(
+                        MapConfig(
+                            mapOf(
+                                "cloudflare.account-id" to "acc123",
+                                "integrations.ai.gateway" to "asha",
+                                "integrations.live-stt.provider" to "workers-ai",
+                                "integrations.live-tts.provider" to "workers-ai",
+                            ),
+                        ),
+                        object : Secrets {
+                            override fun get(name: String): String? =
+                                "cf-token".takeIf { name == "cloudflare.ai-token" }
+                        },
+                    ),
+                    module { single<HttpClients> { clients } },
+                )
+            }.koin
+
+        assertIs<WorkersAiLiveTranscription>(koin.get<LiveTranscription>())
+        assertIs<WorkersAiLiveSpeech>(koin.get<LiveSpeech>())
+        assertEquals(setOf("workers-ai-live"), clients.names.toSet())
+        assertTrue(clients.configs.getValue("workers-ai-live").webSockets)
+    }
+
+    @Test
+    fun `the development live voice reads text frames as speech and speaks English only`() =
+        runTest {
+            val koin = koin()
+            val ears = koin.get<LiveTranscription>()
+            val voice = koin.get<LiveSpeech>()
+
+            val session = (ears.open(LiveTranscriptionOptions("en")) as Resource.Success).data
+            session.send("hello Asha".toByteArray())
+            session.send(byteArrayOf(-1, -2, 0, 7))
+            assertEquals(TranscriptionEvent.SpeechStarted, session.next())
+            assertEquals(TranscriptionEvent.Interim("hello Asha", AudioSpan(0.0, 0.8)), session.next())
+            assertEquals(
+                TranscriptionEvent.Final("hello Asha", endOfTurn = true, audio = AudioSpan(0.0, 0.8)),
+                session.next(),
+            )
+            session.close()
+            assertEquals(null, session.next(), "binary audio is silence to the fake")
+
+            val speaking = (voice.open(null) as Resource.Success).data
+            speaking.speak("Hi.")
+            speaking.flush()
+            assertIs<SpeechEvent.Audio>(speaking.next())
+            assertEquals(SpeechEvent.Flushed, speaking.next())
+
+            assertIs<IntegrationError.UnsupportedLanguage>(
+                (ears.open(LiveTranscriptionOptions("sw")) as Resource.Error).error,
+            )
+            assertIs<IntegrationError.UnsupportedLanguage>((voice.open("sw") as Resource.Error).error)
         }
 
     @Test
