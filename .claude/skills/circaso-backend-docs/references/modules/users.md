@@ -26,7 +26,7 @@ It does not require B to have A saved, which matches how WhatsApp behaves: if yo
 ### Privacy defaults
 
 - Phone numbers are never shown to other users; people see the name, @handle and avatar.
-- Avatar visible to anyone who can reach you; about line to contacts only; handle lookup on. All three can be changed in privacy settings.
+- Avatar visible to anyone who can reach you or shares a group with you; about line to contacts only; handle lookup on. All three can be changed in privacy settings.
 
 ### Contract (`users:api`)
 
