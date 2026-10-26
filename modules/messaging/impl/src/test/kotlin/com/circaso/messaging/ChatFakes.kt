@@ -24,9 +24,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Chats in memory, with the same rules as the tables: the pair claim and the versioned update are atomic, and a
- * commit applies one [ChatChanges] as a unit (what the logged batch does). [beforeUpdate] runs just before a
- * versioned update, so a test can change the chat in between.
+ * Chats in memory, with the same rules as the tables: the pair claim, the removal claim and the versioned update
+ * are atomic, and a commit applies one [ChatChanges] as a unit (what the logged batch does). Every call yields
+ * first, so coroutines started together interleave at each step, as requests do. [beforeUpdate] runs just before a
+ * versioned update, so a test can change the chat in between; [failCommits] makes the next commits throw.
  */
 class MemoryChats :
     ChatRepository,
@@ -37,6 +38,7 @@ class MemoryChats :
     val lines = ConcurrentHashMap<UserId, MutableMap<ChatId, UserChat>>()
     val commits = CopyOnWriteArrayList<ChatChanges>()
     var beforeUpdate: suspend () -> Unit = {}
+    var failCommits = 0
 
     override suspend fun claimPair(pair: String, chatId: ChatId): Boolean {
         yield()
@@ -48,6 +50,7 @@ class MemoryChats :
     override suspend fun chat(chatId: ChatId) = chats[chatId]
 
     override suspend fun updateChat(old: Chat, new: Chat): Chat? {
+        yield()
         beforeUpdate()
         synchronized(this) {
             val stored = chats[old.chatId] ?: return null
@@ -58,9 +61,20 @@ class MemoryChats :
         }
     }
 
-    override suspend fun members(chatId: ChatId) = synchronized(this) { members[chatId]?.values?.toList().orEmpty() }
+    override suspend fun members(chatId: ChatId): List<Member> {
+        yield()
+        return synchronized(this) { members[chatId]?.values?.toList().orEmpty() }
+    }
 
-    override suspend fun member(chatId: ChatId, userId: UserId) = synchronized(this) { members[chatId]?.get(userId) }
+    override suspend fun member(chatId: ChatId, userId: UserId): Member? {
+        yield()
+        return synchronized(this) { members[chatId]?.get(userId) }
+    }
+
+    override suspend fun claimRemoval(chatId: ChatId, userId: UserId): Boolean {
+        yield()
+        return synchronized(this) { members[chatId]?.remove(userId) != null }
+    }
 
     override suspend fun chatsOf(userId: UserId) = synchronized(this) { lines[userId]?.values?.toList().orEmpty() }
 
@@ -68,6 +82,10 @@ class MemoryChats :
 
     override suspend fun commit(changes: ChatChanges) {
         yield()
+        if (failCommits > 0) {
+            failCommits--
+            error("batch failed")
+        }
         synchronized(this) {
             commits += changes
             for (chat in changes.chats) chats[chat.chatId] = chat
@@ -93,22 +111,23 @@ class MemoryChats :
         }
 }
 
+/** `msg:members` in memory: a marked chat answers nothing and isn't refilled until [expireMarkers]. */
 class MemoryMembersCache : MembersCache {
     val entries = ConcurrentHashMap<ChatId, Set<UserId>>()
-    var reads = 0
+    val marked = ConcurrentHashMap.newKeySet<ChatId>()
 
-    override suspend fun get(chatId: ChatId): Set<UserId>? {
-        reads++
-        return entries[chatId]
+    override suspend fun get(chatId: ChatId): Set<UserId>? = if (chatId in marked) null else entries[chatId]
+
+    override suspend fun fillIfAbsent(chatId: ChatId, members: Set<UserId>) {
+        if (chatId !in marked) entries.putIfAbsent(chatId, members)
     }
 
-    override suspend fun put(chatId: ChatId, members: Set<UserId>) {
-        entries[chatId] = members
-    }
-
-    override suspend fun clear(chatId: ChatId) {
+    override suspend fun markChanged(chatId: ChatId) {
         entries.remove(chatId)
+        marked += chatId
     }
+
+    fun expireMarkers() = marked.clear()
 }
 
 /** Records each replayed frame per recipient, numbering them per user as `msg:seq:{userId}` does. */

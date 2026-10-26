@@ -11,8 +11,8 @@ import com.circaso.shared.UserId
 
 /**
  * M10 `DELETE /chats/{chatId}/members/{userId}` by an admin, for someone else. Admins remove admins and members;
- * nobody removes the owner, whose way out is to hand over ownership and leave. The admin's phone then makes a new
- * group metadata key and re-seals the name (Messaging → Group metadata key).
+ * nobody removes the owner. A direct chat has no members to remove (`messaging.not_a_group`). The admin's phone
+ * then makes a new group metadata key and re-seals the name (Messaging → Group metadata key).
  */
 class RemoveMember(private val chats: ChatRepository, private val removal: MemberRemoval) {
     suspend operator fun invoke(
@@ -22,9 +22,10 @@ class RemoveMember(private val chats: ChatRepository, private val removal: Membe
     ): Resource<Unit> {
         val admin = chats.member(chatId, caller) ?: return Resource.error(MessagingError.ChatNotFound)
         val chat = chats.chat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        if (chat.kind != ChatKind.GROUP || !admin.role.isAdmin) return Resource.error(MessagingError.NotAdmin)
+        if (chat.kind != ChatKind.GROUP) return Resource.error(MessagingError.NotAGroup)
+        if (!chat.roleOf(admin).isAdmin) return Resource.error(MessagingError.NotAdmin)
         val member = chats.member(chatId, target) ?: return Resource.error(MessagingError.ChatNotFound)
-        if (member.role == Role.OWNER) return Resource.error(MessagingError.NotAdmin)
+        if (chat.roleOf(member) == Role.OWNER) return Resource.error(MessagingError.NotAdmin)
         return removal.remove(member, by = caller)
     }
 }

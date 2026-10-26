@@ -5,7 +5,6 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.GroupDeleted
 import com.circaso.messaging.api.MemberAdded
 import com.circaso.messaging.api.MemberRemoved
-import com.circaso.messaging.domain.models.CreateGroupCommand
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SignedPreKey
@@ -110,7 +109,7 @@ class ChatsTest {
             val h = ChatHarness()
             h.connect(amina, listOf(brian, chidi))
 
-            val group = h.createGroup(CreateGroupCommand(amina, h.sealed, setOf(brian, chidi, dalia, amina))).data()
+            val group = h.createGroup(h.command(amina, setOf(brian, chidi, dalia, amina))).data()
 
             assertEquals(listOf(dalia), group.notAdded)
             assertEquals(3, group.chat.memberCount)
@@ -167,17 +166,17 @@ class ChatsTest {
 
             assertEquals(
                 "messaging.group_invalid",
-                h.createGroup(CreateGroupCommand(amina, "", emptySet())).errorCode(),
+                h.createGroup(h.command(amina, emptySet(), "")).errorCode(),
             )
             assertEquals(
                 "messaging.group_invalid",
-                h.createGroup(CreateGroupCommand(amina, "not!", emptySet())).errorCode(),
+                h.createGroup(h.command(amina, emptySet(), "not!")).errorCode(),
             )
             assertEquals(
                 "messaging.group_invalid",
-                h.createGroup(CreateGroupCommand(amina, big, emptySet())).errorCode(),
+                h.createGroup(h.command(amina, emptySet(), big)).errorCode(),
             )
-            assertNotNull(h.createGroup(CreateGroupCommand(amina, largest, emptySet())).data())
+            assertNotNull(h.createGroup(h.command(amina, emptySet(), largest)).data())
         }
 
     // ---- the cap ----
@@ -190,14 +189,14 @@ class ChatsTest {
             val people = (1..999).map { UserId.new() }.toSet()
             h.connect(amina, people)
 
-            val full = h.createGroup(CreateGroupCommand(amina, h.sealed, people)).data()
+            val full = h.createGroup(h.command(amina, people)).data()
             assertEquals(1_000, full.chat.memberCount)
             assertEquals(1_000L, h.frames.count, "one member.added frame to each member")
 
             val tooMany = people + UserId.new()
             assertEquals(
                 "messaging.group_full",
-                h.createGroup(CreateGroupCommand(amina, h.sealed, tooMany)).errorCode(),
+                h.createGroup(h.command(amina, tooMany)).errorCode(),
             )
             val one = UserId.new()
             h.connect(amina, one)
@@ -290,8 +289,8 @@ class ChatsTest {
 
             assertEquals("messaging.not_admin", h.addMembers(amina, chatId, setOf(chidi)).errorCode())
             assertEquals("messaging.not_admin", h.update(amina, chatId, 1, h.sealed).errorCode())
-            assertEquals("messaging.not_admin", h.removeMember(amina, chatId, brian).errorCode())
-            assertEquals("messaging.not_admin", h.leaveGroup(amina, chatId).errorCode())
+            assertEquals("messaging.not_a_group", h.removeMember(amina, chatId, brian).errorCode())
+            assertEquals("messaging.not_a_group", h.leaveGroup(amina, chatId).errorCode())
             assertEquals("messaging.not_admin", h.setRole(amina, chatId, brian, Role.ADMIN).errorCode())
         }
 
@@ -398,7 +397,7 @@ class ChatsTest {
         }
 
     @Test
-    fun `an owner who leaves hands the group to the longest-serving admin, in the same batch`() =
+    fun `an owner who leaves hands the group to the longest-serving admin, through the version check`() =
         runTest {
             val h = ChatHarness()
             val chatId = h.group(amina, listOf(brian)).chat.chatId
@@ -416,9 +415,15 @@ class ChatsTest {
             assertEquals(Role.OWNER, h.role(chatId, chidi), "chidi joined before dalia; brian is no admin")
             assertEquals(Role.ADMIN, h.role(chatId, dalia))
             assertNull(h.role(chatId, amina))
-            val commit = h.chats.commits.last()
-            assertEquals(listOf(chidi), commit.roles.map { it.userId })
-            assertEquals(listOf(amina), commit.leaves.map { it.member.userId }, "the role and the leave together")
+            assertEquals(chidi, h.chats.chats[chatId]!!.ownerId, "the chat names the new owner")
+            assertEquals(
+                listOf(chidi),
+                h.chats.commits
+                    .last()
+                    .roles
+                    .map { it.userId },
+                "and the row mirrors it",
+            )
             val updated = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(brian, chidi, dalia), updated.map { it.to }.toSet())
             assertEquals(h.chats.chats[chatId]!!.version, updated.first().data["version"])

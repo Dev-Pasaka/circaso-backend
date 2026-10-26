@@ -6,6 +6,7 @@ import com.circaso.messaging.data.entities.MessagingOutboxRow
 import com.circaso.messaging.data.entities.UserChatRow
 import com.circaso.messaging.data.mappers.toRow
 import com.circaso.messaging.data.mappers.toUserChatRow
+import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.repositories.ChatChanges
 import com.circaso.messaging.domain.repositories.MessagingStore
 import com.circaso.shared.EventBus
@@ -67,7 +68,7 @@ class MessagingStoreImpl(
             for (leave in changes.leaves) {
                 val member = leave.member
                 members.deleteInBatch(member.toRow())
-                userChats.deleteInBatch(UserChatRow(member.userId.value, member.chatId.value, "", joinedAt = EPOCH))
+                userChats.deleteInBatch(deletedLine(member))
                 leave.event?.let { outbox.saveInBatch(it.toOutboxRow()) }
             }
             for (event in changes.events) outbox.saveInBatch(event.toOutboxRow())
@@ -76,7 +77,22 @@ class MessagingStoreImpl(
 
     /** Only the key matters to a delete; the other columns are placeholders. */
     private fun deletedChat(chatId: UUID) =
-        ChatRow(chatId, kind = "", settings = "", memberCount = 0, createdBy = chatId, createdAt = EPOCH)
+        ChatRow(
+            chatId = chatId,
+            kind = "",
+            settings = "",
+            memberCount = 0,
+            createdBy = chatId,
+            createdAt = EPOCH,
+        )
+
+    private fun deletedLine(member: Member) =
+        UserChatRow(
+            userId = member.userId.value,
+            chatId = member.chatId.value,
+            kind = "",
+            joinedAt = EPOCH,
+        )
 
     private companion object {
         /** People per batch: each is two rows and an outbox row. */
@@ -85,4 +101,10 @@ class MessagingStoreImpl(
     }
 }
 
-private fun EventEnvelope.toOutboxRow() = MessagingOutboxRow(bucket, eventId.value, type, toJson())
+private fun EventEnvelope.toOutboxRow() =
+    MessagingOutboxRow(
+        bucket,
+        eventId.value,
+        type,
+        toJson(),
+    )

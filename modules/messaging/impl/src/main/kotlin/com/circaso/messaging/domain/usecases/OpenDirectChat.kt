@@ -14,6 +14,7 @@ import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.Join
 import com.circaso.messaging.domain.repositories.MessagingStore
 import com.circaso.messaging.domain.support.ChatViews
+import com.circaso.messaging.domain.support.oncePerChat
 import com.circaso.messaging.domain.support.pairKey
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
@@ -23,11 +24,13 @@ import com.circaso.shared.envelope
 import com.circaso.users.api.ReachPolicy
 import kotlinx.coroutines.delay
 import java.time.Clock
+import java.time.Instant
 
 /**
  * M4 `POST /chats/direct`: the one chat between two people, made on first open. The pair is claimed with a
  * lightweight transaction before the chat is written, so two people opening it at the same moment get the same
- * chat. Reach is checked every time, before anything is looked up.
+ * chat. Reach is checked every time, before anything is looked up. If both end up writing the chat (the claimer was
+ * slow), `ChatCreated` still has one id, made from the chat's.
  */
 class OpenDirectChat(
     private val chats: ChatRepository,
@@ -44,13 +47,35 @@ class OpenDirectChat(
         val pair = pairKey(caller, other)
         val chatId = ChatId.new()
         if (chats.claimPair(pair, chatId)) {
-            val chat = create(chatId, caller, other)
-            return Resource.success(views.view(chat, lastMessageId = null, created = true))
+            val chat =
+                create(
+                    chatId,
+                    caller,
+                    other,
+                )
+            val view =
+                views.view(
+                    chat,
+                    lastMessageId = null,
+                    created = true,
+                )
+            return Resource.success(view)
         }
         val existing = chats.pairChat(pair) ?: return Resource.error(MessagingError.ChatNotFound)
-        val chat = awaitChat(existing) ?: create(existing, caller, other)
+        val chat =
+            awaitChat(existing) ?: create(
+                existing,
+                caller,
+                other,
+            )
         val last = chats.userChat(caller, existing)?.lastMessageId
-        return Resource.success(views.view(chat, last, created = false))
+        val view =
+            views.view(
+                chat,
+                lastMessageId = last,
+                created = false,
+            )
+        return Resource.success(view)
     }
 
     /**
@@ -83,10 +108,38 @@ class OpenDirectChat(
                 createdAt = now,
                 version = 1,
             )
-        val joins = listOf(caller, other).map { Join(Member(chatId, it, Role.MEMBER, now), ChatKind.DIRECT) }
+        val joins =
+            listOf(caller, other).map { person ->
+                join(
+                    chatId,
+                    person,
+                    at = now,
+                )
+            }
         val created = ChatCreated(chatId, ChatKind.DIRECT.name, memberIds = listOf(caller, other))
-        store.commit(ChatChanges(chats = listOf(chat), joins = joins, events = listOf(bus.envelope(created))))
+        store.commit(
+            ChatChanges(
+                chats = listOf(chat),
+                joins = joins,
+                events = listOf(bus.envelope(created).oncePerChat(chatId)),
+            ),
+        )
         return chat
+    }
+
+    private fun join(
+        chatId: ChatId,
+        userId: UserId,
+        at: Instant,
+    ): Join {
+        val member =
+            Member(
+                chatId,
+                userId,
+                Role.MEMBER,
+                at,
+            )
+        return Join(member, ChatKind.DIRECT)
     }
 
     private companion object {

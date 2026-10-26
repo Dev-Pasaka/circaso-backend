@@ -35,6 +35,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.Base64
+import java.util.UUID
 
 /** Chats and membership wired over the in-memory fakes, as `di` wires them over Kandra and Redis. */
 class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
@@ -54,7 +55,18 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     private val removal = MemberRemoval(chats, writer, chats, membership, notifier, bus)
 
     val openDirectChat = OpenDirectChat(chats, chats, reach, views, bus, clock)
-    val createGroup = CreateGroup(chats, reach, views, notifier, bus, config, clock)
+    val createGroup =
+        CreateGroup(
+            chats,
+            writer,
+            chats,
+            reach,
+            views,
+            notifier,
+            bus,
+            config,
+            clock,
+        )
     val listChats = ListChats(chats, views)
     val getChat = GetChat(chats, views)
     val updateGroup = UpdateGroup(chats, membership, views, notifier, config)
@@ -90,8 +102,21 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
 
     suspend fun group(owner: UserId, members: List<UserId> = emptyList()): ChatView {
         connect(owner, members)
-        return createGroup(CreateGroupCommand(owner, sealed, members.toSet())).data()
+        return createGroup(command(owner, members.toSet())).data()
     }
+
+    /** A create with its own `Idempotency-Key`, unless [key] repeats one. */
+    fun command(
+        owner: UserId,
+        members: Set<UserId>,
+        sealedMeta: String = sealed,
+        key: String = UUID.randomUUID().toString(),
+    ) = CreateGroupCommand(
+        owner,
+        sealedMeta,
+        members,
+        key,
+    )
 
     suspend fun update(
         caller: UserId,
@@ -101,7 +126,11 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
         membersCanAdd: Boolean? = null,
     ) = updateGroup(UpdateGroupCommand(caller, chatId, sealedMeta, membersCanAdd, version))
 
-    fun role(chatId: ChatId, userId: UserId): Role? = chats.members[chatId]?.get(userId)?.role
+    /** [userId]'s role as the chat sees it (the owner is the chat's `ownerId`), or null when not a member. */
+    fun role(chatId: ChatId, userId: UserId): Role? {
+        val member = chats.members[chatId]?.get(userId) ?: return null
+        return chats.chats[chatId]?.roleOf(member)
+    }
 
     fun pair(a: UserId, b: UserId) = pairKey(a, b)
 }

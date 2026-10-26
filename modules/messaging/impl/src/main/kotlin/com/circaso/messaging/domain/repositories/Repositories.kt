@@ -63,6 +63,12 @@ interface ChatRepository {
 
     suspend fun member(chatId: ChatId, userId: UserId): Member?
 
+    /**
+     * Deletes [userId]'s member row with a lightweight transaction (`IF EXISTS`): true for the one caller whose delete
+     * applied, false when the row was already gone. Of a remove and a leave racing, only one goes on.
+     */
+    suspend fun claimRemoval(chatId: ChatId, userId: UserId): Boolean
+
     /** The user's chat list. */
     suspend fun chatsOf(userId: UserId): List<UserChat>
 

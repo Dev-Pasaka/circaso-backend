@@ -22,6 +22,7 @@ import com.circaso.messaging.data.entities.UserChatRow
 import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
 import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
 import com.circaso.messaging.data.migrations.V003_CreateChatTables
+import com.circaso.messaging.data.migrations.V004_AddChatOwner
 import com.circaso.messaging.data.migrations.messagingEntities
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
@@ -93,7 +94,12 @@ fun messagingModule(config: Config): Module =
             KandraModuleSpec(
                 KS,
                 messagingEntities,
-                listOf(V001_CreateMessagingTables, V002_CreateKeyDirectoryTables, V003_CreateChatTables),
+                listOf(
+                    V001_CreateMessagingTables,
+                    V002_CreateKeyDirectoryTables,
+                    V003_CreateChatTables,
+                    V004_AddChatOwner,
+                ),
             )
         }
         single<KeyRepository> { KeyRepositoryImpl(get(), rows<KeyBundleRow>(), rows<OneTimePreKeyRow>()) }
@@ -133,7 +139,7 @@ fun messagingModule(config: Config): Module =
         single { GetKeyStatus(get()) }
         single { FetchKeyBundle(get(), get<ReachPolicy>(), get(), get(), get()) }
         single { OpenDirectChat(get(), get(), get<ReachPolicy>(), get(), get(), clock) }
-        single { CreateGroup(get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
+        single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
         single { UpdateGroup(get(), get(), get(), get(), get()) }

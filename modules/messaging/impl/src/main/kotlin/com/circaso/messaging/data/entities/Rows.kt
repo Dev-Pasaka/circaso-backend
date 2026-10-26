@@ -78,6 +78,8 @@ data class ChatRow(
     val createdBy: UUID,
     val createdAt: Instant,
     @Version val version: Long = 0,
+    /** Groups only: the owner, so a change of owner goes through [version] (V004); the nil UUID for direct. */
+    val ownerId: UUID = NIL_UUID,
 )
 
 /** One direct chat per pair, claimed with `saveIfNotExists`, so two people opening it at once get the same one. */

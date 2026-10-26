@@ -29,7 +29,9 @@ class UpdateGroup(
         val caller =
             chats.member(command.chatId, command.caller) ?: return Resource.error(MessagingError.ChatNotFound)
         val current = chats.chat(command.chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        if (current.kind != ChatKind.GROUP || !caller.role.isAdmin) return Resource.error(MessagingError.NotAdmin)
+        if (current.kind != ChatKind.GROUP || !current.roleOf(caller).isAdmin) {
+            return Resource.error(MessagingError.NotAdmin)
+        }
         val sealedMeta = command.sealedMeta
         if (sealedMeta != null && !isValidSealedMeta(sealedMeta, config.maxSealedMetaBytes)) {
             return Resource.error(MessagingError.GroupInvalid)

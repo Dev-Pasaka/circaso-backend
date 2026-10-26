@@ -9,6 +9,7 @@ import com.circaso.messaging.data.entities.MessagingRealtimeRow
 import com.circaso.messaging.data.entities.OneTimePreKeyRow
 import com.circaso.messaging.data.entities.UserChatRow
 import com.datastax.oss.driver.api.core.CqlSession
+import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import io.kandra.migrate.KandraMigration
 
 val messagingEntities =
@@ -86,6 +87,46 @@ object V003_CreateChatTables : KandraMigration(version = 3, name = "create chat 
     override fun up(session: CqlSession) {
         for (statement in statements) {
             session.execute(statement)
+        }
+    }
+}
+
+/**
+ * The group owner on the chat row (decision 2026-10-26), filled for groups made before it from their OWNER member
+ * row. A one-off read of every chat: tables are designed around queries, but a migration runs once. The column is
+ * added only if missing, because a local run may have created the table from the entity already. Never edit it once
+ * applied.
+ */
+object V004_AddChatOwner : KandraMigration(version = 4, name = "add chat owner") {
+    private const val HAS_OWNER_COLUMN =
+        "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'circaso_messaging' AND " +
+            "table_name = 'chats' AND column_name = 'owner_id'"
+    private const val ADD_OWNER_COLUMN = "ALTER TABLE circaso_messaging.chats ADD owner_id UUID"
+    private const val CHATS = "SELECT chat_id, kind FROM circaso_messaging.chats"
+    private const val MEMBERS = "SELECT user_id, role FROM circaso_messaging.members_by_chat WHERE chat_id = ?"
+    private const val SET_OWNER = "UPDATE circaso_messaging.chats SET owner_id = ? WHERE chat_id = ?"
+
+    // Plain loops and ifs only, no inline calls, as in V001 (docs/kandra-bugs.md #5).
+    override fun up(session: CqlSession) {
+        if (session.execute(HAS_OWNER_COLUMN).one() == null) {
+            session.execute(ADD_OWNER_COLUMN)
+        }
+        for (chat in session.execute(CHATS)) {
+            if (chat.getString("kind") != "GROUP") {
+                continue
+            }
+            val chatId = chat.getUuid("chat_id")
+            for (member in session.execute(SimpleStatement.newInstance(MEMBERS, chatId))) {
+                if (member.getString("role") == "OWNER") {
+                    val owner =
+                        SimpleStatement.newInstance(
+                            SET_OWNER,
+                            member.getUuid("user_id"),
+                            chatId,
+                        )
+                    session.execute(owner)
+                }
+            }
         }
     }
 }

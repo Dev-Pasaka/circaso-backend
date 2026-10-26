@@ -9,7 +9,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
 /**
- * M10 `DELETE /chats/{chatId}/members/{userId}` for oneself: leaving a group. A direct chat can't be left. An owner
+ * M10 `DELETE /chats/{chatId}/members/{userId}` for oneself: leaving a group. A direct chat can't be left (`messaging.not_a_group`). An owner
  * who leaves hands ownership to the longest-serving admin, or else member; the last member leaving deletes the group
  * (`messaging.GroupDeleted`).
  */
@@ -17,7 +17,7 @@ class LeaveGroup(private val chats: ChatRepository, private val removal: MemberR
     suspend operator fun invoke(caller: UserId, chatId: ChatId): Resource<Unit> {
         val me = chats.member(chatId, caller) ?: return Resource.error(MessagingError.ChatNotFound)
         val chat = chats.chat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        if (chat.kind != ChatKind.GROUP) return Resource.error(MessagingError.NotAdmin)
+        if (chat.kind != ChatKind.GROUP) return Resource.error(MessagingError.NotAGroup)
         return removal.remove(me, by = caller)
     }
 }

@@ -13,13 +13,20 @@ interface BundleRateLimit {
     suspend fun retryAfter(userId: UserId): Duration?
 }
 
-/** `msg:members:{chatId}`: who is in a chat, for 10 minutes, cleared whenever membership changes. */
+/**
+ * `msg:members:{chatId}`: who is in a chat, for 10 minutes. A change writes a short marker in its place instead of
+ * deleting it, and readers fill it only if nothing is there, so a list read before a change is never put back
+ * after it (decision 2026-10-26).
+ */
 interface MembersCache {
+    /** The cached members, or null when nothing is cached or a change was just marked. */
     suspend fun get(chatId: ChatId): Set<UserId>?
 
-    suspend fun put(chatId: ChatId, members: Set<UserId>)
+    /** Caches [members] unless the key holds anything, a change marker included. */
+    suspend fun fillIfAbsent(chatId: ChatId, members: Set<UserId>)
 
-    suspend fun clear(chatId: ChatId)
+    /** Replaces the entry with a marker for a few seconds, so readers go to the rows and don't refill it. */
+    suspend fun markChanged(chatId: ChatId)
 }
 
 /**

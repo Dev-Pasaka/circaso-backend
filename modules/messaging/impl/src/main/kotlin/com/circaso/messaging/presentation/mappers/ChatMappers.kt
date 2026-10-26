@@ -34,17 +34,32 @@ fun parseRole(raw: String): Resource<Role> =
     Role.entries.firstOrNull { it.name == raw }?.let { Resource.success(it) }
         ?: malformed("role", "must be OWNER, ADMIN or MEMBER")
 
-fun CreateGroupRequest.toCommand(creator: UserId): Resource<CreateGroupCommand> {
+/** [requestKey] is the request's `Idempotency-Key`: the group's id is made from it, so a retry resumes the group. */
+fun CreateGroupRequest.toCommand(creator: UserId, requestKey: String?): Resource<CreateGroupCommand> {
+    val key = requestKey?.takeIf { it.isNotBlank() } ?: return malformed("Idempotency-Key", "required")
     val ids =
         when (val parsed = parseUserIds(memberIds)) {
             is Resource.Error -> return parsed
             is Resource.Success -> parsed.data
         }
-    return Resource.success(CreateGroupCommand(creator, sealedMeta, ids))
+    val command =
+        CreateGroupCommand(
+            creator,
+            sealedMeta,
+            ids,
+            key,
+        )
+    return Resource.success(command)
 }
 
 fun UpdateGroupRequest.toCommand(caller: UserId, chatId: ChatId) =
-    UpdateGroupCommand(caller, chatId, sealedMeta, settings?.membersCanAdd, version)
+    UpdateGroupCommand(
+        caller,
+        chatId,
+        sealedMeta,
+        settings?.membersCanAdd,
+        version,
+    )
 
 // ---- model → response ----
 

@@ -21,14 +21,18 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
+import com.circaso.shared.getOrNull
+import com.circaso.shared.map
 import com.circaso.users.api.ReachPolicy
 import java.time.Clock
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * M9 `POST /chats/{chatId}/members`: admins add people, or any member when the group allows it. Each person must be
  * reachable by whoever adds them; the rest are listed in `notAdded`, with no reason. People already in the group
- * are skipped. The member count goes up through the chat's version first, so two adds at once can't pass 1,000
- * between them; if the rows then fail to write, the count stays high, which only refuses adds early.
+ * are skipped. Inside the version check (decision 2026-10-26) the adder's right and who is already in are read
+ * again, and the member count goes up before the rows are written, so two adds at once can't pass 1,000 between
+ * them and the count is never below the rows; if the rows then fail to write, the count is set back to the rows.
  */
 class AddMembers(
     private val chats: ChatRepository,
@@ -56,47 +60,105 @@ class AddMembers(
         if (current.size + asked.size > config.maxGroupMembers) return Resource.error(MessagingError.GroupFull)
         val added = reach.reachable(caller, asked)
         val notAdded = (asked - added).sortedBy { it.toString() }
-        if (added.isEmpty()) return Resource.success(view(chat, caller, notAdded))
+        if (added.isEmpty()) return Resource.success(chat.viewFor(caller, notAdded))
 
+        var joining = emptySet<UserId>()
         val counted =
             writer.update(chatId) { latest ->
-                if (latest.memberCount + added.size > config.maxGroupMembers) {
-                    Resource.error(MessagingError.GroupFull)
-                } else {
-                    Resource.success(latest.copy(memberCount = latest.memberCount + added.size))
-                }
+                val decided =
+                    decide(
+                        latest,
+                        caller,
+                        added,
+                    )
+                joining = decided.getOrNull().orEmpty()
+                decided.map { latest.copy(memberCount = latest.memberCount + it.size) }
             }
         val updated =
             when (counted) {
                 is Resource.Error -> return counted
                 is Resource.Success -> counted.data
             }
-        store.commit(ChatChanges(joins = added.map { join(chatId, it, caller) }))
+        val joins =
+            joining.map { person ->
+                join(
+                    chatId,
+                    person,
+                    by = caller,
+                )
+            }
+        write(chatId, joins)
         membership.changed(chatId)
 
-        val everyone = current + added
-        notifier.membersAdded(everyone, chatId, added, caller)
-        return Resource.success(view(updated, caller, notAdded))
+        if (joining.isNotEmpty()) {
+            notifier.membersAdded(
+                recipients = current + joining,
+                chatId = chatId,
+                added = joining,
+                by = caller,
+            )
+        }
+        return Resource.success(updated.viewFor(caller, notAdded))
+    }
+
+    /** Inside the version check: who of [added] to write now, or why not. */
+    private suspend fun decide(
+        latest: Chat,
+        caller: UserId,
+        added: Set<UserId>,
+    ): Resource<Set<UserId>> {
+        if (latest.memberCount <= 0) return Resource.error(MessagingError.ChatNotFound)
+        val adder = chats.member(latest.chatId, caller) ?: return Resource.error(MessagingError.ChatNotFound)
+        if (!mayAdd(latest, adder)) return Resource.error(MessagingError.NotAdmin)
+        val present = chats.members(latest.chatId).map { it.userId }.toSet()
+        val joining = added - present
+        if (latest.memberCount + joining.size > config.maxGroupMembers) return Resource.error(MessagingError.GroupFull)
+        return Resource.success(joining)
+    }
+
+    private suspend fun write(chatId: ChatId, joins: List<Join>) {
+        try {
+            store.commit(ChatChanges(joins = joins))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            writer.recount(chatId)
+            throw e
+        }
     }
 
     private fun mayAdd(chat: Chat, adder: Member) =
-        chat.kind == ChatKind.GROUP && (adder.role.isAdmin || chat.settings.membersCanAdd)
+        chat.kind == ChatKind.GROUP && (chat.roleOf(adder).isAdmin || chat.settings.membersCanAdd)
 
     private fun join(
         chatId: ChatId,
         person: UserId,
         by: UserId,
     ): Join {
-        val member = Member(chatId, person, Role.MEMBER, clock.instant())
-        return Join(member, ChatKind.GROUP, bus.envelope(MemberAdded(chatId, person, by)))
+        val member =
+            Member(
+                chatId,
+                person,
+                Role.MEMBER,
+                clock.instant(),
+            )
+        val added =
+            MemberAdded(
+                chatId,
+                person,
+                by,
+            )
+        return Join(
+            member,
+            ChatKind.GROUP,
+            bus.envelope(added),
+        )
     }
 
-    private suspend fun view(
-        chat: Chat,
-        caller: UserId,
-        notAdded: List<UserId>,
-    ): ChatView {
-        val last = chats.userChat(caller, chat.chatId)?.lastMessageId
-        return views.view(chat, last, notAdded = notAdded)
-    }
+    private suspend fun Chat.viewFor(caller: UserId, notAdded: List<UserId>): ChatView =
+        views.view(
+            this,
+            lastMessageId = chats.userChat(caller, chatId)?.lastMessageId,
+            notAdded = notAdded,
+        )
 }

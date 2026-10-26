@@ -3,6 +3,7 @@ package com.circaso.messaging
 import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
 import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
 import com.circaso.messaging.data.migrations.V003_CreateChatTables
+import com.circaso.messaging.data.migrations.V004_AddChatOwner
 import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import io.kandra.test.FakeKandraSession
 import kotlin.test.Test
@@ -70,5 +71,23 @@ class MigrationsTest {
         V003_CreateChatTables.up(session)
 
         assertEquals(v003, session.capturedStatements().map { (it as SimpleStatement).query })
+    }
+
+    /** On a database with no such column and no chats: the check, the column, the (empty) read of chats. */
+    private val v004 =
+        listOf(
+            "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'circaso_messaging' AND " +
+                "table_name = 'chats' AND column_name = 'owner_id'",
+            "ALTER TABLE circaso_messaging.chats ADD owner_id UUID",
+            "SELECT chat_id, kind FROM circaso_messaging.chats",
+        )
+
+    @Test
+    fun `V004 runs exactly the statements it was applied with`() {
+        val session = FakeKandraSession()
+
+        V004_AddChatOwner.up(session)
+
+        assertEquals(v004, session.capturedStatements().map { (it as SimpleStatement).query })
     }
 }

@@ -51,7 +51,16 @@ class RealtimeFramesImpl(
         val payload = JsonObject(data.mapValues { (_, value) -> value.toJson() })
         for (batch in userIds.distinct().chunked(PARALLEL)) {
             coroutineScope {
-                batch.map { userId -> async { sendOne(userId, type, payload) } }.awaitAll()
+                batch
+                    .map { userId ->
+                        async {
+                            sendOne(
+                                userId,
+                                type,
+                                payload,
+                            )
+                        }
+                    }.awaitAll()
             }
         }
     }
@@ -63,7 +72,15 @@ class RealtimeFramesImpl(
     ) {
         try {
             val seq = redis.incrementRenewing(seqKey(userId), SEQ_TTL)
-            val envelope = RealtimeEnvelope(MODULE, type, Uuid7.generate().toString(), seq, clock.instant(), payload)
+            val envelope =
+                RealtimeEnvelope(
+                    MODULE,
+                    type,
+                    Uuid7.generate().toString(),
+                    seq,
+                    clock.instant(),
+                    payload,
+                )
             frames.save(
                 MessagingRealtimeRow(
                     userId.value,

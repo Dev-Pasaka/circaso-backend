@@ -70,6 +70,7 @@ fun ChatRow.toModel() =
         createdBy = UserId(createdBy),
         createdAt = createdAt,
         version = version,
+        ownerId = ownerId.orNull()?.let(::UserId),
         avatarMediaId = avatarMediaId.orNull(),
     )
 
@@ -84,6 +85,7 @@ fun Chat.toRow() =
         createdBy = createdBy.value,
         createdAt = createdAt,
         version = version,
+        ownerId = ownerId?.value ?: NIL_UUID,
         avatarMediaId = avatarMediaId ?: NIL_UUID,
     )
 

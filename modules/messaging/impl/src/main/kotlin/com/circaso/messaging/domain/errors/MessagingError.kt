@@ -74,6 +74,13 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
+    /** Leaving or removing someone only makes sense in a group; a direct chat stays two people. */
+    data object NotAGroup : MessagingError(
+        "messaging.not_a_group",
+        "That only works in a group.",
+        ErrorKind.INVALID,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

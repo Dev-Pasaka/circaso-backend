@@ -17,7 +17,15 @@ import com.circaso.users.domain.models.ProfileChange
 import com.circaso.users.domain.models.SyncCommand
 import com.circaso.users.domain.ports.LoggedFrame
 import com.circaso.users.domain.ports.StoredAvatar
+import com.circaso.users.domain.repositories.BlockRepository
 import com.circaso.users.domain.repositories.UsersChanges
+import com.circaso.users.domain.support.ProfileViews
+import com.circaso.users.domain.usecases.CanReach
+import com.circaso.users.domain.usecases.CheckBlockedEitherWay
+import com.circaso.users.domain.usecases.FilterReachable
+import com.circaso.users.domain.usecases.GetProfiles
+import com.circaso.users.presentation.api.ReachPolicyImpl
+import com.circaso.users.presentation.services.DirectoryService
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
 import java.util.UUID
@@ -266,6 +274,26 @@ class UsersTest {
 
             h.unblockUser(amina, me).data()
             assertFalse(h.blockedEitherWay(me, amina).data())
+        }
+
+    @Test
+    fun `the block check fails closed, so if blocks can't be read, the two count as blocked`() =
+        runTest {
+            val h = Harness()
+            val down =
+                object : BlockRepository by h.users {
+                    override suspend fun eitherWay(a: UserId, b: UserId): Boolean = error("database down")
+                }
+            val directory =
+                DirectoryService(
+                    CanReach(h.reach),
+                    FilterReachable(h.reach),
+                    GetProfiles(h.users, ProfileViews(FakeAvatars(), h.users)),
+                    h.replay,
+                    CheckBlockedEitherWay(down),
+                )
+
+            assertTrue(ReachPolicyImpl(directory).blockedEitherWay(UserId.new(), UserId.new()))
         }
 
     @Test

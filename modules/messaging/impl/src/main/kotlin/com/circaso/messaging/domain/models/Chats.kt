@@ -24,7 +24,9 @@ data class ChatSettings(val membersCanAdd: Boolean = false)
 /**
  * One chat. [sealedMeta] is the group's name and avatar sealed on the phone under the group metadata key; the
  * server never reads it, and it is null for a direct chat. [metaVersion] goes up each time it is re-sealed.
- * [version] goes up on every change to the chat, membership included.
+ * [version] goes up on every change to the chat, membership and roles included. [ownerId] is the group's owner,
+ * null for a direct chat: it lives on the chat so every change of owner goes through [version] (decision
+ * 2026-10-26), and the OWNER member row only mirrors it.
  */
 data class Chat(
     val chatId: ChatId,
@@ -36,9 +38,21 @@ data class Chat(
     val createdBy: UserId,
     val createdAt: Instant,
     val version: Long,
+    val ownerId: UserId? = null,
     /** The encrypted avatar file (chat media, MS5). Kept here so every rewrite of the chat carries it over. */
     val avatarMediaId: UUID? = null,
-)
+) {
+    /**
+     * [member]'s role as the chat sees it: the owner is whoever [ownerId] names, and a member row still saying OWNER
+     * after a handover (its rewrite lags the chat) counts as ADMIN.
+     */
+    fun roleOf(member: Member): Role =
+        when {
+            member.userId == ownerId -> Role.OWNER
+            member.role == Role.OWNER -> Role.ADMIN
+            else -> member.role
+        }
+}
 
 data class Member(
     val chatId: ChatId,
@@ -71,8 +85,16 @@ data class ChatView(
     val notAdded: List<UserId>? = null,
 )
 
-/** M5: the sealed name and avatar, and the people to add besides the creator. */
-data class CreateGroupCommand(val creator: UserId, val sealedMeta: String, val memberIds: Set<UserId>)
+/**
+ * M5: the sealed name and avatar, and the people to add besides the creator. [requestKey] is the request's
+ * `Idempotency-Key`, from which the chat id is made, so a retry resumes the same group.
+ */
+data class CreateGroupCommand(
+    val creator: UserId,
+    val sealedMeta: String,
+    val memberIds: Set<UserId>,
+    val requestKey: String,
+)
 
 /** M8: each field left null stays as it is. [version] is the chat version the phone last read. */
 data class UpdateGroupCommand(
@@ -82,3 +104,6 @@ data class UpdateGroupCommand(
     val membersCanAdd: Boolean?,
     val version: Long,
 )
+
+/** M11 decided inside the version check: the chat to write (a new owner, a new version) and the rows that follow. */
+data class RoleChange(val chat: Chat, val rows: List<Member>)

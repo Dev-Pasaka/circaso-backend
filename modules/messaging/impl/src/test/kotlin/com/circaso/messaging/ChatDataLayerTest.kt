@@ -10,6 +10,7 @@ import com.circaso.messaging.data.entities.UserChatRow
 import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
 import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
 import com.circaso.messaging.data.migrations.V003_CreateChatTables
+import com.circaso.messaging.data.migrations.V004_AddChatOwner
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingOutboxStore
 import com.circaso.messaging.data.repositories.MessagingStoreImpl
@@ -43,6 +44,8 @@ import io.kandra.test.KandraTestcontainers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import java.lang.reflect.Modifier
@@ -82,6 +85,7 @@ class ChatDataLayerTest {
                     V001_CreateMessagingTables,
                     V002_CreateKeyDirectoryTables,
                     V003_CreateChatTables,
+                    V004_AddChatOwner,
                 )
             }
             KandraTestcontainers.freshKeyspace(*entities)
@@ -265,6 +269,42 @@ class ChatDataLayerTest {
             assertNull(chats.chat(chat.chatId))
             assertNull(chats.member(chat.chatId, amina))
             assertNull(chats.userChat(amina, chat.chatId))
+        }
+
+    @Test
+    fun `of many removals of the same member at once, exactly one claims it`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+            val brian = UserId.new()
+            val chat = group(amina)
+            store.commit(
+                ChatChanges(
+                    chats = listOf(chat),
+                    joins = listOf(join(chat, amina, Role.OWNER, false), join(chat, brian)),
+                ),
+            )
+
+            val claims =
+                (1..8)
+                    .map { async(Dispatchers.IO) { chats.claimRemoval(chat.chatId, brian) } }
+                    .awaitAll()
+
+            assertEquals(1, claims.count { it })
+            assertNull(chats.member(chat.chatId, brian))
+            assertFalse(chats.claimRemoval(chat.chatId, UserId.new()), "nobody to claim")
+        }
+
+    @Test
+    fun `the owner is kept on the chat row`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+            val chat = group(amina).copy(ownerId = amina)
+            store.commit(ChatChanges(chats = listOf(chat)))
+
+            assertEquals(amina, chats.chat(chat.chatId)!!.ownerId)
+            val direct = chat.copy(chatId = ChatId.new(), kind = ChatKind.DIRECT, ownerId = null)
+            store.commit(ChatChanges(chats = listOf(direct)))
+            assertNull(chats.chat(direct.chatId)!!.ownerId, "the nil UUID reads back as no owner")
         }
 
     @Test

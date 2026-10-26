@@ -72,7 +72,8 @@ fun Route.chatController(chats: ChatService) {
 
             post("groups") {
                 val caller = call.userId()
-                val result = call.receive<CreateGroupRequest>().toCommand(caller).flatMap { chats.createGroup(it) }
+                val key = call.request.headers["Idempotency-Key"]
+                val result = call.receive<CreateGroupRequest>().toCommand(caller, key).flatMap { chats.createGroup(it) }
                 call.respondDefault(result.toDefaultResponse { it.toDto() })
             }.docs<CreateGroupRequest, ChatDto>(
                 "M5 · Create a group with its sealed name and avatar and its first members",
@@ -80,7 +81,9 @@ fun Route.chatController(chats: ChatService) {
                 listOf("messaging.group_invalid", "messaging.group_full", "request.malformed"),
                 notes =
                     "$SCOPE $SEALED You become the owner. $NOT_ADDED At most 1,000 people, you included. Every " +
-                        "member gets one `member.added` frame listing everyone added in `userIds`.",
+                        "member gets one `member.added` frame listing everyone added in `userIds`. The group's id " +
+                        "comes from the `Idempotency-Key`: if a create fails part-way, retry with the same key and " +
+                        "it carries on with the same group.",
             )
 
             route("/{chatId}") {
@@ -133,7 +136,13 @@ private fun Route.memberRoutes(chats: ChatService) {
         val request = call.receive<AddMembersRequest>()
         val result =
             parseChatId(call.parameters["chatId"]).flatMap { chatId ->
-                parseUserIds(request.memberIds).flatMap { chats.addMembers(caller, chatId, it) }
+                parseUserIds(request.memberIds).flatMap { ids ->
+                    chats.addMembers(
+                        caller,
+                        chatId,
+                        ids,
+                    )
+                }
             }
         call.respondDefault(result.toDefaultResponse { it.toDto() })
     }.docs<AddMembersRequest, ChatDto>(
@@ -149,16 +158,28 @@ private fun Route.memberRoutes(chats: ChatService) {
     delete("{userId}") {
         val caller = call.userId()
         val result =
-            call.chatAndUser().flatMap { (chatId, target) -> chats.removeMember(caller, chatId, target) }
+            call.chatAndUser().flatMap { (chatId, target) ->
+                chats.removeMember(
+                    caller,
+                    chatId,
+                    target,
+                )
+            }
         call.respondDefault(result.toDefaultResponse { MemberRemovedResponse(removed = true) })
     }.docs<NoBody, MemberRemovedResponse>(
         "M10 · Remove someone from a group, or leave it (your own user id)",
         TAG,
-        listOf("messaging.chat_not_found", "messaging.not_admin", "request.malformed"),
+        listOf(
+            "messaging.chat_not_found",
+            "messaging.not_admin",
+            "messaging.not_a_group",
+            "request.malformed",
+        ),
         notes =
             "$SCOPE Admins remove admins and members; nobody removes the owner. With your own user id you " +
-                "leave. When the owner leaves, ownership passes to the longest-serving admin, or else member, " +
-                "and members get `chat.updated`. The last member leaving deletes the group. Everyone who was in " +
+                "leave. A direct chat can't be left (`messaging.not_a_group`). When the owner leaves, " +
+                "ownership passes to the longest-serving admin, or else member, and members get `chat.updated`. " +
+                "The last member leaving deletes the group. Everyone who was in " +
                 "it, the person included, gets a `member.removed` frame and rotates their sender keys.",
     )
 
@@ -167,7 +188,14 @@ private fun Route.memberRoutes(chats: ChatService) {
         val role = parseRole(call.receive<SetRoleRequest>().role)
         val result =
             call.chatAndUser().flatMap { (chatId, target) ->
-                role.flatMap { chats.setRole(caller, chatId, target, it) }
+                role.flatMap {
+                    chats.setRole(
+                        caller,
+                        chatId,
+                        target,
+                        it,
+                    )
+                }
             }
         call.respondDefault(result.toDefaultResponse { it.toDto() })
     }.docs<SetRoleRequest, ChatDto>(

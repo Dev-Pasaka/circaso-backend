@@ -14,12 +14,20 @@ import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.shared.UserId
 import io.kandra.core.exception.KandraOptimisticLockException
 import io.kandra.runtime.dsl.KandraColumnRef
+import io.kandra.runtime.dsl.KandraRawQuery
 import io.kandra.runtime.repository.KandraSuspendRepository
 import java.util.UUID
 
 // Column names Kandra derives from the entity properties (camelCase to snake_case).
 private val CHAT_ID = KandraColumnRef<UUID>("chat_id")
 private val USER_ID = KandraColumnRef<UUID>("user_id")
+
+/**
+ * Kandra has no conditional delete, so the claim is written as CQL. `IF EXISTS` makes it a lightweight transaction:
+ * of a remove and a leave of the same person racing, only one sees `[applied] = true`.
+ */
+private const val CLAIM_REMOVAL_CQL =
+    "DELETE FROM circaso_messaging.members_by_chat WHERE chat_id = ? AND user_id = ? IF EXISTS"
 
 /** Chats and membership on Kandra. Writes of several rows go through `MessagingStoreImpl`, with their events. */
 class ChatRepositoryImpl(
@@ -48,6 +56,15 @@ class ChatRepositoryImpl(
 
     override suspend fun member(chatId: ChatId, userId: UserId): Member? =
         members.findById(chatId.value, userId.value)?.toModel()
+
+    override suspend fun claimRemoval(chatId: ChatId, userId: UserId): Boolean {
+        val query =
+            KandraRawQuery
+                .cql(CLAIM_REMOVAL_CQL)
+                .bind(chatId.value, userId.value)
+                .build()
+        return members.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
+    }
 
     override suspend fun chatsOf(userId: UserId): List<UserChat> =
         userChats.findAll { USER_ID eq userId.value }.map { it.toModel() }

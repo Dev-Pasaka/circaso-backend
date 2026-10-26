@@ -45,7 +45,12 @@ class ChatService(
         caller: UserId,
         chatId: ChatId,
         memberIds: Set<UserId>,
-    ): Resource<ChatView> = addMembers.invoke(caller, chatId, memberIds)
+    ): Resource<ChatView> =
+        addMembers.invoke(
+            caller,
+            chatId,
+            memberIds,
+        )
 
     /** M10 is one route for two things: removing someone else, or leaving when the target is the caller. */
     suspend fun removeMember(
@@ -54,7 +59,11 @@ class ChatService(
         target: UserId,
     ): Resource<Unit> {
         if (target == caller) return leaveGroup(caller, chatId)
-        return removeMember.invoke(caller, chatId, target)
+        return removeMember.invoke(
+            caller,
+            chatId,
+            target,
+        )
     }
 
     suspend fun setRole(
@@ -62,7 +71,13 @@ class ChatService(
         chatId: ChatId,
         target: UserId,
         role: Role,
-    ): Resource<ChatView> = setRole.invoke(caller, chatId, target, role)
+    ): Resource<ChatView> =
+        setRole.invoke(
+            caller,
+            chatId,
+            target,
+            role,
+        )
 
     suspend fun members(chatId: ChatId): Resource<Set<UserId>> = getMembers(chatId)
 }

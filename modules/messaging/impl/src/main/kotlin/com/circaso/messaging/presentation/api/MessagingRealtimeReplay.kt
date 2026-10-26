@@ -23,5 +23,12 @@ class MessagingRealtimeReplay(private val realtime: RealtimeService) : RealtimeR
     }
 
     private fun resync(seq: Long) =
-        RealtimeEnvelope("messaging", "resync", Uuid7.generate().toString(), seq, Instant.now(), JsonObject(emptyMap()))
+        RealtimeEnvelope(
+            "messaging",
+            "resync",
+            Uuid7.generate().toString(),
+            seq,
+            Instant.now(),
+            JsonObject(emptyMap()),
+        )
 }
