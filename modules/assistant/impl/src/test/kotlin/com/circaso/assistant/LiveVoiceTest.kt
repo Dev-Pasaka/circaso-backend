@@ -37,6 +37,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -269,6 +270,10 @@ class LiveVoiceTest {
                 live.h.memory.audit
                     .none { "hidden balance" in it.detail || "secret balance" in it.detail },
             )
+            // The phone sees the close before the server writes its closing line, so wait for it.
+            withTimeoutOrNull(5_000) {
+                while (logs.list.none { "live voice closed" in it.formattedMessage }) delay(20)
+            }
             val lines = logs.list.map { it.formattedMessage + " " + it.argumentArray.orEmpty().joinToString() }
             assertTrue(lines.any { "live voice closed" in it }, "the socket's life is logged")
             assertTrue(
