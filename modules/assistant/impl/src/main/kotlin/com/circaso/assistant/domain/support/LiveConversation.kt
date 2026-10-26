@@ -111,6 +111,12 @@ class LiveConversation(
     private var speechStart = -1L
     private var lastSpeechAt = 0L
 
+    /**
+     * Whether this session's transcriber has ever timed its words. From the first [AudioSpan] on, the arrival-time
+     * fallback is ignored, so the two clocks can never both charge the same speech.
+     */
+    private var hasAudioClock = false
+
     /** The user's speech on the transcriber's clock, in stream seconds: charged up to [audioFrom], heard up to [audioTo]. */
     private var audioFrom = -1.0
     private var audioTo = 0.0
@@ -219,7 +225,9 @@ class LiveConversation(
     private suspend fun heard(event: TranscriptionEvent) {
         when (event) {
             is TranscriptionEvent.SpeechStarted -> {
-                userSpoke()
+                // voice activity, not words: it resets the silence timer and can stop Asha, but is never charged
+                // (noise trips it too, and an open mic is free)
+                userSpoke(isWord = false)
             }
 
             is TranscriptionEvent.Interim -> {
@@ -258,7 +266,7 @@ class LiveConversation(
                 heardAudio(audio)
             }
 
-            isWord -> {
+            isWord && !hasAudioClock -> {
                 if (speechStart < 0) speechStart = now
                 lastSpeechAt = now
             }
@@ -268,6 +276,11 @@ class LiveConversation(
 
     /** Words on the transcriber's clock. A gap of more than a second starts a new stretch; the gap isn't charged. */
     private fun heardAudio(span: AudioSpan) {
+        if (!hasAudioClock) {
+            // anything the fallback gathered before the first timed words is dropped, not charged twice
+            hasAudioClock = true
+            speechStart = -1
+        }
         if (audioFrom < 0 || span.startSeconds - audioTo > AUDIO_GAP_SECONDS) {
             chargeAudio()
             audioFrom = span.startSeconds

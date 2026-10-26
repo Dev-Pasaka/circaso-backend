@@ -499,7 +499,7 @@ class LiveVoiceTest {
         }
 
     @Test
-    fun `the user's speech is charged from its start to its last word`() =
+    fun `without timestamps the user's speech is charged by arrival, from the first word to the last`() =
         testApplication {
             val live = LiveHarness(Harness())
             live.serve(this)
@@ -521,9 +521,10 @@ class LiveVoiceTest {
                 hangUp(got)
             }
             assertEquals(
-                3,
+                2,
                 voiceSeconds(live),
-                "about 2.5 s of speech, the 1.5 s pause left out (was ${voiceSeconds(live)})",
+                "2 s from the first word to the last; voice activity before them and the 1.5 s pause are free " +
+                    "(was ${voiceSeconds(live)})",
             )
         }
 
@@ -1045,5 +1046,50 @@ class LiveVoiceTest {
             }
             assertTrue(got.frames.isEmpty())
             assertTrue(live.ears.sessions.isEmpty())
+        }
+
+    @Test
+    fun `voice activity with no words is never charged`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                repeat(4) {
+                    ears.push(TranscriptionEvent.SpeechStarted) // a cough, a passing car
+                    delay(1_000)
+                }
+                hangUp(got)
+            }
+            assertEquals(0, voiceSeconds(live))
+        }
+
+    @Test
+    fun `repeated voice activity doesn't add to the transcriber's timed speech`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.SpeechStarted, TranscriptionEvent.Interim("send", AudioSpan(0.2, 1.0)))
+                delay(1_500)
+                ears.push(
+                    TranscriptionEvent.SpeechStarted,
+                    TranscriptionEvent.Interim("send Mum five hundred", AudioSpan(0.2, 3.2)),
+                    TranscriptionEvent.Final("send Mum five hundred", endOfTurn = true, audio = AudioSpan(0.2, 3.2)),
+                )
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+            assertEquals(3, voiceSeconds(live), "exactly the 3 s span the transcriber timed")
         }
 }
