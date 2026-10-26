@@ -43,6 +43,12 @@ private val log = LoggerFactory.getLogger("com.circaso.assistant.presentation.co
 private const val AUTH_WINDOW_MILLIS = 10_000L
 
 /**
+ * Frames on this socket are at most 64 KB both ways, like the main socket (decision 2026-10-25). Opus packets are far
+ * smaller; Asha's PCM is split to fit.
+ */
+internal const val MAX_FRAME_BYTES = 64 * 1024
+
+/**
  * A11: the live voice socket, `wss://…/v1/assistant/voice/live` (Assistant → Live voice, Phase 1). Like the main
  * socket it authenticates with its first frame, not a header, and takes the user token only. Binary frames are audio
  * both ways (Opus from the phone, Asha's PCM back); text frames are JSON with a `type` (the protocol is in
@@ -124,6 +130,10 @@ private suspend fun DefaultWebSocketServerSession.converse(conversation: LiveCon
 
 private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveConversation) {
     for (frame in incoming) {
+        if (frame.data.size > MAX_FRAME_BYTES) {
+            close(CloseReason(CloseReason.Codes.TOO_BIG, "frame too large"))
+            break
+        }
         when (frame) {
             is Frame.Binary -> conversation.audio(frame.readBytes())
             is Frame.Text -> phoneSaid(frame.readText(), conversation)
@@ -164,13 +174,23 @@ private suspend fun DefaultWebSocketServerSession.deliver(event: LiveEvent, conv
         if (json != null) {
             send(Frame.Text(json))
         } else if (event is LiveEvent.ReplyAudio) {
-            send(Frame.Binary(true, event.bytes))
+            sendAudio(event.bytes)
         }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         log.debug("live voice frame not sent: error={}", e::class.simpleName)
         conversation.hangUp(LiveEnd.PhoneGone)
+    }
+}
+
+/** A piece of Asha's speech, in frames of at most [MAX_FRAME_BYTES]. */
+private suspend fun DefaultWebSocketServerSession.sendAudio(bytes: ByteArray) {
+    var start = 0
+    while (start < bytes.size) {
+        val end = minOf(start + MAX_FRAME_BYTES, bytes.size)
+        send(Frame.Binary(true, bytes.copyOfRange(start, end)))
+        start = end
     }
 }
 

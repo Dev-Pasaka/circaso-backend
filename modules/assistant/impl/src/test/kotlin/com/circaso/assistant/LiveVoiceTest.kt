@@ -284,6 +284,36 @@ class LiveVoiceTest {
         }
 
     @Test
+    fun `frames are at most 64 KB both ways`() =
+        testApplication {
+            // the scripted voice's audio is the sentence's bytes, so a ~90 KB sentence needs two frames
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val long = "Asha talks for a while. " + "la ".repeat(30_000).trim() + "."
+            live.h.model.say(long)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("talk to me", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+
+                send(Frame.Binary(true, ByteArray(64 * 1024 + 1)))
+                val closed = readToClose(got)
+                assertEquals(CloseReason.Codes.TOO_BIG.code, closed?.code)
+            }
+            val audio = got.frames.filterIsInstance<ByteArray>()
+            assertTrue(audio.all { it.size <= 64 * 1024 })
+            assertTrue(audio.size > 2, "the long sentence was split")
+            assertEquals(
+                long.length - 1,
+                audio.sumOf { it.size },
+                "every byte arrives (the space between sentences aside)",
+            )
+        }
+
+    @Test
     fun `a user with no voice allowance left is refused with the reset time`() =
         testApplication {
             val live = LiveHarness(Harness())

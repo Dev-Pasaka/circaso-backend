@@ -372,7 +372,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
 - **Live voice (hands-free):** open `wss://<host>/v1/assistant/voice/live` for the length of the conversation and close it when the user leaves the voice screen. Not when the language is Swahili: then record clips (Voice in) and speak replies with the phone's own text-to-speech.
   1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true }`. An agent token, a bad token or no auth frame closes the socket with 1008 `unauthorized` / `auth required`.
-  2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "linear16", "sampleRate": 16000 } }`. Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works).
+  2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "linear16", "sampleRate": 16000 } }`. Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `frame too large`.
   3. Server text frames (JSON, routed on `type`):
 
 | `type` | Fields | Do |

@@ -181,7 +181,7 @@ The phone sends back at most 30 short snippets. They are used for that answer an
 
 While the user talks with Asha hands-free, the phone opens a second WebSocket, `wss://api.circaso.com/v1/assistant/voice/live`, only for that conversation. Like the main socket, the first frame authenticates, with the user token only: `{"type":"auth","accessToken":"…","agentToken":"…","language":"en","chatReading":true}`. The server answers `{"type":"ready","voiceSecondsLeft":…,"audio":{"encoding":"linear16","sampleRate":16000}}`.
 
-Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as 16-bit PCM at the `ready` frame's sample rate. Text frames are JSON with a `type`:
+Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and Asha's voice comes back as 16-bit PCM at the `ready` frame's sample rate. No frame is larger than 64 KB, either way. Text frames are JSON with a `type`:
 
 | `type` | From | Meaning |
 | --- | --- | --- |

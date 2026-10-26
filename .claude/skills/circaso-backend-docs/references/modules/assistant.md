@@ -90,7 +90,7 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 4. Frames on this socket are at most 64 KB, like the main socket (Opus frames are far smaller). Usage counts voice seconds both ways; the socket closes at the allowance or after 30 s of silence. Audio is never stored.
 5. For Swahili (the user's language setting) the live path isn't used: the phone records a clip for A3 (Whisper) and speaks the reply with its own voice.
 
-**Frames (A11, built in AI2).** Binary frames are audio both ways: Opus packets from the phone (16 kHz mono), and Asha's speech to the phone as 16-bit little-endian PCM, mono, at the sample rate the `ready` frame names (Aura's live socket makes only uncompressed audio). Text frames are JSON with a `type`:
+**Frames (A11, built in AI2).** Every frame is at most 64 KB both ways (a bigger one from the phone closes the socket with 1009 `frame too large`; Asha's audio is split to fit). Binary frames are audio both ways: Opus packets from the phone (16 kHz mono), and Asha's speech to the phone as 16-bit little-endian PCM, mono, at the sample rate the `ready` frame names (Aura's live socket makes only uncompressed audio). Text frames are JSON with a `type`:
 
 | Direction | `type` | Fields | Meaning |
 | --- | --- | --- | --- |
