@@ -886,6 +886,48 @@ class LiveVoiceTest {
             assertEquals("Back again.", got.ofType("reply").single().text("text"))
         }
 
+    @Test
+    fun `QA - a spoken turn over the message limit is an error frame, not a session revoked close`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("Back again.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("la ".repeat(2_000).trim(), endOfTurn = true))
+                readUntil(got) { it.ofType("error").isNotEmpty() }
+                ears.push(TranscriptionEvent.Final("short one", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+            assertEquals("request.malformed", got.ofType("error").single().text("code"))
+        }
+
+    @Test
+    fun `QA - a tool_results frame whose snippets are the wrong shape gets request malformed`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                send(
+                    Frame.Text(
+                        """{"type":"tool_results","turnId":"${UUID.randomUUID()}","callId":"c1","snippets":["text"]}""",
+                    ),
+                )
+                readUntil(got) { it.ofType("error").isNotEmpty() }
+                hangUp(got)
+            }
+            assertEquals("request.malformed", got.ofType("error").single().text("code"))
+        }
+
     // ---- ending without leaks ---------------------------------------------------------------------------------
 
     @Test
