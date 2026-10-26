@@ -26,6 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * reply a sentence at a time (`Speak`, then `Flush`), and audio comes back as binary frames; `Clear` drops what hasn't
  * been sent when the user talks over Asha.
  *
+ * The assistant flushes once per reply, not per sentence, to stay under Deepgram's limit on `Flush` messages (its docs
+ * give 20 per 60 s; the smoke test confirms the limit Workers AI applies); a flush over it is answered with a `Warning`.
+ *
  * Aura's live socket only makes uncompressed audio (Deepgram's streaming encodings are `linear16`, `mulaw` and
  * `alaw`). The phone receives mulaw at 8 kHz by default, 64 kbit/s and clear enough for speech (decision 2026-10-26);
  * [encoding] and [sampleRate] are settings, so it can be raised to 16-bit PCM. Aura speaks English only: another language is refused
@@ -132,7 +135,7 @@ class WorkersAiLiveSpeech(
 
                 "Warning" -> {
                     log.warn("live speech warning from the vendor")
-                    null
+                    SpeechEvent.Warning
                 }
 
                 else -> {

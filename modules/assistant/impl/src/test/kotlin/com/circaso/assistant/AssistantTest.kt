@@ -8,6 +8,7 @@ import com.circaso.assistant.domain.models.Role
 import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.VoiceClip
+import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.AccountDeleted
@@ -17,6 +18,7 @@ import com.circaso.shared.UserId
 import kotlinx.coroutines.test.runTest
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -620,5 +622,26 @@ class AssistantTest {
             h.transcribe(me, VoiceClip("hello".toByteArray(), "audio/mp4", 2, null)).data()
 
             assertEquals(30, h.quota.voiceSeconds(me, Clock.systemUTC().today()))
+        }
+
+    @Test
+    fun `a turn re-parked with a new call between the check and the take stays waiting for that call`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.call("searchChats", id = "c1")
+            val waiting = h.start(ask("what did the chama agree?")).data() as TurnResult.NeedsDevice
+            // the check sees c1; by the take, the turn has been parked again waiting on c2
+            val racing =
+                object : PendingTurns by h.pending {
+                    override suspend fun callIdOf(userId: UserId, turnId: UUID): String? {
+                        val turn = h.pending.take(userId, turnId)!!
+                        h.pending.save(turn.copy(callId = "c2"))
+                        return "c1"
+                    }
+                }
+
+            val answer = DeviceToolResult(me, waiting.turnId, "c1", emptyList(), "agent-token", "req-2")
+            assertEquals("assistant.turn_not_found", h.resumeWith(racing).invoke(answer).errorCode())
+            assertEquals("c2", h.pending.callIdOf(me, waiting.turnId), "the new call is still waiting")
         }
 }

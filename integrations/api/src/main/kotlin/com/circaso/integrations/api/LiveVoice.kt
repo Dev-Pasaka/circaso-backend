@@ -126,6 +126,9 @@ sealed interface SpeechEvent {
 
     data object Cleared : SpeechEvent
 
+    /** The provider couldn't act on a command (Aura answers a `Flush` over its rate limit this way). */
+    data object Warning : SpeechEvent
+
     /** The vendor ended the session on its side; [LiveSpeechSession.next] returns null after this. */
     data class Failed(val error: IntegrationError) : SpeechEvent
 }

@@ -77,13 +77,17 @@ class ScriptedEars : LiveTranscription {
  * plays for 1/8000 s. English only, like Aura.
  */
 class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
+    /** False loses every `Flushed`, as a voice might. */
+    @Volatile var answersFlush = true
+
     val sessions = CopyOnWriteArrayList<Session>()
 
     inner class Session : LiveSpeechSession {
         private val events = Channel<SpeechEvent>(Channel.UNLIMITED)
-        private val queued = StringBuilder()
+        private val queued = mutableListOf<String>()
         val spoken = CopyOnWriteArrayList<String>()
         val clears = AtomicInteger()
+        val flushes = AtomicInteger()
 
         @Volatile var isClosed = false
 
@@ -91,14 +95,14 @@ class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
 
         override suspend fun speak(text: String) {
             spoken += text
-            queued.append(text)
+            queued += text
         }
 
         override suspend fun flush() {
-            val text = queued.toString()
+            flushes.incrementAndGet()
+            queued.filter { it.isNotEmpty() }.forEach { events.trySend(SpeechEvent.Audio(it.toByteArray())) }
             queued.clear()
-            if (text.isNotEmpty()) events.trySend(SpeechEvent.Audio(text.toByteArray()))
-            events.trySend(SpeechEvent.Flushed)
+            if (answersFlush) events.trySend(SpeechEvent.Flushed)
         }
 
         override suspend fun clear() {

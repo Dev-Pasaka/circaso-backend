@@ -79,15 +79,27 @@ class LiveConversation(
     private val utterance = StringBuilder()
     private val generation = AtomicInteger()
     private val unmeteredMicros = AtomicLong()
-    private val pendingFlushes = AtomicInteger()
 
-    /** Replies whose audio is sent and still playing on the phone: `reply_done` goes once it has all played. */
+    /** Replies whose audio is all sent and still playing on the phone: `reply_done` goes once it has played. */
     private val playingReplies = ConcurrentLinkedQueue<LiveEvent.ReplyDone>()
 
-    /** Sentences sent to the voice and not yet heard: each goes to the phone as its audio starts, so they line up. */
-    private val captions = ConcurrentLinkedQueue<LiveEvent>()
+    /**
+     * The reply being spoken, from its one `Flush` until the voice answers it. Its sentences go to the phone as the
+     * audio reaches them, timed at [SPOKEN_CHARS_PER_SECOND] (the voice doesn't say where a sentence starts).
+     */
+    private class Speaking(val captions: ArrayDeque<Caption>, val done: LiveEvent.ReplyDone) {
+        var audioSeconds = 0.0
+    }
 
-    @Volatile private var captionShown = false
+    private class Caption(val text: String, val atSeconds: Double)
+
+    private var speaking: Speaking? = null
+
+    /** Flushes of replies talked over, whose `Flushed` may still arrive and must not finish the next reply. */
+    private var staleFlushes = 0
+
+    /** When the voice last sent anything; a flush unanswered for [FLUSH_STALL_MILLIS] is taken as done. */
+    @Volatile private var lastVoiceEventAt = 0L
 
     /** Turns outlive the socket (a started turn is always saved), so they don't run in [run]'s scope. */
     private val turns = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -352,7 +364,7 @@ class LiveConversation(
 
     /** Asha is thinking, waiting for the phone, about to speak, or her audio is still playing on the phone. */
     private fun isAshaBusy(): Boolean =
-        answering >= 0 || deviceGeneration >= 0 || pendingFlushes.get() > 0 || nowMillis() < playingUntil
+        answering >= 0 || deviceGeneration >= 0 || speaking != null || nowMillis() < playingUntil
 
     /** Called with [state] held. */
     private suspend fun bargeIn() {
@@ -361,12 +373,13 @@ class LiveConversation(
         answering = -1
         deviceGeneration = -1
         dropAudio = true
-        pendingFlushes.set(0)
         // a reply cut off half way is still saved: the phone hears of it, unspoken
-        captions.filterIsInstance<LiveEvent.ReplyDone>().forEach { emit(it.copy(spoken = false)) }
+        speaking?.let {
+            staleFlushes++
+            emit(it.done.copy(spoken = false))
+        }
+        speaking = null
         generateSequence { playingReplies.poll() }.forEach { emit(it.copy(spoken = false)) }
-        captions.clear()
-        captionShown = false
         playingUntil = 0
         line.speech.clear()
         emit(LiveEvent.Interrupted)
@@ -450,28 +463,26 @@ class LiveConversation(
     }
 
     /**
-     * Sentence by sentence, so the first is heard while the rest is made. Each sentence's text goes to the phone as its
-     * audio starts, and `reply_done` after the last sentence's audio. False if the user talked over it first.
+     * The reply sentence by sentence, then one `Flush` (one per reply keeps under the voice's flush limit). Each
+     * sentence's text goes to the phone as its audio is reached, and `reply_done` once the audio has played. False if
+     * the user talked over it first.
      */
     private suspend fun speak(asked: Int, reply: ChatMessage): Boolean {
-        for (sentence in sentences(reply.text)) {
-            val queued =
-                state.withLock {
-                    if (asked != generation.get() || ended.isCompleted) return@withLock false
-                    dropAudio = false
-                    captions.add(LiveEvent.ReplyText(sentence))
-                    pendingFlushes.incrementAndGet()
-                    line.speech.speak(sentence)
-                    line.speech.flush()
-                    true
-                }
-            if (!queued) return false
-        }
+        val sentences = sentences(reply.text)
         return state.withLock {
-            if (asked != generation.get()) return@withLock false
-            val done = LiveEvent.ReplyDone(reply, spoken = true)
-            // it follows the last sentence's audio, and goes once that has played ([deliverPlayedReplies])
-            if (pendingFlushes.get() == 0 && captions.isEmpty()) playingReplies.add(done) else captions.add(done)
+            if (asked != generation.get() || ended.isCompleted) return@withLock false
+            dropAudio = false
+            val captions = ArrayDeque<Caption>()
+            var chars = 0
+            for (sentence in sentences) {
+                captions.add(Caption(sentence, chars / SPOKEN_CHARS_PER_SECOND))
+                chars += sentence.length + 1
+            }
+            speaking?.let { flushDone() }
+            speaking = Speaking(captions, LiveEvent.ReplyDone(reply, spoken = true))
+            lastVoiceEventAt = nowMillis()
+            sentences.forEach { line.speech.speak(it) }
+            line.speech.flush()
             true
         }
     }
@@ -480,8 +491,14 @@ class LiveConversation(
         while (true) {
             when (val event = line.speech.next() ?: return hangUp(LiveEnd.ProviderFailed)) {
                 is SpeechEvent.Audio -> played(event.bytes)
+
                 is SpeechEvent.Flushed -> flushed()
-                is SpeechEvent.Cleared -> dropAudio = false
+
+                // a refused Flush (over the rate limit) won't be answered; its audio, if any, has come
+                is SpeechEvent.Warning -> flushed()
+
+                is SpeechEvent.Cleared -> cleared()
+
                 is SpeechEvent.Failed -> hangUp(LiveEnd.ProviderFailed)
             }
         }
@@ -489,25 +506,43 @@ class LiveConversation(
 
     private suspend fun flushed() =
         state.withLock {
-            if (!captionShown) caption()
-            captionShown = false
-            pendingFlushes.updateAndGet { (it - 1).coerceAtLeast(0) }
-            while (captions.peek() is LiveEvent.ReplyDone) playingReplies.add(captions.poll() as LiveEvent.ReplyDone)
+            lastVoiceEventAt = nowMillis()
+            if (staleFlushes > 0) {
+                staleFlushes-- // the answer to a flush of a reply talked over
+                return@withLock
+            }
+            flushDone()
         }
 
-    /** The next sentence's text, if it is next in line (not a `reply_done` waiting for audio still to come). */
-    private suspend fun caption() {
-        if (captions.peek() is LiveEvent.ReplyText) emit(captions.poll())
+    /** After a `Clear` the voice answers no earlier flush: none is stale any more. */
+    private suspend fun cleared() =
+        state.withLock {
+            dropAudio = false
+            staleFlushes = 0
+        }
+
+    /** The reply's audio is all sent: its last sentences go out, and `reply_done` once it has played. With [state]. */
+    private suspend fun flushDone() {
+        val reply = speaking ?: return
+        generateSequence { reply.captions.removeFirstOrNull() }.forEach { emit(LiveEvent.ReplyText(it.text)) }
+        playingReplies.add(reply.done)
+        speaking = null
+    }
+
+    /** The sentences the audio has reached, before [chunkSeconds] more of it. Called with [state] held. */
+    private suspend fun captionsUpTo(reply: Speaking, chunkSeconds: Double) {
+        while (reply.captions.firstOrNull()?.let { it.atSeconds <= reply.audioSeconds } == true) {
+            emit(LiveEvent.ReplyText(reply.captions.removeFirst().text))
+        }
+        reply.audioSeconds += chunkSeconds
     }
 
     private suspend fun played(bytes: ByteArray) {
         val micros = (line.speech.format.seconds(bytes.size.toLong()) * MICROS).roundToLong()
         state.withLock {
+            lastVoiceEventAt = nowMillis()
             if (dropAudio) return@withLock
-            if (!captionShown) {
-                caption()
-                captionShown = true
-            }
+            speaking?.let { captionsUpTo(it, micros.toDouble() / MICROS) }
             unplayedMicros.addAndGet(micros)
             playingUntil = max(playingUntil, nowMillis()) + micros / 1_000
             emit(LiveEvent.ReplyAudio(bytes))
@@ -520,6 +555,7 @@ class LiveConversation(
         while (true) {
             delay(TICK_MILLIS)
             carrySpeech()
+            unstallFlush()
             deliverPlayedReplies()
             settle(final = false)?.let { return hangUp(it) }
             if (isSessionRevoked()) return hangUp(LiveEnd.SessionRevoked)
@@ -529,10 +565,20 @@ class LiveConversation(
         }
     }
 
+    /**
+     * A flush the voice never answers (a lost `Flushed`) would hold `reply_done` and the silence close forever: after
+     * [FLUSH_STALL_MILLIS] with nothing from the voice, it is taken as done.
+     */
+    private suspend fun unstallFlush() =
+        state.withLock {
+            if (speaking == null || nowMillis() - lastVoiceEventAt < FLUSH_STALL_MILLIS) return@withLock
+            flushDone()
+        }
+
     /** `reply_done` (spoken) for each reply whose audio has finished playing on the phone. */
     private suspend fun deliverPlayedReplies() =
         state.withLock {
-            if (playingReplies.isEmpty() || pendingFlushes.get() > 0 || nowMillis() < playingUntil) return@withLock
+            if (playingReplies.isEmpty() || speaking != null || nowMillis() < playingUntil) return@withLock
             generateSequence { playingReplies.poll() }.forEach { emit(it) }
         }
 
@@ -582,6 +628,12 @@ class LiveConversation(
     private companion object {
         const val TICK_MILLIS = 250L
         const val MICROS = 1_000_000L
+
+        /** How fast the voice speaks, to time each sentence's text against its audio (as A4 meters speech). */
+        const val SPOKEN_CHARS_PER_SECOND = 15.0
+
+        /** Nothing from the voice for this long after a flush, and the flush is taken as answered. */
+        const val FLUSH_STALL_MILLIS = 3_000L
 
         /** A pause longer than this between words on the transcriber's clock starts a new stretch of speech. */
         const val AUDIO_GAP_SECONDS = 1.0

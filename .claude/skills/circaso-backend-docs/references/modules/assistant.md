@@ -100,7 +100,7 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 | server → phone | `ready` | `voiceSecondsLeft`, `audio: {encoding, sampleRate}` | Accepted; start streaming |
 | server → phone | `transcript` | `text`, `final` | The words of the turn so far; `final` false while they may change |
 | server → phone | `turn` | `text` | The user finished; this question now goes through A2 |
-| server → phone | `reply` | `text` | One sentence of the reply, sent as its audio starts; the audio follows in binary frames |
+| server → phone | `reply` | `text` | One sentence of the reply, sent when the audio reaches it (timed at about 15 characters a second, as the voice says no more; the last ones at the latest when all the audio is sent); the audio is in binary frames, one `Flush` per reply |
 | server → phone | `reply_done` | `message` (as A1), `spoken` | Sent once the reply's audio has finished playing on the phone (or at once when it is talked over). The reply as saved in the Asha chat; `spoken` false if the user talked over it |
 | server → phone | `tool_request` | `turnId`, `callId`, `name`, `arguments` (a JSON string, as on A2) | A device tool; unanswered after 30 s, the turn ends with an `error` frame `assistant.turn_not_found` |
 | server → phone | `interrupted` | | Barge-in: stop playing what is buffered |

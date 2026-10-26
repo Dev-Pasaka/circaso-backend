@@ -379,7 +379,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | --- | --- | --- |
 | `transcript` | `text`, `final` | Show the live caption; `final: false` may still change. |
 | `turn` | `text` | The question Asha is answering (also saved in the Asha chat). |
-| `reply` | `text` | One sentence of the answer; its audio follows as **binary** frames: mulaw (G.711 µ-law), mono, at `audio.sampleRate` (8 kHz), as `audio.encoding` says. Queue the audio and play it in order. |
+| `reply` | `text` | One sentence of the answer, sent about when the audio reaches it (show it as a caption; the timing is approximate). The audio comes as **binary** frames: mulaw (G.711 µ-law), mono, at `audio.sampleRate` (8 kHz), as `audio.encoding` says. Queue the audio and play it in order. |
 | `reply_done` | `message` (as in A1), `spoken` | The answer as saved, sent once its audio has finished playing; `spoken: false` means the user talked over it (show it, don't play it). |
 | `tool_request` | `turnId`, `callId`, `name`, `arguments` | As on A2 (`arguments` is a JSON **string**): run the device tool, answer on this socket within 30 s with `{ "type": "tool_results", "turnId", "callId", "snippets": [...] }`. A frame that doesn't decode, or the wrong `callId`, gets `error` `request.malformed` and the turn keeps waiting: send it again. Later than that the turn ends with an `error` frame `assistant.turn_not_found`. |
 | `interrupted` | — | The user talked over Asha: drop the audio queued and stop playing at once. |

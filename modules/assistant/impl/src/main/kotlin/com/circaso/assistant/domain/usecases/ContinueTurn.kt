@@ -38,6 +38,11 @@ class ContinueTurn(
             return Resource.error(SharedError.Malformed(mapOf("callId" to "is not the call this turn waits on")))
         }
         val turn = pending.take(result.userId, result.turnId) ?: return Resource.error(AssistantError.TurnNotFound)
+        if (turn.callId != result.callId) {
+            // re-parked with a new call between the check and the take: that call stays waiting for its own answer
+            pending.save(turn)
+            return Resource.error(AssistantError.TurnNotFound)
+        }
 
         val snippets =
             result.snippets

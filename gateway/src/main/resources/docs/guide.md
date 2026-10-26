@@ -187,7 +187,7 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | --- | --- | --- |
 | `transcript` `{text, final}` | server | The words heard so far. |
 | `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
-| `reply` `{text}` | server | One sentence of the answer; its audio follows. |
+| `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). |
 | `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
 | `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
 | `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |

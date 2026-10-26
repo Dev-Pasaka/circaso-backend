@@ -240,6 +240,10 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
 
     val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
     val resume = ContinueTurn(verifier, pending, agent, recorder, config)
+
+    /** A9 over another store of waiting turns, for races. */
+    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, agent, recorder, config)
+
     val list = ListChat(memory)
     val deleteAll = DeleteChat(memory)
     val deleteOne = DeleteExchange(memory, memory)

@@ -186,14 +186,27 @@ class LiveVoiceTest {
             assertEquals("how much did I send Mum", transcripts.last().text("text"))
             assertEquals("how much did I send Mum", got.ofType("turn").single().text("text"))
 
-            // Each sentence is a text frame followed by its audio.
+            // The first sentence's text comes as its audio starts; the second when the audio reaches it (here, the end of
+            // a reply far shorter than it reads), all before reply_done. One Flush for the whole reply.
             val afterTurn = got.frames.dropWhile { !(it is JsonObject && it.type() == "turn") }.drop(1)
             val replies = afterTurn.takeWhile { !(it is JsonObject && it.type() == "reply_done") }
-            assertEquals(4, replies.size)
-            assertEquals("You sent Mum 2,000 shillings yesterday.", (replies[0] as JsonObject).text("text"))
-            assertEquals("You sent Mum 2,000 shillings yesterday.", String(replies[1] as ByteArray))
-            assertEquals("Anything else?", (replies[2] as JsonObject).text("text"))
-            assertEquals("Anything else?", String(replies[3] as ByteArray))
+            assertEquals("You sent Mum 2,000 shillings yesterday.", (replies.first() as JsonObject).text("text"))
+            assertEquals(
+                listOf("You sent Mum 2,000 shillings yesterday.", "Anything else?"),
+                replies.filterIsInstance<JsonObject>().map { it.text("text") },
+            )
+            assertEquals(
+                listOf("You sent Mum 2,000 shillings yesterday.", "Anything else?"),
+                replies.filterIsInstance<ByteArray>().map { String(it) },
+            )
+            assertEquals(
+                1,
+                live.voice.sessions
+                    .single()
+                    .flushes
+                    .get(),
+                "one Flush per reply",
+            )
             val done = got.ofType("reply_done").single()
             assertEquals(true, done["spoken"]!!.jsonPrimitive.boolean)
             assertEquals(
@@ -1187,5 +1200,33 @@ class LiveVoiceTest {
             }
             assertEquals("request.malformed", got.ofType("error").single().text("code"))
             assertEquals("Found it.", got.ofType("reply").single().text("text"))
+        }
+
+    @Test
+    fun `a voice that never answers its flush still delivers reply_done and still closes on silence`() =
+        testApplication {
+            val live = LiveHarness(Harness(AssistantConfig(liveSilence = Duration.ofMillis(800))))
+            live.voice.answersFlush = false
+            live.serve(this)
+            live.h.model.say("Here you are.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("give me something", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                val closed = readToClose(got)
+
+                assertEquals("silence", closed?.message)
+            }
+            assertEquals(
+                true,
+                got
+                    .ofType("reply_done")
+                    .single()["spoken"]!!
+                    .jsonPrimitive.boolean,
+            )
+            assertEquals(listOf("Here you are."), got.ofType("reply").map { it.text("text") })
         }
 }
