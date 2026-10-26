@@ -124,24 +124,17 @@ class ChatsTest {
         }
 
     @Test
-    fun `each person added gets one member added frame, sent to every member`() =
+    fun `one member added frame per member lists everyone the action added`() =
         runTest {
             val h = ChatHarness()
 
             val group = h.group(amina, listOf(brian, chidi))
 
             val added = h.frames.sent.filter { it.type == "member.added" }
-            assertEquals(6, added.size, "two frames, one per person, to each of the three members")
-            for (person in listOf(amina, brian, chidi)) {
-                assertEquals(
-                    setOf(brian.toString(), chidi.toString()),
-                    h.frames
-                        .to(person)
-                        .map { it.data["userId"] }
-                        .toSet(),
-                )
-            }
+            assertEquals(setOf(amina, brian, chidi), added.map { it.to }.toSet())
+            assertEquals(3, added.size, "one frame to each of the three members")
             val frame = added.first().data
+            assertEquals(listOf(brian.toString(), chidi.toString()).sorted(), frame["userIds"])
             assertEquals(group.chat.chatId.toString(), frame["chatId"])
             assertEquals(amina.toString(), frame["byUserId"])
         }
@@ -199,7 +192,7 @@ class ChatsTest {
 
             val full = h.createGroup(CreateGroupCommand(amina, h.sealed, people)).data()
             assertEquals(1_000, full.chat.memberCount)
-            assertEquals(999L * 1_000, h.frames.count, "one frame per person added, to every member (spec gap)")
+            assertEquals(1_000L, h.frames.count, "one member.added frame to each member")
 
             val tooMany = people + UserId.new()
             assertEquals(
@@ -393,7 +386,7 @@ class ChatsTest {
         }
 
     @Test
-    fun `nobody removes the owner, and the owner can't leave while others remain`() =
+    fun `nobody removes the owner`() =
         runTest {
             val h = ChatHarness()
             val group = h.group(amina, listOf(brian))
@@ -401,8 +394,50 @@ class ChatsTest {
             h.setRole(amina, chatId, brian, Role.ADMIN).data()
 
             assertEquals("messaging.not_admin", h.removeMember(brian, chatId, amina).errorCode())
-            assertEquals("messaging.owner_must_hand_over", h.leaveGroup(amina, chatId).errorCode())
             assertEquals(Role.OWNER, h.role(chatId, amina))
+        }
+
+    @Test
+    fun `an owner who leaves hands the group to the longest-serving admin, in the same batch`() =
+        runTest {
+            val h = ChatHarness()
+            val chatId = h.group(amina, listOf(brian)).chat.chatId
+            h.clock.advance()
+            h.connect(amina, listOf(chidi, dalia))
+            h.addMembers(amina, chatId, setOf(chidi)).data()
+            h.clock.advance()
+            h.addMembers(amina, chatId, setOf(dalia)).data()
+            h.setRole(amina, chatId, dalia, Role.ADMIN).data()
+            h.setRole(amina, chatId, chidi, Role.ADMIN).data()
+            h.frames.sent.clear()
+
+            h.leaveGroup(amina, chatId).data()
+
+            assertEquals(Role.OWNER, h.role(chatId, chidi), "chidi joined before dalia; brian is no admin")
+            assertEquals(Role.ADMIN, h.role(chatId, dalia))
+            assertNull(h.role(chatId, amina))
+            val commit = h.chats.commits.last()
+            assertEquals(listOf(chidi), commit.roles.map { it.userId })
+            assertEquals(listOf(amina), commit.leaves.map { it.member.userId }, "the role and the leave together")
+            val updated = h.frames.sent.filter { it.type == "chat.updated" }
+            assertEquals(setOf(brian, chidi, dalia), updated.map { it.to }.toSet())
+            assertEquals(h.chats.chats[chatId]!!.version, updated.first().data["version"])
+            assertEquals(1, h.chats.members(chatId).count { it.role == Role.OWNER })
+        }
+
+    @Test
+    fun `with no admin, the longest-serving member becomes owner`() =
+        runTest {
+            val h = ChatHarness()
+            val chatId = h.group(amina, listOf(brian)).chat.chatId
+            h.clock.advance()
+            h.connect(amina, chidi)
+            h.addMembers(amina, chatId, setOf(chidi)).data()
+
+            h.leaveGroup(amina, chatId).data()
+
+            assertEquals(Role.OWNER, h.role(chatId, brian))
+            assertEquals(Role.MEMBER, h.role(chatId, chidi))
         }
 
     @Test
@@ -444,6 +479,9 @@ class ChatsTest {
                 "both rows in one commit",
             )
             assertEquals(1, handed.members.count { it.role == Role.OWNER })
+            assertEquals(group.chat.version + 1, handed.chat.version, "a role change moves the version on")
+            val updated = h.frames.sent.filter { it.type == "chat.updated" }
+            assertEquals(setOf(amina, brian, chidi), updated.map { it.to }.toSet())
             h.leaveGroup(amina, chatId).data()
             assertNull(h.role(chatId, amina))
         }
@@ -594,6 +632,23 @@ class ChatsTest {
             assertEquals("users.not_reachable", h.fetchKeyBundle(brian, dalia).errorCode(), "dalia shares nothing")
             h.openDirectChat(amina, brian).data()
             assertEquals("users.not_reachable", h.fetchKeyBundle(brian, dalia).errorCode())
+        }
+
+    @Test
+    fun `a shared group never overrides a block`() =
+        runTest {
+            val h = ChatHarness()
+            h.keys.bundles[chidi] =
+                KeyBundle(chidi, DeviceId.new(), "BcF2", SignedPreKey(7, "BXa", "kq3"), Instant.now())
+            h.group(amina, listOf(brian, chidi))
+            h.reach.blocks += chidi to brian
+
+            assertEquals("users.not_reachable", h.fetchKeyBundle(brian, chidi).errorCode(), "chidi blocked brian")
+            h.reach.blocks.clear()
+            h.reach.blocks += brian to chidi
+            assertEquals("users.not_reachable", h.fetchKeyBundle(brian, chidi).errorCode(), "and the other way")
+            h.reach.blocks.clear()
+            assertEquals(chidi, h.fetchKeyBundle(brian, chidi).data().userId)
         }
 
     @Test

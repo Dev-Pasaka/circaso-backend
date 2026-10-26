@@ -253,6 +253,22 @@ class UsersTest {
         }
 
     @Test
+    fun `a block shows from either side, and lifting it clears it`() =
+        runTest {
+            val h = Harness()
+            val me = h.person("Me")
+            val amina = h.person("Amina")
+            assertFalse(h.blockedEitherWay(me, amina).data())
+
+            h.blockUser(amina, me).data()
+            assertTrue(h.blockedEitherWay(me, amina).data(), "seen from the person blocked")
+            assertTrue(h.blockedEitherWay(amina, me).data(), "and from the one who blocked")
+
+            h.unblockUser(amina, me).data()
+            assertFalse(h.blockedEitherWay(me, amina).data())
+        }
+
+    @Test
     fun `blocking yourself is refused and blocking twice is harmless`() =
         runTest {
             val h = Harness()

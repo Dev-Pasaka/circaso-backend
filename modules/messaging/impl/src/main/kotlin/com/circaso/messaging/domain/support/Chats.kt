@@ -9,6 +9,7 @@ import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.MemberView
+import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.MembersCache
 import com.circaso.messaging.domain.ports.RealtimeFrames
 import com.circaso.messaging.domain.repositories.ChatChanges
@@ -85,23 +86,40 @@ class ChatViews(private val chats: ChatRepository, private val profiles: Profile
 }
 
 /**
- * The membership frames (Messaging → Socket frames). `member.added` and `member.removed` go to the members and the
- * person themselves, one frame per person; they tell phones to send or rotate sender keys.
+ * The membership frames (Messaging → Socket frames). They go to the members and the people themselves, and tell
+ * phones to send or rotate sender keys. `member.added` lists everyone one action added in `userIds`, so a member gets
+ * one frame per action (decision 2026-10-26); `member.removed` is one frame per person.
  */
 class ChatNotifier(private val frames: RealtimeFrames) {
-    suspend fun memberAdded(
+    suspend fun membersAdded(
         recipients: Collection<UserId>,
         chatId: ChatId,
-        added: UserId,
+        added: Collection<UserId>,
         by: UserId,
-    ) = frames.send(recipients, "member.added", memberData(chatId, added, by))
+    ) = frames.send(
+        recipients,
+        "member.added",
+        mapOf(
+            "chatId" to chatId.toString(),
+            "userIds" to added.map { it.toString() }.sorted(),
+            "byUserId" to by.toString(),
+        ),
+    )
 
     suspend fun memberRemoved(
         recipients: Collection<UserId>,
         chatId: ChatId,
         removed: UserId,
         by: UserId,
-    ) = frames.send(recipients, "member.removed", memberData(chatId, removed, by))
+    ) = frames.send(
+        recipients,
+        "member.removed",
+        mapOf(
+            "chatId" to chatId.toString(),
+            "userId" to removed.toString(),
+            "byUserId" to by.toString(),
+        ),
+    )
 
     suspend fun chatUpdated(recipients: Collection<UserId>, chat: Chat) =
         frames.send(
@@ -113,16 +131,6 @@ class ChatNotifier(private val frames: RealtimeFrames) {
                 "version" to chat.version,
             ),
         )
-
-    private fun memberData(
-        chatId: ChatId,
-        userId: UserId,
-        by: UserId,
-    ) = mapOf(
-        "chatId" to chatId.toString(),
-        "userId" to userId.toString(),
-        "byUserId" to by.toString(),
-    )
 }
 
 /**
@@ -149,6 +157,9 @@ class ChatWriter(private val chats: ChatRepository, private val config: Messagin
  * Takes someone out of a group, for a leave and for a removal alike: the member count through the chat's version,
  * then their rows with `MemberRemoved` in one batch, then `member.removed` to everyone who was in it, the person
  * included, so the remaining phones rotate their sender keys. The last member leaving deletes the group.
+ *
+ * When the owner leaves, ownership passes to the longest-serving admin, or else the longest-serving member, in the
+ * same batch as the leave, and the others get `chat.updated` for the role change (decision 2026-10-26).
  */
 class MemberRemoval(
     private val chats: ChatRepository,
@@ -160,19 +171,34 @@ class MemberRemoval(
 ) {
     suspend fun remove(member: Member, by: UserId): Resource<Unit> {
         val chatId = member.chatId
-        val before = chats.members(chatId).map { it.userId }.toSet()
-        if (before == setOf(member.userId)) return deleteGroup(member)
+        val others = chats.members(chatId).filter { it.userId != member.userId }
+        if (others.isEmpty()) return deleteGroup(member)
 
         val counted =
             writer.update(chatId) { latest ->
                 Resource.success(latest.copy(memberCount = (latest.memberCount - 1).coerceAtLeast(0)))
             }
-        if (counted is Resource.Error) return counted
+        val chat =
+            when (counted) {
+                is Resource.Error -> return counted
+                is Resource.Success -> counted.data
+            }
+        val successor = if (member.role == Role.OWNER) successorOf(others) else null
         val event = bus.envelope(MemberRemoved(chatId, member.userId, by))
-        store.commit(ChatChanges(leaves = listOf(Leave(member, event))))
+        store.commit(ChatChanges(roles = listOfNotNull(successor), leaves = listOf(Leave(member, event))))
         membership.changed(chatId)
-        notifier.memberRemoved(before, chatId, member.userId, by)
+
+        val remaining = others.map { it.userId }
+        notifier.memberRemoved(remaining + member.userId, chatId, member.userId, by)
+        if (successor != null) notifier.chatUpdated(remaining, chat)
         return Resource.success(Unit)
+    }
+
+    /** The new owner: the admin who joined first, or else the member who did; ties go by user id. */
+    private fun successorOf(others: List<Member>): Member {
+        val bySeniority = others.sortedWith(compareBy<Member>({ it.joinedAt }, { it.userId.toString() }))
+        val next = bySeniority.firstOrNull { it.role == Role.ADMIN } ?: bySeniority.first()
+        return next.copy(role = Role.OWNER)
     }
 
     private suspend fun deleteGroup(last: Member): Resource<Unit> {

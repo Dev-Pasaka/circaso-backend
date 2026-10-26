@@ -25,6 +25,10 @@ class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
                 to,
             ).getOrNull()
             .orEmpty()
+
+    /** Fails closed: when users can't answer, the two count as blocked. */
+    override suspend fun blockedEitherWay(a: UserId, b: UserId): Boolean =
+        directory.blockedEitherWay(a, b).getOrNull() ?: true
 }
 
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {

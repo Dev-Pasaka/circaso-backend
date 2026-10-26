@@ -75,7 +75,7 @@ class AddMembers(
         membership.changed(chatId)
 
         val everyone = current + added
-        for (person in added) notifier.memberAdded(everyone, chatId, person, caller)
+        notifier.membersAdded(everyone, chatId, added, caller)
         return Resource.success(view(updated, caller, notAdded))
     }
 

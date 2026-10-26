@@ -844,19 +844,25 @@ class ServeTest {
         assertEquals(HttpStatusCode.Conflict, stale.status)
         assertEquals("messaging.version_conflict", code(stale))
 
-        // the owner can't leave while Brian is there; she hands over, then leaves
-        val ownerLeaves = send(HttpMethod.Delete, "/v1/chats/$chatId/members/${amina.userId}", amina.app)
-        assertEquals("messaging.owner_must_hand_over", code(ownerLeaves))
+        // she makes Brian an admin, then leaves: ownership passes to him
         data(
             send(
                 HttpMethod.Put,
                 "/v1/chats/$chatId/members/${brian.userId}/role",
                 amina.app,
-                """{"role":"OWNER"}""",
+                """{"role":"ADMIN"}""",
             ),
         )
         data(send(HttpMethod.Delete, "/v1/chats/$chatId/members/${amina.userId}", amina.app))
         assertEquals("messaging.chat_not_found", code(get("/v1/chats/$chatId", amina.app)))
+        val members = data(get("/v1/chats/$chatId", brian.app))["members"]!!.jsonArray
+        assertEquals(
+            "OWNER",
+            members
+                .single()
+                .jsonObject["role"]!!
+                .jsonPrimitive.content,
+        )
         val brianChats = data(get("/v1/chats", brian.app))["chats"]!!.jsonArray
         assertEquals(2, brianChats.size, "the direct chat and the group")
     }

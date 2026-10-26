@@ -164,7 +164,6 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.group_full` | 409 | Adding would pass 1,000 people |
 | `messaging.group_invalid` | 400 | The sealed name and avatar (`sealedMeta`) are missing, not base64, or over 4 KB |
 | `messaging.version_conflict` | 409 | The group changed since you read its `version`: load it again and retry |
-| `messaging.owner_must_hand_over` | 409 | The owner tried to leave while others remain: make someone else the owner first (provisional, pending a decision) |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |

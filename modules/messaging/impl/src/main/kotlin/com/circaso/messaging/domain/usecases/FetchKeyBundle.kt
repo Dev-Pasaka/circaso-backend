@@ -12,9 +12,9 @@ import com.circaso.users.api.ReachPolicy
 
 /**
  * M3 `GET /keys/{userId}`: the person's bundle, using up one of their one-time prekeys. 60 fetches per caller per
- * hour, so nobody can drain someone's prekeys. The caller must reach the person or share a group with them (group
- * members need 1:1 sessions to hand each other sender keys). That is checked before the bundle is looked up, so
- * someone who qualifies neither way can't learn whether they have keys.
+ * hour, so nobody can drain someone's prekeys. The caller must reach the person, or share a group with them with
+ * no block either way (group members need 1:1 sessions to hand each other sender keys). That is checked before the
+ * bundle is looked up, so someone who qualifies neither way can't learn whether they have keys.
  */
 class FetchKeyBundle(
     private val keys: KeyRepository,
@@ -28,7 +28,7 @@ class FetchKeyBundle(
             val wait = rateLimit.retryAfter(caller)?.seconds?.coerceAtLeast(1) ?: SECONDS_PER_HOUR
             return Resource.error(MessagingError.RateLimited(wait))
         }
-        if (!reach.canReach(caller, target) && !sharedGroups.share(caller, target)) {
+        if (!reach.canReach(caller, target) && !sharesGroupUnblocked(caller, target)) {
             return Resource.error(MessagingError.NotReachable)
         }
 
@@ -36,6 +36,10 @@ class FetchKeyBundle(
         val oneTimePreKey = keys.claimOneTimeKey(target)
         return Resource.success(FetchedBundle(target, bundle.identityKey, bundle.signedPreKey, oneTimePreKey))
     }
+
+    /** A shared group stands in for reach, but never overrides a block (decision 2026-10-26). */
+    private suspend fun sharesGroupUnblocked(caller: UserId, target: UserId) =
+        sharedGroups.share(caller, target) && !reach.blockedEitherWay(caller, target)
 
     private companion object {
         const val SECONDS_PER_HOUR = 3_600L

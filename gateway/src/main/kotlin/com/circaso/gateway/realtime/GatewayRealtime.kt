@@ -12,6 +12,7 @@ import com.circaso.shared.UserId
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -92,9 +93,13 @@ class GatewayRealtime(
         return PushMessage("Circaso", NEW_MESSAGE, ids(data, "chatId", "messageId"))
     }
 
-    /** Only the person added is woken (`userId` in the frame); the other members just see it next time. */
+    /**
+     * Only the people added are woken (`userIds` in the frame, one frame per action, decision 2026-10-26); the other
+     * members just see it next time.
+     */
     private fun addedToGroupPush(data: JsonObject?, recipient: UserId): PushMessage? {
-        if (data.text("userId") != recipient.toString()) return null
+        val added = (data?.get("userIds") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        if (recipient.toString() !in added) return null
         // Never the group name, which is sealed; once pushes are data-only (MS4) the phone words it itself.
         return PushMessage("Circaso", "You were added to a group", ids(data, "chatId"))
     }

@@ -15,6 +15,8 @@ import io.kandra.runtime.repository.KandraSuspendRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
@@ -93,8 +95,9 @@ class RealtimeFramesImpl(
 
     private fun seqKey(userId: UserId) = "seq:$userId"
 
-    private fun Any.toJson(): JsonPrimitive =
+    private fun Any.toJson(): JsonElement =
         when (this) {
+            is Collection<*> -> JsonArray(mapNotNull { it?.toJson() })
             is Number -> JsonPrimitive(this)
             is Boolean -> JsonPrimitive(this)
             else -> JsonPrimitive(toString())

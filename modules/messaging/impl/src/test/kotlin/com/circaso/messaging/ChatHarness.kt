@@ -30,6 +30,10 @@ import com.circaso.messaging.presentation.services.ChatService
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Base64
 
 /** Chats and membership wired over the in-memory fakes, as `di` wires them over Kandra and Redis. */
@@ -40,7 +44,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val bus = MemoryBus()
     val reach = FakeReach()
     val keys = MemoryKeys()
-    private val clock = Clock.systemUTC()
+    val clock = TestClock()
     private val profiles = FakeProfiles()
 
     val membership = Membership(chats, cache)
@@ -57,7 +61,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val addMembers = AddMembers(chats, writer, chats, reach, membership, views, notifier, bus, config, clock)
     val removeMember = RemoveMember(chats, removal)
     val leaveGroup = LeaveGroup(chats, removal)
-    val setRole = SetRole(chats, chats, views)
+    val setRole = SetRole(chats, writer, chats, membership, views, notifier)
     val replayFrames = ReplayFrames(frames)
     val fetchKeyBundle = FetchKeyBundle(keys, reach, SharedGroups(chats), MemoryRateLimit(), config)
     val service =
@@ -105,3 +109,16 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
 fun <T> Resource<T>.data(): T = (this as? Resource.Success)?.data ?: error("expected success, got $this")
 
 fun Resource<*>.errorCode(): String = (this as? Resource.Error)?.error?.code ?: error("expected an error, got $this")
+
+/** A clock a test moves on by hand, so "who joined first" never depends on two calls landing in one millisecond. */
+class TestClock(private var now: Instant = Instant.parse("2026-10-26T09:00:00Z")) : Clock() {
+    fun advance(by: Duration = Duration.ofMinutes(1)) {
+        now = now.plus(by)
+    }
+
+    override fun instant(): Instant = now
+
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId): Clock = this
+}

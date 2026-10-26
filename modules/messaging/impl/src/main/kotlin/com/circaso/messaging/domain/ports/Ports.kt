@@ -24,8 +24,8 @@ interface MembersCache {
 
 /**
  * Sends a replayed frame to each user with that user's own `seq`, and keeps it 7 days for replay. Values in [data]
- * are text, numbers or booleans. Failures never fail the operation that caused them: the phone catches up from the
- * kept frames.
+ * are text, numbers, booleans or lists of them. Failures never fail the operation that caused them: the phone
+ * catches up from the kept frames.
  */
 interface RealtimeFrames {
     suspend fun send(

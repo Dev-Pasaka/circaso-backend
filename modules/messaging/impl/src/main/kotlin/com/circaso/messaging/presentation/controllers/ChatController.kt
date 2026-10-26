@@ -79,8 +79,8 @@ fun Route.chatController(chats: ChatService) {
                 TAG,
                 listOf("messaging.group_invalid", "messaging.group_full", "request.malformed"),
                 notes =
-                    "$SCOPE $SEALED You become the owner. $NOT_ADDED At most 1,000 people, you included. Each " +
-                        "person added gets a `member.added` frame.",
+                    "$SCOPE $SEALED You become the owner. $NOT_ADDED At most 1,000 people, you included. Every " +
+                        "member gets one `member.added` frame listing everyone added in `userIds`.",
             )
 
             route("/{chatId}") {
@@ -142,8 +142,8 @@ private fun Route.memberRoutes(chats: ChatService) {
         listOf("messaging.chat_not_found", "messaging.not_admin", "messaging.group_full", "request.malformed"),
         notes =
             "$SCOPE Admins add people, or any member when `settings.membersCanAdd` is on. $NOT_ADDED People " +
-                "already in the group are skipped. A group holds at most 1,000 people. One `member.added` frame " +
-                "per person added, to every member.",
+                "already in the group are skipped. A group holds at most 1,000 people. Every member gets one " +
+                "`member.added` frame listing everyone added in `userIds`.",
     )
 
     delete("{userId}") {
@@ -154,17 +154,12 @@ private fun Route.memberRoutes(chats: ChatService) {
     }.docs<NoBody, MemberRemovedResponse>(
         "M10 · Remove someone from a group, or leave it (your own user id)",
         TAG,
-        listOf(
-            "messaging.chat_not_found",
-            "messaging.not_admin",
-            "messaging.owner_must_hand_over",
-            "request.malformed",
-        ),
+        listOf("messaging.chat_not_found", "messaging.not_admin", "request.malformed"),
         notes =
             "$SCOPE Admins remove admins and members; nobody removes the owner. With your own user id you " +
-                "leave; the owner must first hand over ownership while others remain (provisional, pending a " +
-                "decision). The last member leaving deletes the group. Everyone who was in it, the person " +
-                "included, gets a `member.removed` frame and rotates their sender keys.",
+                "leave. When the owner leaves, ownership passes to the longest-serving admin, or else member, " +
+                "and members get `chat.updated`. The last member leaving deletes the group. Everyone who was in " +
+                "it, the person included, gets a `member.removed` frame and rotates their sender keys.",
     )
 
     put("{userId}/role") {
@@ -181,7 +176,7 @@ private fun Route.memberRoutes(chats: ChatService) {
         listOf("messaging.chat_not_found", "messaging.not_admin", "request.malformed"),
         notes =
             "$SCOPE Admins set `ADMIN` or `MEMBER` on anyone but the owner. Only the owner sets `OWNER`, and " +
-                "then becomes an admin.",
+                "then becomes an admin. A change moves the chat's `version` on and members get `chat.updated`.",
     )
 }
 

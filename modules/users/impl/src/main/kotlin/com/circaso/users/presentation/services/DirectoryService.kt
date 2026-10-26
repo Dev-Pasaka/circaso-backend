@@ -5,6 +5,7 @@ import com.circaso.shared.UserId
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.domain.ports.LoggedFrame
 import com.circaso.users.domain.usecases.CanReach
+import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.FilterReachable
 import com.circaso.users.domain.usecases.GetProfiles
 import com.circaso.users.domain.usecases.ReplayFrames
@@ -15,10 +16,13 @@ class DirectoryService(
     private val filterReachable: FilterReachable,
     private val getProfiles: GetProfiles,
     private val replayFrames: ReplayFrames,
+    private val checkBlockedEitherWay: CheckBlockedEitherWay,
 ) {
     suspend fun canReach(from: UserId, to: UserId): Resource<Boolean> = canReach.invoke(from, to)
 
     suspend fun filterReachable(from: UserId, to: Set<UserId>): Resource<Set<UserId>> = filterReachable.invoke(from, to)
+
+    suspend fun blockedEitherWay(a: UserId, b: UserId): Resource<Boolean> = checkBlockedEitherWay(a, b)
 
     suspend fun getProfiles(ids: Set<UserId>): Resource<Map<UserId, PublicProfile>> = getProfiles.invoke(ids)
 

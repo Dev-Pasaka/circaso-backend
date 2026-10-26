@@ -140,7 +140,7 @@ fun messagingModule(config: Config): Module =
         single { AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock) }
         single { RemoveMember(get(), get()) }
         single { LeaveGroup(get(), get()) }
-        single { SetRole(get(), get(), get()) }
+        single { SetRole(get(), get(), get(), get(), get(), get()) }
         single { GetMembers(get()) }
         single { ReplayFrames(get()) }
 

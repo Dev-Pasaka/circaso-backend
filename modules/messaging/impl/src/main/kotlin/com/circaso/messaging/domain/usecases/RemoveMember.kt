@@ -24,7 +24,6 @@ class RemoveMember(private val chats: ChatRepository, private val removal: Membe
         val chat = chats.chat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
         if (chat.kind != ChatKind.GROUP || !admin.role.isAdmin) return Resource.error(MessagingError.NotAdmin)
         val member = chats.member(chatId, target) ?: return Resource.error(MessagingError.ChatNotFound)
-        // TODO(decision: may an admin remove another admin, and may anyone remove the owner? Built: yes and no.)
         if (member.role == Role.OWNER) return Resource.error(MessagingError.NotAdmin)
         return removal.remove(member, by = caller)
     }

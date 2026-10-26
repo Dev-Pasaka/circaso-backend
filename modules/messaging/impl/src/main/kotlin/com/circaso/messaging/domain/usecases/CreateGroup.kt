@@ -52,7 +52,7 @@ class CreateGroup(
         store.commit(changes(chat, added))
 
         val everyone = added + command.creator
-        for (person in added) notifier.memberAdded(everyone, chat.chatId, person, command.creator)
+        if (added.isNotEmpty()) notifier.membersAdded(everyone, chat.chatId, added, command.creator)
         return Resource.success(views.view(chat, lastMessageId = null, notAdded = notAdded))
     }
 

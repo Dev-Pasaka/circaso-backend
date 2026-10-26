@@ -74,17 +74,6 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
-    /**
-     * The owner tried to leave a group that still has other members. Provisional: the spec doesn't say what happens
-     * to a group when its owner leaves, so the leave is refused until ownership is handed over (M11); see the
-     * `TODO(decision)` in `LeaveGroup`.
-     */
-    data object OwnerMustHandOver : MessagingError(
-        "messaging.owner_must_hand_over",
-        "Make someone else the group owner before you leave.",
-        ErrorKind.CONFLICT,
-    )
-
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",
