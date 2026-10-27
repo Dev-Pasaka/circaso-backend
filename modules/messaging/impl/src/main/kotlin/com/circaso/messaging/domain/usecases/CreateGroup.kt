@@ -69,7 +69,13 @@ class CreateGroup(
                     false
                 }
             }
-        val chat = if (created) group else chats.chat(group.chatId) ?: return Resource.error(MessagingError.ChatNotFound)
+        val chat =
+            if (created) {
+                group
+            } else {
+                chats.chat(group.chatId)
+                    ?: return Resource.error(MessagingError.ChatNotFound)
+            }
         if (created) {
             events.forEach { bus.publish(it) }
             notifyAdded(group, added)

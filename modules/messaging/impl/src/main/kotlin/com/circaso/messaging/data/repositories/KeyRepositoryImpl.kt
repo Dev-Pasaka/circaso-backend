@@ -16,7 +16,7 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.inSubQuery
+import org.jetbrains.exposed.v1.core.eqSubQuery
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.batchInsert
@@ -52,8 +52,10 @@ class KeyRepositoryImpl(private val database: Database) : KeyRepository {
         database.tx("keys.one-time-ids") {
             OneTimePreKeysTable
                 .select(OneTimePreKeysTable.keyId)
-                .where { (OneTimePreKeysTable.userId eq userId.value) and (OneTimePreKeysTable.deviceId eq deviceId.value) }
-                .map { it[OneTimePreKeysTable.keyId] }
+                .where {
+                    (OneTimePreKeysTable.userId eq userId.value) and
+                        (OneTimePreKeysTable.deviceId eq deviceId.value)
+                }.map { it[OneTimePreKeysTable.keyId] }
                 .toList()
                 .toSet()
         }
@@ -104,7 +106,11 @@ class KeyRepositoryImpl(private val database: Database) : KeyRepository {
         }
     }
 
-    /** `DELETE … WHERE (user_id, key_id) IN (the lowest key, FOR UPDATE SKIP LOCKED) RETURNING …`. */
+    /**
+     * `DELETE … WHERE key_id = (the lowest key, FOR UPDATE SKIP LOCKED) RETURNING …`. The pick is a scalar subquery,
+     * which PostgreSQL runs once; as `IN (…)` it may run again for each row the delete scans, and with `SKIP LOCKED`
+     * each run can pick another key, so one fetch would take several.
+     */
     override suspend fun claimOneTimeKey(userId: UserId, deviceId: DeviceId): OneTimePreKey? =
         database.tx("keys.claim-one-time") {
             val mine = (OneTimePreKeysTable.userId eq userId.value) and (OneTimePreKeysTable.deviceId eq deviceId.value)
@@ -116,7 +122,7 @@ class KeyRepositoryImpl(private val database: Database) : KeyRepository {
                     .limit(1)
                     .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
             OneTimePreKeysTable
-                .deleteReturning { mine and (OneTimePreKeysTable.keyId inSubQuery lowest) }
+                .deleteReturning { mine and (OneTimePreKeysTable.keyId eqSubQuery lowest) }
                 .map { OneTimePreKey(it[OneTimePreKeysTable.keyId], it[OneTimePreKeysTable.publicKey]) }
                 .singleOrNull()
         }

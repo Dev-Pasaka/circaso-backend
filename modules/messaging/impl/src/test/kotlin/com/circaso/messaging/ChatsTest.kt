@@ -136,9 +136,15 @@ class ChatsTest {
 
             assertEquals(listOf("chats.create-group"), h.transactor.operations)
             assertEquals(listOf(ChatCreated.TYPE, MemberAdded.TYPE, MemberAdded.TYPE), h.outbox.types())
-            val added = h.outbox.written.drop(1).map { it.data.toString() }
+            val added =
+                h.outbox.written
+                    .drop(1)
+                    .map { it.data.toString() }
             assertTrue(added.any { brian.toString() in it } && added.any { chidi.toString() in it })
-            assertTrue(added.none { amina.toString() in it.substringBefore("byUserId") }, "the creator is in ChatCreated")
+            assertTrue(
+                added.none { amina.toString() in it.substringBefore("byUserId") },
+                "the creator is in ChatCreated",
+            )
             assertEquals(h.outbox.written, h.bus.published, "published after the transaction, each once")
             assertEquals(3, h.chats.members(group.chat.chatId).size)
         }
@@ -331,8 +337,17 @@ class ChatsTest {
             assertEquals(setOf(amina, brian, chidi), removed.map { it.to }.toSet())
             assertEquals(brian, removed.first().data<MemberRemovedFrame>().userId)
             assertEquals(amina, removed.first().data<MemberRemovedFrame>().byUserId)
-            assertEquals("chats.remove-member", h.transactor.operations.last(), "rows, count and event: one transaction")
-            assertEquals(MemberRemoved.TYPE, h.outbox.written.last().type)
+            assertEquals(
+                "chats.remove-member",
+                h.transactor.operations.last(),
+                "rows, count and event: one transaction",
+            )
+            assertEquals(
+                MemberRemoved.TYPE,
+                h.outbox.written
+                    .last()
+                    .type,
+            )
             assertEquals("messaging.chat_not_found", h.getChat(brian, chatId).errorCode())
             assertTrue(h.listChats(brian).data().isEmpty())
         }

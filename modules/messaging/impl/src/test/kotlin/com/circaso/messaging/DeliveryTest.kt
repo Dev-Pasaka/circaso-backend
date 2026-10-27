@@ -198,7 +198,11 @@ class DeliveryTest {
 
             assertEquals(text, h.delivery.bodies[group to sent.messageId]!!.ciphertext)
             assertEquals(1, h.delivery.writes, "the record, the body and 250 pointers in one write")
-            assertEquals(listOf("messages.send"), h.chats.transactor.operations.filter { it.startsWith("messages") })
+            assertEquals(
+                listOf("messages.send"),
+                h.chats.transactor.operations
+                    .filter { it.startsWith("messages") },
+            )
             for (member in members) {
                 val pointer = h.delivery.inboxOf(member).single()
                 assertTrue(pointer.groupBody)

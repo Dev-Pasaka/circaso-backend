@@ -1,6 +1,7 @@
 package com.circaso.messaging.domain.models
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
 import com.circaso.users.api.PublicProfile
 import java.time.Instant
@@ -114,3 +115,6 @@ data class UpdateGroupCommand(
 
 /** M11 decided inside the version check: the chat to write (a new owner, a new version) and the rows that follow. */
 data class RoleChange(val chat: Chat, val rows: List<Member>)
+
+/** M9 decided under the chat's lock: the chat as it now is, who joined, and the events written for them. */
+data class MembersAdded(val chat: Chat, val joined: Set<UserId>, val events: List<EventEnvelope>)

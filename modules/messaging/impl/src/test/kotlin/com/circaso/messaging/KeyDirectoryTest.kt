@@ -290,7 +290,11 @@ class KeyDirectoryTest {
             val result = topUp(amina, amina.sign(topUpBody(10..20)))
 
             assertEquals("messaging.prekey_id_exists", result.errorCode())
-            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(amina.userId, amina.deviceId), "nothing from the refused upload is kept")
+            assertEquals(
+                (1..10).toSet(),
+                keys.oneTimeKeyIds(amina.userId, amina.deviceId),
+                "nothing from the refused upload is kept",
+            )
             assertEquals(20, topUp(amina, amina.sign(topUpBody(11..20))).data())
         }
 

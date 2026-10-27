@@ -7,6 +7,7 @@ import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.Member
+import com.circaso.messaging.domain.models.MembersAdded
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
@@ -16,7 +17,6 @@ import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.Membership
 import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.shared.EventBus
-import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
@@ -46,9 +46,6 @@ class AddMembers(
     private val config: MessagingConfig,
     private val clock: Clock,
 ) {
-    /** What the transaction decided: the chat as it now is, who joined, and the events written for them. */
-    private class Added(val chat: Chat, val joined: Set<UserId>, val events: List<EventEnvelope>)
-
     suspend operator fun invoke(
         caller: UserId,
         chatId: ChatId,
@@ -86,14 +83,14 @@ class AddMembers(
         caller: UserId,
         chatId: ChatId,
         reachable: Set<UserId>,
-    ): Resource<Added> =
+    ): Resource<MembersAdded> =
         transactor.attempt("chats.add-members") {
             val latest = chats.lockChat(chatId) ?: return@attempt Resource.error(MessagingError.ChatNotFound)
             val adder = chats.member(chatId, caller) ?: return@attempt Resource.error(MessagingError.ChatNotFound)
             if (!mayAdd(latest, adder)) return@attempt Resource.error(MessagingError.NotAdmin)
             val present = chats.members(chatId).map { it.userId }.toSet()
             val joining = reachable - present
-            if (joining.isEmpty()) return@attempt Resource.success(Added(latest, emptySet(), emptyList()))
+            if (joining.isEmpty()) return@attempt Resource.success(MembersAdded(latest, emptySet(), emptyList()))
 
             val reserved =
                 chats.reserveSeats(chatId, joining.size, config.maxGroupMembers)
@@ -102,7 +99,7 @@ class AddMembers(
             chats.addMembers(joining.map { Member(chatId, it, Role.MEMBER, now) })
             val events = joining.map { bus.envelope(MemberAdded(chatId, it, caller)) }
             outbox.write(events)
-            Resource.success(Added(reserved, joining, events))
+            Resource.success(MembersAdded(reserved, joining, events))
         }
 
     private fun mayAdd(chat: Chat, adder: Member) =

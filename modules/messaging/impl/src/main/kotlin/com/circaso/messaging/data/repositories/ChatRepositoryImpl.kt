@@ -337,4 +337,3 @@ private fun ResultRow.toMember() =
         role = Role.valueOf(this[MembersTable.role]),
         joinedAt = this[MembersTable.joinedAt],
     )
-

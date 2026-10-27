@@ -100,8 +100,6 @@ import com.circaso.shared.RealtimeModule
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.ReachPolicy
 import com.circaso.web.RouteContributor
-import java.time.Clock
-import java.time.Duration
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -110,6 +108,8 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
+import java.time.Clock
+import java.time.Duration
 
 /** Schema `messaging`: its tables, its Flyway scripts and its outbox, which is infrastructure's (`outbox = true`). */
 internal val messagingDatabaseSpec =

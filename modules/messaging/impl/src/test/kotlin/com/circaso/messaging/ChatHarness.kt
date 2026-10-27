@@ -129,7 +129,6 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
         val member = chats.members[chatId]?.get(userId) ?: return null
         return chats.chats[chatId]?.roleOf(member)
     }
-
 }
 
 fun <T> Resource<T>.data(): T = (this as? Resource.Success)?.data ?: error("expected success, got $this")

@@ -143,7 +143,8 @@ class DeliveryRepositoryImpl(private val database: Database, private val clock: 
                     InboxTable.ciphertext.isNull() and
                         (GroupMessagesTable.chatId eq InboxTable.chatId) and
                         (GroupMessagesTable.messageId eq InboxTable.messageId)
-                }).select(InboxTable.columns + GroupMessagesTable.ciphertext)
+                })
+                .select(InboxTable.columns + GroupMessagesTable.ciphertext)
                 .where {
                     val mine: Op<Boolean> = InboxTable.userId eq userId.value
                     if (after == null) mine else mine and (InboxTable.messageId greater after)
