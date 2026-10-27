@@ -72,6 +72,8 @@
   <logger name="io.r2dbc.postgresql.PARAM" level="INFO"/>
   <!-- also pinned: at DEBUG the protocol client logs every server response, an error's DETAIL (the failing row) included -->
   <logger name="io.r2dbc.postgresql.client.ReactorNettyClient" level="INFO"/>
+  <!-- and the connection, whose DEBUG line for a failed validation carries the server's message, which can quote a value -->
+  <logger name="io.r2dbc.postgresql.PostgresqlConnection" level="INFO"/>
   <logger name="io.r2dbc" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.flywaydb" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.postgresql" level="${LOG_LEVEL_DATABASE:-WARN}"/>

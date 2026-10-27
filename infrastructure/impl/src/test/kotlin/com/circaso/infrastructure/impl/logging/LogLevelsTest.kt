@@ -127,6 +127,7 @@ class LogLevelsTest {
             levelOf("io.r2dbc.postgresql.client.ReactorNettyClient"),
             "nor a server error's detail",
         )
+        assertEquals(Level.INFO, levelOf("io.r2dbc.postgresql.PostgresqlConnection"), "nor a server message")
         assertEquals(Level.DEBUG, levelOf("io.r2dbc.postgresql.QUERY"), "the SQL itself, with placeholders, may be")
         assertEquals(Level.DEBUG, levelOf("io.r2dbc.pool.ConnectionPool"))
         assertEquals(Level.DEBUG, levelOf("org.flywaydb.core.Flyway"))

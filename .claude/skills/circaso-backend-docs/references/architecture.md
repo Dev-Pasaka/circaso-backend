@@ -619,7 +619,7 @@ Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked
 
 - **Each table gets a private mapper,** `ResultRow.toAccount(): Account`, in its repository file. A `ResultRow` never leaves `data`.
 - **Raw SQL** (`exec`) only for what the DSL can't express (partition management), in infrastructure or a migration, never with values spliced in.
-- **The SQL logger is off.** `StdOutSqlLogger` is never installed outside a local debug run, because it would print bound phone numbers and keys. Infrastructure's own SQL logger prints `?` for values; `Exposed`'s logger is fixed at ERROR, r2dbc-postgresql's `io.r2dbc.postgresql.PARAM` (bound values) and `io.r2dbc.postgresql.client.ReactorNettyClient` (raw server responses, an error's DETAIL included) at INFO, and the driver's `errorResponseLogLevel` is OFF, whatever `LOG_LEVEL_DATABASE` says.
+- **The SQL logger is off.** `StdOutSqlLogger` is never installed outside a local debug run, because it would print bound phone numbers and keys. Infrastructure's own SQL logger prints `?` for values; `Exposed`'s logger is fixed at ERROR, r2dbc-postgresql's `io.r2dbc.postgresql.PARAM` (bound values) `io.r2dbc.postgresql.client.ReactorNettyClient` (raw server responses, an error's DETAIL included) and `io.r2dbc.postgresql.PostgresqlConnection` (a failed validation's server message) at INFO, and the driver's `errorResponseLogLevel` is OFF, whatever `LOG_LEVEL_DATABASE` says.
 
 **Pools.** Postgres pays for each connection with a server process, so the pools stay small and bounded. They are r2dbc-pool `ConnectionPool`s: coroutines wait in the pool's queue for a connection, never on a thread.
 
