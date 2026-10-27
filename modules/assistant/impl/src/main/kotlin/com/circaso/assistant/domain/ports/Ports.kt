@@ -64,6 +64,9 @@ interface PendingTurns {
 
     /** Reads and removes it, so an answer can't be used twice. */
     suspend fun take(userId: UserId, turnId: UUID): PendingTurn?
+
+    /** Removes every turn the user has parked, with the conversation each one holds (a deleted account). */
+    suspend fun forget(userId: UserId)
 }
 
 /** Daily allowance counters (`ast:quota:…`). */
@@ -100,6 +103,9 @@ interface QuotaCounters {
     )
 
     suspend fun tokens(userId: UserId, day: String): Pair<Long, Long>
+
+    /** Removes the user's counters for [days] (a deleted account). */
+    suspend fun forget(userId: UserId, days: List<String>)
 }
 
 /** Conversation text is encrypted at rest: it is not end-to-end encrypted, because Asha has to read it. */

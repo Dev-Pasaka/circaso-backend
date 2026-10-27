@@ -71,8 +71,15 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
 
     private suspend fun read(key: String): Long = redis.get(key)?.toLongOrNull() ?: 0
 
+    override suspend fun forget(userId: UserId, days: List<String>) {
+        for (day in days) {
+            for (kind in KINDS) redis.delete(key(kind, userId, day))
+        }
+    }
+
     private companion object {
         val TTL: Duration = Duration.ofDays(2)
+        val KINDS = listOf("text", "voice", "in", "out")
     }
 }
 
@@ -103,7 +110,10 @@ private data class MessageJson(
 @Serializable
 private data class CallJson(val id: String, val name: String, val arguments: String)
 
-/** A turn waiting for the phone, `ast:turn:{userId}:{turnId}`, kept 10 minutes and taken once. */
+/**
+ * A turn waiting for the phone, `ast:turn:{userId}:{turnId}`, kept 10 minutes and taken once; `ast:turns:{userId}`
+ * lists the user's parked turn ids for as long.
+ */
 class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
     override suspend fun save(turn: PendingTurn) {
         val json =
@@ -145,6 +155,13 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
                 turn.steps,
             )
         redis.set("turn:${turn.userId}:${turn.turnId}", CircasoJson.encodeToString(PendingJson.serializer(), json), TTL)
+        // The user's parked turn ids, so a deleted account's turns can be found without scanning keys.
+        redis.hashSet("turns:${turn.userId}", mapOf(turn.turnId.toString() to "1"), TTL)
+    }
+
+    override suspend fun forget(userId: UserId) {
+        for (turnId in redis.hashGetAll("turns:$userId").keys) redis.delete("turn:$userId:$turnId")
+        redis.delete("turns:$userId")
     }
 
     override suspend fun callIdOf(userId: UserId, turnId: UUID): String? {

@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.impl.database.OnJobsPool
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.shared.EventId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -29,21 +30,36 @@ class OutboxRelay(
         scheduler.every("events.outbox-relay", interval) { sweep() }
     }
 
-    /** One pass over every module's outbox, on the jobs pool. Returns how many events it published. */
-    suspend fun sweep(): Int = withContext(OnJobsPool) { outboxStores().sumOf { sweep(it) } }
+    /**
+     * One pass over every module's outbox, on the jobs pool. Returns how many events it published. A module whose
+     * outbox fails is logged and left for the next sweep; the others are still relayed.
+     */
+    suspend fun sweep(): Int = withContext(OnJobsPool) { outboxStores().sumOf { sweepOnItsOwn(it) } }
+
+    private suspend fun sweepOnItsOwn(store: OutboxStore): Int =
+        try {
+            sweep(store)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The exception's class only: a driver's message can quote a row.
+            log.error("outbox sweep failed", kv("producer", store.producer), kv("error", e.javaClass.simpleName))
+            0
+        }
 
     private suspend fun sweep(store: OutboxStore): Int {
         val published = mutableSetOf<EventId>()
         for (round in 1..maxBatches) {
-            val batch = store.unpublished(OutboxStore.BATCH)
-            val fresh = batch.filter { it.eventId !in published }
+            val page = store.page(OutboxStore.BATCH)
+            val fresh = page.events.filter { it.eventId !in published }
             for (envelope in fresh) {
                 if (!bus.appendToStream(envelope)) return done(store, published.size) // Redis is down: next sweep
                 bus.stampOutbox(envelope)
                 published += envelope.eventId
             }
-            // A short batch was the last one; a batch of rows already sent means their stamps failed.
-            if (batch.size < OutboxStore.BATCH || fresh.isEmpty()) break
+            // A short read was the last one (counted in rows read, so a skipped poison row doesn't end the sweep); a
+            // batch of rows already sent means their stamps failed.
+            if (!page.full || fresh.isEmpty()) break
         }
         return done(store, published.size)
     }

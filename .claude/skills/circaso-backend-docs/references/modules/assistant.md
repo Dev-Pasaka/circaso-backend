@@ -23,7 +23,7 @@ Asha answers "what do I want to know or do, said in my own words": she is Circas
 - **Stored by this module.** The thread lives in the `assistant` schema, encrypted at rest. It is not end-to-end encrypted, because Asha has to read what you write to answer; the top of her chat says so in one line.
 - **Not a person.** Asha has a fixed system id, no account in identity and no profile in users. She can't be blocked, paid, called, added to a group or found by handle, and she never appears in anyone else's contacts. The app opens her chat through the assistant routes, so the reach rule doesn't apply.
 - **Memory of the thread.** She uses the recent part of the thread as context: the last few exchanges on the free plan, much more on Asha Plus.
-- **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Two things remain, neither holding conversation text: the audit records of Phase B actions (what was proposed, to whom, the amount and the user's decision), because they back money movements, and usage counts for billing.
+- **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Deleting the account deletes the chat and the entitlement in one transaction and, once it has committed, the user's `ast:` Redis keys (turns parked for the phone, which hold the conversation, and the day's counters), so nothing of the conversation stays in caches. All audit records (what was done, never what was said; in Phase B what was proposed, to whom, the amount and the user's decision, which back money movements) and usage counts for billing remain.
 
 ### Reading encrypted chats
 
@@ -134,7 +134,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
 - **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
@@ -174,12 +174,10 @@ The user talks to Asha with the **user** token; Asha's tools call other modules 
 
 ## Data
 
-PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`).
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. The assistant still runs on its Kandra tables in keyspace `circaso_assistant` until slice PG4 builds the tables below.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), built in PG4, and three Redis key families.
 
 ```sql
--- V1__assistant.sql (shape; the script itself is written in PG4)
+-- V1__assistant.sql (shape; the script is modules/assistant/impl/src/main/resources/db/assistant/V1__assistant.sql)
 
 CREATE TABLE assistant.asha_messages (                  -- the Asha chat
     user_id     uuid        NOT NULL,
@@ -202,7 +200,7 @@ CREATE TABLE assistant.usage_daily (                    -- daily totals for cost
     input_tokens  bigint      NOT NULL,
     output_tokens bigint      NOT NULL,
     updated_at    timestamptz NOT NULL,
-    PRIMARY KEY (user_id, usage_day)                    -- added to with upsert (keys: user_id, usage_day), count = count + n
+    PRIMARY KEY (user_id, usage_day)                    -- upsert (keys: user_id, usage_day) keeping the larger of stored and new totals (the live Redis counters only grow within a day)
 );
 
 CREATE TABLE assistant.entitlements (
@@ -220,7 +218,7 @@ CREATE TABLE assistant.audit (                          -- append-only; what hap
     PRIMARY KEY (user_id, event_id)
 );
 
-CREATE TABLE assistant.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
+CREATE TABLE assistant.outbox (…);                      -- the shared outbox DDL (architecture.md → Durable events): daily partitions, 7 days
 ```
 
 | Table | Expiry |
@@ -229,7 +227,17 @@ CREATE TABLE assistant.outbox (…);                      -- the same shape as i
 | `usage_daily` | — |
 | `entitlements` | — |
 | `audit` | — |
-| `outbox` | Daily partitions, 7 days |
+| `outbox` | Daily partitions, 7 days, kept one day ahead and dropped by `assistant.purge-expired` (every 5 minutes) |
+
+**Redis (`ast:` prefix)**
+
+| Key | Value | Expiry | Purpose |
+| --- | --- | --- | --- |
+| `ast:quota:{kind}:{userId}:{day}` | counter; `kind` is `text`, `voice`, `in` or `out` | 2 days | The day's live allowance counters (text turns, voice seconds, input and output tokens) |
+| `ast:turn:{userId}:{turnId}` | JSON: the turn parked for the phone, with the conversation so far | 10 min | A turn waiting on a device tool (A9, A11); taken once |
+| `ast:turns:{userId}` | hash: the user's parked turn ids | 10 min, renewed on each save | Lets account deletion find and delete the parked turns without scanning keys |
+
+All three are deleted for a user on `identity.AccountDeleted`, after its transaction commits.
 
 **Phase B** adds `assistant.proposals` (by user, with an `expires_at` 10 minutes after the proposal is decided or expires, purged by `assistant.purge-expired`), designed with Phase B.
 
