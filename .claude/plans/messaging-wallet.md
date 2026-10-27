@@ -34,6 +34,7 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 | --- | --- | --- |
 | AI1 | Integrations on Workers AI through AI Gateway (`HttpClients.named("workers-ai")`): `LanguageModel` (kimi-k2.6, tool calls), new `VisionModel` (llama-4-scout), `SpeechToText` (whisper-large-v3-turbo clips), `TextToSpeech` (aura-2-en); provider `workers-ai` for `INTEGRATIONS_LLM/STT/TTS/VISION_PROVIDER`; settings in `.env.example` | MockEngine tests for each call, tool-call round trip, error mapping; a manual smoke test against the real gateway once credentials exist |
 | AI2 | Live voice: a `webSockets` flag on `VendorHttpConfig` (decision 2026-10-25), `LiveTranscription` (Nova-3, Opus) and `LiveSpeech` (Aura) over Ktor WebSocket client; assistant A11 socket with turn detection, barge-in, metering, silence close; Swahili falls back to clips | Tests with fake streams; a local end-to-end run |
+| AI1b | Smoke-test fixes: Aura live socket without the gateway header (and a clear error, not `SerializationException`, when an upgrade is refused; `AuraSession.close` handling of Aura's 1011 on Close); streaming chat completions for A2 and A11 (text and tool-call deltas); A3 decimal `X-Duration-Seconds` and a correct error message | Tests with MockEngine/test host; a short real re-check |
 | AI3 | Images: A10 upload URL, A2 with `imageKey`, `VisionModel` description into the turn, deletion after the turn, metering | Tests for size/type, deletion, metering |
 
 ### Gateway follow-ups (from MS1 QA, decided 2026-10-25)
