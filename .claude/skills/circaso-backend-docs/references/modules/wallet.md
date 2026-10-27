@@ -64,7 +64,7 @@ Wallet also implements identity's `DeletionGuard` (refuses while the wallet hold
 
 | Setting | Example | Purpose |
 | --- | --- | --- |
-| `INTEGRATIONS_CUSTODY_PROVIDER` | `log` \| `fake` \| `circle` | `log` locally, `fake` in tests and on the sandbox until Circle keys are set |
+| `INTEGRATIONS_CUSTODY_PROVIDER` | `log` \| `fake` \| `circle` | `log` locally and on the sandbox, `fake` in tests, `circle` once real wallets are wanted |
 | `CIRCLE_API_KEY` (secret) | `TEST_API_KEY:…` | Circle API key; testnet and mainnet keys are separate |
 | `INTEGRATIONS_CUSTODY_APP_ID` | `…` | Circle app id, handed to the phone's SDK |
 | `INTEGRATIONS_CUSTODY_BLOCKCHAIN` | `BASE-SEPOLIA` (`BASE` in production) | Chain new wallets are created on |
@@ -92,6 +92,8 @@ interface CustodyNotifications {     // implemented by wallet, wired in app; int
     suspend fun onTransaction(update: CustodyTransaction): Resource<Unit>
 }
 ```
+
+**Contract details (as built in WS1).** `createWallet` for a user Circle has already initialized returns a `Challenge` with an empty `challengeId` and `needsSignature == false`; the caller then reads `wallets()`. `CustodyWallet` has id, address, blockchain, account type and state (`SETTING_UP`, `ACTIVE`, `FROZEN`). `CustodyTransaction` has circleTxId, circleUserId, walletId, blockchain, direction (`IN`, `OUT`), state, amount (`Money`), source and destination address, refId, txHash, failure reason and `updatedAt` (to ignore out-of-order updates). States: Circle's INITIATED, CLEARED, QUEUED, SENT → `SUBMITTED`; STUCK → `STUCK`; CONFIRMED, COMPLETE → `CONFIRMED`; FAILED, DENIED, CANCELLED → `FAILED`. Errors in our language: `PinLocked`, `InsufficientFunds`, `AddressInvalid`, plus `Unavailable` and `Rejected` with vendor-neutral messages. **Addresses are returned exactly as the chain gives them**; the wallet module normalises per chain when it compares or indexes them (EVM chains such as Base: lowercase; Solana: unchanged).
 
 The `log` provider answers with made-up wallets and challenges and prints what it was asked; `fake` records calls for tests.
 
