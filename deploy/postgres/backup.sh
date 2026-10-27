@@ -16,6 +16,9 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/circaso}"
 ENV_FILE="${ENV_FILE:-$APP_DIR/backup.env}"
 AWS_CLI_IMAGE="amazon/aws-cli:2.38.0"
+# The server's compose file names the app's images by variable; cron sets none, so take the ones the last deploy left.
+export IMAGE="${IMAGE:-$(cat "$APP_DIR/.current" 2>/dev/null || true)}"
+export DOCS_IMAGE="${DOCS_IMAGE:-$(cat "$APP_DIR/.current-docs" 2>/dev/null || true)}"
 
 [ -r "$ENV_FILE" ] || { echo "backup: $ENV_FILE is missing" >&2; exit 1; }
 # shellcheck disable=SC1090

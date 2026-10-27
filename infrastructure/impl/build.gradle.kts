@@ -9,7 +9,13 @@ plugins {
 dependencies {
     implementation(project(":observability:api"))
 
-    implementation(libs.r2dbc.postgresql)
+    implementation(libs.r2dbc.postgresql) {
+        // reactor-netty brings netty's epoll transport at 4.1, while the rest of netty resolves to 4.2. On Linux, Lettuce
+        // then finds epoll and calls a 4.2-only class (EpollIoHandler) that the 4.1 jar lacks. Without it, everything
+        // uses NIO, as before PG1.
+        exclude(group = "io.netty", module = "netty-transport-native-epoll")
+        exclude(group = "io.netty", module = "netty-transport-classes-epoll")
+    }
     implementation(libs.r2dbc.pool)
     // JDBC only for the Migrate step: Flyway and its PostgreSQL driver (Konsist keeps them in database.migrate)
     implementation(libs.flyway.core)
