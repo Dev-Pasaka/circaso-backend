@@ -258,8 +258,7 @@ interface DomainError {
 
 data class ErrorDetails(
     val retryAfterSeconds: Long? = null,             // RATE_LIMITED: also sent as the Retry-After header
-    val fields: List<FieldError> = emptyList(),      // INVALID: which field and what is wrong with it
-@Serializable data class FieldError(val field: String, val problem: String)
+    val fields: List<FieldError> = emptyList(),      // INVALID: which field and what is wrong with it (FieldError(field, problem); sent as FieldErrorDto)
 )
 
 class DomainException(val error: DomainError, cause: Throwable? = null) : RuntimeException(error.message, cause)
