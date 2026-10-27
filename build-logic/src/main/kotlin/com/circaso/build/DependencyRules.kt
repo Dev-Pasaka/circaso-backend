@@ -85,7 +85,7 @@ object DependencyRules {
 
     /**
      * `shared`, every module `api` and `integrations:api` carry no library beyond the Kotlin standard
-     * library and kotlinx-serialization: no Ktor, no Kandra, no Koin, no vendor SDK.
+     * library and kotlinx-serialization: no Ktor, no Exposed, no Koin, no vendor SDK.
      */
     private fun libraryAllowed(from: Kind, group: String?, name: String): Boolean {
         val bare = from == Kind.Shared || from == Kind.IntegrationsApi || from is Kind.ModuleApi

@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Serializable
 data class HealthReport(val status: String, val checks: List<HealthCheckStatus> = emptyList())
 
-/** One connection's result: [name] is `postgres`, `redis`, `scylla` or `streams`, [status] is `up` or `down`. */
+/** One connection's result: [name] is `postgres`, `redis` or `streams`, [status] is `up` or `down`. */
 @Serializable
 data class HealthCheckStatus(val name: String, val status: String)
 
@@ -68,7 +68,7 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
             TAG,
             envelope = false,
             notes =
-                "`200` with `status: ready` when PostgreSQL, Redis, ScyllaDB and the event streams all answer; " +
+                "`200` with `status: ready` when PostgreSQL, Redis and the event streams all answer; " +
                     "`503` with " +
                     "`status: not_ready` and the failing check marked `down` otherwise. " +
                     "Load balancers take the instance out of rotation when this fails. No token needed.",

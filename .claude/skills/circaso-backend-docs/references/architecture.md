@@ -546,8 +546,6 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 **Exposed and PostgreSQL.**
 
-> **Until PG6.** Temporary; PG6 deletes this line. Every module (identity, users, assistant, messaging) now runs on PostgreSQL; Kandra and ScyllaDB stay installed, unused by any module, until PG6 removes them.
-
 **Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-r2dbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is the non-blocking R2DBC driver (`exposed-r2dbc`, `org.postgresql:r2dbc-postgresql`, `io.r2dbc:r2dbc-pool`), so no thread ever blocks on the database (decision 2026-10-27: "queries must be non-blocking"). JDBC (`org.postgresql:postgresql`) is used only by Flyway in the `Migrate` step, because Flyway has no R2DBC driver; a Konsist rule keeps it there. Versions live in `gradle/libs.versions.toml`, like every other library.
 
 **One database, a schema and a role per module.** There is one database (`circaso`) with a schema per module: `identity`, `users`, `messaging`, `assistant`, later `wallet`. Each module also gets its own database role, with rights only on its own schema, so a module that queries another module's table fails in the database, not only in Konsist. There are no foreign keys across schemas, because modules stay independent.
@@ -659,10 +657,10 @@ Each module's Data section names the mechanism per table.
 
 **Where Postgres runs** (decided 2026-10-27)
 
-- **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`). The app starts using Postgres as its modules move.
+- **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`).
   - **Postgres:** database `circaso`, on the internal `circaso-data` network with no published port, so only the app and pgAdmin reach it. Volume `postgres-data`, memory limit 1.5 GB, `max_connections=50` (3 reserved), `shared_buffers=384MB`, `effective_cache_size=1GB`, `work_mem=8MB`, `maintenance_work_mem=128MB`, and statements over 500 ms logged.
   - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The login roles are created by `postgres/initdb/20-login-roles.sh` (run once by hand on the existing volume); the module roles by the `Migrate` step (PG1).
-  - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days (set up by devops in PG1); a restore is tested once in PG6. In production, the host's point-in-time recovery, retention at least 7 days.
+  - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days (set up by devops in PG1); a restore from it is still to be tested once (Decisions → Open questions → Backups). In production, the host's point-in-time recovery, retention at least 7 days.
 - **pgAdmin at `https://sandbox-db.circaso.com`,** behind three locks in a row:
   1. **Cloudflare Access** (Zero Trust application, only Pasaka's email). nginx (`deploy/nginx/sandbox-db.conf`) accepts only Cloudflare's addresses and refuses, with 403, a request without the `Cf-Access-Jwt-Assertion` header, so nothing reaches pgAdmin around Access. The name is one level under `circaso.com` because the origin and free edge certificates only cover `*.circaso.com`.
   2. **pgAdmin's own login** (`dpage/pgadmin4`, port 5050, no published port; nginx reaches it on the backend network by container name).

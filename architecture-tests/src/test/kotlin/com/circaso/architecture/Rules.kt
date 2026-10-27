@@ -9,7 +9,7 @@ data class Project(val kind: String, val module: String? = null) {
 }
 
 /**
- * The Konsist rules from docs/architecture.md (Module anatomy, Dependency rules, Integrations, Kandra).
+ * The Konsist rules from docs/architecture.md (Module anatomy, Dependency rules, Integrations, Exposed and PostgreSQL).
  * Each rule takes the main-source files and returns its violations, so the same rule runs on the real
  * project (must find none) and on a deliberately broken fixture (must find some).
  */
@@ -162,7 +162,7 @@ object Rules {
 
     // ---- the rules ----------------------------------------------------------------------------------------
 
-    /** Nothing in `domain` imports Ktor, Kandra, kotlinx-serialization or any library; only ports and the kernel. */
+    /** Nothing in `domain` imports Ktor, Exposed, kotlinx-serialization or any library; only ports and the kernel. */
     fun domainIsPureKotlin(files: List<KoFileDeclaration>): List<String> =
         files
             .filter {
@@ -191,7 +191,7 @@ object Rules {
                 }
             }
 
-    /** A module's `api` is a contract: no Ktor, Kandra, Koin, and only `shared` and other modules' `api`. */
+    /** A module's `api` is a contract: no Ktor, Exposed, Koin, and only `shared` and other modules' `api`. */
     fun apiIsContractOnly(files: List<KoFileDeclaration>): List<String> =
         files
             .filter {
@@ -420,70 +420,6 @@ object Rules {
                         violation(file, "no 'fun Route.xController(service: XService)' in a controllers file"),
                     )
                 }
-        }
-
-    /** Entities name their keyspace (`circaso_<module>`) and are unique across modules. */
-    fun entitiesNameTheirKeyspace(files: List<KoFileDeclaration>): List<String> {
-        val entities =
-            files.filter { it.isBusiness() }.flatMap { file ->
-                file
-                    .classes()
-                    .filter { cls ->
-                        cls.annotations.any {
-                            it.name ==
-                                "ScyllaTable"
-                        }
-                    }.map { file to it }
-            }
-        val perEntity =
-            entities.flatMap { (file, cls) ->
-                val annotation = cls.annotations.first { it.name == "ScyllaTable" }
-                val module = projectOf(file)!!.module
-                val literal = Regex("keyspace\\s*=\\s*\"([^\"]*)\"").find(annotation.text)?.groupValues?.get(1)
-                when {
-                    !annotation.text.contains(
-                        "keyspace",
-                    ) -> {
-                        listOf(
-                            violation(
-                                file,
-                                "'${cls.name}' has no keyspace in @ScyllaTable; there is no default keyspace",
-                            ),
-                        )
-                    }
-
-                    literal != null && literal != "circaso_$module" -> {
-                        listOf(
-                            violation(file, "'${cls.name}' names keyspace '$literal', expected 'circaso_$module'"),
-                        )
-                    }
-
-                    else -> {
-                        emptyList()
-                    }
-                }
-            }
-        val duplicates =
-            entities
-                .groupBy { it.second.name }
-                .filter { (_, owners) -> owners.size > 1 }
-                .map { (name, owners) ->
-                    "entity name '$name' is used by ${owners.map {
-                        projectOf(
-                            it.first,
-                        )!!.module
-                    }}; names must be unique across modules (Koin binds by simple name)"
-                }
-        return perEntity + duplicates
-    }
-
-    /** Kandra is touched only inside the `data` layer of a business module. */
-    fun kandraOnlyInData(files: List<KoFileDeclaration>): List<String> =
-        files.filter { it.isBusiness() && it.layer() != "data" }.flatMap { file ->
-            file
-                .importNames()
-                .filter { it.startsWith("io.kandra") || it.startsWith("com.kandraorm") }
-                .map { violation(file, "imports Kandra '$it' outside data") }
         }
 
     /** Business code reaches telemetry through the `Telemetry` handle, never OpenTelemetry directly. */
@@ -785,7 +721,28 @@ object Rules {
         return declared + referenced
     }
 
-    // `transaction {` or `transaction(db)`; prose such as "a lightweight transaction (`IF EXISTS`)" has a space.
+    private val tableName = Regex("""\bobject\s+(\w+)\s*:\s*Table\s*\(\s*"([^"]*)"""")
+
+    /**
+     * An Exposed `Table` names its module's schema (`identity.accounts`): one schema and one role per module, so a
+     * table without one, or in another module's schema, would fail only at run time, against the role's rights.
+     */
+    fun tablesNameTheirSchema(files: List<KoFileDeclaration>): List<String> =
+        files.filter { it.isBusiness() }.flatMap { file ->
+            val module = projectOf(file)!!.module
+            tableName
+                .findAll(file.text)
+                .mapNotNull { match ->
+                    val (name, table) = match.destructured
+                    if (table.startsWith("$module.")) {
+                        null
+                    } else {
+                        violation(file, "table '$name' is named '$table', expected '$module.<table>'")
+                    }
+                }.toList()
+        }
+
+    // `transaction {` or `transaction(db)`; prose such as "one transaction (rows and outbox)" has a space.
     private val rawTransaction = Regex("""(^|[^.\w])(transaction|suspendTransaction|inTopLevelTransaction)(\s*\{|\()""")
 
     /**
@@ -1031,8 +988,6 @@ object Rules {
             "servicesCallUseCases" to ::servicesCallUseCases,
             "useCasesAreSingleOperations" to ::useCasesAreSingleOperations,
             "layersAreNamedByRole" to ::layersAreNamedByRole,
-            "entitiesNameTheirKeyspace" to ::entitiesNameTheirKeyspace,
-            "kandraOnlyInData" to ::kandraOnlyInData,
             "noDirectOpenTelemetryInModules" to ::noDirectOpenTelemetryInModules,
             "importsFollowTheDependencyTable" to ::importsFollowTheDependencyTable,
             "vendorsDoNotKnowEachOther" to ::vendorsDoNotKnowEachOther,
@@ -1042,6 +997,7 @@ object Rules {
             "httpOnlyThroughKtor" to ::httpOnlyThroughKtor,
             "payloadsAreTyped" to ::payloadsAreTyped,
             "tablesStayInTheirModule" to ::tablesStayInTheirModule,
+            "tablesNameTheirSchema" to ::tablesNameTheirSchema,
             "noWayInButDatabaseTx" to ::noWayInButDatabaseTx,
             "transactionsHoldDatabaseWorkOnly" to ::transactionsHoldDatabaseWorkOnly,
             "jdbcOnlyInMigrate" to ::jdbcOnlyInMigrate,

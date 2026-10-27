@@ -5,7 +5,7 @@ import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.Secrets
 
 /**
- * [Config] read from environment variables: `scylla.contact-points` is `SCYLLA_CONTACT_POINTS`, and a
+ * [Config] read from environment variables: `database.ssl-mode` is `DATABASE_SSL_MODE`, and a
  * [section] puts its prefix in front. `CIRCASO_ENV` picks the [environment] (default local).
  */
 class EnvConfig(
@@ -21,7 +21,7 @@ class EnvConfig(
 }
 
 /**
- * [Secrets] from the environment: `scylla.password` is `SCYLLA_PASSWORD`, `phone-hmac-key` is `PHONE_HMAC_KEY`.
+ * [Secrets] from the environment: `database.password` is `DATABASE_PASSWORD`, `phone-hmac-key` is `PHONE_HMAC_KEY`.
  * A key store replaces this later.
  */
 class EnvSecrets(private val env: Map<String, String> = System.getenv()) : Secrets {

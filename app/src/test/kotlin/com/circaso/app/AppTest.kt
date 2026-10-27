@@ -53,7 +53,7 @@ class AppTest {
     @Test
     fun `live answers 200 whatever the connections are doing`() =
         testApplication {
-            application { circasoModule(AppConfig(), listOf(check("scylla") { Resource.error(Down) })) }
+            application { circasoModule(AppConfig(), listOf(check("postgres") { Resource.error(Down) })) }
 
             val response = client.get("/health/live")
 
@@ -88,7 +88,7 @@ class AppTest {
                     AppConfig(),
                     listOf(
                         check("redis") { Resource.success(Unit) },
-                        check("scylla") { Resource.error(Down) },
+                        check("postgres") { Resource.error(Down) },
                         check("streams") { error("boom") },
                     ),
                 )
@@ -103,7 +103,7 @@ class AppTest {
                     "not_ready",
                     listOf(
                         HealthCheckStatus("redis", "up"),
-                        HealthCheckStatus("scylla", "down"),
+                        HealthCheckStatus("postgres", "down"),
                         HealthCheckStatus("streams", "down"),
                     ),
                 ),

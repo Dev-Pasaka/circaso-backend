@@ -40,10 +40,9 @@
     LOG_LEVEL_CIRCLE           Circle wallets and its webhook (follows LOG_LEVEL_INTEGRATIONS when unset)
     LOG_LEVEL_EVENTS           the outbox relay and the stream consumers
     LOG_LEVEL_SCHEDULER        scheduled jobs
-    LOG_LEVEL_DATABASE         PostgreSQL (pools, transactions, migrations; r2dbc, Flyway, the drivers) and Circaso's
-                               side of ScyllaDB and Kandra. SQL is logged with ? for values. Exposed's own logger is
-                               held at ERROR (its messages can quote bound values), and the ScyllaDB driver and Kandra
-                               at ERROR (their notices are noise)
+    LOG_LEVEL_DATABASE         PostgreSQL (pools, transactions, migrations; r2dbc, Flyway, the drivers). SQL is logged
+                               with ? for values. Exposed's own logger is held at ERROR (its messages can quote bound
+                               values)
     LOG_LEVEL_REDIS            Redis, Circaso's side and Lettuce's
     LOG_LEVEL_HTTP             the Ktor server and Netty
     Example for debugging sign-in only:  LOG_LEVEL=WARN  LOG_LEVEL_IDENTITY=DEBUG  LOG_LEVEL_REQUESTS=INFO
@@ -77,8 +76,6 @@
   <logger name="io.r2dbc" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.flywaydb" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.postgresql" level="${LOG_LEVEL_DATABASE:-WARN}"/>
-  <logger name="com.datastax" level="ERROR"/>
-  <logger name="io.kandra" level="ERROR"/>
   <logger name="com.circaso.infrastructure.impl.redis" level="${LOG_LEVEL_REDIS:-${LOG_LEVEL:-INFO}}"/>
   <logger name="io.lettuce" level="${LOG_LEVEL_REDIS:-WARN}"/>
   <logger name="io.ktor" level="${LOG_LEVEL_HTTP:-WARN}"/>

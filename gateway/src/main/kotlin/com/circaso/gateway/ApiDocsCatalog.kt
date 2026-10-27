@@ -38,7 +38,7 @@ internal object ApiDocsCatalog {
                             "- **Live** says the process is running. An orchestrator restarts the process when " +
                             "it " +
                             "fails.\n" +
-                            "- **Ready** says every connection works (Redis, ScyllaDB, the event streams). A " +
+                            "- **Ready** says every connection works (PostgreSQL, Redis, the event streams). A " +
                             "load " +
                             "balancer stops sending traffic to an instance that is not ready, and the failing " +
                             "check " +
@@ -453,44 +453,12 @@ internal object ApiDocsCatalog {
         return CircasoJson.encodeToString(JsonObject.serializer(), JsonObject(result))
     }
 
-    /** Routes that come with a library and cannot carry a `docs(...)` call; they are described here instead. */
-    private val libraryRoutes: Map<String, Pair<String, String>> =
-        mapOf(
-            "/kandra/health" to (
-                "Is ScyllaDB reachable? (Kandra's own check)" to
-                    "Kandra, the database layer, answers this itself: whether its connection to ScyllaDB works " +
-                    "right " +
-                    "now. It needs no token. `/health/ready` already includes it, so use that one for load " +
-                    "balancers."
-            ),
-        )
-
-    /**
-     * Only routes someone described, so nothing undocumented (or a library's) leaks into the reference by accident. A
-     * known library route is given a summary and the Health section.
-     */
+    /** Only routes someone described, so nothing undocumented (or a library's) leaks into the reference by accident. */
     private fun describedOnly(paths: JsonObject): JsonObject =
         JsonObject(
             paths
                 .mapNotNull { (path, item) ->
-                    val operations =
-                        (item as JsonObject)
-                            .mapValues { (_, op) ->
-                                if (op !is JsonObject || op["tags"] != null) {
-                                    op
-                                } else {
-                                    val known = libraryRoutes[path] ?: return@mapValues null
-                                    JsonObject(
-                                        op +
-                                            mapOf(
-                                                "summary" to JsonPrimitive(known.first),
-                                                "description" to JsonPrimitive(known.second),
-                                                "tags" to buildJsonArray { add(JsonPrimitive("Health")) },
-                                            ),
-                                    )
-                                }
-                            }.filterValues { it != null }
-                            .mapValues { it.value!! }
+                    val operations = (item as JsonObject).filterValues { it !is JsonObject || it["tags"] != null }
                     if (operations.values.any { it is JsonObject }) path to JsonObject(operations) else null
                 }.toMap(),
         )

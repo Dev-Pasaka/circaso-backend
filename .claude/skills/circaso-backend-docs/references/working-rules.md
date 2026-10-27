@@ -41,8 +41,6 @@ Libraries not named in the docs (the Redis client, for example) are your proposa
 
 Packages are `com.circaso.<module>.<api | presentation | domain | data | di>`.
 
-> **Until PG6.** Temporary; PG6 deletes this line. Every module now runs on PostgreSQL; Kandra and ScyllaDB stay installed, unused by any module, until PG6 removes them. Nothing new is built on them.
-
 ## Build order
 
 Work in this order. Each milestone ends green: it builds, its tests and the Konsist rules pass, and nothing from a later milestone is half-started.

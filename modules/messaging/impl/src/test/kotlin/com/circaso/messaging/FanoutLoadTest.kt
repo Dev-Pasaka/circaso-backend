@@ -9,7 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * The fan-out measurement the plan asks for (postgres-migration.md §2.6, §6): group messages to a 1,000-member group on
+ * The fan-out measurement (messaging.md → Data → Fan-out): group messages to a 1,000-member group on
  * the test container, each send one transaction (claim, record, body, 999 inbox pointers in one multi-row insert). It
  * is not part of the default build; run it with
  * `MESSAGING_LOAD_TEST=1 ./gradlew :modules:messaging:impl:test --tests '*FanoutLoadTest*' --rerun -i`.

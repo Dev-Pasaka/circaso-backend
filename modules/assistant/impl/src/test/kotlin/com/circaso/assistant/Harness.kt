@@ -147,7 +147,16 @@ class MemoryQuota : QuotaCounters {
 
     private fun add(key: String, by: Long) = counters.merge(key, by, Long::plus)!!
 
-    override suspend fun countTextTurn(userId: UserId, day: String) = add("t:$userId:$day", 1)
+    override suspend fun countTextTurn(
+        userId: UserId,
+        day: String,
+        cap: Int,
+    ): Long =
+        synchronized(counters) {
+            val after = (counters["t:$userId:$day"] ?: 0) + 1
+            if (after <= cap) counters["t:$userId:$day"] = after
+            after
+        }
 
     override suspend fun textTurns(userId: UserId, day: String) = counters["t:$userId:$day"] ?: 0
 
@@ -373,7 +382,7 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val deleteAll = DeleteChat(memory, memory)
     val deleteOne = DeleteExchange(memory, memory, memory)
     val usage = GetUsage(plans, quota, config, clock)
-    val transcribe = TranscribeVoice(speech, plans, quota, config, clock)
+    val transcribe = TranscribeVoice(speech, plans, quota, memory, memory, config, clock)
     val speak = SynthesizeSpeech(speech, plans, quota, config, clock)
     val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)
 }

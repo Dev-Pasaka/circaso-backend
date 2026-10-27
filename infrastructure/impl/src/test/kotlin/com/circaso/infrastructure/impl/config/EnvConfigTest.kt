@@ -11,8 +11,8 @@ import kotlin.test.assertTrue
 class EnvConfigTest {
     private val env =
         mapOf(
-            "SCYLLA_CONTACT_POINTS" to "a:9042,b:9042",
-            "SCYLLA_TLS" to "true",
+            "DATABASE_URL" to "r2dbc:postgresql://a:5432/circaso",
+            "DATABASE_POOL_WARM" to "true",
             "INTEGRATIONS_SMS_PROVIDER" to "log",
             "REDIS_POOL_SIZE" to "8",
             "BLANK" to "  ",
@@ -22,17 +22,17 @@ class EnvConfigTest {
     fun `a dotted key reads its upper-case variable, dashes included`() {
         val config = EnvConfig(env)
 
-        assertEquals("a:9042,b:9042", config.string("scylla.contact-points"))
+        assertEquals("r2dbc:postgresql://a:5432/circaso", config.string("database.url"))
         assertEquals("log", config.string("integrations.sms.provider"))
-        assertNull(config.string("scylla.datacenter"))
-        assertEquals("datacenter1", config.string("scylla.datacenter", "datacenter1"))
+        assertNull(config.string("database.user"))
+        assertEquals("circaso_app", config.string("database.user", "circaso_app"))
     }
 
     @Test
     fun `a section puts its prefix in front of every key`() {
-        val scylla = EnvConfig(env).section("scylla")
+        val database = EnvConfig(env).section("database")
 
-        assertEquals("a:9042,b:9042", scylla.string("contact-points"))
+        assertEquals("r2dbc:postgresql://a:5432/circaso", database.string("url"))
         assertEquals("log", EnvConfig(env).section("integrations").section("sms").string("provider"))
     }
 
@@ -42,8 +42,8 @@ class EnvConfigTest {
 
         assertEquals(8, config.int("redis.pool-size", 1))
         assertEquals(1, config.int("redis.missing", 1))
-        assertTrue(config.boolean("scylla.tls", false))
-        assertFalse(config.boolean("scylla.missing", false))
+        assertTrue(config.boolean("database.pool.warm", false))
+        assertFalse(config.boolean("database.missing", false))
         val bad =
             assertFailsWith<IllegalStateException> {
                 EnvConfig(
@@ -51,7 +51,9 @@ class EnvConfigTest {
                 ).int("redis.pool-size", 1)
             }
         assertTrue("redis.pool-size" in bad.message!!)
-        assertFailsWith<IllegalStateException> { EnvConfig(mapOf("SCYLLA_TLS" to "yes")).boolean("scylla.tls", false) }
+        assertFailsWith<IllegalStateException> {
+            EnvConfig(mapOf("DATABASE_POOL_WARM" to "yes")).boolean("database.pool.warm", false)
+        }
     }
 
     @Test
@@ -59,7 +61,7 @@ class EnvConfigTest {
         val config = EnvConfig(env)
 
         assertNull(config.string("blank"))
-        assertFailsWith<IllegalStateException> { config.requireString("scylla.datacenter") }
+        assertFailsWith<IllegalStateException> { config.requireString("database.user") }
     }
 
     @Test
@@ -76,9 +78,9 @@ class EnvConfigTest {
 
     @Test
     fun `a missing secret is null, a required one fails, and none ever prints`() {
-        val secrets = EnvSecrets(mapOf("SCYLLA_PASSWORD" to "hunter2", "EMPTY" to ""))
+        val secrets = EnvSecrets(mapOf("DATABASE_PASSWORD" to "hunter2", "EMPTY" to ""))
 
-        assertEquals("hunter2", secrets.get("SCYLLA_PASSWORD"))
+        assertEquals("hunter2", secrets.get("DATABASE_PASSWORD"))
         assertNull(secrets.get("EMPTY"))
         assertNull(secrets.get("NOPE"))
         assertFailsWith<IllegalStateException> { secrets.require("NOPE") }

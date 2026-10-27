@@ -19,7 +19,7 @@ import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
 
-/** Google and Apple logins. The unique `(provider, subject)` index is the claim; there is no claim table. */
+/** Google and Apple logins. The unique `(provider, subject)` index is the claim, settled inside the transaction. */
 class ProviderRepositoryImpl(private val database: Database) : ProviderRepository {
     override suspend fun ownerOf(provider: SocialProvider, subject: String): UserId? =
         database.tx("providers.owner-of") {

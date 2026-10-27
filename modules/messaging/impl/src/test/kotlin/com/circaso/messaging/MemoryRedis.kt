@@ -73,6 +73,8 @@ class MemoryRedis(override val prefix: String = "msg") : RedisScope {
 
     override suspend fun hashTake(key: String): Map<String, String> = hashes.remove(key).orEmpty()
 
+    override suspend fun hashDelete(key: String, field: String): Boolean = hashes[key]?.remove(field) != null
+
     override suspend fun hashIncrement(
         key: String,
         field: String,

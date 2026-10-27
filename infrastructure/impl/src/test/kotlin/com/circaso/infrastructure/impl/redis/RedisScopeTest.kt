@@ -126,6 +126,19 @@ class RedisScopeTest {
         }
 
     @Test
+    fun `deleting a hash field leaves the others and the expiry, and the last one takes the hash`() =
+        runBlocking<Unit> {
+            idn.hashSet("parked:$id", mapOf("a" to "1", "b" to "1"), Duration.ofSeconds(30))
+
+            assertTrue(idn.hashDelete("parked:$id", "a"))
+            assertFalse(idn.hashDelete("parked:$id", "a"), "already gone")
+            assertEquals(mapOf("b" to "1"), idn.hashGetAll("parked:$id"))
+            assertTrue(idn.ttl("parked:$id")!! > Duration.ofSeconds(20), "the hash keeps its expiry")
+            assertTrue(idn.hashDelete("parked:$id", "b"))
+            assertFalse(idn.exists("parked:$id"), "the last field takes the hash with it")
+        }
+
+    @Test
     fun `taking a hash reads and deletes it at once, and later fields start a new one`() =
         runBlocking<Unit> {
             idn.hashSet("batch:$id", mapOf("a" to "read", "b" to "delivered"), Duration.ofSeconds(10))

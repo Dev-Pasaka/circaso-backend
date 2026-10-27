@@ -87,6 +87,8 @@ private class SeqRedis : RedisScope {
 
     override suspend fun hashTake(key: String): Map<String, String> = error("unused")
 
+    override suspend fun hashDelete(key: String, field: String): Boolean = error("unused")
+
     override suspend fun hashIncrement(
         key: String,
         field: String,

@@ -134,7 +134,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved and when a voice clip is transcribed (A3).
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
 - **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
@@ -162,7 +162,7 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A2 | `POST /v1/assistant/chat/messages` | app | Send Asha a message: typed, spoken, or asked from another chat (with that chat's id); reply streamed as server-sent events |
 | A3 | `POST /v1/assistant/voice` | app | Transcribe a voice clip |
 | A4 | `POST /v1/assistant/speech` | app | Turn a reply into audio |
-| A5 | `DELETE /v1/assistant/chat` | app | Delete the whole history with Asha |
+| A5 | `DELETE /v1/assistant/chat` | app | Delete the whole history with Asha (one `CHAT_DELETED` audit record, only when there was something to delete) |
 | A6 | `DELETE /v1/assistant/chat/messages/{messageId}` | app | Delete one exchange |
 | A7 | `GET /v1/assistant/usage` | app | Today's allowance used and left, and the plan |
 | A8 | `GET /v1/assistant/proposals/{id}` / `POST …/decline` | app | Read or decline a proposal (Phase B) |
@@ -235,7 +235,7 @@ CREATE TABLE assistant.outbox (…);                      -- the shared outbox D
 | --- | --- | --- | --- |
 | `ast:quota:{kind}:{userId}:{day}` | counter; `kind` is `text`, `voice`, `in` or `out` | 2 days | The day's live allowance counters (text turns, voice seconds, input and output tokens) |
 | `ast:turn:{userId}:{turnId}` | JSON: the turn parked for the phone, with the conversation so far | 10 min | A turn waiting on a device tool (A9, A11); taken once |
-| `ast:turns:{userId}` | hash: the user's parked turn ids | 10 min, renewed on each save | Lets account deletion find and delete the parked turns without scanning keys |
+| `ast:turns:{userId}` | hash: the user's parked turn ids | 10 min, renewed on each save | Lets account deletion find and delete the parked turns without scanning keys; an id leaves it when its turn is taken |
 
 All three are deleted for a user on `identity.AccountDeleted`, after its transaction commits.
 

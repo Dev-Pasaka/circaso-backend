@@ -68,6 +68,9 @@ interface RedisScope {
      */
     suspend fun hashTake(key: String): Map<String, String>
 
+    /** Removes one field of a hash; whether it was there. The hash keeps its expiry and goes with its last field. */
+    suspend fun hashDelete(key: String, field: String): Boolean
+
     /**
      * Adds [by] to one field of a hash that already exists; the hash keeps its expiry. Returns null when the
      * hash is gone (expired), rather than creating one that would never expire.
