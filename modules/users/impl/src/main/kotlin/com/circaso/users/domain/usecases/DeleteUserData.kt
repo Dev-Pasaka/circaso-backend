@@ -12,8 +12,8 @@ import com.circaso.users.domain.repositories.UsersStore
 import java.time.Clock
 
 /**
- * `identity.AccountDeleted`: deletes the profile, the contacts in both directions and the blocks either way, and
- * puts the handle on its 30-day hold, in one transaction. Numbers the user was waiting for expire on their own after
+ * `identity.AccountDeleted`: deletes the profile, the contacts in both directions, the blocks either way and the
+ * user's invites, and puts the handle on its 30-day hold, in one transaction. Numbers the user was waiting for expire on their own after
  * 180 days, since that table is keyed by number, not by owner.
  */
 class DeleteUserData(

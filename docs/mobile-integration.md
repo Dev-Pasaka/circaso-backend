@@ -250,16 +250,16 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `GET /v1/handles/{handle}/availability`<br>**U5** Whether a @handle is free, taken or invalid, with a suggestion | `app` | — → HandleAvailabilityResponse | **READY** | 30 per hour. |
+| `GET /v1/handles/{handle}/availability`<br>**U5** Whether a @handle is free, taken or invalid, with a suggestion | `app` | — → HandleAvailabilityResponse | **READY** | 30 per hour, one count shared with U9 and connecting by @handle. Errors: `request.rate_limited`. |
 | `PUT /v1/me/handle`<br>**U6** Claim or change your @handle, once every 30 days | `app` | ClaimHandleRequest → MyProfileResponse | **READY** | Once every 30 days. Errors: `users.handle_invalid`, `users.handle_taken`, `users.handle_cooldown`. |
-| `GET /v1/users/by-handle/{handle}`<br>**U9** Exact-match @handle lookup | `app` | — → PublicProfileDto | **READY** | 30 lookups per user per hour. Exact match; an owner who turned lookup off looks like not found. Errors: `users.handle_not_found`, `request.rate_limited`. |
+| `GET /v1/users/by-handle/{handle}`<br>**U9** Exact-match @handle lookup | `app` | — → PublicProfileDto | **READY** | 30 lookups per user per hour. Exact match; an owner who turned lookup off, or whose account is deleted or suspended, looks like not found. Errors: `users.handle_not_found`, `request.rate_limited`. |
 
 ### Contacts
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `POST /v1/contacts/sync`<br>**U7** Upload a batch of phone-book numbers (up to 1,000) and get back the ones on Circaso | `app` | SyncRequest → SyncResponse | **READY** | 5 syncs per user per hour. Names from the phone book never leave the phone. Up to 1,000 numbers per batch, 5 syncs per hour. Send E.164 numbers only; names never leave the phone. Errors: `users.sync_too_large`, `request.rate_limited`. |
-| `GET /v1/contacts`<br>**U8** Your contacts with public profiles | `app` | — → ContactsResponse | **READY** | Query: `cursor`, `limit` (default 50, at most 200). Paged with `cursor` and `limit`. |
+| `GET /v1/contacts`<br>**U8** Your contacts with public profiles | `app` | — → ContactsResponse | **READY** | Query: `cursor`, `limit` (default 50, at most 200). Paged with `cursor` and `limit`. A contact whose account is deleted or suspended is left out until it is active again. |
 | `DELETE /v1/contacts/{userId}`<br>**U16** Remove a contact; a sync won't add them back | `app` | — → RemovedResponse | **READY** | Errors: `users.contact_not_found`. |
 
 ### Connections and invites
@@ -275,7 +275,7 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `GET /v1/blocks`<br>**U13** People you have blocked | `app` | — → BlocksResponse | **READY** |  |
-| `PUT /v1/blocks/{userId}`<br>**U14** Block someone; a block overrides every other way of reaching a person | `app` | — → NoBody | **READY** | Errors: `users.cannot_block_self`. |
+| `PUT /v1/blocks/{userId}`<br>**U14** Block someone; a block overrides every other way of reaching a person | `app` | — → NoBody | **READY** | Errors: `users.cannot_block_self`, `request.not_found` (no such account). |
 | `DELETE /v1/blocks/{userId}`<br>**U14** Lift a block | `app` | — → NoBody | **READY** |  |
 | `GET /v1/me/reach/{userId}`<br>**U15** Whether you can reach that person | `app` | — → ReachResponse | **READY** | Never says why not. |
 

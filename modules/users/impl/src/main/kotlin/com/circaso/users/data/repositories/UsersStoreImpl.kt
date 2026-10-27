@@ -96,10 +96,11 @@ class UsersStoreImpl(private val database: Database) : UsersStore {
         }
     }
 
-    /** A deleted account: its profile, and its contacts and blocks in both directions. */
+    /** A deleted account: its profile, its contacts and blocks in both directions, and its invites. */
     private suspend fun erase(ids: List<UUID>) {
         ProfilesTable.deleteWhere { userId inList ids }
         ContactsTable.deleteWhere { (ownerId inList ids) or (contactId inList ids) }
         BlocksTable.deleteWhere { (userId inList ids) or (blockedId inList ids) }
+        InvitesTable.deleteWhere { ownerId inList ids }
     }
 }

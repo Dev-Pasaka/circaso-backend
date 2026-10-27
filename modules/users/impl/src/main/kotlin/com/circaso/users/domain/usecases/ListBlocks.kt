@@ -17,11 +17,11 @@ class ListBlocks(
     suspend operator fun invoke(userId: UserId): Resource<List<PublicProfile>> {
         val blocked = blocks.list(userId)
         val found = profiles.findAll(blocked.map { it.blockedId }.toSet())
+        // Someone whose account isn't active is shown to nobody, blocked or not.
         return Resource.success(
-            blocked.map {
-                found[it.blockedId]?.let { p -> views.forViewer(userId, p) }
-                    ?: fallbackProfile(it.blockedId)
-            },
+            blocked
+                .filter { found[it.blockedId]?.hidden != true }
+                .map { found[it.blockedId]?.let { p -> views.forViewer(userId, p) } ?: fallbackProfile(it.blockedId) },
         )
     }
 }

@@ -75,7 +75,7 @@ Sixteen routes, all with the `app` scope; reads that return another person's dat
 | U11 | `POST /connections` | `Connect` | Connect through a handle, QR code or invite link |
 | U12 | `POST /invites` / `DELETE /invites/{token}` | `CreateInvite` / `RevokeInvite` | Shareable link and QR payload |
 | U13 | `GET /blocks` | `ListBlocks` | People this user has blocked |
-| U14 | `PUT /blocks/{userId}` / `DELETE /blocks/{userId}` | `BlockUser` / `UnblockUser` | Block or unblock |
+| U14 | `PUT /blocks/{userId}` / `DELETE /blocks/{userId}` | `BlockUser` / `UnblockUser` | Block or unblock; an id that is no account is `request.not_found` |
 | U15 | `GET /me/reach/{userId}` | `CheckReach` | Whether this user can reach that one (debug and app hints) |
 | U16 | `DELETE /contacts/{userId}` | `RemoveContact` | Removes someone from this user's contacts; sync won't add them back |
 
@@ -176,7 +176,9 @@ CREATE TABLE users.profiles (
     privacy           text        NOT NULL,             -- JSON: avatar, about, handleLookup
     created_at        timestamptz NOT NULL,
     updated_at        timestamptz NOT NULL,
-    version           bigint      NOT NULL DEFAULT 0    -- optimistic lock (U2's version)
+    version           bigint      NOT NULL DEFAULT 0,   -- optimistic lock (U2's version)
+    account_status    text        NOT NULL DEFAULT 'ACTIVE',  -- V2: identity's last status; not ACTIVE hides the profile
+    status_changed_at timestamptz                       -- V2: that event's occurredAt; an older event changes nothing
 );
 CREATE UNIQUE INDEX profiles_handle_key ON users.profiles (handle);
 
@@ -271,8 +273,8 @@ Every read of a table with `expires_at` filters `expires_at > :now` (the app's c
 | --- | --- |
 | `identity.AccountActivated` | Create the profile, prefilled from the name and photo hints; look up `waiting_contacts` by the event's `phoneHmac`; turn waiting rows into contacts; send `contact.joined` to those users |
 | `identity.PhoneChanged` | Re-check waiting contacts by `newPhoneHmac`; existing contacts stay |
-| `identity.AccountStatusChanged` | Hide or restore the profile; clear cached reach decisions |
-| `identity.AccountDeleted` | Delete profile, contacts and blocks; release the handle into its 30-day hold |
+| `identity.AccountStatusChanged` | Record the status on the profile (`account_status`, ordered by the event's `occurredAt`, so a late older event changes nothing); clear cached reach decisions. While the account isn't `ACTIVE` (deleted in its 30-day grace, suspended, blocked) the profile is hidden: U9 and a handle connect answer `users.handle_not_found`, an invite or QR connect `users.invite_invalid`, it drops out of contact lists (U8, the agent's contacts and search) and block lists (U13), U10 answers `users.not_reachable`, and `Profiles.get` gives other modules the plain fallback (no name, handle or avatar). Its handle stays reserved (U5 says taken). Back to `ACTIVE`, all of it returns |
+| `identity.AccountDeleted` | Delete profile, contacts, blocks and the user's invites in one transaction; release the handle into its 30-day hold |
 
 If a profile is ever missing when it's read (the event is still in flight, or failed into the dead-letter stream), users creates an empty one on the spot, so nobody is stuck without a profile.
 
@@ -304,6 +306,6 @@ Users' own codes; the shared `request.*`, `auth.*` and `internal.error` codes ar
 | `users.handle_not_found` | NOT_FOUND → 404 | No such handle, or its owner turned lookup off (the two look the same on purpose) |
 | `users.not_reachable` | FORBIDDEN → 403 | No connection, or blocked either way (never says which) |
 | `users.contact_not_found` | NOT_FOUND → 404 | Removing someone who isn't a contact |
-| `users.invite_invalid` | NOT_FOUND → 404 | Invite expired or revoked |
+| `users.invite_invalid` | NOT_FOUND → 404 | Invite expired or revoked, or its owner's account is gone or not active |
 | `users.sync_too_large` | INVALID → 400 | Over 1,000 numbers in a batch |
 | `users.cannot_block_self` | INVALID → 400 | Blocking yourself |

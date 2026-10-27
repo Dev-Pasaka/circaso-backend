@@ -40,7 +40,8 @@ fun Route.handleController(handles: HandleService) {
             }.docs<NoBody, HandleAvailabilityResponse>(
                 "U5 · Whether a @handle is free, taken or invalid, with a suggestion",
                 TAG,
-                notes = SCOPE,
+                listOf("request.rate_limited"),
+                notes = "$SCOPE 30 handle lookups per user per hour, shared with U9 and connecting by handle.",
             )
         }
 

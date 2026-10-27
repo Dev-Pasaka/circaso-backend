@@ -57,11 +57,26 @@ class ClaimHandle(
         val saved =
             when (claimed) {
                 is Resource.Success -> claimed.data
-                is Resource.Error -> return claimed
+                is Resource.Error -> return alreadyHeld(userId, handle, claimed)
             }
 
         bus.publish(event)
         notifier.profileUpdated(userId, saved.version)
         return Resource.success(MyProfile(saved, views.avatarUrl(saved), now.plus(HANDLE_COOLDOWN)))
+    }
+
+    /**
+     * A lost version race where the profile now has this very handle is the same user's parallel claim winning, so
+     * it answers like a repeat of the claim; any other failure stands.
+     */
+    private suspend fun alreadyHeld(
+        userId: UserId,
+        handle: String,
+        failure: Resource.Error,
+    ): Resource<MyProfile> {
+        if (failure.error != UsersError.VersionConflict) return failure
+        val current = profiles.find(userId)?.takeIf { it.handle == handle } ?: return failure
+        val changeable = current.handleChangedAt?.plus(HANDLE_COOLDOWN)
+        return Resource.success(MyProfile(current, views.avatarUrl(current), changeable))
     }
 }
