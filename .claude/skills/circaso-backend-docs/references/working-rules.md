@@ -41,7 +41,7 @@ Libraries not named in the docs (the Redis client, for example) are your proposa
 
 Packages are `com.circaso.<module>.<api | presentation | domain | data | di>`.
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Identity, users, assistant and messaging run on ScyllaDB through Kandra 0.5.1 until their slices (PG2–PG5) ship. A fix to their code keeps the Kandra rules: entities in `@ScyllaTable(keyspace = …)` ending in `Row`; unique values claimed with `saveIfNotExists` before the batch; a clearable column stores a sentinel (empty text, nil UUID, epoch), since Kandra writes nothing for a `null` outside `saveWithNulls`; real Kandra bugs in `docs/kandra-bugs.md`; Testcontainers ScyllaDB for their data tests.
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Users, assistant and messaging run on ScyllaDB through Kandra 0.5.1 until their slices (PG3–PG5) ship. A fix to their code keeps the Kandra rules: entities in `@ScyllaTable(keyspace = …)` ending in `Row`; unique values claimed with `saveIfNotExists` before the batch; a clearable column stores a sentinel (empty text, nil UUID, epoch), since Kandra writes nothing for a `null` outside `saveWithNulls`; real Kandra bugs in `docs/kandra-bugs.md`; Testcontainers ScyllaDB for their data tests.
 
 ## Build order
 
