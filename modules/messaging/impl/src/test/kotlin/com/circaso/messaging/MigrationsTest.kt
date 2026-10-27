@@ -4,6 +4,7 @@ import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
 import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
 import com.circaso.messaging.data.migrations.V003_CreateChatTables
 import com.circaso.messaging.data.migrations.V004_AddChatOwner
+import com.circaso.messaging.data.migrations.V005_CreateDeliveryTables
 import com.datastax.oss.driver.api.core.cql.SimpleStatement
 import io.kandra.test.FakeKandraSession
 import kotlin.test.Test
@@ -89,5 +90,33 @@ class MigrationsTest {
         V004_AddChatOwner.up(session)
 
         assertEquals(v004, session.capturedStatements().map { (it as SimpleStatement).query })
+    }
+
+    private val v005 =
+        listOf(
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.inbox_by_user (user_id UUID, message_id UUID, chat_id " +
+                "UUID, ciphertext TEXT, group_body BOOLEAN, kind TEXT, media_ids TEXT, sender_id UUID, sent_at " +
+                "TIMESTAMP, PRIMARY KEY (user_id, message_id)) WITH CLUSTERING ORDER BY (message_id ASC) AND " +
+                "default_time_to_live = 2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.group_messages (chat_id UUID, message_id UUID, " +
+                "ciphertext TEXT, sender_id UUID, sent_at TIMESTAMP, PRIMARY KEY (chat_id, message_id)) WITH " +
+                "CLUSTERING ORDER BY (message_id ASC) AND default_time_to_live = 2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.messages_by_id (message_id UUID, chat_id UUID, kind " +
+                "TEXT, sender_id UUID, sent_at TIMESTAMP, PRIMARY KEY (message_id)) WITH default_time_to_live = " +
+                "2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.sent_by_client_id (sender_id UUID, client_message_id " +
+                "UUID, complete BOOLEAN, message_id UUID, PRIMARY KEY (sender_id, client_message_id)) WITH " +
+                "CLUSTERING ORDER BY (client_message_id ASC) AND default_time_to_live = 86400",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.settings (user_id UUID, read_receipts BOOLEAN, typing " +
+                "BOOLEAN, PRIMARY KEY (user_id))",
+        )
+
+    @Test
+    fun `V005 runs exactly the statements it was applied with`() {
+        val session = FakeKandraSession()
+
+        V005_CreateDeliveryTables.up(session)
+
+        assertEquals(v005, session.capturedStatements().map { (it as SimpleStatement).query })
     }
 }

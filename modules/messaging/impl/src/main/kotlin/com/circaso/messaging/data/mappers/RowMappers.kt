@@ -1,17 +1,26 @@
 package com.circaso.messaging.data.mappers
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.MessageKind
 import com.circaso.messaging.data.entities.ChatRow
+import com.circaso.messaging.data.entities.GroupMessageRow
+import com.circaso.messaging.data.entities.InboxRow
 import com.circaso.messaging.data.entities.KeyBundleRow
 import com.circaso.messaging.data.entities.MemberRow
+import com.circaso.messaging.data.entities.MessageRecordRow
+import com.circaso.messaging.data.entities.MessagingSettingsRow
 import com.circaso.messaging.data.entities.NIL_UUID
 import com.circaso.messaging.data.entities.OneTimePreKeyRow
 import com.circaso.messaging.data.entities.UserChatRow
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.ChatSettings
+import com.circaso.messaging.domain.models.GroupBody
+import com.circaso.messaging.domain.models.InboxMessage
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Member
+import com.circaso.messaging.domain.models.MessageRecord
+import com.circaso.messaging.domain.models.MessagingSettings
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SignedPreKey
@@ -105,3 +114,49 @@ fun UserChatRow.toModel() =
 
 /** A new chat-list line: no message yet, so both markers hold the nil UUID. */
 fun Member.toUserChatRow(kind: ChatKind) = UserChatRow(userId.value, chatId.value, kind.name, joinedAt = joinedAt)
+
+/** A pointer's empty ciphertext reads back as null: its ciphertext is the group body's. */
+fun InboxRow.toModel() =
+    InboxMessage(
+        userId = UserId(userId),
+        messageId = messageId,
+        chatId = ChatId(chatId),
+        senderId = UserId(senderId),
+        kind = MessageKind.valueOf(kind),
+        ciphertext = ciphertext.ifEmpty { null },
+        groupBody = groupBody,
+        mediaIds = mediaIdsOf(mediaIds),
+        sentAt = sentAt,
+    )
+
+fun InboxMessage.toRow() =
+    InboxRow(
+        userId = userId.value,
+        messageId = messageId,
+        chatId = chatId.value,
+        senderId = senderId.value,
+        kind = kind.name,
+        ciphertext = ciphertext.orEmpty(),
+        groupBody = groupBody,
+        mediaIds = mediaIds.joinToString(","),
+        sentAt = sentAt,
+    )
+
+private fun mediaIdsOf(raw: String): List<UUID> =
+    raw
+        .split(',')
+        .filter { it.isNotBlank() }
+        .map { UUID.fromString(it) }
+
+fun MessageRecordRow.toModel() =
+    MessageRecord(messageId, ChatId(chatId), UserId(senderId), MessageKind.valueOf(kind), sentAt)
+
+fun MessageRecord.toRow() = MessageRecordRow(messageId, chatId.value, senderId.value, kind.name, sentAt)
+
+fun GroupMessageRow.toModel() = GroupBody(ChatId(chatId), messageId, UserId(senderId), ciphertext, sentAt)
+
+fun GroupBody.toRow() = GroupMessageRow(chatId.value, messageId, senderId.value, ciphertext, sentAt)
+
+fun MessagingSettingsRow.toModel() = MessagingSettings(readReceipts, typing)
+
+fun MessagingSettings.toRow(userId: UserId) = MessagingSettingsRow(userId.value, readReceipts, typing)

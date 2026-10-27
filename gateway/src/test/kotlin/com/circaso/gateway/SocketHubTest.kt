@@ -16,8 +16,13 @@ import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
+import com.circaso.integrations.api.PushPayload
 import com.circaso.integrations.api.PushReceipt
 import com.circaso.integrations.api.PushTarget
+import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.MemberAddedFrame
+import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.observability.api.Metrics
 import com.circaso.observability.api.NoopTelemetry
 import com.circaso.observability.api.Telemetry
@@ -56,11 +61,13 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -147,6 +154,8 @@ class SocketHubTest {
         ) = Unit
 
         override suspend fun hashGetAll(key: String) = emptyMap<String, String>()
+
+        override suspend fun hashTake(key: String) = emptyMap<String, String>()
 
         override suspend fun hashIncrement(
             key: String,
@@ -251,6 +260,26 @@ class SocketHubTest {
             },
         ),
     )
+
+    private val chat = ChatId.new()
+    private val messageId = UUID.randomUUID()
+
+    /** A typed `messaging` frame, encoded as messaging encodes it. */
+    private fun <T> typed(
+        type: String,
+        serializer: KSerializer<T>,
+        data: T,
+    ) = RealtimeEnvelope.of("messaging", type, 1, data, serializer)
+
+    private fun newMessage(pushable: Boolean) =
+        typed(
+            MessageNewFrame.TYPE,
+            MessageNewFrame.serializer(),
+            MessageNewFrame(messageId, chat, UserId.new(), MessageKind.MESSAGE, pushable, Instant.now()),
+        )
+
+    private fun membersAdded(userIds: List<UserId>) =
+        typed(MemberAddedFrame.TYPE, MemberAddedFrame.serializer(), MemberAddedFrame(chat, userIds, UserId.new()))
 
     private fun hub(
         redis: RedisScope = MemoryRedis(),
@@ -462,15 +491,16 @@ class SocketHubTest {
 
             realtime.deliverMany(
                 listOf(online, offline, alsoOffline),
-                frame(1, "messaging", "message.new", mapOf("chatId" to "c1", "messageId" to "m1", "pushable" to true)),
+                newMessage(pushable = true),
             )
 
             assertEquals(setOf("token-$offline", "token-$alsoOffline"), push.sent.map { it.first.token }.toSet())
             assertEquals(1, redis.pipelinedReads.get(), "who is offline, in one pipelined lookup")
             assertEquals(0, redis.singleReads.get())
             push.sent.forEach { (_, message) ->
-                assertEquals(mapOf("chatId" to "c1", "messageId" to "m1"), message.data)
+                assertEquals(PushPayload(chat.toString(), messageId.toString()), message.data)
                 assertEquals("New message", message.body, "no text from the chat")
+                assertTrue(message.dataOnly, "the app fetches, decrypts and words it")
             }
         }
 
@@ -483,7 +513,7 @@ class SocketHubTest {
 
             realtime.deliverMany(
                 List(3) { UserId.new() },
-                frame(1, "messaging", "message.new", mapOf("chatId" to "c1", "messageId" to "m1", "pushable" to false)),
+                newMessage(pushable = false),
             )
 
             assertTrue(push.sent.isEmpty())
@@ -514,13 +544,14 @@ class SocketHubTest {
 
             realtime.deliverMany(
                 listOf(first, second, member),
-                frame(1, "messaging", "member.added", mapOf("chatId" to "c1", "userIds" to listOf(first, second))),
+                membersAdded(listOf(first, second)),
             )
 
             assertEquals(setOf("token-$first", "token-$second"), push.sent.map { it.first.token }.toSet())
             assertEquals(2, push.sent.size, "the member already in is not woken")
+            assertTrue(push.sent.all { it.second.dataOnly }, "the phone words it from the sealed group name")
             assertEquals(
-                mapOf("chatId" to "c1"),
+                PushPayload(chatId = chat.toString()),
                 push.sent
                     .first()
                     .second.data,

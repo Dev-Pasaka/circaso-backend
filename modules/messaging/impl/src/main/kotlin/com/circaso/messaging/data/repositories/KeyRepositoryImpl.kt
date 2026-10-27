@@ -7,6 +7,7 @@ import com.circaso.messaging.data.mappers.toRow
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.repositories.KeyRepository
+import com.circaso.shared.DeviceId
 import com.circaso.shared.UserId
 import com.datastax.oss.driver.api.core.servererrors.WriteTimeoutException
 import io.kandra.core.ExperimentalKandraApi
@@ -16,6 +17,8 @@ import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.dsl.KandraRawQuery
 import io.kandra.runtime.repository.KandraSuspendRepository
 import org.slf4j.LoggerFactory
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -35,6 +38,13 @@ private const val CLAIM_CQL =
  */
 private const val ROLL_BACK_CQL =
     "DELETE FROM circaso_messaging.one_time_prekeys WHERE user_id = ? AND key_id = ? IF public_key = ?"
+
+/** A replaced phone's bundle, only while that phone's is the one stored. */
+private const val REMOVE_BUNDLE_CQL = "DELETE FROM circaso_messaging.key_bundles WHERE user_id = ? IF device_id = ?"
+
+/** Only keys written before the replacement: the timestamp is the event's, in microseconds. */
+private const val REMOVE_PREKEYS_CQL =
+    "DELETE FROM circaso_messaging.one_time_prekeys USING TIMESTAMP ? WHERE user_id = ?"
 
 private val log = LoggerFactory.getLogger("com.circaso.messaging.data")
 
@@ -159,6 +169,34 @@ class KeyRepositoryImpl(
             if (e.cause !is WriteTimeoutException) throw e
             false
         }
+    }
+
+    /**
+     * The bundle goes with a lightweight transaction on its device, so a bundle the new phone already published is
+     * never deleted. The one-time prekeys go as one partition delete written at [replacedAt] (`USING TIMESTAMP`, in
+     * microseconds; decision 2026-10-27): it removes only keys written before the replacement, so a set the new phone
+     * publishes afterwards stays whatever order the writes land in. It runs even when the bundle was already gone, so
+     * a retry of the event finishes a removal that failed part-way.
+     */
+    override suspend fun removeBundle(
+        userId: UserId,
+        deviceId: DeviceId,
+        replacedAt: Instant,
+    ): Boolean {
+        val bundle =
+            KandraRawQuery
+                .cql(REMOVE_BUNDLE_CQL)
+                .bind(userId.value, deviceId.value)
+                .build()
+        val removed = bundles.rawQuery(bundle).firstOrNull()?.getBoolean("[applied]") == true
+        val micros = ChronoUnit.MICROS.between(Instant.EPOCH, replacedAt)
+        val keys =
+            KandraRawQuery
+                .cql(REMOVE_PREKEYS_CQL)
+                .bind(micros, userId.value)
+                .build()
+        prekeys.rawQuery(keys)
+        return removed
     }
 
     private companion object {

@@ -1,6 +1,7 @@
 package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.MessagingFrame
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.UserChat
@@ -158,8 +159,10 @@ class RecordingFrames :
         val to: UserId,
         val seq: Long,
         val type: String,
-        val data: Map<String, Any>,
-    )
+        val frame: MessagingFrame,
+    ) {
+        inline fun <reified T : MessagingFrame> data(): T = frame as T
+    }
 
     val sent = CopyOnWriteArrayList<Sent>()
     private val seqs = ConcurrentHashMap<UserId, Long>()
@@ -168,15 +171,11 @@ class RecordingFrames :
     var recording = true
     var count = 0L
 
-    override suspend fun send(
-        userIds: Collection<UserId>,
-        type: String,
-        data: Map<String, Any>,
-    ) {
+    override suspend fun send(userIds: Collection<UserId>, frame: MessagingFrame) {
         val recipients = userIds.distinct()
         count += recipients.size
         if (!recording) return
-        sent.addAll(recipients.map { Sent(it, seqs.merge(it, 1L, Long::plus)!!, type, data) })
+        sent.addAll(recipients.map { Sent(it, seqs.merge(it, 1L, Long::plus)!!, frame.type, frame) })
     }
 
     override suspend fun since(

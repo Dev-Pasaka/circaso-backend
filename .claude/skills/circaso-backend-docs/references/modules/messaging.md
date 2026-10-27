@@ -467,7 +467,8 @@ Every read of a table with `expires_at` filters `expires_at > now()`; `messaging
 | --- | --- | --- | --- |
 | `msg:pending:{messageId}` | count of members yet to ack | 30 days | Deletes the group body on the last ack |
 | `msg:members:{chatId}` | userIds, one comma-separated value | 10 min; a change writes a 5 s marker and readers fill only with set-if-absent | Membership for sends and fan-out without reading `members` each time |
-| `msg:receipts:{messageId}` | hash userId → `delivered` / `read` | 10 s | Group receipts collected for the 5-second batch to the sender |
+| `msg:receipts:{messageId}` | hash `<userId>:delivered` / `<userId>:read` → `1` | 10 s | Group receipts collected for the 5-second batch to the sender; one field per status, so a delivered receipt never replaces a read one; the batch takes and clears the hash in one step (`RedisScope.hashTake`) and sends each person's furthest status |
+| `msg:receipts-due:{messageId}` | `1` | 5 s | Claims the next receipt batch for one node; a batched receipt's `at` is when the batch is sent |
 | `msg:bundle-rate:{userId}` | counter | 1 h | 60 key bundles per user per hour |
 | `msg:hk-fetch:{userId}` | counter | 24 h | 5 backup fetches per user per day |
 | `msg:typing:{chatId}:{userId}` | `1` | 6 s | Drops repeated typing frames |

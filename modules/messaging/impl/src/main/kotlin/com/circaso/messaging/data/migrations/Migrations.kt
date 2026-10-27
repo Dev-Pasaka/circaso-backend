@@ -1,11 +1,16 @@
 package com.circaso.messaging.data.migrations
 
 import com.circaso.messaging.data.entities.ChatRow
+import com.circaso.messaging.data.entities.ClientMessageRow
 import com.circaso.messaging.data.entities.DirectChatClaimRow
+import com.circaso.messaging.data.entities.GroupMessageRow
+import com.circaso.messaging.data.entities.InboxRow
 import com.circaso.messaging.data.entities.KeyBundleRow
 import com.circaso.messaging.data.entities.MemberRow
+import com.circaso.messaging.data.entities.MessageRecordRow
 import com.circaso.messaging.data.entities.MessagingOutboxRow
 import com.circaso.messaging.data.entities.MessagingRealtimeRow
+import com.circaso.messaging.data.entities.MessagingSettingsRow
 import com.circaso.messaging.data.entities.OneTimePreKeyRow
 import com.circaso.messaging.data.entities.UserChatRow
 import com.datastax.oss.driver.api.core.CqlSession
@@ -22,6 +27,11 @@ val messagingEntities =
         DirectChatClaimRow::class,
         MemberRow::class,
         UserChatRow::class,
+        InboxRow::class,
+        GroupMessageRow::class,
+        MessageRecordRow::class,
+        ClientMessageRow::class,
+        MessagingSettingsRow::class,
     )
 
 /**
@@ -127,6 +137,39 @@ object V004_AddChatOwner : KandraMigration(version = 4, name = "add chat owner")
                     session.execute(owner)
                 }
             }
+        }
+    }
+}
+
+/**
+ * Sending and delivery (MS4): each recipient's inbox, group message bodies, who sent each message, the
+ * idempotent-send claims and the receipt and typing settings. The inbox, bodies and records live 30 days and the
+ * claims 24 hours. Never edit it once applied.
+ */
+object V005_CreateDeliveryTables : KandraMigration(version = 5, name = "create delivery tables") {
+    // A plain loop, as in V001 (docs/kandra-bugs.md #5).
+    private val statements =
+        listOf(
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.inbox_by_user (user_id UUID, message_id UUID, chat_id " +
+                "UUID, ciphertext TEXT, group_body BOOLEAN, kind TEXT, media_ids TEXT, sender_id UUID, sent_at " +
+                "TIMESTAMP, PRIMARY KEY (user_id, message_id)) WITH CLUSTERING ORDER BY (message_id ASC) AND " +
+                "default_time_to_live = 2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.group_messages (chat_id UUID, message_id UUID, " +
+                "ciphertext TEXT, sender_id UUID, sent_at TIMESTAMP, PRIMARY KEY (chat_id, message_id)) WITH " +
+                "CLUSTERING ORDER BY (message_id ASC) AND default_time_to_live = 2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.messages_by_id (message_id UUID, chat_id UUID, kind " +
+                "TEXT, sender_id UUID, sent_at TIMESTAMP, PRIMARY KEY (message_id)) WITH default_time_to_live = " +
+                "2592000",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.sent_by_client_id (sender_id UUID, client_message_id " +
+                "UUID, complete BOOLEAN, message_id UUID, PRIMARY KEY (sender_id, client_message_id)) WITH " +
+                "CLUSTERING ORDER BY (client_message_id ASC) AND default_time_to_live = 86400",
+            "CREATE TABLE IF NOT EXISTS circaso_messaging.settings (user_id UUID, read_receipts BOOLEAN, typing " +
+                "BOOLEAN, PRIMARY KEY (user_id))",
+        )
+
+    override fun up(session: CqlSession) {
+        for (statement in statements) {
+            session.execute(statement)
         }
     }
 }

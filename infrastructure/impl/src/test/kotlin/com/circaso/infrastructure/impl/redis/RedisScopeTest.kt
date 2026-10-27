@@ -126,6 +126,19 @@ class RedisScopeTest {
         }
 
     @Test
+    fun `taking a hash reads and deletes it at once, and later fields start a new one`() =
+        runBlocking<Unit> {
+            idn.hashSet("batch:$id", mapOf("a" to "read", "b" to "delivered"), Duration.ofSeconds(10))
+
+            assertEquals(mapOf("a" to "read", "b" to "delivered"), idn.hashTake("batch:$id"))
+            assertFalse(idn.exists("batch:$id"))
+            assertEquals(emptyMap(), idn.hashTake("batch:$id"))
+
+            idn.hashSet("batch:$id", mapOf("c" to "read"), Duration.ofSeconds(10))
+            assertEquals(mapOf("c" to "read"), idn.hashTake("batch:$id"))
+        }
+
+    @Test
     fun `counting up a hash that expired does not bring back a key with no expiry`() =
         runBlocking<Unit> {
             assertNull(idn.hashIncrement("otp:gone-$id", "attempts"))

@@ -81,6 +81,26 @@ sealed class MessagingError(
         ErrorKind.INVALID,
     )
 
+    data object MessageTooLarge : MessagingError(
+        "messaging.message_too_large",
+        "A message can be at most 64 KB. Send files as chat media.",
+        ErrorKind.INVALID,
+    )
+
+    /** A direct or `SENDER_KEY` send whose recipients aren't (other) members of the chat. */
+    data object RecipientsMismatch : MessagingError(
+        "messaging.recipients_mismatch",
+        "The recipients don't match the chat's members. Load the chat again and retry.",
+        ErrorKind.INVALID,
+    )
+
+    /** After 48 hours, or by someone other than the sender: the two look the same. */
+    data object DeleteWindowPassed : MessagingError(
+        "messaging.delete_window_passed",
+        "Only the sender can delete a message for everyone, within 48 hours.",
+        ErrorKind.CONFLICT,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

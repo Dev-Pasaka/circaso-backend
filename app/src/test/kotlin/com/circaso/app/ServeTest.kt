@@ -1,5 +1,9 @@
 package com.circaso.app
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
@@ -34,6 +38,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
+import org.slf4j.LoggerFactory
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.scylladb.ScyllaDBContainer
 import org.testcontainers.utility.DockerImageName
@@ -403,6 +408,11 @@ class ServeTest {
                 "/v1/chats/{chatId}/members",
                 "/v1/chats/{chatId}/members/{userId}",
                 "/v1/chats/{chatId}/members/{userId}/role",
+                "/v1/chats/{chatId}/messages",
+                "/v1/chats/{chatId}/messages/{messageId}",
+                "/v1/inbox",
+                "/v1/inbox/ack",
+                "/v1/messaging/settings",
             ).forEach { assertTrue(it in paths.keys, "$it is documented") }
 
             // the journey order: infrastructure, then nonce before social sign-in before the phone before the device
@@ -816,6 +826,8 @@ class ServeTest {
         assertEquals(direct["chatId"], again["chatId"])
         assertEquals("false", again["created"]!!.jsonPrimitive.content)
 
+        messagesJourney(direct["chatId"]!!.jsonPrimitive.content, amina, brian, ::get, ::send, ::data, ::code)
+
         // a group: Chidi can't be reached by Amina, so he is listed in notAdded
         val sealed = Base64.getEncoder().encodeToString(ByteArray(48) { 1 })
         val group =
@@ -885,6 +897,81 @@ class ServeTest {
         )
         val brianChats = data(get("/v1/chats", brian.app))["chats"]!!.jsonArray
         assertEquals(2, brianChats.size, "the direct chat and the group")
+    }
+
+    /**
+     * M12 to M14 and M22 over HTTP in a direct chat: an idempotent send, the inbox and its ack, delete for everyone,
+     * settings, the agent token refused, and no log line carrying the ciphertext.
+     */
+    private suspend fun messagesJourney(
+        chatId: String,
+        amina: Person,
+        brian: Person,
+        get: suspend (String, String) -> HttpResponse,
+        send: suspend (HttpMethod, String, String, String) -> HttpResponse,
+        data: suspend (HttpResponse) -> JsonObject,
+        code: suspend (HttpResponse) -> String,
+    ) {
+        val logs = ListAppender<ILoggingEvent>().apply { start() }
+        val circaso = LoggerFactory.getLogger("com.circaso") as Logger
+        val level = circaso.level
+        circaso.level = Level.DEBUG
+        (LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger).addAppender(logs)
+        try {
+            val secret = Base64.getEncoder().encodeToString("the ciphertext nobody may log".toByteArray())
+            val message =
+                """{"clientMessageId":"${Uuid7.generate()}","kind":"MESSAGE","pushable":true,""" +
+                    """"recipients":[{"userId":"${brian.userId}","ciphertext":"$secret"}]}"""
+            val path = "/v1/chats/$chatId/messages"
+
+            // a retry with the same clientMessageId (and a new Idempotency-Key) returns the first message
+            val sent = data(send(HttpMethod.Post, path, amina.app, message))
+            val messageId = sent["messageId"]!!.jsonPrimitive.content
+            val retried = data(send(HttpMethod.Post, path, amina.app, message))
+            assertEquals(messageId, retried["messageId"]!!.jsonPrimitive.content)
+
+            // Brian's inbox holds it until he acknowledges it
+            val waiting = data(get("/v1/inbox", brian.app))["messages"]!!.jsonArray
+            assertEquals(
+                secret,
+                waiting
+                    .single()
+                    .jsonObject["ciphertext"]!!
+                    .jsonPrimitive.content,
+            )
+            val ack = """{"messageIds":["$messageId"]}"""
+            assertEquals("1", data(send(HttpMethod.Post, "/v1/inbox/ack", brian.app, ack))["acked"].toString())
+            assertTrue(data(get("/v1/inbox", brian.app))["messages"]!!.jsonArray.isEmpty())
+
+            // a second message still waiting is deleted for everyone by Amina, not by Brian
+            val second =
+                message.replace(
+                    Regex("\"clientMessageId\":\"[^\"]+\""),
+                    "\"clientMessageId\":\"${Uuid7.generate()}\"",
+                )
+            val secondId = data(send(HttpMethod.Post, path, amina.app, second))["messageId"]!!.jsonPrimitive.content
+            val notHers = send(HttpMethod.Delete, "$path/$secondId", brian.app, "{}")
+            assertEquals("messaging.delete_window_passed", code(notHers))
+            data(send(HttpMethod.Delete, "$path/$secondId", amina.app, "{}"))
+            assertTrue(data(get("/v1/inbox", brian.app))["messages"]!!.jsonArray.isEmpty())
+
+            // settings, and the agent token reaches none of it
+            val settings = data(send(HttpMethod.Patch, "/v1/messaging/settings", brian.app, """{"typing":false}"""))
+            assertEquals("false", settings["typing"].toString())
+            assertEquals("true", settings["readReceipts"].toString())
+            assertEquals(HttpStatusCode.Forbidden, send(HttpMethod.Post, path, amina.agent, message).status)
+            assertEquals(HttpStatusCode.Forbidden, get("/v1/inbox", amina.agent).status)
+            assertEquals(HttpStatusCode.Forbidden, send(HttpMethod.Post, "/v1/inbox/ack", amina.agent, ack).status)
+            val agentSettings = send(HttpMethod.Patch, "/v1/messaging/settings", amina.agent, "{}")
+            assertEquals(HttpStatusCode.Forbidden, agentSettings.status)
+
+            val lines = logs.list.map { it.formattedMessage + " " + it.throwableProxy?.message.orEmpty() }
+            assertTrue(lines.isNotEmpty(), "the requests were logged")
+            assertTrue(lines.none { secret in it }, "no log line carries a ciphertext")
+        } finally {
+            (LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME) as Logger).detachAppender(logs)
+            circaso.level = level
+        }
     }
 
     @Test

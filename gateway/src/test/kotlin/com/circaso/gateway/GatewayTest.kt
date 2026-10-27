@@ -109,6 +109,8 @@ class GatewayTest {
 
         override suspend fun hashGetAll(key: String) = emptyMap<String, String>()
 
+        override suspend fun hashTake(key: String) = emptyMap<String, String>()
+
         override suspend fun hashIncrement(
             key: String,
             field: String,

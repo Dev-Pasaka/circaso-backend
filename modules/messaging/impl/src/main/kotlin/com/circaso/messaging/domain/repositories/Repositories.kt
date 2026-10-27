@@ -7,8 +7,10 @@ import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.UserChat
+import com.circaso.shared.DeviceId
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
+import java.time.Instant
 
 /** The key directory: `key_bundles` and `one_time_prekeys`. */
 interface KeyRepository {
@@ -40,6 +42,17 @@ interface KeyRepository {
      * key. Null when none are left, or (rarely) when every key it tried was taken first by someone else.
      */
     suspend fun claimOneTimeKey(userId: UserId): OneTimePreKey?
+
+    /**
+     * Deletes [userId]'s bundle only if [deviceId] published it (a lightweight transaction), and the one-time
+     * prekeys written before [replacedAt]. True when the bundle was deleted; false when another phone's is stored
+     * (the new phone published first) or none is, and then only older prekeys go.
+     */
+    suspend fun removeBundle(
+        userId: UserId,
+        deviceId: DeviceId,
+        replacedAt: Instant,
+    ): Boolean
 }
 
 /** Chats and membership: `chats`, `direct_chats_by_pair`, `members_by_chat` and `chats_by_user`. */

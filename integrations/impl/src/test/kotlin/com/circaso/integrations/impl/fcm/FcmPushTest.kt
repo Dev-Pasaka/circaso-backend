@@ -2,6 +2,7 @@ package com.circaso.integrations.impl.fcm
 
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PushMessage
+import com.circaso.integrations.api.PushPayload
 import com.circaso.integrations.api.PushPlatform
 import com.circaso.integrations.api.PushTarget
 import com.circaso.integrations.impl.FakeHttpClients
@@ -78,7 +79,7 @@ class FcmPushTest {
             clock,
         )
     private val target = PushTarget(PushPlatform.IOS, "device-token")
-    private val message = PushMessage("Circaso", "Amina is on Circaso", mapOf("route" to "contacts"))
+    private val message = PushMessage("Circaso", "Amina is on Circaso", PushPayload(chatId = "c1"))
 
     private fun sends() = clients.requests.filter { it.url.host == "fcm.googleapis.com" }
 
@@ -94,7 +95,44 @@ class FcmPushTest {
             val body = Json.parseToJsonElement(request.text()).jsonObject["message"]!!.jsonObject
             assertEquals("device-token", body["token"]!!.jsonPrimitive.content)
             assertEquals("Amina is on Circaso", body["notification"]!!.jsonObject["body"]!!.jsonPrimitive.content)
-            assertEquals("contacts", body["data"]!!.jsonObject["route"]!!.jsonPrimitive.content)
+            assertEquals("c1", body["data"]!!.jsonObject["chatId"]!!.jsonPrimitive.content)
+            assertTrue("messageId" !in body["data"]!!.jsonObject, "an id that is not set is not sent")
+        }
+
+    @Test
+    fun `a normal push is a notification on both phones`() =
+        runBlocking<Unit> {
+            push.send(target, message)
+
+            val body = Json.parseToJsonElement(sends().single().text()).jsonObject["message"]!!.jsonObject
+            val apns = body["apns"]!!.jsonObject
+            assertTrue("notification" in body)
+            assertEquals(null, apns["headers"]!!.jsonObject["apns-push-type"])
+            assertEquals(null, apns["payload"]!!.jsonObject["aps"]!!.jsonObject["mutable-content"])
+        }
+
+    @Test
+    fun `a data-only push is a data message on Android and a mutable alert with the fallback text on iOS`() =
+        runBlocking<Unit> {
+            val wake =
+                PushMessage(
+                    "Circaso",
+                    "New message",
+                    PushPayload(chatId = "c1", messageId = "m1"),
+                    dataOnly = true,
+                )
+
+            push.send(PushTarget(PushPlatform.ANDROID, "device-token"), wake)
+
+            val body = Json.parseToJsonElement(sends().single().text()).jsonObject["message"]!!.jsonObject
+            assertTrue("notification" !in body, "no notification block, so Android hands it to the app")
+            assertEquals("m1", body["data"]!!.jsonObject["messageId"]!!.jsonPrimitive.content)
+            assertEquals("HIGH", body["android"]!!.jsonObject["priority"]!!.jsonPrimitive.content)
+            val apns = body["apns"]!!.jsonObject
+            assertEquals("alert", apns["headers"]!!.jsonObject["apns-push-type"]!!.jsonPrimitive.content)
+            val aps = apns["payload"]!!.jsonObject["aps"]!!.jsonObject
+            assertEquals(1, aps["mutable-content"]!!.jsonPrimitive.content.toInt())
+            assertEquals("New message", aps["alert"]!!.jsonObject["body"]!!.jsonPrimitive.content)
         }
 
     @Test

@@ -683,15 +683,6 @@ object Rules {
      */
     val untypedPayloadAllowList: Map<String, String> =
         linkedMapOf(
-            // Owned by the parallel slice that converts them. Each entry is removed when MS4 merges.
-            "integrations/impl/fcm/FcmPush.kt" to
-                "MS4 converts it; FCM's `data` stays a string map, the FCM API requires it, encoded from a typed class",
-            "messaging/data/cache/RealtimeFramesImpl.kt" to
-                "MS4 converts the messaging frames",
-            "messaging/domain/ports/Ports.kt" to
-                "MS4 converts the messaging frames",
-            "gateway/realtime/GatewayRealtime.kt" to
-                "MS4 converts pushFor",
             // Not payloads, so they stay.
             "integrations/impl/workersai/ChatCompletions.kt" to
                 "a tool's parametersJsonSchema is an opaque JSON Schema string (decision B, 2026-10-27, AI1b review)",

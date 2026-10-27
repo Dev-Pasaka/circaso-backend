@@ -1,6 +1,7 @@
 package com.circaso.messaging.data.cache
 
 import com.circaso.infrastructure.api.RedisScope
+import com.circaso.messaging.api.MessagingFrame
 import com.circaso.messaging.data.entities.MessagingRealtimeRow
 import com.circaso.messaging.domain.ports.LoggedFrame
 import com.circaso.messaging.domain.ports.RealtimeFrames
@@ -9,16 +10,11 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
-import com.circaso.shared.Uuid7
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.repository.KandraSuspendRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
@@ -43,44 +39,18 @@ class RealtimeFramesImpl(
     private val clock: Clock,
 ) : RealtimeFrames,
     RealtimeLog {
-    override suspend fun send(
-        userIds: Collection<UserId>,
-        type: String,
-        data: Map<String, Any>,
-    ) {
-        val payload = JsonObject(data.mapValues { (_, value) -> value.toJson() })
+    override suspend fun send(userIds: Collection<UserId>, frame: MessagingFrame) {
         for (batch in userIds.distinct().chunked(PARALLEL)) {
             coroutineScope {
-                batch
-                    .map { userId ->
-                        async {
-                            sendOne(
-                                userId,
-                                type,
-                                payload,
-                            )
-                        }
-                    }.awaitAll()
+                batch.map { userId -> async { sendOne(userId, frame) } }.awaitAll()
             }
         }
     }
 
-    private suspend fun sendOne(
-        userId: UserId,
-        type: String,
-        payload: JsonObject,
-    ) {
+    private suspend fun sendOne(userId: UserId, frame: MessagingFrame) {
         try {
             val seq = redis.incrementRenewing(seqKey(userId), SEQ_TTL)
-            val envelope =
-                RealtimeEnvelope(
-                    MODULE,
-                    type,
-                    Uuid7.generate().toString(),
-                    seq,
-                    clock.instant(),
-                    payload,
-                )
+            val envelope = frame.envelope(seq, clock.instant())
             frames.save(
                 MessagingRealtimeRow(
                     userId.value,
@@ -92,7 +62,7 @@ class RealtimeFramesImpl(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("realtime frame not sent: type={}", type, e)
+            log.warn("realtime frame not sent: type={}", frame.type, e)
         }
     }
 
@@ -112,16 +82,7 @@ class RealtimeFramesImpl(
 
     private fun seqKey(userId: UserId) = "seq:$userId"
 
-    private fun Any.toJson(): JsonElement =
-        when (this) {
-            is Collection<*> -> JsonArray(mapNotNull { it?.toJson() })
-            is Number -> JsonPrimitive(this)
-            is Boolean -> JsonPrimitive(this)
-            else -> JsonPrimitive(toString())
-        }
-
     private companion object {
-        const val MODULE = "messaging"
         val SEQ_TTL: Duration = Duration.ofDays(8)
     }
 }

@@ -2,9 +2,12 @@ package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatCreated
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.ChatUpdatedFrame
 import com.circaso.messaging.api.GroupDeleted
 import com.circaso.messaging.api.MemberAdded
+import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MemberRemoved
+import com.circaso.messaging.api.MemberRemovedFrame
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SignedPreKey
@@ -132,10 +135,10 @@ class ChatsTest {
             val added = h.frames.sent.filter { it.type == "member.added" }
             assertEquals(setOf(amina, brian, chidi), added.map { it.to }.toSet())
             assertEquals(3, added.size, "one frame to each of the three members")
-            val frame = added.first().data
-            assertEquals(listOf(brian.toString(), chidi.toString()).sorted(), frame["userIds"])
-            assertEquals(group.chat.chatId.toString(), frame["chatId"])
-            assertEquals(amina.toString(), frame["byUserId"])
+            val frame = added.first().data<MemberAddedFrame>()
+            assertEquals(listOf(brian, chidi).sortedBy { it.toString() }, frame.userIds)
+            assertEquals(group.chat.chatId, frame.chatId)
+            assertEquals(amina, frame.byUserId)
         }
 
     @Test
@@ -343,8 +346,8 @@ class ChatsTest {
             assertEquals(2, h.chats.chats[chatId]!!.memberCount)
             val removed = h.frames.sent.filter { it.type == "member.removed" }
             assertEquals(setOf(amina, brian, chidi), removed.map { it.to }.toSet())
-            assertEquals(brian.toString(), removed.first().data["userId"])
-            assertEquals(amina.toString(), removed.first().data["byUserId"])
+            assertEquals(brian, removed.first().data<MemberRemovedFrame>().userId)
+            assertEquals(amina, removed.first().data<MemberRemovedFrame>().byUserId)
             val leave =
                 h.chats.commits
                     .last()
@@ -419,7 +422,7 @@ class ChatsTest {
             assertEquals(Role.OWNER, h.chats.members[chatId]!![chidi]!!.role, "and the row mirrors it")
             val updated = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(brian, chidi, dalia), updated.map { it.to }.toSet())
-            assertEquals(h.chats.chats[chatId]!!.version, updated.first().data["version"])
+            assertEquals(h.chats.chats[chatId]!!.version, updated.first().data<ChatUpdatedFrame>().version)
             assertEquals(1, h.chats.members(chatId).count { it.role == Role.OWNER })
         }
 
@@ -513,8 +516,8 @@ class ChatsTest {
             val frames = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(amina, brian), frames.map { it.to }.toSet())
             assertEquals(
-                mapOf("chatId" to group.chat.chatId.toString(), "metaVersion" to 2, "version" to 2L),
-                frames.first().data,
+                ChatUpdatedFrame(group.chat.chatId, metaVersion = 2, version = 2L),
+                frames.first().data<ChatUpdatedFrame>(),
             )
         }
 

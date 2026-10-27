@@ -1,6 +1,7 @@
 package com.circaso.messaging.domain.ports
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.MessagingFrame
 import com.circaso.shared.UserId
 import java.time.Duration
 
@@ -30,16 +31,12 @@ interface MembersCache {
 }
 
 /**
- * Sends a replayed frame to each user with that user's own `seq`, and keeps it 7 days for replay. Values in [data]
- * are text, numbers, booleans or lists of them. Failures never fail the operation that caused them: the phone
- * catches up from the kept frames.
+ * Sends a replayed frame to each user with that user's own `seq`, and keeps it 7 days for replay. The frame's class
+ * is its `data` (decision 2026-10-27). Failures never fail the operation that caused them: the phone catches up from
+ * the kept frames.
  */
 interface RealtimeFrames {
-    suspend fun send(
-        userIds: Collection<UserId>,
-        type: String,
-        data: Map<String, Any>,
-    )
+    suspend fun send(userIds: Collection<UserId>, frame: MessagingFrame)
 }
 
 /** The frames `messaging` has kept, so a phone that reconnects can catch up. */

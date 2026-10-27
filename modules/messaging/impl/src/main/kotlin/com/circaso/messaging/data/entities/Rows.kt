@@ -110,3 +110,71 @@ data class UserChatRow(
     val readUpTo: UUID = NIL_UUID,
     val joinedAt: Instant,
 )
+
+/**
+ * A message waiting for one recipient, deleted on their ack and after 30 days at the latest. Ascending ids: oldest
+ * first. A direct or `SENDER_KEY` row holds this recipient's own [ciphertext]; a group message's row is a pointer
+ * ([groupBody], empty [ciphertext]) to its [GroupMessageRow]. [mediaIds] are comma-separated, empty for none.
+ */
+@ScyllaTable(name = "inbox_by_user", keyspace = KS)
+@Ttl(seconds = 60 * 60 * 24 * 30)
+data class InboxRow(
+    @PartitionKey val userId: UUID,
+    @ClusteringKey val messageId: UUID,
+    val chatId: UUID,
+    val senderId: UUID,
+    /** `MESSAGE`, `SENDER_KEY` or `CONTROL`. */
+    val kind: String,
+    @Sensitive val ciphertext: String = "",
+    val groupBody: Boolean = false,
+    val mediaIds: String = "",
+    val sentAt: Instant,
+)
+
+/** One ciphertext per group message, not one per member; deleted with the last member's ack, or after 30 days. */
+@ScyllaTable(name = "group_messages", keyspace = KS)
+@Ttl(seconds = 60 * 60 * 24 * 30)
+data class GroupMessageRow(
+    @PartitionKey val chatId: UUID,
+    @ClusteringKey val messageId: UUID,
+    val senderId: UUID,
+    @Sensitive val ciphertext: String,
+    val sentAt: Instant,
+)
+
+/**
+ * Who sent what, written with every send and kept 30 days, so M14 can check the sender and a group read receipt can
+ * find them after every copy has been delivered and deleted (decision 2026-10-27).
+ */
+@ScyllaTable(name = "messages_by_id", keyspace = KS)
+@Ttl(seconds = 60 * 60 * 24 * 30)
+data class MessageRecordRow(
+    @PartitionKey val messageId: UUID,
+    val chatId: UUID,
+    val senderId: UUID,
+    /** `MESSAGE`, `SENDER_KEY` or `CONTROL`. */
+    val kind: String,
+    val sentAt: Instant,
+)
+
+/**
+ * Idempotent send: the message id a sender's `clientMessageId` was given, claimed with `saveIfNotExists`, for 24 h,
+ * and whether the send finished writing (decision 2026-10-27).
+ */
+@ScyllaTable(name = "sent_by_client_id", keyspace = KS)
+@Ttl(seconds = 60 * 60 * 24)
+data class ClientMessageRow(
+    @PartitionKey val senderId: UUID,
+    @ClusteringKey val clientMessageId: UUID,
+    val messageId: UUID,
+    /** Set once every row of the send is written; a retry that finds it unset writes them again under [messageId]. */
+    val complete: Boolean = false,
+)
+
+/** M22: read receipts and typing indicators; no row means both on. */
+@ScyllaTable(name = "settings", keyspace = KS)
+data class MessagingSettingsRow(
+    @PartitionKey val userId: UUID,
+    val readReceipts: Boolean = true,
+    val typing: Boolean = true,
+)

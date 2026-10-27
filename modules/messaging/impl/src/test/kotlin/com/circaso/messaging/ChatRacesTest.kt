@@ -3,6 +3,7 @@ package com.circaso.messaging
 import com.circaso.messaging.api.ChatCreated
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.GroupDeleted
+import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MemberRemoved
 import com.circaso.messaging.domain.models.Role
 import com.circaso.shared.Resource
@@ -217,7 +218,7 @@ class ChatRacesTest {
             assertEquals(3, h.chats.chats[first.chat.chatId]!!.memberCount)
             assertEquals(1, h.chats.eventTypes().count { it == ChatCreated.TYPE })
             val added = h.frames.sent.filter { it.type == "member.added" }
-            assertEquals(listOf(chidi.toString()), added.first().data["userIds"], "only the one written now")
+            assertEquals(listOf(chidi), added.first().data<MemberAddedFrame>().userIds, "only the one written now")
         }
 
     @Test

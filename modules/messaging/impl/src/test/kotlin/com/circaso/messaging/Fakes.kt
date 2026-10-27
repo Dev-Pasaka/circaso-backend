@@ -14,6 +14,7 @@ import com.circaso.users.api.ReachPolicy
 import java.security.PublicKey
 import java.security.Signature
 import java.time.Duration
+import java.time.Instant
 import java.util.TreeMap
 import java.util.concurrent.ConcurrentHashMap
 
@@ -48,6 +49,21 @@ class MemoryKeys : KeyRepository {
 
     override suspend fun claimOneTimeKey(userId: UserId): OneTimePreKey? =
         synchronized(this) { of(userId).pollFirstEntry()?.value }
+
+    /** Without write times, a newer phone's bundle stands for prekeys written after the replacement: they stay. */
+    override suspend fun removeBundle(
+        userId: UserId,
+        deviceId: DeviceId,
+        replacedAt: Instant,
+    ): Boolean =
+        synchronized(this) {
+            if (bundles[userId]?.deviceId != deviceId) return false
+            bundles.remove(userId)
+            prekeys.remove(userId)
+            true
+        }
+
+    fun prekeyCount(userId: UserId) = synchronized(this) { prekeys[userId]?.size ?: 0 }
 }
 
 class MemoryRateLimit : BundleRateLimit {
