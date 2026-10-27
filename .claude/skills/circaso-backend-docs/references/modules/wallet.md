@@ -93,13 +93,13 @@ interface CustodyNotifications {     // implemented by wallet, wired in app; int
 }
 ```
 
-**Contract details (as built in WS1).** `createWallet` for a user Circle has already initialized returns a `Challenge` with an empty `challengeId` and `needsSignature == false`; the caller then reads `wallets()`. `CustodyWallet` has id, address, blockchain, account type and state (`LIVE`, `FROZEN`, as Circle reports them; Circle lists a wallet only once it exists, so `SETTING_UP` is the wallet module's own state, not custody's). `CustodyTransaction` has circleTxId, circleUserId, walletId, blockchain, direction (`IN`, `OUT`), state, amount (`Money`), source and destination address, refId, txHash, failure reason and `updatedAt` (to ignore out-of-order updates). States: Circle's INITIATED, CLEARED, QUEUED, SENT → `SUBMITTED`; STUCK → `STUCK`; CONFIRMED, COMPLETE → `CONFIRMED`; FAILED, DENIED, CANCELLED → `FAILED`. Errors in our language: `PinLocked`, `InsufficientFunds`, `AddressInvalid`, plus `Unavailable` and `Rejected` with vendor-neutral messages. **Addresses are returned exactly as the chain gives them**; the wallet module normalises per chain when it compares or indexes them (EVM chains such as Base: lowercase; Solana: unchanged).
+**Contract details (as built in WS1).** `createWallet` for a user Circle has already initialized returns a `Challenge` with an empty `challengeId` and `needsSignature == false`; the caller then reads `wallets()`. `CustodyWallet` has id, address, blockchain, account type and state (`LIVE`, `FROZEN`, as Circle reports them; Circle lists a wallet only once it exists, so `SETTING_UP` is the wallet module's own state, not custody's). `CustodyTransaction` has circleTxId, circleUserId, walletId, blockchain, direction (`IN`, `OUT`), state, amount (`Money`), source and destination address, refId, txHash, failure reason and `updatedAt` (to ignore out-of-order updates). States: Circle's INITIATED, CLEARED, QUEUED, SENT → `SUBMITTED`; STUCK → `STUCK`; CONFIRMED, COMPLETE → `CONFIRMED`; FAILED, DENIED, CANCELLED → `FAILED`. Errors in our language: `PinLocked`, `InsufficientFunds`, `AddressInvalid`, plus `Rejected` with a vendor-neutral message and `Unavailable` naming the vendor, as every integration does. **Addresses are returned exactly as the chain gives them**; the wallet module normalises per chain when it compares or indexes them (EVM chains such as Base: lowercase; Solana: unchanged).
 
 The `log` provider answers with made-up wallets and challenges and prints what it was asked; `fake` records calls for tests.
 
 Circle's error codes stay inside the vendor package. "User already initialized" (`155106`) becomes success with the existing wallet; a locked PIN, insufficient funds or an invalid address become `ErrorKind.INVALID` with a wallet code; everything else is `UPSTREAM`. Every POST to Circle carries the idempotency key in the body, so the HTTP client may retry it.
 
-**Webhooks:** Circle posts to `/v1/hooks/circle`. Each notification is signed with ECDSA over SHA-256: the signature in `X-Circle-Signature`, the key id in `X-Circle-Key-Id`, the public key from `GET /v2/notifications/publicKey/{keyId}`, cached for good by key id (it never changes). Verified against the raw body. `CircleWebhook` translates `transactions.inbound` and `transactions.outbound` into `CustodyTransaction` and hands it to `CustodyNotifications`; a failure returns non-200 so Circle retries. `WebhookVendor.verifySignature` is not `suspend` today, so the first sight of a new key id needs either a `suspend` signature or a key fetched before the check (see gaps in shared code below).
+**Webhooks:** Circle posts to `/v1/hooks/circle`. Each notification is signed with ECDSA over SHA-256: the signature in `X-Circle-Signature`, the key id in `X-Circle-Key-Id`, the public key from `GET /v2/notifications/publicKey/{keyId}`, cached for good by key id (it never changes). Verified against the raw body. `CircleWebhook` translates `transactions.inbound` and `transactions.outbound` into `CustodyTransaction` and hands it to `CustodyNotifications`; a failure returns non-200 so Circle retries. `WebhookVendor.verifySignature` is `suspend` (built in WS1), so a new key id is fetched on first sight, at most 10 a minute per node.
 
 ### Depends on
 
@@ -107,8 +107,7 @@ Circle's error codes stay inside the vendor package. "User already initialized" 
 
 ### New in shared code
 
-- `WebhookVendor.verifySignature` needs to be able to fetch Circle's public key for a new key id (`suspend`, or a key provider the vendor warms).
-- `CustodyNotifications` in `integrations:api`.
+- Done in WS1: `WebhookVendor.verifySignature` is `suspend`, `WebhookVendor.answersAfterTranslation`, `HEAD /v1/hooks/{vendor}`, and `CustodyNotifications` in `integrations:api`.
 - Push wording for wallet frames in `GatewayRealtime.pushFor`.
 
 ## Endpoints
