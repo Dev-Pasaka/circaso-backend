@@ -156,7 +156,7 @@ The app runs the challenge; the user sets the PIN and security questions. When C
 { "transferId": "0193…", "challengeId": "c7a2…", "sdk": { "userToken": "eyJ…", "encryptionKey": "Pq1…" }, "fee": { "amountMinor": 0, "asset": "USDC" }, "expiresAt": "2026-10-25T09:15:00Z" }
 ```
 
-Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and `StablecoinCustody.prepareTransfer` creates Circle's transfer challenge with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`.
+Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and `StablecoinCustody.prepareTransfer` creates Circle's transfer challenge with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`. A transfer is unique per sender and `Idempotency-Key`, so a reused key returns the same transfer, even after the gateway's 24-hour replay window.
 
 **Transfer states:** `AWAITING_SIGNATURE` → `SUBMITTED` (Circle `INITIATED`, `QUEUED`, `SENT`) → `CONFIRMED` (`CONFIRMED`, `COMPLETE`) or `FAILED` (`FAILED`, `DENIED`, `CANCELLED`); `EXPIRED` if never signed; `STUCK` is shown as submitted and handled by the stuck-transfer job.
 
@@ -225,7 +225,7 @@ CREATE TABLE wallet.transfers (
     failure_reason      text,
     created_at          timestamptz NOT NULL,
     updated_at          timestamptz NOT NULL,
-    version             bigint      NOT NULL DEFAULT 0  -- a webhook applies a newer state with the version check
+    version             bigint      NOT NULL DEFAULT 0  -- only for read-modify-write edits; states move by the transition guard
 );
 CREATE UNIQUE INDEX transfers_idempotency_key ON wallet.transfers (sender_id, idempotency_key);
 CREATE INDEX transfers_open_idx ON wallet.transfers (state, created_at)
@@ -252,6 +252,7 @@ CREATE INDEX transactions_user_idx ON wallet.transactions (user_id, occurred_at 
 CREATE UNIQUE INDEX transactions_circle_key ON wallet.transactions (circle_tx_id, user_id);
                                                         -- a webhook finds the rows it updates; a repeated inbound one inserts nothing
 CREATE UNIQUE INDEX transactions_transfer_key ON wallet.transactions (transfer_id) WHERE transfer_id IS NOT NULL;
+CREATE INDEX transactions_occurred_idx ON wallet.transactions (occurred_at);   -- ReconcileWallets: the day's activity
 
 CREATE TABLE wallet.payment_holds (
     user_id    uuid        PRIMARY KEY,
@@ -267,8 +268,8 @@ CREATE TABLE wallet.outbox (…);                         -- the same shape as i
 | --- | --- | --- |
 | `circle_users` | — | — |
 | `wallets` | — | — |
-| `transfers` | — | W4 inserts with `insertIgnore` on `(sender_id, idempotency_key)`; `insertedCount = 0` returns the transfer already prepared for that key. State changes use `updateReturning` with the version check, so an older webhook never overwrites a newer state |
-| `transactions` | — (kept for the retention period) | An inbound webhook inserts the `IN` row with `insertIgnore` on `(circle_tx_id, user_id)`, so a repeated webhook adds nothing |
+| `transfers` | — | W4 inserts with `insertIgnore` on `(sender_id, idempotency_key)`; `insertedCount = 0` returns the transfer already prepared for that key. A state moves only by a **transition guard**: `UPDATE … SET state = :next WHERE transfer_id = ? AND state IN (<allowed predecessors of :next>) RETURNING …`; 0 rows means the transfer is already past that state, so a late or repeated webhook changes nothing |
+| `transactions` | — (kept for the retention period) | An inbound webhook inserts the `IN` row with `insertIgnore` on `(circle_tx_id, user_id)`, so a repeated webhook adds nothing. `state` moves by the same transition guard as transfers (`WHERE id = ? AND state IN (…)`) |
 | `payment_holds` | `expires_at`, purged by `wallet.purge-expired` | — |
 | `realtime`, `outbox` | Daily partitions, 7 days | — |
 

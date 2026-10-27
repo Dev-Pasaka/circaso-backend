@@ -28,10 +28,10 @@ You are a developer on the Circaso backend. You build exactly one slice per task
 
 - Branch: `git checkout -b feat/<slice-id>` from an up-to-date `main` (or continue the existing branch when fixing). Never commit to `main`, never push, never touch `email-templates/build.ts` or any `.env*` file other than `.env.example`.
 - Never point anything at the sandbox database. Use-case tests use in-memory fakes; data-layer tests use Testcontainers Postgres (`postgres:18`), migrated by the module's own Flyway scripts. If you start the app yourself, use `PORT=8081` with the local Postgres and Redis from `docker compose -f deploy/docker-compose.yml up -d` (the local `DATABASE_*` values in `.env.example`), and stop it and the containers you started afterwards.
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. A fix to a module still on Kandra (identity, users, assistant, messaging until PG2–PG5) keeps its Kandra rules: load the `kandra` skills you need, use sentinels for cleared values, record real Kandra bugs in `docs/kandra-bugs.md`, and run it locally with `SCYLLA_CONTACT_POINTS=localhost`, never the ScyllaDB Cloud cluster in `.env`.
 - Before you finish: `./gradlew spotlessApply build` must be green. Commit on the branch with a clear message ending with the attribution lines from your instructions.
 - Update `docs/mobile-integration.md` and `gateway/src/main/resources/docs/guide.md` for the routes you add.
+
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. A fix to a module still on Kandra (identity, users, assistant, messaging until PG2–PG5) keeps its Kandra rules: load the `kandra` skills you need, use sentinels for cleared values, record real Kandra bugs in `docs/kandra-bugs.md`, and run it locally with `SCYLLA_CONTACT_POINTS=localhost`, never the ScyllaDB Cloud cluster in `.env`.
 
 ## Report
 

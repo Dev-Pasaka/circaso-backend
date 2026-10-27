@@ -570,10 +570,13 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 **Transactions: `Database.tx`.** Every database call runs in a transaction, and the only way in is infrastructure's `Database.tx { }`, a thin wrapper over Exposed's `suspendTransaction(db = …)` (`org.jetbrains.exposed.v1.jdbc.transactions`).
 
 - **Bounded dispatcher.** It runs on `Dispatchers.IO.limitedParallelism(poolSize)`, one dispatcher per pool, so at most `poolSize` coroutines ever hold a JDBC thread and the rest suspend cheaply. Threads never block waiting for a connection.
-- **The module's role.** Each transaction starts with `SET LOCAL ROLE <module>`. The pools log in as `circaso_app`, which is granted every module role. `SET LOCAL` ends with the transaction, so a connection returns to the pool clean, and it works behind PgBouncer in transaction mode.
+- **The module's role.** Each transaction starts with `SET LOCAL ROLE <module>`. The app pool logs in as `circaso_app` and the jobs pool as `circaso_jobs`; both are granted every module role. `SET LOCAL` ends with the transaction, so a connection returns to the pool clean, and it works behind PgBouncer in transaction mode.
 - **Settings.** Isolation `READ_COMMITTED` and `autoCommit = false` are set in Hikari, not in `DatabaseConfig`. `defaultQueryTimeout` is 5 s per statement, backed by the role's `statement_timeout`. `maxAttempts` stays `1`, so nothing runs twice by surprise; only a block that is pure database work and safe to repeat may raise it, and the call site says why. Nested transactions stay off.
 - **`connect()` runs once.** Infrastructure creates the Exposed `Database` from each Hikari `DataSource` at startup and shares it; calling `connect()` again leaks resources.
-- **One operation, one transaction.** Everything an operation changes (its rows, its uniqueness claims and its outbox row) is written in one `Database.tx`. Repositories called inside it join it; they don't open their own.
+- **One operation, one transaction: the `Transactor` port.** The domain opens a transaction through a port it declares, `interface Transactor { suspend fun <T> run(block: suspend () -> T): T }`, which each module's `data` implements over `Database.tx`. Repositories called inside `run` join the open transaction through the coroutine context; outside it, each repository call opens its own. A store's `commit(changes)` stays as a convenience built on `run`.
+  - Everything an operation changes (its rows, its uniqueness claims and its outbox row) is written inside one `run`.
+  - A decision that depends on what was read is made inside the same `run` as the write it guards: a version-checked write, a phone or provider claim, a group's member cap, the successor when an owner leaves, the last-ack delete of a media file.
+  - Inside the block there are repository calls only. Konsist fails the build if a `Transactor.run` lambda in `usecases` references `RedisScope`, an HTTP client, `EventBus` or any other port that leaves the database.
 - **Database work only.** A transaction holds no Redis call, HTTP call or `XADD`, which would hold a connection for the whole wait. "Publish at once" still happens right after the commit.
 - **`text` columns are read inside the transaction,** or loaded eagerly (`eagerLoading = true`) where they are used after it.
 
@@ -593,7 +596,7 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 | Time-ordered lists and paging | An index such as `(owner_id, created_at DESC)` and keyset paging, `WHERE (created_at, id) < (?, ?)`; never `OFFSET` for feeds |
 | Counters kept in rows (a group's member count) | `UPDATE … SET count = count + 1` in the same transaction; exact |
 | A cleared value | A real `NULL`: columns are `NOT NULL` unless `.nullable()`, with a nullable Kotlin type |
-| Time-ordered ids | UUIDv7 made in the app (`clientDefault { }`), never by the database |
+| Time-ordered ids | UUIDv7 made on the server in the app (`clientDefault { }`), never by the database or a phone |
 | Times | `timestamp(...)` from `exposed-java-time`, `timestamptz` in SQL; `createdAt` from the injected clock, so tests stay deterministic |
 | Rows that expire | `expires_at` and a purge job, or daily partitions (below) |
 | Domain rules the database can check | `.check { }` on the table and `CHECK` in the SQL; `reference(…, onDelete = CASCADE)` only within one module |
@@ -614,10 +617,10 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 | `circaso-migrate` | The `Migrate` main only, during deploy | 2, closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
 
 - **Two URLs.** `DATABASE_URL` is for the app pools; in production behind a provider's pooler (PgBouncer in transaction mode), it is the pooled endpoint. `DATABASE_MIGRATION_URL` is always a direct connection. On the sandbox's self-hosted Postgres both are the same address.
-- **Settings:** `DATABASE_USER`, `DATABASE_PASSWORD` (a secret), `DATABASE_POOL_APP_SIZE` (10), `DATABASE_POOL_JOBS_SIZE` (3) and `DATABASE_SSL_MODE` (`require` outside local); other `DATABASE_POOL_*` settings override the Hikari values below.
+- **Settings:** `DATABASE_USER`, `DATABASE_PASSWORD` (a secret), `DATABASE_JOBS_USER`, `DATABASE_JOBS_PASSWORD` (a secret), `DATABASE_MIGRATION_PASSWORD` (a secret, for `circaso_migrator`), `DATABASE_POOL_APP_SIZE` (10), `DATABASE_POOL_JOBS_SIZE` (3) and `DATABASE_SSL_MODE` (`require` outside local); other `DATABASE_POOL_*` settings override the Hikari values below.
 - **Hikari:** `connectionTimeout` 3 s (with no free connection in time, the request fails fast as `service.unavailable`, 503, instead of piling up), `idleTimeout` 10 min, `maxLifetime` 30 min, `keepaliveTime` 2 min, `validationTimeout` 2 s, `leakDetectionThreshold` 10 s locally and on the sandbox and off in production, `poolName` per pool.
 - **JDBC URL:** `ApplicationName=circaso-app` (or `-jobs`, `-migrate`) so `pg_stat_activity` shows who holds what, `reWriteBatchedInserts=true`, `sslmode=require` outside local, `tcpKeepAlive=true`. Behind PgBouncer in transaction mode, server-side prepared statements need PgBouncer 1.21+ with `max_prepared_statements` set, or `prepareThreshold=0` on the pooled URL.
-- **Limits on the app's roles,** set in the roles migration so a bad query can't hold a pooled connection: `statement_timeout = 5s` (60 s for the jobs role's purges), `lock_timeout = 2s`, `idle_in_transaction_session_timeout = 10s`.
+- **Limits on the login roles,** so a bad query can't hold a pooled connection: `circaso_app` has `statement_timeout = 5s`, `lock_timeout = 2s` and `idle_in_transaction_session_timeout = 10s`; `circaso_jobs` has `statement_timeout = 60s` for purges and partition work. The limits sit on the login role, so they hold whichever module role a transaction switches to.
 - **Budget.** On the sandbox (`max_connections = 50`, 3 reserved): app 10, jobs 3, migrate 2 during deploy, pgAdmin about 3, the nightly backup 1, about 22 in all, which leaves room for a second app container during a rolling deploy. In production: `containers × (app + jobs) + migrate + tools ≤ 80%` of the server's limit; past that, the pooled endpoint goes in front, not bigger pools.
 - **Long reads** (exports, admin listings) page with keyset queries, each page its own short transaction.
 
@@ -627,12 +630,15 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 - **Applied scripts are never edited;** Flyway's checksum check fails the deploy otherwise. A change is a new `V<n+1>` script.
 - **Drafting.** A developer may run the Exposed Gradle plugin's `generateMigrations` (against a Testcontainers Postgres, the module's `tablesPackages`, `fileDirectory` = the module's `db/<module>`) to draft the next script. A draft can contain `DROP`s, so it is always reviewed before it is committed, and only Flyway applies it (decision 2026-10-27).
 
-**Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), on the `circaso-migrate` pool. `Migrate` creates the schemas and roles, then runs Flyway for each module's spec. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
+**Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), on the `circaso-migrate` pool over the direct URL.
 
-**Rows that expire.** Postgres has no row TTL, so each table that needs one uses one of two mechanisms:
+- **The migrator role.** `Migrate` logs in as `circaso_migrator` (password `DATABASE_MIGRATION_PASSWORD`), a login role with `CREATEROLE` that owns the database's schemas. It is created once by the superuser from `deploy/postgres/initdb`, as a server change in PG1.
+- **What it does.** It creates any missing schema, module role and login role (`circaso_app`, `circaso_jobs`, each granted the module roles), then runs Flyway for each module's spec with `SET ROLE <module>`, so each module's tables are owned by that module's role and `SET LOCAL ROLE <module>` can use them. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
 
-- **`expires_at` and a purge.** The table gets an `expires_at timestamptz` column. Reads filter it (`WHERE expires_at > now()`), so an expired row is invisible at once, like a TTL. A purge job per module (`<module>.purge-expired`, single-leader through the scheduler's Redis lock, on the jobs pool) deletes expired rows in chunks every few minutes (`DELETE … WHERE ctid IN (SELECT ctid … LIMIT 5000)`).
-- **Daily partitions** for the large, high-churn tables: every module's `outbox` and `realtime` (dropped after 7 days) and messaging's inbox, group messages and message records (dropped after 30 days). Dropping a partition avoids the vacuum pressure of millions of deleted rows. The same job creates tomorrow's partition and drops the expired ones; no extension is needed. A partitioned table's primary key includes its partition column.
+**Rows that expire.** A table whose rows expire uses one of two mechanisms:
+
+- **`expires_at` and a purge.** Rows that expire carry `expires_at timestamptz`. Every read filters it (`WHERE expires_at > now()`), so an expired row is invisible at once. A column named `expires_at` always means this: filtered and purged. A purge job per module (`<module>.purge-expired`, single-leader through the scheduler's Redis lock, on the jobs pool) deletes expired rows in chunks every few minutes (`DELETE … WHERE ctid IN (SELECT ctid … LIMIT 5000)`).
+- **Daily partitions** for the large, high-churn tables: every module's `outbox` and `realtime` (dropped after 7 days) and messaging's inbox, group messages and message records (dropped after 30 days). Dropping a partition avoids the vacuum pressure of millions of deleted rows. The same job creates tomorrow's partition and drops the expired ones; no extension is needed. A partitioned table's primary key includes its partition column. Messaging's three tables are partitioned by their UUIDv7 `message_id`, with each day's bounds at the UUIDv7 value of midnight UTC, so every lookup by id prunes to one partition; this requires ids made on the server, never taken from a phone.
 
 Each module's Data section names the mechanism per table.
 
@@ -655,7 +661,7 @@ Each module's Data section names the mechanism per table.
 
 - **Table ownership.** A Konsist rule: an Exposed `Table` object is referenced only from the `data` package of the module that owns it. The module's role enforces the same thing in the database.
 - **No way in but `Database.tx`.** A Konsist rule fails the build on a raw `transaction {}` (it blocks the calling thread) or `Database.connect` in a module. Only infrastructure connects.
-- **Nothing but database work inside a transaction.** A Konsist rule and review catch an HTTP call, a Redis call or an `XADD` inside `Database.tx`.
+- **Nothing but database work inside a transaction.** A Konsist rule and review catch an HTTP call, a Redis call or an `XADD` inside `Database.tx` or a `Transactor.run` block.
 
 **The shared HTTP client.** Infrastructure owns one Ktor client factory. Each vendor gets a named client with its base URL, timeouts (5 s to connect, 15 s per request; a vendor client with `webSockets = true` never retries an upgrade, the circuit breaker neither counts nor blocks upgrades, and only the handshake is bounded (`handshakeTimeout` 10 s, `pingInterval` 20 s); per-vendor overrides: Workers AI 60 s, and its chat completions are not retried, so one Asha turn waits at most about a minute), retries, a circuit breaker, tracing and logging with phone numbers, tokens and amounts hidden. The retry policy is careful, because retrying the wrong call sends money or an OTP twice:
 
@@ -851,7 +857,7 @@ Every boundary the backend crosses writes its own line, from the one place that 
 | --- | --- | --- | --- |
 | Request in and out | Gateway `RequestLog` plugin | Start: DEBUG. End: INFO; WARN for 401, 403 and 429; ERROR for 5xx | Method, route, status, duration, client IP and country, app version, user, device, scope, error code, idempotency replay |
 | Vendor call | Infrastructure HTTP client plugin, and the wrapper around each SDK | INFO; WARN on a retry; ERROR when the circuit opens or the last attempt fails | Vendor, method, path without the query string, status, duration, attempt, circuit state; never a body |
-| Database | Infrastructure's `Database.tx` (level `LOG_LEVEL_DATABASE`) | DEBUG; WARN over 50 ms | Schema, pool, duration; never bound values |
+| Database | Infrastructure's `Database.tx`, one line per transaction (level `LOG_LEVEL_DATABASE`) | DEBUG; WARN over the pool's threshold: app 100 ms, jobs 5 s | Operation name, schema, pool, statement count, duration; never bound values |
 | Redis | `RedisScope` | DEBUG; WARN over 20 ms | Command, key with ids shortened, duration |
 | Event published | `EventBus` | INFO | Stream, type, event id |
 | Event handled | Stream consumer runtime | INFO; WARN on a retry; ERROR when dead-lettered | Consumer group, type, event id, attempt, duration |
@@ -1071,7 +1077,7 @@ These apply to every module from the first line of code, so later modules look l
 | API versions | Path prefix `/v1`; additive changes only within a version; breaking changes get `/v2` and the old version stays until old apps are forced to update |
 | JSON | kotlinx-serialization only (no Gson), camelCase fields, unknown fields ignored on read |
 | Events | Past tense (`AccountActivated`), declared in the publisher's `api`, carry ids and changed facts, versioned by field addition only |
-| Schemas and tables | Schema `<module>` with its own role; tables named for what they hold, plural and snake_case (`accounts`, `contacts`), columns snake_case; Exposed objects `<Name>Table` in the module's `data/tables`; migrations `db/<module>/V<n>__<what>.sql` |
+| Schemas and tables | Schema `<module>` with its own role; tables named for what they hold, plural and snake_case (`accounts`, `contacts`), except the terms `outbox`, `realtime`, `audit`, `history` and `usage_daily`; columns snake_case; Exposed objects `<Name>Table` in the module's `data/tables`; migrations `db/<module>/V<n>__<what>.sql` |
 | Redis keys | `<module prefix>:<purpose>:<id>`, every key with an expiry |
 | Packages | `com.circaso.<module>.<api, presentation, domain, data or di>` |
 | Logging | JSON in staging and production, colored console locally (see Logging); every line carries the request id; user id yes, phone numbers, tokens, PINs and amounts never |

@@ -208,7 +208,7 @@ CREATE TABLE assistant.usage_daily (                    -- daily totals for cost
 CREATE TABLE assistant.entitlements (
     user_id    uuid PRIMARY KEY,
     plan       text NOT NULL,
-    expires_at timestamptz                              -- when the plan ends; not a row expiry, so never purged
+    plan_ends_at timestamptz                            -- when the paid plan ends; NULL for the free plan
 );
 
 CREATE TABLE assistant.audit (                          -- append-only; what happened, never what was said

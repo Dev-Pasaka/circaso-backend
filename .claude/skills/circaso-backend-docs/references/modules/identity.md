@@ -233,11 +233,16 @@ CREATE TABLE identity.accounts (
     active_device_id uuid,
     verification     text        NOT NULL DEFAULT 'NONE', -- NONE | PENDING | VERIFIED (KYC)
     session_version  int         NOT NULL DEFAULT 1,    -- bump to invalidate every token at once
+    delete_after     timestamptz,                       -- DELETED: when the grace period ends and deletion completes
     created_at       timestamptz NOT NULL,
     updated_at       timestamptz NOT NULL,
     version          bigint      NOT NULL DEFAULT 0     -- optimistic lock
 );
 CREATE UNIQUE INDEX accounts_phone_key ON identity.accounts (phone);   -- one account per number
+CREATE INDEX accounts_pending_idx ON identity.accounts (created_at) WHERE status = 'PENDING_PHONE';
+                                                        -- the 30-day sweep of pending accounts
+CREATE INDEX accounts_deleted_idx ON identity.accounts (delete_after) WHERE status = 'DELETED';
+                                                        -- the job that completes deletion after the grace period
 
 CREATE TABLE identity.provider_links (
     user_id   uuid        NOT NULL,
@@ -302,6 +307,10 @@ CREATE TABLE identity.support_recoveries (
     new_subject    text
 );
 CREATE INDEX support_recoveries_user_idx ON identity.support_recoveries (user_id, request_id DESC);
+CREATE INDEX support_recoveries_relink_idx ON identity.support_recoveries (relink_after) WHERE status = 'NOTICE_SENT';
+                                                        -- the job that relinks 48 h after the notice
+CREATE INDEX support_recoveries_status_idx ON identity.support_recoveries (status, request_id);
+                                                        -- /ops/recoveries: the cases in a status, oldest first
 
 CREATE TABLE identity.outbox (
     event_id     uuid        NOT NULL,                  -- UUIDv7
@@ -316,7 +325,7 @@ CREATE INDEX outbox_unpublished_idx ON identity.outbox (occurred_at) WHERE publi
 
 | Table | Expiry | How the race is settled |
 | --- | --- | --- |
-| `accounts` | — | The number is claimed by setting `phone` inside the verifying transaction; the unique index makes a second account's write fail (unique violation), which answers `identity.phone_taken`. Profile-style edits use the `version` check |
+| `accounts` | — (a `DELETED` account is removed by its job at `delete_after`) | The number is claimed by setting `phone` inside the verifying transaction (one `Transactor.run`); the unique index makes a second account's write fail (unique violation), which answers `identity.phone_taken`. Profile-style edits use the `version` check |
 | `provider_links` | — | A new login inserts the account and the link in one transaction with `insertIgnore`; `insertedCount = 0` means another tap won, so the transaction is rolled back and the winner's account is read |
 | `devices` | — | — |
 | `sessions` | `expires_at`, purged by `identity.purge-expired` | — |

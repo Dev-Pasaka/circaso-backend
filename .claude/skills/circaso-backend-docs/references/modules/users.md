@@ -244,7 +244,7 @@ CREATE TABLE users.outbox (…);                          -- the same shape as i
 | Table | Expiry | How the race is settled |
 | --- | --- | --- |
 | `profiles` | — | U2 updates with `WHERE version = ?` (0 rows is `users.version_conflict`). A missing profile is created with `insertIgnore`, so two readers can't create two |
-| `handles` | On release, `expires_at` = 30 days; purged by `users.purge-expired` | U6 claims with `insertIgnore` in the same transaction that updates `profiles.handle` and releases the old handle. On a conflict the existing row is taken over only if it is the caller's own hold or an expired one (`updateReturning … WHERE user_id = ? OR expires_at <= now()`); otherwise (owned, or on hold for someone else) the answer is `users.handle_taken` |
+| `handles` | On release, `expires_at` = 30 days; purged by `users.purge-expired` | U6 claims with `insertIgnore` in the same transaction that updates `profiles.handle` and releases the old handle. On a conflict the existing row is taken over only if it is the caller's own hold or an expired one (`updateReturning … WHERE user_id = ? OR expires_at <= now()`); a claim that loses to the purge between the `insertIgnore` and the takeover retries once. Otherwise (owned, or on hold for someone else) the answer is `users.handle_taken` |
 | `contacts` | — | `insertIgnore` keeps a sync from re-adding a `REMOVED` row; U16 updates the one row to `REMOVED` |
 | `waiting_contacts` | `expires_at`, 180 days | — |
 | `blocks` | — | — |

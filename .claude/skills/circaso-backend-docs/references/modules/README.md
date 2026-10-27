@@ -27,7 +27,7 @@ A new module is a new file here plus the same code skeleton as the first two; no
 
 1. `modules/<name>/api` and `modules/<name>/impl`, with the `presentation` (routes, controllers, services, dto, mappers, events, agent, api), `domain` (models, repositories, usecases, errors), `data` (tables, repositories, cache) and `di` folders from Module anatomy in the architecture doc.
 2. The database (Architecture → Infrastructure → Exposed and PostgreSQL):
-   - **Schema** `<name>` and a **role** `<name>` with rights only on that schema, both created by the `Migrate` step; `circaso_app` is granted the role, and `circaso_readonly` gets `SELECT` on the schema.
+   - **Schema** `<name>` and a **role** `<name>` with rights only on that schema, both created by the `Migrate` step; `circaso_app` and `circaso_jobs` are granted the role, and the module's tables are owned by it.
    - **Flyway location** `classpath:db/<name>`: plain SQL in `impl/src/main/resources/db/<name>/V1__<name>.sql`, numbered on its own, with its own history table.
    - **`DatabaseModuleSpec(schema = "<name>", tables, migrationsLocation = "classpath:db/<name>")`** contributed from the module's `di`.
    - Exposed `Table` objects in `data/tables`, named `<Thing>Table` with the schema in the table name (`Table("<name>.<things>")`), including its `outbox` (and `realtime` if it sends frames), both partitioned by day.
