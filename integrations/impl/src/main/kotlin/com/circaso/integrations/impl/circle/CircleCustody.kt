@@ -219,7 +219,7 @@ class CircleCustody internal constructor(
     private fun walletOf(wallet: WalletData) =
         CustodyWallet(
             walletId = wallet.id,
-            address = wallet.address.lowercase(),
+            address = wallet.address,
             blockchain = wallet.blockchain,
             accountType = wallet.accountType,
             state = if (wallet.state == "LIVE") CustodyWalletState.LIVE else CustodyWalletState.FROZEN,

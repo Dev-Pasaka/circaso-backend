@@ -26,10 +26,11 @@ class CircleWebhook internal constructor(
     client: CircleClient,
     settings: CircleSettings,
     clock: Clock = Clock.systemUTC(),
+    keyFetchesPerMinute: Int = CircleNotificationKeys.FETCHES_PER_MINUTE,
     private val notifications: () -> CustodyNotifications?,
 ) : WebhookVendor {
     private val log = LoggerFactory.getLogger(CircleWebhook::class.java)
-    private val keys = CircleNotificationKeys(client, clock)
+    private val keys = CircleNotificationKeys(client, clock, keyFetchesPerMinute)
     private val transactions = CircleTransactions(CircleTokens(client), settings)
 
     override val name: String = "circle"
@@ -77,7 +78,7 @@ class CircleWebhook internal constructor(
         runCatching { circleJson.decodeFromString<T>(body.decodeToString()) }.getOrNull()
 
     private fun unreadable(): Resource<Unit> =
-        Resource.error(IntegrationError.Rejected("Circle sent a notification we can't read."))
+        Resource.error(IntegrationError.Rejected("The custody provider sent a notification that can't be read."))
 
     private companion object {
         const val KEY_ID_HEADER = "x-circle-key-id"

@@ -21,9 +21,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Tests (and the sandbox until Circle keys are set): an in-memory custodian that records every call. A wallet appears
- * only when the test says the user ran the challenge ([completeSetup]), unless [autoCompleteSetup] is on; while
- * [failure] is set, every call fails with it.
+ * Tests: an in-memory custodian that records every call. A wallet appears only when the test says the user ran the
+ * challenge ([completeSetup]), unless [autoCompleteSetup] is on; while [failure] is set, every call fails with it.
  */
 class FakeCustody(private val clock: Clock = Clock.systemUTC(), private val autoCompleteSetup: Boolean = false) :
     StablecoinCustody {
@@ -47,7 +46,7 @@ class FakeCustody(private val clock: Clock = Clock.systemUTC(), private val auto
         val wallet =
             CustodyWallet(
                 walletId = UUID.randomUUID().toString(),
-                address = address.lowercase(),
+                address = address,
                 blockchain = "BASE-SEPOLIA",
                 accountType = "SCA",
                 state = CustodyWalletState.LIVE,
@@ -97,7 +96,7 @@ class FakeCustody(private val clock: Clock = Clock.systemUTC(), private val auto
         }
 
     override suspend fun validateAddress(address: String): Resource<Boolean> =
-        guarded { Resource.success(ADDRESS.matches(address) && address.lowercase() !in invalidAddresses) }
+        guarded { Resource.success(ADDRESS.matches(address) && address !in invalidAddresses) }
 
     override suspend fun pinChallenge(
         circleUserId: String,
@@ -137,8 +136,8 @@ class FakeCustody(private val clock: Clock = Clock.systemUTC(), private val auto
 }
 
 /**
- * Local runs: [FakeCustody] with wallets that appear as soon as they are asked for (there is no phone SDK to run the
- * challenge), printing each call. Addresses and amounts are never printed.
+ * Local runs and the sandbox: [FakeCustody] with wallets that appear as soon as they are asked for (there is no phone
+ * SDK to run the challenge), printing each call. Addresses and amounts are never printed.
  */
 class LogCustody(private val fake: FakeCustody = FakeCustody(autoCompleteSetup = true)) : StablecoinCustody {
     private val log = LoggerFactory.getLogger(LogCustody::class.java)

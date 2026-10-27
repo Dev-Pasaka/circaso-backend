@@ -254,19 +254,55 @@ class CircleWebhookTest {
     @Test
     fun `the unknown ids are bounded, so a flood of junk can't grow without end`() =
         runBlocking<Unit> {
+            // Without the fetch cap, which would otherwise stop the flood long before the memory fills.
+            val uncapped = CircleWebhook(circle.client, circle.settings, circle.clock, Int.MAX_VALUE) { listener }
             val body = "{}".toByteArray()
             val first = UUID.randomUUID().toString()
-            webhook.verifySignature(headers(body, first), body)
+            uncapped.verifySignature(headers(body, first), body)
             repeat(CircleNotificationKeys.UNKNOWN_LIMIT) {
-                webhook.verifySignature(headers(body, UUID.randomUUID().toString()), body)
+                uncapped.verifySignature(headers(body, UUID.randomUUID().toString()), body)
             }
 
-            webhook.verifySignature(headers(body, first), body)
+            uncapped.verifySignature(headers(body, first), body)
             assertEquals(
                 2,
                 circle.requests("GET /v2/notifications/publicKey/$first").size,
                 "when full the memory is emptied, so the first junk id is asked about again",
             )
+        }
+
+    @Test
+    fun `a node fetches at most ten unknown keys a minute and refuses the rest as unverifiable`() =
+        runBlocking<Unit> {
+            val body = "{}".toByteArray()
+            repeat(CircleNotificationKeys.FETCHES_PER_MINUTE) {
+                assertFalse(webhook.verifySignature(headers(body, UUID.randomUUID().toString()), body))
+            }
+            assertEquals(10, circle.clients.requests.size)
+
+            assertFalse(webhook.verifySignature(headers(body), body), "even Circle's real key waits for the cap")
+            assertEquals(10, circle.clients.requests.size, "the eleventh fetch never went out")
+
+            circle.now = circle.now.plusSeconds(61)
+            assertTrue(webhook.verifySignature(headers(body), body), "a minute later the real key is fetched")
+            assertEquals(11, circle.clients.requests.size)
+        }
+
+    @Test
+    fun `a 401 or 403 from Circle is our key being wrong, so the id isn't remembered as unknown`() =
+        runBlocking<Unit> {
+            val id = "22222222-3333-4444-5555-666666666666"
+            val body = "{}".toByteArray()
+            for (status in listOf(401, 403)) {
+                circle.reply("GET /v2/notifications/publicKey/$id", """{"code":401,"message":"x"}""", status)
+                assertFalse(webhook.verifySignature(headers(body, id), body))
+            }
+            assertEquals(2, circle.requests("GET /v2/notifications/publicKey/$id").size)
+
+            circle.reply("GET /v2/notifications/publicKey/$id", """{"code":2,"message":"x"}""", 422)
+            assertFalse(webhook.verifySignature(headers(body, id), body))
+            assertFalse(webhook.verifySignature(headers(body, id), body))
+            assertEquals(3, circle.requests("GET /v2/notifications/publicKey/$id").size, "a 422 is remembered")
         }
 
     companion object {

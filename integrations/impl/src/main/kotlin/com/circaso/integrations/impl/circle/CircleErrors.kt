@@ -53,7 +53,7 @@ internal object CircleErrors {
 
     private fun rejected(reply: CircleReply.Failed, operation: String): IntegrationError {
         log.warn("circle refused: operation={} status={} code={}", operation, reply.status, reply.code)
-        return IntegrationError.Rejected("Circle refused the request (code ${reply.code ?: reply.status}).")
+        return IntegrationError.Rejected("The custody provider refused the request.")
     }
 
     const val VENDOR = "Circle"

@@ -14,6 +14,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.head
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
@@ -88,25 +89,11 @@ fun Route.webhookRoutes(
                 }
             }
             val seenKey = vendor.deliveryId(headers, body)?.let { id -> "hook:$name:$id" }
-            val duplicate = seenKey?.let { !redis.setIfAbsent(it, "1", SEEN_FOR) } ?: false
-
-            if (duplicate) {
-                call.respondDefault(RECEIVED)
-                return@post
+            if (vendor.answersAfterTranslation) {
+                answerAfterTranslation(vendor, body, seenKey, redis)
+            } else {
+                answerAtOnce(vendor, body, seenKey, redis, scope)
             }
-            if (!vendor.answersAfterTranslation) {
-                call.respondDefault(RECEIVED)
-                scope.launch { translate(vendor, body) }
-                return@post
-            }
-            // The vendor delivers again until it gets a 2xx, so a failure must not leave the id marked as seen.
-            val result = translate(vendor, body)
-            if (result is Resource.Error) {
-                seenKey?.let { redis.delete(it) }
-                call.respondDefault(result.error.toResponse())
-                return@post
-            }
-            call.respondDefault(RECEIVED)
         }.docs<NoBody, NoBody>(
             "Receive a vendor's callback",
             "Webhooks",
@@ -124,6 +111,43 @@ fun Route.webhookRoutes(
 }
 
 private val RECEIVED = DefaultResponse<Unit>(HttpStatusCode.OK.value, true, "Received")
+
+/** Most vendors: the id is claimed first, the answer is `200` at once, and the body is translated afterwards. */
+private suspend fun RoutingContext.answerAtOnce(
+    vendor: WebhookVendor,
+    body: ByteArray,
+    seenKey: String?,
+    redis: RedisScope,
+    scope: CoroutineScope,
+) {
+    val duplicate = seenKey?.let { !redis.setIfAbsent(it, "1", SEEN_FOR) } ?: false
+    call.respondDefault(RECEIVED)
+    if (!duplicate) scope.launch { translate(vendor, body) }
+}
+
+/**
+ * A vendor that delivers again until it gets a 2xx (Circle): the id is marked as seen only once the translation has
+ * succeeded. A failure, an exception or a cancelled call leaves no mark, so the next delivery runs; two deliveries at
+ * once may both run, which the handlers allow (they are idempotent and ignore older versions).
+ */
+private suspend fun RoutingContext.answerAfterTranslation(
+    vendor: WebhookVendor,
+    body: ByteArray,
+    seenKey: String?,
+    redis: RedisScope,
+) {
+    if (seenKey != null && redis.exists(seenKey)) {
+        call.respondDefault(RECEIVED)
+        return
+    }
+    val result = translate(vendor, body)
+    if (result is Resource.Error) {
+        call.respondDefault(result.error.toResponse())
+        return
+    }
+    seenKey?.let { redis.set(it, "1", SEEN_FOR) }
+    call.respondDefault(RECEIVED)
+}
 
 private suspend fun translate(vendor: WebhookVendor, body: ByteArray): Resource<Unit> {
     val result =

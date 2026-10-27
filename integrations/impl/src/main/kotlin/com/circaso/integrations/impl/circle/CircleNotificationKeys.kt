@@ -16,17 +16,28 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Anyone can post to `/v1/hooks/circle` with a made-up key id, so an id Circle refused is remembered as unknown for
  * [UNKNOWN_FOR] (at most [UNKNOWN_LIMIT] of them) instead of asking Circle again on every post. An id that couldn't be
- * checked because Circle was unavailable is not remembered: its next delivery asks again.
+ * checked because Circle was unavailable is not remembered: its next delivery asks again. On top of that, a node
+ * fetches at most [fetchesPerMinute] keys a minute: unauthenticated traffic must not spend our Circle rate limit, and a
+ * delivery over the cap is unverifiable for now (a 4xx, which Circle retries later).
  */
-internal class CircleNotificationKeys(private val client: CircleClient, private val clock: Clock) {
+internal class CircleNotificationKeys(
+    private val client: CircleClient,
+    private val clock: Clock,
+    private val fetchesPerMinute: Int = FETCHES_PER_MINUTE,
+) {
     private val log = LoggerFactory.getLogger(CircleNotificationKeys::class.java)
     private val keys = ConcurrentHashMap<String, PublicKey>()
     private val unknownUntil = ConcurrentHashMap<String, Instant>()
+    private val recentFetches = ArrayDeque<Instant>()
 
     /** The key for [keyId], or null if Circle doesn't know it or can't be asked right now. */
     suspend fun get(keyId: String): PublicKey? {
         keys[keyId]?.let { return it }
         if (!KEY_ID.matches(keyId) || isKnownUnknown(keyId)) return null
+        if (!mayFetch()) {
+            log.warn("circle notification key not fetched: over {} fetches a minute", fetchesPerMinute)
+            return null
+        }
 
         val reply = client.get<NotificationKeyData>("/v2/notifications/publicKey/$keyId", "get_notification_key")
         if (reply !is CircleReply.Ok) {
@@ -43,8 +54,21 @@ internal class CircleNotificationKeys(private val client: CircleClient, private 
         return key
     }
 
-    /** Circle looked at the id and said no (a 4xx other than its rate limit). */
-    private fun CircleReply<*>.isRefusal(): Boolean = this is CircleReply.Failed && status in 400..499 && status != 429
+    /** Circle looked at the id and said no. A 401 or 403 is our key being wrong, not the id. */
+    private fun CircleReply<*>.isRefusal(): Boolean = this is CircleReply.Failed && status in REFUSALS
+
+    /** A sliding minute: the fetches made in the last minute, oldest first. */
+    private fun mayFetch(): Boolean =
+        synchronized(recentFetches) {
+            val now = clock.instant()
+            val windowStart = now.minus(FETCH_WINDOW)
+            while (recentFetches.isNotEmpty() && !recentFetches.first().isAfter(windowStart)) {
+                recentFetches.removeFirst()
+            }
+            if (recentFetches.size >= fetchesPerMinute) return false
+            recentFetches.addLast(now)
+            true
+        }
 
     private fun isKnownUnknown(keyId: String): Boolean {
         val until = unknownUntil[keyId] ?: return false
@@ -73,5 +97,9 @@ internal class CircleNotificationKeys(private val client: CircleClient, private 
 
         /** When full, expired entries go first, then all of them: a flood of junk ids can't grow the map. */
         const val UNKNOWN_LIMIT = 1_000
+
+        const val FETCHES_PER_MINUTE = 10
+        private val FETCH_WINDOW: Duration = Duration.ofMinutes(1)
+        private val REFUSALS = setOf(400, 404, 422)
     }
 }

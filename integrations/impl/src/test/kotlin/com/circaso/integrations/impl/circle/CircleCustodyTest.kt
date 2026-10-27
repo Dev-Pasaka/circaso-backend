@@ -133,6 +133,33 @@ class CircleCustodyTest {
         }
 
     @Test
+    fun `the retry with a new token sends the same idempotency key, so Circle can't act twice`() =
+        runBlocking<Unit> {
+            val expired = """{"code":155104,"message":"The user token has expired."}"""
+            circle.reply("POST /v1/w3s/user/transactions/transfer", expired, 403)
+            circle.reply("PUT /v1/w3s/user/pin", expired, 403)
+            val transferKey = UUID.randomUUID()
+            val pinKey = UUID.randomUUID()
+
+            custody.prepareTransfer(user, TransferRequest("w-1", "0x1", Money(1, Asset.USDC), transferKey, "ref"))
+            custody.pinChallenge(user, PinChallenge.CHANGE, pinKey)
+
+            val transfers = circle.requests("POST /v1/w3s/user/transactions/transfer")
+            assertEquals(2, transfers.size)
+            assertEquals(listOf(circle.tokenOf(1), circle.tokenOf(2)), transfers.map { it.headers["X-User-Token"] })
+            for (attempt in transfers) {
+                assertEquals(transferKey.toString(), attempt.headers["Idempotency-Key"])
+                assertEquals(transferKey.toString(), attempt.sent<TransferBody>().idempotencyKey)
+            }
+            val pins = circle.requests("PUT /v1/w3s/user/pin")
+            assertEquals(2, pins.size)
+            for (attempt in pins) {
+                assertEquals(pinKey.toString(), attempt.headers["Idempotency-Key"])
+                assertEquals(pinKey.toString(), attempt.sent<PinBody>().idempotencyKey)
+            }
+        }
+
+    @Test
     fun `a token Circle refuses is dropped and the call made once more with a new one`() =
         runBlocking<Unit> {
             custody.sdkSession(user)
@@ -151,7 +178,7 @@ class CircleCustodyTest {
         }
 
     @Test
-    fun `wallets come back in our words with a lowercase address`() =
+    fun `wallets come back in our words with the address exactly as Circle gave it`() =
         runBlocking<Unit> {
             circle.reply(
                 "GET /v1/w3s/wallets",
@@ -164,7 +191,7 @@ class CircleCustodyTest {
             val wallets = custody.wallets(user).data()
 
             assertEquals("w-1", wallets[0].walletId)
-            assertEquals("0xabc0000000000000000000000000000000000001", wallets[0].address)
+            assertEquals("0xAbC0000000000000000000000000000000000001", wallets[0].address)
             assertEquals("BASE-SEPOLIA", wallets[0].blockchain)
             assertEquals("SCA", wallets[0].accountType)
             assertEquals(CustodyWalletState.LIVE, wallets[0].state)

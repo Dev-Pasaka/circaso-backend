@@ -87,7 +87,9 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
 
     private fun <T> unreadable(what: String): Resource<T> {
         log.warn("circle sent a transaction we can't read: {}", what)
-        return Resource.error(IntegrationError.Rejected("Circle sent a transaction without a readable $what."))
+        return Resource.error(
+            IntegrationError.Rejected("The custody provider sent a transaction without a readable $what."),
+        )
     }
 
     companion object {
