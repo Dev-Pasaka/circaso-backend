@@ -4,13 +4,6 @@ import com.circaso.shared.CircasoJson
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.JsonTransformingSerializer
-import kotlinx.serialization.json.booleanOrNull
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.PublicKey
@@ -43,20 +36,6 @@ internal data class IdTokenClaims(
     val name: String? = null,
     val picture: String? = null,
 )
-
-/** Reads `aud` as a list whether the provider sent one string or several. */
-internal object AudienceSerializer : JsonTransformingSerializer<List<String>>(ListSerializer(String.serializer())) {
-    override fun transformDeserialize(element: JsonElement): JsonElement =
-        if (element is JsonArray) element else JsonArray(listOf(element))
-}
-
-/** `true` for a JSON boolean `true` or the string "true", `false` for anything else. */
-internal object LooseFlagSerializer : JsonTransformingSerializer<Boolean>(Boolean.serializer()) {
-    override fun transformDeserialize(element: JsonElement): JsonElement {
-        val primitive = element as? JsonPrimitive ?: return JsonPrimitive(false)
-        return JsonPrimitive(primitive.booleanOrNull ?: (primitive.content == "true"))
-    }
-}
 
 /** A provider's JWKS document. */
 @Serializable

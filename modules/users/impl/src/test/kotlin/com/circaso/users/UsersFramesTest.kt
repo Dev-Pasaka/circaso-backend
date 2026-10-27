@@ -4,9 +4,9 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
-import com.circaso.users.data.cache.ConnectionAddedFrame
-import com.circaso.users.data.cache.ContactJoinedFrame
-import com.circaso.users.data.cache.ProfileUpdatedFrame
+import com.circaso.users.api.ConnectionAddedFrame
+import com.circaso.users.api.ContactJoinedFrame
+import com.circaso.users.api.ProfileUpdatedFrame
 import com.circaso.users.data.cache.toEnvelope
 import com.circaso.users.domain.ports.UsersFrame
 import java.time.Instant

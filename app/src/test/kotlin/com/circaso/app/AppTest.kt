@@ -68,11 +68,11 @@ class AppTest {
             application { circasoModule(AppConfig(), listOf(check("redis") { Resource.success(Unit) })) }
 
             val response = client.get("/health/ready")
-            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+            val body = Json.decodeFromString<HealthReport>(response.bodyAsText())
 
             assertEquals(HttpStatusCode.OK, response.status)
-            assertEquals("ready", body["status"]!!.jsonPrimitive.content)
-            assertEquals("up", body["checks"]!!.jsonObject["redis"]!!.jsonPrimitive.content)
+            assertEquals(HealthReport("ready", listOf(HealthCheckStatus("redis", "up"))), body)
+            assertTrue("""[{"name":"redis","status":"up"}]""" in response.bodyAsText(), "checks are a list")
         }
 
     @Test
@@ -90,12 +90,20 @@ class AppTest {
             }
 
             val response = client.get("/health/ready")
-            val checks = Json.parseToJsonElement(response.bodyAsText()).jsonObject["checks"]!!.jsonObject
+            val body = Json.decodeFromString<HealthReport>(response.bodyAsText())
 
             assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
-            assertEquals("up", checks["redis"]!!.jsonPrimitive.content)
-            assertEquals("down", checks["scylla"]!!.jsonPrimitive.content)
-            assertEquals("down", checks["streams"]!!.jsonPrimitive.content)
+            assertEquals(
+                HealthReport(
+                    "not_ready",
+                    listOf(
+                        HealthCheckStatus("redis", "up"),
+                        HealthCheckStatus("scylla", "down"),
+                        HealthCheckStatus("streams", "down"),
+                    ),
+                ),
+                body,
+            )
         }
 
     @Test

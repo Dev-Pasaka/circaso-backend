@@ -648,6 +648,13 @@ object Rules {
             "JsonObject(" to "JsonObject(…)",
             ".jsonObject[" to ".jsonObject[…]",
             ".jsonPrimitive" to ".jsonPrimitive",
+            "as JsonObject" to "a cast to JsonObject",
+            "as? JsonObject" to "a cast to JsonObject",
+            "as? JsonPrimitive" to "a cast to JsonPrimitive",
+            "parseToJsonElement" to "parseToJsonElement",
+            "JsonPrimitive(" to "JsonPrimitive(…)",
+            "buildJsonArray" to "buildJsonArray",
+            ".jsonArray" to ".jsonArray",
         )
 
     /**
@@ -663,6 +670,10 @@ object Rules {
                 "MS4 converts the messaging frames",
             "messaging/domain/ports/Ports.kt" to
                 "MS4 converts the messaging frames",
+            "gateway/realtime/GatewayRealtime.kt" to
+                "MS4 converts pushFor",
+            "integrations/impl/workersai/ChatCompletions.kt" to
+                "AI1b converts Workers AI",
             "integrations/impl/workersai/WorkersAiGateway.kt" to
                 "AI1b converts Workers AI",
             "integrations/impl/workersai/WorkersAiLanguageModel.kt" to
@@ -688,6 +699,8 @@ object Rules {
                 "grpc-java takes its retry service config as a Map<String, Any>",
             "infrastructure/impl/logging/LineFormatter.kt" to
                 "a log line's fields, read from logback, not a payload",
+            "integrations/impl/social/IdTokenClaimShapes.kt" to
+                "JsonTransformingSerializers reshape `aud` and `email_verified` before the typed claims read them",
         )
 
     /**

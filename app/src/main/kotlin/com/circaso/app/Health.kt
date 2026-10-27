@@ -13,8 +13,13 @@ import io.ktor.server.routing.route
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 
+/** `ready` or `not_ready` (`up` on `/health/live`), with each connection's own result (decision 2026-10-27: a list). */
 @Serializable
-data class HealthReport(val status: String, val checks: Map<String, String> = emptyMap())
+data class HealthReport(val status: String, val checks: List<HealthCheckStatus> = emptyList())
+
+/** One connection's result: [name] is `redis`, `scylla` or `streams`, [status] is `up` or `down`. */
+@Serializable
+data class HealthCheckStatus(val name: String, val status: String)
 
 private val log = LoggerFactory.getLogger("com.circaso.app.Health")
 private const val TAG = "Health"
@@ -37,8 +42,8 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
                     "restart the process when this fails. No token needed.",
         )
         get("ready") {
-            val results =
-                checks.associate { check ->
+            val report =
+                checks.map { check ->
                     val outcome =
                         try {
                             check.check()
@@ -46,10 +51,9 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
                             log.warn("Health check '${check.name}' threw", e)
                             Resource.Error(SharedError.Internal, e)
                         }
-                    check.name to outcome
+                    HealthCheckStatus(check.name, if (outcome is Resource.Success) "up" else "down")
                 }
-            val report = results.mapValues { (_, outcome) -> if (outcome is Resource.Success) "up" else "down" }
-            val ready = report.values.all { it == "up" }
+            val ready = report.all { it.status == "up" }
             call.respond(
                 if (ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
                 HealthReport(if (ready) "ready" else "not_ready", report),

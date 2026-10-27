@@ -145,6 +145,12 @@ class RuleFixturesTest {
             "JsonObject(…)",
             ".jsonObject[…]",
             ".jsonPrimitive",
+            "a cast to JsonObject",
+            "a cast to JsonPrimitive",
+            "parseToJsonElement",
+            "JsonPrimitive(…)",
+            "buildJsonArray",
+            ".jsonArray",
         )
 
     @Test

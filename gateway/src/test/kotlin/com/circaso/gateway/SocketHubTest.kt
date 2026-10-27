@@ -652,6 +652,7 @@ class SocketHubTest {
                     "not json" to "auth required",
                     """{"type":"auth","accessToken":"good","last":[1]}""" to "invalid last",
                     """{"type":"auth","accessToken":"good","last":{"users":4}}""" to "invalid last",
+                    """{"type":"auth","accessToken":"good","last":null}""" to "invalid last",
                     """{"type":"auth","accessToken":"good","last":[{"module":"users"}]}""" to "invalid last",
                     """{"type":"auth","accessToken":"good","last":[{"module":"users","seq":1},""" +
                         """{"module":"users","seq":2}]}""" to "invalid last",

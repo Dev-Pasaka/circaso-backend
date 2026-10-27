@@ -479,7 +479,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ErrorDetailsDto** — `retryAfterSeconds`?: integer|null; `fields`?: [FieldErrorDto]
 - **FieldErrorDto** — `field`: string; `problem`: string
 - **HandleAvailabilityResponse** — `handle`: string; `available`: boolean; `status`: string; `suggestion`?: string|null
-- **HealthReport** — `status`: string; `checks`?: map<string,string>
+- **HealthCheckStatus** — `name`: string; `status`: string
+- **HealthReport** — `status`: string; `checks`?: [HealthCheckStatus]
 - **InviteResponse** — `token`: string; `url`: string; `qrPayload`: string; `expiresAt`: string
 - **JwkDto** — `kty`?: string; `crv`?: string; `use`?: string; `alg`?: string; `kid`: string; `x`: string
 - **JwksResponse** — `keys`: [JwkDto]

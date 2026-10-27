@@ -84,12 +84,13 @@ class ServeTest {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
 
             val response = client.get("/health/ready")
-            val checks = Json.parseToJsonElement(response.bodyAsText()).jsonObject["checks"]!!.jsonObject
+            val checks = Json.decodeFromString<HealthReport>(response.bodyAsText()).checks
 
             assertEquals(HttpStatusCode.OK, response.status)
-            assertEquals("up", checks["redis"]!!.jsonPrimitive.content)
-            assertEquals("up", checks["scylla"]!!.jsonPrimitive.content)
-            assertEquals("up", checks["streams"]!!.jsonPrimitive.content)
+            assertEquals(
+                listOf("redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
+                checks.sortedBy { it.name },
+            )
         }
 
     @Test

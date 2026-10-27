@@ -89,8 +89,12 @@ data class ClientFrame(
     val data: JsonElement = NO_DATA,
 )
 
+/** A frame with no fields: encodes as `{}`. */
+@Serializable
+data object EmptyFrame
+
 /** What a phone frame without `data` carries: `{}`, so a frame class whose fields all have defaults still reads. */
-private val NO_DATA: JsonElement = CircasoJson.parseToJsonElement("{}")
+private val NO_DATA: JsonElement = CircasoJson.encodeToJsonElement(EmptyFrame.serializer(), EmptyFrame)
 
 /**
  * The phone frame's `data` as [deserializer]'s class. Throws `SerializationException` when it doesn't fit, which the
