@@ -842,7 +842,7 @@ The request id is the OpenTelemetry trace id, so the lines of an event handler (
 | Request id | First 8 characters of the trace id, dim | `requestId`, `traceId`, `spanId` | OpenTelemetry agent; returned to the app as `requestId` |
 | Module | Bold | `module` | Logger name `com.circaso.<module>` |
 | Kind | Arrow and service tag (`→ in`, `← out`, `⇄ db`, `⇄ redis`, `⇄ http`, `⇢ stream`, `⇠ stream`, `⇄ ws`, `⏲ job`) | `kind`: `request`, `response`, `db`, `redis`, `http`, `stream.publish`, `stream.consume`, `ws`, `job`, `webhook` | The logging helper that wrote it |
-| Method, route | Colored method, then the path | `http.method`, `http.route` (template, `/v1/users/{userId}`), `url.path` | Ktor |
+| Method, route | Colored method, then the route template | `http.method`, `http.route` (the matched template, `/v1/users/{userId}`; `(unmatched)` when no route matched). Never the concrete path or query: path parameters carry handles and tokens. `url.path` is only on vendor calls | Ktor |
 | Status, duration | Colored by status class and by speed | `http.status`, `durationMs` | Gateway, HTTP client, `Database.tx`, Redis wrapper |
 | Client IP, country | `102.68.143.7 KE` | `client.ip`, `client.country` | `CF-Connecting-IP`, `CF-IPCountry` from Cloudflare; the origin accepts traffic only from Cloudflare, so the header can be trusted |
 | Client app | `android/1.4.0` on the request line | `client.platform`, `client.version`, `client.model`, `client.os` | `X-Client-Version`, `User-Agent` |
@@ -940,7 +940,7 @@ val RequestLog = createApplicationPlugin("RequestLog") {
         MDC.put("client.country", call.request.header("CF-IPCountry"))
         MDC.put("client.version", call.request.header("X-Client-Version"))
         MDC.put("deviceId", call.request.header("X-Device-Id"))
-        log.debug("in", kv("kind", "request"), kv("http.method", call.request.httpMethod.value), kv("url.path", call.request.path()))
+        log.debug("in", kv("kind", "request"), kv("http.method", call.request.httpMethod.value), kv("http.route", routeTemplate(call)))
     }
     on(ResponseSent) { call ->
         val status = call.response.status()?.value ?: 0
