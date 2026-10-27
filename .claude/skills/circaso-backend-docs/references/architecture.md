@@ -546,8 +546,6 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 **Exposed and PostgreSQL.**
 
-> **Until PG6.** Temporary; PG6 deletes this line. Every module (identity, users, assistant, messaging) now runs on PostgreSQL; Kandra and ScyllaDB stay installed, unused by any module, until PG6 removes them.
-
 **Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-r2dbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is the non-blocking R2DBC driver (`exposed-r2dbc`, `org.postgresql:r2dbc-postgresql`, `io.r2dbc:r2dbc-pool`), so no thread ever blocks on the database (decision 2026-10-27: "queries must be non-blocking"). JDBC (`org.postgresql:postgresql`) is used only by Flyway in the `Migrate` step, because Flyway has no R2DBC driver; a Konsist rule keeps it there. Versions live in `gradle/libs.versions.toml`, like every other library.
 
 **One database, a schema and a role per module.** There is one database (`circaso`) with a schema per module: `identity`, `users`, `messaging`, `assistant`, later `wallet`. Each module also gets its own database role, with rights only on its own schema, so a module that queries another module's table fails in the database, not only in Konsist. There are no foreign keys across schemas, because modules stay independent.
@@ -577,7 +575,7 @@ object ContactsTable : Table("users.contacts") {
 }
 ```
 
-Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked in PG1). Exposed 1.6's `uuid()` column is `kotlin.uuid.Uuid`; for `java.util.UUID` use `javaUUID()` (`org.jetbrains.exposed.v1.core.java`). The name is always given explicitly, because Exposed strips a `Table` suffix from the object's name. Tables are plain `Table` with an explicit `primaryKey`, not `IntIdTable` or `UUIDTable`; composite keys use `PrimaryKey(a, b)`.
+Schema-qualified names in `Table("<schema>.<table>")` work with the DSL. Exposed 1.6's `uuid()` column is `kotlin.uuid.Uuid`; for `java.util.UUID` use `javaUUID()` (`org.jetbrains.exposed.v1.core.java`). The name is always given explicitly, because Exposed strips a `Table` suffix from the object's name. Tables are plain `Table` with an explicit `primaryKey`, not `IntIdTable` or `UUIDTable`; composite keys use `PrimaryKey(a, b)`.
 
 **Transactions: `Database.tx`.** Every database call runs in a transaction, and the only way in is infrastructure's `Database.tx { }`, a thin wrapper over Exposed's R2DBC `suspendTransaction(db = …)` (`org.jetbrains.exposed.v1.r2dbc.transactions`).
 
@@ -607,7 +605,7 @@ Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked
 | Safe concurrent edits (profile updates) | `UPDATE … SET version = version + 1 WHERE id = ? AND version = ?`; 0 rows means a concurrent edit |
 | A second way to look a row up (contacts by target, chats by user, support case by request id) | A secondary or unique index on the one table |
 | Idempotent writes | `upsert` with explicit `keys` (without them the behaviour varies by database) |
-| Fan-out writes (a group message to 1,000 inboxes) | `batchInsert(items, shouldReturnGeneratedValues = false)` in the sending transaction (R2DBC has no `reWriteBatchedInserts`; a multi-row `INSERT` is measured in PG5) |
+| Fan-out writes (a group message to 1,000 inboxes) | `batchInsert(items, shouldReturnGeneratedValues = false)` in the sending transaction (R2DBC has no `reWriteBatchedInserts`; a multi-row `INSERT`, measured by messaging's `FanoutLoadTest`) |
 | Time-ordered lists and paging | An index such as `(owner_id, created_at DESC)` and keyset paging, `WHERE (created_at, id) < (?, ?)`; never `OFFSET` for feeds |
 | Counters kept in rows (a group's member count) | `UPDATE … SET count = count + 1` in the same transaction; exact |
 | A cleared value | A real `NULL`: columns are `NOT NULL` unless `.nullable()`, with a nullable Kotlin type |
@@ -647,7 +645,7 @@ Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked
 
 **Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), over JDBC on the direct URL (`circaso-migrate`), the one place JDBC is used.
 
-- **The migrator role.** `Migrate` logs in as `circaso_migrator` (password `DATABASE_MIGRATION_PASSWORD`), a login role with `CREATEROLE` that owns the database's schemas. It is created once by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, as a server change in PG1, together with the `circaso_app` and `circaso_jobs` login roles and their limits (the script carries their passwords, so `Migrate` never needs them).
+- **The migrator role.** `Migrate` logs in as `circaso_migrator` (password `DATABASE_MIGRATION_PASSWORD`), a login role with `CREATEROLE` that owns the database's schemas. It is created once by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, together with the `circaso_app` and `circaso_jobs` login roles and their limits (the script carries their passwords, so `Migrate` never needs them).
 - **What it does.** It checks the login roles exist, creates any missing schema (owned by `circaso_migrator`) and module role (`NOLOGIN`), grants itself `SET` on the module role (PostgreSQL 16+ gives a role's creator only ADMIN), grants the module role `USAGE, CREATE` on its own schema and grants it to `circaso_app` and `circaso_jobs`, then runs Flyway for each module's spec with `SET ROLE <module>`, so each module's tables are owned by that module's role and `SET LOCAL ROLE <module>` can use them. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
 
 **Rows that expire.** A table whose rows expire uses one of two mechanisms:
@@ -659,10 +657,10 @@ Each module's Data section names the mechanism per table.
 
 **Where Postgres runs** (decided 2026-10-27)
 
-- **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`). The app starts using Postgres as its modules move.
+- **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`).
   - **Postgres:** database `circaso`, on the internal `circaso-data` network with no published port, so only the app and pgAdmin reach it. Volume `postgres-data`, memory limit 1.5 GB, `max_connections=50` (3 reserved), `shared_buffers=384MB`, `effective_cache_size=1GB`, `work_mem=8MB`, `maintenance_work_mem=128MB`, and statements over 500 ms logged.
-  - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The login roles are created by `postgres/initdb/20-login-roles.sh` (run once by hand on the existing volume); the module roles by the `Migrate` step (PG1).
-  - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days (set up by devops in PG1); a restore is tested once in PG6. In production, the host's point-in-time recovery, retention at least 7 days.
+  - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The login roles are created by `postgres/initdb/20-login-roles.sh` (run once by hand on the existing volume); the module roles by the `Migrate` step.
+  - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days; a restore from it is still to be tested once (Decisions → Open questions → Backups). In production, the host's point-in-time recovery, retention at least 7 days.
 - **pgAdmin at `https://sandbox-db.circaso.com`,** behind three locks in a row:
   1. **Cloudflare Access** (Zero Trust application, only Pasaka's email). nginx (`deploy/nginx/sandbox-db.conf`) accepts only Cloudflare's addresses and refuses, with 403, a request without the `Cf-Access-Jwt-Assertion` header, so nothing reaches pgAdmin around Access. The name is one level under `circaso.com` because the origin and free edge certificates only cover `*.circaso.com`.
   2. **pgAdmin's own login** (`dpage/pgadmin4`, port 5050, no published port; nginx reaches it on the backend network by container name).

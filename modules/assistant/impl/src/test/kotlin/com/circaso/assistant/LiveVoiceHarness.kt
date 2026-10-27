@@ -3,6 +3,7 @@ package com.circaso.assistant
 import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.presentation.controllers.liveVoiceController
 import com.circaso.assistant.presentation.services.LiveVoiceService
 import com.circaso.identity.api.Principal
@@ -204,6 +205,7 @@ class LiveHarness(val h: Harness) {
             h.start,
             h.resume,
             CheckLiveSession(verifier),
+            SaveLiveVoiceUsage(h.dailyUsage),
         )
 
     fun serve(builder: ApplicationTestBuilder) =

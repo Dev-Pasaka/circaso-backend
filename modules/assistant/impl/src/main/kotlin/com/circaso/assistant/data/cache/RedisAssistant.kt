@@ -13,7 +13,9 @@ import kotlinx.serialization.Serializable
 import java.time.Duration
 import java.util.UUID
 
-/** Daily allowance counters, `ast:quota:…`; each lives two days so a day's totals can still be read after midnight. */
+/**
+ * Daily allowance counters, `ast:quota:…`; each lives two days so a day's totals can still be read after midnight.
+ */
 class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
     private fun key(
         kind: String,
@@ -21,11 +23,21 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
         day: String,
     ) = "quota:$kind:$userId:$day"
 
-    override suspend fun countTextTurn(userId: UserId, day: String): Long =
-        redis.increment(
-            key("text", userId, day),
-            TTL,
-        )
+    /**
+     * `INCR` first, then give back the turn if it went over the cap, as [addVoiceSecondsUpTo] does: every refused
+     * caller takes back exactly the one it added, so the count settles at the cap, and `usage_daily` never counts a
+     * refusal.
+     */
+    override suspend fun countTextTurn(
+        userId: UserId,
+        day: String,
+        cap: Int,
+    ): Long {
+        val key = key("text", userId, day)
+        val after = redis.increment(key, TTL)
+        if (after > cap) redis.incrementBy(key, -1, TTL)
+        return after
+    }
 
     override suspend fun textTurns(userId: UserId, day: String): Long = read(key("text", userId, day))
 
@@ -112,7 +124,7 @@ private data class CallJson(val id: String, val name: String, val arguments: Str
 
 /**
  * A turn waiting for the phone, `ast:turn:{userId}:{turnId}`, kept 10 minutes and taken once; `ast:turns:{userId}`
- * lists the user's parked turn ids for as long.
+ * lists the user's parked turn ids for as long, and loses an id when its turn is taken.
  */
 class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
     override suspend fun save(turn: PendingTurn) {
@@ -170,6 +182,9 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
     }
 
     override suspend fun take(userId: UserId, turnId: UUID): PendingTurn? {
+        // Out of the index first: a turn parked again under this id between the two steps puts its id back, so the
+        // index may keep a stale id (harmless) but never misses a parked turn.
+        redis.hashDelete("turns:$userId", turnId.toString())
         val raw = redis.getAndDelete("turn:$userId:$turnId") ?: return null
         val j = runCatching { CircasoJson.decodeFromString(PendingJson.serializer(), raw) }.getOrNull() ?: return null
         return PendingTurn(

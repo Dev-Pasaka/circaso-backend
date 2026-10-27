@@ -1,6 +1,6 @@
 package com.circaso.identity.domain.models
 
-import com.kandraorm.kandra.annotations.PartitionKey
+import org.jetbrains.exposed.v1.core.Table
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.Serializable
 

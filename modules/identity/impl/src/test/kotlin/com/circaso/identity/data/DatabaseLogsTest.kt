@@ -25,7 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * The PG1 QA follow-up: with `LOG_LEVEL_DATABASE=DEBUG` (and everything else at DEBUG too), a real identity write that
+ * A QA follow-up: with `LOG_LEVEL_DATABASE=DEBUG` (and everything else at DEBUG too), a real identity write that
  * carries a phone number, and one the unique index refuses, never put the number in any log event: not in a message,
  * an argument or an exception. The events are read raw, before any appender's masking.
  */

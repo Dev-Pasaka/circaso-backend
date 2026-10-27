@@ -5,10 +5,7 @@ import com.circaso.gateway.installGateway
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.HealthCheck
-import com.circaso.infrastructure.api.KandraModuleSpec
 import com.circaso.infrastructure.api.Secrets
-import com.circaso.infrastructure.impl.database.ScyllaSettings
-import com.circaso.infrastructure.impl.database.installDatabase
 import com.circaso.infrastructure.impl.database.installPostgres
 import com.circaso.infrastructure.impl.infrastructureModule
 import com.circaso.infrastructure.impl.startInfrastructure
@@ -44,10 +41,9 @@ fun Application.circasoModule(
 
 /**
  * Wires everything, in the order it depends on itself. Koin first (observability, infrastructure and the business
- * modules); then PostgreSQL (its pools, and a check that every module's schema is migrated) and Kandra for the modules
- * still on ScyllaDB, each once, with what every module contributed; then the running parts (event consumers,
- * the outbox relay, the scheduler); then the web side with every health check collected. [config] and [secrets] are
- * where settings come from; tests pass their own.
+ * modules); then PostgreSQL (its pools, and a check that every module's schema is migrated), once, with what every
+ * module contributed; then the running parts (event consumers, the outbox relay, the scheduler); then the web side with
+ * every health check collected. [config] and [secrets] are where settings come from; tests pass their own.
  */
 fun Application.circasoServe(
     app: AppConfig,
@@ -65,7 +61,6 @@ fun Application.circasoServe(
     }
     val koin = getKoin()
     installPostgres(koin.getAll<DatabaseModuleSpec>())
-    installDatabase(koin.get<ScyllaSettings>(), koin.getAll<KandraModuleSpec>(), koin.get())
     startInfrastructure()
     val googleClient =
         config

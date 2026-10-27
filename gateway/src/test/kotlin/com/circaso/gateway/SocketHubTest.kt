@@ -157,6 +157,8 @@ class SocketHubTest {
 
         override suspend fun hashTake(key: String) = emptyMap<String, String>()
 
+        override suspend fun hashDelete(key: String, field: String) = false
+
         override suspend fun hashIncrement(
             key: String,
             field: String,

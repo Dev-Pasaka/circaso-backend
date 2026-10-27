@@ -18,7 +18,8 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.event
  * [OutboxStore] for its unpublished rows older than 10 seconds, oldest first, in batches of [OutboxStore.BATCH].
  * A rescued event may be a duplicate of one that was published but not stamped; handlers skip those.
  *
- * There is no checkpoint: an unpublished row stays visible to the store's query until it is stamped.
+ * Each sweep starts from the store's query (`published_at IS NULL`), so an unpublished row is found again on every
+ * sweep until it is stamped.
  */
 class OutboxRelay(
     private val bus: RedisEventBus,

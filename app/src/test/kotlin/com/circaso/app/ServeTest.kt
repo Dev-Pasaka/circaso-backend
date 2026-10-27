@@ -11,7 +11,6 @@ import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.shared.Uuid7
-import io.kandra.test.KandraTestUtils
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -40,7 +39,6 @@ import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
 import org.slf4j.LoggerFactory
 import org.testcontainers.containers.GenericContainer
-import org.testcontainers.scylladb.ScyllaDBContainer
 import org.testcontainers.utility.DockerImageName
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -49,15 +47,15 @@ import java.security.Signature
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
-import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis, ScyllaDB and
- * PostgreSQL (infrastructure's test container, started with the server's own init scripts, and migrated first).
+ * `serve` booted for real: Koin, infrastructure, the gateway and the modules, against a real Redis and PostgreSQL
+ * (infrastructure's test container, started with the server's own init scripts, and migrated first). The settings
+ * are only what `.env.example` documents: the database, Redis and the SMS provider.
  */
 class ServeTest {
     private companion object {
@@ -67,10 +65,6 @@ class ServeTest {
             ).withExposedPorts(6379).also {
                 it.start()
             }
-        val scylla: ScyllaDBContainer =
-            ScyllaDBContainer(
-                DockerImageName.parse("scylladb/scylla:2026.1"),
-            ).also { it.start() }
 
         init {
             // serve never migrates: as the deploy's Migrate step does, every module's Flyway scripts run first
@@ -85,17 +79,8 @@ class ServeTest {
         mapOf(
             "CIRCASO_ENV" to "local",
             "REDIS_URL" to "redis://${redis.host}:${redis.getMappedPort(6379)}",
-            "SCYLLA_CONTACT_POINTS" to "${scylla.contactPoint.hostString}:${scylla.contactPoint.port}",
-            "SCYLLA_DATACENTER" to "datacenter1",
-            "SCYLLA_TLS" to "false",
-            "SCYLLA_CREATE_SCHEMA" to "true",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
         ) + TestPostgres.env().filterKeys { it.startsWith("DATABASE_") } + extra
-
-    @AfterTest
-    fun resetKandra() =
-        KandraTestUtils
-            .reset()
 
     @Test
     fun `serve starts and reports PostgreSQL, Redis and the stream consumers ready`() =
@@ -107,7 +92,6 @@ class ServeTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals(
-                // No module is on Kandra any more (PG5), so no ScyllaDB check is registered.
                 listOf("postgres", "redis", "streams").map { HealthCheckStatus(it, "up") },
                 checks.sortedBy { it.name },
             )
@@ -126,12 +110,11 @@ class ServeTest {
 
     @Test
     fun `migrate applies each module's migrations once and a second run applies none`() {
-        val keyspaceEnv = env(mapOf("SCYLLA_CONTACT_POINTS" to env()["SCYLLA_CONTACT_POINTS"]!!))
-        val first = migrate(EnvConfig(keyspaceEnv), EnvSecrets(keyspaceEnv))
+        val first = migrate(EnvConfig(env()), EnvSecrets(env()))
         assertTrue(first >= 0)
         assertEquals(
             0,
-            migrate(EnvConfig(keyspaceEnv), EnvSecrets(keyspaceEnv)),
+            migrate(EnvConfig(env()), EnvSecrets(env())),
             "migrations already applied are not run again",
         )
     }
@@ -777,7 +760,7 @@ class ServeTest {
 
     @Test
     fun `direct chats and groups need reach, keep names sealed, and follow admin, handover and leave rules`() =
-        // No 1-minute test timeout: whichever test runs first creates every table in a fresh container.
+        // No 1-minute test timeout: the journey is long, and the first test in the JVM also waits for the containers.
         runBlocking<Unit> {
             runTestApplication { chatsJourney() }
         }

@@ -33,11 +33,6 @@ spotless {
     }
 }
 
-// kandra-core 0.5.1 depends on slf4j-simple, a second SLF4J provider next to Logback. Logback is the one provider.
-configurations.configureEach {
-    exclude(group = "org.slf4j", module = "slf4j-simple")
-}
-
 dependencies {
     testImplementation(platform(libs.findLibrary("junit-bom").get()))
     testImplementation(kotlin("test"))

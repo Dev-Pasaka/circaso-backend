@@ -184,7 +184,7 @@ Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount abo
 
 ## Data
 
-PostgreSQL tables in schema `wallet` (role `wallet`, Flyway location `db/wallet`), designed for Postgres from the start and built after PG1, and Redis keys under `wal:`.
+PostgreSQL tables in schema `wallet` (role `wallet`, Flyway location `db/wallet`), and Redis keys under `wal:`.
 
 ```sql
 -- V1__wallet.sql (shape; the script itself is written in WS2–WS4)

@@ -6,7 +6,7 @@ import java.util.UUID
 
 /**
  * UUIDv7 (RFC 9562): a 48-bit Unix millisecond timestamp, then random bits. Ids sort by creation time,
- * which is what makes them good clustering keys. `@GeneratedUuid` in Kandra produces the same shape.
+ * which keeps a B-tree index on them append-mostly and lets keyset paging order by id.
  */
 object Uuid7 {
     private val random = SecureRandom()

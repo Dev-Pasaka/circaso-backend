@@ -55,7 +55,7 @@ class StartTurn(
         val userId = command.userId
         if (!isOwnAgentToken(verifier, userId, command.agentToken)) return Resource.error(SharedError.TokenInvalid)
         val limits = config.limitsOf(entitlements.planOf(userId))
-        if (quota.countTextTurn(userId, clock.today()) > limits.textTurnsPerDay) {
+        if (quota.countTextTurn(userId, clock.today(), limits.textTurnsPerDay) > limits.textTurnsPerDay) {
             return Resource.error(AssistantError.QuotaExceeded(secondsUntilReset()))
         }
 

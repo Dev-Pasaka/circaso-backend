@@ -3,16 +3,16 @@ plugins {
     `java-test-fixtures` // TestPostgres, for every module's data-layer tests (decision 2026-10-27, PG1 review)
 }
 
-// Plumbing, no business logic: PostgreSQL (Exposed over R2DBC pools; Flyway over JDBC for Migrate) and Kandra for
-// the modules not moved yet, Redis, the event runtime, the scheduler, the shared HTTP client, config and secrets,
-// logging. Hands each module a handle scoped to it.
+// Plumbing, no business logic: PostgreSQL (Exposed over R2DBC pools; Flyway over JDBC for Migrate), Redis, the
+// event runtime, the scheduler, the shared HTTP client, config and secrets, logging. Hands each module a handle scoped
+// to it.
 dependencies {
     implementation(project(":observability:api"))
 
     implementation(libs.r2dbc.postgresql) {
-        // reactor-netty brings netty's epoll transport at 4.1, while the rest of netty resolves to 4.2. On Linux, Lettuce
-        // then finds epoll and calls a 4.2-only class (EpollIoHandler) that the 4.1 jar lacks. Without it, everything
-        // uses NIO, as before PG1.
+        // reactor-netty brings netty's epoll transport at 4.1, while the rest of netty resolves to 4.2. On Linux,
+        // Lettuce then finds epoll and calls a 4.2-only class (EpollIoHandler) that the 4.1 jar lacks. Without it,
+        // everything uses NIO.
         exclude(group = "io.netty", module = "netty-transport-native-epoll")
         exclude(group = "io.netty", module = "netty-transport-classes-epoll")
     }
@@ -21,11 +21,6 @@ dependencies {
     implementation(libs.flyway.core)
     implementation(libs.flyway.database.postgresql)
     implementation(libs.postgresql)
-
-    implementation(platform(libs.kandra.bom))
-    implementation(libs.kandra.ktor)
-    implementation(libs.kandra.koin)
-    implementation(libs.kandra.migrate)
 
     implementation(libs.grpc.netty.shaded)
     implementation(libs.lettuce.core)
@@ -49,12 +44,10 @@ dependencies {
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.ktor.server.websockets)
-    testImplementation(libs.kandra.test)
     testImplementation(libs.grpc.stub)
     testImplementation(libs.grpc.inprocess)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)
-    testImplementation(libs.testcontainers.scylladb)
     testImplementation(libs.testcontainers.postgresql)
 
     testFixturesApi(project(":infrastructure:api")) // what modules use: Database, DatabaseModuleSpec

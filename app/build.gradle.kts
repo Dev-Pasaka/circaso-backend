@@ -4,7 +4,7 @@ plugins {
 }
 
 // The only place that knows the implementations: `serve` wires modules and starts the server,
-// `migrate` runs the migrations once per deploy (PostgreSQL's Flyway scripts and, until PG6, Kandra's).
+// `migrate` runs the migrations once per deploy (PostgreSQL's Flyway scripts).
 application {
     mainClass = "com.circaso.app.MainKt"
     // Netty loads a native transport; newer JDKs warn unless native access is granted explicitly.
@@ -53,8 +53,5 @@ dependencies {
 
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.testcontainers)
-    testImplementation(libs.testcontainers.scylladb)
     testImplementation(testFixtures(project(":infrastructure:impl")))
-    testImplementation(platform(libs.kandra.bom))
-    testImplementation(libs.kandra.test)
 }

@@ -48,17 +48,17 @@ class RuleFixturesTest {
     }
 
     @Test
-    fun `domain may not import Ktor, serialization or Kandra`() =
+    fun `domain may not import Ktor, serialization or Exposed`() =
         assertFlags(
             "domainIsPureKotlin",
             "io.ktor.http.HttpStatusCode",
             "kotlinx.serialization.Serializable",
-            "com.kandraorm",
+            "org.jetbrains.exposed",
         )
 
     @Test
     fun `an api may not import a library or an impl`() =
-        assertFlags("apiIsContractOnly", "com.kandraorm", "com.circaso.users.domain")
+        assertFlags("apiIsContractOnly", "org.jetbrains.exposed", "com.circaso.users.domain")
 
     @Test
     fun `a DTO may not leave presentation`() =
@@ -100,18 +100,6 @@ class RuleFixturesTest {
             "'ProfileManager' in services must end in Service",
             "'Profiles' in controllers must end in Controller",
         )
-
-    @Test
-    fun `entities name their keyspace and are unique`() =
-        assertFlags(
-            "entitiesNameTheirKeyspace",
-            "no keyspace",
-            "expected 'circaso_identity'",
-            "must be unique across modules",
-        )
-
-    @Test
-    fun `Kandra stays in data`() = assertFlags("kandraOnlyInData", "io.kandra.runtime.KandraRepository")
 
     @Test
     fun `modules do not import OpenTelemetry`() = assertFlags("noDirectOpenTelemetryInModules", "io.opentelemetry")
@@ -182,6 +170,14 @@ class RuleFixturesTest {
             "references table 'com.circaso.identity.data.tables.AccountsTable' outside data",
             "imports Exposed 'org.jetbrains.exposed.v1.jdbc.selectAll' outside data",
             "references another module's table 'com.circaso.identity.data.tables.AccountsTable'",
+        )
+
+    @Test
+    fun `tables name their own module's schema`() =
+        assertFlags(
+            "tablesNameTheirSchema",
+            "table 'AccountsTable' is named 'accounts', expected 'identity.<table>'",
+            "table 'ProfilesTable' is named 'users.profiles', expected 'identity.<table>'",
         )
 
     @Test

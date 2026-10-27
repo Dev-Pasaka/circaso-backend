@@ -104,12 +104,10 @@ class TurnRecorder(
                         requestId,
                     )
                 // The day's totals come from Redis before the transaction, which holds database work only.
-                val (input, output) = quota.tokens(userId, day)
-                val textTurns = quota.textTurns(userId, day).toInt()
-                val voiceSeconds = quota.voiceSeconds(userId, day).toInt()
+                val totals = quota.totals(userId, day)
                 transactor.run("chat.record-turn") {
                     store.commit(AssistantChanges(messages = listOf(question, reply), audit = listOf(audit)))
-                    store.saveUsage(userId, day, textTurns, voiceSeconds, input, output, now)
+                    store.saveUsage(userId, day, totals, now)
                 }
                 Resource.success(TurnResult.Answer(reply))
             }

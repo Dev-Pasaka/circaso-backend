@@ -16,7 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** The daily voice cap holds with several sockets metering at once (decision 2026-10-26). */
+/** The daily caps hold with several callers at once: voice sockets metering (decision 2026-10-26), text turns. */
 class QuotaCountersTest {
     /** Redis's counters, one atomic `INCRBY` at a time, yielding around each so concurrent callers interleave. */
     private class CounterRedis : RedisScope {
@@ -70,6 +70,8 @@ class QuotaCountersTest {
 
         override suspend fun hashTake(key: String) = error("not used")
 
+        override suspend fun hashDelete(key: String, field: String) = error("not used")
+
         override suspend fun hashIncrement(
             key: String,
             field: String,
@@ -101,6 +103,23 @@ class QuotaCountersTest {
 
             assertEquals(30, quota.voiceSeconds(user, "2026-10-26"), "exactly at the cap once every socket is done")
             assertTrue(counts.all { it <= 30 }, "no socket is told a count past the cap")
+        }
+
+    @Test
+    fun `turns arriving at once over the cap are refused and given back, so the day ends at the cap`() =
+        runBlocking {
+            val redis = CounterRedis()
+            val quota = RedisQuotaCounters(redis)
+            val user = UserId.new()
+            quota.countTextTurn(user, "2026-10-28", 10)
+
+            val counts =
+                withContext(Dispatchers.Default) {
+                    (1..60).map { async { quota.countTextTurn(user, "2026-10-28", 10) } }.awaitAll()
+                }
+
+            assertEquals(9, counts.count { it <= 10 }, "only the turns that fit are allowed")
+            assertEquals(10, quota.textTurns(user, "2026-10-28"), "a refused turn is not counted as used")
         }
 
     @Test

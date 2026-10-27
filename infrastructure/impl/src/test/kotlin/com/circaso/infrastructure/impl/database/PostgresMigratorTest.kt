@@ -127,7 +127,7 @@ class PostgresMigratorTest {
     }
 
     @Test
-    fun `with no module on PostgreSQL, migrate connects to nothing`() {
+    fun `with no module spec, migrate connects to nothing`() {
         val unreachable = TestPostgres.settings(mapOf("DATABASE_MIGRATION_URL" to "jdbc:postgresql://127.0.0.1:1/none"))
 
         assertEquals(PostgresMigrationOutcome.NOTHING, PostgresMigrator(unreachable).migrate(emptyList()))

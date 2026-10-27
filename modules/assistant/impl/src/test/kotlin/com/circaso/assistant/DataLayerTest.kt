@@ -11,11 +11,16 @@ import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Plan
 import com.circaso.assistant.domain.models.ReadNote
 import com.circaso.assistant.domain.models.Role
+import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AuditEntry
+import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
+import com.circaso.assistant.domain.support.today
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
 import com.circaso.assistant.domain.usecases.DeleteExchange
+import com.circaso.assistant.domain.usecases.TranscribeVoice
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.Secrets
@@ -259,6 +264,24 @@ class DataLayerTest {
             assertEquals(0, store.deleteChat(user), "nothing left to delete")
         }
 
+    @Test
+    fun `of many deletes of one chat at once one records it, and deleting an empty chat records nothing`() =
+        runBlocking<Unit> {
+            repeat(50) {
+                val user = UserId.new()
+                val messages = (0 until 20).map { message(user, "m$it", at = now.plusMillis(it.toLong())) }
+                store.commit(AssistantChanges(messages = messages))
+
+                val results = concurrently(6) { deleteChat(user, "req-$it") }
+
+                assertTrue(results.all { it == Resource.success(Unit) }, "deleting an empty chat is not an error")
+                val audited = "SELECT count(*) FROM assistant.audit WHERE user_id = ? AND kind = 'CHAT_DELETED'"
+                assertEquals(1, count(audited, user.value))
+                assertEquals(Resource.success(Unit), deleteChat(user, "again"))
+                assertEquals(1, count(audited, user.value), "an empty chat records nothing")
+            }
+        }
+
     // ---- entitlements ----
 
     @Test
@@ -314,6 +337,37 @@ class DataLayerTest {
                     "SELECT concat_ws(' ', text_turns, voice_seconds, input_tokens, output_tokens) " +
                         "FROM assistant.usage_daily WHERE user_id = ?",
                     user.value,
+                ),
+            )
+        }
+
+    @Test
+    fun `a transcribed clip stores the day's voice seconds at once, never lowering what a turn stored`() =
+        runBlocking<Unit> {
+            val user = UserId.new()
+            val day = clock.today()
+            val speech = RecordingSpeech().apply { seconds = 7 }
+            val quota = MemoryQuota()
+            val transcribe =
+                TranscribeVoice(
+                    speech,
+                    Plans(),
+                    quota,
+                    DailyUsage(quota, store, transactor, clock),
+                    AssistantConfig(),
+                    clock,
+                )
+            store.saveUsage(user, day, 2, 0, 300, 40, now) // an earlier text turn's totals
+
+            assertTrue(transcribe(user, VoiceClip("hello".toByteArray(), "audio/mp4", 7, null)) is Resource.Success)
+
+            assertEquals(
+                "2 7 300 40",
+                text(
+                    "SELECT concat_ws(' ', text_turns, voice_seconds, input_tokens, output_tokens) " +
+                        "FROM assistant.usage_daily WHERE user_id = ? AND usage_day = ?::date",
+                    user.value,
+                    day,
                 ),
             )
         }

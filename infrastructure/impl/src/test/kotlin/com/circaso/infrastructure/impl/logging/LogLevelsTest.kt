@@ -60,8 +60,6 @@ class LogLevelsTest {
 
         assertEquals(Level.INFO, levelOf("com.circaso.identity.domain.usecases.SignInWithProvider"))
         assertEquals(Level.INFO, levelOf("com.circaso.gateway.RequestLog"))
-        assertEquals(Level.ERROR, levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"))
-        assertEquals(Level.ERROR, levelOf("io.kandra.runtime.BatchEngine"))
         assertEquals(Level.ERROR, levelOf("Exposed"), "Exposed's own logger can quote values")
         assertEquals(Level.WARN, levelOf("io.r2dbc.pool.ConnectionPool"))
         assertEquals(Level.WARN, levelOf("io.r2dbc.pool.ConnectionPool"))
@@ -112,13 +110,6 @@ class LogLevelsTest {
         )
         assertEquals(Level.ERROR, levelOf("com.circaso.infrastructure.impl.events.OutboxRelay"))
         assertEquals(Level.OFF, levelOf("com.circaso.infrastructure.impl.scheduler.Scheduler"))
-        assertEquals(
-            Level.ERROR,
-            levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"),
-            "the noisy ScyllaDB driver keeps its own level",
-        )
-        assertEquals(Level.ERROR, levelOf("io.kandra.runtime.BatchEngine"))
-        assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Kandra"))
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Transactions"))
         assertEquals(Level.ERROR, levelOf("Exposed"), "Exposed stays at ERROR whatever LOG_LEVEL_DATABASE says")
         assertEquals(Level.INFO, levelOf("io.r2dbc.postgresql.PARAM"), "bound values are never logged")

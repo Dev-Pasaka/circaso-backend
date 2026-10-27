@@ -5,6 +5,7 @@ import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.today
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.Transcript
@@ -13,11 +14,15 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import java.time.Clock
 
-/** A3: a voice clip (up to 60 s) becomes text. The transcript becomes the turn; the audio is not kept. */
+/**
+ * A3: a voice clip (up to 60 s) becomes text. The transcript becomes the turn; the audio is not kept. The seconds are
+ * charged and the day's totals stored at once, so the cost report has them before the next text turn.
+ */
 class TranscribeVoice(
     private val speech: SpeechToText,
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
+    private val usage: DailyUsage,
     private val config: AssistantConfig,
     private val clock: Clock,
 ) {
@@ -41,6 +46,7 @@ class TranscribeVoice(
         if (transcript.seconds > config.maxVoiceSeconds) return Resource.error(AssistantError.VoiceTooLong)
         // the clip's real length may be longer than claimed: charged up to the cap, never past it
         quota.addVoiceSecondsUpTo(userId, day, transcript.seconds, limit)
+        usage.save(userId, day)
         return Resource.success(transcript)
     }
 

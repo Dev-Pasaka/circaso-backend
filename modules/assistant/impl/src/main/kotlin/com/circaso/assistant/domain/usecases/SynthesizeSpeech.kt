@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.today
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SpokenAudio
@@ -14,7 +15,7 @@ import com.circaso.shared.UserId
 import java.time.Clock
 
 /**
- * A4: Asha's reply as audio. Metered with voice, at about 15 characters a second.
+ * A4: Asha's reply as audio. Metered with voice, at about 15 characters a second, and the day's totals stored at once.
  *
  * TODO(decision: short replies could be cached by text hash for a day, as the design suggests)
  */
@@ -22,6 +23,7 @@ class SynthesizeSpeech(
     private val speech: TextToSpeech,
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
+    private val usage: DailyUsage,
     private val config: AssistantConfig,
     private val clock: Clock,
 ) {
@@ -48,6 +50,7 @@ class SynthesizeSpeech(
         return when (val r = speech.speak(spoken, language)) {
             is Resource.Success -> {
                 quota.addVoiceSecondsUpTo(userId, day, seconds, limit)
+                usage.save(userId, day)
                 r
             }
 

@@ -5,9 +5,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.serializer
 import java.time.Instant
-import java.time.LocalDateTime
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 
 /**
  * Something that happened, declared in the publisher's `api`, named in the past tense, carrying ids and
@@ -38,22 +35,10 @@ data class EventEnvelope(
 ) {
     val stream: String get() = streamOf(producer)
 
-    /** The outbox minute-bucket this event is stored under, for example `2026-10-21T18:06`. */
-    val bucket: String get() = bucketOf(occurredAt)
-
     fun toJson(): String = CircasoJson.encodeToString(Companion.serializer(), this)
 
     companion object {
         fun streamOf(producer: String): String = "events:$producer"
-
-        private val bucketFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm").withZone(ZoneOffset.UTC)
-
-        fun bucketOf(at: Instant): String = bucketFormat.format(at)
-
-        /** The first instant of [bucket]. */
-        fun bucketStart(bucket: String): Instant = LocalDateTime.parse(bucket, bucketFormat).toInstant(ZoneOffset.UTC)
-
-        fun nextBucket(bucket: String): String = bucketOf(bucketStart(bucket).plusSeconds(60))
 
         fun fromJson(raw: String): EventEnvelope = CircasoJson.decodeFromString(serializer(), raw)
 

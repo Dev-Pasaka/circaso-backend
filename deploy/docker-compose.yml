@@ -1,4 +1,4 @@
-# Local development: PostgreSQL, ScyllaDB (until every module has moved to PostgreSQL) and Redis (Valkey is
+# Local development: PostgreSQL and Redis (Valkey is
 # wire-compatible). The vendors (SMS, email, push, Circle) are not here: locally the `log` and `fake` integrations stand
 # in for them.
 #
@@ -49,21 +49,6 @@ services:
       postgres:
         condition: service_healthy
 
-  scylla:
-    image: scylladb/scylla:2026.1
-    # Small and single-node for a laptop. Keyspaces are created by Kandra (AUTO_CREATE) in local runs.
-    command: --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1 --skip-wait-for-gossip-to-settle 0
-    ports:
-      - "9042:9042"
-    volumes:
-      - scylla-data:/var/lib/scylla
-    healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' >/dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-      start_period: 40s
-
   redis:
     image: valkey/valkey:8-alpine
     # Append-only persistence as in production (appendfsync everysec).
@@ -80,5 +65,4 @@ services:
 
 volumes:
   postgres-data:
-  scylla-data:
   redis-data:

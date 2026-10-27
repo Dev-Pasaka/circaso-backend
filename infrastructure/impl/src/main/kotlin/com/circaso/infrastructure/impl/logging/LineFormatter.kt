@@ -58,7 +58,7 @@ class LineFormatter(private val palette: Palette) {
         when (kind) {
             "request" -> palette.gray("→ in")
             "response" -> palette.gray("← out")
-            "db" -> palette.magenta("⇄ scylla")
+            "db" -> palette.magenta("⇄ postgres")
             "redis" -> palette.red("⇄ redis")
             "http" -> palette.cyan("⇄ http")
             "stream.publish" -> palette.blue("⇢ stream")

@@ -49,9 +49,8 @@ location = /errors/50x.html {
     add_header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" always;
 }
 
-# Not for the public: readiness reveals which dependencies are down, and Kandra's health route lists the database.
+# Not for the public: readiness reveals which dependencies are down.
 location = /health/ready { return 404; }
-location ^~ /kandra/ { return 404; }
 location ^~ /dev/ { return 404; }
 
 # The API reference is for people Cloudflare Access has let in (dashboard: Zero Trust > Access > Applications, path /docs). Access puts its signed token in

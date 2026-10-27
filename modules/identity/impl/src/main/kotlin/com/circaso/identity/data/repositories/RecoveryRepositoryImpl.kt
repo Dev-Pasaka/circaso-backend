@@ -15,7 +15,7 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.util.UUID
 
-/** Support cases, found by their request id: one table, so there is no lookup table to keep in step. */
+/** Support cases, found by their request id, which is unique in the one table that holds them. */
 class RecoveryRepositoryImpl(private val database: Database) : RecoveryRepository {
     override suspend fun find(requestId: UUID): SupportRecovery? =
         database.tx("recoveries.find") {

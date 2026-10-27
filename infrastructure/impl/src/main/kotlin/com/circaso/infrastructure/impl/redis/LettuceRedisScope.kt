@@ -163,6 +163,11 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
                 .associate { (field, value) -> field to value }
         }
 
+    override suspend fun hashDelete(key: String, field: String): Boolean =
+        timed("HDEL", key) {
+            (commands.hdel(key(key), field) ?: 0) > 0
+        }
+
     override suspend fun hashIncrement(
         key: String,
         field: String,

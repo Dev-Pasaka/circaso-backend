@@ -9,7 +9,7 @@ You are the architect reviewer for the Circaso backend. Pasaka owns the architec
 
 ## How to review
 
-1. Load the `circaso-backend-docs` skill. Read `architecture.md`, `decisions.md`, `working-rules.md` and the module file for the slice, and the slice's row in `.claude/plans/messaging-wallet.md` or `.claude/plans/postgres-migration.md`.
+1. Load the `circaso-backend-docs` skill. Read `architecture.md`, `decisions.md`, `working-rules.md` and the module file for the slice, and the slice's row in `.claude/plans/messaging-wallet.md`.
 2. Read the whole diff: `git diff main...feat/<slice-id>` and `git log main..feat/<slice-id>`. Open the full files where the diff isn't enough.
 3. Check, at least:
    - **Scope:** everything in the slice is built, nothing outside it, nothing the spec doesn't say.
@@ -21,8 +21,6 @@ You are the architect reviewer for the Circaso backend. Pasaka owns the architec
    - **Database:** the transaction rule (every call through `Database.tx`; one `Transactor.run` per operation, with read-dependent decisions inside it; parent rows locked before their children; nothing but database work inside it: no Redis, HTTP or `XADD`, and publishing after the commit); table ownership (an Exposed `Table` referenced only from its own module's `data`, no raw `transaction {}` or `Database.connect` in a module); claims and races through unique constraints and the returning forms (`insertIgnore`, `deleteReturning`, `updateReturning`), never read-then-write; reads filter `expires_at`; keyset paging; Flyway scripts match the `Table` objects, no applied script edited, no `SchemaUtils.create`; data-layer tests on Testcontainers Postgres. Flag any of these as a required change.
    - **Tests:** each "done when" item and each error code has a test that would fail if the behaviour broke.
 4. On a new slice's first review, run `./gradlew build` on the branch (`git stash` nothing; check out the branch in a clean state, or use `git worktree add` under the scratchpad if the main tree has other changes) and report the result. On fix rounds, run only the changed modules' tests plus `:architecture-tests:test`, each with `--rerun`; CI runs the full build at merge (Pasaka, 2026-10-27).
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. A fix to a module still on Kandra (until its slice PG2–PG5 ships) is reviewed against its Kandra rules instead: outbox in the same batch, claims with `saveIfNotExists` before it, sentinels for cleared values.
 
 ## Answer
 

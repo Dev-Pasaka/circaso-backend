@@ -6,7 +6,6 @@ import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -80,22 +79,6 @@ class ResourceAndEventsTest {
         assertEquals("events:identity", read.stream)
         assertEquals(1, read.version)
         assertEquals(Activated(userId, "ab12"), read.decode<Activated>())
-    }
-
-    @Test
-    fun `an event is stored under its UTC minute bucket, and buckets step by a minute`() {
-        val envelope =
-            EventEnvelope.of(
-                Activated(UserId.new(), "ab12"),
-                Activated.serializer(),
-                occurredAt = Instant.parse("2026-10-21T18:06:59.999Z"),
-            )
-
-        assertEquals("2026-10-21T18:06", envelope.bucket)
-        assertEquals(Instant.parse("2026-10-21T18:06:00Z"), EventEnvelope.bucketStart(envelope.bucket))
-        assertEquals("2026-10-21T18:07", EventEnvelope.nextBucket(envelope.bucket))
-        assertEquals("2026-10-22T00:00", EventEnvelope.nextBucket("2026-10-21T23:59"))
-        assertFalse(envelope.toJson().contains("bucket"), "the bucket is derived, not part of the wire format")
     }
 
     @Test

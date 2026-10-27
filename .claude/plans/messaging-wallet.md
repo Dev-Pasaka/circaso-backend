@@ -21,14 +21,14 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 
 | Id | Slice | Done when |
 | --- | --- | --- |
-| MS1 | Foundation: `RealtimeInbound` + `ClientFrame` in `shared`, hub routing of phone frames, `Realtime.deliverMany` (one publish on the `rt:fanout` pub/sub channel every node reads; pipelined single-key offline lookups only for push-worthy frames), push wording entries; `modules/messaging/{api,impl}` skeleton, keyspace `circaso_messaging`, DI, `LOG_LEVEL_MESSAGING`, OpenAPI tags in `ApiDocsCatalog` | Existing tests green; new hub and fan-out tests; Konsist passes |
-| MS2 | Key directory M1–M3 (device-signed upload via `identity.DeviceSignatures`, one-time prekey claim with LWT, bundle rate limit) | Tests for proof failure, prekey exhaustion, rate limit, reach |
+| MS1 | Foundation: `RealtimeInbound` + `ClientFrame` in `shared`, hub routing of phone frames, `Realtime.deliverMany` (one publish on the `rt:fanout` pub/sub channel every node reads; pipelined single-key offline lookups only for push-worthy frames), push wording entries; `modules/messaging/{api,impl}` skeleton, schema `messaging`, DI, `LOG_LEVEL_MESSAGING`, OpenAPI tags in `ApiDocsCatalog` | Existing tests green; new hub and fan-out tests; Konsist passes |
+| MS2 | Key directory M1–M3 (device-signed upload via `identity.DeviceSignatures`, one-time prekey claim with `deleteReturning` over `FOR UPDATE SKIP LOCKED`, bundle rate limit) | Tests for proof failure, prekey exhaustion, rate limit, reach |
 | MS3 | Chats and membership M4–M11, `ChatDirectory` (and the shared-group path in M3 `FetchKeyBundle`, `TODO(MS3)`), `msg:members` cache, reach on add, 1,000 cap, roles, sealed metadata, `member.*` and `chat.updated` frames | Tests for pair claim race, cap, admin rules, leave, not-reachable |
-| MS4 | **Done through PG5** (`feat/pg5-messaging`, `.claude/plans/postgres-migration.md`): paused 2026-10-27 and folded into PG5; its behaviour, frames, Redis receipts and behaviour tests carried over and its tables are built on Postgres. Sending and delivery M12–M14: data-only option on `PushMessage` + `FcmPush`, inbox, group body + pointer rows, idempotent send, socket `ack` / `read` / `typing`, receipts batched 5 s, typing ≤ 50 members, data-only push, `RealtimeReplay`, undeliverable on `DeviceReplaced` | Tests for fan-out, ack deletion, group body deletion, replay, blocks |
+| MS4 | **Done** (built with the messaging data layer on `feat/pg5-messaging`; settings M22 shipped there too). Sending and delivery M12–M14: data-only option on `PushMessage` + `FcmPush`, inbox, group body + pointer rows, idempotent send, socket `ack` / `read` / `typing`, receipts batched 5 s, typing ≤ 50 members, data-only push, `RealtimeReplay`, undeliverable on `DeviceReplaced` | Tests for fan-out, ack deletion, group body deletion, replay, blocks |
 | MS5 | Media M15–M17: presigned single and multipart (> 50 MB, 16 MB parts, 500 MB cap), recipients fixed at upload, delete on last ack, `MediaSweep` daily job, group avatars | Tests with the R2 fake; sweep test |
-| MS6 | History M18–M20, key backup M21 (passkey and recovery-key wraps), settings M22, agent route, consumed events (`DeviceReplaced`, `AccountStatusChanged`, `AccountDeleted`), published events | Tests for ownership, rate limits, deletion cascade |
+| MS6 | History M18–M20, key backup M21 (passkey and recovery-key wraps), agent route, consumed events (`DeviceReplaced`, `AccountStatusChanged`, `AccountDeleted`), published events | Tests for ownership, rate limits, deletion cascade |
 
-MS5 and MS6 start after PG1 and build on PostgreSQL (`messaging.md` → Data).
+MS5 and MS6 follow `messaging.md` → Data.
 
 ### Asha on Workers AI (decided 2026-10-25, runs beside messaging)
 
@@ -62,12 +62,10 @@ MS5 and MS6 start after PG1 and build on PostgreSQL (`messaging.md` → Data).
 | WS3 | Transfers W4, W5, W9–W11: rule order, idempotency, `refId`, states, webhook updates, frames, push, published events, remind | Tests for each rule, webhook ordering, duplicates |
 | WS4 | Transactions W6–W7, jobs (`ExpireUnsignedTransfers`, `StuckTransfers`, `ReconcileWallets`), payment hold on `AccountRelinked`, agent routes | Tests for statements, jobs, hold |
 
-WS2–WS4 start after PG1 and build directly on PostgreSQL (`wallet.md` → Data). Wallet runs against the `fake` custody provider on the sandbox until Pasaka adds Circle sandbox credentials to `/opt/circaso/.env`.
+WS2–WS4 follow `wallet.md` → Data. Wallet runs against the `fake` custody provider on the sandbox until Pasaka adds Circle sandbox credentials to `/opt/circaso/.env`.
 
 ## Every slice also
 
 - Documents every route with `.docs<Req, Res>()` under a catalog tag; updates `gateway/src/main/resources/docs/guide.md` (error table) and `docs/mobile-integration.md` (status per route: READY / PARTIAL / DEV STUB).
 - Leaves `// TODO(decision: …)` where the spec has an open question, and lists doc gaps in its report.
 - Never touches `email-templates/build.ts` (Pasaka's uncommitted change) or any `.env*` file except `.env.example`.
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. A fix to a module still on Kandra (until PG2–PG5) records real Kandra bugs in `docs/kandra-bugs.md`. MS1–MS3 were built on Kandra; PG5 moves their tables.

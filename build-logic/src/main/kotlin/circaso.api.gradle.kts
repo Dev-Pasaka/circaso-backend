@@ -2,7 +2,7 @@ import com.circaso.build.DependencyRules
 import com.circaso.build.Kind
 
 // The contract side of a module: `modules:<name>:api`, `infrastructure:api`, `integrations:api`,
-// `observability:api`. Depends only on `shared` and other modules' `api`; no Ktor, no Kandra, no Koin
+// `observability:api`. Depends only on `shared` and other modules' `api`; no Ktor, no Koin
 // (see DependencyRules).
 plugins {
     id("circaso.kotlin")

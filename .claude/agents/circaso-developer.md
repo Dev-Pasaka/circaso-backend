@@ -9,7 +9,7 @@ You are a developer on the Circaso backend. You build exactly one slice per task
 ## Before writing code
 
 1. Load the `circaso-backend-docs` skill and read `architecture.md`, `working-rules.md`, `decisions.md` and the module file for your slice.
-2. Read the slice's row in `.claude/plans/messaging-wallet.md` or `.claude/plans/postgres-migration.md` for its scope and "done when".
+2. Read the slice's row in `.claude/plans/messaging-wallet.md` for its scope and "done when".
 3. Read the existing modules (`modules/identity`, `modules/users`) and copy their shape: packages, controllers, services, use cases, row mappers, DI, tests.
 
 ## Rules (Pasaka's, not negotiable)
@@ -30,8 +30,6 @@ You are a developer on the Circaso backend. You build exactly one slice per task
 - Never point anything at the sandbox database. Use-case tests use in-memory fakes; data-layer tests use Testcontainers Postgres (`postgres:18`), migrated by the module's own Flyway scripts. If you start the app yourself, use `PORT=8081` with the local Postgres and Redis from `docker compose -f deploy/docker-compose.yml up -d` (the local `DATABASE_*` values in `.env.example`), and stop it and the containers you started afterwards.
 - Before you finish a new slice's first submission: `./gradlew spotlessApply build` must be green. In fix rounds, run `spotlessApply` and only the changed modules' tests, each test task followed by `--rerun` (e.g. `./gradlew :modules:users:impl:test --rerun :architecture-tests:test --rerun`); CI runs the full build at merge (Pasaka, 2026-10-27). Commit on the branch with a clear message ending with the attribution lines from your instructions.
 - Update `docs/mobile-integration.md` and `gateway/src/main/resources/docs/guide.md` for the routes you add.
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. A fix to a module still on Kandra (identity, users, assistant, messaging until PG2–PG5) keeps its Kandra rules: load the `kandra` skills you need, use sentinels for cleared values, record real Kandra bugs in `docs/kandra-bugs.md`, and run it locally with `SCYLLA_CONTACT_POINTS=localhost`, never the ScyllaDB Cloud cluster in `.env`.
 
 ## Report
 

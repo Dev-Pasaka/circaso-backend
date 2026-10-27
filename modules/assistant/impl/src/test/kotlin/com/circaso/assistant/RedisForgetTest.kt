@@ -14,6 +14,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** A deleted account's `ast:` keys: its parked turns (which hold the conversation) and its counters. */
@@ -70,6 +71,13 @@ class RedisForgetTest {
 
         override suspend fun hashTake(key: String): Map<String, String> = hashes.remove(key).orEmpty()
 
+        override suspend fun hashDelete(key: String, field: String): Boolean {
+            val hash = hashes[key] ?: return false
+            val removed = hash.remove(field) != null
+            if (hash.isEmpty()) hashes.remove(key) // Redis drops a hash with its last field
+            return removed
+        }
+
         override suspend fun hashIncrement(
             key: String,
             field: String,
@@ -116,6 +124,24 @@ class RedisForgetTest {
         }
 
     @Test
+    fun `a taken turn leaves the user's index, and so does one that expired before its answer`() =
+        runBlocking<Unit> {
+            val redis = MapRedis()
+            val turns = RedisPendingTurns(redis)
+            val me = UserId.new()
+            val (answered, expired, waiting) = listOf(turn(me), turn(me), turn(me))
+            listOf(answered, expired, waiting).forEach { turns.save(it) }
+            redis.values.remove("turn:$me:${expired.turnId}") // its 10 minutes passed
+
+            assertEquals("c1", turns.take(me, answered.turnId)?.callId)
+            assertNull(turns.take(me, expired.turnId))
+
+            assertEquals<Set<String>?>(setOf(waiting.turnId.toString()), redis.hashes["turns:$me"]?.keys)
+            assertEquals("c1", turns.take(me, waiting.turnId)?.callId)
+            assertNull(redis.hashes["turns:$me"], "the last taken turn takes the index with it")
+        }
+
+    @Test
     fun `forgetting a user removes their counters for the given days only`() =
         runBlocking {
             val redis = MapRedis()
@@ -123,11 +149,11 @@ class RedisForgetTest {
             val me = UserId.new()
             val other = UserId.new()
             for (day in listOf("2026-10-27", "2026-10-28")) {
-                quota.countTextTurn(me, day)
+                quota.countTextTurn(me, day, 10)
                 quota.addVoiceSeconds(me, day, 5)
                 quota.addTokens(me, day, 100, 20)
             }
-            quota.countTextTurn(other, "2026-10-28")
+            quota.countTextTurn(other, "2026-10-28", 10)
 
             quota.forget(me, listOf("2026-10-28", "2026-10-27", "2026-10-26"))
 

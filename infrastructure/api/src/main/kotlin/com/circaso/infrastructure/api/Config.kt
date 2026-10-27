@@ -18,8 +18,8 @@ enum class Environment {
 
 /**
  * Typed configuration, a section per module and vendor. Keys are dotted lowercase paths
- * (`scylla.contact-points`, `integrations.sms.provider`); the environment-backed implementation reads
- * `SCYLLA_CONTACT_POINTS`, `INTEGRATIONS_SMS_PROVIDER`. Credentials are not config: they come from [Secrets].
+ * (`database.url`, `integrations.sms.provider`); the environment-backed implementation reads
+ * `DATABASE_URL`, `INTEGRATIONS_SMS_PROVIDER`. Credentials are not config: they come from [Secrets].
  */
 interface Config {
     val environment: Environment

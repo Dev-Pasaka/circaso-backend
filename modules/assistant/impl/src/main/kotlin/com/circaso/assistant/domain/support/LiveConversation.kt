@@ -71,6 +71,8 @@ class LiveConversation(
     private val meter: suspend (Int) -> Resource<Long>,
     /** Whether this access token (and agent token, when given) are still valid tokens of the line's user. */
     private val checkSession: suspend (String, String?) -> Boolean,
+    /** Stores the day's usage totals, once, after the conversation's last seconds are metered. */
+    private val saveUsage: suspend () -> Unit = {},
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val ended = CompletableDeferred<LiveEnd>()
@@ -276,6 +278,9 @@ class LiveConversation(
         // the last part second counts, unless the allowance or a revoked session ended it
         if (end !is LiveEnd.OutOfAllowance && end !is LiveEnd.SessionRevoked) settle(final = true)
         release()
+        // after the providers are closed, so a slow database never holds them open; whatever ended the conversation,
+        // the seconds metered so far reach the cost report
+        saveUsage()
     }
 
     /** Sends [event] unless the conversation has ended: a turn that finishes after a hang-up is saved, not sent. */
