@@ -174,12 +174,10 @@ The user talks to Asha with the **user** token; Asha's tools call other modules 
 
 ## Data
 
-PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`).
-
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. The assistant still runs on its Kandra tables in keyspace `circaso_assistant` until slice PG4 builds the tables below.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), built in PG4.
 
 ```sql
--- V1__assistant.sql (shape; the script itself is written in PG4)
+-- V1__assistant.sql (shape; the script is modules/assistant/impl/src/main/resources/db/assistant/V1__assistant.sql)
 
 CREATE TABLE assistant.asha_messages (                  -- the Asha chat
     user_id     uuid        NOT NULL,
@@ -220,7 +218,7 @@ CREATE TABLE assistant.audit (                          -- append-only; what hap
     PRIMARY KEY (user_id, event_id)
 );
 
-CREATE TABLE assistant.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
+CREATE TABLE assistant.outbox (…);                      -- the shared outbox DDL (architecture.md → Durable events): daily partitions, 7 days
 ```
 
 | Table | Expiry |
@@ -229,7 +227,7 @@ CREATE TABLE assistant.outbox (…);                      -- the same shape as i
 | `usage_daily` | — |
 | `entitlements` | — |
 | `audit` | — |
-| `outbox` | Daily partitions, 7 days |
+| `outbox` | Daily partitions, 7 days, kept one day ahead and dropped by `assistant.purge-expired` (every 5 minutes) |
 
 **Phase B** adds `assistant.proposals` (by user, with an `expires_at` 10 minutes after the proposal is decided or expires, purged by `assistant.purge-expired`), designed with Phase B.
 

@@ -3,8 +3,11 @@ package com.circaso.gateway
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.circaso.web.installJson
+import com.circaso.web.installStatusPages
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
@@ -74,5 +77,25 @@ class RequestLogTest {
                 listOf("/v1/handles/{handle}/availability", "/v1/invites/{token}", UNMATCHED_ROUTE),
                 routes(),
             )
+        }
+
+    @Test
+    fun `an unmatched route answered by StatusPages is logged once, with its 404`() =
+        testApplication {
+            application {
+                // as `app` installs them
+                installJson()
+                installStatusPages()
+                install(RequestLog)
+                routing {
+                    get("/v1/known") { call.respondText("ok") }
+                }
+            }
+
+            val response = client.get("/v1/nothing/here")
+
+            assertEquals(HttpStatusCode.NotFound, response.status)
+            assertEquals(listOf(UNMATCHED_ROUTE), routes(), "one line per request (QA on PG2/PG3)")
+            assertTrue("http.status=404" in captured.list.single().text(), captured.list.single().text())
         }
 }

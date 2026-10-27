@@ -8,6 +8,7 @@ import com.circaso.assistant.domain.ports.PendingReadNote
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.AuditEntry
@@ -23,7 +24,8 @@ fun Clock.today(): String = LocalDate.now(this.withZone(ZoneOffset.UTC)).toStrin
 
 /**
  * What happens when the agent stops. An answer is saved with the question, one audit record says what was done (never
- * what was said), and the day's usage is updated. A question for the phone is parked for 10 minutes instead.
+ * what was said), and the day's usage is updated, all in one transaction. A question for the phone is parked for 10
+ * minutes instead.
  */
 class TurnRecorder(
     private val store: AssistantStore,
@@ -31,6 +33,7 @@ class TurnRecorder(
     private val quota: QuotaCounters,
     private val config: AssistantConfig,
     private val ids: OrderedIds,
+    private val transactor: Transactor,
     private val clock: Clock,
 ) {
     suspend fun conclude(
@@ -89,34 +92,25 @@ class TurnRecorder(
                         note,
                         now,
                     )
-                store.commit(
-                    AssistantChanges(
-                        messages = listOf(question, reply),
-                        audit =
-                            listOf(
-                                AuditEntry(
-                                    userId,
-                                    "TURN",
-                                    "prompt=${config.promptVersion} tools=${outcome.toolsUsed.joinToString(
-                                        ",",
-                                    ).ifEmpty { "none" }} " +
-                                        "chatMessagesRead=${readNote.messageCount} in=${outcome.inputTokens} " +
-                                        "out=${outcome.outputTokens}",
-                                    requestId,
-                                ),
-                            ),
-                    ),
-                )
+                val audit =
+                    AuditEntry(
+                        userId,
+                        "TURN",
+                        "prompt=${config.promptVersion} tools=${outcome.toolsUsed.joinToString(
+                            ",",
+                        ).ifEmpty { "none" }} " +
+                            "chatMessagesRead=${readNote.messageCount} in=${outcome.inputTokens} " +
+                            "out=${outcome.outputTokens}",
+                        requestId,
+                    )
+                // The day's totals come from Redis before the transaction, which holds database work only.
                 val (input, output) = quota.tokens(userId, day)
-                store.saveUsage(
-                    userId,
-                    day,
-                    quota.textTurns(userId, day).toInt(),
-                    quota.voiceSeconds(userId, day).toInt(),
-                    input,
-                    output,
-                    now,
-                )
+                val textTurns = quota.textTurns(userId, day).toInt()
+                val voiceSeconds = quota.voiceSeconds(userId, day).toInt()
+                transactor.run("chat.record-turn") {
+                    store.commit(AssistantChanges(messages = listOf(question, reply), audit = listOf(audit)))
+                    store.saveUsage(userId, day, textTurns, voiceSeconds, input, output, now)
+                }
                 Resource.success(TurnResult.Answer(reply))
             }
         }

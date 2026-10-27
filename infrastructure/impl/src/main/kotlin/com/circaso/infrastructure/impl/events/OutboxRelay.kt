@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.impl.database.OnJobsPool
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.shared.EventId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -29,8 +30,22 @@ class OutboxRelay(
         scheduler.every("events.outbox-relay", interval) { sweep() }
     }
 
-    /** One pass over every module's outbox, on the jobs pool. Returns how many events it published. */
-    suspend fun sweep(): Int = withContext(OnJobsPool) { outboxStores().sumOf { sweep(it) } }
+    /**
+     * One pass over every module's outbox, on the jobs pool. Returns how many events it published. A module whose
+     * outbox fails is logged and left for the next sweep; the others are still relayed.
+     */
+    suspend fun sweep(): Int = withContext(OnJobsPool) { outboxStores().sumOf { sweepOnItsOwn(it) } }
+
+    private suspend fun sweepOnItsOwn(store: OutboxStore): Int =
+        try {
+            sweep(store)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The exception's class only: a driver's message can quote a row.
+            log.error("outbox sweep failed", kv("producer", store.producer), kv("error", e.javaClass.simpleName))
+            0
+        }
 
     private suspend fun sweep(store: OutboxStore): Int {
         val published = mutableSetOf<EventId>()

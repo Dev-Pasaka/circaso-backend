@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory
 private val log = LoggerFactory.getLogger("com.circaso.gateway.RequestLog")
 private val StartedAt = AttributeKey<Long>("circaso.request.startedAt")
 private val RouteTemplate = AttributeKey<String>("circaso.request.routeTemplate")
+private val Logged = AttributeKey<Unit>("circaso.request.logged")
 
 /** What `http.route` says for a request no route matched: its path is the caller's text, so it is never logged. */
 internal const val UNMATCHED_ROUTE = "(unmatched)"
@@ -33,6 +34,10 @@ val RequestLog =
         }
         onCall { call -> call.attributes.put(StartedAt, System.nanoTime()) }
         on(ResponseSent) { call ->
+            // StatusPages answers an unmatched route by responding again from inside the first response's send, so
+            // ResponseSent fires once for its envelope and once more for the response it replaced: log the first.
+            if (call.attributes.contains(Logged)) return@on
+            call.attributes.put(Logged, Unit)
             val started = call.attributes.getOrNull(StartedAt) ?: return@on
             val status = call.response.status()?.value ?: 0
             val line =

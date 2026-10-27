@@ -7,6 +7,7 @@ import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.AuditEntry
@@ -49,12 +50,53 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
+/**
+ * One in-memory stand-in for the repository ports and the transaction boundary. A `run` that throws puts the chat and
+ * the audit trail back as they were, as a rolled-back transaction would.
+ */
 class MemoryAssistant :
     ChatRepository,
-    AssistantStore {
+    AssistantStore,
+    Transactor {
     val messages = CopyOnWriteArrayList<ChatMessage>()
     val audit = CopyOnWriteArrayList<AuditEntry>()
     val usage = ConcurrentHashMap<String, List<Number>>()
+    val erased = CopyOnWriteArrayList<UserId>()
+
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T {
+        val savedMessages = messages.toList()
+        val savedAudit = audit.toList()
+        try {
+            return block()
+        } catch (e: Exception) {
+            messages.clear()
+            messages += savedMessages
+            audit.clear()
+            audit += savedAudit
+            throw e
+        }
+    }
+
+    override suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T> =
+        try {
+            run(operation) { block().also { if (it is Resource.Error) throw Failed(it) } }
+        } catch (e: Failed) {
+            e.error
+        }
+
+    /** Carries an `attempt` block's error out of [run], so [run] puts everything back. */
+    private class Failed(val error: Resource.Error) : RuntimeException()
+
+    override suspend fun delete(userId: UserId, messageIds: Collection<UUID>): Int {
+        val gone = messages.filter { it.userId == userId && it.messageId in messageIds }
+        messages.removeAll(gone.toSet())
+        return gone.size
+    }
+
+    override suspend fun erase(userId: UserId) {
+        deleteChat(userId)
+        erased += userId
+    }
 
     override suspend fun find(userId: UserId, messageId: UUID) =
         messages.firstOrNull {
@@ -74,12 +116,13 @@ class MemoryAssistant :
 
     override suspend fun commit(changes: AssistantChanges) {
         messages += changes.messages
-        changes.deletedMessages.forEach { gone -> messages.removeAll { it.messageId == gone.messageId } }
         audit += changes.audit
     }
 
-    override suspend fun deleteChat(userId: UserId) {
-        messages.removeAll { it.userId == userId }
+    override suspend fun deleteChat(userId: UserId): Int {
+        val gone = messages.filter { it.userId == userId }
+        messages.removeAll(gone.toSet())
+        return gone.size
     }
 
     override suspend fun saveUsage(
@@ -304,7 +347,7 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
 
     private val agent = AshaAgent(model, tools, config)
     private val ids = OrderedIds(clock)
-    private val recorder = TurnRecorder(memory, pending, quota, config, ids, clock)
+    private val recorder = TurnRecorder(memory, pending, quota, config, ids, memory, clock)
 
     val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
     val resume = ContinueTurn(verifier, pending, agent, recorder, config)
@@ -313,12 +356,12 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, agent, recorder, config)
 
     val list = ListChat(memory)
-    val deleteAll = DeleteChat(memory)
-    val deleteOne = DeleteExchange(memory, memory)
+    val deleteAll = DeleteChat(memory, memory)
+    val deleteOne = DeleteExchange(memory, memory, memory)
     val usage = GetUsage(plans, quota, config, clock)
     val transcribe = TranscribeVoice(speech, plans, quota, config, clock)
     val speak = SynthesizeSpeech(speech, plans, quota, config, clock)
-    val deleteData = DeleteAssistantData(memory)
+    val deleteData = DeleteAssistantData(memory, memory)
 }
 
 fun smallLimits(turns: Int = 2, context: Int = 4) = AssistantConfig(free = Limits(turns, 30, context))

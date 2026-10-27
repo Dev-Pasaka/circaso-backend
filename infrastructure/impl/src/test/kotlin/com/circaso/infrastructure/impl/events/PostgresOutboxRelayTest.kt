@@ -1,6 +1,11 @@
 package com.circaso.infrastructure.impl.events
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.DatabaseModuleSpec
+import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.impl.TestRedis
 import com.circaso.infrastructure.impl.database.PostgresDatabases
 import com.circaso.infrastructure.impl.database.PostgresOutboxes
@@ -17,15 +22,20 @@ import io.lettuce.core.Range
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
+import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @Serializable
 private data class Noted(val n: Int) : DomainEvent {
@@ -103,6 +113,84 @@ class PostgresOutboxRelayTest {
             assertNotNull(publishedAt(older))
             assertNotNull(publishedAt(stuck))
             assertNull(publishedAt(fresh))
+        }
+
+    /** A row whose payload no longer decodes, as a bad deploy or a hand edit could leave one. */
+    private fun writePoison(ago: Duration, content: String): UUID {
+        val eventId = UUID.randomUUID()
+        TestPostgres.superuser { connection ->
+            connection
+                .prepareStatement(
+                    "INSERT INTO pgrelay.outbox (event_id, occurred_at, type, payload) VALUES (?, ?, 'pgrelay.Noted', ?)",
+                ).use { statement ->
+                    statement.setObject(1, eventId)
+                    statement.setTimestamp(2, Timestamp.from(Instant.now().minus(ago)))
+                    statement.setString(3, """{"eventId":"$content""")
+                    statement.executeUpdate()
+                }
+        }
+        return eventId
+    }
+
+    @Test
+    fun `a row that no longer decodes is skipped and logged once, and the rows behind it still flow`() =
+        runBlocking<Unit> {
+            val logs = ListAppender<ILoggingEvent>().apply { start() }
+            val outboxLog = LoggerFactory.getLogger("com.circaso.infrastructure.impl.database.Outbox") as Logger
+            outboxLog.addAppender(logs)
+            try {
+                val poison = writePoison(Duration.ofMinutes(5), "marker_poison_0712345678")
+                val behind = write(1, Duration.ofMinutes(4))
+                val relay = OutboxRelay(bus, { listOf(store) })
+
+                val first = relay.sweep()
+                val later = write(2, Duration.ofMinutes(1))
+                val second = relay.sweep()
+                val third = relay.sweep()
+
+                assertEquals(listOf(1, 1, 0), listOf(first, second, third))
+                assertNotNull(publishedAt(behind))
+                assertNotNull(publishedAt(later))
+                val onStream = redis.commands.xrange("events:pgrelay", Range.create("-", "+")).toList()
+                assertEquals(
+                    listOf(behind.eventId, later.eventId),
+                    onStream.map { EventEnvelope.fromJson(it.body.values.single()).eventId },
+                )
+                val errors = logs.list.filter { it.level == Level.ERROR }
+                assertEquals(1, errors.size, "logged once, however many sweeps see it")
+                val line = errors.single().let { it.formattedMessage + it.argumentArray.orEmpty().joinToString() }
+                assertTrue(poison.toString() in line && "pgrelay" in line, line)
+                assertFalse("marker_poison" in line || "0712345678" in line, "never the row's content: $line")
+                assertNull(errors.single().throwableProxy, "nor an exception that could quote it")
+                assertEquals(
+                    "",
+                    TestPostgres.superuser {
+                        it.single(
+                            "SELECT coalesce(published_at::text, '') FROM pgrelay.outbox WHERE event_id = '$poison'",
+                        )
+                    },
+                    "the poison row is left unstamped, for an operator to look at",
+                )
+            } finally {
+                outboxLog.detachAppender(logs)
+            }
+        }
+
+    @Test
+    fun `a module whose outbox fails does not hold back the others`() =
+        runBlocking<Unit> {
+            val stuck = write(1, Duration.ofMinutes(2))
+            val broken =
+                object : OutboxStore {
+                    override val producer = "broken"
+
+                    override suspend fun unpublished(limit: Int): List<EventEnvelope> = error("the database is gone")
+
+                    override suspend fun markPublished(envelope: EventEnvelope, at: Instant) = Unit
+                }
+
+            assertEquals(1, OutboxRelay(bus, { listOf(broken, store) }).sweep())
+            assertNotNull(publishedAt(stuck))
         }
 
     @Test
