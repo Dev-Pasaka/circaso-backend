@@ -1,9 +1,9 @@
 package com.circaso.users
 
+import com.circaso.identity.api.AccountStatus
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.shared.Resource
-import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ProfileUpdated
@@ -95,7 +95,8 @@ class DataLayerTest {
             notifier,
             clock,
         )
-    private val blockUser = BlockUser(blocks, transactor, store, bus, reachCache, clock)
+    private val directory = FakeDirectory()
+    private val blockUser = BlockUser(directory, blocks, transactor, store, bus, reachCache, clock)
     private val unblockUser = UnblockUser(blocks, transactor, store, bus, reachCache)
 
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
@@ -388,7 +389,7 @@ class DataLayerTest {
             profiles.create(profile(guest, "Guest"))
             store.commit(UsersChanges(invites = listOf(Invite("inv_gone", owner, "LINK", now, now.plusSeconds(600)))))
 
-            assertEquals(SharedError.NotFound, (connect(guest, ConnectVia.QR, "inv_gone") as Resource.Error).error)
+            assertEquals(UsersError.InviteInvalid, (connect(guest, ConnectVia.QR, "inv_gone") as Resource.Error).error)
             profiles.create(profile(owner))
             blocks.add(Block(owner, guest, now))
             assertEquals(UsersError.NotReachable, (connect(guest, ConnectVia.QR, "inv_gone") as Resource.Error).error)
@@ -439,6 +440,7 @@ class DataLayerTest {
             val me = UserId.new()
             val pest = UserId.new()
 
+            directory.statuses[pest] = AccountStatus.ACTIVE
             concurrently(8) { blockUser(me, pest) }
             assertEquals(1, outboxRows("users.UserBlocked"))
             concurrently(8) { unblockUser(me, pest) }

@@ -382,6 +382,17 @@ class UsersTest {
             assertEquals("request.rate_limited", h.lookupHandle(searcher, "nobody").errorCode())
         }
 
+    @Test
+    fun `the availability check counts against the same 30 handle lookups an hour`() =
+        runTest {
+            val h = Harness()
+            val checker = h.person("Checker")
+            repeat(30) { assertTrue(h.checkHandle(checker, "free_$it") is Resource.Success, "call ${it + 1}") }
+
+            assertEquals("request.rate_limited", h.checkHandle(checker, "one_more").errorCode())
+            assertEquals("request.rate_limited", h.lookupHandle(checker, "nobody").errorCode(), "the count is shared")
+        }
+
     // ---- what each viewer sees ----
 
     @Test

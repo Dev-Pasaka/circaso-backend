@@ -152,7 +152,7 @@ The shared ones, then each area's own. Codes are stable.
 | `users.handle_not_found` | 404 | No such handle, or its owner turned lookup off (the two look the same on purpose) |
 | `users.not_reachable` | 403 | No connection, or blocked either way (it never says which) |
 | `users.contact_not_found` | 404 | That person is not in your contacts |
-| `users.invite_invalid` | 404 | The invite expired or was revoked |
+| `users.invite_invalid` | 404 | The invite expired or was revoked, or its owner's account is gone |
 | `users.sync_too_large` | 400 | More than 1,000 numbers in one batch |
 | `users.cannot_block_self` | 400 | You cannot block yourself |
 | `messaging.keys_not_found` | 404 | The person has not published encryption keys yet, or this phone has not published its own |

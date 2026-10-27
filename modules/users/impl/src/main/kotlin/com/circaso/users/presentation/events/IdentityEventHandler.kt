@@ -25,7 +25,9 @@ class IdentityEventHandler(private val events: IdentityEventsService) {
                 mapOf(
                     AccountActivated.TYPE to EventHandler { orThrow(events.accountActivated(it.decode())) },
                     PhoneChanged.TYPE to EventHandler { orThrow(events.phoneChanged(it.decode())) },
-                    AccountStatusChanged.TYPE to EventHandler { orThrow(events.statusChanged(it.decode())) },
+                    // the event's time orders status changes, since stream retries can reorder them
+                    AccountStatusChanged.TYPE to
+                        EventHandler { orThrow(events.statusChanged(it.decode(), it.occurredAt)) },
                     AccountDeleted.TYPE to EventHandler { orThrow(events.accountDeleted(it.decode())) },
                 ),
         )

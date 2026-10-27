@@ -31,7 +31,7 @@ class LookupHandle(
         val claim =
             handles.find(handle)?.takeIf { it.releasedAt == null } ?: return Resource.error(UsersError.HandleNotFound)
         val profile =
-            profiles.find(claim.userId)?.takeIf { it.privacy.handleLookup }
+            profiles.find(claim.userId)?.takeIf { it.privacy.handleLookup && !it.hidden }
                 ?: return Resource.error(UsersError.HandleNotFound)
         if (claim.userId != viewer &&
             blocks.eitherWay(viewer, claim.userId)

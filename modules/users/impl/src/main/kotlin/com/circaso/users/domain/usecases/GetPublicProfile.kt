@@ -18,6 +18,7 @@ class GetPublicProfile(
     suspend operator fun invoke(viewer: UserId, target: UserId): Resource<PublicProfile> {
         if (viewer != target && !reach.canReach(viewer, target)) return Resource.error(UsersError.NotReachable)
         val profile = profiles.find(target) ?: return Resource.error(SharedError.NotFound)
+        if (viewer != target && profile.hidden) return Resource.error(UsersError.NotReachable)
         return Resource.success(views.forViewer(viewer, profile))
     }
 }

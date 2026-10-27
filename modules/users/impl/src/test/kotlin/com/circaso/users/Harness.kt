@@ -142,6 +142,20 @@ class MemoryUsers :
 
     override suspend fun lock(userId: UserId) = profiles[userId]
 
+    private val statusTimes = ConcurrentHashMap<UserId, Instant>()
+
+    override suspend fun recordAccountStatus(
+        userId: UserId,
+        status: AccountStatus,
+        at: Instant,
+    ): Boolean {
+        val profile = profiles[userId] ?: return false
+        if (statusTimes[userId]?.let { !it.isBefore(at) } == true) return false
+        statusTimes[userId] = at
+        profiles[userId] = profile.copy(hidden = status != AccountStatus.ACTIVE)
+        return true
+    }
+
     override suspend fun find(handle: String) = handles[handle]
 
     override suspend fun claim(
@@ -167,7 +181,7 @@ class MemoryUsers :
         activeOnly: Boolean,
     ) = contacts.values
         .filter { it.ownerId == ownerId && (after == null || it.contactId.value > after) }
-        .filter { !activeOnly || it.status == ContactStatus.ACTIVE }
+        .filter { !activeOnly || (it.status == ContactStatus.ACTIVE && profiles[it.contactId]?.hidden != true) }
         .sortedBy { it.contactId.value }
         .take(limit)
 
@@ -230,6 +244,7 @@ class MemoryUsers :
             profiles.remove(erased)
             contacts.keys.removeIf { (owner, contact) -> owner == erased || contact == erased }
             blocks.keys.removeIf { (user, blocked) -> user == erased || blocked == erased }
+            invites.values.removeIf { it.ownerId == erased }
         }
         events += changes.events
     }
@@ -363,7 +378,7 @@ class Harness {
     val updateProfile = UpdateProfile(provisioner, users, users, users, bus, notifier, views)
     val prepareAvatar = PrepareAvatarUpload(avatars, config)
     val setAvatar = SetAvatar(provisioner, users, avatars, users, users, bus, notifier, views, config)
-    val checkHandle = CheckHandle(users)
+    val checkHandle = CheckHandle(users, usersCache)
     val claimHandle = ClaimHandle(provisioner, users, users, users, users, bus, notifier, views, clock)
     val syncContacts = SyncContacts(directory, users, users, views, hasher, users, users, reachCache, usersCache, clock)
     val listContacts = ListContacts(users, users, views)
@@ -388,7 +403,7 @@ class Harness {
     val createInvite = CreateInvite(users, config, clock)
     val revokeInvite = RevokeInvite(users.inviteRepo)
     val listBlocks = ListBlocks(users, users, views)
-    val blockUser = BlockUser(users, users, users, bus, reachCache, clock)
+    val blockUser = BlockUser(directory, users, users, users, bus, reachCache, clock)
     val unblockUser = UnblockUser(users, users, users, bus, reachCache)
     val removeContact = RemoveContact(users, users, users, bus, reachCache, clock)
     val searchContacts = SearchContacts(users, users, views)

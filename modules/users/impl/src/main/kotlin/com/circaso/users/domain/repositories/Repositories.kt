@@ -1,5 +1,6 @@
 package com.circaso.users.domain.repositories
 
+import com.circaso.identity.api.AccountStatus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
 import com.circaso.users.domain.models.Block
@@ -27,6 +28,16 @@ interface ProfileRepository {
      * (an account deletion locks it first too), so contacts are never written for a profile that is going away.
      */
     suspend fun lock(userId: UserId): Profile?
+
+    /**
+     * Records the account's [status] as of [at] (the event's time), which hides the profile unless it is `ACTIVE`. An
+     * older status than the one recorded changes nothing; true when the row changed.
+     */
+    suspend fun recordAccountStatus(
+        userId: UserId,
+        status: AccountStatus,
+        at: Instant,
+    ): Boolean
 }
 
 interface HandleRepository {
@@ -50,7 +61,10 @@ interface ContactRepository {
     /** The owner's rows for [contactIds] that exist, active or removed. */
     suspend fun findAll(ownerId: UserId, contactIds: Set<UserId>): Map<UserId, Contact>
 
-    /** A page in contact-id order, [after] being the last contact id of the previous page; removed rows only if asked. */
+    /**
+     * A page in contact-id order, [after] being the last contact id of the previous page. [activeOnly] leaves out
+     * removed rows and people whose account isn't active (their profile is hidden).
+     */
     suspend fun list(
         ownerId: UserId,
         after: UUID?,
@@ -113,7 +127,7 @@ data class UsersChanges(
     val clearedWaiting: List<WaitingContact> = emptyList(),
     /** Handles to put on a 30-day hold for their old owner. */
     val releasedHandles: List<HandleClaim> = emptyList(),
-    /** Deleted accounts: the profile, and every contact and block either way. */
+    /** Deleted accounts: the profile, every contact and block either way, and their invites. */
     val erasedUsers: List<UserId> = emptyList(),
     val events: List<EventEnvelope> = emptyList(),
 )

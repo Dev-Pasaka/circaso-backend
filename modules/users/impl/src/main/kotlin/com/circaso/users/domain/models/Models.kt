@@ -27,6 +27,8 @@ data class Profile(
     val privacy: Privacy,
     val createdAt: Instant,
     val version: Long = 0,
+    /** The account isn't active (deleted in its grace period, suspended, blocked): others see no such user. */
+    val hidden: Boolean = false,
 )
 
 enum class ContactSource { PHONEBOOK, QR, INVITE, HANDLE }

@@ -20,6 +20,12 @@ object ProfilesTable : Table("users.profiles") {
 
     /** U2's optimistic lock: every update is `WHERE version = ?` and adds one. */
     val version = long("version").default(0)
+
+    /** The account's status as identity last reported it; the profile is hidden from others unless `ACTIVE`. */
+    val accountStatus = text("account_status").default("ACTIVE")
+
+    /** When that status changed (the event's `occurredAt`), so a late, older event never overwrites a newer one. */
+    val statusChangedAt = timestamp("status_changed_at").nullable()
     override val primaryKey = PrimaryKey(userId)
 
     init {

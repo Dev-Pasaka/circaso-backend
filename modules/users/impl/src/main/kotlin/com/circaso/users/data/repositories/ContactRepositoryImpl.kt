@@ -1,14 +1,17 @@
 package com.circaso.users.data.repositories
 
+import com.circaso.identity.api.AccountStatus
 import com.circaso.infrastructure.api.Database
 import com.circaso.shared.UserId
 import com.circaso.users.data.tables.ContactsTable
+import com.circaso.users.data.tables.ProfilesTable
 import com.circaso.users.domain.models.Contact
 import com.circaso.users.domain.models.ContactSource
 import com.circaso.users.domain.models.ContactStatus
 import com.circaso.users.domain.repositories.ContactRepository
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -16,7 +19,10 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.upsert
@@ -55,12 +61,18 @@ class ContactRepositoryImpl(private val database: Database) : ContactRepository 
         activeOnly: Boolean,
     ): List<Contact> =
         database.tx("contacts.list") {
+            // A contact whose account isn't active (its profile hidden) is left out; one with no profile yet is not.
             ContactsTable
-                .selectAll()
+                .join(ProfilesTable, JoinType.LEFT, ContactsTable.contactId, ProfilesTable.userId)
+                .select(ContactsTable.columns)
                 .where {
                     var condition: Op<Boolean> = ContactsTable.ownerId eq ownerId.value
                     if (after != null) condition = condition and (ContactsTable.contactId greater after)
-                    if (activeOnly) condition = condition and (ContactsTable.status eq ContactStatus.ACTIVE.name)
+                    if (activeOnly) {
+                        condition = condition and
+                            (ContactsTable.status eq ContactStatus.ACTIVE.name) and
+                            (ProfilesTable.accountStatus.isNull() or (ProfilesTable.accountStatus eq ACTIVE_ACCOUNT))
+                    }
                     condition
                 }.orderBy(ContactsTable.contactId to SortOrder.ASC)
                 .limit(limit)
@@ -132,3 +144,5 @@ private fun ResultRow.toContact() =
         removedAt = this[ContactsTable.removedAt],
         addedAt = this[ContactsTable.addedAt],
     )
+
+private val ACTIVE_ACCOUNT = AccountStatus.ACTIVE.name

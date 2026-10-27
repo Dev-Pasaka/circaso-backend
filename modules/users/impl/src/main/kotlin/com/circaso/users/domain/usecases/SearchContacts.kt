@@ -29,6 +29,7 @@ class SearchContacts(
             profiles
                 .findAll(ids)
                 .values
+                .filter { !it.hidden }
                 .filter { needle in it.displayName.lowercase() || it.handle?.contains(needle) == true }
                 .map { views.forViewer(userId, it) }
                 .sortedBy { it.displayName }

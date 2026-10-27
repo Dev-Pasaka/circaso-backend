@@ -53,13 +53,13 @@ import com.circaso.users.domain.support.ReachRule
 import com.circaso.users.domain.support.UserNotifier
 import com.circaso.users.domain.support.UsersConfig
 import com.circaso.users.domain.support.WaitingContactMatcher
+import com.circaso.users.domain.usecases.ApplyAccountStatus
 import com.circaso.users.domain.usecases.BlockUser
 import com.circaso.users.domain.usecases.CanReach
 import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckHandle
 import com.circaso.users.domain.usecases.CheckReach
 import com.circaso.users.domain.usecases.ClaimHandle
-import com.circaso.users.domain.usecases.ClearReachOnStatusChange
 import com.circaso.users.domain.usecases.Connect
 import com.circaso.users.domain.usecases.CreateInvite
 import com.circaso.users.domain.usecases.CreateProfileOnActivation
@@ -176,7 +176,7 @@ fun usersModule(config: Config): Module =
         single { PrepareAvatarUpload(get(), get()) }
         single { SetAvatar(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { RemoveAvatar(get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { CheckHandle(get()) }
+        single { CheckHandle(get(), get()) }
         single { ClaimHandle(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { SyncContacts(get<AccountDirectory>(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { ListContacts(get(), get(), get()) }
@@ -186,7 +186,7 @@ fun usersModule(config: Config): Module =
         single { CreateInvite(get(), get(), clock) }
         single { RevokeInvite(get()) }
         single { ListBlocks(get(), get(), get()) }
-        single { BlockUser(get(), get(), get(), get(), get(), clock) }
+        single { BlockUser(get<AccountDirectory>(), get(), get(), get(), get(), get(), clock) }
         single { UnblockUser(get(), get(), get(), get(), get()) }
         single { CheckReach(get()) }
         single { RemoveContact(get(), get(), get(), get(), get(), clock) }
@@ -198,7 +198,7 @@ fun usersModule(config: Config): Module =
         single { ReplayFrames(get()) }
         single { CreateProfileOnActivation(get(), get(), get()) }
         single { RecheckWaitingContacts(get(), get(), get()) }
-        single { ClearReachOnStatusChange(get()) }
+        single { ApplyAccountStatus(get(), get(), get()) }
         single { DeleteUserData(get(), get(), get(), get(), get(), clock) }
 
         // presentation

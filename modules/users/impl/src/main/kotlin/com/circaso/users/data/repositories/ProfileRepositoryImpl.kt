@@ -1,5 +1,6 @@
 package com.circaso.users.data.repositories
 
+import com.circaso.identity.api.AccountStatus
 import com.circaso.infrastructure.api.Database
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.UserId
@@ -16,13 +17,18 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
 import java.time.Clock
+import java.time.Instant
 
 class ProfileRepositoryImpl(private val database: Database, private val clock: Clock) : ProfileRepository {
     override suspend fun find(userId: UserId): Profile? =
@@ -80,6 +86,23 @@ class ProfileRepositoryImpl(private val database: Database, private val clock: C
                 ?.toProfile()
         }
 
+    override suspend fun recordAccountStatus(
+        userId: UserId,
+        status: AccountStatus,
+        at: Instant,
+    ): Boolean =
+        database.tx("profiles.account-status") {
+            val updated =
+                ProfilesTable.update({
+                    (ProfilesTable.userId eq userId.value) and
+                        (ProfilesTable.statusChangedAt.isNull() or (ProfilesTable.statusChangedAt less at))
+                }) {
+                    it[accountStatus] = status.name
+                    it[statusChangedAt] = at
+                }
+            updated == 1
+        }
+
     /** The columns a profile change can touch; the key, `created_at` and `version` are set by the caller. */
     private fun UpdateBuilder<*>.write(profile: Profile) {
         this[ProfilesTable.displayName] = profile.displayName
@@ -121,4 +144,5 @@ private fun ResultRow.toProfile() =
         privacy = privacyOf(this[ProfilesTable.privacy]),
         createdAt = this[ProfilesTable.createdAt],
         version = this[ProfilesTable.version],
+        hidden = this[ProfilesTable.accountStatus] != AccountStatus.ACTIVE.name,
     )

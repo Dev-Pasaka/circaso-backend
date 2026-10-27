@@ -115,7 +115,10 @@ class Connect(
             }
         }
 
-    /** Inside the transaction: the target's profile, locked, if the viewer may reach the target this way. */
+    /**
+     * Inside the transaction: the target's profile, locked, if the viewer may reach the target this way. A target
+     * whose account is gone or not active answers like an unknown handle or invite.
+     */
     private suspend fun reach(
         viewer: UserId,
         via: ConnectVia,
@@ -123,13 +126,13 @@ class Connect(
     ): Resource<Profile> {
         if (target.userId == viewer) return Resource.error(notFound(via))
         val profile = profiles.lock(target.userId)
-        if (via == ConnectVia.HANDLE && profile?.privacy?.handleLookup != true) {
+        if (via == ConnectVia.HANDLE && (profile?.privacy?.handleLookup != true || profile.hidden)) {
             return Resource.error(UsersError.HandleNotFound)
         }
         if (blocks.eitherWay(viewer, target.userId)) {
             return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.NotReachable)
         }
-        return if (profile == null) Resource.error(SharedError.NotFound) else Resource.success(profile)
+        return if (profile == null || profile.hidden) Resource.error(notFound(via)) else Resource.success(profile)
     }
 
     /**
