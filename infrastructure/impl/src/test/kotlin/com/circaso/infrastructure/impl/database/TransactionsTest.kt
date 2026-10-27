@@ -219,13 +219,20 @@ class TransactionsTest {
     @Test
     fun `when no connection comes free in time the request fails as service unavailable`() =
         runBlocking<Unit> {
-            val db =
-                database(pools(mapOf("DATABASE_POOL_APP_SIZE" to "4", "DATABASE_POOL_ACQUIRE_TIMEOUT_MS" to "300")))
+            val pools = pools(mapOf("DATABASE_POOL_APP_SIZE" to "4", "DATABASE_POOL_ACQUIRE_TIMEOUT_MS" to "300"))
+            val db = database(pools)
+            pools.open() // warmed first, so no connection is still being made when the waiter asks
 
             val outcome =
                 coroutineScope {
-                    val holders = (1..4).map { async { db.tx("test") { exec("SELECT pg_sleep(1.5)") } } }
-                    delay(200) // all four connections are taken
+                    // Held far longer than the 300 ms the waiter may wait.
+                    val holders = (1..4).map { async { db.tx("test") { exec("SELECT pg_sleep(2)") } } }
+                    val deadline = System.currentTimeMillis() + 5_000
+                    while (pools.app.metrics?.acquiredSize() != 4) {
+                        check(System.currentTimeMillis() < deadline) { "the four holders never took the pool" }
+                        delay(10)
+                    }
+                    // All four are held for about two seconds more: a connection for this one would be a real bug.
                     val waiting = runCatching { db.tx("test") { 1 } }
                     holders.awaitAll()
                     waiting
