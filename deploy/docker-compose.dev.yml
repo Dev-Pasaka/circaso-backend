@@ -1,7 +1,9 @@
-# The dev server: the app, Redis (Valkey) and the nginx proxy. Only the proxy publishes a port (443); the app and Redis publish none.
-# Networks: circaso-backend (external, created once with `docker network create circaso-backend`) joins nginx and the app; circaso-data (internal, no internet) joins the
+# The dev server: the app, Redis (Valkey), Postgres, pgAdmin, the docs reader and the nginx proxy. Only the proxy publishes a port (443).
+# Networks: circaso-backend (external, created once with `docker network create circaso-backend`) joins nginx, the app, docs and pgAdmin; circaso-data (internal, no internet) joins the
 # app and Redis, so nginx cannot reach Redis and Redis cannot reach the internet. Nothing uses Compose's default network.
-# Reference copy of the server's file; the deploy workflow sets IMAGE and runs `docker compose up -d`. Settings live in /opt/circaso/.env on the server (see deploy/dev.env.example).
+# Reference copy of /opt/circaso/docker-compose.yml. The deploy workflow and /opt/circaso/up.sh set IMAGE and DOCS_IMAGE and run `docker compose up -d`. Settings live in
+# /opt/circaso/.env (see deploy/dev.env.example); Postgres and pgAdmin secrets in /opt/circaso/postgres.env (see deploy/postgres.env.example). deploy/postgres and
+# deploy/nginx are copied to /opt/circaso/postgres and /opt/circaso/nginx.
 name: circaso
 
 services:
@@ -37,7 +39,8 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     networks: [data]
-    # Run as the image's valkey user: the root entrypoint's chown of /data fails once appendonlydir exists, because cap_drop removes DAC_OVERRIDE.
+    # Runs as uid:gid 999:1000 (the image's valkey user, which owns /data and appendonlydir), so it needs no privileges at all. As root
+    # with everything dropped it cannot even read a data folder it already created, and the restart after a deploy would fail.
     user: "999:1000"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -51,6 +54,71 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     mem_limit: 128m
+
+  # PostgreSQL for the move off ScyllaDB (.claude/plans/postgres-migration.md, §2.8). Only the app and pgAdmin reach it: no published
+  # port, on the internal data network. Its secrets live in postgres.env (mode 600), not .env, so the app container never sees them.
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    env_file: postgres.env
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - superuser_reserved_connections=3
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      # Runs once, on the first start with an empty volume: creates the read-only browsing role.
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d circaso"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [data]
+    shm_size: 256m
+    mem_limit: 1536m
+    cap_drop: [ALL]
+    # The entrypoint fixes the data folder's owner and drops to the postgres user.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: ["no-new-privileges:true"]
+
+  # Browsing and querying, at https://sandbox-db.circaso.com behind Cloudflare Access (nginx/sandbox-db.conf). No published port:
+  # nginx reaches it on the backend network, and it reaches Postgres on the data network.
+  pgadmin:
+    image: dpage/pgadmin4:9.18
+    restart: unless-stopped
+    env_file: postgres.env
+    environment:
+      PGADMIN_LISTEN_PORT: "5050"
+      PGADMIN_DISABLE_POSTFIX: "true"
+      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+      # Behind nginx and Cloudflare: trust one hop of X-Forwarded-For/-Proto, so pgAdmin builds https links.
+      PGADMIN_CONFIG_PROXY_X_FOR_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PROTO_COUNT: "1"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./postgres/pgadmin-servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend, data]
+    mem_limit: 512m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
 
   nginx:
     image: nginx:1-alpine
@@ -77,3 +145,5 @@ networks:
 
 volumes:
   valkey-data:
+  postgres-data:
+  pgadmin-data:

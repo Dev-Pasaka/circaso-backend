@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "circaso (sandbox, read-only)",
+      "Group": "Circaso",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "circaso",
+      "Username": "circaso_readonly",
+      "SSLMode": "disable",
+      "Comment": "Read-only browsing role. Writes go through the owner role, used deliberately."
+    }
+  }
+}
