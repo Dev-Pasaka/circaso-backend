@@ -64,6 +64,19 @@ class RuleFixturesTest {
     fun `a DTO may not leave presentation`() =
         assertFlags("dtosStayInPresentation", "presentation.dto.SignInRequest", "declares 'SignInResponse'")
 
+    /** Decision A (2026-10-27, AI1b review): only a consumed `*Response`, and only in a module's api project. */
+    @Test
+    fun `a module's api project may declare a response another module consumes, and nothing else`() {
+        assertFlags(
+            "dtosStayInPresentation",
+            "declares 'AgentSearchRequest'",
+            "declares 'LeakedSessionResponse'",
+            "presentation.dto.SessionRequest",
+        )
+        val violations = Rules.all.getValue("dtosStayInPresentation")(filesIn("dtosStayInPresentation"))
+        assertTrue(violations.none { "'AgentContactsResponse'" in it }, violations.joinToString("\n"))
+    }
+
     @Test
     fun `a row may not leave data`() =
         assertFlags("rowsStayInData", "AccountRow", "must end in Row", "another module's row")

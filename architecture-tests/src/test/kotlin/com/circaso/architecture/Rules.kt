@@ -216,13 +216,15 @@ object Rules {
             }
 
     /**
-     * Request and response DTOs live in `presentation` and never leave it. The exception is a module's `api`: a
-     * response another module reads over HTTP is part of the contract and is declared there (users' agent routes,
-     * read by the assistant; decision 2026-10-27, AI1b review).
+     * Request and response DTOs live in `presentation` and never leave it. One exception (decision A, 2026-10-27,
+     * AI1b review): an HTTP response DTO that another module consumes is part of the contract, so a `*Response` may be
+     * declared in a module's `api` project (users' agent-route answers, read by the assistant). Requests never may,
+     * and the exception follows the project, not a package that happens to have an `api` segment.
      */
     fun dtosStayInPresentation(files: List<KoFileDeclaration>): List<String> =
         files.filter { it.isBusiness() }.flatMap { file ->
-            val inPresentation = file.layer() == "presentation" || file.layer() == "api"
+            val inPresentation = file.layer() == "presentation"
+            val inModuleApi = projectOf(file)?.kind == "module-api"
             val leaked =
                 if (inPresentation) {
                     emptyList()
@@ -242,7 +244,7 @@ object Rules {
                         .classes()
                         .filter {
                             it.name.endsWith("Request") ||
-                                it.name.endsWith("Response")
+                                (it.name.endsWith("Response") && !inModuleApi)
                         }.map { violation(file, "declares '${it.name}' outside presentation") }
                 }
             leaked + declared
