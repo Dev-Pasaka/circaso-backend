@@ -2,6 +2,7 @@ package com.circaso.identity.presentation.mappers
 
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.SessionId
+import com.circaso.identity.domain.errors.IdentityError
 import com.circaso.identity.domain.models.DeviceInfo
 import com.circaso.identity.domain.models.DeviceProof
 import com.circaso.identity.domain.models.LinkProviderCommand
@@ -90,7 +91,7 @@ fun SocialSignInRequest.toCommand(): Resource<SignInCommand> {
 }
 
 fun StartPhoneRequest.toCommand(caller: CallPrincipal): Resource<StartPhoneCommand> {
-    val number = PhoneNumber.parse(phone) ?: return malformed("phone", "must be an E.164 number")
+    val number = PhoneNumber.parse(phone) ?: return Resource.error(IdentityError.PhoneInvalid)
     return Resource.success(StartPhoneCommand(caller.toPrincipal(), number))
 }
 
@@ -145,7 +146,7 @@ fun LinkProviderRequest.toCommand(caller: CallPrincipal): Resource<LinkProviderC
 fun parseProvider(raw: String?): SocialProvider? = raw?.let(::provider)
 
 fun RecoveryRequest.toCommand(caller: CallPrincipal): Resource<RecoveryCommand> {
-    val number = PhoneNumber.parse(phone) ?: return malformed("phone", "must be an E.164 number")
+    val number = PhoneNumber.parse(phone) ?: return Resource.error(IdentityError.PhoneInvalid)
     if (!contactEmail.matches(Regex("[^@\\s]+@[^@\\s]+\\.[^@\\s]+"))) return malformed("contactEmail")
     return Resource.success(RecoveryCommand(caller.toPrincipal(), number, contactEmail, note?.take(500)))
 }

@@ -36,6 +36,7 @@ fun Route.phoneController(phones: PhoneService) {
                 "I3 · Send a 6-digit SMS code",
                 TAG,
                 listOf(
+                    "identity.phone_invalid",
                     "identity.phone_mismatch",
                     "identity.code_locked",
                     "identity.sms_unavailable",
