@@ -91,7 +91,7 @@ Postgres has no row TTL. Each table that has one gets an `expires_at timestamptz
    Redis lock) deletes in chunks (`DELETE … WHERE ctid IN (SELECT ctid … LIMIT 5000)`) every few minutes.
 
 The large, high-churn tables are partitioned by day and expire by dropping old partitions instead of deleting rows.
-That is `messaging.inbox`, `messaging.group_messages` and `messaging.messages_by_id` (30 d), plus the per-module
+That is `messaging.inbox`, `messaging.group_messages` and `messaging.message_records` (30 d), plus the per-module
 `outbox` and `realtime` (7 d). Dropping partitions avoids vacuum pressure from millions of deleted rows. The partitions
 are managed by the same job (create tomorrow's, drop the expired ones); no extension needed.
 
@@ -124,7 +124,15 @@ Messaging is the write-heavy module: a group message to 1,000 members writes 1,0
   guaranteed by the row lock, so the CAS-timeout handling and the "unknown outcome" branches in MS4 and MS3 go away.
 - **Member removal** becomes one transaction: delete the member, decrement the count, insert the outbox row. That
   closes the MS3 half-done-removal gap by construction.
-- The `messages_by_id` lookup is just the primary key of `group_messages` (or a small table for direct messages).
+- Message records are their own table, `message_records (message_id PRIMARY KEY)`, because group bodies are deleted on
+  the last ack while M14 and receipts still need the record (PG0 review).
+- `inbox`, `group_messages` and `message_records` are partitioned by `RANGE (message_id)`, with daily bounds at the
+  UUIDv7 value of midnight UTC; keys `(user_id, message_id)`, `(chat_id, message_id)` and `(message_id)`, so every
+  lookup prunes to one partition. Ids are UUIDv7 made on the server.
+- There is no `chats.last_message_id`: M6 reads the newest id per chat from `message_records (chat_id, message_id DESC)`
+  with `LATERAL … LIMIT 1`; after 30 quiet days `lastMessageId` is null.
+- Every membership transaction locks the `chats` row first; the member cap is
+  `UPDATE chats SET member_count = member_count + :n WHERE … AND member_count + :n <= 1000 RETURNING …`.
 - Ciphertext columns are `bytea` or `text` as today (base64 stays at the API edge). TOAST compresses large values on
   its own.
 
@@ -242,12 +250,12 @@ That leaves room for a second app container (+13) during a rolling deploy. In pr
   - `sslmode=require` outside local.
   - `tcpKeepAlive=true`.
 
-**Server-side limits on the app's roles** (set in the roles migration, so a bad query can't hold a pooled connection
-for long):
+**Server-side limits on the login roles** (so a bad query can't hold a pooled connection for long; decision A of the
+PG0 review):
 
-- `statement_timeout = 5s` (jobs role: 60s for purges)
-- `lock_timeout = 2s`
-- `idle_in_transaction_session_timeout = 10s`
+- `circaso_app` (the app pool): `statement_timeout = 5s`, `lock_timeout = 2s`,
+  `idle_in_transaction_session_timeout = 10s`
+- `circaso_jobs` (the jobs pool): `statement_timeout = 60s` for purges and partition work
 
 **Coroutines and the pool**
 
@@ -257,9 +265,10 @@ for long):
   connection for the whole wait, and a Konsist rule plus review catch it.
 - Long reads (exports, admin listings) page with keyset queries, each page its own short transaction.
 
-**Role switching.** With one role per module, the recommendation (open question 4) is one pool per purpose (above)
-logged in as `circaso_app`, which is granted every module role. Each transaction starts with
-`SET LOCAL ROLE <module>`.
+**Role switching.** One pool per purpose (above): the app pool logs in as `circaso_app` and the jobs pool as
+`circaso_jobs`, both granted every module role. Each transaction starts with `SET LOCAL ROLE <module>`. Migrations
+run as `circaso_migrator` (`CREATEROLE`, owns the schemas, secret `DATABASE_MIGRATION_PASSWORD`), with
+`SET ROLE <module>` per schema so each module's tables are owned by its role.
 - `SET LOCAL` ends with the transaction, so a connection returns to the pool clean.
 - It also works behind PgBouncer in transaction mode.
 - The alternative, one pool per module role, would multiply connections by 5.
@@ -297,8 +306,9 @@ a page did not cover a point, it is marked "verify in PG1" rather than assumed.
   `SERIALIZABLE` claim), and the call site says why.
 - **`queryTimeout` is 5 s per statement** by default, set in `DatabaseConfig { defaultQueryTimeout }` and backed by a
   `statement_timeout` on the role.
-- **No nested transactions:** `useNestedTransactions` stays off. A use case opens one transaction; repositories accept
-  the caller's.
+- **No nested transactions:** `useNestedTransactions` stays off. A use case opens one transaction through the domain
+  port `Transactor.run { }` (implemented in `data` over `Database.tx`); repositories join it through the coroutine
+  context.
 - **`text` and `blob` columns are read inside the transaction**, using `eagerLoading = true` where they are used after
   it. The docs say they are unavailable outside a transaction otherwise.
 
@@ -355,11 +365,11 @@ its own, and Scylla is switched off only in the last slice.
 | Slice | Content | Done when |
 | --- | --- | --- |
 | **PG0: spec** | Decision row; architecture.md (Infrastructure, outbox step 1, Kandra section replaced by "Exposed and Postgres", guardrails); working-rules (drop Kandra sentinels and the Kandra bugs rule, add the transaction rule and the purge/partition rule); each module doc's Data section rewritten as Postgres tables; agent files (developer, architect, QA) updated | Pasaka approves the docs |
-| **PG1: foundation** | Version catalog: Exposed, Hikari, Flyway, Postgres driver, Testcontainers postgres. Infrastructure: `DatabaseModuleSpec`, the app, jobs and migrate pools with their dispatchers and metrics (§2.9), `Database.tx { }` (suspended transaction, bounded dispatcher), Flyway per schema in the `Migrate` main, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Devops adds Postgres, pgAdmin with its nginx server block for `sandbox-db.circaso.com`, the roles (including `circaso_readonly`) and the nightly R2 backup to the sandbox compose file (§2.8), with Pasaka's go-ahead for the server change. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
+| **PG1: foundation** | Version catalog: Exposed, Hikari, Flyway, Postgres driver, Testcontainers postgres. Infrastructure: `DatabaseModuleSpec`, the app, jobs and migrate pools with their dispatchers and metrics (§2.9), `Database.tx { }` (suspended transaction, bounded dispatcher), Flyway per schema in the `Migrate` main, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Postgres, pgAdmin and `circaso_readonly` already run on the sandbox (main `ae6e233`). Devops adds the `circaso_migrator` login role (created once by the superuser from `deploy/postgres/initdb`; `DATABASE_MIGRATION_PASSWORD` in `/opt/circaso/.env`) and the nightly R2 backup, with Pasaka's go-ahead for the server change. `Migrate` creates the module roles and the `circaso_app` and `circaso_jobs` login roles with their limits. The `Transactor` port and its Konsist rule. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
 | **PG2: identity** | `V1__identity.sql` (accounts with unique phone, provider links with unique (provider, subject), devices, sessions with `expires_at`, security log, support recoveries with unique request id, outbox partitioned); Exposed tables; repository impls behind the existing ports; claim tables dropped (the unique constraints are the claims); data tests on Postgres | All identity tests green on Postgres; sign-up, sign-in, refresh and recovery pass QA on local |
 | **PG3: users** | Profiles with unique handle, contacts (one table, index on target), waiting contacts, blocks (one table, index on blocked), invites, realtime, outbox | Same, for users |
 | **PG4: assistant** | Asha messages, daily usage, entitlements, audit, outbox | Same, for assistant |
-| **PG5: messaging** | Key bundles, prekeys, chats with unique direct pair, members (count in the same transaction), chats by user (index), inbox / group messages / message records partitioned by day, client-message idempotency, settings, realtime, outbox. MS3's removal gap and MS4's claim and batch workarounds are dropped in favour of transactions | All messaging tests green; the "exactly one wins" tests pass 50 runs in a loop under load |
+| **PG5: messaging** | Key bundles, prekeys, chats with unique direct pair, members (count in the same transaction), chats by user (index), inbox / group messages / message records partitioned by day, client-message idempotency, settings, realtime, outbox. MS3's removal gap and MS4's claim and batch workarounds are dropped in favour of transactions. Relax the M1 rule that the phone keeps a refused top-up's private keys (`messaging.md` M1 and `docs/mobile-integration.md`) | All messaging tests green; the "exactly one wins" tests pass 50 runs in a loop under load |
 | **PG6: cutover** | Sandbox: switch the app to the Postgres added in PG1, test a backup restore once, deploy migrate step on Flyway; remove Kandra (deps, `KandraInstall`, `KeyspaceReplication`, `ScyllaConnection`, the `SCYLLA_*` settings, the Kandra Konsist rules and allow-list entries, the `/kandra/` nginx block); full build; deploy; smoke test every route. **Then remove every trace of Kandra and ScyllaDB** (Pasaka, 2026-10-27: "nothing looks like Kandra or ScyllaDB existed before"): code, tests and fixtures, Konsist rules, Gradle deps and catalog entries, `.env.example`/`dev.env.example` `SCYLLA_*` lines, the local compose `scylla` service, the nginx `/kandra/` block, `docs/kandra-bugs.md`, every mention in the spec, plan files, agent files and decisions log (rewritten to state the Postgres design as the decision), and the project memory notes. Git history stays as it is unless Pasaka asks otherwise. A final `git grep -i -e kandra -e scylla` returns nothing | Sandbox serves only from Postgres; the ScyllaDB Cloud cluster can be shut down after Pasaka confirms |
 | **Wallet (WS2+)** | Built directly on Postgres after PG1, using the same patterns | — |
 
@@ -407,7 +417,11 @@ days (the largest, but simpler than MS4 was); PG6 1 day. Roughly **a working wee
    launch.
 2. **Sandbox data:** none is migrated; the sandbox starts empty on Postgres.
 3. **Shipping:** module by module. The app runs Kandra and Exposed side by side until PG6.
-4. **Roles:** one pool per purpose (§2.9), logged in as `circaso_app`, with `SET LOCAL ROLE <module>` per transaction.
+4. **Roles:** one pool per purpose (§2.9); the app pool logged in as `circaso_app`, the jobs pool as `circaso_jobs`, with
+   `SET LOCAL ROLE <module>` per transaction (amended in the PG0 review).
 5. **MS4:** paused and folded into PG5. AI1b ships on Kandra first, since it barely touches the database.
 6. **Kandra dependencies outside Circaso:** not answered. Nothing in this plan depends on the answer.
 7. **Exposed Gradle plugin:** added, to draft migrations. Drafts are always reviewed, and only Flyway applies them.
+8. **PG0 review (2026-10-27):** the `Transactor` port, `users.handles`, no `chats.last_message_id`, messaging partitions
+   by `message_id`, media lock order, wallet transition guards and permanent idempotency, the database log line,
+   naming, the `circaso_jobs` login role, the `circaso_migrator` role and `accounts.delete_after`. See `decisions.md`.

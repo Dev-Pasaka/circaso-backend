@@ -1,6 +1,6 @@
 # Circaso backend
 
-Circaso (formerly CoinX) is a chat-first social finance app for African markets: chat, money through Circle user-controlled wallets, group calls, and chamas. This repository is its backend: one Kotlin/Ktor deployable split into strict modules, each with its own ScyllaDB keyspace, talking to the others only through published contracts and durable events.
+Circaso (formerly CoinX) is a chat-first social finance app for African markets: chat, money through Circle user-controlled wallets, group calls, and chamas. This repository is its backend: one Kotlin/Ktor deployable split into strict modules, each with its own PostgreSQL schema, talking to the others only through published contracts and durable events.
 
 The architecture is decided; the code is not written yet. Your job is to build it exactly as designed.
 
@@ -8,7 +8,7 @@ The architecture is decided; the code is not written yet. Your job is to build i
 
 Before writing code, read these in order. They are the spec; this file only tells you how to work with them.
 
-1. `docs/architecture.md`: principles, project structure, module anatomy, results and errors, how modules talk, gateway, infrastructure and Kandra, logging, observability, integrations, realtime, conventions.
+1. `docs/architecture.md`: principles, project structure, module anatomy, results and errors, how modules talk, gateway, infrastructure and the database (Exposed and PostgreSQL), logging, observability, integrations, realtime, conventions.
 2. `docs/decisions.md`: every decision with its reason, and the open questions.
 3. `docs/modules/README.md`: the module map and the checklist for adding a module.
 4. The module you are working on: `docs/modules/identity.md` (and `identity-signin-flow.md` for the screens each endpoint serves), `docs/modules/users.md`, `docs/modules/assistant.md`.
@@ -27,19 +27,21 @@ Before writing code, read these in order. They are the spec; this file only tell
 | Piece | Choice |
 | --- | --- |
 | Language and server | Kotlin (2.2.20 or newer, for Ktor's OpenAPI plugin), Ktor 3 server and client |
-| Database | ScyllaDB (ScyllaDB Cloud in staging and production, Docker locally) through **Kandra** `com.kandraorm.kandra` 0.5.1 with its BOM: `kandra-ktor`, `kandra-koin`, `kandra-migrate`, `kandra-test` |
+| Database | PostgreSQL 18 (`postgres:18`: self-hosted on the sandbox, Docker locally and in CI; production host decided before launch) through **Exposed** 1.6.0, DSL only (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), JDBC with HikariCP, Flyway for migrations. |
 | DI | Koin |
 | JSON | kotlinx-serialization only (never Gson) |
-| Events | Outbox in each keyspace + Redis Streams |
+| Events | Outbox table in each schema + Redis Streams |
 | Cache, counters, locks | Redis (Valkey compatible) |
 | Architecture tests | Konsist, plus the `circaso.api` and `circaso.impl` Gradle convention plugins |
-| Tests | kotlin-test / JUnit 5, in-memory fakes for the domain, Testcontainers ScyllaDB and Redis for data tests |
+| Tests | kotlin-test / JUnit 5, in-memory fakes for the domain, Testcontainers PostgreSQL and Redis for data tests |
 | Observability | OpenTelemetry Java agent, Logback (pretty console locally, `LogstashEncoder` JSON elsewhere), Prometheus metrics |
 | AI (assistant) | Cloudflare Workers AI over plain Ktor (no agent framework; decision 2026-10-25) |
 
 Libraries not named in the docs (the Redis client, for example) are your proposal: pick a well-maintained option, say so in your summary, and keep it behind the infrastructure handle so it can change.
 
 Packages are `com.circaso.<module>.<api | presentation | domain | data | di>`.
+
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Identity, users, assistant and messaging run on ScyllaDB through Kandra 0.5.1 until their slices (PG2–PG5) ship. A fix to their code keeps the Kandra rules: entities in `@ScyllaTable(keyspace = …)` ending in `Row`; unique values claimed with `saveIfNotExists` before the batch; a clearable column stores a sentinel (empty text, nil UUID, epoch), since Kandra writes nothing for a `null` outside `saveWithNulls`; real Kandra bugs in `docs/kandra-bugs.md`; Testcontainers ScyllaDB for their data tests.
 
 ## Build order
 
@@ -50,14 +52,14 @@ Work in this order. Each milestone ends green: it builds, its tests and the Kons
 - `shared`: ids (UUIDv7 value classes), `Money`, `PhoneNumber`, `Resource`, `ErrorKind`, `DomainError`, `ErrorDetails`, `DomainException`, `DomainEvent`, the `EventBus`, `Realtime` and `RealtimeReplay` contracts.
 - `shared-web`: `DefaultResponse`, `ErrorKind.httpStatus()`, `toDefaultResponse`, `respondDefault` (with `Retry-After`), StatusPages.
 - `architecture-tests`: every Konsist rule in Module anatomy and the dependency table.
-- `deploy/docker-compose.yml` with ScyllaDB and Redis; `app` as a plain embedded Ktor server (no command-line arguments; settings from environment variables, local ones from `.env`), with `Migrate` as a second main class; `/health/live` and `/health/ready`.
+- `deploy/docker-compose.yml` with PostgreSQL and Redis; `app` as a plain embedded Ktor server (no command-line arguments; settings from environment variables, local ones from `.env`), with `Migrate` as a second main class; `/health/live` and `/health/ready`.
 - Logging as in the Logging section: both formats, request id in MDC.
 
 **M1 — Infrastructure**
-- Kandra installed once with keyspaces contributed by each module's `KandraModuleSpec`; no default keyspace; `AUTO_CREATE` locally, `VALIDATE` elsewhere; TLS and credentials for ScyllaDB Cloud from `Secrets`.
-- `kandra-migrate` runner per keyspace, run only by `app migrate`.
+- The database as in architecture.md → Exposed and PostgreSQL: one schema and role per module from each module's `DatabaseModuleSpec`; the app, jobs and migrate pools; `Database.tx` on a bounded dispatcher with `SET LOCAL ROLE`; credentials from `Secrets`.
+- Flyway once per schema, run only by the `Migrate` main; the app only checks that the history is current.
 - `RedisScope` with per-module prefixes; `Scheduler` with a Redis leader lock.
-- `EventBus`: outbox write in the same batch, immediate `XADD`, `publishedAt` stamp, single-leader relay with checkpoint, consumer groups, `XACK` after success, `XAUTOCLAIM` at 30 s, 5 attempts then `events:dlq`, `evt:done:` idempotency, 7-day trim.
+- `EventBus`: outbox write in the same transaction, immediate `XADD` after the commit, `publishedAt` stamp, single-leader relay over the unpublished rows, consumer groups, `XACK` after success, `XAUTOCLAIM` at 30 s, 5 attempts then `events:dlq`, `evt:done:` idempotency, 7-day trim.
 - Named Ktor HTTP clients with the retry table and circuit breaker; config and secrets; OpenTelemetry wiring and the `Telemetry` handle.
 
 **M2 — Integrations**
@@ -77,7 +79,7 @@ Work in this order. Each milestone ends green: it builds, its tests and the Kons
 
 ## How every endpoint is built
 
-Controller (a `Route` extension function) → service method → use case → repository interface → repository implementation → Kandra entity. For each endpoint:
+Controller (a `Route` extension function) → service method → use case → repository interface → repository implementation → Exposed table. For each endpoint:
 
 - Request and response DTOs in `presentation/dto`, mapped to and from models; shape checks in the mapper.
 - One use case per operation (`suspend operator fun invoke`), returning `Resource<T>`; expected failures are `Resource.Error` with the module's error code from the docs, never thrown.
@@ -85,11 +87,11 @@ Controller (a `Route` extension function) → service method → use case → re
 - The controller is `fun Route.xController(service: XService)` in its own file (`controllers/ProfileController.kt`): path groups, scope, handlers and `.docs(...)` together, as in the Ktor reference (`fun Route.patientRatingController(service)` with `authenticate { route("/…") { post { … } } }`). The module's Koin `RouteContributor` installs its controllers; there is no separate routes file.
 - Declared scope, `Idempotency-Key` on state changes, rate limit where the Gateway table lists one.
 - OpenAPI: describe the route with `.docs<Request, Response>(summary, tag, errors, notes)` from `shared-web`: the response is declared as `DefaultResponse<T>`, the error codes it can return are listed, and the module's tag groups it. The spec is generated from these descriptions; the reader is Circaso's own (`docs-ui/`), not Swagger UI or Scalar.
-- Tests: the use case against in-memory fakes of its ports (happy path and every error code it can return); the repository against Testcontainers ScyllaDB; one end-to-end test per flow (sign-up, sign-in on the same phone, new phone, refresh, sign-out, contact sync).
+- Tests: the use case against in-memory fakes of its ports (happy path and every error code it can return); the repository against Testcontainers PostgreSQL; one end-to-end test per flow (sign-up, sign-in on the same phone, new phone, refresh, sign-out, contact sync).
 
 ## Rules that are easy to get wrong
 
-- **Configuration is environment variables, not arguments.** `main` takes no arguments: it loads `.env` (local development only, never overriding the real environment), builds `EnvConfig` and `EnvSecrets` from the result and starts `embeddedServer(Netty, …)`. A setting's dotted name is its variable (`scylla.contact-points` is `SCYLLA_CONTACT_POINTS`; a secret `identity.signing-key` is `IDENTITY_SIGNING_KEY`). A new setting is a line in `.env.example`. There is no `application.conf`. Nothing may log before `main` has read `.env` (no top-level logger `val` in `Main.kt`).
+- **Configuration is environment variables, not arguments.** `main` takes no arguments: it loads `.env` (local development only, never overriding the real environment), builds `EnvConfig` and `EnvSecrets` from the result and starts `embeddedServer(Netty, …)`. A setting's dotted name is its variable (`database.migration-url` is `DATABASE_MIGRATION_URL`; a secret `identity.signing-key` is `IDENTITY_SIGNING_KEY`). A new setting is a line in `.env.example`. There is no `application.conf`. Nothing may log before `main` has read `.env` (no top-level logger `val` in `Main.kt`).
 - **Logging is controlled per service by environment variable** (`LOG_LEVEL`, `LOG_LEVEL_OTHER`, `LOG_LEVEL_REQUESTS`, `…_IDENTITY`, `…_DATABASE`, `…_REDIS`, `…_HTTP` and so on; `OFF` to silence); a new module or integration gets its own `LOG_LEVEL_<NAME>` line in `logback.xml`, and `LogLevelsTest` covers it.
 
 - **Every route is documented into a section.** `.docs<Req, Res>(summary, tag, errors, notes)` takes a `tag` that must be one of the sections in `gateway/.../ApiDocsCatalog.kt` (Health, Webhooks, Sign in, Phone verification, Register device, Profile, Handles, Contacts, Connections and invites, Blocks and reach, Asha chat, Asha voice and usage, Account and security, Account recovery, Agent routes). The catalog orders the reference as a person uses the API (Infrastructure first, then authentication, profile, people, Asha, account) and explains each section; a new area adds a tag and its explanation there. A route in the spec with no section fails `ServeTest`. The reader is its own service: `docs-ui/` builds static files into a small nginx image (`circaso-docs`), nginx routes `/docs` to it and `/docs/openapi.json` to the server; the server only builds the spec. The introduction is `gateway/src/main/resources/docs/guide.md`: keep the quick start, scopes, limits and error table in step with the code.
@@ -133,17 +135,26 @@ Controller (a `Route` extension function) → service method → use case → re
       }
   }
   ```
-- **Clearing a value:** Kandra writes nothing for a `null` (it is "unset") through `save`, `saveInBatch` and `update`. A column that must be clearable stores a sentinel (empty text, the nil UUID, the epoch) and the row mapper turns it back into `null`; `saveWithNulls` is the only call that writes a real null. See `docs/kandra-bugs.md`.
+- **Postgres and Exposed** (decision 2026-10-27; architecture.md → Infrastructure → Exposed and PostgreSQL).
+  - **Every database call goes through `Database.tx { }`.** Never `transaction {}` (it blocks the thread) or `Database.connect` in a module; Konsist fails the build on both. An Exposed `Table` is referenced only from the `data` package of the module that owns it.
+  - **One operation, one transaction, database work only.** A use case opens the transaction through the domain port `Transactor.run { }` (implemented in `data` over `Database.tx`; repositories join it through the coroutine context). An operation's rows, its uniqueness claims and its outbox row are written in one `run`, and every decision that depends on what was read (version checks, claims, caps, successors, last-ack deletes) is made inside it. Nothing inside it calls Redis, HTTP, `EventBus` or any other port that leaves the database (Konsist checks `Transactor.run` lambdas in `usecases`); the event is published right after the commit.
+  - **Lock order.** When a transaction touches a parent row and its children (a chat and its members, a media file and its pending recipients), it locks the parent first, on every path.
+  - **Ids are UUIDv7 made on the server.** Messaging's partitions are keyed by them, so an id is never taken from a phone.
+  - **Claims and races use the returning forms.** A unique value is a `UNIQUE` constraint on the table that holds it: `insertIgnore` and its `insertedCount` say who won. `deleteReturning` when exactly one caller may take a row (acks, member removal, a one-time prekey); `updateReturning` for conditional changes and optimistic locks (`SET version = version + 1 WHERE … AND version = ?`, 0 rows is a conflict); `upsert` only with explicit `keys`. A second access path is an index on the same table. A cleared value is a real `NULL`.
+  - **Lists page by keyset** (`WHERE (created_at, id) < (?, ?) ORDER BY … LIMIT n`), never `OFFSET`.
+  - **Rows that expire** carry `expires_at`: every read filters `expires_at > now()`, and the module's purge job deletes them in chunks. The high-churn tables the module doc names are partitioned by day and expire by dropping partitions.
+  - **Migrations are Flyway SQL** in `src/main/resources/db/<module>/V<n>__<what>.sql`, declaring the same keys, constraints and indexes as the `Table` objects. A script is never edited once it has been applied anywhere; a change is a new script. No `SchemaUtils.create` anywhere, development and tests included. A draft from the Exposed Gradle plugin (`generateMigrations`) is reviewed line by line before it is committed, because it can contain `DROP`s.
+  - **Data-layer tests run on Testcontainers Postgres** (`postgres:18`, one container per test JVM, reset with `TRUNCATE`), migrated by the module's own Flyway scripts; use-case tests use in-memory fakes of the ports. No test, and no local run, ever points at the sandbox database.
+  - **The SQL logger stays off** outside a local debug run; it would print bound phone numbers and keys.
 - **Message and event ids:** UUIDv7 made in the same millisecond come out in random order. Where a list is shown by id (a chat), take ids from `OrderedIds`.
 - **Architecture tests only mean something if they re-run:** `architecture-tests` declares the other modules' sources as inputs; do not remove that, or the rules report "up to date" and check nothing.
 
-- A domain class never imports Ktor, Kandra or kotlinx-serialization. Rows never leave `data`; DTOs never leave `presentation`.
-- Entities name their keyspace in `@ScyllaTable(keyspace = …)`, end in `Row` and are unique across modules. Unique values use a claim table with `saveIfNotExists` before the batch; an LWT can't join a batch.
-- Tables are designed around queries. No `ALLOW FILTERING`, no scans.
-- No module reads another module's keyspace or Redis keys. Ask through its `api`, tell through its stream.
-- Never log tokens, OTP codes, PINs, device keys, amounts, emails or raw phone numbers. Mark such entity fields `@Sensitive`.
+- A domain class never imports Ktor, Exposed or kotlinx-serialization. `Table` objects and `ResultRow`s never leave `data`; DTOs never leave `presentation`.
+- Tables are designed around queries. Every read is served by a primary key or an index; no scans.
+- No module reads another module's schema or Redis keys. Ask through its `api`, tell through its stream.
+- Never log tokens, OTP codes, PINs, device keys, amounts, emails or raw phone numbers. Keep the SQL logger off, so bound values never reach a log.
 - Never retry a POST that has no idempotency key (SMS, email).
-- Times are ISO-8601 UTC in the API and epoch milliseconds in storage. Money is integer minor units with its asset.
+- Times are ISO-8601 UTC in the API and `timestamptz` in storage. Money is integer minor units with its asset.
 - `/v1` only changes additively.
 
 ## Done means

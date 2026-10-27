@@ -1,6 +1,6 @@
 # Wallet module
 
-Wallet answers "what do I hold, and how do I send it to someone": it gives each user a Circle user-controlled wallet on request, prepares transfers that only the user can sign, and keeps the record of every transaction for statements and audit. It never holds keys and never moves money on its own: the backend prepares, the user signs with their Circle PIN, the chain executes. Keyspace `circaso_wallet`, Redis prefix `wal:`, stream `events:wallet`.
+Wallet answers "what do I hold, and how do I send it to someone": it gives each user a Circle user-controlled wallet on request, prepares transfers that only the user can sign, and keeps the record of every transaction for statements and audit. It never holds keys and never moves money on its own: the backend prepares, the user signs with their Circle PIN, the chain executes. Schema `wallet`, Redis prefix `wal:`, stream `events:wallet`.
 
 Status: draft, 2026-10-25. Proposals marked **Proposed** are listed again under Open questions; Circle details are from Circle's user-controlled wallets docs and API reference as read on 2026-10-25.
 
@@ -156,7 +156,7 @@ The app runs the challenge; the user sets the PIN and security questions. When C
 { "transferId": "0193…", "challengeId": "c7a2…", "sdk": { "userToken": "eyJ…", "encryptionKey": "Pq1…" }, "fee": { "amountMinor": 0, "asset": "USDC" }, "expiresAt": "2026-10-25T09:15:00Z" }
 ```
 
-Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and `StablecoinCustody.prepareTransfer` creates Circle's transfer challenge with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`.
+Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount above zero and within limits; the recipient reachable (or a member of `chatId` with the sender) and holding a wallet, or the address valid; balance (from Circle) enough. Then the transfer row is written as `AWAITING_SIGNATURE` and `StablecoinCustody.prepareTransfer` creates Circle's transfer challenge with `idempotencyKey` derived from the request's `Idempotency-Key` and `refId = transferId`, so the webhook leads back to it. If the user doesn't sign within 15 minutes the transfer becomes `EXPIRED`. A transfer is unique per sender and `Idempotency-Key`, so a reused key returns the same transfer, even after the gateway's 24-hour replay window.
 
 **Transfer states:** `AWAITING_SIGNATURE` → `SUBMITTED` (Circle `INITIATED`, `QUEUED`, `SENT`) → `CONFIRMED` (`CONFIRMED`, `COMPLETE`) or `FAILED` (`FAILED`, `DENIED`, `CANCELLED`); `EXPIRED` if never signed; `STUCK` is shown as submitted and handled by the stuck-transfer job.
 
@@ -184,88 +184,98 @@ Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount abo
 
 ## Data
 
-Kandra entities in keyspace `circaso_wallet` (plus `WalletRealtimeRow` and `WalletOutboxRow`), Redis keys under `wal:`.
+PostgreSQL tables in schema `wallet` (role `wallet`, Flyway location `db/wallet`), designed for Postgres from the start and built after PG1, and Redis keys under `wal:`.
 
-```kotlin
-const val KS = "circaso_wallet"
+```sql
+-- V1__wallet.sql (shape; the script itself is written in WS2–WS4)
 
-@ScyllaTable(name = "circle_users", keyspace = KS)
-data class CircleUserRow(
-    @PartitionKey val userId: UUID,
-    val circleUserId: UUID,                     // random; what Circle knows us by, never our user id
-    val createdAt: Instant,
-)
+CREATE TABLE wallet.circle_users (
+    user_id        uuid        PRIMARY KEY,
+    circle_user_id uuid        NOT NULL UNIQUE,         -- random; what Circle knows us by, never our user id
+    created_at     timestamptz NOT NULL
+);
 
-@ScyllaTable(name = "wallets_by_user", keyspace = KS)
-data class WalletRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val circleWalletId: String,
-    val blockchain: String,                     // BASE | BASE-SEPOLIA
-    val accountType: String,                    // SCA
-    val address: String,                        // lowercase hex
-    val state: String,                          // SETTING_UP | ACTIVE | FROZEN
-    val createdAt: Instant,
-)
+CREATE TABLE wallet.wallets (
+    circle_wallet_id text        PRIMARY KEY,           -- webhooks carry Circle's wallet id
+    user_id          uuid        NOT NULL,
+    blockchain       text        NOT NULL,              -- BASE | BASE-SEPOLIA
+    account_type     text        NOT NULL,              -- SCA
+    address          text        NOT NULL,              -- lowercase hex
+    state            text        NOT NULL,              -- SETTING_UP | ACTIVE | FROZEN | CLOSED
+    created_at       timestamptz NOT NULL
+);
+CREATE INDEX wallets_user_idx ON wallet.wallets (user_id);
+CREATE UNIQUE INDEX wallets_address_key ON wallet.wallets (address, blockchain);   -- inbound webhooks and paying a contact
 
-@ScyllaTable(name = "wallets_by_address", keyspace = KS)       // inbound webhooks and paying a contact
-data class WalletAddressRow(
-    @PartitionKey val address: String,          // lowercase hex; one small partition per address
-    @ClusteringKey val blockchain: String,
-    val userId: UUID, val circleWalletId: String,
-)
+CREATE TABLE wallet.transfers (
+    transfer_id         uuid        PRIMARY KEY,        -- Circle's refId
+    sender_id           uuid        NOT NULL,
+    sender_wallet_id    text        NOT NULL,
+    idempotency_key     uuid        NOT NULL,           -- the W4 request's Idempotency-Key
+    recipient_id        uuid,                           -- NULL for an outside address
+    destination_address text        NOT NULL,
+    amount_minor        bigint      NOT NULL CHECK (amount_minor > 0),
+    asset               text        NOT NULL,
+    state               text        NOT NULL,           -- AWAITING_SIGNATURE | SUBMITTED | CONFIRMED | FAILED | EXPIRED
+    circle_tx_id        text,
+    tx_hash             text,
+    chat_id             uuid,
+    origin              text        NOT NULL,           -- APP | ASHA
+    proposal_id         uuid,
+    failure_reason      text,
+    created_at          timestamptz NOT NULL,
+    updated_at          timestamptz NOT NULL,
+    version             bigint      NOT NULL DEFAULT 0  -- only for read-modify-write edits; states move by the transition guard
+);
+CREATE UNIQUE INDEX transfers_idempotency_key ON wallet.transfers (sender_id, idempotency_key);
+CREATE INDEX transfers_open_idx ON wallet.transfers (state, created_at)
+    WHERE state IN ('AWAITING_SIGNATURE', 'SUBMITTED');                      -- ExpireUnsignedTransfers, StuckTransfers
 
-@ScyllaTable(name = "wallets_by_circle_id", keyspace = KS)     // webhooks carry Circle's wallet id
-data class WalletCircleIdRow(@PartitionKey val circleWalletId: String, val userId: UUID)
+CREATE TABLE wallet.transactions (                      -- history and statements
+    id                   uuid        PRIMARY KEY,       -- OrderedIds
+    user_id              uuid        NOT NULL,
+    direction            text        NOT NULL,          -- IN | OUT
+    state                text        NOT NULL,
+    amount_minor         bigint      NOT NULL,
+    asset                text        NOT NULL,
+    counterparty_id      uuid,
+    counterparty_address text,
+    transfer_id          uuid,                          -- set for outgoing transfers prepared here
+    circle_tx_id         text,                          -- NULL until Circle reports an outgoing transfer
+    tx_hash              text,
+    chat_id              uuid,
+    origin               text        NOT NULL DEFAULT 'APP',
+    occurred_at          timestamptz NOT NULL
+);
+CREATE INDEX transactions_user_idx ON wallet.transactions (user_id, occurred_at DESC, id DESC);
+                                                        -- W6 and W7: a month is a range of occurred_at, paged by keyset
+CREATE UNIQUE INDEX transactions_circle_key ON wallet.transactions (circle_tx_id, user_id);
+                                                        -- a webhook finds the rows it updates; a repeated inbound one inserts nothing
+CREATE UNIQUE INDEX transactions_transfer_key ON wallet.transactions (transfer_id) WHERE transfer_id IS NOT NULL;
+CREATE INDEX transactions_occurred_idx ON wallet.transactions (occurred_at);   -- ReconcileWallets: the day's activity
 
-@ScyllaTable(name = "transfers", keyspace = KS)
-data class TransferRow(
-    @PartitionKey val transferId: UUID,
-    val senderId: UUID, val senderWalletId: String,
-    val recipientId: UUID = NIL_UUID,           // nil for an outside address
-    val destinationAddress: String,
-    val amountMinor: Long, val asset: String,
-    val state: String,                          // AWAITING_SIGNATURE | SUBMITTED | CONFIRMED | FAILED | EXPIRED
-    val circleTxId: String = "", val txHash: String = "",
-    val chatId: UUID = NIL_UUID,
-    val origin: String,                         // APP | ASHA
-    val proposalId: UUID = NIL_UUID,
-    val failureReason: String = "",
-    val createdAt: Instant,
-    val updatedAt: Instant,
-    @Version val version: Long = 0,
-)
+CREATE TABLE wallet.payment_holds (
+    user_id    uuid        PRIMARY KEY,
+    reason     text        NOT NULL,                    -- RELINKED
+    expires_at timestamptz NOT NULL                     -- the end of the hold
+);
 
-@ScyllaTable(name = "transfers_by_idempotency", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24)
-data class TransferIdempotencyRow(@PartitionKey val senderId: UUID, @ClusteringKey val idempotencyKey: UUID, val transferId: UUID)
-
-@ScyllaTable(name = "transactions_by_user_month", keyspace = KS)   // history and statements
-data class TransactionRow(
-    @PartitionKey(index = 0) val userId: UUID,
-    @PartitionKey(index = 1) val month: String, // "2026-10", so one month is one partition
-    @ClusteringKey val id: UUID,                // OrderedIds, descending
-    val direction: String,                      // IN | OUT
-    val state: String,
-    val amountMinor: Long, val asset: String,
-    val counterpartyId: UUID = NIL_UUID, val counterpartyAddress: String,
-    val transferId: UUID = NIL_UUID,            // set for outgoing transfers prepared here
-    val circleTxId: String, val txHash: String = "",
-    val chatId: UUID = NIL_UUID, val origin: String = "APP",
-    val occurredAt: Instant,
-)
-
-@ScyllaTable(name = "transactions_by_circle_id", keyspace = KS)    // a webhook finds the rows it updates
-data class TransactionCircleIdRow(
-    @PartitionKey val circleTxId: String,
-    @ClusteringKey val userId: UUID,            // sender and recipient each have a row
-    val month: String, val id: UUID,
-)
-
-@ScyllaTable(name = "payment_holds", keyspace = KS)
-data class PaymentHoldRow(@PartitionKey val userId: UUID, val until: Instant, val reason: String)   // RELINKED
+CREATE TABLE wallet.realtime (…);                       -- the same shape as users' realtime: daily partitions, 7 days
+CREATE TABLE wallet.outbox (…);                         -- the same shape as identity's outbox: daily partitions, 7 days
 ```
 
-A payment between two Circaso users writes two `TransactionRow`s: the sender's `OUT`, created when the transfer is prepared and updated from `transactions.outbound`, and the recipient's `IN`, created from `transactions.inbound` (the recipient is found through `wallets_by_address`). Payments from outside addresses only have the `IN` row.
+| Table | Expiry | How the race is settled |
+| --- | --- | --- |
+| `circle_users` | — | — |
+| `wallets` | — | — |
+| `transfers` | — | W4 inserts with `insertIgnore` on `(sender_id, idempotency_key)`; `insertedCount = 0` returns the transfer already prepared for that key. A state moves only by a **transition guard**: `UPDATE … SET state = :next WHERE transfer_id = ? AND state IN (<allowed predecessors of :next>) RETURNING …`; 0 rows means the transfer is already past that state, so a late or repeated webhook changes nothing |
+| `transactions` | — (kept for the retention period) | An inbound webhook inserts the `IN` row with `insertIgnore` on `(circle_tx_id, user_id)`, so a repeated webhook adds nothing. `state` moves by the same transition guard as transfers (`WHERE id = ? AND state IN (…)`) |
+| `payment_holds` | `expires_at`, purged by `wallet.purge-expired` | — |
+| `realtime`, `outbox` | Daily partitions, 7 days | — |
+
+Every read of `payment_holds` filters `expires_at > now()`.
+
+A payment between two Circaso users writes two `transactions` rows: the sender's `OUT`, created when the transfer is prepared and updated from `transactions.outbound`, and the recipient's `IN`, created from `transactions.inbound` (the recipient is found through `wallets_address_key`). Payments from outside addresses only have the `IN` row. The transfer, the `OUT` row and the outbox row for an event are written in one transaction.
 
 **Redis (`wal:` prefix)**
 
@@ -290,7 +300,7 @@ A payment between two Circaso users writes two `TransactionRow`s: the sender's `
 
 | Stream (group `wallet`) | Event | What wallet does |
 | --- | --- | --- |
-| `events:identity` | `identity.AccountRelinked` | Writes a 48-hour `PaymentHoldRow`, if the hold is kept (Open questions) |
+| `events:identity` | `identity.AccountRelinked` | Writes a 48-hour `payment_holds` row, if the hold is kept (Open questions) |
 | `events:identity` | `identity.AccountStatusChanged` | Suspended or blocked: W4 refuses; wallets aren't frozen at Circle, which we can't do for user-controlled wallets |
 | `events:identity` | `identity.AccountDeleted` | Deletion only happens once the guard has seen an empty wallet; marks the wallet `CLOSED` and keeps transaction records for the retention period (Open questions) |
 
@@ -313,7 +323,7 @@ A payment between two Circaso users writes two `TransactionRow`s: the sender's `
 | `wallet.ready` | The user, when the wallet turns `ACTIVE` | No |
 | `setup.requested` | A contact someone wants to pay (W10) | Yes: "Amina wants to send you money. Set up your wallet" |
 
-Wallet implements `RealtimeReplay` with `realtime_by_user`, as users does.
+Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 
 ## Error codes
 
@@ -344,7 +354,7 @@ These also go into `decisions.md`.
 - **Chain.** Proposed: Base, with SCA accounts and Gas Station. Alternatives: Polygon (similar), Solana (no SCA; Gas Station pays as fee payer), Arc (Circle's chain, USDC as gas) once it's on mainnet.
 - **Authentication method.** Proposed: PIN with security questions, plus biometrics. Social login or email OTP instead?
 - **Who pays gas.** Proposed: Circaso sponsors all gas in v1, with per-wallet daily caps in the Gas Station policy. A small fee on outside transfers later?
-- **Payment hold after a support restore** (already open): keep the 48-hour hold on outgoing transfers, kept here as `PaymentHoldRow` keyed on `AccountRelinked`, or drop it because the 48-hour notice already gives the owner time to cancel? Proposed: keep it.
+- **Payment hold after a support restore** (already open): keep the 48-hour hold on outgoing transfers, kept here as a `payment_holds` row written on `AccountRelinked`, or drop it because the 48-hour notice already gives the owner time to cancel? Proposed: keep it.
 - **Limits and KYC.** Per-payment and daily limits for accounts that aren't KYC-verified, and higher ones for verified accounts (identity's `verification`). Linked to Kenya's Virtual Asset Service Providers Act, 2025 and whether Circaso needs a licence for user-controlled wallets: a legal question to settle before money moves in production.
 - **Record retention.** How long transaction records are kept after an account is deleted (financial records usually have a statutory minimum; the Data Protection Act question already open).
 - **Deletion error code.** Identity publishes `identity.wallet_not_empty` to the app (guide and mobile doc) while its `DeletionGuard` contract says the guard's own code (`wallet.funds_remaining`) comes back. One of the two has to change.

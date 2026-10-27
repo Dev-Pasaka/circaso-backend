@@ -4,14 +4,14 @@ One file per business module, each in the same shape, so a new module is a new f
 
 ## Module map
 
-| Module | Status | Keyspace | Stream | Owns | Depends on (`api`) |
+| Module | Status | Schema | Stream | Owns | Depends on (`api`) |
 | --- | --- | --- | --- | --- | --- |
-| identity | Designed — [identity.md](identity.md), screens in [identity-signin-flow.md](identity-signin-flow.md) | `circaso_identity` | `events:identity` | Accounts, Google/Apple sign-in, phone, devices, sessions, support recovery | — |
-| users | Designed — [users.md](users.md) | `circaso_users` | `events:users` | Profiles, handles, contacts, blocks, the reach rule | identity |
-| messaging | Draft — [messaging.md](messaging.md) | `circaso_messaging` | `events:messaging` | 1:1 and group chats, messages, delivery, push for chat | users |
-| wallet | Draft — [wallet.md](wallet.md) | `circaso_wallet` | `events:wallet` | Circle user-controlled wallets, transaction records, statements | identity, users, messaging |
-| calls | Planned | `circaso_calls` | `events:calls` | 1:1 and group calls on Cloudflare Realtime, contributions during calls | users |
-| assistant (Asha) | Outlined — [assistant.md](assistant.md) | `circaso_assistant` | `events:assistant` | Asha conversations, voice, usage and Asha Plus, proposals, audit trail | identity, users; later messaging, wallet |
+| identity | Designed — [identity.md](identity.md), screens in [identity-signin-flow.md](identity-signin-flow.md) | `identity` | `events:identity` | Accounts, Google/Apple sign-in, phone, devices, sessions, support recovery | — |
+| users | Designed — [users.md](users.md) | `users` | `events:users` | Profiles, handles, contacts, blocks, the reach rule | identity |
+| messaging | Draft — [messaging.md](messaging.md) | `messaging` | `events:messaging` | 1:1 and group chats, messages, delivery, push for chat | users |
+| wallet | Draft — [wallet.md](wallet.md) | `wallet` | `events:wallet` | Circle user-controlled wallets, transaction records, statements | identity, users, messaging |
+| calls | Planned | `calls` | `events:calls` | 1:1 and group calls on Cloudflare Realtime, contributions during calls | users |
+| assistant (Asha) | Outlined — [assistant.md](assistant.md) | `assistant` | `events:assistant` | Asha conversations, voice, usage and Asha Plus, proposals, audit trail | identity, users; later messaging, wallet |
 
 ## Adding a module
 
@@ -25,8 +25,13 @@ A new module is a new file here plus the same code skeleton as the first two; no
 
 **In the code**
 
-1. `modules/<name>/api` and `modules/<name>/impl`, with the `presentation` (routes, controllers, services, dto, mappers, events, agent, api), `domain` (models, repositories, usecases, errors), `data` (entities, repositories, mappers, migrations) and `di` folders from Module anatomy in the architecture doc.
-2. Keyspace `circaso_<name>`, declared in its `KandraModuleSpec`; entities end in `Row` and don't clash with other modules' names (its outbox is `<Name>OutboxRow`).
+1. `modules/<name>/api` and `modules/<name>/impl`, with the `presentation` (routes, controllers, services, dto, mappers, events, agent, api), `domain` (models, repositories, usecases, errors), `data` (tables, repositories, cache) and `di` folders from Module anatomy in the architecture doc.
+2. The database (Architecture → Infrastructure → Exposed and PostgreSQL):
+   - **Schema** `<name>` and a **role** `<name>` with rights only on that schema, both created by the `Migrate` step; `circaso_app` and `circaso_jobs` are granted the role, and the module's tables are owned by it.
+   - **Flyway location** `classpath:db/<name>`: plain SQL in `impl/src/main/resources/db/<name>/V1__<name>.sql`, numbered on its own, with its own history table.
+   - **`DatabaseModuleSpec(schema = "<name>", tables, migrationsLocation = "classpath:db/<name>")`** contributed from the module's `di`.
+   - Exposed `Table` objects in `data/tables`, named `<Thing>Table` with the schema in the table name (`Table("<name>.<things>")`), including its `outbox` (and `realtime` if it sends frames), both partitioned by day.
+   - A `<name>.purge-expired` job if any table has `expires_at` or daily partitions.
 3. Redis prefix, stream `events:<name>`, consumer group `<name>` on any stream it reads.
 4. Error codes `<name>.<reason>`, an OpenAPI tag `<name>`, metrics prefixed `circaso_<name>_`.
 5. If it sends realtime frames, implement `RealtimeReplay`. If the assistant may read from it, add read-only routes in `presentation/agent/`.
@@ -36,7 +41,7 @@ A new module is a new file here plus the same code skeleton as the first two; no
 
 ```
 # <Name> module
-<one-line answer to the question the module owns>; keyspace, Redis prefix, stream
+<one-line answer to the question the module owns>; schema, Redis prefix, stream
 
 ## Overview
 ### Owns
@@ -48,7 +53,7 @@ A new module is a new file here plus the same code skeleton as the first two; no
 (route table: #, route, scope, service method → use case, does; then request/response samples)
 
 ## Data
-(Kandra entities, then Redis keys)
+(PostgreSQL tables as SQL: schema, columns and types, primary key, unique and secondary indexes, expiry by `expires_at` or daily partition, and what each unique constraint settles; then Redis keys)
 
 ## Events
 (consumed, published with payloads, realtime events)

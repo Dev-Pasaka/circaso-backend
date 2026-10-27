@@ -1,6 +1,6 @@
 ---
 name: circaso-backend-docs
-description: The Circaso backend spec (architecture, decisions, module designs for identity, users and assistant) and the working rules for building it. Use when designing, writing or reviewing any Circaso backend code (Kotlin/Ktor modules, Kandra/ScyllaDB, Redis Streams, gateway, integrations), when adding a module or endpoint, or when a question depends on a documented decision or open question.
+description: The Circaso backend spec (architecture, decisions, module designs for identity, users and assistant) and the working rules for building it. Use when designing, writing or reviewing any Circaso backend code (Kotlin/Ktor modules, PostgreSQL/Exposed, Redis Streams, gateway, integrations), when adding a module or endpoint, or when a question depends on a documented decision or open question.
 ---
 
 # Circaso backend docs
@@ -9,7 +9,7 @@ The spec for the Circaso backend, exported from the Claude Docs document "Circas
 
 ## Read in this order
 
-1. `references/architecture.md`: principles, project structure, module anatomy, results and errors, how modules talk, gateway, infrastructure and Kandra, logging, observability, integrations, realtime, conventions.
+1. `references/architecture.md`: principles, project structure, module anatomy, results and errors, how modules talk, gateway, infrastructure and the database (Exposed and PostgreSQL), logging, observability, integrations, realtime, conventions.
 2. `references/decisions.md`: every decision with its reason, and the open questions.
 3. `references/modules/README.md`: module map and the checklist for adding a module.
 4. The module you are working on:

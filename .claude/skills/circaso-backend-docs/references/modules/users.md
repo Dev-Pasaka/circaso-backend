@@ -1,6 +1,6 @@
 # Users module
 
-Users answers "who is this person to me, and may I reach them": it owns profiles, @handles, the contact graph and the reach rule that every later module (messaging, wallet, calls) checks before letting one person touch another. Keyspace `circaso_users`, Redis prefix `usr:`, stream `events:users`.
+Users answers "who is this person to me, and may I reach them": it owns profiles, @handles, the contact graph and the reach rule that every later module (messaging, wallet, calls) checks before letting one person touch another. Schema `users`, Redis prefix `usr:`, stream `events:users`.
 
 ## Overview
 
@@ -153,7 +153,7 @@ A QR code is a signed invite token. Connecting through a QR code or invite link 
 // DELETE /contacts/{userId} → data { "removed": true }
 ```
 
-The contact row is kept with status `REMOVED` and its reverse row deleted, in one batch, and cached reach decisions for the pair are cleared. Keeping the row stops the next sync from adding the person back while their number is still in the phone book. Only the user can restore them, through a QR code, invite or handle (U11). The other person isn't told and keeps you if they had you.
+The contact row is kept with status `REMOVED`, in one transaction with its outbox row, and cached reach decisions for the pair are cleared. Keeping the row stops the next sync from adding the person back while their number is still in the phone book. Only the user can restore them, through a QR code, invite or handle (U11). The other person isn't told and keeps you if they had you.
 
 ### Agent routes (read-only, for Asha)
 
@@ -161,86 +161,100 @@ Users exposes read-only routes for the assistant under `presentation/agent/` (`G
 
 ## Data
 
-Eight Kandra entities in keyspace `circaso_users` (plus `UsersRealtimeRow`, below) and four Redis key families. Contacts and blocks are each written as two tables (forward and reverse) in one batch, because the module reads them from both sides; a lookup index can't do this, since it keeps one row per value.
+Eight PostgreSQL tables in schema `users` (role `users`, Flyway location `db/users`) and four Redis key families. Contacts and blocks are each one table, read from both sides through a second index.
 
-```kotlin
-const val KS = "circaso_users"
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Users still runs on its Kandra tables in keyspace `circaso_users` until slice PG3 builds the tables below.
 
-@ScyllaTable(name = "profiles", keyspace = KS)
-data class ProfileRow(
-    @PartitionKey val userId: UUID,
-    val displayName: String,
-    val about: String? = null,
-    val handle: String? = null,
-    val handleChangedAt: Instant? = null,
-    val avatarKey: String? = null,
-    val privacy: String,                        // JSON: avatar, about, handleLookup
-    @CreatedAt val createdAt: Instant? = null,
-    @UpdatedAt val updatedAt: Instant? = null,
-    @Version val version: Long = 0,
-)
+```sql
+-- V1__users.sql (shape; the script itself is written in PG3)
 
-@ScyllaTable(name = "handle_claims", keyspace = KS)            // one owner per handle
-data class HandleClaimRow(
-    @PartitionKey val handle: String,           // lowercase
-    val userId: UUID,
-    val claimedAt: Instant,
-    val releasedAt: Instant? = null,            // on release the row is re-saved with a 30-day TTL
-)
+CREATE TABLE users.profiles (
+    user_id           uuid        PRIMARY KEY,
+    display_name      text        NOT NULL,
+    about             text,
+    handle            text,                             -- lowercase; the live handle, a copy of the owner's row in handles
+    handle_changed_at timestamptz,
+    avatar_key        text,
+    privacy           text        NOT NULL,             -- JSON: avatar, about, handleLookup
+    created_at        timestamptz NOT NULL,
+    updated_at        timestamptz NOT NULL,
+    version           bigint      NOT NULL DEFAULT 0    -- optimistic lock (U2's version)
+);
+CREATE UNIQUE INDEX profiles_handle_key ON users.profiles (handle);
 
-@ScyllaTable(name = "contacts_by_owner", keyspace = KS)
-data class ContactRow(
-    @PartitionKey val ownerId: UUID,
-    @ClusteringKey val contactId: UUID,
-    val source: String,                         // PHONEBOOK | QR | INVITE | HANDLE
-    val status: String = "ACTIVE",              // ACTIVE | REMOVED — removed rows stop sync from re-adding
-    val removedAt: Instant? = null,
-    val addedAt: Instant,
-)
+CREATE TABLE users.handles (
+    handle      text        PRIMARY KEY,                -- lowercase; one owner per handle, live or on hold
+    user_id     uuid        NOT NULL,
+    claimed_at  timestamptz NOT NULL,
+    released_at timestamptz,                            -- set on a change or on account deletion
+    expires_at  timestamptz                             -- released_at + 30 days: the hold for the old owner; NULL while in use
+);
+CREATE INDEX handles_user_idx ON users.handles (user_id);
+CREATE INDEX handles_expires_at_idx ON users.handles (expires_at) WHERE expires_at IS NOT NULL;   -- for the purge
 
-@ScyllaTable(name = "contacts_by_target", keyspace = KS)        // who has me: fan-out for joins and profile changes
-data class ContactReverseRow(
-    @PartitionKey val contactId: UUID,
-    @ClusteringKey val ownerId: UUID,
-    val addedAt: Instant,
-)
+CREATE TABLE users.contacts (
+    owner_id   uuid        NOT NULL,
+    contact_id uuid        NOT NULL,
+    source     text        NOT NULL,                    -- PHONEBOOK | QR | INVITE | HANDLE
+    status     text        NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE | REMOVED; removed rows stop sync from re-adding
+    removed_at timestamptz,
+    added_at   timestamptz NOT NULL,
+    PRIMARY KEY (owner_id, contact_id)
+);
+CREATE INDEX contacts_target_idx ON users.contacts (contact_id) WHERE status = 'ACTIVE';
+                                                        -- who has me: fan-out for joins and profile changes
 
-@ScyllaTable(name = "waiting_contacts", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 180)               // forget after 180 days
-data class WaitingContactRow(
-    @PartitionKey val phoneHmac: String,        // HMAC-SHA256(phone, phone-HMAC key shared with identity)
-    @ClusteringKey val ownerId: UUID,
-    val addedAt: Instant,
-)
+CREATE TABLE users.waiting_contacts (
+    phone_hmac text        NOT NULL,                    -- HMAC-SHA256(phone, phone-HMAC key shared with identity)
+    owner_id   uuid        NOT NULL,
+    added_at   timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL,                    -- added_at + 180 days
+    PRIMARY KEY (phone_hmac, owner_id)
+);
+CREATE INDEX waiting_contacts_expires_at_idx ON users.waiting_contacts (expires_at);
 
-@ScyllaTable(name = "blocks_by_user", keyspace = KS)
-data class BlockRow(@PartitionKey val userId: UUID, @ClusteringKey val blockedId: UUID, val blockedAt: Instant)
+CREATE TABLE users.blocks (
+    user_id    uuid        NOT NULL,
+    blocked_id uuid        NOT NULL,
+    blocked_at timestamptz NOT NULL,
+    PRIMARY KEY (user_id, blocked_id)
+);
+CREATE INDEX blocks_blocked_idx ON users.blocks (blocked_id);   -- who blocked me
 
-@ScyllaTable(name = "blocked_by_user", keyspace = KS)
-data class BlockedByRow(@PartitionKey val blockedId: UUID, @ClusteringKey val userId: UUID, val blockedAt: Instant)
+CREATE TABLE users.invites (
+    token      text        PRIMARY KEY,
+    owner_id   uuid        NOT NULL,
+    kind       text        NOT NULL,                    -- LINK | QR
+    created_at timestamptz NOT NULL,
+    expires_at timestamptz NOT NULL                     -- created_at + 7 days
+);
+CREATE INDEX invites_expires_at_idx ON users.invites (expires_at);
 
-@ScyllaTable(name = "invites", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 7)
-data class InviteRow(
-    @PartitionKey val token: String,
-    val ownerId: UUID,
-    val kind: String,                           // LINK | QR
-    val createdAt: Instant,
-)
+CREATE TABLE users.realtime (
+    user_id uuid        NOT NULL,
+    seq     bigint      NOT NULL,
+    frame   text        NOT NULL,                       -- the envelope as JSON
+    sent_at timestamptz NOT NULL,
+    PRIMARY KEY (user_id, seq, sent_at)                 -- replay reads WHERE user_id = ? AND seq > ? ORDER BY seq
+) PARTITION BY RANGE (sent_at);                         -- daily partitions, dropped after 7 days
 
-@ScyllaTable(name = "outbox", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 7)
-data class UsersOutboxRow(
-    @PartitionKey val bucket: String,
-    @ClusteringKey val eventId: UUID,
-    val type: String, val payload: String,
-    val publishedAt: Instant? = null,
-)
+CREATE TABLE users.outbox (…);                          -- the same shape as identity's outbox: daily partitions, 7 days
 ```
 
-`IdentityOutboxRow` and `UsersOutboxRow` show the naming rule: both modules have an `outbox` table, but Kandra's Koin bindings need distinct class names.
+| Table | Expiry | How the race is settled |
+| --- | --- | --- |
+| `profiles` | — | U2 updates with `WHERE version = ?` (0 rows is `users.version_conflict`). A missing profile is created with `insertIgnore`, so two readers can't create two |
+| `handles` | On release, `expires_at` = 30 days; purged by `users.purge-expired` | U6 claims with `insertIgnore` in the same transaction that updates `profiles.handle` and releases the old handle. On a conflict the existing row is taken over only if it is the caller's own hold or an expired one (`updateReturning … WHERE user_id = ? OR expires_at <= now()`); a claim that loses to the purge between the `insertIgnore` and the takeover retries once. Otherwise (owned, or on hold for someone else) the answer is `users.handle_taken` |
+| `contacts` | — | `insertIgnore` keeps a sync from re-adding a `REMOVED` row; U16 updates the one row to `REMOVED` |
+| `waiting_contacts` | `expires_at`, 180 days | — |
+| `blocks` | — | — |
+| `invites` | `expires_at`, 7 days | — |
+| `realtime` | Daily partitions, 7 days | — |
+| `outbox` | Daily partitions, 7 days | — |
 
-**How the reach rule reads:** `canReach(a, b)` = `b` is active (identity, cached) ∧ no row in `blocks_by_user` for (a, b) or (b, a) ∧ a row in `contacts_by_owner` for (a, b) with status `ACTIVE`. Three single-partition reads, cached in Redis.
+Every read of a table with `expires_at` filters `expires_at > now()`.
+
+**How the reach rule reads:** `canReach(a, b)` = `b` is active (identity, cached) ∧ no row in `blocks` for (a, b) or (b, a) ∧ a row in `contacts` for (a, b) with status `ACTIVE`. Three primary-key reads, cached in Redis.
 
 **Redis (`usr:` prefix)**
 
@@ -275,7 +289,7 @@ If a profile is ever missing when it's read (the event is still in flight, or fa
 
 **Realtime events users sends** (through the gateway, not the stream): `users.contact.joined`, `users.profile.updated`, `users.connection.added`.
 
-Users implements `RealtimeReplay` (see Realtime and push on the Architecture doc): each frame it sends takes the next `seq` from `usr:seq:{userId}` and is kept for 7 days in `realtime_by_user` (`UsersRealtimeRow`: partition `userId`, clustering `seq` descending, the envelope as JSON, 7-day TTL), so a phone that reconnects gets what it missed. Handlers ignore a `ProfileUpdated` whose `version` is older than the copy they hold, because stream retries can reorder events.
+Users implements `RealtimeReplay` (see Realtime and push on the Architecture doc): each frame it sends takes the next `seq` from `usr:seq:{userId}` and is kept for 7 days in the `realtime` table (by user and `seq`, the envelope as JSON, daily partitions dropped after 7 days), so a phone that reconnects gets what it missed. Handlers ignore a `ProfileUpdated` whose `version` is older than the copy they hold, because stream retries can reorder events.
 
 ## Error codes
 
