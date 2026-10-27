@@ -56,6 +56,7 @@ data class Invite(
     val ownerId: UserId,
     val kind: String,
     val createdAt: Instant,
+    val expiresAt: Instant,
 )
 
 data class WaitingContact(val phoneHmac: String, val ownerId: UserId, val addedAt: Instant)
@@ -72,6 +73,9 @@ data class HandleCheck(val handle: String, val availability: HandleAvailability,
 enum class ConnectVia { HANDLE, QR, INVITE }
 
 data class Connection(val user: PublicProfile, val created: Boolean)
+
+/** Whom a U11 connect reaches, how, and whether the contact goes both ways (a QR code or invite) or one (a handle). */
+data class ConnectTarget(val userId: UserId, val source: ContactSource, val mutual: Boolean)
 
 data class InviteLink(
     val token: String,

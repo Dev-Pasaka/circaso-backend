@@ -435,6 +435,7 @@ class UsersTest {
             assertNotNull(first.nextCursor)
             val rest = h.listContacts(me, first.nextCursor, 10).data()
             assertEquals(2, rest.entries.size)
+            assertNull(rest.nextCursor, "no cursor when there is no next page")
             assertEquals(4, (first.entries + rest.entries).map { it.profile.userId }.toSet().size)
             assertFalse(people[0] in (first.entries + rest.entries).map { it.profile.userId })
         }

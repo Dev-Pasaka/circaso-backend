@@ -2,10 +2,11 @@ package com.circaso.users.di
 
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.infrastructure.api.Config
-import com.circaso.infrastructure.api.KandraModuleSpec
+import com.circaso.infrastructure.api.DatabaseModuleSpec
+import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.ObjectStores
-import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
@@ -16,32 +17,28 @@ import com.circaso.users.data.cache.ObjectStoreAvatars
 import com.circaso.users.data.cache.RealtimeFramesImpl
 import com.circaso.users.data.cache.RedisReachCache
 import com.circaso.users.data.cache.RedisUsersCache
-import com.circaso.users.data.entities.BlockRow
-import com.circaso.users.data.entities.BlockedByRow
-import com.circaso.users.data.entities.ContactReverseRow
-import com.circaso.users.data.entities.ContactRow
-import com.circaso.users.data.entities.HandleClaimRow
-import com.circaso.users.data.entities.InviteRow
-import com.circaso.users.data.entities.ProfileRow
-import com.circaso.users.data.entities.UsersOutboxRow
-import com.circaso.users.data.entities.UsersRealtimeRow
-import com.circaso.users.data.entities.WaitingContactRow
-import com.circaso.users.data.migrations.V001_CreateUsersTables
-import com.circaso.users.data.migrations.usersEntities
 import com.circaso.users.data.repositories.BlockRepositoryImpl
 import com.circaso.users.data.repositories.ContactRepositoryImpl
+import com.circaso.users.data.repositories.DatabaseTransactor
 import com.circaso.users.data.repositories.HandleRepositoryImpl
 import com.circaso.users.data.repositories.InviteRepositoryImpl
 import com.circaso.users.data.repositories.ProfileRepositoryImpl
-import com.circaso.users.data.repositories.UsersOutboxStore
+import com.circaso.users.data.repositories.UsersExpiry
 import com.circaso.users.data.repositories.UsersStoreImpl
 import com.circaso.users.data.repositories.WaitingContactRepositoryImpl
-import com.circaso.users.data.rows
+import com.circaso.users.data.tables.BlocksTable
+import com.circaso.users.data.tables.ContactsTable
+import com.circaso.users.data.tables.HandlesTable
+import com.circaso.users.data.tables.InvitesTable
+import com.circaso.users.data.tables.ProfilesTable
+import com.circaso.users.data.tables.RealtimeTable
+import com.circaso.users.data.tables.WaitingContactsTable
 import com.circaso.users.domain.ports.AvatarStorage
 import com.circaso.users.domain.ports.PhoneHasher
 import com.circaso.users.domain.ports.ReachCache
 import com.circaso.users.domain.ports.RealtimeFrames
 import com.circaso.users.domain.ports.RealtimeLog
+import com.circaso.users.domain.ports.Transactor
 import com.circaso.users.domain.ports.UsersCache
 import com.circaso.users.domain.repositories.BlockRepository
 import com.circaso.users.domain.repositories.ContactRepository
@@ -105,8 +102,33 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import java.time.Clock
+import java.time.Duration
 
-/** Users' Koin bindings: data, domain, presentation, its `api`, its Kandra spec, its outbox and its event subscription. */
+/** Schema `users`: its tables, its Flyway scripts and its outbox, which is infrastructure's (`outbox = true`). */
+internal val usersDatabaseSpec =
+    DatabaseModuleSpec(
+        schema = "users",
+        tables =
+            listOf(
+                ProfilesTable,
+                HandlesTable,
+                ContactsTable,
+                WaitingContactsTable,
+                BlocksTable,
+                InvitesTable,
+                RealtimeTable,
+            ),
+        migrationsLocation = "classpath:db/users",
+        outbox = true,
+    )
+
+/** How often `users.purge-expired` runs. */
+private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
+
+/**
+ * Users' Koin bindings: data, domain, presentation, its `api`, its database spec (with the outbox), its purge job and
+ * its event subscription.
+ */
 fun usersModule(config: Config): Module =
     module {
         val clock = Clock.systemUTC()
@@ -121,62 +143,53 @@ fun usersModule(config: Config): Module =
         single { usersConfig }
 
         // data
+        single(named("users.spec")) { usersDatabaseSpec }
+        single(named("users.database")) { get<Databases>().scope(usersDatabaseSpec.schema) }
+        single<Transactor> { DatabaseTransactor(get(named("users.database"))) }
         single<ReachCache> { RedisReachCache(get<RedisScopes>().scope("usr")) }
         single<UsersCache> { RedisUsersCache(get<RedisScopes>().scope("usr")) }
         single<PhoneHasher> { KeyedPhoneHasher(get<Secrets>(), local) }
         single<AvatarStorage> { ObjectStoreAvatars(get<ObjectStores>().scope("users")) }
-        single { RealtimeFramesImpl(get<RedisScopes>().scope("usr"), rows<UsersRealtimeRow>(), get(), clock) }
+        single { RealtimeFramesImpl(get<RedisScopes>().scope("usr"), get(named("users.database")), get(), clock) }
         single<RealtimeFrames> { get<RealtimeFramesImpl>() }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
-        single<ProfileRepository> { ProfileRepositoryImpl(rows<ProfileRow>()) }
-        single<HandleRepository> { HandleRepositoryImpl(rows<HandleClaimRow>()) }
-        single<ContactRepository> { ContactRepositoryImpl(rows<ContactRow>(), rows<ContactReverseRow>()) }
-        single<WaitingContactRepository> { WaitingContactRepositoryImpl(rows<WaitingContactRow>()) }
-        single<BlockRepository> { BlockRepositoryImpl(rows<BlockRow>(), rows<BlockedByRow>()) }
-        single<InviteRepository> { InviteRepositoryImpl(rows<InviteRow>()) }
-        single<UsersStore> {
-            UsersStoreImpl(
-                get(),
-                rows<ProfileRow>(),
-                rows<HandleClaimRow>(),
-                rows<ContactRow>(),
-                rows<ContactReverseRow>(),
-                rows<WaitingContactRow>(),
-                rows<BlockRow>(),
-                rows<BlockedByRow>(),
-                rows<InviteRow>(),
-                rows<UsersOutboxRow>(),
-                get(),
-            )
+        single<ProfileRepository> { ProfileRepositoryImpl(get(named("users.database")), clock) }
+        single<HandleRepository> { HandleRepositoryImpl(get(named("users.database")), clock) }
+        single<ContactRepository> { ContactRepositoryImpl(get(named("users.database"))) }
+        single<WaitingContactRepository> { WaitingContactRepositoryImpl(get(named("users.database")), clock) }
+        single<BlockRepository> { BlockRepositoryImpl(get(named("users.database"))) }
+        single<InviteRepository> { InviteRepositoryImpl(get(named("users.database")), clock) }
+        single<UsersStore> { UsersStoreImpl(get(named("users.database"))) }
+        single(named("users.purge-expired")) {
+            val expiry = UsersExpiry(get(named("users.database")))
+            ScheduledJob("users.purge-expired", PURGE_INTERVAL) { expiry.run() }
         }
-        single<OutboxStore>(named("users.outbox")) { UsersOutboxStore(rows<UsersOutboxRow>()) }
-        single(named("users.spec")) { KandraModuleSpec("circaso_users", usersEntities, listOf(V001_CreateUsersTables)) }
 
         // domain: helpers and use cases
         single { ReachRule(get<AccountDirectory>(), get(), get(), get()) }
         single { ProfileViews(get(), get()) }
         single { UserNotifier(get(), get()) }
         single { ProfileProvisioner(get(), get(), clock) }
-        single { WaitingContactMatcher(get(), get(), get(), get(), clock) }
+        single { WaitingContactMatcher(get(), get(), get(), get(), get(), clock) }
         single { GetMyProfile(get(), get()) }
-        single { UpdateProfile(get(), get(), get(), get(), get(), get()) }
+        single { UpdateProfile(get(), get(), get(), get(), get(), get(), get()) }
         single { PrepareAvatarUpload(get(), get()) }
-        single { SetAvatar(get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { RemoveAvatar(get(), get(), get(), get(), get(), get(), get()) }
+        single { SetAvatar(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { RemoveAvatar(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CheckHandle(get()) }
-        single { ClaimHandle(get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { SyncContacts(get<AccountDirectory>(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ClaimHandle(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { SyncContacts(get<AccountDirectory>(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { ListContacts(get(), get(), get()) }
         single { LookupHandle(get(), get(), get(), get(), get()) }
         single { GetPublicProfile(get(), get(), get()) }
-        single { Connect(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { Connect(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { CreateInvite(get(), get(), clock) }
-        single { RevokeInvite(get(), get()) }
+        single { RevokeInvite(get()) }
         single { ListBlocks(get(), get(), get()) }
-        single { BlockUser(get(), get(), get(), get(), clock) }
-        single { UnblockUser(get(), get(), get(), get(), clock) }
+        single { BlockUser(get(), get(), get(), get(), get(), clock) }
+        single { UnblockUser(get(), get(), get(), get(), get()) }
         single { CheckReach(get()) }
-        single { RemoveContact(get(), get(), get(), get(), clock) }
+        single { RemoveContact(get(), get(), get(), get(), get(), clock) }
         single { SearchContacts(get(), get(), get()) }
         single { CanReach(get()) }
         single { CheckBlockedEitherWay(get()) }
@@ -186,7 +199,7 @@ fun usersModule(config: Config): Module =
         single { CreateProfileOnActivation(get(), get(), get()) }
         single { RecheckWaitingContacts(get(), get(), get()) }
         single { ClearReachOnStatusChange(get()) }
-        single { DeleteUserData(get(), get(), get(), get(), get(), get(), clock) }
+        single { DeleteUserData(get(), get(), get(), get(), get(), clock) }
 
         // presentation
         single { ProfileService(get(), get(), get(), get(), get(), get()) }

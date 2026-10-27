@@ -11,6 +11,7 @@ import com.circaso.users.domain.models.SyncMatch
 import com.circaso.users.domain.models.WaitingContact
 import com.circaso.users.domain.ports.PhoneHasher
 import com.circaso.users.domain.ports.ReachCache
+import com.circaso.users.domain.ports.Transactor
 import com.circaso.users.domain.ports.UsersCache
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.ProfileRepository
@@ -31,6 +32,7 @@ class SyncContacts(
     private val profiles: ProfileRepository,
     private val views: ProfileViews,
     private val hasher: PhoneHasher,
+    private val transactor: Transactor,
     private val store: UsersStore,
     private val cache: ReachCache,
     private val usersCache: UsersCache,
@@ -42,16 +44,19 @@ class SyncContacts(
         val now = clock.instant()
 
         val resolved = directory.resolvePhones(command.phones).filterValues { it != owner }
-        val existing = resolved.values.toSet().associateWith { contacts.find(owner, it) }
-
-        val added =
-            existing
-                .filterValues { it == null }
-                .keys
-                .map { Contact(owner, it, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now) }
         val waiting = (command.phones - resolved.keys).map { WaitingContact(hasher.hmac(it), owner, now) }
-        store.commit(UsersChanges(contacts = added, waiting = waiting))
-        added.forEach { cache.invalidateTarget(it.contactId) }
+        // Contacts are added only where the pair has no row, so one the user removed stays removed.
+        val existing =
+            transactor.run("contacts.sync") {
+                val existing = contacts.findAll(owner, resolved.values.toSet())
+                val added =
+                    (resolved.values.toSet() - existing.keys).map {
+                        Contact(owner, it, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now)
+                    }
+                store.commit(UsersChanges(contacts = added, waiting = waiting))
+                existing
+            }
+        (resolved.values.toSet() - existing.keys).forEach { cache.invalidateTarget(it) }
         usersCache.recordSyncBatch(owner, command.syncId, command.final)
 
         val shown = resolved.filter { (_, user) -> existing[user]?.status != ContactStatus.REMOVED }
