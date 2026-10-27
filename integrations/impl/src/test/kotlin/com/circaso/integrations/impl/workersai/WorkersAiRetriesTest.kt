@@ -53,6 +53,17 @@ class WorkersAiRetriesTest {
         }
 
     @Test
+    fun `a 503 on a streamed reply gives exactly one attempt`() =
+        runBlocking<Unit> {
+            val model = WorkersAiLanguageModel(gateway, "@cf/moonshotai/kimi-k2.6", maxOutputTokens = 4096)
+
+            val result = model.stream(ModelRequest("s", listOf(ModelMessage.User("u"))))
+
+            assertIs<IntegrationError.Unavailable>((result as Resource.Error).error)
+            assertEquals(1, attempts.get())
+        }
+
+    @Test
     fun `a 503 on reading a photo gives exactly one attempt`() =
         runBlocking<Unit> {
             val vision = WorkersAiVisionModel(gateway, "@cf/meta/llama-4-scout-17b-16e-instruct")

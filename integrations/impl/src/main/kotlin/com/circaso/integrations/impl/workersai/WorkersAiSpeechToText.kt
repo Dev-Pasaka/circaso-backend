@@ -4,12 +4,8 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.Transcript
 import com.circaso.shared.Resource
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.put
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.util.Base64
 import kotlin.math.ceil
@@ -30,12 +26,13 @@ class WorkersAiSpeechToText(private val gateway: WorkersAiGateway, private val m
         contentType: String,
         language: String?,
     ): Resource<Transcript> {
-        val body =
-            buildJsonObject {
-                put("audio", Base64.getEncoder().encodeToString(audio))
-                put("task", "transcribe")
-                whisperLanguage(language)?.let { put("language", it) }
-            }
+        val request =
+            WhisperRequest(
+                audio = Base64.getEncoder().encodeToString(audio),
+                task = "transcribe",
+                language = whisperLanguage(language),
+            )
+        val body = WorkersAiJson.encodeToString(WhisperRequest.serializer(), request)
 
         return when (val reply = gateway.post("run/$model", "transcribe", body)) {
             is Resource.Success -> read(reply.data)
@@ -44,9 +41,9 @@ class WorkersAiSpeechToText(private val gateway: WorkersAiGateway, private val m
     }
 
     private fun read(reply: GatewayReply): Resource<Transcript> {
-        val answer = reply.json()
-        val text = answer?.text("text")
-        if (answer == null || text == null) {
+        val answer = reply.decode(WhisperResult.serializer())
+        val text = answer?.text
+        if (text == null) {
             log.warn("workers-ai transcription had no text")
             return Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         }
@@ -54,13 +51,9 @@ class WorkersAiSpeechToText(private val gateway: WorkersAiGateway, private val m
     }
 
     /** Whisper's measured duration, else the end of the last segment; at least one second, rounded up. */
-    private fun seconds(answer: JsonObject): Int {
-        val duration = ((answer["transcription_info"] as? JsonObject)?.get("duration") as? JsonPrimitive)?.doubleOrNull
-        val lastEnd =
-            ((answer["segments"] as? JsonArray)?.lastOrNull() as? JsonObject)
-                ?.get("end")
-                ?.let { (it as? JsonPrimitive)?.doubleOrNull }
-        return ceil(duration ?: lastEnd ?: 0.0).toInt().coerceAtLeast(1)
+    private fun seconds(answer: WhisperResult): Int {
+        val measured = answer.transcriptionInfo?.duration ?: answer.segments.lastOrNull()?.end
+        return ceil(measured ?: 0.0).toInt().coerceAtLeast(1)
     }
 
     /**
@@ -81,3 +74,20 @@ class WorkersAiSpeechToText(private val gateway: WorkersAiGateway, private val m
         val LANGUAGE_CODE = Regex("[a-z]{2,3}")
     }
 }
+
+/** Whisper's input; without a [language] hint (left out), Whisper detects it. */
+@Serializable
+private class WhisperRequest(val audio: String, val task: String, val language: String? = null)
+
+@Serializable
+private class WhisperResult(
+    val text: String? = null,
+    @SerialName("transcription_info") val transcriptionInfo: TranscriptionInfo? = null,
+    val segments: List<WhisperSegment> = emptyList(),
+)
+
+@Serializable
+private class TranscriptionInfo(val duration: Double? = null)
+
+@Serializable
+private class WhisperSegment(val end: Double? = null)

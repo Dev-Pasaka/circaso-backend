@@ -13,6 +13,13 @@ class CircuitOpenException(val vendor: String) : RuntimeException("The '$vendor'
 /** Thrown when a vendor's socket doesn't open within its handshake timeout; integrations treat it as `Unavailable`. */
 class HandshakeTimeoutException(val vendor: String) : RuntimeException("The '$vendor' socket didn't open in time")
 
+/**
+ * Thrown when a vendor answers a socket's upgrade with anything but `101 Switching Protocols` (Workers AI's AI Gateway
+ * refuses some live models with a `400`); integrations treat it as `Unavailable`. The attempt log line has the status.
+ */
+class HandshakeRefusedException(val vendor: String, val status: Int) :
+    RuntimeException("The '$vendor' socket was refused with status $status")
+
 /** Names the vendor operation (`send_sms`) on a request, for the duration metric and the log line. */
 val HttpOperation = AttributeKey<String>("circaso.http.operation")
 

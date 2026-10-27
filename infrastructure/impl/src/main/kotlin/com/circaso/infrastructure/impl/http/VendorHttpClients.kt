@@ -1,6 +1,7 @@
 package com.circaso.infrastructure.impl.http
 
 import com.circaso.infrastructure.api.CircuitOpenException
+import com.circaso.infrastructure.api.HandshakeRefusedException
 import com.circaso.infrastructure.api.HandshakeTimeoutException
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.HttpOperation
@@ -21,6 +22,7 @@ import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodedPath
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
@@ -87,12 +89,21 @@ class VendorHttpClients(
      * Bounds the opening of a socket only. `HttpTimeout`'s request timeout leaves WebSockets alone, so without this a
      * vendor that accepted the connection but never answered the upgrade would hold the caller forever. Once the
      * `101` is in, the socket lives as long as the conversation.
+     *
+     * An upgrade answered with anything but `101` is [HandshakeRefusedException]: left to Ktor, the vendor's error
+     * body would be read as the socket and fail as a serialization error that hides what happened. Its status is in
+     * the attempt log line, written before this sees the answer.
      */
     private fun handshakeTimeout(vendor: String, timeout: Duration) =
         createClientPlugin("VendorHandshake-$vendor") {
             on(Send) { request ->
                 if (!request.isWebSocketUpgrade()) return@on proceed(request)
-                withTimeoutOrNull(timeout.toMillis()) { proceed(request) } ?: throw HandshakeTimeoutException(vendor)
+                val call =
+                    withTimeoutOrNull(timeout.toMillis()) { proceed(request) }
+                        ?: throw HandshakeTimeoutException(vendor)
+                val status = call.response.status
+                if (status != HttpStatusCode.SwitchingProtocols) throw HandshakeRefusedException(vendor, status.value)
+                call
             }
         }
 

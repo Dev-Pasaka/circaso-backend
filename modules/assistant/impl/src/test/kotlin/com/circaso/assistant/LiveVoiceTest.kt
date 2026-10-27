@@ -29,6 +29,7 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -244,6 +245,51 @@ class LiveVoiceTest {
                     live.voice.sessions
                         .single()
                         .isClosed,
+            )
+        }
+
+    @Test
+    fun `each sentence goes to the voice as soon as the model has written it, with one Flush at the end`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val gate = CompletableDeferred<Unit>()
+            live.h.model.streamed("You sent Mum 2,000 shillings. Any", "thing else?", gate = gate)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("how much did I send Mum", endOfTurn = true))
+
+                eventually {
+                    live.voice.sessions
+                        .singleOrNull()
+                        ?.spoken
+                        ?.isNotEmpty() == true
+                }
+                val voice = live.voice.sessions.single()
+                assertEquals(listOf("You sent Mum 2,000 shillings."), voice.spoken, "spoken while the model writes")
+                assertEquals(0, voice.flushes.get())
+
+                gate.complete(Unit)
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                assertEquals(listOf("You sent Mum 2,000 shillings.", "Anything else?"), voice.spoken)
+                assertEquals(1, voice.flushes.get(), "one Flush per reply")
+                hangUp(got)
+            }
+
+            assertEquals(
+                listOf("You sent Mum 2,000 shillings.", "Anything else?"),
+                got.ofType("reply").map { it.text("text") },
+            )
+            assertEquals(
+                "You sent Mum 2,000 shillings. Anything else?",
+                got
+                    .ofType("reply_done")
+                    .single()["message"]!!
+                    .jsonObject
+                    .text("text"),
             )
         }
 
@@ -1058,8 +1104,8 @@ class LiveVoiceTest {
                     )
                 return LiveConversation(
                     line,
-                    ask = { _, _ -> error("not asked") },
-                    answerDevice = { error("not asked") },
+                    ask = { _, _, _ -> error("not asked") },
+                    answerDevice = { _, _ -> error("not asked") },
                     meter = { Resource.success(100L) },
                     checkSession = { _, _ -> true },
                 )

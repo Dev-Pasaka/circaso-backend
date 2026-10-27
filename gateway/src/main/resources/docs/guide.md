@@ -166,20 +166,21 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.version_conflict` | 409 | The group changed since you read its `version`: load it again and retry |
 | `messaging.not_a_group` | 400 | Leaving a direct chat, or removing someone from one: only groups have members to remove |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
-| `assistant.voice_too_long` | 400 | A voice clip over 60 seconds |
+| `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
 | `assistant.model_unavailable` | 502 | Asha's model is down; try again |
 | `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself. On the live voice socket it is the close reason instead |
 
 ## Talking to Asha: streaming and the phone's help
 
-`POST /v1/assistant/chat/messages` answers with **server-sent events** (`text/event-stream`), not the envelope, so the reply can appear as it arrives. Errors that happen before any text (a used-up allowance, a bad request) are still the envelope.
+`POST /v1/assistant/chat/messages` answers with **server-sent events** (`text/event-stream`), not the envelope, and streams the reply from the model as it is written, so the first words show within a second or two. Errors that happen before any text (a used-up allowance, a bad request, a token that isn't yours) are still the envelope.
 
 | Event | Data | Meaning |
 | --- | --- | --- |
-| `message` | `{"delta": "…"}` | A piece of the reply. Append the pieces. |
-| `tool_request` | `{"turnId", "callId", "name", "arguments"}` | Asha needs something only the phone can do: search or read your chats, which stay end-to-end encrypted on the server. Run the tool locally and answer with `POST …/messages/{turnId}/tool-results`. |
-| `done` | `{"message": {…}}` | The reply is complete and saved. |
+| `message` | `{"delta": "…"}` | The next piece of the reply, as the model wrote it. Append the pieces. |
+| `tool_request` | `{"turnId", "callId", "name", "arguments"}` | Asha needs something only the phone can do: search or read your chats, which stay end-to-end encrypted on the server. Run the tool locally and answer with `POST …/messages/{turnId}/tool-results`; its response is a new event stream that carries on the same reply. |
+| `done` | `{"message": {…}}` | The reply is complete and saved. Its text is everything shown, including what Asha said before a tool request, with a blank line between the parts. |
+| `error` | `{"code", "message"}` | The model failed after some text had gone out (the `200` was already sent); nothing is saved. Ask again. |
 
 The phone sends back at most 30 short snippets. They are used for that answer and never stored; Asha keeps only a note of which chats and how many messages she read, and the answer says so ("Asha read 4 messages from Family").
 
@@ -193,7 +194,7 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | --- | --- | --- |
 | `transcript` `{text, final}` | server | The words heard so far. |
 | `turn` `{text}` | server | The user finished; Asha answers it exactly like a typed message (same tools, allowance and history). |
-| `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). |
+| `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). Each sentence is spoken as soon as the model has written it. |
 | `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
 | `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
 | `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |

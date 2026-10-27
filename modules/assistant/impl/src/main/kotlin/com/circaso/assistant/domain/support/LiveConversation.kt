@@ -65,9 +65,9 @@ fun interface LiveOutput {
  */
 class LiveConversation(
     val line: LiveVoiceLine,
-    /** Asks Asha one question, with the user's agent token for her tools. */
-    private val ask: suspend (String, String?) -> Resource<TurnResult>,
-    private val answerDevice: suspend (DeviceToolResult) -> Resource<TurnResult>,
+    /** Asks Asha one question, with the user's agent token for her tools; her reply streams to the listener. */
+    private val ask: suspend (String, String?, ReplyListener) -> Resource<TurnResult>,
+    private val answerDevice: suspend (DeviceToolResult, ReplyListener) -> Resource<TurnResult>,
     private val meter: suspend (Int) -> Resource<Long>,
     /** Whether this access token (and agent token, when given) are still valid tokens of the line's user. */
     private val checkSession: suspend (String, String?) -> Boolean,
@@ -84,11 +84,48 @@ class LiveConversation(
     private val playingReplies = ConcurrentLinkedQueue<LiveEvent.ReplyDone>()
 
     /**
-     * The reply being spoken, from its one `Flush` until the voice answers it. Its sentences go to the phone as the
-     * audio reaches them, timed at [SPOKEN_CHARS_PER_SECOND] (the voice doesn't say where a sentence starts).
+     * The reply being spoken, from its first sentence until the voice answers its one `Flush`. Sentences are queued
+     * with the voice as the model writes them (decision 2026-10-27), and the reply is flushed once, when the turn
+     * ends or pauses for the phone. Its sentences go to the phone as the audio reaches them, timed at
+     * [SPOKEN_CHARS_PER_SECOND] (the voice doesn't say where a sentence starts).
      */
-    private class Speaking(val captions: ArrayDeque<Caption>, val done: LiveEvent.ReplyDone) {
+    private class Speaking(val generation: Int) {
+        val captions = ArrayDeque<Caption>()
+        var chars = 0
         var audioSeconds = 0.0
+        var isFlushed = false
+
+        /** The saved reply, once the turn has ended with one; a reply paused for the phone has none yet. */
+        var done: LiveEvent.ReplyDone? = null
+    }
+
+    /** One turn's reply on its way to the voice: each sentence is spoken as soon as the model has written it. */
+    private inner class SpokenReply(private val asked: Int) : ReplyListener {
+        private val unfinished = StringBuilder()
+
+        override suspend fun text(delta: String) {
+            unfinished.append(delta)
+            val parts = unfinished.split(sentenceEnd)
+            if (parts.size < 2) return
+            parts
+                .dropLast(1)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .forEach { queueSentence(asked, it) }
+            unfinished.setLength(0)
+            unfinished.append(parts.last())
+        }
+
+        /**
+         * The turn has ended (or paused for the phone): the last words are spoken, unless the turn failed half way
+         * ([speakRest] false), and the reply is flushed. False if the user talked over it first.
+         */
+        suspend fun finish(done: LiveEvent.ReplyDone?, speakRest: Boolean): Boolean {
+            val rest = unfinished.trim().toString()
+            unfinished.setLength(0)
+            if (speakRest && rest.isNotEmpty()) queueSentence(asked, rest)
+            return flushReply(asked, done)
+        }
     }
 
     private class Caption(val text: String, val atSeconds: Double)
@@ -197,8 +234,9 @@ class LiveConversation(
             return
         }
         answering = asked
+        val reply = SpokenReply(asked)
         turns.launch {
-            val answer = withContext(NonCancellable) { answerDevice(result) }
+            val answer = withContext(NonCancellable) { answerDevice(result, reply) }
             if (answer is Resource.Error && answer.error is SharedError.Malformed) {
                 // a wrong call id: the turn keeps waiting for the right answer
                 if (answering == asked) answering = -1
@@ -206,7 +244,7 @@ class LiveConversation(
                 return@launch
             }
             state.withLock { if (deviceGeneration == asked) deviceGeneration = -1 }
-            conclude(asked, answer)
+            conclude(asked, answer, reply)
             if (answering == asked) answering = -1
         }
     }
@@ -373,10 +411,11 @@ class LiveConversation(
         answering = -1
         deviceGeneration = -1
         dropAudio = true
-        // a reply cut off half way is still saved: the phone hears of it, unspoken
+        // a reply cut off half way is still saved: the phone hears of it, unspoken (one still being written hears of
+        // it when its turn ends)
         speaking?.let {
-            staleFlushes++
-            emit(it.done.copy(spoken = false))
+            if (it.isFlushed) staleFlushes++
+            it.done?.let { done -> emit(done.copy(spoken = false)) }
         }
         speaking = null
         generateSequence { playingReplies.poll() }.forEach { emit(it.copy(spoken = false)) }
@@ -396,41 +435,48 @@ class LiveConversation(
         turnsAsked.incrementAndGet()
         lastActivity = nowMillis()
         emit(LiveEvent.TurnStarted(text))
-        answer(asked, checked = true) { ask(text, agentToken) }
+        answer(asked, checked = true) { reply -> ask(text, agentToken, reply) }
     }
 
     /**
-     * Runs one turn's use case to the end, whatever happens to the socket, then delivers what it came to. A new turn
-     * first re-checks the session (decision 2026-10-26).
+     * Runs one turn's use case to the end, whatever happens to the socket, speaking its reply as it streams, then
+     * delivers what it came to. A new turn first re-checks the session (decision 2026-10-26).
      */
     private fun answer(
         asked: Int,
         checked: Boolean,
-        turn: suspend () -> Resource<TurnResult>,
+        turn: suspend (ReplyListener) -> Resource<TurnResult>,
     ) {
         if (asked >= 0) answering = asked
+        val reply = SpokenReply(asked)
         turns.launch {
             if (checked && !checkSession(accessToken, null)) {
                 hangUp(LiveEnd.SessionRevoked)
                 return@launch
             }
-            val result = withContext(NonCancellable) { turn() }
-            conclude(asked, result)
+            val result = withContext(NonCancellable) { turn(reply) }
+            conclude(asked, result, reply)
             if (answering == asked) answering = -1
         }
     }
 
     // ---- answering -------------------------------------------------------------------------------------------
 
-    private suspend fun conclude(asked: Int, result: Resource<TurnResult>) {
+    private suspend fun conclude(
+        asked: Int,
+        result: Resource<TurnResult>,
+        reply: SpokenReply,
+    ) {
         when (result) {
-            is Resource.Error -> failed(result)
-            is Resource.Success -> answered(asked, result.data)
+            is Resource.Error -> failed(result, reply)
+            is Resource.Success -> answered(asked, result.data, reply)
         }
         lastActivity = nowMillis()
     }
 
-    private suspend fun failed(result: Resource.Error) {
+    private suspend fun failed(result: Resource.Error, reply: SpokenReply) {
+        // the sentences already spoken are let out; the half-written one is dropped
+        reply.finish(done = null, speakRest = false)
         if (result.error is AssistantError.QuotaExceeded) {
             hangUp(LiveEnd.OutOfAllowance(result.error))
             return
@@ -444,13 +490,20 @@ class LiveConversation(
         emit(LiveEvent.TurnFailed(result.error))
     }
 
-    private suspend fun answered(asked: Int, result: TurnResult) {
+    private suspend fun answered(
+        asked: Int,
+        result: TurnResult,
+        reply: SpokenReply,
+    ) {
         when (result) {
             is TurnResult.Answer -> {
-                if (!speak(asked, result.message)) emit(LiveEvent.ReplyDone(result.message, spoken = false))
+                val done = LiveEvent.ReplyDone(result.message, spoken = true)
+                if (!reply.finish(done, speakRest = true)) emit(done.copy(spoken = false))
             }
 
             is TurnResult.NeedsDevice -> {
+                // what Asha said before asking the phone ("Let me look in your chats.") is heard while it searches
+                reply.finish(done = null, speakRest = true)
                 state.withLock {
                     if (asked == generation.get()) {
                         deviceGeneration = asked
@@ -462,30 +515,42 @@ class LiveConversation(
         }
     }
 
+    /** Queues one sentence of turn [asked]'s reply with the voice, unless the user has talked over it since. */
+    private suspend fun queueSentence(asked: Int, sentence: String) =
+        state.withLock {
+            if (asked != generation.get() || ended.isCompleted) return@withLock
+            val reply = speakingFor(asked)
+            reply.captions.add(Caption(sentence, reply.chars / SPOKEN_CHARS_PER_SECOND))
+            reply.chars += sentence.length + 1
+            line.speech.speak(sentence)
+        }
+
+    /** The reply of turn [asked] still taking sentences, started if need be. Called with [state] held. */
+    private suspend fun speakingFor(asked: Int): Speaking {
+        speaking?.takeIf { it.generation == asked && !it.isFlushed }?.let { return it }
+        // the part of this turn spoken before it paused for the phone: let it out, and ignore its Flushed when it comes
+        speaking?.let {
+            if (it.isFlushed) staleFlushes++
+            letOut(it)
+        }
+        dropAudio = false
+        return Speaking(asked).also { speaking = it }
+    }
+
     /**
-     * The reply sentence by sentence, then one `Flush` (one per reply keeps under the voice's flush limit). Each
-     * sentence's text goes to the phone as its audio is reached, and `reply_done` once the audio has played. False if
-     * the user talked over it first.
+     * One `Flush` for the reply of turn [asked] (one per reply keeps under the voice's flush limit); `reply_done`
+     * ([done]) goes once its audio has played. False if the user talked over it, or nothing of it was spoken.
      */
-    private suspend fun speak(asked: Int, reply: ChatMessage): Boolean {
-        val sentences = sentences(reply.text)
-        return state.withLock {
+    private suspend fun flushReply(asked: Int, done: LiveEvent.ReplyDone?): Boolean =
+        state.withLock {
             if (asked != generation.get() || ended.isCompleted) return@withLock false
-            dropAudio = false
-            val captions = ArrayDeque<Caption>()
-            var chars = 0
-            for (sentence in sentences) {
-                captions.add(Caption(sentence, chars / SPOKEN_CHARS_PER_SECOND))
-                chars += sentence.length + 1
-            }
-            speaking?.let { flushDone() }
-            speaking = Speaking(captions, LiveEvent.ReplyDone(reply, spoken = true))
+            val reply = speaking?.takeIf { it.generation == asked && !it.isFlushed } ?: return@withLock done == null
+            reply.done = done
+            reply.isFlushed = true
             lastVoiceEventAt = nowMillis()
-            sentences.forEach { line.speech.speak(it) }
             line.speech.flush()
             true
         }
-    }
 
     private suspend fun relaySpeech() {
         while (true) {
@@ -521,12 +586,16 @@ class LiveConversation(
             staleFlushes = 0
         }
 
-    /** The reply's audio is all sent: its last sentences go out, and `reply_done` once it has played. With [state]. */
+    /** The flushed reply's audio is all sent ([letOut]). Called with [state] held. */
     private suspend fun flushDone() {
-        val reply = speaking ?: return
+        speaking?.takeIf { it.isFlushed }?.let { letOut(it) }
+    }
+
+    /** The reply's last sentences go out, and `reply_done` once it has played. Called with [state] held. */
+    private suspend fun letOut(reply: Speaking) {
         generateSequence { reply.captions.removeFirstOrNull() }.forEach { emit(LiveEvent.ReplyText(it.text)) }
-        playingReplies.add(reply.done)
-        speaking = null
+        reply.done?.let { playingReplies.add(it) }
+        if (speaking === reply) speaking = null
     }
 
     /** The sentences the audio has reached, before [chunkSeconds] more of it. Called with [state] held. */
@@ -571,7 +640,7 @@ class LiveConversation(
      */
     private suspend fun unstallFlush() =
         state.withLock {
-            if (speaking == null || nowMillis() - lastVoiceEventAt < FLUSH_STALL_MILLIS) return@withLock
+            if (speaking?.isFlushed != true || nowMillis() - lastVoiceEventAt < FLUSH_STALL_MILLIS) return@withLock
             flushDone()
         }
 
@@ -641,13 +710,7 @@ class LiveConversation(
         /** No new word for this long and the speech being heard has ended, even without an end-of-turn event. */
         const val SPEECH_IDLE_MILLIS = 2_000L
 
+        /** The space after a sentence's last mark: a sentence is whole once the model has written past it. */
         private val sentenceEnd = Regex("(?<=[.!?])\\s+")
-
-        fun sentences(reply: String): List<String> =
-            reply
-                .trim()
-                .split(sentenceEnd)
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
     }
 }

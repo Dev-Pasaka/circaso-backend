@@ -2,13 +2,12 @@ package com.circaso.integrations.impl.workersai
 
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.ModelUsage
 import com.circaso.integrations.api.VisionAnswer
 import com.circaso.integrations.api.VisionModel
 import com.circaso.shared.Resource
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.util.Base64
 
@@ -22,33 +21,24 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
     private val log = LoggerFactory.getLogger(WorkersAiVisionModel::class.java)
 
     override suspend fun describe(image: ImageInput, instruction: String): Resource<VisionAnswer> {
-        val body =
-            buildJsonObject {
-                put("model", model)
+        val request =
+            VisionRequest(
+                model = model,
                 // Llama 4 Scout stops at 256 tokens unless told otherwise, which cuts a receipt short.
-                put("max_tokens", MAX_TOKENS)
-                putJsonArray("messages") {
-                    add(
-                        buildJsonObject {
-                            put("role", "user")
-                            putJsonArray("content") {
-                                add(
-                                    buildJsonObject {
-                                        put("type", "text")
-                                        put("text", instruction)
-                                    },
-                                )
-                                add(
-                                    buildJsonObject {
-                                        put("type", "image_url")
-                                        putJsonObject("image_url") { put("url", dataUrl(image)) }
-                                    },
-                                )
-                            }
-                        },
-                    )
-                }
-            }
+                maxTokens = MAX_TOKENS,
+                messages =
+                    listOf(
+                        VisionMessage(
+                            role = "user",
+                            content =
+                                listOf(
+                                    VisionPart(type = "text", text = instruction),
+                                    VisionPart(type = "image_url", imageUrl = ImageUrl(dataUrl(image))),
+                                ),
+                        ),
+                    ),
+            )
+        val body = WorkersAiJson.encodeToString(VisionRequest.serializer(), request)
 
         return when (val reply = gateway.post(CHAT_COMPLETIONS, "describe_image", body, retried = false)) {
             is Resource.Success -> read(reply.data)
@@ -57,13 +47,14 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
     }
 
     private fun read(reply: GatewayReply): Resource<VisionAnswer> {
-        val answer = reply.json()
-        val text = answer?.firstMessage()?.contentText()
+        val answer = reply.decode(ChatCompletion.serializer())
+        val choice = answer?.choices?.firstOrNull()
+        val text = choice?.message?.content
         if (answer == null || text.isNullOrBlank()) {
-            log.warn("workers-ai image answer had no text: finish_reason={}", answer?.finishReason())
+            log.warn("workers-ai image answer had no text: finish_reason={}", choice?.finishReason)
             return Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         }
-        return Resource.success(VisionAnswer(text, answer.usage()))
+        return Resource.success(VisionAnswer(text, answer.usage?.toModel() ?: ModelUsage(0, 0)))
     }
 
     private fun dataUrl(image: ImageInput) =
@@ -73,3 +64,25 @@ class WorkersAiVisionModel(private val gateway: WorkersAiGateway, private val mo
         const val MAX_TOKENS = 1024
     }
 }
+
+/** One user message with the instruction and the photo as its parts (OpenAI's multi-part content). */
+@Serializable
+private class VisionRequest(
+    val model: String,
+    @SerialName("max_tokens") val maxTokens: Int,
+    val messages: List<VisionMessage>,
+)
+
+@Serializable
+private class VisionMessage(val role: String, val content: List<VisionPart>)
+
+/** A `text` part or an `image_url` part; the other field is left out. */
+@Serializable
+private class VisionPart(
+    val type: String,
+    val text: String? = null,
+    @SerialName("image_url") val imageUrl: ImageUrl? = null,
+)
+
+@Serializable
+private class ImageUrl(val url: String)

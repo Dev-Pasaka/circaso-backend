@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.circaso.infrastructure.api.HandshakeRefusedException
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
@@ -12,6 +13,8 @@ import com.circaso.integrations.api.LiveTranscriptionOptions
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.shared.Resource
+import io.ktor.client.plugins.api.Send
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.http.Headers
 import io.ktor.http.Parameters
@@ -26,7 +29,12 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.slf4j.LoggerFactory
 import kotlin.test.AfterTest
@@ -242,12 +250,17 @@ class WorkersAiLiveTest {
                 send(Frame.Text("""{"type":"Cleared","sequence_id":1}"""))
             }
             val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
-            val (path, query, _) = vendor.opened.next()
+            val (path, query, headers) = vendor.opened.next()
 
             assertEquals("/client/v4/accounts/acc123/ai/run/@cf/deepgram/aura-2-en", path.replace("%40", "@"))
             assertEquals("mulaw", query["encoding"])
             assertEquals("8000", query["sample_rate"])
             assertEquals("true", query["mip_opt_out"])
+            assertEquals("Bearer cf-token", headers["Authorization"])
+            assertTrue(
+                headers.names().none { it.lowercase().startsWith("cf-aig-") },
+                "AI Gateway refuses Aura's socket, so it goes to Workers AI directly",
+            )
             assertEquals(AudioEncoding.MULAW, session.format.encoding)
             assertEquals(2.0, session.format.seconds(16_000))
             assertContentEquals(byteArrayOf(9, 8, 7, 6), assertIs<SpeechEvent.Audio>(session.next()).bytes)
@@ -267,6 +280,117 @@ class WorkersAiLiveTest {
             assertEquals("""{"type":"Close"}""", (vendor.received.next() as Frame.Text).readText())
 
             assertTrue(logs.list.none { "shillings" in it.formattedMessage }, "reply text never reaches a log")
+        }
+
+    @Test
+    fun `aura closing with 1011 and no reason after our Close is the normal end, not a failure`() =
+        testApplication {
+            val vendor = vendor()
+            vendor.script = {
+                for (frame in incoming) {
+                    if (frame is Frame.Text && "Close" in frame.readText()) {
+                        close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, ""))
+                    }
+                }
+            }
+            val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
+            vendor.opened.next()
+
+            withTimeout(3_000) { session.close() }
+
+            assertNull(session.next(), "no failure after our own Close")
+            assertTrue(logs.list.none { it.level == Level.WARN }, "nothing to warn about")
+        }
+
+    @Test
+    fun `aura closing while it still has text to speak is a failure`() =
+        testApplication {
+            val vendor = vendor()
+            vendor.script = {
+                val speak = incoming.receive()
+                assertTrue("Speak" in (speak as Frame.Text).readText())
+                close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, ""))
+            }
+            val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
+            vendor.opened.next()
+
+            session.speak("You sent Mum 2,000 shillings.")
+            val failed = assertIs<SpeechEvent.Failed>(withTimeout(3_000) { session.next() })
+
+            assertIs<IntegrationError.Unavailable>(failed.error)
+            assertNull(session.next())
+        }
+
+    /** Workers AI closes Aura's socket 5 s after our last message, even mid-reply (smoke test 2026-10-27). */
+    @Test
+    fun `a quiet aura socket gets a one-space Speak every 3 s, so Workers AI keeps it open`() =
+        testApplication {
+            val vendor = vendor()
+            val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
+            vendor.opened.next()
+
+            val kept = withContext(Dispatchers.Default) { withTimeout(5_000) { vendor.received.receive() } }
+
+            assertEquals("""{"type":"Speak","text":" "}""", (kept as Frame.Text).readText())
+            session.close()
+        }
+
+    /** Should Workers AI still close an idle Aura socket, the next sentence opens another. */
+    @Test
+    fun `an aura socket closed while idle is reopened by the next sentence, and the session carries on`() =
+        testApplication {
+            val vendor = vendor()
+            var sockets = 0
+            vendor.script = {
+                sockets++
+                if (sockets == 1) {
+                    close(CloseReason(CloseReason.Codes.INTERNAL_ERROR, ""))
+                } else {
+                    val speak = incoming.receive() as Frame.Text
+                    assertTrue("Anything else?" in speak.readText())
+                    send(Frame.Binary(true, byteArrayOf(4, 2)))
+                }
+            }
+            val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
+            vendor.opened.next()
+            coroutineScope {
+                val reading = async(Dispatchers.Default) { session.next() }
+                // real time, not the test's: the first socket is closed by now, and next() waits rather than failing
+                withContext(Dispatchers.Default) { delay(300) }
+
+                session.speak("Anything else?")
+
+                val (_, query, headers) = vendor.opened.next()
+                assertEquals("true", query["mip_opt_out"], "the new socket is opened like the first")
+                assertTrue(headers.names().none { it.lowercase().startsWith("cf-aig-") })
+                val audio = assertIs<SpeechEvent.Audio>(withTimeout(3_000) { reading.await() })
+                assertContentEquals(byteArrayOf(4, 2), audio.bytes)
+            }
+            assertTrue(logs.list.none { it.level == Level.WARN }, "an idle close is not a failure")
+            session.close()
+        }
+
+    @Test
+    fun `a refused upgrade is a plain Unavailable, logged without its cause`() =
+        testApplication {
+            vendor()
+            val refusing =
+                createClient {
+                    install(WebSockets)
+                    install(
+                        createClientPlugin("Refuse") {
+                            on(Send) { throw HandshakeRefusedException("workers-ai-live", 400) }
+                        },
+                    )
+                }
+            val socket = WorkersAiLiveSocket(refusing, "cf-token", "asha", "ws://localhost/client/v4/accounts/a/ai/")
+
+            val opened = WorkersAiLiveSpeech(socket, "@cf/deepgram/aura-2-en").open("en")
+
+            val error = opened as Resource.Error
+            assertIs<IntegrationError.Unavailable>(error.error)
+            assertNull(error.cause, "a refusal is an answer, not an exception to report")
+            assertTrue(logs.list.any { "live socket refused" in it.formattedMessage })
         }
 
     @Test
