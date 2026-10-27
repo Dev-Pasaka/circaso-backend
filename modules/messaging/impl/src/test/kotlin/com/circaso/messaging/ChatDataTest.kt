@@ -1,22 +1,29 @@
 package com.circaso.messaging
 
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.messaging.PostgresHarness.Companion.RACE_RUNS
 import com.circaso.messaging.PostgresHarness.Companion.concurrently
+import com.circaso.messaging.PostgresHarness.Companion.lowestUuid7
 import com.circaso.messaging.api.ChatCreated
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.GroupDeleted
 import com.circaso.messaging.api.MemberAdded
 import com.circaso.messaging.api.MemberRemoved
 import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.repositories.MessagingOutbox
+import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.util.UUID
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,28 +51,24 @@ class ChatDataTest {
     // ---- M4 ----
 
     @Test
-    fun `of many opens of one pair from both sides, one chat is made, once, and everyone gets it`() =
+    fun `of many opens of one pair from both sides, one chat is made, once, and everyone gets it (50 runs)`() =
         runBlocking<Unit> {
-            val (amina, brian) = List(2) { UserId.new() }
+            repeat(RACE_RUNS) { run ->
+                val (amina, brian) = List(2) { UserId.new() }
+                val createdBefore = outboxRows(ChatCreated.TYPE)
 
-            val opened =
-                concurrently(8) { i ->
-                    if (i % 2 == 0) h.openDirectChat(amina, brian).data() else h.openDirectChat(brian, amina).data()
-                }
+                val opened =
+                    concurrently(8) { i ->
+                        if (i % 2 == 0) h.openDirectChat(amina, brian).data() else h.openDirectChat(brian, amina).data()
+                    }
 
-            assertEquals(1, opened.map { it.chat.chatId }.toSet().size, "one chat for the pair")
-            assertEquals(1, opened.count { it.created == true })
-            assertEquals(1, h.count("SELECT count(*) FROM messaging.chats"))
-            assertEquals(2, memberRows(opened.first().chat.chatId))
-            assertEquals(1, outboxRows(ChatCreated.TYPE), "ChatCreated once")
-            assertEquals(
-                setOf(amina, brian),
-                opened
-                    .first()
-                    .chat.directPair!!
-                    .toList()
-                    .toSet(),
-            )
+                val chatId = opened.first().chat.chatId
+                assertEquals(1, opened.map { it.chat.chatId }.toSet().size, "one chat for the pair, run $run")
+                assertEquals(1, opened.count { it.created == true }, "run $run")
+                assertEquals(chatId, h.chats.directChat(brian, amina)!!.chatId)
+                assertEquals(2, memberRows(chatId))
+                assertEquals(createdBefore + 1, outboxRows(ChatCreated.TYPE), "ChatCreated once, run $run")
+            }
         }
 
     // ---- M9 cap ----
@@ -89,6 +92,25 @@ class ChatDataTest {
             assertEquals(1_000, chat.memberCount)
             assertEquals(1_000, memberRows(chatId), "the count is the rows")
             assertEquals(998 + 1, outboxRows(MemberAdded.TYPE), "the creation's and the one add's")
+        }
+
+    @Test
+    fun `of many adds racing for a group's last place, exactly one gets in (50 runs)`() =
+        runBlocking<Unit> {
+            // The same statements as at 1,000, with a cap of 10 so 50 runs stay quick.
+            val small = PostgresHarness(MessagingConfig(maxGroupMembers = 10))
+            repeat(RACE_RUNS) { run ->
+                val owner = UserId.new()
+                val chatId = small.group(owner, List(8) { UserId.new() })
+                val hopefuls = List(6) { UserId.new() }
+
+                val results = concurrently(hopefuls.size) { i -> small.addMembers(owner, chatId, setOf(hopefuls[i])) }
+
+                assertEquals(1, results.count { it is Resource.Success }, "run $run")
+                assertTrue(results.filterIsInstance<Resource.Error>().all { it.error.code == "messaging.group_full" })
+                assertEquals(10, small.chats.chat(chatId)!!.memberCount, "run $run")
+                assertEquals(10, memberRows(chatId), "the count is the rows, run $run")
+            }
         }
 
     @Test
@@ -146,7 +168,7 @@ class ChatDataTest {
     @Test
     fun `of a removal and a leave of the same person at once, exactly one claims it (50 runs)`() =
         runBlocking<Unit> {
-            repeat(50) {
+            repeat(RACE_RUNS) {
                 val (owner, brian, chidi) = List(3) { UserId.new() }
                 val chatId = h.group(owner, listOf(brian, chidi))
                 val count = h.chats.chat(chatId)!!.memberCount
@@ -167,9 +189,9 @@ class ChatDataTest {
         }
 
     @Test
-    fun `the owner and the next in line leaving at once leave the group exactly one owner`() =
+    fun `the owner and the next in line leaving at once leave the group exactly one owner (50 runs)`() =
         runBlocking<Unit> {
-            repeat(10) {
+            repeat(RACE_RUNS) {
                 val (owner, first, second) = List(3) { UserId.new() }
                 val chatId = h.group(owner, listOf(first, second))
                 h.setRole(owner, chatId, first, Role.ADMIN).data()
@@ -184,40 +206,46 @@ class ChatDataTest {
         }
 
     @Test
-    fun `the last two leaving at once delete the group, once`() =
+    fun `the last two leaving at once delete the group, once (50 runs)`() =
         runBlocking<Unit> {
-            val (owner, brian) = List(2) { UserId.new() }
-            val chatId = h.group(owner, listOf(brian))
+            repeat(RACE_RUNS) { run ->
+                val (owner, brian) = List(2) { UserId.new() }
+                val chatId = h.group(owner, listOf(brian))
+                val deletedBefore = outboxRows(GroupDeleted.TYPE)
+                val removedBefore = outboxRows(MemberRemoved.TYPE)
 
-            concurrently(2) { i -> h.leaveGroup(if (i == 0) owner else brian, chatId).data() }
+                concurrently(2) { i -> h.leaveGroup(if (i == 0) owner else brian, chatId).data() }
 
-            assertNull(h.chats.chat(chatId))
-            assertEquals(0, memberRows(chatId))
-            assertEquals(1, outboxRows(GroupDeleted.TYPE))
-            assertEquals(2, outboxRows(MemberRemoved.TYPE))
+                assertNull(h.chats.chat(chatId), "run $run")
+                assertEquals(0, memberRows(chatId))
+                assertEquals(deletedBefore + 1, outboxRows(GroupDeleted.TYPE), "deleted once, run $run")
+                assertEquals(removedBefore + 2, outboxRows(MemberRemoved.TYPE))
+            }
         }
 
     // ---- M11, M8 ----
 
     @Test
-    fun `of two handovers at once, the second sees the first and the group keeps one owner`() =
+    fun `of two handovers at once, the second sees the first and the group keeps one owner (50 runs)`() =
         runBlocking<Unit> {
-            val (owner, brian, chidi) = List(3) { UserId.new() }
-            val chatId = h.group(owner, listOf(brian, chidi))
+            repeat(RACE_RUNS) { run ->
+                val (owner, brian, chidi) = List(3) { UserId.new() }
+                val chatId = h.group(owner, listOf(brian, chidi))
 
-            val results =
-                concurrently(2) { i -> h.setRole(owner, chatId, if (i == 0) brian else chidi, Role.OWNER) }
+                val results =
+                    concurrently(2) { i -> h.setRole(owner, chatId, if (i == 0) brian else chidi, Role.OWNER) }
 
-            assertEquals(1, results.count { it is Resource.Success })
-            assertEquals(
-                "messaging.not_admin",
-                results
-                    .filterIsInstance<Resource.Error>()
-                    .single()
-                    .error.code,
-            )
-            val owners = h.chats.members(chatId).filter { it.role == Role.OWNER }
-            assertEquals(listOf(h.chats.chat(chatId)!!.ownerId), owners.map { it.userId })
+                assertEquals(1, results.count { it is Resource.Success }, "run $run")
+                assertEquals(
+                    "messaging.not_admin",
+                    results
+                        .filterIsInstance<Resource.Error>()
+                        .single()
+                        .error.code,
+                )
+                val owners = h.chats.members(chatId).filter { it.role == Role.OWNER }
+                assertEquals(listOf(h.chats.chat(chatId)!!.ownerId), owners.map { it.userId }, "run $run")
+            }
         }
 
     @Test
@@ -263,6 +291,46 @@ class ChatDataTest {
             assertNull(lines.getValue(group).lastMessageId, "a control message is not shown")
             assertEquals(lines.keys, h.chats.chatIdsOf(brian).toSet())
             assertEquals(last.messageId, h.chats.lastMessageId(direct))
+        }
+
+    @Test
+    fun `lastMessageId is null once the record's partition is past 30 days, and the members stay`() =
+        runBlocking<Unit> {
+            val (amina, brian) = List(2) { UserId.new() }
+            val chatId = h.direct(amina, brian)
+            val old = LocalDate.now(ZoneOffset.UTC).minusDays(40)
+            val partition = "message_records_p" + old.toString().replace("-", "")
+            val from = lowestUuid7(old.atStartOfDay().toInstant(ZoneOffset.UTC))
+            val to = lowestUuid7(old.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC))
+            TestPostgres.superuser { connection ->
+                connection.createStatement().use {
+                    it.execute(
+                        "CREATE TABLE messaging.$partition PARTITION OF messaging.message_records " +
+                            "FOR VALUES FROM ('$from') TO ('$to')",
+                    )
+                    it.execute("ALTER TABLE messaging.$partition OWNER TO messaging")
+                }
+                connection
+                    .prepareStatement("INSERT INTO messaging.message_records VALUES (?, ?, ?, 'MESSAGE', now())")
+                    .use {
+                        it.setObject(1, UUID.fromString(from.replaceRange(30, 36, "000001")))
+                        it.setObject(2, chatId.value)
+                        it.setObject(3, amina.value)
+                        it.executeUpdate()
+                    }
+            }
+            assertNotNull(h.chats.lastMessageId(chatId), "kept while its day is within 30 days of the drop")
+
+            MessagingExpiry(h.database).run()
+
+            assertNull(h.chats.lastMessageId(chatId))
+            assertNull(
+                h.chats
+                    .chatList(brian)
+                    .single()
+                    .lastMessageId,
+            )
+            assertEquals(2, memberRows(chatId), "the chat and its members stay")
         }
 
     @Test

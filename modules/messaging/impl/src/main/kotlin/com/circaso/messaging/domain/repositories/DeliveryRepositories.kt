@@ -65,5 +65,13 @@ interface DeliveryRepository {
 interface SettingsRepository {
     suspend fun settings(userId: UserId): MessagingSettings
 
-    suspend fun save(userId: UserId, settings: MessagingSettings)
+    /**
+     * Sets the fields given and keeps the others, in one statement (so concurrent changes to different fields both
+     * stick); the settings as they now are.
+     */
+    suspend fun update(
+        userId: UserId,
+        readReceipts: Boolean?,
+        typing: Boolean?,
+    ): MessagingSettings
 }

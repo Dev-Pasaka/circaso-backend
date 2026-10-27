@@ -98,7 +98,7 @@ class ServeTest {
             .reset()
 
     @Test
-    fun `serve starts and reports PostgreSQL, Redis, ScyllaDB and the stream consumers ready`() =
+    fun `serve starts and reports PostgreSQL, Redis and the stream consumers ready`() =
         testApplication {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
 
@@ -107,7 +107,8 @@ class ServeTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals(
-                listOf("postgres", "redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
+                // No module is on Kandra any more (PG5), so no ScyllaDB check is registered.
+                listOf("postgres", "redis", "streams").map { HealthCheckStatus(it, "up") },
                 checks.sortedBy { it.name },
             )
         }

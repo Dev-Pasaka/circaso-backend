@@ -429,6 +429,17 @@ class DataLayerTest {
         }
 
     @Test
+    fun `a sweep chunk never takes more than its limit`() =
+        runBlocking<Unit> {
+            repeat(5) { created(pending(createdAt = now.minus(Duration.ofDays(31 + it.toLong())))) }
+
+            assertEquals(2, pg.accounts.deleteAbandoned(now.minus(Duration.ofDays(30)), 2))
+            assertEquals(3, count("SELECT count(*) FROM identity.accounts"))
+            assertEquals(2, pg.accounts.deleteAbandoned(now.minus(Duration.ofDays(30)), 2))
+            assertEquals(1, pg.accounts.deleteAbandoned(now.minus(Duration.ofDays(30)), 2))
+        }
+
+    @Test
     fun `the sweep skips a sign-up whose phone claim is in flight, and the claim then lands`() =
         runBlocking<Unit> {
             val late = created(pending(createdAt = now.minus(Duration.ofDays(31))))

@@ -1,8 +1,10 @@
 package com.circaso.messaging
 
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.messaging.PostgresHarness.Companion.RACE_RUNS
 import com.circaso.messaging.PostgresHarness.Companion.concurrently
-import com.circaso.messaging.domain.errors.MessagingError
+import com.circaso.messaging.PostgresHarness.Companion.proof
+import com.circaso.messaging.domain.models.AddOneTimeKeysCommand
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.SignedPreKey
@@ -37,22 +39,12 @@ class KeyDataTest {
 
     private fun prekeys(ids: IntRange) = ids.map { OneTimePreKey(it, "key-$it") }
 
-    /**
-     * A top-up as `AddOneTimeKeys` runs it after the proof, under the bundle's lock, except that it writes before it
-     * checks the cap, to show that a refusal takes back what the transaction already wrote.
-     */
-    private suspend fun topUpWritingFirst(
+    /** `POST /keys/one-time` through `AddOneTimeKeys` itself, with a proof that passes. */
+    private suspend fun topUp(
         userId: UserId,
         deviceId: DeviceId,
         ids: IntRange,
-    ): Resource<Int> =
-        h.transactor.attempt("keys.top-up") {
-            keys.lockBundle(userId)
-            val stored = keys.oneTimeKeyIds(userId, deviceId)
-            keys.addOneTimeKeys(userId, deviceId, prekeys(ids), now)
-            val total = stored.size + ids.count()
-            if (total > 100) Resource.error(MessagingError.TooManyPrekeys) else Resource.success(total)
-        }
+    ): Resource<Int> = h.addOneTimeKeys(AddOneTimeKeysCommand(userId, deviceId, prekeys(ids), proof(h.clock)))
 
     @Test
     fun `a PUT keys replaces the bundle and every one-time prekey`() =
@@ -67,18 +59,20 @@ class KeyDataTest {
         }
 
     @Test
-    fun `concurrent fetches never get the same prekey, and each one taken is gone`() =
+    fun `concurrent fetches never get the same prekey, and each one taken is gone (50 runs)`() =
         runBlocking<Unit> {
-            val (userId, phone) = UserId.new() to DeviceId.new()
-            keys.publish(bundle(userId, phone), prekeys(1..40), now)
+            repeat(RACE_RUNS) { run ->
+                val (userId, phone) = UserId.new() to DeviceId.new()
+                keys.publish(bundle(userId, phone), prekeys(1..40), now)
 
-            val taken = concurrently(50) { keys.claimOneTimeKey(userId, phone) }
+                val taken = concurrently(50) { keys.claimOneTimeKey(userId, phone) }
 
-            val ids = taken.mapNotNull { it?.keyId }
-            assertEquals(40, ids.size, "every key handed out once")
-            assertEquals((1..40).toSet(), ids.toSet())
-            assertEquals(10, taken.count { it == null }, "the rest got a bundle without one")
-            assertTrue(keys.oneTimeKeyIds(userId, phone).isEmpty())
+                val ids = taken.mapNotNull { it?.keyId }
+                assertEquals(40, ids.size, "every key handed out once, run $run")
+                assertEquals((1..40).toSet(), ids.toSet())
+                assertEquals(10, taken.count { it == null }, "the rest got a bundle without one")
+                assertTrue(keys.oneTimeKeyIds(userId, phone).isEmpty())
+            }
         }
 
     @Test
@@ -93,39 +87,56 @@ class KeyDataTest {
         }
 
     @Test
-    fun `a refused top-up rolls back and keeps nothing of its own`() =
+    fun `a refused top-up keeps nothing of its own`() =
         runBlocking<Unit> {
             val (userId, phone) = UserId.new() to DeviceId.new()
             keys.publish(bundle(userId, phone), prekeys(1..10), now)
 
-            assertEquals("messaging.too_many_prekeys", topUpWritingFirst(userId, phone, 11..101).errorCode())
+            assertEquals("messaging.too_many_prekeys", topUp(userId, phone, 11..101).errorCode())
+            assertEquals("messaging.prekey_id_exists", topUp(userId, phone, 10..12).errorCode())
 
-            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(userId, phone), "the 91 inserted keys went with it")
+            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(userId, phone))
         }
 
     @Test
-    fun `of identical top-ups racing, exactly one succeeds and nothing of the others stays`() =
+    fun `of two top-ups of 30 onto 60 stored, exactly one gets in and 90 are kept (50 runs)`() =
         runBlocking<Unit> {
-            val (userId, phone) = UserId.new() to DeviceId.new()
-            keys.publish(bundle(userId, phone), prekeys(1..5), now)
+            repeat(RACE_RUNS) { run ->
+                val (userId, phone) = UserId.new() to DeviceId.new()
+                keys.publish(bundle(userId, phone), prekeys(1..60), now)
 
-            val results =
-                concurrently(6) {
-                    h.transactor.attempt("keys.top-up") {
-                        keys.lockBundle(userId)
-                        val stored = keys.oneTimeKeyIds(userId, phone)
-                        if ((6..10).any { it in stored }) {
-                            Resource.error(MessagingError.PrekeyIdExists)
-                        } else {
-                            keys.addOneTimeKeys(userId, phone, prekeys(6..10), now)
-                            Resource.success(stored.size + 5)
-                        }
-                    }
-                }
+                val results = concurrently(2) { i -> topUp(userId, phone, if (i == 0) 61..90 else 91..120) }
 
-            assertEquals(listOf(10), results.filterIsInstance<Resource.Success<Int>>().map { it.data })
-            assertEquals(5, results.count { it is Resource.Error })
-            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(userId, phone))
+                assertEquals(listOf(90), results.filterIsInstance<Resource.Success<Int>>().map { it.data }, "run $run")
+                assertEquals(
+                    "messaging.too_many_prekeys",
+                    results
+                        .filterIsInstance<Resource.Error>()
+                        .single()
+                        .error.code,
+                )
+                assertEquals(90, keys.oneTimeKeyIds(userId, phone).size, "the cap held, run $run")
+            }
+        }
+
+    @Test
+    fun `of identical top-ups racing, exactly one succeeds and nothing of the others stays (50 runs)`() =
+        runBlocking<Unit> {
+            repeat(RACE_RUNS) { run ->
+                val (userId, phone) = UserId.new() to DeviceId.new()
+                keys.publish(bundle(userId, phone), prekeys(1..5), now)
+
+                val results = concurrently(6) { topUp(userId, phone, 6..10) }
+
+                assertEquals(listOf(10), results.filterIsInstance<Resource.Success<Int>>().map { it.data }, "run $run")
+                assertTrue(
+                    results.filterIsInstance<Resource.Error>().all {
+                        it.error.code ==
+                            "messaging.prekey_id_exists"
+                    },
+                )
+                assertEquals((1..10).toSet(), keys.oneTimeKeyIds(userId, phone))
+            }
         }
 
     @Test

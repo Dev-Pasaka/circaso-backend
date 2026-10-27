@@ -7,7 +7,7 @@ import com.circaso.shared.UserId
 import java.util.UUID
 
 /**
- * Who sent a message in a chat, from its `messages_by_id` record, written with every send and kept 30 days, so it is
+ * Who sent a message in a chat, from its `message_records` record, written with every send and kept 30 days, so it is
  * known after every copy has been delivered and deleted (decision 2026-10-27). M14 (sender only) and read receipts
  * (to the sender) ask it. Null for an id never sent in [ChatId], or past 30 days.
  */

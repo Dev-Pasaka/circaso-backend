@@ -68,6 +68,8 @@ class RedisForgetTest {
 
         override suspend fun hashGetAll(key: String): Map<String, String> = hashes[key].orEmpty()
 
+        override suspend fun hashTake(key: String): Map<String, String> = hashes.remove(key).orEmpty()
+
         override suspend fun hashIncrement(
             key: String,
             field: String,

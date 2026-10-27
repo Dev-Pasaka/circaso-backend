@@ -98,9 +98,14 @@ class MemoryDelivery(val records: ConcurrentHashMap<UUID, MessageRecord> = Concu
 
     override suspend fun settings(userId: UserId) = stored[userId] ?: MessagingSettings()
 
-    override suspend fun save(userId: UserId, settings: MessagingSettings) {
-        stored[userId] = settings
-    }
+    override suspend fun update(
+        userId: UserId,
+        readReceipts: Boolean?,
+        typing: Boolean?,
+    ): MessagingSettings =
+        stored.merge(userId, MessagingSettings(readReceipts ?: true, typing ?: true)) { old, _ ->
+            MessagingSettings(readReceipts ?: old.readReceipts, typing ?: old.typing)
+        }!!
 }
 
 /** `msg:pending` in memory; [lose] forgets a counter, as a Redis restart would. */

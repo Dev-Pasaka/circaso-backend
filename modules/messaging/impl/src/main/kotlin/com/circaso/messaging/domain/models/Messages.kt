@@ -52,7 +52,7 @@ data class GroupBody(
     val sentAt: Instant,
 )
 
-/** Who sent a message, kept 30 days after sending whatever has been delivered (`messages_by_id`). */
+/** Who sent a message, kept 30 days after sending whatever has been delivered (`message_records`). */
 data class MessageRecord(
     val messageId: UUID,
     val chatId: ChatId,

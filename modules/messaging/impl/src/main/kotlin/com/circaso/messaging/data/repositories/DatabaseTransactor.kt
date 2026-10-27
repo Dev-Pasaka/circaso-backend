@@ -4,7 +4,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.shared.Resource
 
-/** The domain's transaction boundary over messaging's [Database]: repositories called inside it join the transaction. */
+/** The domain's transaction boundary over messaging's [Database]: repositories called inside join the transaction. */
 class DatabaseTransactor(private val database: Database) : Transactor {
     override suspend fun <T> run(operation: String, block: suspend () -> T): T = database.tx(operation) { block() }
 

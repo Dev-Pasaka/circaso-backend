@@ -251,6 +251,7 @@ class RuleFixturesTest {
             "uses 'events' (EventBus) inside transactor.run",
             "uses 'sms' (SmsGateway)",
             "uses 'reach' (ReachPolicy)",
+            "'PhoneClaims' uses 'claimCache' (ClaimCache)",
         )
         val violations =
             Rules.all.getValue("transactionsHoldDatabaseWorkOnly")(filesIn("transactionsHoldDatabaseWorkOnly"))

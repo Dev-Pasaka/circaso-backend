@@ -36,7 +36,7 @@ interface KeyRepository {
         at: Instant,
     )
 
-    /** Inserts a top-up's keys for [deviceId]. The caller has checked, under the bundle's lock, that every id is new. */
+    /** Inserts a top-up's keys for [deviceId]; the caller checked, under the bundle's lock, that every id is new. */
     suspend fun addOneTimeKeys(
         userId: UserId,
         deviceId: DeviceId,

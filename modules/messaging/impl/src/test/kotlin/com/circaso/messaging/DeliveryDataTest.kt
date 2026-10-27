@@ -1,11 +1,14 @@
 package com.circaso.messaging
 
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.messaging.PostgresHarness.Companion.RACE_RUNS
 import com.circaso.messaging.PostgresHarness.Companion.concurrently
 import com.circaso.messaging.api.MessageKind
 import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.domain.models.Fanout
+import com.circaso.messaging.domain.models.MessagingSettings
 import com.circaso.messaging.domain.repositories.DeliveryRepository
+import com.circaso.messaging.domain.usecases.UpdateSettings
 import com.circaso.shared.UserId
 import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
@@ -58,18 +61,27 @@ class DeliveryDataTest {
         }
 
     @Test
-    fun `of many sends with one clientMessageId at once, one is written and all answer its id`() =
+    fun `of many sends with one clientMessageId at once, one is written and all answer its id (50 runs)`() =
         runBlocking<Unit> {
-            val (amina, brian) = List(2) { UserId.new() }
-            val chat = h.direct(amina, brian)
-            val clientMessageId = UUID.randomUUID()
+            repeat(RACE_RUNS) { run ->
+                val (amina, brian) = List(2) { UserId.new() }
+                val chat = h.direct(amina, brian)
+                val clientMessageId = UUID.randomUUID()
 
-            val sent = concurrently(8) { h.sendMessage(h.directCommand(amina, brian, chat, clientMessageId)).data() }
+                val sent =
+                    concurrently(8) { h.sendMessage(h.directCommand(amina, brian, chat, clientMessageId)).data() }
 
-            assertEquals(1, sent.map { it.messageId }.toSet().size, "one message id")
-            assertEquals(1, inboxRows(brian))
-            assertEquals(1, h.count("SELECT count(*) FROM messaging.message_records"))
-            assertEquals(1, h.count("SELECT count(*) FROM messaging.client_messages"))
+                assertEquals(1, sent.map { it.messageId }.toSet().size, "one message id, run $run")
+                assertEquals(1, inboxRows(brian), "run $run")
+                assertEquals(1, h.count("SELECT count(*) FROM messaging.message_records WHERE chat_id = ?", chat.value))
+                assertEquals(
+                    1,
+                    h.count(
+                        "SELECT count(*) FROM messaging.client_messages WHERE client_message_id = ?",
+                        clientMessageId,
+                    ),
+                )
+            }
         }
 
     @Test
@@ -108,34 +120,39 @@ class DeliveryDataTest {
     // ---- acks ----
 
     @Test
-    fun `of many acks of one inbox row at once, exactly one takes it and one receipt goes`() =
+    fun `of many acks of one inbox row at once, exactly one takes it and one receipt goes (50 runs)`() =
         runBlocking<Unit> {
-            val (amina, brian) = List(2) { UserId.new() }
-            val chat = h.direct(amina, brian)
-            val sent = h.sendMessage(h.directCommand(amina, brian, chat)).data()
+            repeat(RACE_RUNS) { run ->
+                val (amina, brian) = List(2) { UserId.new() }
+                val chat = h.direct(amina, brian)
+                val sent = h.sendMessage(h.directCommand(amina, brian, chat)).data()
+                val receiptsBefore = h.frames.count
 
-            val acked = concurrently(10) { h.ackDelivered(brian, listOf(sent.messageId)).data() }
+                val acked = concurrently(10) { h.ackDelivered(brian, listOf(sent.messageId)).data() }
 
-            assertEquals(1, acked.sum())
-            assertEquals(0, inboxRows(brian))
-            assertEquals(1L, h.frames.count, "one delivered receipt to Amina")
+                assertEquals(1, acked.sum(), "run $run")
+                assertEquals(0, inboxRows(brian))
+                assertEquals(receiptsBefore + 1, h.frames.count, "one delivered receipt to Amina, run $run")
+            }
         }
 
     @Test
-    fun `the last of a group's acks deletes the body, and only the last`() =
+    fun `of a group's members all acking at once, the last ack deletes the body, once (50 runs)`() =
         runBlocking<Unit> {
-            repeat(5) {
+            repeat(RACE_RUNS) { run ->
                 val owner = UserId.new()
                 val members = List(12) { UserId.new() }
                 val group = h.group(owner, members)
                 val sent = h.sendMessage(h.groupCommand(owner, group)).data()
 
-                concurrently(members.size - 1) { i -> h.ackDelivered(members[i], listOf(sent.messageId)).data() }
-                assertEquals(1, bodies(sent.messageId), "one member hasn't got it yet")
+                concurrently(members.size - 2) { i -> h.ackDelivered(members[i], listOf(sent.messageId)).data() }
+                assertEquals(1, bodies(sent.messageId), "two members haven't got it yet, run $run")
 
-                concurrently(3) { h.ackDelivered(members.last(), listOf(sent.messageId, sent.messageId)).data() }
+                val last = members.takeLast(2)
+                val acked = concurrently(6) { i -> h.ackDelivered(last[i % 2], listOf(sent.messageId)).data() }
 
-                assertEquals(0, bodies(sent.messageId))
+                assertEquals(2, acked.sum(), "each of the last two counted once, run $run")
+                assertEquals(0, bodies(sent.messageId), "run $run")
                 assertNull(h.pending.counts[sent.messageId])
                 assertEquals(0, h.count("SELECT count(*) FROM messaging.inbox WHERE message_id = ?", sent.messageId))
             }
@@ -222,6 +239,38 @@ class DeliveryDataTest {
                     .messages
                     .map { it.messageId },
             )
+        }
+
+    // ---- M22 ----
+
+    @Test
+    fun `two settings changes at once, one to each field, both stick (50 runs)`() =
+        runBlocking<Unit> {
+            val updateSettings = UpdateSettings(h.settings)
+            repeat(RACE_RUNS) { run ->
+                val amina = UserId.new()
+
+                concurrently(2) { i ->
+                    if (i == 0) updateSettings(amina, false, null).data() else updateSettings(amina, null, false).data()
+                }
+
+                assertEquals(
+                    MessagingSettings(readReceipts = false, typing = false),
+                    h.settings.settings(amina),
+                    "run $run",
+                )
+            }
+        }
+
+    @Test
+    fun `a settings change returns the row as written, and a field left out keeps its value`() =
+        runBlocking<Unit> {
+            val amina = UserId.new()
+
+            assertEquals(MessagingSettings(true, false), h.settings.update(amina, null, false))
+            assertEquals(MessagingSettings(false, false), h.settings.update(amina, false, null))
+            assertEquals(MessagingSettings(false, true), h.settings.update(amina, null, true))
+            assertEquals(MessagingSettings(), h.settings.settings(UserId.new()), "no row: both on")
         }
 
     // ---- expiry ----

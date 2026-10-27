@@ -845,12 +845,13 @@ object Rules {
     private val portSuffixesThatLeave = listOf("Gateway", "Cache", "Client", "Clients")
 
     /**
-     * A `Transactor.run { }` block in a use case holds repository calls only: nothing that reaches Redis, HTTP, the
-     * event bus, a vendor contract or another module (the event is published right after the commit). The block is
-     * found by its braces; a constructor parameter it names is checked by its type.
+     * A `Transactor.run { }` block anywhere in `domain` (use cases and the helpers in `support` alike; decision
+     * 2026-10-28, PG5 review) holds repository calls only: nothing that reaches Redis, HTTP, the event bus, a vendor
+     * contract or another module (the event is published right after the commit). The block is found by its braces; a
+     * constructor parameter it names is checked by its type.
      */
     fun transactionsHoldDatabaseWorkOnly(files: List<KoFileDeclaration>): List<String> =
-        files.filter { it.isBusiness() && it.layer() == "domain" && it.subLayer() == "usecases" }.flatMap { file ->
+        files.filter { it.isBusiness() && it.layer() == "domain" }.flatMap { file ->
             val own = projectOf(file)!!.module
             val imports = file.importNames().associateBy { it.substringAfterLast('.') }
             file.classes().flatMap { cls ->

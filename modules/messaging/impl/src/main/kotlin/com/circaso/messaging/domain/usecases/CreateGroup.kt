@@ -35,7 +35,8 @@ import java.time.Clock
  *
  * The chat, every member row, `ChatCreated` and each `MemberAdded` are one transaction, so a create is never half
  * written. The chat id comes from the request's `Idempotency-Key` (decision 2026-10-26): a retry finds the group the
- * first attempt made and returns it as it is now, adding nobody, so someone who left in between is never put back.
+ * first attempt made and returns it as it is now, adding nobody, so someone who left in between is never put back;
+ * a creator who has left it since gets `messaging.chat_not_found`.
  */
 class CreateGroup(
     private val chats: ChatRepository,
@@ -69,17 +70,23 @@ class CreateGroup(
                     false
                 }
             }
-        val chat =
-            if (created) {
-                group
-            } else {
-                chats.chat(group.chatId)
-                    ?: return Resource.error(MessagingError.ChatNotFound)
-            }
-        if (created) {
-            events.forEach { bus.publish(it) }
-            notifyAdded(group, added)
-        }
+        if (!created) return retried(group, command.creator, notAdded)
+        events.forEach { bus.publish(it) }
+        notifyAdded(group, added)
+        return Resource.success(views.view(group, lastMessageId = null, notAdded = notAdded))
+    }
+
+    /**
+     * A retry of a create that committed: the group as it is now. A creator who has left it since sees no group, as
+     * anyone outside a chat does.
+     */
+    private suspend fun retried(
+        group: Chat,
+        creator: UserId,
+        notAdded: List<UserId>,
+    ): Resource<ChatView> {
+        val chat = chats.chat(group.chatId) ?: return Resource.error(MessagingError.ChatNotFound)
+        if (chats.member(chat.chatId, creator) == null) return Resource.error(MessagingError.ChatNotFound)
         return Resource.success(views.view(chat, lastMessageId = chats.lastMessageId(chat.chatId), notAdded = notAdded))
     }
 

@@ -1,5 +1,6 @@
 package com.circaso.messaging
 
+import com.circaso.identity.api.DeviceSignatures
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.ChatId
@@ -12,6 +13,7 @@ import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
 import com.circaso.messaging.di.messagingDatabaseSpec
 import com.circaso.messaging.domain.models.CreateGroupCommand
+import com.circaso.messaging.domain.models.KeyUploadProof
 import com.circaso.messaging.domain.models.RecipientCopy
 import com.circaso.messaging.domain.models.SendMessageCommand
 import com.circaso.messaging.domain.ports.Transactor
@@ -46,6 +48,8 @@ import com.circaso.messaging.domain.usecases.RetireReplacedPhone
 import com.circaso.messaging.domain.usecases.SendMessage
 import com.circaso.messaging.domain.usecases.SetRole
 import com.circaso.messaging.domain.usecases.UpdateGroup
+import com.circaso.shared.DeviceId
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.ReachPolicy
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +59,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.time.Clock
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 
@@ -95,7 +100,7 @@ class PostgresHarness(
     private val batcher = ReceiptBatcher(receipts, notifier, background, clock, config)
     private val inboxRemoval = InboxRemoval(this.delivery, pending)
     private val senders = MessageSenders(this.delivery)
-    private val signatures = FakeDeviceSignatures()
+    private val signatures = AcceptingSignatures()
     private val proofs = KeyProofs(signatures, clock, config.proofWindow)
 
     val openDirectChat = OpenDirectChat(chats, transactor, this.outbox, reach, views, bus, clock)
@@ -192,10 +197,32 @@ class PostgresHarness(
     companion object {
         fun cipher(bytes: Int = 48): String = Base64.getEncoder().encodeToString(ByteArray(bytes) { (it * 7).toByte() })
 
+        /** How often each "exactly one wins" race runs (the plan's done-when: 50 runs in a loop). */
+        const val RACE_RUNS = 50
+
+        /** The smallest UUIDv7 of [at]'s millisecond: a daily partition's bound, as infrastructure computes it. */
+        fun lowestUuid7(at: Instant): String {
+            val millis = at.toEpochMilli().toString(16).padStart(12, '0')
+            return "${millis.take(8)}-${millis.drop(8)}-7000-8000-000000000000"
+        }
+
+        /** A key upload whose proof passes: the time is now and [AcceptingSignatures] takes any signature. */
+        fun proof(clock: Clock) = KeyUploadProof(ByteArray(1), clock.instant(), ByteArray(1))
+
         /** Runs [block] [times] times at once on the default dispatcher, as concurrent requests would. */
         suspend fun <T> concurrently(times: Int, block: suspend (Int) -> T): List<T> =
             coroutineScope { (0 until times).map { async(Dispatchers.Default) { block(it) } }.awaitAll() }
     }
+}
+
+/** Identity's device signatures, all valid: the data tests drive the key use cases without signing. */
+class AcceptingSignatures : DeviceSignatures {
+    override suspend fun verify(
+        userId: UserId,
+        deviceId: DeviceId,
+        payload: ByteArray,
+        signature: ByteArray,
+    ): Resource<Unit> = Resource.success(Unit)
 }
 
 /** Users' reach, answered yes for everyone: the data tests are about the database, not the reach rule. */
