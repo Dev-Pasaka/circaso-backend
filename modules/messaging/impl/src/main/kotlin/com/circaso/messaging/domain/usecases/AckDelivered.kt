@@ -14,8 +14,9 @@ import java.util.UUID
 
 /**
  * The phone has these messages: `messaging.ack` over the socket, or M13 `POST /inbox/ack` after a push wake. Each
- * inbox row is deleted (a group's body with the last member's ack) and the sender gets `receipt delivered`: at once
- * in a direct chat, batched in a group. Ids that aren't in the inbox (already acked, or never there) are skipped.
+ * inbox row is taken with one `DELETE … RETURNING` (a group's body goes with the last member's ack) and the sender
+ * gets `receipt delivered`: at once in a direct chat, batched in a group. Of two acks of the same row racing, only the
+ * one that deleted it counts. Ids that aren't in the inbox (already acked, or never there) are skipped.
  * Only a `MESSAGE` gets a receipt; sender keys and control messages aren't shown, so nobody waits for one.
  */
 class AckDelivered(
@@ -26,14 +27,12 @@ class AckDelivered(
 ) {
     /** The number of messages this call took out of the inbox. */
     suspend operator fun invoke(userId: UserId, messageIds: Collection<UUID>): Resource<Int> {
-        val removed = messageIds.distinct().mapNotNull { take(userId, it) }
+        val distinct = messageIds.distinct()
+        if (distinct.isEmpty()) return Resource.success(0)
+        val removed = delivery.takeInboxRows(userId, distinct)
+        removal.settle(removed)
         tell(userId, removed.filter { it.kind == MessageKind.MESSAGE })
         return Resource.success(removed.size)
-    }
-
-    private suspend fun take(userId: UserId, messageId: UUID): InboxMessage? {
-        val row = delivery.inboxRow(userId, messageId) ?: return null
-        return row.takeIf { removal.remove(it) }
     }
 
     /** One frame per sender and direct chat; group receipts join their message's batch. */

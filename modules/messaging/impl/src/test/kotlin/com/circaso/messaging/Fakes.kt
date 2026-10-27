@@ -18,48 +18,60 @@ import java.time.Instant
 import java.util.TreeMap
 import java.util.concurrent.ConcurrentHashMap
 
+/** The key directory in memory; each one-time prekey remembers which phone uploaded it and when. */
 class MemoryKeys : KeyRepository {
+    private data class Stored(val key: OneTimePreKey, val deviceId: DeviceId, val at: Instant)
+
     val bundles = ConcurrentHashMap<UserId, KeyBundle>()
-    private val prekeys = ConcurrentHashMap<UserId, TreeMap<Int, OneTimePreKey>>()
+    private val prekeys = ConcurrentHashMap<UserId, TreeMap<Int, Stored>>()
 
     private fun of(userId: UserId) = prekeys.getOrPut(userId) { TreeMap() }
 
     override suspend fun bundle(userId: UserId) = bundles[userId]
 
-    override suspend fun oneTimeKeyIds(userId: UserId): Set<Int> = synchronized(this) { of(userId).keys.toSet() }
+    override suspend fun lockBundle(userId: UserId) = bundles[userId]
+
+    override suspend fun oneTimeKeyIds(userId: UserId, deviceId: DeviceId): Set<Int> =
+        synchronized(this) { of(userId).filterValues { it.deviceId == deviceId }.keys.toSet() }
 
     override suspend fun publish(
         bundle: KeyBundle,
         oneTimePreKeys: List<OneTimePreKey>,
-        staleKeyIds: Set<Int>,
+        at: Instant,
     ) = synchronized(this) {
         bundles[bundle.userId] = bundle
         val keys = of(bundle.userId)
-        for (keyId in staleKeyIds) keys.remove(keyId)
-        for (key in oneTimePreKeys) keys[key.keyId] = key
+        keys.clear()
+        for (key in oneTimePreKeys) keys[key.keyId] = Stored(key, bundle.deviceId, at)
     }
 
-    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean =
+    override suspend fun addOneTimeKeys(
+        userId: UserId,
+        deviceId: DeviceId,
+        keys: List<OneTimePreKey>,
+        at: Instant,
+    ) = synchronized(this) {
+        val stored = of(userId)
+        check(keys.none { it.keyId in stored }) { "a resent id would break the primary key" }
+        for (key in keys) stored[key.keyId] = Stored(key, deviceId, at)
+    }
+
+    override suspend fun claimOneTimeKey(userId: UserId, deviceId: DeviceId): OneTimePreKey? =
         synchronized(this) {
-            val stored = of(userId)
-            if (keys.any { it.keyId in stored }) return false
-            for (key in keys) stored[key.keyId] = key
-            true
+            val keys = of(userId)
+            val first = keys.entries.firstOrNull { it.value.deviceId == deviceId } ?: return null
+            keys.remove(first.key)?.key
         }
 
-    override suspend fun claimOneTimeKey(userId: UserId): OneTimePreKey? =
-        synchronized(this) { of(userId).pollFirstEntry()?.value }
-
-    /** Without write times, a newer phone's bundle stands for prekeys written after the replacement: they stay. */
     override suspend fun removeBundle(
         userId: UserId,
         deviceId: DeviceId,
         replacedAt: Instant,
     ): Boolean =
         synchronized(this) {
+            of(userId).entries.removeIf { it.value.deviceId == deviceId && it.value.at.isBefore(replacedAt) }
             if (bundles[userId]?.deviceId != deviceId) return false
             bundles.remove(userId)
-            prekeys.remove(userId)
             true
         }
 

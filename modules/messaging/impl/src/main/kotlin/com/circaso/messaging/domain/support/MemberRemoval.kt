@@ -5,12 +5,12 @@ import com.circaso.messaging.api.GroupDeleted
 import com.circaso.messaging.api.MemberRemoved
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.Chat
+import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
-import com.circaso.messaging.domain.repositories.ChatChanges
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
-import com.circaso.messaging.domain.repositories.Leave
-import com.circaso.messaging.domain.repositories.MessagingStore
+import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventId
@@ -20,85 +20,94 @@ import com.circaso.shared.envelope
 import java.util.UUID
 
 /**
- * Takes someone out of a group, for a leave and for a removal alike (decision 2026-10-26):
+ * Takes someone out of a group, for a leave ([by] is the person) and for a removal by an admin alike. It is one
+ * transaction (messaging.md → M10), which closes the half-done removal MS3 could leave behind:
  *
- * 1. Their chat-list line goes with `MemberRemoved` in one batch. The event's id is made from the chat, the person
- *    and when they joined: one event per membership, however many removals of it are tried.
- * 2. Then the member row is deleted with a lightweight transaction (`IF EXISTS`): of a remove and a leave of the
- *    same person racing, only one goes on to the next step, and only it sends frames. If anything fails before
- *    this, the person is still a member, so a retry by either of them completes the removal.
- * 3. Only then the chat changes, through its version, deciding on the rows as they are now: the member count goes
- *    down (never below the rows), a group whose owner is gone gets the longest-serving admin, or else member, as
- *    owner, and a group with nobody left is deleted.
+ * 1. The chat's row is locked first, so membership changes to one group run one after another, and the caller's
+ *    right to remove is decided on the rows as they are now.
+ * 2. The member row is taken with `DELETE … RETURNING`. Only the caller that gets it goes on; one that gets nothing
+ *    changed nothing (`messaging.chat_not_found`), so of a remove and a leave racing, one wins.
+ * 3. The winner decrements `member_count` (moving the version on), picks the successor when the owner left (the
+ *    longest-serving admin, else member), deletes the group when nobody is left, and writes `MemberRemoved` (its id
+ *    made from the chat, the person and when they joined) and `GroupDeleted` to the outbox.
  *
- * Everyone who was in it, the person included, gets `member.removed` so the remaining phones rotate their sender
- * keys; a new owner is announced with `chat.updated`.
+ * After the commit, everyone who was in it, the person included, gets `member.removed` so the remaining phones
+ * rotate their sender keys; a new owner is announced with `chat.updated`.
  */
 class MemberRemoval(
     private val chats: ChatRepository,
-    private val writer: ChatWriter,
-    private val store: MessagingStore,
+    private val transactor: Transactor,
+    private val outbox: MessagingOutbox,
     private val membership: Membership,
     private val notifier: ChatNotifier,
     private val bus: EventBus,
 ) {
-    suspend fun remove(member: Member, by: UserId): Resource<Unit> {
-        val chatId = member.chatId
-        store.commit(ChatChanges(leaves = listOf(Leave(member, removedEvent(member, by)))))
-        if (!chats.claimRemoval(chatId, member.userId)) return Resource.error(MessagingError.ChatNotFound)
+    /** What the transaction did, for the frames and events after the commit. */
+    private class Removed(
+        val member: Member,
+        val chat: Chat?,
+        val remaining: List<Member>,
+        val newOwner: Member?,
+        val events: List<EventEnvelope>,
+    )
+
+    suspend fun remove(
+        chatId: ChatId,
+        target: UserId,
+        by: UserId,
+    ): Resource<Unit> {
+        val removed =
+            when (val outcome = transactor.attempt("chats.remove-member") { decide(chatId, target, by) }) {
+                is Resource.Error -> return outcome
+                is Resource.Success -> outcome.data
+            }
         membership.changed(chatId)
-
-        val outcome = Outcome()
-        val written = writer.update(chatId) { latest -> decide(latest, outcome) }
-        if (written is Resource.Success) finish(written.data, outcome)
-
-        val remaining = membership.members(chatId)
-        notifier.memberRemoved(
-            recipients = remaining + member.userId,
-            chatId = chatId,
-            removed = member.userId,
-            by = by,
-        )
+        removed.events.forEach { bus.publish(it) }
+        val remaining = removed.remaining.map { it.userId }
+        notifier.memberRemoved(remaining + target, chatId, removed = target, by = by)
+        val chat = removed.chat
+        if (removed.newOwner != null && chat != null) notifier.chatUpdated(remaining, chat)
         return Resource.success(Unit)
     }
 
+    /** Inside the transaction, with the chat's row locked before any member row is read. */
+    private suspend fun decide(
+        chatId: ChatId,
+        target: UserId,
+        by: UserId,
+    ): Resource<Removed> {
+        val chat = chats.lockChat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
+        val actor = chats.member(chatId, by) ?: return Resource.error(MessagingError.ChatNotFound)
+        if (chat.kind != ChatKind.GROUP) return Resource.error(MessagingError.NotAGroup)
+        if (target != by) {
+            if (!chat.roleOf(actor).isAdmin) return Resource.error(MessagingError.NotAdmin)
+            val subject = chats.member(chatId, target) ?: return Resource.error(MessagingError.ChatNotFound)
+            if (chat.roleOf(subject) == Role.OWNER) return Resource.error(MessagingError.NotAdmin)
+        }
+
+        val member = chats.removeMember(chatId, target) ?: return Resource.error(MessagingError.ChatNotFound)
+        val remaining = chats.members(chatId)
+        val removedEvent = removedEvent(member, by)
+        if (remaining.isEmpty()) {
+            chats.deleteChat(chatId)
+            val deleted = bus.envelope(GroupDeleted(chatId)).oncePerChat(chatId)
+            outbox.write(listOf(removedEvent, deleted))
+            return Resource.success(Removed(member, null, remaining, null, listOf(removedEvent, deleted)))
+        }
+
+        val successor = if (chat.ownerId == target) successorOf(chat, remaining) else null
+        val next = chat.copy(memberCount = chat.memberCount - 1, ownerId = successor?.userId ?: chat.ownerId)
+        val updated = chats.updateChat(chat, next) ?: return Resource.error(MessagingError.VersionConflict)
+        if (successor != null) chats.setRole(successor)
+        outbox.write(listOf(removedEvent))
+        return Resource.success(Removed(member, updated, remaining, successor, listOf(removedEvent)))
+    }
+
+    /** One event per membership, however many removals of it are tried. */
     private fun removedEvent(member: Member, by: UserId): EventEnvelope {
-        val removed =
-            MemberRemoved(
-                member.chatId,
-                member.userId,
-                by,
-            )
+        val removed = MemberRemoved(member.chatId, member.userId, by)
         val once = "${MemberRemoved.TYPE}:${member.chatId}:${member.userId}:${member.joinedAt.toEpochMilli()}"
         return bus.envelope(removed).copy(eventId = EventId(UUID.nameUUIDFromBytes(once.toByteArray())))
-    }
-
-    /** What the last run of [decide] chose; it runs again on every attempt, so it starts over each time. */
-    private class Outcome {
-        var deleting = false
-        var successor: Member? = null
-    }
-
-    /**
-     * Inside the version check. A chat already at zero is being deleted by the last member to leave before this one,
-     * which stops here: that leave publishes `GroupDeleted`, once.
-     */
-    private suspend fun decide(latest: Chat, outcome: Outcome): Resource<Chat> {
-        outcome.deleting = false
-        outcome.successor = null
-        if (latest.memberCount <= 0) return Resource.error(MessagingError.ChatNotFound)
-
-        val remaining = chats.members(latest.chatId)
-        if (remaining.isEmpty()) {
-            outcome.deleting = true
-            return Resource.success(latest.copy(memberCount = 0))
-        }
-        val owner = latest.ownerId
-        val ownerLeft = owner != null && remaining.none { it.userId == owner }
-        val successor = if (ownerLeft) successorOf(latest, remaining) else null
-        outcome.successor = successor
-        val count = maxOf(latest.memberCount - 1, remaining.size)
-        return Resource.success(latest.copy(memberCount = count, ownerId = successor?.userId ?: owner))
     }
 
     /** The admin who joined first, or else the member who did; ties go by user id. */
@@ -106,28 +115,5 @@ class MemberRemoval(
         val bySeniority = remaining.sortedWith(compareBy<Member>({ it.joinedAt }, { it.userId.toString() }))
         val next = bySeniority.firstOrNull { chat.roleOf(it) == Role.ADMIN } ?: bySeniority.first()
         return next.copy(role = Role.OWNER)
-    }
-
-    private suspend fun finish(chat: Chat, outcome: Outcome) {
-        val successor = outcome.successor
-        when {
-            outcome.deleting -> deleteGroup(chat.chatId)
-            successor != null -> handOver(chat, successor)
-        }
-    }
-
-    private suspend fun deleteGroup(chatId: ChatId) {
-        val deleted = bus.envelope(GroupDeleted(chatId)).oncePerChat(chatId)
-        store.commit(ChatChanges(deletedChats = listOf(chatId), events = listOf(deleted)))
-        membership.changed(chatId)
-    }
-
-    /**
-     * The owner row mirrors [Chat.ownerId], which the version check already set. Written only if the successor is
-     * still a member: one who left in the meantime isn't put back, and their own leave chose the next owner.
-     */
-    private suspend fun handOver(chat: Chat, successor: Member) {
-        chats.updateRole(successor)
-        notifier.chatUpdated(membership.members(chat.chatId), chat)
     }
 }

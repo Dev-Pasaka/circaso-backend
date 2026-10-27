@@ -160,8 +160,7 @@ class DeliveryTest {
             assertEquals(true, data.pushable)
             assertEquals(sent.messageId, data.messageId)
             assertEquals(text, data.ciphertext, "a small ciphertext rides in the frame")
-            assertEquals(sent.messageId, h.delivery.lastMessages[amina to chat])
-            assertEquals(sent.messageId, h.delivery.lastMessages[brian to chat])
+            assertEquals(sent.messageId, h.chats.chats.lastMessageId(chat), "the chat list's last message")
         }
 
     @Test
@@ -188,7 +187,7 @@ class DeliveryTest {
         }
 
     @Test
-    fun `a group message is one body and a pointer per member, in batches of 100, with one frame for all`() =
+    fun `a group message is one body and a pointer per member, written at once, with one frame for all`() =
         runBlocking<Unit> {
             val members = List(250) { UserId.new() }
             val group = h.group(amina, members)
@@ -198,7 +197,8 @@ class DeliveryTest {
             h.settle()
 
             assertEquals(text, h.delivery.bodies[group to sent.messageId]!!.ciphertext)
-            assertEquals(listOf(100, 100, 51), h.delivery.batches, "the message record and 250 pointers")
+            assertEquals(1, h.delivery.writes, "the record, the body and 250 pointers in one write")
+            assertEquals(listOf("messages.send"), h.chats.transactor.operations.filter { it.startsWith("messages") })
             for (member in members) {
                 val pointer = h.delivery.inboxOf(member).single()
                 assertTrue(pointer.groupBody)
@@ -243,7 +243,7 @@ class DeliveryTest {
             val frames = h.live.of("message.new").filter { it.data<MessageNewFrame>().kind == MessageKind.SENDER_KEY }
             assertEquals(listOf(setOf(brian), setOf(chidi)), frames.map { it.to })
             assertTrue(frames.none { it.data<MessageNewFrame>().pushable })
-            assertEquals(before.messageId, h.delivery.lastMessages[brian to group], "not shown, so not last")
+            assertEquals(before.messageId, h.chats.chats.lastMessageId(group), "not shown, so not last")
         }
 
     @Test
@@ -376,20 +376,13 @@ class DeliveryTest {
         runBlocking<Unit> {
             val chat = h.direct(amina, brian)
             val sent = h.sendDirect(amina, brian, chat)
-            val bothRead = CompletableDeferred<Unit>()
-            var reads = 0
-            h.delivery.inboxRead = {
-                if (++reads == 2) bothRead.complete(Unit)
-                bothRead.await()
-            }
-
             val acks =
                 listOf(
                     async { h.ackDelivered(brian, listOf(sent.messageId)).data() },
                     async { h.ackDelivered(brian, listOf(sent.messageId)).data() },
                 ).awaitAll()
 
-            assertEquals(1, acks.sum(), "both read the row, one claimed it")
+            assertEquals(1, acks.sum(), "one took the row, the other found it gone")
             assertEquals(1, h.frames.to(amina).count { it.type == "receipt" })
         }
 
@@ -407,7 +400,7 @@ class DeliveryTest {
                     .messages
                     .isEmpty(),
             )
-            assertNull(h.delivery.inboxRow(brian, sent.messageId))
+            assertTrue(h.delivery.inboxOf(brian).isEmpty())
         }
 
     @Test
@@ -439,16 +432,5 @@ class DeliveryTest {
 
             assertEquals("request.malformed", h.inbound.receive(amina, device, unknown).errorCode())
             assertEquals("request.malformed", h.inbound.receive(amina, device, unreadable).errorCode())
-        }
-
-    @Test
-    fun `a small config is honoured for the fan-out batch`() =
-        runBlocking<Unit> {
-            val small = DeliveryHarness(MessagingConfig(fanOutBatch = 2))
-            val group = small.group(amina, List(5) { UserId.new() })
-
-            small.sendGroup(amina, group)
-
-            assertEquals(listOf(2, 2, 2), small.delivery.batches, "the record and 5 pointers")
         }
 }

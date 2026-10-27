@@ -41,6 +41,8 @@ data class Chat(
     val ownerId: UserId? = null,
     /** The encrypted avatar file (chat media, MS5). Kept here so every rewrite of the chat carries it over. */
     val avatarMediaId: UUID? = null,
+    /** A direct chat's two people, in any order; null for a group. Unique per pair: the claim behind M4. */
+    val directPair: Pair<UserId, UserId>? = null,
 ) {
     /**
      * [member]'s role as the chat sees it: the owner is whoever [ownerId] names, and a member row still saying OWNER
@@ -61,15 +63,20 @@ data class Member(
     val joinedAt: Instant,
 )
 
-/** One line of a user's chat list. [lastMessageId] and [readUpTo] are null until messages exist (MS4). */
+/** A user's place in one chat: the chat's kind and their read marker (null until they read anything). */
 data class UserChat(
     val userId: UserId,
     val chatId: ChatId,
     val kind: ChatKind,
-    val lastMessageId: UUID?,
     val readUpTo: UUID?,
     val joinedAt: Instant,
 )
+
+/**
+ * One line of a user's chat list (M6): the chat and the newest `MESSAGE` the server still holds a record of, null
+ * after 30 quiet days.
+ */
+data class ChatLine(val chat: Chat, val lastMessageId: UUID?)
 
 data class MemberView(val profile: PublicProfile, val role: Role, val joinedAt: Instant)
 

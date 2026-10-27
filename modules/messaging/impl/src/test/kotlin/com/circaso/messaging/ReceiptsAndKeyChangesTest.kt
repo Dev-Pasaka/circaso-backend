@@ -46,7 +46,7 @@ class ReceiptsAndKeyChangesTest {
 
             h.markRead(brian, chat, sent.messageId).data()
 
-            assertEquals(sent.messageId, h.delivery.readMarks[brian to chat])
+            assertEquals(sent.messageId, h.chats.chats.readMarks[brian to chat])
             val receipt =
                 h.frames
                     .to(amina)
@@ -64,13 +64,10 @@ class ReceiptsAndKeyChangesTest {
             val first = h.sendDirect(amina, brian, chat)
             val second = h.sendDirect(amina, brian, chat)
             h.markRead(brian, chat, second.messageId)
-            h.chats.chats.lines[brian]!![chat] =
-                h.chats.chats.lines[brian]!![chat]!!
-                    .copy(readUpTo = second.messageId)
 
             h.markRead(brian, chat, first.messageId)
 
-            assertEquals(second.messageId, h.delivery.readMarks[brian to chat])
+            assertEquals(second.messageId, h.chats.chats.readMarks[brian to chat])
             assertEquals(1, h.frames.to(amina).count { it.type == "receipt" })
         }
 
@@ -83,7 +80,7 @@ class ReceiptsAndKeyChangesTest {
 
             h.markRead(brian, chat, sent.messageId)
 
-            assertEquals(sent.messageId, h.delivery.readMarks[brian to chat])
+            assertEquals(sent.messageId, h.chats.chats.readMarks[brian to chat])
             assertTrue(h.frames.to(amina).none { it.type == "receipt" })
         }
 
@@ -250,7 +247,7 @@ class ReceiptsAndKeyChangesTest {
             assertEquals("messaging.chat_not_found", h.deleteForEveryone(chidi, chat, sent.messageId).errorCode())
             h.chats.clock.advance(Duration.ofHours(49))
             assertEquals("messaging.delete_window_passed", h.deleteForEveryone(amina, chat, sent.messageId).errorCode())
-            assertNotNull(h.delivery.inboxRow(brian, sent.messageId))
+            assertEquals(listOf(sent.messageId), h.delivery.inboxOf(brian).map { it.messageId })
         }
 
     @Test
@@ -328,7 +325,7 @@ class ReceiptsAndKeyChangesTest {
     fun `a replaced phone's waiting messages are dropped, senders told, and keys changed for everyone`() =
         runBlocking<Unit> {
             val oldPhone = DeviceId.new()
-            h.chats.keys.publish(bundle(brian, oldPhone), listOf(OneTimePreKey(1, "otk")), emptySet())
+            h.chats.keys.publish(bundle(brian, oldPhone), listOf(OneTimePreKey(1, "otk")), h.chats.clock.instant())
             val direct = h.direct(amina, brian)
             val group = h.group(chidi, listOf(brian))
             val fromAmina = h.sendDirect(amina, brian, direct)
@@ -361,7 +358,7 @@ class ReceiptsAndKeyChangesTest {
     fun `a bundle the new phone already published is kept`() =
         runBlocking<Unit> {
             val newPhone = DeviceId.new()
-            h.chats.keys.publish(bundle(brian, newPhone), listOf(OneTimePreKey(1, "otk")), emptySet())
+            h.chats.keys.publish(bundle(brian, newPhone), listOf(OneTimePreKey(1, "otk")), h.chats.clock.instant())
 
             h.retireReplacedPhone(brian, DeviceId.new(), h.chats.clock.instant()).data()
 

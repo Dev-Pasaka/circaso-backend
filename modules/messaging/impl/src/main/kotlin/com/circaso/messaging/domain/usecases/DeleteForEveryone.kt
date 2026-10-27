@@ -4,6 +4,7 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.ports.PendingCounts
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.support.DeliveryNotifier
@@ -26,6 +27,7 @@ class DeleteForEveryone(
     private val chats: ChatRepository,
     private val membership: Membership,
     private val delivery: DeliveryRepository,
+    private val transactor: Transactor,
     private val pending: PendingCounts,
     private val senders: MessageSenders,
     private val notifier: DeliveryNotifier,
@@ -46,11 +48,11 @@ class DeleteForEveryone(
             return Resource.error(MessagingError.DeleteWindowPassed)
         }
 
-        delivery.deleteInboxRows(others, messageId, config.fanOutBatch)
-        if (chat.kind == ChatKind.GROUP) {
-            delivery.deleteGroupBody(chatId, messageId)
-            pending.clear(messageId)
+        transactor.run("messages.delete-for-everyone") {
+            delivery.deleteInboxRows(others, messageId)
+            if (chat.kind == ChatKind.GROUP) delivery.deleteGroupBody(chatId, messageId)
         }
+        if (chat.kind == ChatKind.GROUP) pending.clear(messageId)
         notifier.messageDeleted(others, chatId, messageId)
         return Resource.success(Unit)
     }

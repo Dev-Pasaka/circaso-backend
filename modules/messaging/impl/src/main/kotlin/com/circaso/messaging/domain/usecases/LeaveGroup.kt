@@ -1,9 +1,6 @@
 package com.circaso.messaging.domain.usecases
 
 import com.circaso.messaging.api.ChatId
-import com.circaso.messaging.domain.errors.MessagingError
-import com.circaso.messaging.domain.models.ChatKind
-import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.support.MemberRemoval
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -13,11 +10,7 @@ import com.circaso.shared.UserId
  * (`messaging.not_a_group`). An owner who leaves hands ownership to the longest-serving admin, or else member; the
  * last member leaving deletes the group (`messaging.GroupDeleted`).
  */
-class LeaveGroup(private val chats: ChatRepository, private val removal: MemberRemoval) {
-    suspend operator fun invoke(caller: UserId, chatId: ChatId): Resource<Unit> {
-        val me = chats.member(chatId, caller) ?: return Resource.error(MessagingError.ChatNotFound)
-        val chat = chats.chat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        if (chat.kind != ChatKind.GROUP) return Resource.error(MessagingError.NotAGroup)
-        return removal.remove(me, by = caller)
-    }
+class LeaveGroup(private val removal: MemberRemoval) {
+    suspend operator fun invoke(caller: UserId, chatId: ChatId): Resource<Unit> =
+        removal.remove(chatId, caller, by = caller)
 }

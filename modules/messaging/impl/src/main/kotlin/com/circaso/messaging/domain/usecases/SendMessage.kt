@@ -11,7 +11,7 @@ import com.circaso.messaging.domain.models.MessageRecord
 import com.circaso.messaging.domain.models.SendMessageCommand
 import com.circaso.messaging.domain.models.SentMessage
 import com.circaso.messaging.domain.ports.PendingCounts
-import com.circaso.messaging.domain.repositories.ChatMarkers
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.support.DeliveryNotifier
@@ -34,23 +34,22 @@ import java.util.UUID
 
 /**
  * M12 `POST /chats/{chatId}/messages`. A direct copy goes into the recipient's inbox with its ciphertext; a group
- * message is one `GroupMessageRow` and a pointer per member, written in unlogged batches of 100, with
- * `msg:pending:{messageId}` counting the members still to ack (Messaging → Fan-out). The send answers once the rows
- * are written; `message.new` frames and pushes go out after, in the background.
+ * message is one `group_messages` body and a pointer per member, with `msg:pending:{messageId}` counting the members
+ * still to ack (Messaging → Fan-out). The send answers once its transaction has committed; `message.new` frames and
+ * pushes go out after, in the background.
  *
- * The `clientMessageId` is claimed with the message id before anything is written, and the claim is marked complete
- * once every row is (decision 2026-10-27). A retry of a complete send returns its id and writes nothing; a retry that
- * finds the claim incomplete (the first attempt failed part-way, or is still writing) writes the same rows under the
- * same id, which is harmless twice, and completes it. So a message keeps one id, and no send answers before its rows
- * exist. The writes and the completion run under `NonCancellable`: a caller that goes away mid-write doesn't leave
- * half a fan-out behind.
+ * The `clientMessageId` claim, the message record, the body and every inbox row (one multi-row insert) are one
+ * transaction. A retry that finds the claim returns the first send's id and writes nothing; a send that failed left
+ * no claim and no rows, so its retry sends it once, under a new id. So a message keeps one id (decision 2026-10-27)
+ * and no send answers before its rows exist. The pending counter is set for this attempt's id before the
+ * transaction, so an ack never finds a pointer without it, and cleared again when the attempt didn't write.
  */
 class SendMessage(
     private val chats: ChatRepository,
     private val membership: Membership,
     private val reach: ReachPolicy,
     private val delivery: DeliveryRepository,
-    private val markers: ChatMarkers,
+    private val transactor: Transactor,
     private val pending: PendingCounts,
     private val notifier: DeliveryNotifier,
     private val ids: OrderedIds,
@@ -67,20 +66,46 @@ class SendMessage(
         val problem = check(chat, command, others)
         if (problem != null) return Resource.error(problem)
 
-        val fresh = ids.next()
-        val earlier = delivery.claimClientMessage(command.sender, command.clientMessageId, fresh)
-        if (earlier != null && earlier.complete) {
-            return Resource.success(SentMessage(earlier.messageId, sentAt(earlier.messageId)))
-        }
-        val messageId = earlier?.messageId ?: fresh
+        val messageId = ids.next()
         val sentAt = sentAt(messageId)
         val fanout = fanout(chat, command, others, messageId, sentAt)
-        withContext(NonCancellable) {
-            write(command, fanout, members, messageId)
-            delivery.completeClientMessage(command.sender, command.clientMessageId, messageId)
+        val counted = fanout.body != null && fanout.rows.isNotEmpty()
+        if (counted) pending.start(messageId, fanout.rows.size)
+        val earlier = commit(command, fanout, counted)
+        if (earlier != null) {
+            if (counted) pending.clear(messageId)
+            return Resource.success(SentMessage(earlier, sentAt(earlier)))
         }
         background.launch { notify(command, fanout) }
         return Resource.success(SentMessage(messageId, sentAt))
+    }
+
+    /**
+     * The send's one transaction: the claim, then the rows only if the claim was this attempt's. The earlier send's
+     * id when there was one. It runs under `NonCancellable` (decision 2026-10-27): a caller that goes away mid-send
+     * neither leaves the outcome unknown nor clears the counter of a message that committed. A failed transaction
+     * clears this attempt's counter, which nothing would count down.
+     */
+    private suspend fun commit(
+        command: SendMessageCommand,
+        fanout: Fanout,
+        counted: Boolean,
+    ): UUID? {
+        val messageId = fanout.record.messageId
+        val expiresAt = clock.instant().plus(config.clientMessageTtl)
+        return withContext(NonCancellable) {
+            try {
+                transactor.run("messages.send") {
+                    val earlier =
+                        delivery.claimClientMessage(command.sender, command.clientMessageId, messageId, expiresAt)
+                    if (earlier == null) delivery.writeMessage(fanout)
+                    earlier
+                }
+            } catch (e: Exception) {
+                if (counted) pending.clear(messageId)
+                throw e
+            }
+        }
     }
 
     private fun tooLarge(command: SendMessageCommand): Boolean {
@@ -151,28 +176,6 @@ class SendMessage(
         if (groupText == null) return Fanout(record, command.recipients.map { row(it.userId, it.ciphertext) }, null)
         val body = GroupBody(chat.chatId, messageId, command.sender, groupText, sentAt)
         return Fanout(record, others.map { row(it, null) }, body)
-    }
-
-    /**
-     * The body before its pointers, and the counter before either, so an ack never finds a pointer without them. The
-     * message record rides in the first batch of rows.
-     * Only a `MESSAGE` moves the chat list's last message: sender keys and control messages aren't shown.
-     */
-    private suspend fun write(
-        command: SendMessageCommand,
-        fanout: Fanout,
-        members: Set<UserId>,
-        messageId: UUID,
-    ) {
-        val body = fanout.body
-        if (body != null && fanout.rows.isNotEmpty()) {
-            pending.start(messageId, fanout.rows.size)
-            delivery.writeGroupBody(body)
-        }
-        delivery.writeMessage(fanout.record, fanout.rows, config.fanOutBatch)
-        if (command.kind == MessageKind.MESSAGE) {
-            markers.lastMessage(members, command.chatId, messageId, config.fanOutBatch)
-        }
     }
 
     /** Sender keys and control messages never wake anyone, whatever the phone asked. */

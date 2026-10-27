@@ -27,9 +27,6 @@ data class SendMessageCommand(
 
 data class SentMessage(val messageId: UUID, val sentAt: Instant)
 
-/** An earlier send with the same `clientMessageId`: the id it was given, and whether all its rows are written. */
-data class ClientClaim(val messageId: UUID, val complete: Boolean)
-
 /**
  * A message waiting in one recipient's inbox. A group message's rows are pointers ([groupBody] true, no
  * [ciphertext]): its one ciphertext is a [GroupBody]. [mediaIds] are references to chat media (M15).

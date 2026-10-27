@@ -1,62 +1,95 @@
 package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.MessageKind
 import com.circaso.messaging.api.MessagingFrame
 import com.circaso.messaging.domain.models.Chat
+import com.circaso.messaging.domain.models.ChatKind
+import com.circaso.messaging.domain.models.ChatLine
 import com.circaso.messaging.domain.models.Member
+import com.circaso.messaging.domain.models.MessageRecord
 import com.circaso.messaging.domain.models.UserChat
 import com.circaso.messaging.domain.ports.LoggedFrame
 import com.circaso.messaging.domain.ports.MembersCache
 import com.circaso.messaging.domain.ports.RealtimeFrames
 import com.circaso.messaging.domain.ports.RealtimeLog
-import com.circaso.messaging.domain.repositories.ChatChanges
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
-import com.circaso.messaging.domain.repositories.MessagingStore
+import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.KSerializer
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Chats in memory, with the same rules as the tables: the pair claim, the removal claim and the versioned update
- * are atomic, and a commit applies one [ChatChanges] as a unit (what the logged batch does). Every call yields
- * first, so coroutines started together interleave at each step, as requests do. [beforeUpdate] runs just before a
- * versioned update, so a test can change the chat in between, and [beforeRoleWrite] just before a role is written;
- * [failCommits] makes the next commits throw, and [partialJoins] makes the next commit write the chats and only that
- * many joins before it throws (a create that failed part-way).
+ * One transaction at a time: every `run` and `attempt` holds one lock, the in-memory stand-in for the row locks the
+ * real transactions take, so use cases that race in a test run one after the other, as they do on PostgreSQL. An
+ * `attempt` that answers an error doesn't undo what it wrote: the use cases decide before they write, and the
+ * rollback itself is tested on PostgreSQL.
  */
-class MemoryChats :
-    ChatRepository,
-    MessagingStore {
-    val claims = ConcurrentHashMap<String, ChatId>()
-    val chats = ConcurrentHashMap<ChatId, Chat>()
-    val members = ConcurrentHashMap<ChatId, MutableMap<UserId, Member>>()
-    val lines = ConcurrentHashMap<UserId, MutableMap<ChatId, UserChat>>()
-    val commits = CopyOnWriteArrayList<ChatChanges>()
-    var beforeUpdate: suspend () -> Unit = {}
-    var failCommits = 0
-    var partialJoins: Int? = null
-    var beforeRoleWrite: suspend () -> Unit = {}
+class MemoryTransactor : Transactor {
+    private val lock = Mutex()
+    val operations = CopyOnWriteArrayList<String>()
 
-    override suspend fun claimPair(pair: String, chatId: ChatId): Boolean {
-        yield()
-        return claims.putIfAbsent(pair, chatId) == null
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T =
+        lock.withLock {
+            operations += operation
+            block()
+        }
+
+    override suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T> =
+        run(operation, block)
+}
+
+/** The outbox rows written, in order. */
+class MemoryOutbox : MessagingOutbox {
+    val written = CopyOnWriteArrayList<EventEnvelope>()
+
+    override suspend fun write(events: List<EventEnvelope>) {
+        written += events
     }
 
-    override suspend fun pairChat(pair: String) = claims[pair]
+    fun types(): List<String> = written.map { it.type }
+}
+
+/**
+ * Chats in memory, with the same rules as the tables: one direct chat per pair, a removal that one caller takes, a
+ * versioned update, the conditional seat reservation, and members that go with their chat. [records] are the
+ * message records the delivery fakes write, so the newest one answers `lastMessageId` as `message_records` does.
+ */
+class MemoryChats : ChatRepository {
+    val chats = ConcurrentHashMap<ChatId, Chat>()
+    val members = ConcurrentHashMap<ChatId, MutableMap<UserId, Member>>()
+    val readMarks = ConcurrentHashMap<Pair<UserId, ChatId>, UUID>()
+    val records = ConcurrentHashMap<UUID, MessageRecord>()
 
     override suspend fun chat(chatId: ChatId) = chats[chatId]
 
+    override suspend fun lockChat(chatId: ChatId) = chats[chatId]
+
+    override suspend fun insertChat(chat: Chat): Boolean =
+        synchronized(this) {
+            if (chats.containsKey(chat.chatId)) return false
+            val pair = chat.directPair?.toList()?.toSet()
+            if (pair != null && chats.values.any { it.directPair?.toList()?.toSet() == pair }) return false
+            chats[chat.chatId] = chat
+            true
+        }
+
+    override suspend fun directChat(a: UserId, b: UserId): Chat? =
+        chats.values.firstOrNull { it.directPair?.toList()?.toSet() == setOf(a, b) }
+
     override suspend fun updateChat(old: Chat, new: Chat): Chat? {
-        yield()
-        beforeUpdate()
         synchronized(this) {
             val stored = chats[old.chatId] ?: return null
             if (stored.version != old.version) return null
@@ -66,69 +99,86 @@ class MemoryChats :
         }
     }
 
-    override suspend fun members(chatId: ChatId): List<Member> {
-        yield()
-        return synchronized(this) { members[chatId]?.values?.toList().orEmpty() }
+    override suspend fun reserveSeats(
+        chatId: ChatId,
+        seats: Int,
+        max: Int,
+    ): Chat? =
+        synchronized(this) {
+            val stored = chats[chatId] ?: return null
+            if (stored.memberCount + seats > max) return null
+            val written = stored.copy(memberCount = stored.memberCount + seats, version = stored.version + 1)
+            chats[chatId] = written
+            written
+        }
+
+    override suspend fun deleteChat(chatId: ChatId) {
+        synchronized(this) {
+            chats.remove(chatId)
+            members.remove(chatId)
+        }
     }
 
-    override suspend fun member(chatId: ChatId, userId: UserId): Member? {
-        yield()
-        return synchronized(this) { members[chatId]?.get(userId) }
+    override suspend fun members(chatId: ChatId): List<Member> =
+        synchronized(this) { members[chatId]?.values?.toList().orEmpty() }
+
+    override suspend fun members(chatIds: Collection<ChatId>): Map<ChatId, List<Member>> =
+        chatIds.associateWith { members(it) }.filterValues { it.isNotEmpty() }
+
+    override suspend fun member(chatId: ChatId, userId: UserId): Member? =
+        synchronized(this) { members[chatId]?.get(userId) }
+
+    override suspend fun addMembers(members: List<Member>) {
+        synchronized(this) {
+            for (member in members) this.members.getOrPut(member.chatId) { mutableMapOf() }[member.userId] = member
+        }
     }
 
-    override suspend fun claimRemoval(chatId: ChatId, userId: UserId): Boolean {
-        yield()
-        return synchronized(this) { members[chatId]?.remove(userId) != null }
-    }
+    override suspend fun removeMember(chatId: ChatId, userId: UserId): Member? =
+        synchronized(this) { members[chatId]?.remove(userId) }
 
-    override suspend fun updateRole(member: Member): Boolean {
-        beforeRoleWrite()
-        yield()
+    override suspend fun setRole(member: Member): Boolean =
         synchronized(this) {
             val rows = members[member.chatId] ?: return false
             if (member.userId !in rows) return false
             rows[member.userId] = member
-            return true
+            true
         }
+
+    override suspend fun chatList(userId: UserId): List<ChatLine> =
+        chatIdsOf(userId).mapNotNull { chatId -> chats[chatId]?.let { ChatLine(it, lastMessageId(chatId)) } }
+
+    override suspend fun chatIdsOf(userId: UserId): List<ChatId> =
+        synchronized(this) { members.filterValues { userId in it }.keys.toList() }
+
+    override suspend fun userChat(userId: UserId, chatId: ChatId): UserChat? {
+        val member = member(chatId, userId) ?: return null
+        val chat = chats[chatId] ?: return null
+        return UserChat(userId, chatId, chat.kind, readMarks[userId to chatId], member.joinedAt)
     }
 
-    override suspend fun chatsOf(userId: UserId) = synchronized(this) { lines[userId]?.values?.toList().orEmpty() }
+    override suspend fun lastMessageId(chatId: ChatId): UUID? =
+        records.values
+            .filter { it.chatId == chatId && it.kind == MessageKind.MESSAGE }
+            .maxByOrNull { it.messageId.toString() }
+            ?.messageId
 
-    override suspend fun userChat(userId: UserId, chatId: ChatId) = synchronized(this) { lines[userId]?.get(chatId) }
-
-    override suspend fun commit(changes: ChatChanges) {
-        yield()
-        if (failCommits > 0) {
-            failCommits--
-            error("batch failed")
-        }
-        partialJoins?.let { written ->
-            partialJoins = null
-            apply(changes.copy(joins = changes.joins.take(written), leaves = emptyList(), events = emptyList()))
-            error("batch failed part-way")
-        }
-        apply(changes)
-    }
-
-    private fun apply(changes: ChatChanges) {
+    override suspend fun moveReadMarker(
+        userId: UserId,
+        chatId: ChatId,
+        upTo: UUID,
+    ): Boolean =
         synchronized(this) {
-            commits += changes
-            for (chat in changes.chats) chats[chat.chatId] = chat
-            for (chatId in changes.deletedChats) chats.remove(chatId)
-            for (join in changes.joins) {
-                val member = join.member
-                members.getOrPut(member.chatId) { mutableMapOf() }[member.userId] = member
-                lines.getOrPut(member.userId) { mutableMapOf() }[member.chatId] =
-                    UserChat(member.userId, member.chatId, join.kind, null, null, member.joinedAt)
-            }
-            for (leave in changes.leaves) lines[leave.member.userId]?.remove(leave.member.chatId)
+            if (members[chatId]?.containsKey(userId) != true) return false
+            val previous = readMarks[userId to chatId]
+            if (previous != null && previous.toString() >= upTo.toString()) return false
+            readMarks[userId to chatId] = upTo
+            true
         }
-    }
 
-    /** Every event committed, in order: chat-level ones and those riding with a join or leave. */
-    fun eventTypes(): List<String> =
-        commits.flatMap { c -> c.events + c.joins.mapNotNull { it.event } + c.leaves.mapNotNull { it.event } }.map {
-            it.type
+    override suspend fun shareGroup(a: UserId, b: UserId): Boolean =
+        synchronized(this) {
+            members.any { (chatId, rows) -> chats[chatId]?.kind == ChatKind.GROUP && a in rows && b in rows }
         }
 }
 

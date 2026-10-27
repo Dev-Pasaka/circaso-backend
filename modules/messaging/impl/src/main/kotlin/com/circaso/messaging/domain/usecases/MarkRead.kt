@@ -7,7 +7,6 @@ import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.MessageRecord
 import com.circaso.messaging.domain.models.Receipt
-import com.circaso.messaging.domain.repositories.ChatMarkers
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.SettingsRepository
 import com.circaso.messaging.domain.support.MessageSenders
@@ -18,15 +17,15 @@ import java.time.Clock
 import java.util.UUID
 
 /**
- * `messaging.read` from the phone: the user has read [ChatId] up to a message. The chat list's `readUpTo` only moves
- * forward. The message's sender gets `receipt read`, unless the reader turned read receipts off (M22): at once in a
- * direct chat, batched every 5 seconds in a group. Only for a `MESSAGE` sent in this chat by someone else, found from
- * its `messages_by_id` record whether or not every member has it (decision 2026-10-27); reading up to your own
- * message, a sender key or an id from another chat moves the marker and tells nobody.
+ * `messaging.read` from the phone: the user has read [ChatId] up to a message. The member's `read_up_to` only moves
+ * forward (a conditional update), and only a call that moved it sends a receipt. The message's sender gets
+ * `receipt read`, unless the reader turned read receipts off (M22): at once in a direct chat, batched every 5 seconds
+ * in a group. Only for a `MESSAGE` sent in this chat by someone else, found from its `message_records` row whether or
+ * not every member has it (decision 2026-10-27); reading up to your own message, a sender key or an id from another
+ * chat moves the marker and tells nobody.
  */
 class MarkRead(
     private val chats: ChatRepository,
-    private val markers: ChatMarkers,
     private val settings: SettingsRepository,
     private val senders: MessageSenders,
     private val receipts: ReceiptBatcher,
@@ -38,9 +37,7 @@ class MarkRead(
         upTo: UUID,
     ): Resource<Unit> {
         val line = chats.userChat(reader, chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        val previous = line.readUpTo
-        if (previous != null && previous >= upTo) return Resource.success(Unit)
-        markers.readUpTo(reader, chatId, upTo)
+        if (!chats.moveReadMarker(reader, chatId, upTo)) return Resource.success(Unit)
         if (!settings.settings(reader).readReceipts) return Resource.success(Unit)
 
         val message = senders.recordIn(chatId, upTo) ?: return Resource.success(Unit)

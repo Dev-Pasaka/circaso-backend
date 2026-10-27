@@ -3,7 +3,6 @@ package com.circaso.messaging
 import com.circaso.messaging.domain.models.FetchedBundle
 import com.circaso.messaging.domain.support.KeyProofs
 import com.circaso.messaging.domain.support.MessagingConfig
-import com.circaso.messaging.domain.support.SharedGroups
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetKeyStatus
@@ -46,10 +45,11 @@ class KeyDirectoryTest {
     private val reach = FakeReach()
     private val rateLimit = MemoryRateLimit()
     private val proofs = KeyProofs(signatures, clock, config.proofWindow)
-    private val publishKeys = PublishKeys(keys, proofs, clock)
-    private val addOneTimeKeys = AddOneTimeKeys(keys, proofs, config)
+    private val transactor = MemoryTransactor()
+    private val publishKeys = PublishKeys(keys, transactor, proofs, clock)
+    private val addOneTimeKeys = AddOneTimeKeys(keys, transactor, proofs, config, clock)
     private val getKeyStatus = GetKeyStatus(keys)
-    private val fetchKeyBundle = FetchKeyBundle(keys, reach, SharedGroups(MemoryChats()), rateLimit, config)
+    private val fetchKeyBundle = FetchKeyBundle(keys, reach, MemoryChats(), rateLimit, config)
 
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 
@@ -241,7 +241,7 @@ class KeyDirectoryTest {
 
             assertEquals(20, left)
             assertEquals(8, keys.bundles[amina.userId]!!.signedPreKey.keyId)
-            assertEquals((105..124).toSet(), keys.oneTimeKeyIds(amina.userId))
+            assertEquals((105..124).toSet(), keys.oneTimeKeyIds(amina.userId, amina.deviceId))
         }
 
     @Test
@@ -278,7 +278,7 @@ class KeyDirectoryTest {
 
             assertEquals(100, topUp(amina, amina.sign(topUpBody(61..100))).data())
             assertEquals("messaging.too_many_prekeys", topUp(amina, amina.sign(topUpBody(101..101))).errorCode())
-            assertEquals(100, keys.oneTimeKeyIds(amina.userId).size)
+            assertEquals(100, keys.oneTimeKeyIds(amina.userId, amina.deviceId).size)
         }
 
     @Test
@@ -290,7 +290,7 @@ class KeyDirectoryTest {
             val result = topUp(amina, amina.sign(topUpBody(10..20)))
 
             assertEquals("messaging.prekey_id_exists", result.errorCode())
-            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(amina.userId), "nothing from the refused upload is kept")
+            assertEquals((1..10).toSet(), keys.oneTimeKeyIds(amina.userId, amina.deviceId), "nothing from the refused upload is kept")
             assertEquals(20, topUp(amina, amina.sign(topUpBody(11..20))).data())
         }
 
@@ -364,7 +364,7 @@ class KeyDirectoryTest {
 
             assertEquals("users.not_reachable", fetchKeyBundle(stranger, amina.userId).errorCode())
             assertEquals("users.not_reachable", fetchKeyBundle(stranger, UserId.new()).errorCode())
-            assertEquals(3, keys.oneTimeKeyIds(amina.userId).size, "no prekey was used up")
+            assertEquals(3, keys.oneTimeKeyIds(amina.userId, amina.deviceId).size, "no prekey was used up")
         }
 
     @Test

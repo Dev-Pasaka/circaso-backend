@@ -1,206 +1,155 @@
 package com.circaso.messaging.data.repositories
 
-import com.circaso.messaging.data.entities.KeyBundleRow
-import com.circaso.messaging.data.entities.OneTimePreKeyRow
-import com.circaso.messaging.data.mappers.toModel
-import com.circaso.messaging.data.mappers.toRow
+import com.circaso.infrastructure.api.Database
+import com.circaso.messaging.data.tables.KeyBundlesTable
+import com.circaso.messaging.data.tables.OneTimePreKeysTable
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.OneTimePreKey
+import com.circaso.messaging.domain.models.SignedPreKey
 import com.circaso.messaging.domain.repositories.KeyRepository
 import com.circaso.shared.DeviceId
 import com.circaso.shared.UserId
-import com.datastax.oss.driver.api.core.servererrors.WriteTimeoutException
-import io.kandra.core.ExperimentalKandraApi
-import io.kandra.core.exception.KandraQueryException
-import io.kandra.runtime.KandraRuntime
-import io.kandra.runtime.dsl.KandraColumnRef
-import io.kandra.runtime.dsl.KandraRawQuery
-import io.kandra.runtime.repository.KandraSuspendRepository
-import org.slf4j.LoggerFactory
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inSubQuery
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.r2dbc.batchInsert
+import org.jetbrains.exposed.v1.r2dbc.deleteReturning
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
+import org.jetbrains.exposed.v1.r2dbc.select
+import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.time.Instant
-import java.time.temporal.ChronoUnit
-import java.util.UUID
-import kotlin.coroutines.cancellation.CancellationException
 
-// Column name Kandra derives from the entity property (camelCase to snake_case).
-private val USER_ID = KandraColumnRef<UUID>("user_id")
+/** The key directory over `key_bundles` and `one_time_prekeys`. */
+class KeyRepositoryImpl(private val database: Database) : KeyRepository {
+    override suspend fun bundle(userId: UserId): KeyBundle? =
+        database.tx("keys.bundle") {
+            KeyBundlesTable
+                .selectAll()
+                .where { KeyBundlesTable.userId eq userId.value }
+                .map { it.toBundle() }
+                .singleOrNull()
+        }
 
-/**
- * Kandra has no conditional delete, so the claim is written as CQL. `IF EXISTS` makes it a lightweight
- * transaction: of two callers deleting the same row, only one sees `[applied] = true`.
- */
-private const val CLAIM_CQL =
-    "DELETE FROM circaso_messaging.one_time_prekeys WHERE user_id = ? AND key_id = ? IF EXISTS"
+    override suspend fun lockBundle(userId: UserId): KeyBundle? =
+        database.tx("keys.lock-bundle") {
+            KeyBundlesTable
+                .selectAll()
+                .where { KeyBundlesTable.userId eq userId.value }
+                .forUpdate(ForUpdateOption.ForUpdate)
+                .map { it.toBundle() }
+                .singleOrNull()
+        }
 
-/**
- * Rolls back a top-up's own row: a lightweight transaction like the insert (a plain delete mixed with it could lose
- * to clock skew and leave the row), and only if the row still holds the public key this request wrote.
- */
-private const val ROLL_BACK_CQL =
-    "DELETE FROM circaso_messaging.one_time_prekeys WHERE user_id = ? AND key_id = ? IF public_key = ?"
-
-/** A replaced phone's bundle, only while that phone's is the one stored. */
-private const val REMOVE_BUNDLE_CQL = "DELETE FROM circaso_messaging.key_bundles WHERE user_id = ? IF device_id = ?"
-
-/** Only keys written before the replacement: the timestamp is the event's, in microseconds. */
-private const val REMOVE_PREKEYS_CQL =
-    "DELETE FROM circaso_messaging.one_time_prekeys USING TIMESTAMP ? WHERE user_id = ?"
-
-private val log = LoggerFactory.getLogger("com.circaso.messaging.data")
-
-/**
- * The key directory on Kandra. [insertIfAbsent] is the `IF NOT EXISTS` insert of one one-time prekey; tests replace
- * it to fail part-way through a top-up.
- */
-@OptIn(ExperimentalKandraApi::class)
-class KeyRepositoryImpl(
-    private val runtime: KandraRuntime,
-    private val bundles: KandraSuspendRepository<KeyBundleRow>,
-    private val prekeys: KandraSuspendRepository<OneTimePreKeyRow>,
-    private val insertIfAbsent: suspend (OneTimePreKeyRow) -> Boolean = { prekeys.saveIfNotExists(it) },
-) : KeyRepository {
-    override suspend fun bundle(userId: UserId): KeyBundle? = bundles.findById(userId.value)?.toModel()
-
-    override suspend fun oneTimeKeyIds(userId: UserId): Set<Int> =
-        prekeys.findAll { USER_ID eq userId.value }.map { it.keyId }.toSet()
+    override suspend fun oneTimeKeyIds(userId: UserId, deviceId: DeviceId): Set<Int> =
+        database.tx("keys.one-time-ids") {
+            OneTimePreKeysTable
+                .select(OneTimePreKeysTable.keyId)
+                .where { (OneTimePreKeysTable.userId eq userId.value) and (OneTimePreKeysTable.deviceId eq deviceId.value) }
+                .map { it[OneTimePreKeysTable.keyId] }
+                .toList()
+                .toSet()
+        }
 
     override suspend fun publish(
         bundle: KeyBundle,
         oneTimePreKeys: List<OneTimePreKey>,
-        staleKeyIds: Set<Int>,
+        at: Instant,
     ) {
-        runtime.batch {
-            bundles.saveInBatch(bundle.toRow())
-            for (key in oneTimePreKeys) {
-                prekeys.saveInBatch(key.toRow(bundle.userId))
+        database.tx("keys.publish") {
+            KeyBundlesTable.upsert(KeyBundlesTable.userId) {
+                it[userId] = bundle.userId.value
+                it[deviceId] = bundle.deviceId.value
+                it[identityKey] = bundle.identityKey
+                it[signedPreKeyId] = bundle.signedPreKey.keyId
+                it[signedPreKey] = bundle.signedPreKey.publicKey
+                it[signedPreKeySignature] = bundle.signedPreKey.signature
+                it[signedPreKeyAt] = bundle.signedPreKeyAt
+                it[uploadedAt] = at
             }
-            for (keyId in staleKeyIds) {
-                prekeys.deleteInBatch(OneTimePreKeyRow(bundle.userId.value, keyId, ""))
-            }
+            OneTimePreKeysTable.deleteWhere { userId eq bundle.userId.value }
+            insertKeys(bundle.userId, bundle.deviceId, oneTimePreKeys, at)
         }
     }
 
-    /**
-     * One `IF NOT EXISTS` insert per key, in key-id order, stopping at the first id already stored. With the same
-     * order everywhere, of several identical top-ups racing only the one that wins the lowest id gets further, so
-     * exactly one succeeds.
-     *
-     * A failed call rolls back every row it attempted, the one in flight included: an insert that timed out may have
-     * applied, and Kandra retries `IF NOT EXISTS`, so a retry can answer "exists" for a row this call wrote. The
-     * rollback deletes only rows still holding this call's public key. The one case it can't tell apart is a racing
-     * top-up that sent the very same key for the same id: that twin row may go too, which loses a key but never
-     * serves a wrong one.
-     */
-    override suspend fun addOneTimeKeys(userId: UserId, keys: List<OneTimePreKey>): Boolean {
-        val attempted = mutableListOf<OneTimePreKeyRow>()
-        try {
-            for (key in keys.sortedBy { it.keyId }) {
-                val row = key.toRow(userId)
-                attempted += row
-                if (!insertIfAbsent(row)) {
-                    val failed = rollBack(attempted)
-                    if (failed.isNotEmpty()) log.warn("prekey rollback failed: user={} keyIds={}", userId, failed)
-                    return false
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            for (keyId in rollBack(attempted)) {
-                e.addSuppressed(RollbackFailed(keyId))
-            }
-            throw e
-        }
-        return true
+    override suspend fun addOneTimeKeys(
+        userId: UserId,
+        deviceId: DeviceId,
+        keys: List<OneTimePreKey>,
+        at: Instant,
+    ) {
+        database.tx("keys.add-one-time") { insertKeys(userId, deviceId, keys, at) }
     }
 
-    /** Conditionally deletes each row; returns the key ids whose delete failed. */
-    private suspend fun rollBack(rows: List<OneTimePreKeyRow>): List<Int> {
-        val failed = mutableListOf<Int>()
-        for (row in rows) {
-            val query =
-                KandraRawQuery
-                    .cql(ROLL_BACK_CQL)
-                    .bind(row.userId, row.keyId, row.publicKey)
-                    .build()
-            try {
-                prekeys.rawQuery(query)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failed += row.keyId
-            }
-        }
-        return failed
-    }
-
-    /** Names only the key id, never key material; added as suppressed so the original exception stays the error. */
-    private class RollbackFailed(keyId: Int) : RuntimeException("prekey rollback failed for keyId $keyId")
-
-    /**
-     * Reads the first few keys and tries to delete them in order; the first delete that applies is ours. A caller
-     * that loses every race reads again, a few rounds at most, then answers without a key, which X3DH allows.
-     */
-    override suspend fun claimOneTimeKey(userId: UserId): OneTimePreKey? {
-        repeat(CLAIM_ROUNDS) {
-            val candidates = prekeys.findAll(limit = CANDIDATES) { USER_ID eq userId.value }
-            if (candidates.isEmpty()) return null
-            val claimed = candidates.firstOrNull { delete(it) }
-            if (claimed != null) return claimed.toModel()
-        }
-        return null
-    }
-
-    /**
-     * A lightweight transaction that times out under contention may or may not have applied. It counts as lost
-     * either way: at worst that key is deleted without being handed out, never handed out twice.
-     */
-    private suspend fun delete(row: OneTimePreKeyRow): Boolean {
-        val query =
-            KandraRawQuery
-                .cql(CLAIM_CQL)
-                .bind(row.userId, row.keyId)
-                .build()
-        return try {
-            prekeys.rawQuery(query).firstOrNull()?.getBoolean("[applied]") == true
-        } catch (e: WriteTimeoutException) {
-            false
-        } catch (e: KandraQueryException) {
-            if (e.cause !is WriteTimeoutException) throw e
-            false
+    private suspend fun insertKeys(
+        userId: UserId,
+        deviceId: DeviceId,
+        keys: List<OneTimePreKey>,
+        at: Instant,
+    ) {
+        if (keys.isEmpty()) return
+        OneTimePreKeysTable.batchInsert(keys, useMultiRowValues = true, shouldReturnGeneratedValues = false) {
+            this[OneTimePreKeysTable.userId] = userId.value
+            this[OneTimePreKeysTable.keyId] = it.keyId
+            this[OneTimePreKeysTable.deviceId] = deviceId.value
+            this[OneTimePreKeysTable.publicKey] = it.publicKey
+            this[OneTimePreKeysTable.uploadedAt] = at
         }
     }
 
-    /**
-     * The bundle goes with a lightweight transaction on its device, so a bundle the new phone already published is
-     * never deleted. The one-time prekeys go as one partition delete written at [replacedAt] (`USING TIMESTAMP`, in
-     * microseconds; decision 2026-10-27): it removes only keys written before the replacement, so a set the new phone
-     * publishes afterwards stays whatever order the writes land in. It runs even when the bundle was already gone, so
-     * a retry of the event finishes a removal that failed part-way.
-     */
+    /** `DELETE … WHERE (user_id, key_id) IN (the lowest key, FOR UPDATE SKIP LOCKED) RETURNING …`. */
+    override suspend fun claimOneTimeKey(userId: UserId, deviceId: DeviceId): OneTimePreKey? =
+        database.tx("keys.claim-one-time") {
+            val mine = (OneTimePreKeysTable.userId eq userId.value) and (OneTimePreKeysTable.deviceId eq deviceId.value)
+            val lowest =
+                OneTimePreKeysTable
+                    .select(OneTimePreKeysTable.keyId)
+                    .where { mine }
+                    .orderBy(OneTimePreKeysTable.keyId to SortOrder.ASC)
+                    .limit(1)
+                    .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
+            OneTimePreKeysTable
+                .deleteReturning { mine and (OneTimePreKeysTable.keyId inSubQuery lowest) }
+                .map { OneTimePreKey(it[OneTimePreKeysTable.keyId], it[OneTimePreKeysTable.publicKey]) }
+                .singleOrNull()
+        }
+
     override suspend fun removeBundle(
         userId: UserId,
         deviceId: DeviceId,
         replacedAt: Instant,
-    ): Boolean {
-        val bundle =
-            KandraRawQuery
-                .cql(REMOVE_BUNDLE_CQL)
-                .bind(userId.value, deviceId.value)
-                .build()
-        val removed = bundles.rawQuery(bundle).firstOrNull()?.getBoolean("[applied]") == true
-        val micros = ChronoUnit.MICROS.between(Instant.EPOCH, replacedAt)
-        val keys =
-            KandraRawQuery
-                .cql(REMOVE_PREKEYS_CQL)
-                .bind(micros, userId.value)
-                .build()
-        prekeys.rawQuery(keys)
-        return removed
-    }
-
-    private companion object {
-        const val CLAIM_ROUNDS = 5
-        const val CANDIDATES = 10
-    }
+    ): Boolean =
+        database.tx("keys.remove-bundle") {
+            OneTimePreKeysTable.deleteWhere {
+                (OneTimePreKeysTable.userId eq userId.value) and
+                    (OneTimePreKeysTable.deviceId eq deviceId.value) and
+                    (OneTimePreKeysTable.uploadedAt less replacedAt)
+            }
+            val deleted =
+                KeyBundlesTable.deleteWhere {
+                    (KeyBundlesTable.userId eq userId.value) and (KeyBundlesTable.deviceId eq deviceId.value)
+                }
+            deleted > 0
+        }
 }
+
+private fun ResultRow.toBundle() =
+    KeyBundle(
+        userId = UserId(this[KeyBundlesTable.userId]),
+        deviceId = DeviceId(this[KeyBundlesTable.deviceId]),
+        identityKey = this[KeyBundlesTable.identityKey],
+        signedPreKey =
+            SignedPreKey(
+                this[KeyBundlesTable.signedPreKeyId],
+                this[KeyBundlesTable.signedPreKey],
+                this[KeyBundlesTable.signedPreKeySignature],
+            ),
+        signedPreKeyAt = this[KeyBundlesTable.signedPreKeyAt],
+    )

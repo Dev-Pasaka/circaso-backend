@@ -7,13 +7,12 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
 /**
- * M6 `GET /chats`: every chat the user is in, with members' public profiles and the last message id. The app sorts
- * and counts unread itself. A chat-list line whose chat is gone (a group deleted a moment ago) is skipped.
+ * M6 `GET /chats`: every chat the user is in, with members' public profiles and the newest message id the server
+ * still holds (null after 30 days without a message). The app sorts and counts unread itself.
  */
 class ListChats(private val chats: ChatRepository, private val views: ChatViews) {
     suspend operator fun invoke(userId: UserId): Resource<List<ChatView>> {
-        val lines = chats.chatsOf(userId)
-        val found = lines.mapNotNull { line -> chats.chat(line.chatId)?.let { it to line.lastMessageId } }
-        return Resource.success(views.views(found))
+        val lines = chats.chatList(userId)
+        return Resource.success(views.views(lines.map { it.chat to it.lastMessageId }))
     }
 }

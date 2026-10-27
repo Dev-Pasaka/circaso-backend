@@ -12,12 +12,10 @@ data class MessagingConfig(
     val maxGroupMembers: Int = 1_000,
     /** A group's sealed name and avatar, decoded (Messaging → Error codes, `messaging.group_invalid`). */
     val maxSealedMetaBytes: Int = 4 * 1_024,
-    /** How often a membership change re-reads the chat when another change won the race for its version. */
-    val chatWriteAttempts: Int = 5,
     /** Decision 2026-10-25: 64 KB per message, decoded; media goes through M15. */
     val maxCiphertextBytes: Int = 64 * 1_024,
-    /** Rows per unlogged batch when a message fans out or its copies are dropped (Messaging → Data → Fan-out). */
-    val fanOutBatch: Int = 100,
+    /** How long a `clientMessageId` answers a retry with the first send's id (`client_messages.expires_at`). */
+    val clientMessageTtl: Duration = Duration.ofDays(1),
     /** Decision 2026-10-25: typing is relayed only in chats of this many people or fewer. */
     val maxTypingMembers: Int = 50,
     /** `msg:typing:{chatId}:{userId}`: a repeated "typing" within this long is dropped. */

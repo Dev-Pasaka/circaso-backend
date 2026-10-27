@@ -1,6 +1,5 @@
 package com.circaso.messaging.domain.usecases
 
-import com.circaso.messaging.domain.models.InboxMessage
 import com.circaso.messaging.domain.models.InboxPage
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.support.MessagingConfig
@@ -10,8 +9,8 @@ import java.util.UUID
 
 /**
  * M13 `GET /inbox`: what is waiting for the user, oldest first, a page at a time; for catching up after the socket
- * was closed and for push wakes. A group pointer gets its body's ciphertext; one whose body is gone (deleted for
- * everyone a moment ago, or past its 30 days) is left out and deleted, since it can never be delivered.
+ * was closed and for push wakes. A group pointer comes with its body's ciphertext, read in the same query; one whose
+ * body is gone (deleted for everyone a moment ago) is left out and deleted, since it can never be delivered.
  */
 class ReadInbox(private val delivery: DeliveryRepository, private val config: MessagingConfig) {
     suspend operator fun invoke(
@@ -23,16 +22,8 @@ class ReadInbox(private val delivery: DeliveryRepository, private val config: Me
         val rows = delivery.inbox(userId, after, size + 1)
         val page = rows.take(size)
         val next = if (rows.size > size) page.last().messageId else null
-        return Resource.success(InboxPage(page.mapNotNull { withCiphertext(it) }, next))
-    }
-
-    private suspend fun withCiphertext(row: InboxMessage): InboxMessage? {
-        if (!row.groupBody) return row
-        val body = delivery.groupBody(row.chatId, row.messageId)
-        if (body == null) {
-            delivery.deleteInboxRows(listOf(row.userId), row.messageId, batchSize = 1)
-            return null
-        }
-        return row.copy(ciphertext = body.ciphertext)
+        val (orphans, deliverable) = page.partition { it.groupBody && it.ciphertext == null }
+        for (row in orphans) delivery.deleteInboxRows(listOf(userId), row.messageId)
+        return Resource.success(InboxPage(deliverable, next))
     }
 }

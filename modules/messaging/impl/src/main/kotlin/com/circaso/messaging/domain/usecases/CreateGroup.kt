@@ -11,10 +11,9 @@ import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
-import com.circaso.messaging.domain.repositories.ChatChanges
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
-import com.circaso.messaging.domain.repositories.Join
-import com.circaso.messaging.domain.repositories.MessagingStore
+import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.MessagingConfig
@@ -22,6 +21,7 @@ import com.circaso.messaging.domain.support.groupChatId
 import com.circaso.messaging.domain.support.isValidSealedMeta
 import com.circaso.messaging.domain.support.oncePerChat
 import com.circaso.shared.EventBus
+import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
@@ -33,14 +33,14 @@ import java.time.Clock
  * is left out and listed in `notAdded`, with no reason, as in users. The 1,000 cap counts everyone asked for, so
  * the answer doesn't depend on who turned out to be reachable.
  *
- * A big group is written in several batches, so a create can fail part-way. The chat id comes from the request's
- * `Idempotency-Key` (decision 2026-10-26): the retry finds the chat and writes only the members still missing. A
- * failed write leaves the count at the planned total, above the rows written, rather than recounting: a recount
- * would move the version on and stop the retry from finishing. `ChatCreated` has one id per chat.
+ * The chat, every member row, `ChatCreated` and each `MemberAdded` are one transaction, so a create is never half
+ * written. The chat id comes from the request's `Idempotency-Key` (decision 2026-10-26): a retry finds the group the
+ * first attempt made and returns it as it is now, adding nobody, so someone who left in between is never put back.
  */
 class CreateGroup(
     private val chats: ChatRepository,
-    private val store: MessagingStore,
+    private val transactor: Transactor,
+    private val outbox: MessagingOutbox,
     private val reach: ReachPolicy,
     private val views: ChatViews,
     private val notifier: ChatNotifier,
@@ -57,32 +57,24 @@ class CreateGroup(
 
         val added = reach.reachable(command.creator, asked)
         val notAdded = (asked - added).sortedBy { it.toString() }
-        val chatId = groupChatId(command.creator, command.requestKey)
-        val chat = chats.chat(chatId)
-        val written =
-            if (chat == null) {
-                val group =
-                    newGroup(
-                        chatId,
-                        command,
-                        memberCount = added.size + 1,
-                    )
-                create(group, added)
-            } else {
-                resume(chat, added)
+        val group = newGroup(groupChatId(command.creator, command.requestKey), command, memberCount = added.size + 1)
+        val events = events(group, added)
+        val created =
+            transactor.run("chats.create-group") {
+                if (chats.insertChat(group)) {
+                    chats.addMembers(listOf(owner(group)) + added.map { member(group, it) })
+                    outbox.write(events)
+                    true
+                } else {
+                    false
+                }
             }
-        val group =
-            when (written) {
-                is Resource.Error -> return written
-                is Resource.Success -> written.data
-            }
-        val view =
-            views.view(
-                group,
-                lastMessageId = null,
-                notAdded = notAdded,
-            )
-        return Resource.success(view)
+        val chat = if (created) group else chats.chat(group.chatId) ?: return Resource.error(MessagingError.ChatNotFound)
+        if (created) {
+            events.forEach { bus.publish(it) }
+            notifyAdded(group, added)
+        }
+        return Resource.success(views.view(chat, lastMessageId = chats.lastMessageId(chat.chatId), notAdded = notAdded))
     }
 
     private fun newGroup(
@@ -102,61 +94,12 @@ class CreateGroup(
         ownerId = command.creator,
     )
 
-    private suspend fun create(chat: Chat, added: Set<UserId>): Resource<Chat> {
-        val owner = Join(owner(chat), ChatKind.GROUP)
-        val created =
-            ChatCreated(
-                chat.chatId,
-                ChatKind.GROUP.name,
-                createdBy = chat.createdBy,
-            )
-        val changes =
-            ChatChanges(
-                chats = listOf(chat),
-                joins = listOf(owner) + joins(chat, added),
-                events = listOf(bus.envelope(created).oncePerChat(chat.chatId)),
-            )
-        store.commit(changes)
-        notifyAdded(chat, added)
-        return Resource.success(chat)
+    /** `ChatCreated` (one id per chat) and a `MemberAdded` for each person added besides the creator. */
+    private fun events(chat: Chat, added: Set<UserId>): List<EventEnvelope> {
+        val created = ChatCreated(chat.chatId, ChatKind.GROUP.name, createdBy = chat.createdBy)
+        val joined = added.map { bus.envelope(MemberAdded(chat.chatId, it, chat.createdBy)) }
+        return listOf(bus.envelope(created).oncePerChat(chat.chatId)) + joined
     }
-
-    /**
-     * A retry of the same request finds the chat. It finishes only if nothing else changed the group since: its
-     * version is still the one the create wrote (decision 2026-10-26), so someone who left in between is never put
-     * back. Then only the people with no member row yet are written, and the count is set to at least the rows.
-     */
-    private suspend fun resume(chat: Chat, added: Set<UserId>): Resource<Chat> {
-        if (chat.version != CREATED_VERSION) return Resource.success(chat)
-        val present = chats.members(chat.chatId).map { it.userId }.toSet()
-        val ownerJoin =
-            if (chat.createdBy in present) {
-                emptyList()
-            } else {
-                listOf(Join(owner(chat), ChatKind.GROUP))
-            }
-        val missing = added - present
-        store.commit(ChatChanges(joins = ownerJoin + joins(chat, missing)))
-        val rows = chats.members(chat.chatId).size
-        val counted = chats.updateChat(chat, chat.copy(memberCount = maxOf(chat.memberCount, rows)))
-        notifyAdded(chat, missing)
-        return Resource.success(counted ?: chats.chat(chat.chatId) ?: chat)
-    }
-
-    private fun joins(chat: Chat, people: Set<UserId>): List<Join> =
-        people.map { person ->
-            val added =
-                MemberAdded(
-                    chat.chatId,
-                    person,
-                    chat.createdBy,
-                )
-            Join(
-                member(chat, person),
-                ChatKind.GROUP,
-                bus.envelope(added),
-            )
-        }
 
     private fun owner(chat: Chat) = member(chat, chat.createdBy).copy(role = Role.OWNER)
 
@@ -170,9 +113,8 @@ class CreateGroup(
 
     private suspend fun notifyAdded(chat: Chat, added: Set<UserId>) {
         if (added.isEmpty()) return
-        val everyone = chats.members(chat.chatId).map { it.userId }
         notifier.membersAdded(
-            recipients = everyone,
+            recipients = added + chat.createdBy,
             chatId = chat.chatId,
             added = added,
             by = chat.createdBy,

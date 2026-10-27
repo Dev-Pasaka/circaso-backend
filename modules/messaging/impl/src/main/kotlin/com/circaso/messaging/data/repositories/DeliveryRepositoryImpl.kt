@@ -1,156 +1,213 @@
 package com.circaso.messaging.data.repositories
 
+import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
-import com.circaso.messaging.data.entities.ClientMessageRow
-import com.circaso.messaging.data.entities.GroupMessageRow
-import com.circaso.messaging.data.entities.InboxRow
-import com.circaso.messaging.data.entities.MessageRecordRow
-import com.circaso.messaging.data.mappers.toModel
-import com.circaso.messaging.data.mappers.toRow
-import com.circaso.messaging.data.repositories.UnloggedBatches.Write
-import com.circaso.messaging.domain.models.ClientClaim
-import com.circaso.messaging.domain.models.GroupBody
+import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.data.tables.ClientMessagesTable
+import com.circaso.messaging.data.tables.GroupMessagesTable
+import com.circaso.messaging.data.tables.InboxTable
+import com.circaso.messaging.data.tables.MessageRecordsTable
+import com.circaso.messaging.domain.models.Fanout
 import com.circaso.messaging.domain.models.InboxMessage
 import com.circaso.messaging.domain.models.MessageRecord
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.shared.UserId
-import com.datastax.oss.driver.api.core.cql.Row
-import com.datastax.oss.driver.api.core.servererrors.WriteTimeoutException
-import io.kandra.core.exception.KandraQueryException
-import io.kandra.runtime.dsl.KandraColumnRef
-import io.kandra.runtime.dsl.KandraRawQuery
-import io.kandra.runtime.repository.KandraSuspendRepository
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.inSubQuery
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.r2dbc.batchInsert
+import org.jetbrains.exposed.v1.r2dbc.deleteReturning
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
+import org.jetbrains.exposed.v1.r2dbc.insert
+import org.jetbrains.exposed.v1.r2dbc.select
+import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.upsert
+import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
-// Column names Kandra derives from the entity properties (camelCase to snake_case).
-private val USER_ID = KandraColumnRef<UUID>("user_id")
-private val MESSAGE_ID = KandraColumnRef<UUID>("message_id")
-
-/** 30 days, as the table's default; said again because a local table may have been made from the entity. */
-private const val INSERT_INBOX_CQL =
-    "INSERT INTO circaso_messaging.inbox_by_user (user_id, message_id, chat_id, sender_id, kind, ciphertext, " +
-        "group_body, media_ids, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) USING TTL 2592000"
-
-private const val INSERT_RECORD_CQL =
-    "INSERT INTO circaso_messaging.messages_by_id (message_id, chat_id, sender_id, kind, sent_at) VALUES " +
-        "(?, ?, ?, ?, ?) USING TTL 2592000"
-
-private const val DELETE_INBOX_CQL = "DELETE FROM circaso_messaging.inbox_by_user WHERE user_id = ? AND message_id = ?"
-
-/** Kandra has no conditional delete: `IF EXISTS` lets only one of two acks of the same row count it. */
-private const val CLAIM_INBOX_CQL = "$DELETE_INBOX_CQL IF EXISTS"
-
-private const val DELETE_BODY_CQL = "DELETE FROM circaso_messaging.group_messages WHERE chat_id = ? AND message_id = ?"
-
-/** Delivery on Kandra; the fan-out writes and deletes go through [UnloggedBatches]. */
-class DeliveryRepositoryImpl(
-    private val batches: UnloggedBatches,
-    private val inbox: KandraSuspendRepository<InboxRow>,
-    private val bodies: KandraSuspendRepository<GroupMessageRow>,
-    private val records: KandraSuspendRepository<MessageRecordRow>,
-    private val clientIds: KandraSuspendRepository<ClientMessageRow>,
-    /** Runs a conditional delete; tests replace it to time out. */
-    private val conditional: suspend (KandraRawQuery) -> List<Row> = { inbox.rawQuery(it) },
-) : DeliveryRepository {
+/** Delivery over `inbox`, `group_messages`, `message_records` and `client_messages`. */
+class DeliveryRepositoryImpl(private val database: Database, private val clock: Clock) : DeliveryRepository {
+    /**
+     * `INSERT … ON CONFLICT (sender_id, client_message_id) DO UPDATE … WHERE expires_at <= :now`: a live claim is left
+     * alone and its message id read back; an expired one the purge hasn't reached yet is taken over.
+     */
     override suspend fun claimClientMessage(
         senderId: UserId,
         clientMessageId: UUID,
         messageId: UUID,
-    ): ClientClaim? {
-        if (clientIds.saveIfNotExists(ClientMessageRow(senderId.value, clientMessageId, messageId))) return null
-        val earlier = clientIds.findById(senderId.value, clientMessageId) ?: return ClientClaim(messageId, false)
-        return ClientClaim(earlier.messageId, earlier.complete)
-    }
-
-    /** A full-row save, so the row keeps its 24-hour expiry. */
-    override suspend fun completeClientMessage(
-        senderId: UserId,
-        clientMessageId: UUID,
-        messageId: UUID,
-    ) = clientIds.save(ClientMessageRow(senderId.value, clientMessageId, messageId, complete = true))
-
-    override suspend fun writeMessage(
-        record: MessageRecord,
-        rows: List<InboxMessage>,
-        batchSize: Int,
-    ) {
-        val writes = listOf(record.toWrite()) + rows.map { it.toWrite() }
-        batches.runAll(writes, batchSize)
-    }
-
-    override suspend fun messageRecord(messageId: UUID): MessageRecord? = records.findById(messageId)?.toModel()
-
-    private fun MessageRecord.toWrite() =
-        toRow().let {
-            Write(
-                INSERT_RECORD_CQL,
-                listOf(it.messageId, it.chatId, it.senderId, it.kind, it.sentAt),
-            )
+        expiresAt: Instant,
+    ): UUID? =
+        database.tx("messages.claim-client-id") {
+            val now = clock.instant()
+            val claimed =
+                ClientMessagesTable.upsert(
+                    ClientMessagesTable.senderId,
+                    ClientMessagesTable.clientMessageId,
+                    where = { ClientMessagesTable.expiresAt lessEq now },
+                ) {
+                    it[this.senderId] = senderId.value
+                    it[this.clientMessageId] = clientMessageId
+                    it[this.messageId] = messageId
+                    it[this.expiresAt] = expiresAt
+                }
+            if (claimed.insertedCount > 0) return@tx null
+            ClientMessagesTable
+                .select(ClientMessagesTable.messageId)
+                .where {
+                    (ClientMessagesTable.senderId eq senderId.value) and
+                        (ClientMessagesTable.clientMessageId eq clientMessageId)
+                }.map { it[ClientMessagesTable.messageId] }
+                .singleOrNull()
         }
 
-    private fun InboxMessage.toWrite() =
-        toRow().let {
-            Write(
-                INSERT_INBOX_CQL,
-                listOf(
-                    it.userId,
-                    it.messageId,
-                    it.chatId,
-                    it.senderId,
-                    it.kind,
-                    it.ciphertext,
-                    it.groupBody,
-                    it.mediaIds,
-                    it.sentAt,
-                ),
-            )
+    /** The record, the body and the inbox rows; the rows as one multi-row `INSERT` (Messaging → Fan-out). */
+    override suspend fun writeMessage(fanout: Fanout) {
+        database.tx("messages.write") {
+            val record = fanout.record
+            MessageRecordsTable.insert {
+                it[messageId] = record.messageId
+                it[chatId] = record.chatId.value
+                it[senderId] = record.senderId.value
+                it[kind] = record.kind.name
+                it[sentAt] = record.sentAt
+            }
+            fanout.body?.let { body ->
+                GroupMessagesTable.insert {
+                    it[chatId] = body.chatId.value
+                    it[messageId] = body.messageId
+                    it[senderId] = body.senderId.value
+                    it[ciphertext] = body.ciphertext
+                    it[sentAt] = body.sentAt
+                }
+            }
+            if (fanout.rows.isNotEmpty()) {
+                InboxTable.batchInsert(fanout.rows, useMultiRowValues = true, shouldReturnGeneratedValues = false) {
+                    this[InboxTable.userId] = it.userId.value
+                    this[InboxTable.messageId] = it.messageId
+                    this[InboxTable.chatId] = it.chatId.value
+                    this[InboxTable.senderId] = it.senderId.value
+                    this[InboxTable.kind] = it.kind.name
+                    this[InboxTable.ciphertext] = it.ciphertext
+                    this[InboxTable.mediaIds] = it.mediaIds
+                    this[InboxTable.sentAt] = it.sentAt
+                }
+            }
+        }
+    }
+
+    override suspend fun messageRecord(messageId: UUID): MessageRecord? =
+        database.tx("messages.record") {
+            MessageRecordsTable
+                .selectAll()
+                .where { MessageRecordsTable.messageId eq messageId }
+                .map {
+                    MessageRecord(
+                        messageId = it[MessageRecordsTable.messageId],
+                        chatId = ChatId(it[MessageRecordsTable.chatId]),
+                        senderId = UserId(it[MessageRecordsTable.senderId]),
+                        kind = MessageKind.valueOf(it[MessageRecordsTable.kind]),
+                        sentAt = it[MessageRecordsTable.sentAt],
+                    )
+                }.singleOrNull()
         }
 
-    override suspend fun writeGroupBody(body: GroupBody) = bodies.save(body.toRow())
+    override suspend fun deleteGroupBody(chatId: ChatId, messageId: UUID) {
+        database.tx("messages.delete-body") {
+            GroupMessagesTable.deleteWhere {
+                (GroupMessagesTable.chatId eq chatId.value) and (GroupMessagesTable.messageId eq messageId)
+            }
+        }
+    }
 
-    override suspend fun groupBody(chatId: ChatId, messageId: UUID): GroupBody? =
-        bodies.findById(chatId.value, messageId)?.toModel()
-
-    override suspend fun deleteGroupBody(chatId: ChatId, messageId: UUID) =
-        batches.run(DELETE_BODY_CQL, listOf(listOf(chatId.value, messageId)), batchSize = 1)
-
-    override suspend fun inboxRow(userId: UserId, messageId: UUID): InboxMessage? =
-        inbox.findById(userId.value, messageId)?.toModel()
-
+    /** One page with each group pointer's body joined in by `(chat_id, message_id)`. */
     override suspend fun inbox(
         userId: UserId,
         after: UUID?,
         limit: Int,
     ): List<InboxMessage> =
-        inbox
-            .findAll(limit) {
-                USER_ID eq userId.value
-                if (after != null) MESSAGE_ID gt after
-            }.map { it.toModel() }
+        database.tx("inbox.page") {
+            InboxTable
+                .join(GroupMessagesTable, JoinType.LEFT, additionalConstraint = {
+                    InboxTable.ciphertext.isNull() and
+                        (GroupMessagesTable.chatId eq InboxTable.chatId) and
+                        (GroupMessagesTable.messageId eq InboxTable.messageId)
+                }).select(InboxTable.columns + GroupMessagesTable.ciphertext)
+                .where {
+                    val mine: Op<Boolean> = InboxTable.userId eq userId.value
+                    if (after == null) mine else mine and (InboxTable.messageId greater after)
+                }.orderBy(InboxTable.messageId to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toInboxMessage(body = it.getOrNull(GroupMessagesTable.ciphertext)) }
+                .toList()
+        }
 
-    /**
-     * A lightweight transaction that times out may or may not have applied; it counts as not claimed (decision
-     * 2026-10-27), so at worst a row is deleted without its receipt or count-down, never counted twice.
-     */
-    override suspend fun claimInboxRow(userId: UserId, messageId: UUID): Boolean {
-        val query =
-            KandraRawQuery
-                .cql(CLAIM_INBOX_CQL)
-                .bind(userId.value, messageId)
-                .build()
-        return try {
-            conditional(query).firstOrNull()?.getBoolean("[applied]") == true
-        } catch (e: WriteTimeoutException) {
-            false
-        } catch (e: KandraQueryException) {
-            if (e.cause !is WriteTimeoutException) throw e
-            false
+    override suspend fun takeInboxRows(userId: UserId, messageIds: Collection<UUID>): List<InboxMessage> {
+        if (messageIds.isEmpty()) return emptyList()
+        return database.tx("inbox.take") {
+            InboxTable
+                .deleteReturning {
+                    (InboxTable.userId eq userId.value) and (InboxTable.messageId inList messageIds)
+                }.map { it.toInboxMessage() }
+                .toList()
         }
     }
 
-    override suspend fun deleteInboxRows(
-        userIds: Collection<UserId>,
-        messageId: UUID,
-        batchSize: Int,
-    ) = batches.run(DELETE_INBOX_CQL, userIds.map { listOf(it.value, messageId) }, batchSize)
+    override suspend fun takeInboxRowsSentBy(
+        userId: UserId,
+        sentBy: Instant,
+        limit: Int,
+    ): List<InboxMessage> =
+        database.tx("inbox.take-sent-by") {
+            val page =
+                InboxTable
+                    .select(InboxTable.messageId)
+                    .where { (InboxTable.userId eq userId.value) and (InboxTable.sentAt lessEq sentBy) }
+                    .orderBy(InboxTable.messageId to SortOrder.ASC)
+                    .limit(limit)
+            InboxTable
+                .deleteReturning { (InboxTable.userId eq userId.value) and (InboxTable.messageId inSubQuery page) }
+                .map { it.toInboxMessage() }
+                .toList()
+                .sortedBy { it.sentAt }
+        }
+
+    override suspend fun deleteInboxRows(userIds: Collection<UserId>, messageId: UUID): Int {
+        if (userIds.isEmpty()) return 0
+        return database.tx("inbox.delete-copies") {
+            InboxTable.deleteWhere {
+                (InboxTable.messageId eq messageId) and (InboxTable.userId inList userIds.map { it.value })
+            }
+        }
+    }
+}
+
+/**
+ * A group pointer is a row without ciphertext; [body] is its group ciphertext when it was joined in (null when the
+ * body is gone, or not asked for).
+ */
+private fun ResultRow.toInboxMessage(body: String? = null): InboxMessage {
+    val own = this[InboxTable.ciphertext]
+    return InboxMessage(
+        userId = UserId(this[InboxTable.userId]),
+        messageId = this[InboxTable.messageId],
+        chatId = ChatId(this[InboxTable.chatId]),
+        senderId = UserId(this[InboxTable.senderId]),
+        kind = MessageKind.valueOf(this[InboxTable.kind]),
+        ciphertext = own ?: body,
+        groupBody = own == null,
+        mediaIds = this[InboxTable.mediaIds],
+        sentAt = this[InboxTable.sentAt],
+    )
 }

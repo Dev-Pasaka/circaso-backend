@@ -2,9 +2,10 @@ package com.circaso.messaging.di
 
 import com.circaso.identity.api.DeviceSignatures
 import com.circaso.infrastructure.api.Config
-import com.circaso.infrastructure.api.KandraModuleSpec
-import com.circaso.infrastructure.api.OutboxStore
+import com.circaso.infrastructure.api.DatabaseModuleSpec
+import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.data.cache.LiveFramesImpl
 import com.circaso.messaging.data.cache.REDIS_PREFIX
@@ -14,35 +15,23 @@ import com.circaso.messaging.data.cache.RedisMembersCache
 import com.circaso.messaging.data.cache.RedisPendingCounts
 import com.circaso.messaging.data.cache.RedisReceiptBuffer
 import com.circaso.messaging.data.cache.RedisTypingMarks
-import com.circaso.messaging.data.entities.ChatRow
-import com.circaso.messaging.data.entities.ClientMessageRow
-import com.circaso.messaging.data.entities.DirectChatClaimRow
-import com.circaso.messaging.data.entities.GroupMessageRow
-import com.circaso.messaging.data.entities.InboxRow
-import com.circaso.messaging.data.entities.KS
-import com.circaso.messaging.data.entities.KeyBundleRow
-import com.circaso.messaging.data.entities.MemberRow
-import com.circaso.messaging.data.entities.MessageRecordRow
-import com.circaso.messaging.data.entities.MessagingOutboxRow
-import com.circaso.messaging.data.entities.MessagingRealtimeRow
-import com.circaso.messaging.data.entities.MessagingSettingsRow
-import com.circaso.messaging.data.entities.OneTimePreKeyRow
-import com.circaso.messaging.data.entities.UserChatRow
-import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
-import com.circaso.messaging.data.migrations.V002_CreateKeyDirectoryTables
-import com.circaso.messaging.data.migrations.V003_CreateChatTables
-import com.circaso.messaging.data.migrations.V004_AddChatOwner
-import com.circaso.messaging.data.migrations.V005_CreateDeliveryTables
-import com.circaso.messaging.data.migrations.messagingEntities
-import com.circaso.messaging.data.repositories.ChatMarkersImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
+import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
-import com.circaso.messaging.data.repositories.MessagingOutboxStore
-import com.circaso.messaging.data.repositories.MessagingStoreImpl
+import com.circaso.messaging.data.repositories.MessagingExpiry
+import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
-import com.circaso.messaging.data.repositories.UnloggedBatches
-import com.circaso.messaging.data.rows
+import com.circaso.messaging.data.tables.ChatsTable
+import com.circaso.messaging.data.tables.ClientMessagesTable
+import com.circaso.messaging.data.tables.GroupMessagesTable
+import com.circaso.messaging.data.tables.InboxTable
+import com.circaso.messaging.data.tables.KeyBundlesTable
+import com.circaso.messaging.data.tables.MembersTable
+import com.circaso.messaging.data.tables.MessageRecordsTable
+import com.circaso.messaging.data.tables.OneTimePreKeysTable
+import com.circaso.messaging.data.tables.RealtimeTable
+import com.circaso.messaging.data.tables.SettingsTable
 import com.circaso.messaging.domain.ports.BundleRateLimit
 import com.circaso.messaging.domain.ports.LiveFrames
 import com.circaso.messaging.domain.ports.MembersCache
@@ -50,16 +39,15 @@ import com.circaso.messaging.domain.ports.PendingCounts
 import com.circaso.messaging.domain.ports.RealtimeFrames
 import com.circaso.messaging.domain.ports.RealtimeLog
 import com.circaso.messaging.domain.ports.ReceiptBuffer
+import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.ports.TypingMarks
-import com.circaso.messaging.domain.repositories.ChatMarkers
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.repositories.KeyRepository
-import com.circaso.messaging.domain.repositories.MessagingStore
+import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.messaging.domain.repositories.SettingsRepository
 import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
-import com.circaso.messaging.domain.support.ChatWriter
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
 import com.circaso.messaging.domain.support.KeyProofs
@@ -69,7 +57,6 @@ import com.circaso.messaging.domain.support.MessageSenders
 import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.messaging.domain.support.OrderedIds
 import com.circaso.messaging.domain.support.ReceiptBatcher
-import com.circaso.messaging.domain.support.SharedGroups
 import com.circaso.messaging.domain.usecases.AckDelivered
 import com.circaso.messaging.domain.usecases.AddMembers
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
@@ -113,6 +100,8 @@ import com.circaso.shared.RealtimeModule
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.ReachPolicy
 import com.circaso.web.RouteContributor
+import java.time.Clock
+import java.time.Duration
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -121,12 +110,35 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
-import java.time.Clock
+
+/** Schema `messaging`: its tables, its Flyway scripts and its outbox, which is infrastructure's (`outbox = true`). */
+internal val messagingDatabaseSpec =
+    DatabaseModuleSpec(
+        schema = "messaging",
+        tables =
+            listOf(
+                ChatsTable,
+                MembersTable,
+                KeyBundlesTable,
+                OneTimePreKeysTable,
+                InboxTable,
+                GroupMessagesTable,
+                MessageRecordsTable,
+                ClientMessagesTable,
+                SettingsTable,
+                RealtimeTable,
+            ),
+        migrationsLocation = "classpath:db/messaging",
+        outbox = true,
+    )
+
+/** How often `messaging.purge-expired` runs. */
+private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 
 /**
- * Messaging's Koin bindings: its Kandra spec, its outbox, the key directory (MS2), chats and membership (MS3),
- * sending and delivery (MS4) with the phone-frame handler (`RealtimeInboundModule`) and its `events:identity`
- * subscription, its replay (`RealtimeModule`) and its `messaging:api`.
+ * Messaging's Koin bindings: its database spec (with the outbox) and purge job, the key directory (MS2), chats and
+ * membership (MS3), sending and delivery (MS4) with the phone-frame handler (`RealtimeInboundModule`) and its
+ * `events:identity` subscription, its replay (`RealtimeModule`) and its `messaging:api`.
  */
 fun messagingModule(config: Config): Module =
     module {
@@ -144,53 +156,30 @@ fun messagingModule(config: Config): Module =
         single { messaging }
 
         // data
-        single<OutboxStore>(named("messaging.outbox")) { MessagingOutboxStore(rows<MessagingOutboxRow>()) }
-        single(named("messaging.spec")) {
-            KandraModuleSpec(
-                KS,
-                messagingEntities,
-                listOf(
-                    V001_CreateMessagingTables,
-                    V002_CreateKeyDirectoryTables,
-                    V003_CreateChatTables,
-                    V004_AddChatOwner,
-                    V005_CreateDeliveryTables,
-                ),
-            )
+        single(named("messaging.spec")) { messagingDatabaseSpec }
+        single(named("messaging.database")) { get<Databases>().scope(messagingDatabaseSpec.schema) }
+        single<Transactor> { DatabaseTransactor(get(named("messaging.database"))) }
+        single<MessagingOutbox> { MessagingOutboxImpl(get(named("messaging.database"))) }
+        single<KeyRepository> { KeyRepositoryImpl(get(named("messaging.database"))) }
+        single<ChatRepository> { ChatRepositoryImpl(get(named("messaging.database"))) }
+        single<DeliveryRepository> { DeliveryRepositoryImpl(get(named("messaging.database")), clock) }
+        single<SettingsRepository> { SettingsRepositoryImpl(get(named("messaging.database"))) }
+        single(named("messaging.purge-expired")) {
+            val expiry = MessagingExpiry(get(named("messaging.database")))
+            ScheduledJob("messaging.purge-expired", PURGE_INTERVAL) { expiry.run() }
         }
-        single<KeyRepository> { KeyRepositoryImpl(get(), rows<KeyBundleRow>(), rows<OneTimePreKeyRow>()) }
         single<BundleRateLimit> { RedisBundleRateLimit(get<RedisScopes>().scope(REDIS_PREFIX)) }
-        single<ChatRepository> {
-            ChatRepositoryImpl(rows<ChatRow>(), rows<DirectChatClaimRow>(), rows<MemberRow>(), rows<UserChatRow>())
-        }
-        single<MessagingStore> {
-            MessagingStoreImpl(
-                get(),
-                rows<ChatRow>(),
-                rows<MemberRow>(),
-                rows<UserChatRow>(),
-                rows<MessagingOutboxRow>(),
-                get(),
-            )
-        }
         single<MembersCache> { RedisMembersCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single {
-            RealtimeFramesImpl(get<RedisScopes>().scope(REDIS_PREFIX), rows<MessagingRealtimeRow>(), get(), clock)
+            RealtimeFramesImpl(
+                get<RedisScopes>().scope(REDIS_PREFIX),
+                get(named("messaging.database")),
+                get(),
+                clock,
+            )
         }
         single<RealtimeFrames> { get<RealtimeFramesImpl>() }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
-        single { UnloggedBatches(get()) }
-        single<DeliveryRepository> {
-            DeliveryRepositoryImpl(
-                get(),
-                rows<InboxRow>(),
-                rows<GroupMessageRow>(),
-                rows<MessageRecordRow>(),
-                rows<ClientMessageRow>(),
-            )
-        }
-        single<ChatMarkers> { ChatMarkersImpl(get()) }
-        single<SettingsRepository> { SettingsRepositoryImpl(rows<MessagingSettingsRow>()) }
         single<LiveFrames> { LiveFramesImpl(get<Realtime>(), clock) }
         single<PendingCounts> { RedisPendingCounts(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<ReceiptBuffer> { RedisReceiptBuffer(get<RedisScopes>().scope(REDIS_PREFIX), messaging.receiptBatch) }
@@ -201,9 +190,7 @@ fun messagingModule(config: Config): Module =
         single { Membership(get(), get()) }
         single { ChatViews(get(), get<Profiles>()) }
         single { ChatNotifier(get()) }
-        single { ChatWriter(get(), get()) }
         single { MemberRemoval(get(), get(), get(), get(), get(), get()) }
-        single { SharedGroups(get()) }
         single { OrderedIds(clock) }
         single { DeliveryNotifier(get(), get(), messaging) }
         single { ReceiptBatcher(get(), get(), background, clock, messaging) }
@@ -211,18 +198,20 @@ fun messagingModule(config: Config): Module =
         single { MessageSenders(get()) }
 
         // domain: use cases
-        single { PublishKeys(get(), get(), clock) }
-        single { AddOneTimeKeys(get(), get(), get()) }
+        single { PublishKeys(get(), get(), get(), clock) }
+        single { AddOneTimeKeys(get(), get(), get(), get(), clock) }
         single { GetKeyStatus(get()) }
         single { FetchKeyBundle(get(), get<ReachPolicy>(), get(), get(), get()) }
-        single { OpenDirectChat(get(), get(), get<ReachPolicy>(), get(), get(), clock) }
-        single { CreateGroup(get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
+        single { OpenDirectChat(get(), get(), get(), get<ReachPolicy>(), get(), get(), clock) }
+        single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
-        single { UpdateGroup(get(), get(), get(), get(), get()) }
-        single { AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock) }
-        single { RemoveMember(get(), get()) }
-        single { LeaveGroup(get(), get()) }
+        single { UpdateGroup(get(), get(), get(), get(), get(), get()) }
+        single {
+            AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock)
+        }
+        single { RemoveMember(get()) }
+        single { LeaveGroup(get()) }
         single { SetRole(get(), get(), get(), get(), get()) }
         single { GetMembers(get()) }
         single { ReplayFrames(get()) }
@@ -243,11 +232,11 @@ fun messagingModule(config: Config): Module =
         }
         single { ReadInbox(get(), messaging) }
         single { AckDelivered(get(), get(), get(), clock) }
-        single { MarkRead(get(), get(), get(), get(), get(), clock) }
+        single { MarkRead(get(), get(), get(), get(), clock) }
         single { RelayTyping(get(), get(), get(), get(), messaging) }
-        single { DeleteForEveryone(get(), get(), get(), get(), get(), get(), messaging, clock) }
+        single { DeleteForEveryone(get(), get(), get(), get(), get(), get(), get(), messaging, clock) }
         single { UpdateSettings(get()) }
-        single { RetireReplacedPhone(get(), get(), get(), get(), get(), get()) }
+        single { RetireReplacedPhone(get(), get(), get(), get(), get(), get(), get()) }
 
         // presentation
         single { KeyService(get(), get(), get(), get()) }

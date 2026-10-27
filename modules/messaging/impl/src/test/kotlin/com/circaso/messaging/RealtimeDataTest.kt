@@ -1,5 +1,6 @@
 package com.circaso.messaging
 
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.ChatUpdatedFrame
 import com.circaso.messaging.api.KeysChangedFrame
@@ -15,8 +16,7 @@ import com.circaso.messaging.api.ReceiptStatus
 import com.circaso.messaging.api.TypingFrame
 import com.circaso.messaging.data.cache.RealtimeFramesImpl
 import com.circaso.messaging.data.cache.RedisMembersCache
-import com.circaso.messaging.data.entities.MessagingRealtimeRow
-import com.circaso.messaging.data.migrations.V001_CreateMessagingTables
+import com.circaso.messaging.di.messagingDatabaseSpec
 import com.circaso.messaging.domain.usecases.ReplayFrames
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
 import com.circaso.messaging.presentation.services.RealtimeService
@@ -25,12 +25,6 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
-import io.kandra.migrate.KandraMigrationRunner
-import io.kandra.runtime.repository.KandraSuspendRepository
-import io.kandra.test.KandraRuntimeHandle
-import io.kandra.test.KandraTestBackend
-import io.kandra.test.KandraTestUtils
-import io.kandra.test.KandraTestcontainers
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.KSerializer
 import java.time.Clock
@@ -38,48 +32,36 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The replayed frames against a real Cassandra-compatible container (`realtime_by_user`) and Redis in memory: a seq
- * per recipient, the row kept before delivery, every frame as its own class, failed deliveries dropped, the replay and
- * its resync. Also the members cache's encoding and expiries.
+ * The replayed frames against PostgreSQL (`messaging.realtime`) and Redis in memory: a seq per recipient, the row kept
+ * before delivery, every frame as its own class, failed deliveries dropped, the replay and its resync. Also the
+ * members cache's encoding and expiries.
  */
 class RealtimeDataTest {
-    private val db: KandraRuntimeHandle =
-        run {
-            KandraTestBackend.newSession().use { admin ->
-                admin.execute(KandraTestBackend.createKeyspaceCql("circaso_messaging"))
-                KandraMigrationRunner(admin, keyspace = "circaso_messaging").run(V001_CreateMessagingTables)
-            }
-            KandraTestcontainers.freshKeyspace(MessagingRealtimeRow::class)
-        }
-
-    private val rows = db.suspendRepository<MessagingRealtimeRow>()
+    private val database = TestPostgres.database(messagingDatabaseSpec)
     private val redis = MemoryRedis()
-    private val realtime = RecordingRealtime(rows)
-    private val frames = RealtimeFramesImpl(redis, rows, realtime, Clock.systemUTC())
+    private val realtime = RecordingRealtime()
+    private val frames = RealtimeFramesImpl(redis, database, realtime, Clock.systemUTC())
     private val replay = MessagingRealtimeReplay(RealtimeService(ReplayFrames(frames)))
     private val chat = ChatId.new()
 
-    @AfterTest
-    fun close() {
-        db.close()
-        KandraTestUtils.reset()
-    }
+    @BeforeTest
+    fun clean() = TestPostgres.truncate("messaging")
 
     /** Delivers by recording; checks the row is already kept; refuses the users in [failFor]. */
-    private class RecordingRealtime(private val rows: KandraSuspendRepository<MessagingRealtimeRow>) : Realtime {
+    private class RecordingRealtime : Realtime {
         val delivered = CopyOnWriteArrayList<Pair<UserId, RealtimeEnvelope>>()
         val keptFirst = CopyOnWriteArrayList<Boolean>()
         val failFor = mutableSetOf<UserId>()
 
         override suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope): Resource<Unit> {
-            keptFirst += rows.findById(userId.value, envelope.seq) != null
+            keptFirst += kept(userId, envelope.seq)
             if (userId in failFor) error("node unreachable")
             delivered += userId to envelope
             return Resource.success(Unit)
@@ -87,7 +69,27 @@ class RealtimeDataTest {
 
         override suspend fun deliverMany(userIds: Collection<UserId>, envelope: RealtimeEnvelope) =
             error("replayed frames go per recipient")
+
+        private fun kept(userId: UserId, seq: Long): Boolean =
+            TestPostgres.superuser { connection ->
+                connection
+                    .prepareStatement("SELECT count(*) FROM messaging.realtime WHERE user_id = ? AND seq = ?")
+                    .use { statement ->
+                        statement.setObject(1, userId.value)
+                        statement.setLong(2, seq)
+                        statement.executeQuery().use { rows -> rows.next() && rows.getInt(1) == 1 }
+                    }
+            }
     }
+
+    private fun forget(userId: UserId, seq: Long) =
+        TestPostgres.superuser { connection ->
+            connection.prepareStatement("DELETE FROM messaging.realtime WHERE user_id = ? AND seq = ?").use {
+                it.setObject(1, userId.value)
+                it.setLong(2, seq)
+                it.executeUpdate()
+            }
+        }
 
     @Test
     fun `each recipient gets their own seq, and the row is kept before delivery`() =
@@ -101,7 +103,7 @@ class RealtimeDataTest {
             val seqs = realtime.delivered.groupBy({ it.first }, { it.second.seq })
             assertEquals(listOf(1L, 2L, 3L), seqs[amina])
             assertEquals(listOf(1L, 2L), seqs[brian])
-            assertTrue(realtime.keptFirst.all { it }, "every frame was in realtime_by_user before it went out")
+            assertTrue(realtime.keptFirst.all { it }, "every frame was in messaging.realtime before it went out")
             assertEquals(Duration.ofDays(8), redis.ttls["seq:$amina"])
             val updated = realtime.delivered.single { it.second.type == "chat.updated" }.second
             assertEquals(ChatUpdatedFrame(chat, 1, 3L), decode(ChatUpdatedFrame.serializer(), updated))
@@ -161,7 +163,7 @@ class RealtimeDataTest {
             assertEquals(listOf(2L, 3L), replay.since(amina, 1).data().map { it.seq })
             assertEquals(emptyList(), replay.since(amina, 3).data())
 
-            rows.delete(MessagingRealtimeRow(amina.value, 1, ""))
+            forget(amina, 1)
             val resync = replay.since(amina, 0).data().single()
             assertEquals("resync", resync.type)
             assertEquals("messaging", resync.module)

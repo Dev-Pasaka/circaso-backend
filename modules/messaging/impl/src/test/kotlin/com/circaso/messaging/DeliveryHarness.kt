@@ -38,7 +38,7 @@ import java.util.UUID
 @OptIn(ExperimentalCoroutinesApi::class)
 class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
     val chats = ChatHarness(config)
-    val delivery = MemoryDelivery()
+    val delivery = MemoryDelivery(chats.chats.records)
     val pending = MemoryPending()
     val receipts = MemoryReceipts()
     val typing = MemoryTyping()
@@ -57,7 +57,7 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
             chats.membership,
             chats.reach,
             delivery,
-            delivery,
+            chats.transactor,
             pending,
             notifier,
             OrderedIds(chats.clock),
@@ -67,13 +67,14 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
         )
     val readInbox = ReadInbox(delivery, config)
     val ackDelivered = AckDelivered(delivery, removal, batcher, chats.clock)
-    val markRead = MarkRead(chats.chats, delivery, delivery, senders, batcher, chats.clock)
+    val markRead = MarkRead(chats.chats, delivery, senders, batcher, chats.clock)
     val relayTyping = RelayTyping(chats.membership, delivery, typing, notifier, config)
     val deleteForEveryone =
         DeleteForEveryone(
             chats.chats,
             chats.membership,
             delivery,
+            chats.transactor,
             pending,
             senders,
             notifier,
@@ -82,7 +83,15 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
         )
     val updateSettings = UpdateSettings(delivery)
     val retireReplacedPhone =
-        RetireReplacedPhone(chats.keys, delivery, removal, chats.chats, chats.membership, notifier)
+        RetireReplacedPhone(
+            chats.keys,
+            chats.transactor,
+            delivery,
+            removal,
+            chats.chats,
+            chats.membership,
+            notifier,
+        )
     val inbound =
         MessagingRealtimeInbound(PhoneFrameService(ackDelivered, markRead, relayTyping), config.inboxPageMax)
 

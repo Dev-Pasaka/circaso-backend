@@ -3,7 +3,7 @@ package com.circaso.messaging
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.MessagingFrame
 import com.circaso.messaging.api.ReceiptStatus
-import com.circaso.messaging.domain.models.ClientClaim
+import com.circaso.messaging.domain.models.Fanout
 import com.circaso.messaging.domain.models.GroupBody
 import com.circaso.messaging.domain.models.InboxMessage
 import com.circaso.messaging.domain.models.MessageRecord
@@ -12,39 +12,30 @@ import com.circaso.messaging.domain.ports.LiveFrames
 import com.circaso.messaging.domain.ports.PendingCounts
 import com.circaso.messaging.domain.ports.ReceiptBuffer
 import com.circaso.messaging.domain.ports.TypingMarks
-import com.circaso.messaging.domain.repositories.ChatMarkers
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.repositories.SettingsRepository
 import com.circaso.shared.UserId
-import kotlinx.coroutines.CompletableDeferred
+import java.time.Instant
 import java.util.TreeMap
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Inboxes, group bodies, client-id claims, chat-list markers and settings in memory, with the tables' rules: a claim
- * and a conditional delete are atomic. [failInboxWrites] makes the next sends fail after [writtenBeforeFailing]
- * batches (a later batch failing); [writeGate], when set, holds every write until it is completed; [batches] records
- * the size of each batch; [inboxRead] runs on each `inboxRow`, so a test can interleave two acks.
+ * Inboxes, group bodies, client-id claims and settings in memory, with the tables' rules: a claim and a take are
+ * atomic, and a send writes its record, body and rows together. [records] is shared with [MemoryChats], whose
+ * `lastMessageId` reads it. [writes] counts the sends written; [failWrites] makes the next sends throw before writing
+ * anything, as a failed transaction leaves nothing.
  */
-class MemoryDelivery :
+class MemoryDelivery(val records: ConcurrentHashMap<UUID, MessageRecord> = ConcurrentHashMap()) :
     DeliveryRepository,
-    ChatMarkers,
     SettingsRepository {
-    val inboxes = ConcurrentHashMap<UserId, TreeMap<UUID, InboxMessage>>()
+    val inboxes = ConcurrentHashMap<UserId, TreeMap<String, InboxMessage>>()
     val bodies = ConcurrentHashMap<Pair<ChatId, UUID>, GroupBody>()
-    val clientIds = ConcurrentHashMap<Pair<UserId, UUID>, ClientClaim>()
-    val records = ConcurrentHashMap<UUID, MessageRecord>()
-    val lastMessages = ConcurrentHashMap<Pair<UserId, ChatId>, UUID>()
-    val readMarks = ConcurrentHashMap<Pair<UserId, ChatId>, UUID>()
+    val clientIds = ConcurrentHashMap<Pair<UserId, UUID>, UUID>()
     val stored = ConcurrentHashMap<UserId, MessagingSettings>()
-    val batches = CopyOnWriteArrayList<Int>()
-    var failInboxWrites = 0
-    var writtenBeforeFailing = 0
-    var writeGate: CompletableDeferred<Unit>? = null
-    val writesStarted = CompletableDeferred<Unit>()
-    var inboxRead: suspend () -> Unit = {}
+    var writes = 0
+    var failWrites = 0
 
     private fun of(userId: UserId) = inboxes.getOrPut(userId) { TreeMap() }
 
@@ -54,58 +45,26 @@ class MemoryDelivery :
         senderId: UserId,
         clientMessageId: UUID,
         messageId: UUID,
-    ): ClientClaim? = clientIds.putIfAbsent(senderId to clientMessageId, ClientClaim(messageId, complete = false))
+        expiresAt: Instant,
+    ): UUID? = clientIds.putIfAbsent(senderId to clientMessageId, messageId)
 
-    override suspend fun completeClientMessage(
-        senderId: UserId,
-        clientMessageId: UUID,
-        messageId: UUID,
-    ) {
-        clientIds[senderId to clientMessageId] = ClientClaim(messageId, complete = true)
-    }
-
-    /** [batches] counts statements per batch, the record in the first, as the unlogged batches do. */
-    override suspend fun writeMessage(
-        record: MessageRecord,
-        rows: List<InboxMessage>,
-        batchSize: Int,
-    ) {
-        writesStarted.complete(Unit)
-        writeGate?.await()
-        val chunks = (listOf<Any>(record) + rows).chunked(batchSize)
-        for ((index, chunk) in chunks.withIndex()) {
-            if (failInboxWrites > 0 && index == writtenBeforeFailing) {
-                failInboxWrites--
-                error("batch $index failed")
-            }
-            batches += chunk.size
-            write(chunk)
+    override suspend fun writeMessage(fanout: Fanout) {
+        if (failWrites > 0) {
+            failWrites--
+            error("the send failed")
         }
-    }
-
-    private fun write(chunk: List<Any>) =
         synchronized(this) {
-            for (item in chunk) {
-                if (item is MessageRecord) records[item.messageId] = item
-                if (item is InboxMessage) of(item.userId)[item.messageId] = item
-            }
+            writes++
+            records[fanout.record.messageId] = fanout.record
+            fanout.body?.let { bodies[it.chatId to it.messageId] = it }
+            for (row in fanout.rows) of(row.userId)[row.messageId.toString()] = row
         }
+    }
 
     override suspend fun messageRecord(messageId: UUID) = records[messageId]
 
-    override suspend fun writeGroupBody(body: GroupBody) {
-        bodies[body.chatId to body.messageId] = body
-    }
-
-    override suspend fun groupBody(chatId: ChatId, messageId: UUID) = bodies[chatId to messageId]
-
     override suspend fun deleteGroupBody(chatId: ChatId, messageId: UUID) {
         bodies.remove(chatId to messageId)
-    }
-
-    override suspend fun inboxRow(userId: UserId, messageId: UUID): InboxMessage? {
-        inboxRead()
-        return synchronized(this) { of(userId)[messageId] }
     }
 
     override suspend fun inbox(
@@ -114,33 +73,28 @@ class MemoryDelivery :
         limit: Int,
     ): List<InboxMessage> =
         synchronized(this) {
-            val rows = if (after == null) of(userId) else of(userId).tailMap(after, false)
-            rows.values.take(limit)
+            val rows = if (after == null) of(userId) else of(userId).tailMap(after.toString(), false)
+            rows.values.take(limit).map { row ->
+                if (!row.groupBody) row else row.copy(ciphertext = bodies[row.chatId to row.messageId]?.ciphertext)
+            }
         }
 
-    override suspend fun claimInboxRow(userId: UserId, messageId: UUID): Boolean =
-        synchronized(this) { of(userId).remove(messageId) != null }
+    override suspend fun takeInboxRows(userId: UserId, messageIds: Collection<UUID>): List<InboxMessage> =
+        synchronized(this) { messageIds.mapNotNull { of(userId).remove(it.toString()) } }
 
-    override suspend fun deleteInboxRows(
-        userIds: Collection<UserId>,
-        messageId: UUID,
-        batchSize: Int,
-    ) = synchronized(this) { userIds.forEach { of(it).remove(messageId) } }
-
-    override suspend fun lastMessage(
-        userIds: Collection<UserId>,
-        chatId: ChatId,
-        messageId: UUID,
-        batchSize: Int,
-    ) = userIds.forEach { lastMessages[it to chatId] = messageId }
-
-    override suspend fun readUpTo(
+    override suspend fun takeInboxRowsSentBy(
         userId: UserId,
-        chatId: ChatId,
-        messageId: UUID,
-    ) {
-        readMarks[userId to chatId] = messageId
-    }
+        sentBy: Instant,
+        limit: Int,
+    ): List<InboxMessage> =
+        synchronized(this) {
+            val due = of(userId).values.filter { !it.sentAt.isAfter(sentBy) }.take(limit)
+            due.forEach { of(userId).remove(it.messageId.toString()) }
+            due
+        }
+
+    override suspend fun deleteInboxRows(userIds: Collection<UserId>, messageId: UUID): Int =
+        synchronized(this) { userIds.count { of(it).remove(messageId.toString()) != null } }
 
     override suspend fun settings(userId: UserId) = stored[userId] ?: MessagingSettings()
 

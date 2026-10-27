@@ -13,7 +13,7 @@ class GetChat(private val chats: ChatRepository, private val views: ChatViews) {
     suspend operator fun invoke(caller: UserId, chatId: ChatId): Resource<ChatView> {
         if (chats.member(chatId, caller) == null) return Resource.error(MessagingError.ChatNotFound)
         val chat = chats.chat(chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        val last = chats.userChat(caller, chatId)?.lastMessageId
+        val last = chats.lastMessageId(chatId)
         return Resource.success(views.view(chat, last))
     }
 }

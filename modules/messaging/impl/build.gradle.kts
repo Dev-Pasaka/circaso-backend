@@ -3,20 +3,16 @@ plugins {
 }
 
 // Chats, membership, the key directory, delivery of end-to-end encrypted messages and media, receipts and history.
-// The domain imports nothing from the libraries below.
+// The domain imports nothing from the libraries below; data reaches PostgreSQL through Exposed and `Database` (both
+// from infrastructure:api) and Redis through RedisScope.
 dependencies {
-    implementation(platform(libs.kandra.bom))
-    implementation(libs.kandra.runtime)
-    implementation(libs.kandra.migrate)
-
     implementation(libs.ktor.server.core)
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines.core)
 
-    testImplementation(platform(libs.kandra.bom))
-    testImplementation(libs.kandra.test)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.testcontainers)
-    testImplementation(libs.testcontainers.cassandra)
+    testImplementation(libs.logback.classic)
+    // PostgreSQL for data tests, as infrastructure:api types (the one test-only exception in DependencyRules)
+    testImplementation(testFixtures(project(":infrastructure:impl")))
 }
