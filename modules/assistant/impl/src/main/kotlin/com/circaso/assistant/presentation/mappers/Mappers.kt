@@ -111,9 +111,20 @@ fun voiceClipOf(
     val problems =
         listOfNotNull(
             when {
-                duration == null -> FieldError(DURATION_HEADER, "is required: the clip's length in seconds, such as 5 or 5.5")
-                seconds == null -> FieldError(DURATION_HEADER, "must be a number of seconds above 0, such as 5 or 5.5")
-                else -> null
+                duration == null -> {
+                    FieldError(
+                        DURATION_HEADER,
+                        "is required: the clip's length in seconds, such as 5 or 5.5",
+                    )
+                }
+
+                seconds == null -> {
+                    FieldError(DURATION_HEADER, "must be a number of seconds above 0, such as 5 or 5.5")
+                }
+
+                else -> {
+                    null
+                }
             },
             FieldError("audio", "must be under 3 MB").takeIf { audio.size > MAX_CLIP_BYTES },
         )

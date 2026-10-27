@@ -669,7 +669,7 @@ object Rules {
      */
     val untypedPayloadAllowList: Map<String, String> =
         linkedMapOf(
-            // Owned by the parallel slices that convert them. Each entry is removed when MS4 or AI1b merges.
+            // Owned by the parallel slice that converts them. Each entry is removed when MS4 merges.
             "integrations/impl/fcm/FcmPush.kt" to
                 "MS4 converts it; FCM's `data` stays a string map, the FCM API requires it, encoded from a typed class",
             "messaging/data/cache/RealtimeFramesImpl.kt" to
@@ -678,27 +678,9 @@ object Rules {
                 "MS4 converts the messaging frames",
             "gateway/realtime/GatewayRealtime.kt" to
                 "MS4 converts pushFor",
-            "integrations/impl/workersai/ChatCompletions.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiGateway.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiLanguageModel.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiLiveSpeech.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiLiveTranscription.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiSpeechToText.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiTextToSpeech.kt" to
-                "AI1b converts Workers AI",
-            "integrations/impl/workersai/WorkersAiVisionModel.kt" to
-                "AI1b converts Workers AI",
-            "assistant/data/tools/HttpAgentTools.kt" to
-                "AI1b converts Asha's tools",
-            "assistant/presentation/controllers/LiveVoiceController.kt" to
-                "AI1b converts the live-voice frames",
             // Not payloads, so they stay.
+            "integrations/impl/workersai/ChatCompletions.kt" to
+                "a tool's parametersJsonSchema is an opaque JSON Schema string (decision B, 2026-10-27, AI1b review)",
             "gateway/ApiDocsCatalog.kt" to
                 "the OpenAPI generator builds a JSON schema document",
             "infrastructure/impl/grpc/PeerGrpcClients.kt" to

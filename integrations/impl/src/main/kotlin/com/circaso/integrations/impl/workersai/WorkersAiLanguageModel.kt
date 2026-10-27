@@ -61,7 +61,7 @@ class WorkersAiLanguageModel(
 
     /** The request as JSON; a tool whose schema isn't a JSON object is refused before any call. */
     private fun body(request: ModelRequest, isStreamed: Boolean): Resource<String> {
-        request.tools.firstOrNull { !isJsonObject(it.parametersJsonSchema) }?.let {
+        request.tools.firstOrNull { !isSchemaObject(it.parametersJsonSchema) }?.let {
             return Resource.error(
                 IntegrationError.Rejected("Tool '${it.name}' has a parameters schema that isn't JSON."),
             )
@@ -143,6 +143,6 @@ class WorkersAiLanguageModel(
         )
 
     /** A schema is opaque text (decision 2026-10-27); it must still read as a JSON object to be sent as one. */
-    private fun isJsonObject(schema: String) =
+    private fun isSchemaObject(schema: String) =
         runCatching { Json.decodeFromString(JsonObject.serializer(), schema) }.isSuccess
 }

@@ -13,7 +13,12 @@ class VoiceClipTest {
 
     private fun clip(duration: String?, bytes: ByteArray = audio) = voiceClipOf(bytes, duration, "audio/mp4", "en")
 
-    private fun Resource<VoiceClip>.fields(): Map<String, String> = (this as Resource.Error).error.details!!.fields
+    /** The field errors, by field (each field is named once). */
+    private fun Resource<VoiceClip>.fields(): Map<String, String> =
+        (this as Resource.Error)
+            .error.details!!
+            .fields
+            .associate { it.field to it.problem }
 
     @Test
     fun `a decimal length is accepted and rounded up`() {
