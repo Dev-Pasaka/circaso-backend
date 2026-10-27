@@ -2,7 +2,7 @@
 
 2026-10-21 · Pasaka
 
-Circaso's backend is one Kotlin/Ktor deployable split into strict modules, each owning its own ScyllaDB keyspace and talking to others only through published interfaces and events; identity and users are the first two modules and set the pattern for the rest.
+Circaso's backend is one Kotlin/Ktor deployable split into strict modules, each owning its own PostgreSQL schema and talking to others only through published interfaces and events; identity and users are the first two modules and set the pattern for the rest.
 
 This tab holds what every module shares. Each module's endpoints, data, events and error codes live in Modules, one sub-tab per module; every decision and open question lives in Decisions. New modules and features are added on top of these, never in a separate document.
 
@@ -14,14 +14,14 @@ Twelve rules every module follows; a change to any of them is an architecture de
 2. **Four layers.** The gateway handles the edge, business modules hold the logic, integrations wrap third-party services, infrastructure provides connections and libraries. Dependencies only point downward.
 3. **Infrastructure is plumbing, not logic.** It installs and configures libraries and connections, including the shared HTTP client with its retries, and hands each module a scoped handle. Modules build their own tables, queries and logic on top.
 4. **Vendors live behind contracts.** Every third-party service is reached through an interface in `integrations:api`. Swapping Africa's Talking for Twilio is a new implementation and a config change; no business module notices.
-5. **One module, one keyspace.** Each module owns a ScyllaDB keyspace and is the only code that reads or writes it.
+5. **One module, one schema.** Each module owns a PostgreSQL schema, reached through its own database role, and is the only code that reads or writes it.
 6. **Modules meet only through contracts.** Another module's `api` (interfaces, data types, events) is the only thing a module may depend on. Never its internals.
-7. **No cross-module transactions.** Work that spans modules happens through durable events: each event is written to an outbox in the same batch as the change that caused it, then delivered through Redis Streams, and every handler is idempotent. There is no workflow engine: wallets are user-controlled, so the backend never moves money itself, and work that must run on a schedule (stuck transactions, audits) is a plain scheduled job.
-8. **Tables are designed around queries.** One table per question asked; data is duplicated across tables and modules where reads need it.
+7. **No cross-module transactions.** Work that spans modules happens through durable events: each event is written to an outbox in the same transaction as the change that caused it, then delivered through Redis Streams, and every handler is idempotent. There is no workflow engine: wallets are user-controlled, so the backend never moves money itself, and work that must run on a schedule (stuck transactions, audits) is a plain scheduled job.
+8. **Tables are designed around queries.** Every read is served by a primary key or an index, never a scan; data is duplicated across modules where reads need it.
 9. **Commands over HTTP, signals over the socket.** Anything that changes state, above all money, is an HTTP call with an idempotency key. The WebSocket carries delivery and lightweight signals.
 10. **The socket is a doorbell, not the mailbox.** Every pushed event also lives in its module's data, so a missed frame is recovered on reconnect.
 11. **Circle holds the money.** Our database records transactions for statements and audit; Circle is the source of truth for balances.
-12. **Costs stay low.** Managed where running it ourselves would cost more than it saves (ScyllaDB Cloud, Cloudflare, Circle, SMS), self-hosted where it is cheap to run (Redis, the Grafana stack), and nothing added before a feature needs it.
+12. **Costs stay low.** Managed where running it ourselves would cost more than it saves (Cloudflare, Circle, SMS; the production database host is decided before launch), self-hosted where it is cheap to run (PostgreSQL on the sandbox, Redis, the Grafana stack), and nothing added before a feature needs it.
 
 ## System at a glance
 
@@ -45,9 +45,9 @@ circaso-backend/
 │                                StatusPages: for presentation layers and the gateway
 │
 ├─ infrastructure/
-│  ├─ api/                       handles modules borrow: Kandra repositories, RedisScope,
+│  ├─ api/                       handles modules borrow: Database (transactions), RedisScope,
 │  │                             Scheduler, ObjectStore, HttpClients, Secrets, Telemetry
-│  └─ impl/                      ScyllaDB + Kandra, Redis, the EventBus implementation
+│  └─ impl/                      PostgreSQL + Exposed (Hikari pools, Flyway), Redis, the EventBus implementation
 │                                (outbox relay, Redis Streams consumers), Cloudflare R2,
 │                                Ktor HTTP client (retries, timeouts, circuit breaker),
 │                                config, OpenTelemetry, migrations, scheduled jobs
@@ -83,7 +83,7 @@ circaso-backend/
 ├─ app/                          main(): `serve` loads config, picks vendor implementations,
 │                                wires modules, starts the server; `Migrate` runs migrations
 ├─ architecture-tests/           Konsist rules that fail the build on a boundary breach
-└─ deploy/                       docker-compose for local dev (ScyllaDB, Redis)
+└─ deploy/                       docker-compose for local dev (PostgreSQL, Redis)
 ```
 
 Code packages follow the folders: `com.circaso.identity.api`, `com.circaso.identity.domain`, `com.circaso.users.data`, and so on.
@@ -97,16 +97,16 @@ Every business module is two Gradle modules: a small `api` that others may see, 
 - Interfaces other modules call (for example `ReachPolicy`, `AccountDirectory`).
 - The data types those interfaces take and return.
 - The events the module publishes.
-- No Ktor, no Kandra, no Koin. Depends only on `shared` and other modules' `api`.
+- No Ktor, no Exposed, no Koin. Depends only on `shared` and other modules' `api`.
 
 **`impl` — everything else, in three layers plus `di`**
 
 | Layer (package) | Holds | Calls | Never sees |
 | --- | --- | --- | --- |
-| `presentation` | **Controllers**: one `fun Route.xController(service: XService)` per area, in its own file, holding the path groups (`route("/…") { }`), the scope (`authenticate`), the handlers and their OpenAPI docs; a handler receives the request DTO, maps it, calls a service, responds. **Services**: one class per area of the module (`ProfileService`, `ContactService`), **each in its own file**, grouping that area's use cases and exposing them as methods. Request and response DTOs (`@Serializable`) and their mappers. Handlers for other modules' events. The implementation of the module's own `api` | Services call use cases; controllers, event handlers and `api` implementations call services | Rows, Kandra, repositories |
-| `domain` | **Models** (plain Kotlin, used only inside the domain). **Repository interfaces**, declared here and implemented in `data`. **Use cases**, one business operation each. Domain errors and other ports | Repository interfaces and ports; `shared`, own `api`, other modules' `api`, `integrations:api` | DTOs, rows, Ktor, Kandra, any library |
-| `data` | Kandra entities (`*Row`), repository implementations, row ↔ model mappers, migrations, other data sources (Redis caches, R2 objects) | `infrastructure:api` handles | DTOs, Ktor, services |
-| `di` | The Koin module: binds repository interfaces to implementations, builds use cases, services and controllers, registers routes, event handlers, the `api` implementations and the Kandra spec | Everything in `impl` | — |
+| `presentation` | **Controllers**: one `fun Route.xController(service: XService)` per area, in its own file, holding the path groups (`route("/…") { }`), the scope (`authenticate`), the handlers and their OpenAPI docs; a handler receives the request DTO, maps it, calls a service, responds. **Services**: one class per area of the module (`ProfileService`, `ContactService`), **each in its own file**, grouping that area's use cases and exposing them as methods. Request and response DTOs (`@Serializable`) and their mappers. Handlers for other modules' events. The implementation of the module's own `api` | Services call use cases; controllers, event handlers and `api` implementations call services | Tables, rows, Exposed, repositories |
+| `domain` | **Models** (plain Kotlin, used only inside the domain). **Repository interfaces**, declared here and implemented in `data`. **Use cases**, one business operation each. Domain errors and other ports | Repository interfaces and ports; `shared`, own `api`, other modules' `api`, `integrations:api` | DTOs, rows, Ktor, Exposed, any library |
+| `data` | Exposed `Table` objects (`data/tables`), repository implementations with their private `ResultRow` → model mappers, other data sources (Redis caches, R2 objects); the module's Flyway SQL lives beside it in `src/main/resources/db/<module>` | `infrastructure:api` handles (`Database.tx`) | DTOs, Ktor, services |
+| `di` | The Koin module: binds repository interfaces to implementations, builds use cases, services and controllers, registers routes, event handlers, the `api` implementations and the `DatabaseModuleSpec` | Everything in `impl` | — |
 
 A business module never talks to a vendor itself: it calls a contract such as `SmsGateway`, and the integrations layer does the rest.
 
@@ -128,13 +128,14 @@ modules/users/impl/src/main/kotlin/com/circaso/users/
 │  ├─ usecases/      UpdateProfile.kt, ClaimHandle.kt, SyncContacts.kt, …
 │  └─ errors/        UsersError.kt
 ├─ data/
-│  ├─ entities/      ProfileRow.kt, ContactRow.kt, …
-│  ├─ repositories/  ProfileRepositoryImpl.kt, …
-│  ├─ mappers/       row ↔ model
-│  ├─ cache/         reach decisions in Redis
-│  └─ migrations/    V001_CreateProfiles.kt, …
+│  ├─ tables/        ProfilesTable.kt, ContactsTable.kt, … (Exposed `Table` objects)
+│  ├─ repositories/  ProfileRepositoryImpl.kt, … (each with its private ResultRow → model mapper)
+│  └─ cache/         reach decisions in Redis
 └─ di/
-   └─ UsersModule.kt Koin bindings, routes, event handlers, Kandra spec
+   └─ UsersModule.kt Koin bindings, routes, event handlers, DatabaseModuleSpec
+
+modules/users/impl/src/main/resources/db/users/
+└─ V1__users.sql, V2__…  Flyway migrations, plain SQL
 ```
 
 **Rules for use cases and services**
@@ -156,12 +157,12 @@ Data changes shape twice on its way in and twice on its way out: DTOs stop at pr
 **Rules**
 
 1. **DTOs live only in `presentation`.** A request is deserialised into a request DTO, mapped to a model, and passed to a use case. The use case's result model is mapped to a response DTO. Domain functions never take or return a DTO.
-2. **Rows live only in `data`.** The domain asks a port (`ProfileRepository.save(profile: Profile)`); the data layer maps the model to a `ProfileRow`, saves it with Kandra, and maps rows back to models on reads. A row never leaves `data`.
-3. **Models are plain Kotlin.** No `@Serializable`, no Kandra annotations, no Ktor types. They use value types from `shared` (`UserId`, `PhoneNumber`, `Money`), so an invalid phone number can't exist as a model.
-4. **Mappers sit at the edge that owns the foreign shape:** `toModel()` / `toResponse()` in `presentation`, `toRow()` / `toModel()` in `data`. They are plain extension functions, tested on their own.
+2. **Rows live only in `data`.** The domain asks a port (`ProfileRepository.save(profile: Profile)`); the data layer writes the model's fields through its Exposed table inside `Database.tx`, and maps each `ResultRow` back to a model on reads. A `ResultRow` or `Table` never leaves `data`.
+3. **Models are plain Kotlin.** No `@Serializable`, no Exposed types, no Ktor types. They use value types from `shared` (`UserId`, `PhoneNumber`, `Money`), so an invalid phone number can't exist as a model.
+4. **Mappers sit at the edge that owns the foreign shape:** `toModel()` / `toResponse()` in `presentation`, a private `ResultRow.toProfile()` in each repository file in `data`. They are plain extension functions, tested on their own.
 5. **Validation in two places.** Presentation checks shape (required fields, formats, lengths) while mapping and returns `400` for a bad request. The domain checks rules ("this number is already taken", "handle changed less than 30 days ago") and returns a `DomainError`.
 6. **Contracts and events between modules are their own types.** `users:api` exposes `PublicProfile`, not the `Profile` model, so a module can reshape its internals without breaking callers. The `api` types are mapped from models at the module edge too.
-7. **The shapes may look alike.** `ProfileResponse`, `Profile` and `ProfileRow` often have similar fields. They stay separate anyway: the response can't leak a stored field by accident, and the table can change without touching the API.
+7. **The shapes may look alike.** `ProfileResponse`, `Profile` and the `ProfilesTable` columns often have similar fields. They stay separate anyway: the response can't leak a stored field by accident, and the table can change without touching the API.
 
 ```kotlin
 // presentation/dto
@@ -215,14 +216,19 @@ class UpdateProfile(private val profiles: ProfileRepository, private val events:
     suspend operator fun invoke(command: UpdateProfileCommand): Resource<Profile> = …
 }
 
-// data/entities and data/mappers
-@ScyllaTable(name = "profiles", keyspace = "circaso_users")
-data class ProfileRow(@PartitionKey val userId: UUID, val displayName: String, val about: String?, val handle: String?, @Version val version: Long = 0)
-fun ProfileRow.toModel(): Profile = …
-fun Profile.toRow(): ProfileRow = …
+// data/tables: one object per table, the name given with its schema
+object ProfilesTable : Table("users.profiles") {
+    val userId = uuid("user_id")
+    val displayName = text("display_name")
+    val about = text("about").nullable()
+    val handle = text("handle").nullable()
+    val version = long("version")
+    override val primaryKey = PrimaryKey(userId)
+}
 
-// data/repositories
-class ProfileRepositoryImpl(private val rows: KandraRepository<ProfileRow>) : ProfileRepository { … }
+// data/repositories: every call inside Database.tx; the mapper is private to the file
+class ProfileRepositoryImpl(private val db: Database) : ProfileRepository { … }
+private fun ResultRow.toProfile(): Profile = …
 
 // di
 val usersModule = module {
@@ -233,7 +239,7 @@ val usersModule = module {
 }
 ```
 
-Konsist checks the boundaries: nothing in `domain` imports `kotlinx.serialization`, Ktor or Kandra; nothing outside `presentation` references a `*Request` or `*Response`; nothing outside `data` references a `*Row`; controllers, event handlers and `api` implementations depend on services only; services depend on use cases only; use cases depend on `domain` interfaces and ports, never on a `*Impl`; classes in `services/` end in `Service`, each controllers file declares a `fun Route.xController(service)` and no class, and classes in `usecases/` have exactly one public function.
+Konsist checks the boundaries: nothing in `domain` imports `kotlinx.serialization`, Ktor or Exposed; nothing outside `presentation` references a `*Request` or `*Response`; nothing outside the owning module's `data` references an Exposed `Table` or a `ResultRow`; controllers, event handlers and `api` implementations depend on services only; services depend on use cases only; use cases depend on `domain` interfaces and ports, never on a `*Impl`; classes in `services/` end in `Service`, each controllers file declares a `fun Route.xController(service)` and no class, and classes in `usecases/` have exactly one public function.
 
 ### Results, errors and responses
 
@@ -361,7 +367,7 @@ suspend fun update(call: ApplicationCall) {
 | `gateway` | every `api`, `infrastructure:api`, `integrations:api` | any `impl`, any vendor module |
 | `app` | everything | — (the only place that knows the implementations) |
 
-**Enforcement.** Two guards fail the build: the `circaso.api` and `circaso.impl` Gradle plugins reject a forbidden project dependency at configuration time, and Konsist tests in `architecture-tests` reject forbidden imports (for example `domain` importing Kandra, or anything referencing another module's tables).
+**Enforcement.** Two guards fail the build: the `circaso.api` and `circaso.impl` Gradle plugins reject a forbidden project dependency at configuration time, and Konsist tests in `architecture-tests` reject forbidden imports (for example `domain` importing Exposed, or anything referencing another module's tables).
 
 ## How modules talk
 
@@ -393,9 +399,9 @@ An event must never be lost between the change that caused it and the module tha
 
 **Delivery, step by step**
 
-1. **Write with the change.** The use case writes its rows and an outbox row (in its own keyspace) in one Kandra batch, so both land or neither does. A uniqueness claim (`saveIfNotExists`) happens before the batch, since an LWT can't join one.
-2. **Publish at once.** Right after the batch succeeds, the module `XADD`s the event to its stream: the normal path, about a millisecond.
-3. **Rescue after a crash.** After the `XADD` succeeds, the module stamps `publishedAt` on its outbox row. A relay in infrastructure, run by one node at a time under the scheduler's Redis lock, sweeps the outbox minute-buckets from its last checkpoint up to 10 seconds ago, publishes every row with no `publishedAt`, then moves the checkpoint forward. A rescued event may be a duplicate; handlers already skip those.
+1. **Write with the change.** The operation writes its rows, its uniqueness claims and an outbox row (in its own schema) in one `Database.tx` transaction, so all of them land or none does.
+2. **Publish at once.** Right after the transaction commits, the module `XADD`s the event to its stream: the normal path, about a millisecond.
+3. **Rescue after a crash.** After the `XADD` succeeds, the module stamps `publishedAt` on its outbox row. A relay in infrastructure, run by one node at a time under the scheduler's Redis lock on the jobs pool, asks each module's `OutboxStore` for its unpublished rows (`SELECT … WHERE published_at IS NULL AND occurred_at < now() - interval '10 seconds' ORDER BY occurred_at LIMIT 500`, backed by a partial index `WHERE published_at IS NULL`) and publishes them. A rescued event may be a duplicate; handlers already skip those.
 4. **Consume.** Consumers read with `XREADGROUP` (blocking), run the handler, and `XACK` only after it succeeds.
 5. **Retry, then dead-letter.** Messages unacknowledged for 30 seconds are reclaimed with `XAUTOCLAIM` and retried; after 5 attempts they move to `events:dlq` and raise an alert.
 6. **Idempotent handlers.** Each group records handled `eventId`s in `evt:done:{group}:{eventId}` (7-day expiry) and skips repeats. The `evt:` prefix belongs to infrastructure's event runtime, not to any module.
@@ -515,75 +521,141 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 | Provides | Library / service | Handle a module receives | Scoped by |
 | --- | --- | --- | --- |
-| Database | ScyllaDB Cloud with Kandra 0.5 (`kandra-ktor`, `kandra-koin`) | Kandra repositories for the module's own entities | The module's own keyspace, declared by the module (`circaso_identity`, `circaso_users`) |
-| Schema migrations | `kandra-migrate`, one runner per keyspace, before the app starts serving | Module ships migration objects in `data/migrations` | Own history per keyspace, versioned and checksummed |
+| Database | PostgreSQL 18 through Exposed 1.6 (DSL, JDBC, HikariCP pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
+| Schema migrations | Flyway, one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
 | Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`) |
-| Events | Outbox per keyspace plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
+| Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
 | Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
 | Files | Cloudflare R2 (S3 compatible) | `ObjectStore` | A bucket prefix per module; uploads by pre-signed URL |
 | Outbound HTTP | Ktor client with timeouts, retries, circuit breaker, tracing | `HttpClients.named("africastalking")` | A named client per vendor, used by integrations |
 | Configuration and secrets | Typed config, environment secrets now, a key store later | `Config`, `Secrets` | Own config section per module and vendor |
 | Observability | OpenTelemetry, into Prometheus, Tempo, Loki and Grafana | automatic | — |
-| Health | Liveness and readiness checks for every connection, including Kandra's `/kandra/health` | automatic | — |
+| Health | Liveness and readiness checks for every connection; the database check runs `SELECT 1` through the app pool and fails if a connection can't be borrowed within the timeout | automatic | — |
 
-**Kandra is the only way modules touch ScyllaDB.** [Kandra](https://kandraorm.com/) (`com.kandraorm.kandra`, 0.5.1) is Circaso's own Kotlin ORM for ScyllaDB, built for this backend. Since 0.5, one `install(Kandra)` serves several keyspaces over one connection pool, which is the one-keyspace-per-module rule in code: infrastructure installs Kandra once, each module declares its keyspace and entities, and every entity names its keyspace in its own annotation. The patterns every module uses:
+**Exposed and PostgreSQL.**
 
-| Need | Kandra feature |
-| --- | --- |
-| Put a table in the module's keyspace | `@ScyllaTable(name, keyspace = "circaso_identity")` |
-| A second way to look a row up by a one-to-one value nobody races for (support case by request id) | `@LookupIndex` — the lookup table is written in the same LOGGED BATCH as the main row |
-| A value that must be unique (one account per number, one owner per handle) | `saveIfNotExists` (lightweight transaction) on a claim table first, then the main write; the claim table doubles as that value's lookup. An LWT can't join a batch, so the claim is always its own call |
-| Time-ordered ids | `@GeneratedUuid` (UUIDv7) |
-| Time-ordered rows (security log, contacts) | `@ClusteringKey` with order |
-| Safe concurrent edits (profile updates) | `@Version` with `update(old, new)` |
-| Delete with a recovery window (deleted accounts, released handles) | `@SoftDelete` with a TTL |
-| Phone numbers, token hashes and keys kept out of logs | `@Sensitive` |
-| Several tables changed together | `saveAll` / batch |
-| Unit tests without a database | `kandra-test` `FakeKandraSession`; Testcontainers for data-layer tests |
-| Catch bad models and query shapes early | Kandra's validation at startup: a broken entity stops the app from booting |
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Until their slices ship (PG2 identity, PG3 users, PG4 assistant, PG5 messaging; `.claude/plans/postgres-migration.md`), those modules still run on ScyllaDB Cloud through Kandra 0.5.1, side by side with Postgres: `KandraModuleSpec` per keyspace `circaso_<module>`, `kandra-migrate` in the `Migrate` main, claim tables with `saveIfNotExists` before a logged batch, sentinels for cleared values (bugs in `docs/kandra-bugs.md`), `/kandra/health`, `FakeKandraSession` and the Cassandra container in tests. Fixes to their code follow those rules; nothing new is built on them.
 
-Kandra's query DSL cannot express `ALLOW FILTERING`, which enforces principle 7 (tables designed around queries) in code.
+**Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is JDBC (`org.postgresql:postgresql`) with HikariCP. Versions live in `gradle/libs.versions.toml`, like every other library.
 
-**How it's wired.** Each module's `di module` contributes a `KandraModuleSpec(keyspace, entities, migrations)`; `app` collects them and infrastructure installs Kandra once. No default keyspace is set, so Kandra refuses to start if any entity forgets to name one.
+**One database, a schema and a role per module.** There is one database (`circaso`) with a schema per module: `identity`, `users`, `messaging`, `assistant`, later `wallet`. Each module also gets its own database role, with rights only on its own schema, so a module that queries another module's table fails in the database, not only in Konsist. There are no foreign keys across schemas, because modules stay independent.
+
+Each module's `di module` contributes a `DatabaseModuleSpec(schema, tables, migrationsLocation)`; `app` collects them, and infrastructure creates the pools once and runs Flyway once per spec.
 
 ```kotlin
-// infrastructure: one install, keyspaces contributed by the modules
-install(Kandra) {
-    contactPoints = config.scylla.contactPoints
-    localDatacenter = config.scylla.datacenter
-    schemaMode = if (config.dev) SchemaMode.AUTO_CREATE else SchemaMode.VALIDATE
-    specs.forEach { spec ->
-        keyspace(spec.keyspace) { autoCreate = config.dev }
-        register(*spec.entities.toTypedArray())
+// users/di: the module declares its schema, its tables and its Flyway location
+DatabaseModuleSpec(
+    schema = "users",
+    tables = listOf(ProfilesTable, ContactsTable, BlocksTable),
+    migrationsLocation = "classpath:db/users",
+)
+
+// users/data/tables: one object per table; the name is always given, with its schema
+object ContactsTable : Table("users.contacts") {
+    val ownerId = uuid("owner_id")
+    val contactId = uuid("contact_id")
+    val source = text("source")
+    val status = text("status")
+    val addedAt = timestamp("added_at")
+    override val primaryKey = PrimaryKey(ownerId, contactId)
+
+    init {
+        index(isUnique = false, contactId)      // who has me
     }
 }
-kandraKoin()
-
-// identity/impl/data: the entity names its own keyspace
-@ScyllaTable(name = "accounts_by_id", keyspace = "circaso_identity")
-data class AccountRow(
-    @PartitionKey val userId: UUID,
-    @Sensitive val phone: String,
-    val status: String,
-    @Version val version: Long = 0,
-)
 ```
 
-**Migrations.** `kandra-migrate` runs as a one-shot deploy step, not inside `install(Kandra)`, with one `KandraMigrationRunner(session, keyspace = "circaso_identity")` per module. Each keyspace keeps its own migration history, so identity and users number their migrations independently. Migrations are Kotlin `object`s in the module's `data/migrations`; an applied migration is never edited (its checksum would fail the boot), its CQL names tables with their keyspace and uses `IF NOT EXISTS`. Development lets Kandra create tables from entities (`AUTO_CREATE`); every other environment only validates (`VALIDATE`) and leaves changes to migrations.
+Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Exposed's `Schema` class is the alternative. The name is always given explicitly, because Exposed strips a `Table` suffix from the object's name. Tables are plain `Table` with an explicit `primaryKey`, not `IntIdTable` or `UUIDTable`; composite keys use `PrimaryKey(a, b)`.
 
-**Who runs migrations.** Each deploy runs the migrations once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`). The containers never migrate at boot, so two instances can't race on the same keyspace; they only validate the schema. A failed migration stops the deploy and the old containers keep serving.
+**Transactions: `Database.tx`.** Every database call runs in a transaction, and the only way in is infrastructure's `Database.tx { }`, a thin wrapper over Exposed's `suspendTransaction(db = …)` (`org.jetbrains.exposed.v1.jdbc.transactions`).
 
-**ScyllaDB Cloud.** The database is the existing ScyllaDB Cloud cluster, so the Kandra install differs from local development in four ways:
+- **Bounded dispatcher.** It runs on `Dispatchers.IO.limitedParallelism(poolSize)`, one dispatcher per pool, so at most `poolSize` coroutines ever hold a JDBC thread and the rest suspend cheaply. Threads never block waiting for a connection.
+- **The module's role.** Each transaction starts with `SET LOCAL ROLE <module>`. The pools log in as `circaso_app`, which is granted every module role. `SET LOCAL` ends with the transaction, so a connection returns to the pool clean, and it works behind PgBouncer in transaction mode.
+- **Settings.** Isolation `READ_COMMITTED` and `autoCommit = false` are set in Hikari, not in `DatabaseConfig`. `defaultQueryTimeout` is 5 s per statement, backed by the role's `statement_timeout`. `maxAttempts` stays `1`, so nothing runs twice by surprise; only a block that is pure database work and safe to repeat may raise it, and the call site says why. Nested transactions stay off.
+- **`connect()` runs once.** Infrastructure creates the Exposed `Database` from each Hikari `DataSource` at startup and shares it; calling `connect()` again leaks resources.
+- **One operation, one transaction.** Everything an operation changes (its rows, its uniqueness claims and its outbox row) is written in one `Database.tx`. Repositories called inside it join it; they don't open their own.
+- **Database work only.** A transaction holds no Redis call, HTTP call or `XADD`, which would hold a connection for the whole wait. "Publish at once" still happens right after the commit.
+- **`text` columns are read inside the transaction,** or loaded eagerly (`eagerLoading = true`) where they are used after it.
 
-- **Connection:** TLS on (`ssl { enabled = true }`), credentials from `Secrets` (`auth { provider = KandraAuth.fromEnv() }`), `localDatacenter` set to the cluster's datacenter name, and the app's address allowlisted (or VPC-peered) in ScyllaDB Cloud.
-- **Keyspaces created by the deploy's migration step**, one per module: `migrate` runs `CREATE KEYSPACE IF NOT EXISTS` for each module's keyspace before its migrations, in every environment, and never alters a keyspace that exists. The replication is configured (`SCYLLA_KEYSPACE_REPLICATION_CLASS`, `SCYLLA_KEYSPACE_REPLICATION_FACTOR`, `SCYLLA_DATACENTER`, `SCYLLA_KEYSPACE_TABLETS`): `NetworkTopologyStrategy` in `SCYLLA_DATACENTER` for any cluster other than a node on this machine (which uses `SimpleStrategy`), because it names the datacenter, is correct on a multi-node cluster and also works with tablets on; tablets off, like the existing sandbox keyspaces. The app's start creates keyspaces (`autoCreate`) only for local development.
-- **Schema mode:** `VALIDATE` against the cloud cluster; changes go through `kandra-migrate`.
-- **A separate cluster per environment.** Staging gets its own ScyllaDB Cloud cluster (or a self-run ScyllaDB) with the same keyspace names as production. Keyspace names are written into each entity's annotation, so they can't change per environment; a separate cluster keeps staging data away from production with no code differences.
+**Patterns**
 
-**Two guardrails Kandra doesn't give us for free:**
+| Need | How |
+| --- | --- |
+| Put a table in the module's schema | `object XTable : Table("<schema>.<table>")`, created by the module's Flyway SQL |
+| Rows and the event that records them | One transaction; the outbox row is just another insert |
+| A value that must be unique (one account per number, one owner per handle, one direct chat per pair) | A `UNIQUE` constraint (primary key or unique index) on the real table, inside the same transaction. `insertIgnore` (`ON CONFLICT DO NOTHING`) and its `insertedCount` say who won |
+| Exactly one caller takes a row (acks, removals, a one-time prekey) | `deleteReturning`; the row lock lets exactly one caller get the row |
+| A conditional change (only if the row exists, only if a column still has a value) | `updateReturning` with the condition in `WHERE`; the affected-row count answers |
+| Safe concurrent edits (profile updates) | `UPDATE … SET version = version + 1 WHERE id = ? AND version = ?`; 0 rows means a concurrent edit |
+| A second way to look a row up (contacts by target, chats by user, support case by request id) | A secondary or unique index on the one table |
+| Idempotent writes | `upsert` with explicit `keys` (without them the behaviour varies by database) |
+| Fan-out writes (a group message to 1,000 inboxes) | `batchInsert(items, shouldReturnGeneratedValues = false)` with `reWriteBatchedInserts=true` on the JDBC URL, in the sending transaction |
+| Time-ordered lists and paging | An index such as `(owner_id, created_at DESC)` and keyset paging, `WHERE (created_at, id) < (?, ?)`; never `OFFSET` for feeds |
+| Counters kept in rows (a group's member count) | `UPDATE … SET count = count + 1` in the same transaction; exact |
+| A cleared value | A real `NULL`: columns are `NOT NULL` unless `.nullable()`, with a nullable Kotlin type |
+| Time-ordered ids | UUIDv7 made in the app (`clientDefault { }`), never by the database |
+| Times | `timestamp(...)` from `exposed-java-time`, `timestamptz` in SQL; `createdAt` from the injected clock, so tests stay deterministic |
+| Rows that expire | `expires_at` and a purge job, or daily partitions (below) |
+| Domain rules the database can check | `.check { }` on the table and `CHECK` in the SQL; `reference(…, onDelete = CASCADE)` only within one module |
+| Unit tests without a database | In-memory fakes of the domain ports; Testcontainers Postgres for data-layer tests |
 
-- Kandra binds repositories into Koin by the entity's simple class name across the whole app, so **entity names must be unique across modules**. Entities end in `Row` (`AccountRow`, `ProfileRow`), and two modules that need a similar name prefix it (`IdentityDeviceRow`).
-- Those Koin bindings are global, so nothing in Koin stops users from resolving identity's repository. A Konsist rule enforces it instead: a Kandra repository is only resolved inside the `data` package of the module that owns the entity. The isolation is in code, not in database permissions, since all modules share one session.
+**Queries**
+
+- **Each table gets a private mapper,** `ResultRow.toAccount(): Account`, in its repository file. A `ResultRow` never leaves `data`.
+- **Raw SQL** (`exec`) only for what the DSL can't express (partition management), in infrastructure or a migration, never with values spliced in.
+- **The SQL logger is off.** `StdOutSqlLogger` is never installed outside a local debug run, because it would print bound phone numbers and keys.
+
+**Pools.** Postgres pays for each connection with a server process, so the pools stay small and bounded, and coroutines wait in memory for a connection.
+
+| Pool | Used by | Size | Why separate |
+| --- | --- | --- | --- |
+| `circaso-app` | Requests and socket frames (every `Database.tx` from a route or frame handler) | max 10, min idle 2 | The hot path |
+| `circaso-jobs` | Outbox relay, event consumers, purge and partition jobs, scheduler | max 3, min idle 1 | A slow purge or a burst of events can never take the connections requests need |
+| `circaso-migrate` | The `Migrate` main only, during deploy | 2, closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
+
+- **Two URLs.** `DATABASE_URL` is for the app pools; in production behind a provider's pooler (PgBouncer in transaction mode), it is the pooled endpoint. `DATABASE_MIGRATION_URL` is always a direct connection. On the sandbox's self-hosted Postgres both are the same address.
+- **Settings:** `DATABASE_USER`, `DATABASE_PASSWORD` (a secret), `DATABASE_POOL_APP_SIZE` (10), `DATABASE_POOL_JOBS_SIZE` (3) and `DATABASE_SSL_MODE` (`require` outside local); other `DATABASE_POOL_*` settings override the Hikari values below.
+- **Hikari:** `connectionTimeout` 3 s (with no free connection in time, the request fails fast as `service.unavailable`, 503, instead of piling up), `idleTimeout` 10 min, `maxLifetime` 30 min, `keepaliveTime` 2 min, `validationTimeout` 2 s, `leakDetectionThreshold` 10 s locally and on the sandbox and off in production, `poolName` per pool.
+- **JDBC URL:** `ApplicationName=circaso-app` (or `-jobs`, `-migrate`) so `pg_stat_activity` shows who holds what, `reWriteBatchedInserts=true`, `sslmode=require` outside local, `tcpKeepAlive=true`. Behind PgBouncer in transaction mode, server-side prepared statements need PgBouncer 1.21+ with `max_prepared_statements` set, or `prepareThreshold=0` on the pooled URL.
+- **Limits on the app's roles,** set in the roles migration so a bad query can't hold a pooled connection: `statement_timeout = 5s` (60 s for the jobs role's purges), `lock_timeout = 2s`, `idle_in_transaction_session_timeout = 10s`.
+- **Budget.** On the sandbox (`max_connections = 50`, 3 reserved): app 10, jobs 3, migrate 2 during deploy, pgAdmin about 3, the nightly backup 1, about 22 in all, which leaves room for a second app container during a rolling deploy. In production: `containers × (app + jobs) + migrate + tools ≤ 80%` of the server's limit; past that, the pooled endpoint goes in front, not bigger pools.
+- **Long reads** (exports, admin listings) page with keyset queries, each page its own short transaction.
+
+**Migrations.** Flyway applies plain SQL files: `src/main/resources/db/<module>/V<n>__<what>.sql`, one Flyway run per schema (`schemas = [<module>]`) with that schema's own history table, so each module numbers its migrations on its own. The SQL declares the same constraints as the `Table` objects: primary keys, unique indexes for the claims, secondary indexes, partial indexes (the outbox's `published_at IS NULL`), checks and partitions.
+
+- **No `SchemaUtils.create` anywhere, development included.** Development runs the same Flyway scripts, so what is tested is what ships. At startup the app only checks that Flyway's history is current.
+- **Applied scripts are never edited;** Flyway's checksum check fails the deploy otherwise. A change is a new `V<n+1>` script.
+- **Drafting.** A developer may run the Exposed Gradle plugin's `generateMigrations` (against a Testcontainers Postgres, the module's `tablesPackages`, `fileDirectory` = the module's `db/<module>`) to draft the next script. A draft can contain `DROP`s, so it is always reviewed before it is committed, and only Flyway applies it (decision 2026-10-27).
+
+**Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), on the `circaso-migrate` pool. `Migrate` creates the schemas and roles, then runs Flyway for each module's spec. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
+
+**Rows that expire.** Postgres has no row TTL, so each table that needs one uses one of two mechanisms:
+
+- **`expires_at` and a purge.** The table gets an `expires_at timestamptz` column. Reads filter it (`WHERE expires_at > now()`), so an expired row is invisible at once, like a TTL. A purge job per module (`<module>.purge-expired`, single-leader through the scheduler's Redis lock, on the jobs pool) deletes expired rows in chunks every few minutes (`DELETE … WHERE ctid IN (SELECT ctid … LIMIT 5000)`).
+- **Daily partitions** for the large, high-churn tables: every module's `outbox` and `realtime` (dropped after 7 days) and messaging's inbox, group messages and message records (dropped after 30 days). Dropping a partition avoids the vacuum pressure of millions of deleted rows. The same job creates tomorrow's partition and drops the expired ones; no extension is needed. A partitioned table's primary key includes its partition column.
+
+Each module's Data section names the mechanism per table.
+
+**Where Postgres runs** (decided 2026-10-27)
+
+- **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`). The app starts using Postgres as its modules move.
+  - **Postgres:** database `circaso`, on the internal `circaso-data` network with no published port, so only the app and pgAdmin reach it. Volume `postgres-data`, memory limit 1.5 GB, `max_connections=50` (3 reserved), `shared_buffers=384MB`, `effective_cache_size=1GB`, `work_mem=8MB`, `maintenance_work_mem=128MB`, and statements over 500 ms logged.
+  - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The app role and the module roles are created by the `Migrate` step (PG1).
+  - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days (set up by devops in PG1); a restore is tested once in PG6. In production, the host's point-in-time recovery, retention at least 7 days.
+- **pgAdmin at `https://sandbox-db.circaso.com`,** behind three locks in a row:
+  1. **Cloudflare Access** (Zero Trust application, only Pasaka's email). nginx (`deploy/nginx/sandbox-db.conf`) accepts only Cloudflare's addresses and refuses, with 403, a request without the `Cf-Access-Jwt-Assertion` header, so nothing reaches pgAdmin around Access. The name is one level under `circaso.com` because the origin and free edge certificates only cover `*.circaso.com`.
+  2. **pgAdmin's own login** (`dpage/pgadmin4`, port 5050, no published port; nginx reaches it on the backend network by container name).
+  3. **The read-only role `circaso_readonly`** for the saved server (`deploy/postgres/pgadmin-servers.json`). It is created on Postgres's first start by `deploy/postgres/initdb/10-readonly-role.sh`: `pg_read_all_data` (every schema, tables created later included), `default_transaction_read_only`, a 30 s statement timeout and at most 5 connections. Browsing can't change data by accident; writes go through the owner role, used deliberately.
+
+  pgAdmin's settings and saved queries live in the `pgadmin-data` volume. If Access is ever off, the same pgAdmin is reachable through an SSH tunnel.
+- **Locally:** the same `postgres:18` in `deploy/docker-compose.yml`; pgAdmin is optional (compose profile `tools`), or use the IDE's database tool against `localhost:5432`.
+- **Production: decided before launch.** The lean is a managed Postgres in Europe for failover and point-in-time restore. The app only reads `DATABASE_URL`, so the choice changes no code.
+
+**Guardrails**
+
+- **Table ownership.** A Konsist rule: an Exposed `Table` object is referenced only from the `data` package of the module that owns it. The module's role enforces the same thing in the database.
+- **No way in but `Database.tx`.** A Konsist rule fails the build on a raw `transaction {}` (it blocks the calling thread) or `Database.connect` in a module. Only infrastructure connects.
+- **Nothing but database work inside a transaction.** A Konsist rule and review catch an HTTP call, a Redis call or an `XADD` inside `Database.tx`.
 
 **The shared HTTP client.** Infrastructure owns one Ktor client factory. Each vendor gets a named client with its base URL, timeouts (5 s to connect, 15 s per request; a vendor client with `webSockets = true` never retries an upgrade, the circuit breaker neither counts nor blocks upgrades, and only the handshake is bounded (`handshakeTimeout` 10 s, `pingInterval` 20 s); per-vendor overrides: Workers AI 60 s, and its chat completions are not retried, so one Asha turn waits at most about a minute), retries, a circuit breaker, tracing and logging with phone numbers, tokens and amounts hidden. The retry policy is careful, because retrying the wrong call sends money or an OTP twice:
 
@@ -597,9 +669,9 @@ data class AccountRow(
 
 Backoff is exponential with jitter, at most 3 attempts. After 5 failures in a row the circuit opens for 30 seconds for that vendor, so a vendor outage fails fast instead of piling up waiting requests.
 
-**Local development:** `deploy/docker-compose.yml` starts ScyllaDB and Redis; the `log` and `fake` integrations stand in for SMS, email, push and Circle.
+**Local development:** `deploy/docker-compose.yml` starts PostgreSQL 18 and Redis (pgAdmin with the `tools` profile); Flyway creates the schemas through `Migrate`, as in a deploy; the `log` and `fake` integrations stand in for SMS, email, push and Circle.
 
-**Production at pilot scale:** ScyllaDB on the existing ScyllaDB Cloud cluster; the app as two containers behind Cloudflare; Redis with append-only persistence on a small instance; the Grafana stack on a separate small host. Where the app, Redis and monitoring run is still open (see Decisions).
+**Production at pilot scale:** PostgreSQL on a host decided before launch (the lean is a managed Postgres in Europe with failover and point-in-time restore); the app as two containers behind Cloudflare; Redis with append-only persistence on a small instance; the Grafana stack on a separate small host. Where the app, Redis and monitoring run is still open (see Decisions).
 
 ## Monitoring and observability
 
@@ -611,7 +683,7 @@ Everything is instrumented with OpenTelemetry and lands in a self-hosted Grafana
 | --- | --- | --- |
 | OpenTelemetry Java agent | In the app: traces, metrics, logs | No code changes for the basics |
 | OpenTelemetry Collector | Receives OTLP from the app; scrubs sensitive attributes, samples traces, routes signals | The one place privacy filtering and sampling happen |
-| Prometheus | Metrics storage and queries | Scrapes the app, ScyllaDB's built-in metrics endpoint, the Redis exporter, the Collector and the hosts |
+| Prometheus | Metrics storage and queries | Scrapes the app (including the Hikari pool metrics), the Redis exporter, the Collector and the hosts |
 | Tempo | Trace storage | OTLP from the Collector; trace blocks stored in Cloudflare R2 |
 | Loki | Log storage | OTLP from the Collector (native ingest, no Promtail); chunks stored in R2 |
 | Grafana | Dashboards, exploring, alerting | Metrics jump to traces (exemplars), traces to their logs, logs back to traces, all by trace id |
@@ -666,14 +738,14 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 
 | Signal | How | Covers |
 | --- | --- | --- |
-| Traces | Java agent, automatic → Collector → Tempo | Ktor server, Ktor client (every vendor call), ScyllaDB driver, Redis client |
+| Traces | Java agent, automatic → Collector → Tempo | Ktor server, Ktor client (every vendor call), JDBC (PostgreSQL), Redis client |
 | Traces | Manual spans | Each use case, each stream handler, each outbox relay sweep |
 | Traces across events | `traceparent` field in the event envelope | A sign-up trace runs from identity's route through the stream into users' handler |
 | Metrics | Agent, automatic → Prometheus scrape | HTTP rate, errors and duration per route; JVM memory, GC, threads |
-| Metrics | `Telemetry` meters and Kandra's metrics recorder → Prometheus scrape | Business, events, vendors, per-table database timings (catalog below) |
-| Metrics | Exporters | ScyllaDB (built-in endpoint), Redis (redis_exporter), hosts (node_exporter) |
+| Metrics | `Telemetry` meters and the agent's HikariCP instrumentation → Prometheus scrape | Business, events, vendors, database pools (catalog below) |
+| Metrics | Exporters | Redis (redis_exporter), hosts (node_exporter) |
 | Logs | Logback JSON with trace and span ids → agent → Collector → Loki | Every log line links to its trace in Grafana |
-| Health | `/health/live`, `/health/ready` (ScyllaDB, Redis, stream consumers) | Restarts and load balancer checks |
+| Health | `/health/live`, `/health/ready` (PostgreSQL `SELECT 1` through the pool, Redis, stream consumers) | Restarts and load balancer checks |
 | Uptime | Blackbox exporter probing the public `/health/ready` every minute from outside the app's network (the homelab works), plus a free external uptime service | The external service catches the case where the app and the monitoring go down together |
 
 ### Metrics catalog
@@ -691,7 +763,7 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 | `circaso_gateway_socket_frames_dropped_total` | counter | reason | Phone frames dropped by the gateway (`rate_limited`) |
 | `circaso_events_dlq` | gauge | stream | Events that gave up |
 | `circaso_outbox_unpublished` | gauge | module | Events the relay had to rescue |
-| `kandra_query_duration_seconds` | histogram | table, op | Database latency per table |
+| Hikari pool metrics (agent; exact names per the OpenTelemetry semantic conventions, checked in PG1) | gauges, counter | pool | Connections active, idle and pending; connection timeouts; usage time |
 | `circaso_contacts_sync_matches_ratio` | histogram | — | Share of a phone book already on Circaso |
 | `http_server_request_duration_seconds` | histogram (agent) | route, method, status | Rate, errors and latency per route |
 
@@ -703,7 +775,7 @@ Attributes never include a user id, phone number or handle: they would leak pers
 2. **Sign-up funnel:** sign-in → code sent → verified → device registered → profile created, with drop-off between each step.
 3. **Events:** publish rate, consumer lag, handler failures, dead letters, outbox rescues.
 4. **Vendors:** latency, errors and circuit state per vendor; SMS spend per day.
-5. **Data stores:** ScyllaDB latency per table, lightweight-transaction contention, Redis memory and connections.
+5. **Data stores:** database pool usage, waits and timeouts per pool, query latency from the JDBC spans, Redis memory and connections.
 
 ### Alerts
 
@@ -712,12 +784,12 @@ Attributes never include a user id, phone number or handle: they would leak pers
 | API errors | 5xx above 2% for 5 min | Page |
 | Outside check failing | `/health/ready` fails twice in a row | Page |
 | SMS broken | Code verification success below 60% over 30 min, or the SMS circuit open over 2 min | Page |
-| ScyllaDB node down | Any node unreachable | Page |
+| Database down | Readiness can't borrow a connection or `SELECT 1` fails | Page |
 | Slow API | p95 above 500 ms for 10 min | Warn |
 | Consumers falling behind | Lag above 1,000 or oldest pending over 2 min | Warn |
 | Dead letters | Any event in `events:dlq` | Warn |
 | Outbox rescues | Unpublished events for over 5 min | Warn |
-| Database slow | ScyllaDB p99 above 50 ms for 10 min | Warn |
+| Database pool | Pending connection requests above 0 for 1 min, any connection timeout, or connections in use above 80% of `max_connections` | Warn |
 | Redis memory | Above 80% | Warn |
 | SMS budget | Daily spend above the set budget | Warn |
 | Silence | No sign-ins for 2 h between 07:00 and 22:00 EAT | Warn |
@@ -726,7 +798,7 @@ Alerts are Grafana alert rules over Prometheus and Loki. Pages go to Telegram (a
 
 ### Privacy rules for telemetry
 
-- No phone numbers, tokens, PINs, emails or amounts in span attributes, metric attributes or logs; Kandra's `@Sensitive` masks entity fields in its logs.
+- No phone numbers, tokens, PINs, emails or amounts in span attributes, metric attributes or logs; Exposed's SQL logger is off outside a local debug run and never logs bound values.
 - The agent drops the `Authorization` header and database statement parameters.
 - A last-line log filter masks anything shaped like an E.164 number or a JWT, in case one slips through.
 - Retention: metrics 30 days in Prometheus, logs 30 days in Loki, traces 14 days in Tempo; Loki and Tempo keep their data in R2.
@@ -747,9 +819,9 @@ The request id is the OpenTelemetry trace id, so the lines of an event handler (
 | Level | Colored, padded to 5 | `level` | Logback |
 | Request id | First 8 characters of the trace id, dim | `requestId`, `traceId`, `spanId` | OpenTelemetry agent; returned to the app as `requestId` |
 | Module | Bold | `module` | Logger name `com.circaso.<module>` |
-| Kind | Arrow and service tag (`→ in`, `← out`, `⇄ scylla`, `⇄ redis`, `⇄ http`, `⇢ stream`, `⇠ stream`, `⇄ ws`, `⏲ job`) | `kind`: `request`, `response`, `db`, `redis`, `http`, `stream.publish`, `stream.consume`, `ws`, `job`, `webhook` | The logging helper that wrote it |
+| Kind | Arrow and service tag (`→ in`, `← out`, `⇄ db`, `⇄ redis`, `⇄ http`, `⇢ stream`, `⇠ stream`, `⇄ ws`, `⏲ job`) | `kind`: `request`, `response`, `db`, `redis`, `http`, `stream.publish`, `stream.consume`, `ws`, `job`, `webhook` | The logging helper that wrote it |
 | Method, route | Colored method, then the path | `http.method`, `http.route` (template, `/v1/users/{userId}`), `url.path` | Ktor |
-| Status, duration | Colored by status class and by speed | `http.status`, `durationMs` | Gateway, HTTP client, Kandra, Redis wrapper |
+| Status, duration | Colored by status class and by speed | `http.status`, `durationMs` | Gateway, HTTP client, `Database.tx`, Redis wrapper |
 | Client IP, country | `102.68.143.7 KE` | `client.ip`, `client.country` | `CF-Connecting-IP`, `CF-IPCountry` from Cloudflare; the origin accepts traffic only from Cloudflare, so the header can be trusted |
 | Client app | `android/1.4.0` on the request line | `client.platform`, `client.version`, `client.model`, `client.os` | `X-Client-Version`, `User-Agent` |
 | Who | `user=0193…c50 dev=0193…a1` | `userId`, `deviceId`, `scope` (full ids) | The verified access token |
@@ -768,7 +840,7 @@ Colors exist only on a terminal. The console format switches them off when outpu
 | HTTP methods | GET blue · POST green · PUT and PATCH yellow · DELETE red · HEAD and OPTIONS gray |
 | Status codes | 2xx green · 3xx cyan · 4xx yellow · 5xx bold red |
 | Durations | Under 300 ms dim · 300 ms to 1 s yellow · over 1 s red |
-| Service tags | scylla magenta · redis red · http cyan · stream blue · ws green · job yellow · webhook magenta |
+| Service tags | db magenta · redis red · http cyan · stream blue · ws green · job yellow · webhook magenta |
 | Error codes and circuit state | Same color as the line's level |
 
 ### Service interactions
@@ -779,7 +851,7 @@ Every boundary the backend crosses writes its own line, from the one place that 
 | --- | --- | --- | --- |
 | Request in and out | Gateway `RequestLog` plugin | Start: DEBUG. End: INFO; WARN for 401, 403 and 429; ERROR for 5xx | Method, route, status, duration, client IP and country, app version, user, device, scope, error code, idempotency replay |
 | Vendor call | Infrastructure HTTP client plugin, and the wrapper around each SDK | INFO; WARN on a retry; ERROR when the circuit opens or the last attempt fails | Vendor, method, path without the query string, status, duration, attempt, circuit state; never a body |
-| ScyllaDB | Kandra's query hook | DEBUG; WARN over 50 ms | Keyspace, table, operation, whether an LWT applied, rows, duration; never values (`@Sensitive`) |
+| Database | Infrastructure's `Database.tx` (level `LOG_LEVEL_DATABASE`) | DEBUG; WARN over 50 ms | Schema, pool, duration; never bound values |
 | Redis | `RedisScope` | DEBUG; WARN over 20 ms | Command, key with ids shortened, duration |
 | Event published | `EventBus` | INFO | Stream, type, event id |
 | Event handled | Stream consumer runtime | INFO; WARN on a retry; ERROR when dead-lettered | Consumer group, type, event id, attempt, duration |
@@ -862,7 +934,7 @@ val RequestLog = createApplicationPlugin("RequestLog") {
 }
 ```
 
-With Ktor's coroutine MDC support (`MDCContext`), the values set on the call follow it into every module, so a ScyllaDB or vendor line written deep inside identity still carries the request id, client and user.
+With Ktor's coroutine MDC support (`MDCContext`), the values set on the call follow it into every module, so a database or vendor line written deep inside identity still carries the request id, client and user.
 
 **Into Loki:** the OpenTelemetry agent ships the same events over OTLP with every MDC value and structured argument as an attribute (`OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_MDC_ATTRIBUTES=*`, `OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_KEY_VALUE_PAIR_ATTRIBUTES=true`). The Collector's scrub step still runs before Loki. Only `level`, `module`, `kind` and `deployment.environment` become Loki labels; ids, IPs and routes stay as fields, so the label count stays small.
 
@@ -942,7 +1014,7 @@ Each phone keeps one WebSocket open to the gateway while the app is in the foreg
 
 **From the phone**: a frame `{"module": "messaging", "type": "ack", "data": {…}}` after the auth frame goes to the module that registered a `RealtimeInbound` for that `module`, with the token's user and device; unknown modules and unreadable frames are dropped and the socket stays open. A socket may send at most 100 frames per second; frames over the limit are dropped the same way and counted. A frame may be at most 64 KB; a larger one closes the socket with 1009. The `rt:` prefix belongs to the gateway.
 
-**Catching up after a gap**: every module that sends frames implements `RealtimeReplay` from `shared`, `suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>>`. The module takes `seq` from a per-user counter under its own Redis prefix (`usr:seq:{userId}`) and keeps what it sent in its own keyspace for 7 days (`realtime_by_user`). On reconnect the gateway calls each module's replay with the app's last `seq`; if the gap is older than 7 days, the module answers with a `resync` frame and the app reloads that module's data over HTTP.
+**Catching up after a gap**: every module that sends frames implements `RealtimeReplay` from `shared`, `suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>>`. The module takes `seq` from a per-user counter under its own Redis prefix (`usr:seq:{userId}`) and keeps what it sent in its own schema for 7 days (its `realtime` table, in daily partitions). On reconnect the gateway calls each module's replay with the app's last `seq`; if the gap is older than 7 days, the module answers with a `resync` frame and the app reloads that module's data over HTTP.
 
 **Events identity and users send**
 
@@ -986,10 +1058,10 @@ These apply to every module from the first line of code, so later modules look l
 | Topic | Convention |
 | --- | --- |
 | Base URL | `https://api.circaso.com/v1` |
-| Ids | UUIDv7 everywhere (time-ordered, sorts well as a clustering key; `@GeneratedUuid` in Kandra), wrapped in typed value classes: `UserId` and `DeviceId` in `shared`; ids a module owns live in its `api` (`SessionId` in identity, `ChatId` in messaging) |
+| Ids | UUIDv7 everywhere (time-ordered, sorts well in an index; made in the app, never by the database), wrapped in typed value classes: `UserId` and `DeviceId` in `shared`; ids a module owns live in its `api` (`SessionId` in identity, `ChatId` in messaging) |
 | Money | Integer minor units plus asset (`Money(amountMinor, USDT)`); never floating point |
 | Phone numbers | E.164 only, parsed once at the edge into `PhoneNumber`; masked in responses (`+254 7•• ••• 678`); never logged in full |
-| Time | ISO-8601 UTC strings in the API (`2026-10-21T18:06:00Z`); epoch milliseconds in storage; the app formats for the user |
+| Time | ISO-8601 UTC strings in the API (`2026-10-21T18:06:00Z`); `timestamptz` in storage; the app formats for the user |
 | Results | Every use case and module contract returns `Resource<T>`; expected failures are `Resource.Error(DomainError)`; exceptions only for bugs and outages |
 | Errors over HTTP | Always the `DefaultResponse` envelope, for example `{"httpStatusCode": 409, "status": false, "message": "…", "code": "identity.phone_taken", "requestId": "…", "data": null}`; an INVALID error lists its fields as `details.fields: [{"field": "displayName", "problem": "required"}]`; codes are `module.reason` and stable, and the app keys its copy on them |
 | Auth | `Authorization: Bearer <accessToken>`; each route declares the scope it needs |
@@ -999,11 +1071,11 @@ These apply to every module from the first line of code, so later modules look l
 | API versions | Path prefix `/v1`; additive changes only within a version; breaking changes get `/v2` and the old version stays until old apps are forced to update |
 | JSON | kotlinx-serialization only (no Gson), camelCase fields, unknown fields ignored on read |
 | Events | Past tense (`AccountActivated`), declared in the publisher's `api`, carry ids and changed facts, versioned by field addition only |
-| Keyspaces and entities | Keyspaces `circaso_<module>`; tables `<thing>_by_<key>`; entity classes end in `Row` and are unique across modules |
+| Schemas and tables | Schema `<module>` with its own role; tables named for what they hold, plural and snake_case (`accounts`, `contacts`), columns snake_case; Exposed objects `<Name>Table` in the module's `data/tables`; migrations `db/<module>/V<n>__<what>.sql` |
 | Redis keys | `<module prefix>:<purpose>:<id>`, every key with an expiry |
 | Packages | `com.circaso.<module>.<api, presentation, domain, data or di>` |
 | Logging | JSON in staging and production, colored console locally (see Logging); every line carries the request id; user id yes, phone numbers, tokens, PINs and amounts never |
-| Tests | Domain tested with in-memory fakes of its ports; data tested against a real ScyllaDB in a container; one end-to-end test per flow |
+| Tests | Domain tested with in-memory fakes of its ports; data tested against a real PostgreSQL in a container (Testcontainers `postgres:18`); one end-to-end test per flow |
 
 **Shared error codes** (module codes are on each module's tab)
 

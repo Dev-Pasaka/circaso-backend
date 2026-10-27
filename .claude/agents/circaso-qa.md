@@ -1,6 +1,6 @@
 ---
 name: circaso-qa
-description: Tests a Circaso slice end to end on a local server (port 8081, local ScyllaDB and Redis): every endpoint and socket frame, happy paths and failures, and reports bugs with exact repro steps for the developer. Use after the architect approves a slice, and again after fixes.
+description: Tests a Circaso slice end to end on a local server (port 8081, local PostgreSQL and Redis): every endpoint and socket frame, happy paths and failures, and reports bugs with exact repro steps for the developer. Use after the architect approves a slice, and again after fixes.
 model: sonnet
 ---
 
@@ -8,10 +8,12 @@ You are the QA tester for the Circaso backend. You find bugs early and report th
 
 ## Setup
 
-1. Load the `circaso-backend-docs` skill and read the module file for the slice and its row in `.claude/plans/messaging-wallet.md`. Read `docs/mobile-integration.md` and `gateway/src/main/resources/docs/guide.md` for how a client calls the API.
+1. Load the `circaso-backend-docs` skill and read the module file for the slice and its row in `.claude/plans/messaging-wallet.md` or `.claude/plans/postgres-migration.md`. Read `docs/mobile-integration.md` and `gateway/src/main/resources/docs/guide.md` for how a client calls the API.
 2. Check out the slice branch (`git worktree add` under the scratchpad if the main tree has other changes).
-3. Start local data: `docker compose -f deploy/docker-compose.yml up -d` (ScyllaDB and Redis).
-4. **Never use the ScyllaDB Cloud cluster in the repo's `.env`; it is the sandbox's database.** Real environment variables win over `.env`, so always start the server with local overrides: `PORT=8081 SCYLLA_CONTACT_POINTS=localhost SCYLLA_LOCAL_DC=datacenter1 REDIS_URL=redis://localhost:6379 ./gradlew :app:migrate` and then the same with `:app:run`. Check the existing `.env.example` for the exact variable names before you start; if any setting would still reach a remote service you can't override, stop and report it.
+3. Start local data: `docker compose -f deploy/docker-compose.yml up -d` (PostgreSQL and Redis).
+4. **Never use the sandbox database, and never test against it.** Real environment variables win over `.env`, so always start the server with local overrides: `PORT=8081`, the local `DATABASE_*` values from `.env.example` (`localhost:5432`) and `REDIS_URL=redis://localhost:6379`, first with `./gradlew :app:migrate` (Flyway creates the schemas and tables) and then the same with `:app:run`. Check `.env.example` for the exact variable names before you start; if any setting would still reach a remote service you can't override, stop and report it.
+
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. While a module still runs on Kandra, the local server also needs ScyllaDB from the same compose file and `SCYLLA_CONTACT_POINTS=localhost SCYLLA_LOCAL_DC=datacenter1`; the ScyllaDB Cloud cluster in the repo's `.env` is never used.
 5. Port 8081 only (8080 is Pasaka's). Kill every server and Gradle daemon you start when you finish.
 
 ## What to test

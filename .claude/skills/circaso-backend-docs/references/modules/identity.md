@@ -1,6 +1,6 @@
 # Identity module
 
-Identity answers "is this really the person behind this account, and is this request from their phone": it owns accounts, sign-in providers, the verified phone, devices, sessions and support-led recovery, and nothing about names, photos or friends. Keyspace `circaso_identity`, Redis prefix `idn:`, stream `events:identity`. The screen-by-screen flow, with each screen's call, is in Identity — sign-in flow.
+Identity answers "is this really the person behind this account, and is this request from their phone": it owns accounts, sign-in providers, the verified phone, devices, sessions and support-led recovery, and nothing about names, photos or friends. Schema `identity`, Redis prefix `idn:`, stream `events:identity`. The screen-by-screen flow, with each screen's call, is in Identity — sign-in flow.
 
 ## Overview
 
@@ -210,105 +210,121 @@ After verifying the Google/Apple token, `SignInWithProvider` looks up the provid
 
 **Rules the use case enforces**
 
-- A new provider login creates the account immediately as `PENDING_PHONE` and claims the provider subject with `saveIfNotExists`, so two taps on the button can't create two accounts.
+- A new provider login creates the account immediately as `PENDING_PHONE` and claims the provider subject through the unique index on `provider_links (provider, subject)` in the same transaction, so two taps on the button can't create two accounts.
 - `REVERIFY_PHONE` only accepts the account's own number; a different number returns `identity.phone_mismatch` and points to support recovery.
-- On sign-up, `VerifyPhoneCode` claims the number with `saveIfNotExists`. A number already claimed by another account returns `identity.phone_taken`.
+- On sign-up, `VerifyPhoneCode` claims the number through the unique index on `accounts.phone`. A number already claimed by another account returns `identity.phone_taken`.
 - The account turns `ACTIVE` and `AccountActivated` is written to the outbox when the first device is registered (I6), so every active account has a device and a session.
 - Registering a new phone on an active account marks the old device `REPLACED`, ends its sessions (the gateway deny-list picks this up within one access-token lifetime), and writes `DeviceReplaced`.
 - Pending accounts that never finish are deleted after 30 days by a scheduled sweep.
 
 ## Data
 
-Nine Kandra entities in keyspace `circaso_identity` and five Redis key families.
+Seven PostgreSQL tables in schema `identity` (role `identity`, Flyway location `db/identity`) and five Redis key families.
 
-```kotlin
-const val KS = "circaso_identity"
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Identity still runs on its Kandra tables in keyspace `circaso_identity` until slice PG2 builds the tables below.
 
-@ScyllaTable(name = "accounts_by_id", keyspace = KS)
-data class AccountRow(
-    @PartitionKey val userId: UUID,
-    @Sensitive val phone: String? = null,       // E.164, set once verified
-    val status: String,                         // PENDING_PHONE | ACTIVE | RECOVERY_PENDING | SUSPENDED | BLOCKED | DELETED
-    val activeDeviceId: UUID? = null,
-    val verification: String = "NONE",         // NONE | PENDING | VERIFIED (KYC)
-    val sessionVersion: Int = 1,                // bump to invalidate every token at once
-    @CreatedAt val createdAt: Instant? = null,
-    @UpdatedAt val updatedAt: Instant? = null,
-    @Version val version: Long = 0,
-)
+```sql
+-- V1__identity.sql (shape; the script itself is written in PG2)
 
-@ScyllaTable(name = "phone_claims", keyspace = KS)              // one account per number
-data class PhoneClaimRow(@PartitionKey @Sensitive val phone: String, val userId: UUID, val claimedAt: Instant)
+CREATE TABLE identity.accounts (
+    user_id          uuid        PRIMARY KEY,
+    phone            text,                              -- E.164, set once verified
+    status           text        NOT NULL,              -- PENDING_PHONE | ACTIVE | RECOVERY_PENDING | SUSPENDED | BLOCKED | DELETED
+    active_device_id uuid,
+    verification     text        NOT NULL DEFAULT 'NONE', -- NONE | PENDING | VERIFIED (KYC)
+    session_version  int         NOT NULL DEFAULT 1,    -- bump to invalidate every token at once
+    created_at       timestamptz NOT NULL,
+    updated_at       timestamptz NOT NULL,
+    version          bigint      NOT NULL DEFAULT 0     -- optimistic lock
+);
+CREATE UNIQUE INDEX accounts_phone_key ON identity.accounts (phone);   -- one account per number
 
-@ScyllaTable(name = "provider_claims", keyspace = KS)           // one account per Google/Apple login
-data class ProviderClaimRow(
-    @PartitionKey(index = 0) val provider: String,
-    @PartitionKey(index = 1) @Sensitive val subject: String,
-    val userId: UUID,
-    val linkedAt: Instant,
-)
+CREATE TABLE identity.provider_links (
+    user_id   uuid        NOT NULL,
+    provider  text        NOT NULL,                     -- GOOGLE | APPLE
+    subject   text        NOT NULL,
+    email     text,
+    linked_at timestamptz NOT NULL,
+    PRIMARY KEY (user_id, provider)
+);
+CREATE UNIQUE INDEX provider_links_login_key ON identity.provider_links (provider, subject);
+                                                        -- one account per Google/Apple login
 
-@ScyllaTable(name = "providers_by_user", keyspace = KS)
-data class ProviderLinkRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val provider: String,
-    @Sensitive val subject: String,
-    @Sensitive val email: String?,
-    val linkedAt: Instant,
-)
+CREATE TABLE identity.devices (
+    user_id       uuid        NOT NULL,
+    device_id     uuid        NOT NULL,
+    platform      text        NOT NULL,
+    model         text        NOT NULL,
+    app_version   text        NOT NULL,
+    public_key    text        NOT NULL,
+    key_algorithm text        NOT NULL,
+    push_token    text,
+    status        text        NOT NULL,                 -- ACTIVE | REPLACED | REMOVED
+    registered_at timestamptz NOT NULL,
+    last_seen_at  timestamptz NOT NULL,
+    PRIMARY KEY (user_id, device_id)
+);
 
-@ScyllaTable(name = "devices_by_user", keyspace = KS)
-data class DeviceRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val deviceId: UUID,
-    val platform: String, val model: String, val appVersion: String,
-    val publicKey: String, val keyAlgorithm: String,
-    @Sensitive val pushToken: String? = null,
-    val status: String,                         // ACTIVE | REPLACED | REMOVED
-    val registeredAt: Instant, val lastSeenAt: Instant,
-)
+CREATE TABLE identity.sessions (
+    session_id         uuid        PRIMARY KEY,
+    user_id            uuid        NOT NULL,
+    device_id          uuid        NOT NULL,
+    current_token_hash text        NOT NULL,            -- SHA-256 of the live refresh token
+    scope              text        NOT NULL,
+    status             text        NOT NULL,            -- ACTIVE | REVOKED
+    created_at         timestamptz NOT NULL,
+    rotated_at         timestamptz NOT NULL,
+    expires_at         timestamptz NOT NULL             -- rotated_at + 30 days: unused for 30 days and the session is gone
+);
+CREATE INDEX sessions_expires_at_idx ON identity.sessions (expires_at);   -- for the purge
 
-@ScyllaTable(name = "sessions_by_id", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 30)                // 30 days without use and the session is gone
-data class SessionRow(
-    @PartitionKey val sessionId: UUID,
-    val userId: UUID, val deviceId: UUID,
-    @Sensitive val currentTokenHash: String,    // SHA-256 of the live refresh token
-    val scope: String, val status: String,      // ACTIVE | REVOKED
-    val createdAt: Instant, val rotatedAt: Instant,
-)
+CREATE TABLE identity.security_log (
+    user_id      uuid NOT NULL,
+    event_id     uuid NOT NULL,                         -- UUIDv7 made in the app; newest first by id
+    type         text NOT NULL,                         -- SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | …
+    device_model text,
+    detail       text,
+    PRIMARY KEY (user_id, event_id)                     -- I13 pages it by keyset, event_id DESC
+);
 
-@ScyllaTable(name = "security_log_by_user", keyspace = KS)
-data class SecurityEventRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey(order = DESC) @GeneratedUuid val eventId: UUID? = null,
-    val type: String,                           // SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | …
-    val deviceModel: String?, val detail: String?,
-)
+CREATE TABLE identity.support_recoveries (
+    request_id     uuid        PRIMARY KEY,             -- agents open a case by request id
+    user_id        uuid        NOT NULL,
+    status         text        NOT NULL,                -- RECEIVED | VERIFYING | NOTICE_SENT | RELINKED | REJECTED | CANCELLED
+    contact_email  text        NOT NULL,
+    note           text,
+    id_check       text,
+    selfie_match   text,
+    agent_id       text,
+    notice_sent_at timestamptz,
+    relink_after   timestamptz,
+    new_provider   text,
+    new_subject    text
+);
+CREATE INDEX support_recoveries_user_idx ON identity.support_recoveries (user_id, request_id DESC);
 
-@ScyllaTable(name = "support_recoveries", keyspace = KS)
-data class SupportRecoveryRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey(order = DESC)
-    @LookupIndex(tableSuffix = "by_request") val requestId: UUID,   // agents open a case by request id
-    val status: String,                         // RECEIVED | VERIFYING | NOTICE_SENT | RELINKED | REJECTED | CANCELLED
-    @Sensitive val contactEmail: String,
-    val idCheck: String?, val selfieMatch: String?, val agentId: String?,
-    val noticeSentAt: Instant?, val relinkAfter: Instant?,
-    val newProvider: String?, @Sensitive val newSubject: String?,
-)
-
-@ScyllaTable(name = "outbox", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 7)
-data class IdentityOutboxRow(
-    @PartitionKey val bucket: String,           // minute bucket, e.g. "2026-10-21T18:06"
-    @ClusteringKey val eventId: UUID,           // UUIDv7
-    val type: String, val payload: String,      // JSON envelope
-    val publishedAt: Instant? = null,
-)
+CREATE TABLE identity.outbox (
+    event_id     uuid        NOT NULL,                  -- UUIDv7
+    occurred_at  timestamptz NOT NULL,
+    type         text        NOT NULL,
+    payload      text        NOT NULL,                  -- the JSON envelope
+    published_at timestamptz,
+    PRIMARY KEY (event_id, occurred_at)
+) PARTITION BY RANGE (occurred_at);                     -- daily partitions, dropped after 7 days
+CREATE INDEX outbox_unpublished_idx ON identity.outbox (occurred_at) WHERE published_at IS NULL;   -- the relay's query
 ```
 
-Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one partition by `sessionId` and compares hashes; no table is keyed by the token itself. Uniqueness (phone, provider login) uses claim tables written with `saveIfNotExists`, which also serve as the lookup for that value; `@LookupIndex` is used only where nobody races for the value (`requestId`). See the Kandra patterns on the Architecture tab.
+| Table | Expiry | How the race is settled |
+| --- | --- | --- |
+| `accounts` | — | The number is claimed by setting `phone` inside the verifying transaction; the unique index makes a second account's write fail (unique violation), which answers `identity.phone_taken`. Profile-style edits use the `version` check |
+| `provider_links` | — | A new login inserts the account and the link in one transaction with `insertIgnore`; `insertedCount = 0` means another tap won, so the transaction is rolled back and the winner's account is read |
+| `devices` | — | — |
+| `sessions` | `expires_at`, purged by `identity.purge-expired` | — |
+| `security_log` | — | — |
+| `support_recoveries` | — | — |
+| `outbox` | Daily partitions, dropped after 7 days | — |
+
+Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one row by `session_id` and compares hashes; no table is keyed by the token itself. Every read of `sessions` filters `expires_at > now()`.
 
 **Redis (`idn:` prefix)**
 

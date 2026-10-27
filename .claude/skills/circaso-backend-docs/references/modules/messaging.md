@@ -1,6 +1,6 @@
 # Messaging module
 
-Messaging answers "get this message to these people, so that only they can read it": it owns 1:1 and group chats, membership, the public-key directory, delivery of end-to-end encrypted messages and media, receipts, and each user's encrypted history. It never sees plaintext. Keyspace `circaso_messaging`, Redis prefix `msg:`, stream `events:messaging`.
+Messaging answers "get this message to these people, so that only they can read it": it owns 1:1 and group chats, membership, the public-key directory, delivery of end-to-end encrypted messages and media, receipts, and each user's encrypted history. It never sees plaintext. Schema `messaging`, Redis prefix `msg:`, stream `events:messaging`.
 
 Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the decision log; points still to settle are under Open questions at the end.
 
@@ -137,7 +137,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). The 100 cap is soft under concurrent top-ups; the phone tops up one request at a time. After a refused top-up the phone keeps that request's private keys until it next publishes a full set with `PUT /keys` (at least every 7 days, with the signed prekey rotation; M2 reports a count, not ids), because a fetch can claim a key in the moment before the refused insert is undone. `PUT /keys` replaces keys with plain deletes and inserts on rows other calls wrote with lightweight transactions; the gap between those writes is minutes to days, so clock skew doesn't matter in practice, and it stays as built. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). The 100 cap is soft under concurrent top-ups; the phone tops up one request at a time. After a refused top-up the phone keeps that request's private keys until it next publishes a full set with `PUT /keys` (at least every 7 days, with the signed prekey rotation; M2 reports a count, not ids), a safety margin: a refused top-up is rolled back in one transaction, so no fetch can see its keys. `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -167,9 +167,9 @@ Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), s
 }
 ```
 
-A group's id is derived from the creator and the request's `Idempotency-Key`, so a retried create resumes the same group; a resume only completes a create that nothing else has changed since (otherwise it returns the group as it is), so it never re-adds someone who left. A direct chat's id comes from a claim on the pair (`direct_chats_by_pair`, `saveIfNotExists`), so two people opening a chat at the same moment get the same one.
+A group's id is derived from the creator and the request's `Idempotency-Key`, so a retried create resumes the same group; a resume only completes a create that nothing else has changed since (otherwise it returns the group as it is), so it never re-adds someone who left. A direct chat is claimed through the unique index on the pair in `chats` (`insertIgnore`; the loser reads the winner's chat), so two people opening a chat at the same moment get the same one.
 
-**Leaving and removing (M10):** the chat-list line delete and `MemberRemoved` (event id from chat, user and `joinedAt`) are written first, then the member row is claimed with `DELETE … IF EXISTS`; only the claim's winner sends `member.removed` and updates the chat through its version check (count, successor when the owner left, deleting the group when empty), so a failure at any point can be retried by either party. **Roles (M11, succession)** are written with `UPDATE … IF EXISTS`, so a role write never brings back a member who left; the chat's `ownerId` is the authority on who owns it.
+**Leaving and removing (M10)** is one transaction: the member row (which is also the chat-list line) is taken with `deleteReturning`, and only the caller that gets it decrements `member_count`, picks the successor when the owner left, deletes the group when it is empty and writes `MemberRemoved` (event id from chat, user and `joinedAt`) to the outbox; it sends `member.removed` after the commit. A caller that gets no row changed nothing, so either party can retry and a removal is never left half done. **Roles (M11, succession)** are written with `updateReturning … WHERE chat_id = ? AND user_id = ?`, so a role write never brings back a member who left; the chat's `owner_id` is the authority on who owns it.
 
 A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP_AVATAR"`: it has no recipients and is never deleted on download, only when the avatar changes or the group is deleted. A phone without the current metadata key shows "Group" and a placeholder until it gets one.
 
@@ -277,7 +277,7 @@ The `member.added` push goes only to the people in `userIds`, and is ids-only on
 
 Group frames go out through `Realtime.deliverMany`, so a message, receipt batch or typing signal to a full group costs one publish, not one per member; only push-worthy frames also look up who is offline. Group read receipts collect in `msg:receipts:{messageId}` and are sent to the sender as one `receipt` frame every 5 seconds.
 
-Frames marked "Replayed" are kept 7 days in `realtime_by_user` for `RealtimeReplay`, as in users. `message.new` isn't replayed because the inbox already holds every undelivered message for up to 30 days.
+Frames marked "Replayed" are kept 7 days in the `realtime` table for `RealtimeReplay`, as in users. `message.new` isn't replayed because the inbox already holds every undelivered message for up to 30 days.
 
 **Phone to server** (through `RealtimeInbound`):
 
@@ -289,143 +289,181 @@ Frames marked "Replayed" are kept 7 days in `realtime_by_user` for `RealtimeRepl
 
 ## Data
 
-Kandra entities in keyspace `circaso_messaging` (plus `MessagingRealtimeRow` and `MessagingOutboxRow`, as in users) and Redis keys under `msg:`.
+PostgreSQL tables in schema `messaging` (role `messaging`, Flyway location `db/messaging`) and Redis keys under `msg:`. Foreign keys stay inside the schema.
 
-```kotlin
-const val KS = "circaso_messaging"
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Messaging still runs on its Kandra tables in keyspace `circaso_messaging` until slice PG5 builds the tables below.
 
-@ScyllaTable(name = "chats", keyspace = KS)
-data class ChatRow(
-    @PartitionKey val chatId: UUID,
-    val kind: String,                           // DIRECT | GROUP
-    val sealedMeta: String = "",                // groups only: name and avatar under the group metadata key; empty for direct
-    val metaVersion: Int = 0,
-    val avatarMediaId: UUID = NIL_UUID,         // the encrypted avatar file, deleted when replaced
-    val settings: String,                       // JSON: membersCanAdd
-    val memberCount: Int,
-    val ownerId: UUID = NIL_UUID,               // groups: the owner; ownership changes go through the version check (V004); nil for direct
-    val createdBy: UUID,
-    val createdAt: Instant,
-    @Version val version: Long = 0,
-)
+```sql
+-- V<n>__messaging.sql (shape; the scripts themselves are written in PG5, and the media and history tables in MS5 and MS6)
 
-@ScyllaTable(name = "direct_chats_by_pair", keyspace = KS)      // one direct chat per pair, claimed with saveIfNotExists
-data class DirectChatClaimRow(
-    @PartitionKey val pair: String,             // "<smaller userId>:<larger userId>"
-    val chatId: UUID,
-)
+CREATE TABLE messaging.chats (
+    chat_id         uuid        PRIMARY KEY,
+    kind            text        NOT NULL CHECK (kind IN ('DIRECT', 'GROUP')),
+    direct_low      uuid,                               -- DIRECT: the smaller user id of the pair; NULL for groups
+    direct_high     uuid,                               -- DIRECT: the larger user id of the pair; NULL for groups
+    sealed_meta     text,                               -- groups: name and avatar under the group metadata key; NULL for direct
+    meta_version    int         NOT NULL DEFAULT 0,
+    avatar_media_id uuid,                               -- the encrypted avatar file, deleted when replaced
+    settings        text        NOT NULL,               -- JSON: membersCanAdd
+    member_count    int         NOT NULL,               -- changed in the same transaction as the member rows
+    owner_id        uuid,                               -- groups: the owner, the authority on who owns it; NULL for direct
+    last_message_id uuid,                               -- the newest message, for M6; set in the sending transaction
+    created_by      uuid        NOT NULL,
+    created_at      timestamptz NOT NULL,
+    version         bigint      NOT NULL DEFAULT 0,     -- optimistic lock (M8, ownership changes)
+    CHECK ((kind = 'DIRECT') = (direct_low IS NOT NULL AND direct_high IS NOT NULL)),
+    CHECK (direct_low < direct_high)
+);
+CREATE UNIQUE INDEX chats_direct_pair_key ON messaging.chats (direct_low, direct_high) WHERE kind = 'DIRECT';
+                                                        -- one direct chat per pair
 
-@ScyllaTable(name = "members_by_chat", keyspace = KS)
-data class MemberRow(
-    @PartitionKey val chatId: UUID,
-    @ClusteringKey val userId: UUID,
-    val role: String,                           // OWNER | ADMIN | MEMBER
-    val joinedAt: Instant,
-)
+CREATE TABLE messaging.members (
+    chat_id    uuid        NOT NULL REFERENCES messaging.chats ON DELETE CASCADE,
+    user_id    uuid        NOT NULL,
+    role       text        NOT NULL,                    -- OWNER | ADMIN | MEMBER
+    read_up_to uuid,                                    -- this member's read marker (messaging.read)
+    joined_at  timestamptz NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX members_user_idx ON messaging.members (user_id, chat_id);   -- the chat list (M6)
 
-@ScyllaTable(name = "chats_by_user", keyspace = KS)            // the chat list; written with MemberRow in one batch
-data class UserChatRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val chatId: UUID,
-    val kind: String,
-    val lastMessageId: UUID = NIL_UUID,          // sentinel: a null through Kandra save doesn't clear (kandra-bugs.md)
-    val readUpTo: UUID = NIL_UUID,
-    val joinedAt: Instant,
-)
+CREATE TABLE messaging.key_bundles (
+    user_id                  uuid        PRIMARY KEY,   -- one phone per account, so one bundle
+    device_id                uuid        NOT NULL,
+    identity_key             text        NOT NULL,
+    signed_pre_key_id        int         NOT NULL,
+    signed_pre_key           text        NOT NULL,
+    signed_pre_key_signature text        NOT NULL,
+    signed_pre_key_at        timestamptz NOT NULL,
+    uploaded_at              timestamptz NOT NULL
+);
 
-@ScyllaTable(name = "key_bundles", keyspace = KS)
-data class KeyBundleRow(
-    @PartitionKey val userId: UUID,
-    val deviceId: UUID,
-    val identityKey: String,
-    val signedPreKeyId: Int, val signedPreKey: String, val signedPreKeySignature: String,
-    val signedPreKeyAt: Instant,
-)
+CREATE TABLE messaging.one_time_prekeys (
+    user_id     uuid        NOT NULL,
+    key_id      int         NOT NULL,
+    device_id   uuid        NOT NULL,                   -- the phone that uploaded it
+    public_key  text        NOT NULL,
+    uploaded_at timestamptz NOT NULL,
+    PRIMARY KEY (user_id, key_id)                       -- a resent key id is messaging.prekey_id_exists
+);
 
-@ScyllaTable(name = "one_time_prekeys", keyspace = KS)
-data class OneTimePreKeyRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val keyId: Int,
-    val publicKey: String,
-)                                               // M3 takes the first row and deletes it with a lightweight transaction, so two fetches never get the same key
+CREATE TABLE messaging.inbox (
+    user_id    uuid        NOT NULL,                    -- the recipient
+    message_id uuid        NOT NULL,                    -- OrderedIds; read oldest first
+    chat_id    uuid        NOT NULL,
+    sender_id  uuid        NOT NULL,
+    kind       text        NOT NULL,                    -- MESSAGE | SENDER_KEY | CONTROL
+    ciphertext text,                                    -- direct and SENDER_KEY: this recipient's own copy;
+                                                        -- NULL for a group MESSAGE, whose body is in group_messages
+    media_ids  uuid[]      NOT NULL DEFAULT '{}',
+    sent_at    timestamptz NOT NULL,
+    PRIMARY KEY (user_id, message_id, sent_at)          -- M13 pages WHERE user_id = ? AND message_id > ? ORDER BY message_id
+) PARTITION BY RANGE (sent_at);                         -- daily partitions, dropped after 30 days
 
-@ScyllaTable(name = "inbox_by_user", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 30)
-data class InboxRow(
-    @PartitionKey val userId: UUID,
-    @ClusteringKey val messageId: UUID,         // ascending: oldest first
-    val chatId: UUID, val senderId: UUID, val kind: String,
-    val ciphertext: String = "",                // direct and SENDER_KEY: this recipient's own copy
-    val groupBody: Boolean = false,             // group MESSAGE: the ciphertext is in group_messages
-    val mediaIds: String = "",
-    val sentAt: Instant,
-)
+CREATE TABLE messaging.group_messages (                 -- one ciphertext per group message, not one per member
+    chat_id    uuid        NOT NULL,
+    message_id uuid        NOT NULL,
+    sender_id  uuid        NOT NULL,
+    ciphertext text        NOT NULL,
+    sent_at    timestamptz NOT NULL,
+    PRIMARY KEY (chat_id, message_id, sent_at)
+) PARTITION BY RANGE (sent_at);                         -- daily partitions, dropped after 30 days
 
-@ScyllaTable(name = "group_messages", keyspace = KS)            // one ciphertext per group message, not one per member
-@Ttl(seconds = 60 * 60 * 24 * 30)
-data class GroupMessageRow(
-    @PartitionKey val chatId: UUID,
-    @ClusteringKey val messageId: UUID,
-    val senderId: UUID, val ciphertext: String, val sentAt: Instant,
-)
+CREATE TABLE messaging.message_records (                -- who sent what, for M14 and group read receipts after delivery
+    message_id uuid        NOT NULL,
+    chat_id    uuid        NOT NULL,
+    sender_id  uuid        NOT NULL,
+    kind       text        NOT NULL,
+    sent_at    timestamptz NOT NULL,
+    PRIMARY KEY (message_id, sent_at)
+) PARTITION BY RANGE (sent_at);                         -- daily partitions, dropped after 30 days
 
-@ScyllaTable(name = "messages_by_id", keyspace = KS)              // who sent what, for M14 and group read receipts after delivery
-@Ttl(seconds = 60 * 60 * 24 * 30)
-data class MessageRecordRow(@PartitionKey val messageId: UUID, val chatId: UUID, val senderId: UUID, val kind: String, val sentAt: Instant)
+CREATE TABLE messaging.client_messages (                -- idempotent send
+    sender_id         uuid        NOT NULL,
+    client_message_id uuid        NOT NULL,
+    message_id        uuid        NOT NULL,
+    expires_at        timestamptz NOT NULL,             -- 1 day after the send
+    PRIMARY KEY (sender_id, client_message_id)
+);
+CREATE INDEX client_messages_expires_at_idx ON messaging.client_messages (expires_at);
 
-@ScyllaTable(name = "sent_by_client_id", keyspace = KS)        // idempotent send
-@Ttl(seconds = 60 * 60 * 24)
-data class ClientMessageRow(@PartitionKey val senderId: UUID, @ClusteringKey val clientMessageId: UUID, val messageId: UUID)
+CREATE TABLE messaging.media (
+    media_id            uuid        PRIMARY KEY,
+    chat_id             uuid        NOT NULL,
+    uploader_id         uuid        NOT NULL,
+    purpose             text        NOT NULL,           -- MESSAGE | GROUP_AVATAR
+    object_key          text        NOT NULL,
+    size_bytes          bigint      NOT NULL,
+    multipart_upload_id text,                           -- set while a multipart upload is open
+    created_at          timestamptz NOT NULL,
+    expires_at          timestamptz                     -- created_at + 30 days for MESSAGE; NULL for GROUP_AVATAR
+);
+CREATE INDEX media_expires_at_idx ON messaging.media (expires_at) WHERE expires_at IS NOT NULL;
 
-@ScyllaTable(name = "media", keyspace = KS)
-@Ttl(seconds = 60 * 60 * 24 * 30)
-data class MediaRow(
-    @PartitionKey val mediaId: UUID,
-    val chatId: UUID, val uploaderId: UUID,
-    val purpose: String,                        // MESSAGE | GROUP_AVATAR; avatars are saved without the TTL
-    val objectKey: String, val sizeBytes: Long,
-    val multipartUploadId: String = "",         // set while a multipart upload is open
-    val createdAt: Instant,
-)
+CREATE TABLE messaging.media_pending (                  -- recipients still to download; none left → delete the object
+    media_id uuid NOT NULL REFERENCES messaging.media ON DELETE CASCADE,
+    user_id  uuid NOT NULL,
+    PRIMARY KEY (media_id, user_id)
+);
 
-@ScyllaTable(name = "media_pending", keyspace = KS)            // recipients still to download; empty partition → delete the object
-@Ttl(seconds = 60 * 60 * 24 * 30)
-data class MediaPendingRow(@PartitionKey val mediaId: UUID, @ClusteringKey val userId: UUID)
+CREATE TABLE messaging.history (
+    user_id    uuid NOT NULL,
+    chat_id    uuid NOT NULL,
+    message_id uuid NOT NULL,
+    sealed     text NOT NULL,
+    PRIMARY KEY (user_id, chat_id, message_id)          -- M19 pages newest first (message_id DESC); "clear chat" deletes (user_id, chat_id)
+);
 
-@ScyllaTable(name = "history_by_user_chat", keyspace = KS)
-data class HistoryRow(
-    @PartitionKey(index = 0) val userId: UUID,
-    @PartitionKey(index = 1) val chatId: UUID,  // composite partition: one chat's history for one user; "clear chat" deletes it
-    @ClusteringKey val messageId: UUID,         // descending: newest first
-    val sealed: String,
-)
+CREATE TABLE messaging.history_key_backups (
+    user_id    uuid        PRIMARY KEY,
+    wraps      text        NOT NULL,                    -- JSON: kind, credentialId, prfSalt, sealed per wrap
+    version    int         NOT NULL,
+    updated_at timestamptz NOT NULL
+);
 
-@ScyllaTable(name = "history_key_backups", keyspace = KS)
-data class HistoryKeyBackupRow(
-    @PartitionKey val userId: UUID,
-    val wraps: String,                          // JSON: kind, credentialId, prfSalt, sealed per wrap
-    val version: Int,
-    val updatedAt: Instant,
-)
+CREATE TABLE messaging.settings (
+    user_id       uuid    PRIMARY KEY,
+    read_receipts boolean NOT NULL DEFAULT true,
+    typing        boolean NOT NULL DEFAULT true
+);
 
-@ScyllaTable(name = "settings", keyspace = KS)
-data class MessagingSettingsRow(@PartitionKey val userId: UUID, val readReceipts: Boolean = true, val typing: Boolean = true)
+CREATE TABLE messaging.realtime (…);                    -- the same shape as users' realtime: daily partitions, 7 days
+CREATE TABLE messaging.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
 ```
+
+| Table | Expiry | How the race is settled |
+| --- | --- | --- |
+| `chats` | — | M4 inserts a direct chat with `insertIgnore`; `insertedCount = 0` means the other person opened it at the same moment, and the winner's chat is read, so both get the same one. M8 and ownership changes use the `version` check |
+| `members` | — | Removal and leave take the row with `deleteReturning` (below); role writes use `updateReturning`; an add checks the 1,000 cap and changes `member_count` in the same transaction |
+| `key_bundles` | — | `PUT /keys` replaces the bundle and the one-time prekeys in one transaction |
+| `one_time_prekeys` | — | M3 takes one key with `deleteReturning` over the lowest `key_id` (`FOR UPDATE SKIP LOCKED`), so two fetches never get the same key. A top-up inserts in one transaction and is refused whole (rolled back) on a resent key id or more than 100 kept. On `DeviceReplaced`: `DELETE … WHERE user_id = ? AND device_id = ? AND uploaded_at < :occurredAt` |
+| `inbox` | Daily partitions, 30 days | An ack is `DELETE … WHERE user_id = ? AND message_id = ? RETURNING …`: exactly one ack gets the row and sends the `delivered` receipt |
+| `group_messages` | Daily partitions, 30 days | Deleted on the last ack (`msg:pending:{messageId}` counts down) |
+| `message_records` | Daily partitions, 30 days | — |
+| `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result |
+| `media` | `expires_at`, 30 days (none for group avatars) | M17 locks the media row (`FOR UPDATE`) before taking its pending row, so exactly one ack sees that none are left |
+| `media_pending` | Deleted with its `media` row | M17 takes the caller's row with `deleteReturning` |
+| `history` | — (until cleared or the account is deleted) | — |
+| `history_key_backups` | — | — |
+| `settings` | — | — |
+| `realtime`, `outbox` | Daily partitions, 7 days | — |
+
+Every read of a table with `expires_at` filters `expires_at > now()`; `messaging.purge-expired` deletes the expired rows and drops the expired partitions.
 
 **Deleting what's been delivered**
 
-- Direct messages: `messaging.ack` deletes the recipient's `InboxRow`; nothing else holds the ciphertext.
-- Group messages: each member's `InboxRow` is deleted on ack. The shared `GroupMessageRow` is deleted when the last member acks (`msg:pending:{messageId}` in Redis counts down), and the 30-day TTL catches anything Redis loses.
-- Media: each recipient's `MediaPendingRow` is deleted on M17; when the partition is empty the R2 object and `MediaRow` are deleted. A daily job (`MediaSweep`) deletes R2 objects under `chat-media/` whose `MediaRow` has expired, because R2 objects have no TTL of their own (decision 2026-10-25). It walks the bucket listing, so it needs no table scan, and it never touches a `GROUP_AVATAR` object that still has a row.
+- Direct messages: `messaging.ack` deletes the recipient's `inbox` row; nothing else holds the ciphertext.
+- Group messages: each member's `inbox` row is deleted on ack. The shared `group_messages` row is deleted when the last member acks (`msg:pending:{messageId}` in Redis counts down), and dropping the day's partition after 30 days catches anything Redis loses.
+- Media: each recipient's `media_pending` row is deleted on M17; when none are left, the `media` row is deleted and the R2 object after the commit. A daily job (`MediaSweep`) deletes R2 objects under `chat-media/` whose `media` row is gone or expired, because R2 objects have no TTL of their own (decision 2026-10-25). It walks the bucket listing, so it needs no table scan, and it never touches a `GROUP_AVATAR` object that still has a row.
 
-**Fan-out:** a group message to 1,000 members writes one `GroupMessageRow` and 999 small `InboxRow`s (no ciphertext in them), as one unlogged batch per 100 rows, then sends the frames. Sending answers once the rows are written; frames and pushes go out after.
+**Fan-out:** a group message to 1,000 members writes one `group_messages` row, one `message_records` row and 999 small `inbox` rows (no ciphertext in them) with one `batchInsert` in the sending transaction, together with `chats.last_message_id` and the `client_messages` row, then sends the frames after the commit. Sending answers once the transaction has committed; frames and pushes go out after.
 
 **Redis (`msg:` prefix)**
 
 | Key | Value | Expiry | Purpose |
 | --- | --- | --- | --- |
 | `msg:pending:{messageId}` | count of members yet to ack | 30 days | Deletes the group body on the last ack |
-| `msg:members:{chatId}` | userIds, one comma-separated value | 10 min; a change writes a 5 s marker and readers fill only with set-if-absent | Membership for sends and fan-out without reading `members_by_chat` each time |
+| `msg:members:{chatId}` | userIds, one comma-separated value | 10 min; a change writes a 5 s marker and readers fill only with set-if-absent | Membership for sends and fan-out without reading `members` each time |
 | `msg:receipts:{messageId}` | hash userId → `delivered` / `read` | 10 s | Group receipts collected for the 5-second batch to the sender |
 | `msg:bundle-rate:{userId}` | counter | 1 h | 60 key bundles per user per hour |
 | `msg:hk-fetch:{userId}` | counter | 24 h | 5 backup fetches per user per day |

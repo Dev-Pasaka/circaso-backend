@@ -1,6 +1,6 @@
 # Assistant module (Asha)
 
-Asha answers "what do I want to know or do, said in my own words": she is Circaso's in-app assistant, by text or voice, on Cloudflare Workers AI models. She reads the user's own data through read-only routes, and later drafts messages and payments that only the user can confirm. Keyspace `circaso_assistant`, Redis prefix `ast:`, stream `events:assistant`. Status: planned; Phase A (read) first, Phase B (act) next.
+Asha answers "what do I want to know or do, said in my own words": she is Circaso's in-app assistant, by text or voice, on Cloudflare Workers AI models. She reads the user's own data through read-only routes, and later drafts messages and payments that only the user can confirm. Schema `assistant`, Redis prefix `ast:`, stream `events:assistant`. Status: planned; Phase A (read) first, Phase B (act) next.
 
 ## Overview
 
@@ -20,7 +20,7 @@ Asha answers "what do I want to know or do, said in my own words": she is Circas
 ### Asha in the chat list
 
 - **A chat like any other.** Asha appears as a pinned chat at the top of the chat list and in contacts, with her own avatar and a "Circaso assistant" badge. Her chat is one continuous thread per user: text, voice notes (kept as transcripts), proposal cards, and the questions asked from other chats, marked "asked from Family".
-- **Stored by this module.** The thread lives in `circaso_assistant`, encrypted at rest. It is not end-to-end encrypted, because Asha has to read what you write to answer; the top of her chat says so in one line.
+- **Stored by this module.** The thread lives in the `assistant` schema, encrypted at rest. It is not end-to-end encrypted, because Asha has to read what you write to answer; the top of her chat says so in one line.
 - **Not a person.** Asha has a fixed system id, no account in identity and no profile in users. She can't be blocked, paid, called, added to a group or found by handle, and she never appears in anyone else's contacts. The app opens her chat through the assistant routes, so the reach rule doesn't apply.
 - **Memory of the thread.** She uses the recent part of the thread as context: the last few exchanges on the free plan, much more on Asha Plus.
 - **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Two things remain, neither holding conversation text: the audit records of Phase B actions (what was proposed, to whom, the amount and the user's decision), because they back money movements, and usage counts for billing.
@@ -134,22 +134,22 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{userId}:{day}`); daily totals go to `usage_by_user` for cost reports.
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
-- **Entitlement:** checked on every turn from `entitlements_by_user`, kept up to date by store notifications received as webhooks at the gateway.
+- **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
 ## How Asha acts (Phase B)
 
 Asha never gets write power. The agent token stays read-only; the only thing she can create is a **proposal** in her own module. Carrying it out always takes the user's own token and the user's own confirmation.
 
 1. **Gather.** From the conversation Asha fills what the action needs: the recipient, the amount and token for a payment, the text for a message. She resolves the recipient only among the user's contacts (`users:api`). If two contacts match ("John"), or anything is unclear, she asks; she never guesses a recipient or an amount.
-2. **Propose.** She creates a proposal (`ProposalRow`: kind, recipient, amount or text, the turns it came from, expires in 10 minutes) and shows it as a card: "Send KES 2,000 to Mum?"
+2. **Propose.** She creates a proposal (a `proposals` row: kind, recipient, amount or text, the turns it came from, expires in 10 minutes) and shows it as a card: "Send KES 2,000 to Mum?"
 3. **Confirm.** The user taps Confirm. The app calls the normal endpoint with the **user** token and the `proposalId`: messaging's send, or wallet's prepare transfer. A payment still needs the PIN or biometrics, and the Circle signature, exactly as if the user had typed it.
 4. **Record.** The message or transaction carries `origin: ASHA` and the `proposalId`; the assistant module records the outcome (confirmed, edited, declined, expired).
 
 ### Audit and monitoring
 
-- Every turn, tool call, proposal and decision goes to `audit_by_user`, append-only, with the model, prompt version and request id. It records what happened, never what was said, so deleting the Asha chat leaves no conversation text behind. Audio is never kept.
+- Every turn, tool call, proposal and decision goes to `audit`, append-only, with the model, prompt version and request id. It records what happened, never what was said, so deleting the Asha chat leaves no conversation text behind. Audio is never kept.
 - Events `assistant.ProposalCreated`, `assistant.ProposalConfirmed`, `assistant.ProposalDeclined` feed monitoring and the transaction auditor.
 - Grafana: proposals per user per hour, confirm rate, amounts proposed, declined-after-edit rate. Alerts on bursts of proposals or unusual amounts.
 - **Prompt injection:** contact names, profile text and anything quoted from a chat are untrusted text to the model. They can make Asha say something wrong, but never act: her tools are read-only, and a proposal does nothing until the user confirms it.
@@ -172,9 +172,66 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 
 The user talks to Asha with the **user** token; Asha's tools call other modules with the **agent** token.
 
-## Data (outline)
+## Data
 
-`AshaMessageRow` (partition `userId`, time-ordered: the chat), `ProposalRow` (by user, 10-minute TTL once decided or expired), `UsageDailyRow` (by user and day), `EntitlementRow` (by user), `AssistantAuditRow` (by user, time-ordered, no message text), `AssistantOutboxRow`.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`).
+
+> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. The assistant still runs on its Kandra tables in keyspace `circaso_assistant` until slice PG4 builds the tables below.
+
+```sql
+-- V1__assistant.sql (shape; the script itself is written in PG4)
+
+CREATE TABLE assistant.asha_messages (                  -- the Asha chat
+    user_id     uuid        NOT NULL,
+    message_id  uuid        NOT NULL,                   -- newest first by id
+    role        text        NOT NULL,
+    body        text        NOT NULL,                   -- sealed (AES-GCM) before it is stored
+    reply_to    uuid,
+    answered_by uuid,
+    asked_from  text,
+    read_note   text,                                   -- JSON: the chat ids and the number of messages Asha read, never the messages
+    created_at  timestamptz NOT NULL,
+    PRIMARY KEY (user_id, message_id)                   -- pages by keyset, message_id DESC
+);
+
+CREATE TABLE assistant.usage_daily (                    -- daily totals for cost reports
+    user_id       uuid        NOT NULL,
+    usage_day     date        NOT NULL,
+    text_turns    int         NOT NULL,
+    voice_seconds int         NOT NULL,
+    input_tokens  bigint      NOT NULL,
+    output_tokens bigint      NOT NULL,
+    updated_at    timestamptz NOT NULL,
+    PRIMARY KEY (user_id, usage_day)                    -- added to with upsert (keys: user_id, usage_day), count = count + n
+);
+
+CREATE TABLE assistant.entitlements (
+    user_id    uuid PRIMARY KEY,
+    plan       text NOT NULL,
+    expires_at timestamptz                              -- when the plan ends; not a row expiry, so never purged
+);
+
+CREATE TABLE assistant.audit (                          -- append-only; what happened, never what was said
+    user_id    uuid NOT NULL,
+    event_id   uuid NOT NULL,                           -- UUIDv7 made in the app
+    kind       text NOT NULL,
+    detail     text NOT NULL,
+    request_id text,
+    PRIMARY KEY (user_id, event_id)
+);
+
+CREATE TABLE assistant.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
+```
+
+| Table | Expiry |
+| --- | --- |
+| `asha_messages` | — (until the user deletes the Asha chat) |
+| `usage_daily` | — |
+| `entitlements` | — |
+| `audit` | — |
+| `outbox` | Daily partitions, 7 days |
+
+**Phase B** adds `assistant.proposals` (by user, with an `expires_at` 10 minutes after the proposal is decided or expires, purged by `assistant.purge-expired`), designed with Phase B.
 
 ## Error codes (draft)
 
