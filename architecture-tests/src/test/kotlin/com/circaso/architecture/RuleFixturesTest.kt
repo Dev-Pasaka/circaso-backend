@@ -164,7 +164,60 @@ class RuleFixturesTest {
             "JsonPrimitive(…)",
             "buildJsonArray",
             ".jsonArray",
+            "JsonObject.serializer()",
+            "JsonElement.serializer()",
+            "decodeFromString<JsonObject>",
+            "decodeJsonElement",
+            "encodeJsonElement",
+            "a value declared as JsonObject",
+            "a value declared as JsonElement",
         )
+
+    @Test
+    fun `an Exposed table lives in its module's data, and only that data reads it`() =
+        assertFlags(
+            "tablesStayInTheirModule",
+            "table 'SessionsTable' declared outside data.tables",
+            "table object 'Devices' must end in Table",
+            "references table 'com.circaso.identity.data.tables.AccountsTable' outside data",
+            "imports Exposed 'org.jetbrains.exposed.v1.jdbc.selectAll' outside data",
+            "references another module's table 'com.circaso.identity.data.tables.AccountsTable'",
+        )
+
+    @Test
+    fun `modules reach the database only through Database tx`() =
+        assertFlags(
+            "noWayInButDatabaseTx",
+            "opens a raw Exposed transaction",
+            "calls Database.connect",
+            "imports 'org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction'",
+            "uses SchemaUtils",
+        )
+
+    @Test
+    fun `JDBC and Flyway stay in the Migrate code`() =
+        assertFlags(
+            "jdbcOnlyInMigrate",
+            "imports 'java.sql.Connection'",
+            "imports 'org.jetbrains.exposed.v1.jdbc.selectAll'",
+            "imports 'org.flywaydb.core.Flyway'",
+        )
+
+    @Test
+    fun `nothing blocks a thread on runBlocking`() = assertFlags("noRunBlocking", "Blocking.kt: calls runBlocking")
+
+    @Test
+    fun `a Transactor run block holds database work only`() {
+        assertFlags(
+            "transactionsHoldDatabaseWorkOnly",
+            "uses 'events' (EventBus) inside transactor.run",
+            "uses 'sms' (SmsGateway)",
+            "uses 'reach' (ReachPolicy)",
+        )
+        val violations =
+            Rules.all.getValue("transactionsHoldDatabaseWorkOnly")(filesIn("transactionsHoldDatabaseWorkOnly"))
+        assertTrue(violations.none { "'accounts'" in it }, "a repository call is what the block is for")
+    }
 
     @Test
     fun `a controller is a function on Route, not a class`() =

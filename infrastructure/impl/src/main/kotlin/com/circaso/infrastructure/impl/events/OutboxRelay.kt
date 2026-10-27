@@ -2,70 +2,55 @@ package com.circaso.infrastructure.impl.events
 
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.api.Scheduler
+import com.circaso.infrastructure.impl.database.OnJobsPool
 import com.circaso.infrastructure.impl.logging.kv
-import com.circaso.infrastructure.impl.redis.RedisConnection
-import com.circaso.shared.EventEnvelope
-import io.lettuce.core.ExperimentalLettuceCoroutinesApi
-import io.lettuce.core.SetArgs
+import com.circaso.shared.EventId
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.time.Clock
 import java.time.Duration
 
 private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.events.OutboxRelay")
 
 /**
- * The rescue path: publishes every outbox row that has no `publishedAt`, for the case where a node crashed
- * between its batch and its `XADD`. It runs under the scheduler's Redis lock, so one node at a time sweeps the
- * minute-buckets from its checkpoint up to 10 seconds ago, then moves the checkpoint forward. A rescued event
- * may be a duplicate of one that was published but not stamped; handlers skip those.
+ * The rescue path: publishes every outbox row that has no `publishedAt`, for the case where a node crashed between
+ * its commit and its `XADD`. It runs under the scheduler's Redis lock, so one node at a time asks each module's
+ * [OutboxStore] for its unpublished rows older than 10 seconds, oldest first, in batches of [OutboxStore.BATCH].
+ * A rescued event may be a duplicate of one that was published but not stamped; handlers skip those.
+ *
+ * There is no checkpoint: an unpublished row stays visible to the store's query until it is stamped.
  */
-@OptIn(ExperimentalLettuceCoroutinesApi::class)
 class OutboxRelay(
-    private val redis: RedisConnection,
     private val bus: RedisEventBus,
     private val outboxStores: () -> Collection<OutboxStore>,
-    private val clock: Clock = Clock.systemUTC(),
-    private val margin: Duration = Duration.ofSeconds(10),
-    private val maxBucketsPerSweep: Int = 120,
-    /** Where a store with no checkpoint yet starts: an hour back, never the whole 7 days. */
-    private val firstLookback: Duration = Duration.ofHours(1),
-    private val checkpointTtl: Duration = Duration.ofDays(8),
+    /** Batches per store per sweep, so one sweep can't run for ever behind a stuck stamp. */
+    private val maxBatches: Int = 20,
 ) {
     fun register(scheduler: Scheduler, interval: Duration = Duration.ofSeconds(5)) {
         scheduler.every("events.outbox-relay", interval) { sweep() }
     }
 
-    /** One pass over every module's outbox. Returns how many events it published. */
-    suspend fun sweep(): Int = outboxStores().sumOf { sweep(it) }
+    /** One pass over every module's outbox, on the jobs pool. Returns how many events it published. */
+    suspend fun sweep(): Int = withContext(OnJobsPool) { outboxStores().sumOf { sweep(it) } }
 
     private suspend fun sweep(store: OutboxStore): Int {
-        val checkpointKey = "evt:relay:${store.producer}"
-        val now = clock.instant()
-        val swept = redis.commands.get(checkpointKey)
-        var bucket = swept?.let(EventEnvelope::nextBucket) ?: EventEnvelope.bucketOf(now.minus(firstLookback))
-        var published = 0
-        var buckets = 0
-
-        // A bucket is swept only once it ended more than [margin] ago, so the normal publish path has had its chance.
-        while (buckets < maxBucketsPerSweep &&
-            !EventEnvelope.bucketStart(bucket).plusSeconds(60).isAfter(now.minus(margin))
-        ) {
-            for (envelope in store.unpublished(bucket)) {
-                if (!bus.appendToStream(envelope)) {
-                    bus.noteRescued(store.producer, published.toLong())
-                    return published // leave the checkpoint where it is and try again next sweep
-                }
+        val published = mutableSetOf<EventId>()
+        for (round in 1..maxBatches) {
+            val batch = store.unpublished(OutboxStore.BATCH)
+            val fresh = batch.filter { it.eventId !in published }
+            for (envelope in fresh) {
+                if (!bus.appendToStream(envelope)) return done(store, published.size) // Redis is down: next sweep
                 bus.stampOutbox(envelope)
-                published++
+                published += envelope.eventId
             }
-            redis.commands.set(checkpointKey, bucket, SetArgs().px(checkpointTtl.toMillis()))
-            bucket = EventEnvelope.nextBucket(bucket)
-            buckets++
+            // A short batch was the last one; a batch of rows already sent means their stamps failed.
+            if (batch.size < OutboxStore.BATCH || fresh.isEmpty()) break
         }
+        return done(store, published.size)
+    }
+
+    private fun done(store: OutboxStore, published: Int): Int {
         bus.noteRescued(store.producer, published.toLong())
-        if (published >
-            0
-        ) {
+        if (published > 0) {
             log.warn("rescued unpublished events", kv("producer", store.producer), kv("events", published))
         }
         return published

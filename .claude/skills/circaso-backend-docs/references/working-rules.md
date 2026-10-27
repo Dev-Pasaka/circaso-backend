@@ -27,7 +27,7 @@ Before writing code, read these in order. They are the spec; this file only tell
 | Piece | Choice |
 | --- | --- |
 | Language and server | Kotlin (2.2.20 or newer, for Ktor's OpenAPI plugin), Ktor 3 server and client |
-| Database | PostgreSQL 18 (`postgres:18`: self-hosted on the sandbox, Docker locally and in CI; production host decided before launch) through **Exposed** 1.6.0, DSL only (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), JDBC with HikariCP, Flyway for migrations. |
+| Database | PostgreSQL 18 (`postgres:18`: self-hosted on the sandbox, Docker locally and in CI; production host decided before launch) through **Exposed** 1.6.0, DSL only (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), the non-blocking R2DBC driver with r2dbc-pool (`exposed-r2dbc`, `r2dbc-postgresql`, `r2dbc-pool`), Flyway for migrations (over JDBC, in the `Migrate` step only). |
 | DI | Koin |
 | JSON | kotlinx-serialization only (never Gson) |
 | Events | Outbox table in each schema + Redis Streams |
@@ -56,7 +56,7 @@ Work in this order. Each milestone ends green: it builds, its tests and the Kons
 - Logging as in the Logging section: both formats, request id in MDC.
 
 **M1 — Infrastructure**
-- The database as in architecture.md → Exposed and PostgreSQL: one schema and role per module from each module's `DatabaseModuleSpec`; the app, jobs and migrate pools; `Database.tx` on a bounded dispatcher with `SET LOCAL ROLE`; credentials from `Secrets`.
+- The database as in architecture.md → Exposed and PostgreSQL: one schema and role per module from each module's `DatabaseModuleSpec`; the app and jobs r2dbc pools and the `Migrate` step's JDBC; `Database.tx` (R2DBC `suspendTransaction`, nothing blocks a thread) with `SET LOCAL ROLE`; credentials from `Secrets`.
 - Flyway once per schema, run only by the `Migrate` main; the app only checks that the history is current.
 - `RedisScope` with per-module prefixes; `Scheduler` with a Redis leader lock.
 - `EventBus`: outbox write in the same transaction, immediate `XADD` after the commit, `publishedAt` stamp, single-leader relay over the unpublished rows, consumer groups, `XACK` after success, `XAUTOCLAIM` at 30 s, 5 attempts then `events:dlq`, `evt:done:` idempotency, 7-day trim.
@@ -136,7 +136,7 @@ Controller (a `Route` extension function) → service method → use case → re
   }
   ```
 - **Postgres and Exposed** (decision 2026-10-27; architecture.md → Infrastructure → Exposed and PostgreSQL).
-  - **Every database call goes through `Database.tx { }`.** Never `transaction {}` (it blocks the thread) or `Database.connect` in a module; Konsist fails the build on both. An Exposed `Table` is referenced only from the `data` package of the module that owns it.
+  - **Every database call goes through `Database.tx { }`,** over R2DBC: no thread ever blocks on the database. Never an Exposed transaction of a module's own, `R2dbcDatabase.connect`, JDBC (`java.sql`, `exposed-jdbc`; only the `Migrate` code in infrastructure uses JDBC, for Flyway) or `runBlocking`; Konsist fails the build on each. Results are `Flow`s, consumed inside the transaction. An Exposed `Table` is referenced only from the `data` package of the module that owns it.
   - **One operation, one transaction, database work only.** A use case opens the transaction through the domain port `Transactor.run { }` (implemented in `data` over `Database.tx`; repositories join it through the coroutine context). An operation's rows, its uniqueness claims and its outbox row are written in one `run`, and every decision that depends on what was read (version checks, claims, caps, successors, last-ack deletes) is made inside it. Nothing inside it calls Redis, HTTP, `EventBus` or any other port that leaves the database (Konsist checks `Transactor.run` lambdas in `usecases`); the event is published right after the commit.
   - **Lock order.** When a transaction touches a parent row and its children (a chat and its members, a media file and its pending recipients), it locks the parent first, on every path.
   - **Ids are UUIDv7 made on the server.** Messaging's partitions are keyed by them, so an id is never taken from a phone.

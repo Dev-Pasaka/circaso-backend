@@ -1,6 +1,7 @@
 package com.circaso.infrastructure.impl.scheduler
 
 import com.circaso.infrastructure.api.Scheduler
+import com.circaso.infrastructure.impl.database.OnJobsPool
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.millisSince
 import com.circaso.infrastructure.impl.redis.RedisConnection
@@ -16,6 +17,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.UUID
@@ -107,7 +109,10 @@ class RedisScheduler(
             val start = System.nanoTime()
             log.debug("start", kv("kind", "job"), kv("job", definition.name))
             val items =
-                holding(definition.name, lease) { telemetry.span("job.${definition.name}") { definition.job() } }
+                holding(definition.name, lease) {
+                    // a job is background work: its transactions take the jobs pool
+                    telemetry.span("job.${definition.name}") { withContext(OnJobsPool) { definition.job() } }
+                }
             // A run that found nothing to do happens every few seconds; it is only worth a line at DEBUG.
             val durationMs = 0L.millisSince(start)
             if (items > 0) {

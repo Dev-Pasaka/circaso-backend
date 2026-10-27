@@ -96,6 +96,7 @@ class WebEnvelopeTest {
                     }
                     get("/throws-domain") { throw DomainException(Taken()) }
                     get("/boom") { error("secret vendor detail: api-key-123") }
+                    get("/busy") { throw DomainException(SharedError.ServiceUnavailable) }
                     post(
                         "/body",
                     ) {
@@ -197,6 +198,15 @@ class WebEnvelopeTest {
 
             assertEquals(HttpStatusCode.Conflict, response.status)
             assertEquals("identity.phone_taken", response.json()["code"]!!.jsonPrimitive.content)
+        }
+
+    @Test
+    fun `a pool with no free connection answers 503 service unavailable`() =
+        app {
+            val response = client.get("/busy")
+
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals("service.unavailable", response.json()["code"]!!.jsonPrimitive.content)
         }
 
     @Test

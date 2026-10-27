@@ -646,8 +646,12 @@ object Rules {
             other + builds
         }
 
-    /** Hand-built or hand-read JSON, and maps standing in for a payload class (decision 2026-10-27). */
-    private val untypedPayloads =
+    /**
+     * Hand-built or hand-read JSON, and maps standing in for a payload class (decision 2026-10-27). Also the ways round
+     * a typed class: a `JsonObject`/`JsonElement` serializer, decoding into one, a serializer reading or writing raw
+     * elements, and a property or parameter declared as one (AI1b review).
+     */
+    private val untypedPayloads: List<Pair<Regex, String>> =
         listOf(
             "Map<String, Any" to "a Map<String, Any> payload",
             "buildJsonObject" to "buildJsonObject",
@@ -661,7 +665,17 @@ object Rules {
             "JsonPrimitive(" to "JsonPrimitive(…)",
             "buildJsonArray" to "buildJsonArray",
             ".jsonArray" to ".jsonArray",
-        )
+            "JsonObject.serializer()" to "JsonObject.serializer()",
+            "JsonElement.serializer()" to "JsonElement.serializer()",
+            "decodeFromString<JsonObject>" to "decodeFromString<JsonObject>",
+            "decodeFromString<JsonElement>" to "decodeFromString<JsonElement>",
+            "decodeJsonElement" to "decodeJsonElement",
+            "encodeJsonElement" to "encodeJsonElement",
+        ).map { (text, what) -> Regex(Regex.escape(text)) to what } +
+            listOf(
+                Regex(""":\s*JsonObject\b""") to "a value declared as JsonObject",
+                Regex(""":\s*JsonElement\b""") to "a value declared as JsonElement",
+            )
 
     /**
      * Main-source files that may still build or read JSON by hand, by path under `com/circaso/`, with why. Every
@@ -689,6 +703,11 @@ object Rules {
                 "a log line's fields, read from logback, not a payload",
             "integrations/impl/social/IdTokenClaimShapes.kt" to
                 "JsonTransformingSerializers reshape `aud` and `email_verified` before the typed claims read them",
+            // The envelopes, whose `data` is held as an element and decoded typed by the receiver.
+            "shared/Events.kt" to
+                "the event envelope keeps `data: JsonElement`, decoded into the event's own class by `decodeData`",
+            "shared/Realtime.kt" to
+                "the realtime envelope keeps `data: JsonElement`, decoded into the frame's own class by `decodeData`",
         )
 
     /**
@@ -712,7 +731,218 @@ object Rules {
 
     /** What untyped JSON or payload maps [file] uses, whether or not it is allowed to. */
     fun untypedPayloadUses(file: KoFileDeclaration): List<String> =
-        untypedPayloads.filter { (pattern, _) -> pattern in file.text }.map { (_, what) -> what }
+        untypedPayloads
+            .filter { (pattern, _) ->
+                pattern.containsMatchIn(file.text)
+            }.map { (_, what) -> what }
+            .distinct()
+
+    // ---- PostgreSQL and Exposed (architecture.md → Exposed and PostgreSQL → Guardrails) ------------------------------
+
+    private val tableObject = Regex("""\bobject\s+(\w+)\s*:\s*Table\s*\(""")
+
+    /**
+     * An Exposed `Table` is declared in its module's `data.tables`, ends in `Table`, and is referenced only from that
+     * module's `data` (and its `di`, which lists it in the `DatabaseModuleSpec`). Exposed itself is imported only in
+     * `data`. The module's database role enforces the same thing at run time.
+     */
+    fun tablesStayInTheirModule(files: List<KoFileDeclaration>): List<String> {
+        val owners =
+            files.filter { it.isBusiness() }.flatMap { file ->
+                tableObject.findAll(file.text).map { it.groupValues[1] to file }.toList()
+            }
+        val declared =
+            owners.flatMap { (name, file) ->
+                when {
+                    file.layer() != "data" || file.subLayer() != "tables" -> {
+                        listOf(violation(file, "table '$name' declared outside data.tables"))
+                    }
+
+                    !name.endsWith("Table") -> {
+                        listOf(violation(file, "table object '$name' must end in Table"))
+                    }
+
+                    else -> {
+                        emptyList()
+                    }
+                }
+            }
+        val referenced =
+            files.flatMap { file ->
+                val project = projectOf(file)
+                val own = project?.module
+                val mayReference = file.isBusiness() && (file.layer() == "data" || file.layer() == "di")
+                val viaImport =
+                    file.importNames().filter { ".data.tables." in it }.mapNotNull { import ->
+                        val owner = projectOfImport(import)?.module
+                        when {
+                            !mayReference -> violation(file, "references table '$import' outside data")
+                            owner != own -> violation(file, "references another module's table '$import'")
+                            else -> null
+                        }
+                    }
+                val exposed =
+                    if (file.isBusiness() && file.layer() != "data") {
+                        file.importNames().filter { it.startsWith("org.jetbrains.exposed") }.map {
+                            violation(file, "imports Exposed '$it' outside data")
+                        }
+                    } else {
+                        emptyList()
+                    }
+                viaImport + exposed
+            }
+        return declared + referenced
+    }
+
+    // `transaction {` or `transaction(db)`; prose such as "a lightweight transaction (`IF EXISTS`)" has a space.
+    private val rawTransaction = Regex("""(^|[^.\w])(transaction|suspendTransaction|inTopLevelTransaction)(\s*\{|\()""")
+
+    /**
+     * Modules reach PostgreSQL only through `Database.tx` (and the `Transactor` built on it): no Exposed transaction of
+     * their own, no `Database.connect` or `R2dbcDatabase.connect` (only infrastructure connects, once), and no
+     * `SchemaUtils` anywhere, development included (Flyway's scripts are the only schema).
+     */
+    fun noWayInButDatabaseTx(files: List<KoFileDeclaration>): List<String> =
+        files.flatMap { file ->
+            val business = file.isBusiness()
+            val raw =
+                if (business && rawTransaction.containsMatchIn(file.text)) {
+                    listOf(violation(file, "opens a raw Exposed transaction; use Database.tx { }"))
+                } else {
+                    emptyList()
+                }
+            val connects =
+                if (business && ("Database.connect" in file.text || "R2dbcDatabase.connect" in file.text)) {
+                    listOf(violation(file, "calls Database.connect; infrastructure connects once"))
+                } else {
+                    emptyList()
+                }
+            val transactionImports =
+                if (business) {
+                    file
+                        .importNames()
+                        .filter {
+                            it.startsWith("org.jetbrains.exposed.v1.jdbc.transactions") ||
+                                it.startsWith("org.jetbrains.exposed.v1.r2dbc.transactions")
+                        }.map {
+                            violation(file, "imports '$it'; use Database.tx { }")
+                        }
+                } else {
+                    emptyList()
+                }
+            val schemaUtils =
+                if ("SchemaUtils" in file.text) {
+                    listOf(violation(file, "uses SchemaUtils; the schema comes only from the Flyway scripts"))
+                } else {
+                    emptyList()
+                }
+            raw + connects + transactionImports + schemaUtils
+        }
+
+    /** Ports whose calls leave the database: never inside a transaction, which would hold a connection the whole wait. */
+    private val portsThatLeave =
+        setOf(
+            "RedisScope",
+            "RedisScopes",
+            "EventBus",
+            "HttpClient",
+            "HttpClients",
+            "ObjectStore",
+            "ObjectStores",
+            "Scheduler",
+        )
+    private val portSuffixesThatLeave = listOf("Gateway", "Cache", "Client", "Clients")
+
+    /**
+     * A `Transactor.run { }` block in a use case holds repository calls only: nothing that reaches Redis, HTTP, the
+     * event bus, a vendor contract or another module (the event is published right after the commit). The block is
+     * found by its braces; a constructor parameter it names is checked by its type.
+     */
+    fun transactionsHoldDatabaseWorkOnly(files: List<KoFileDeclaration>): List<String> =
+        files.filter { it.isBusiness() && it.layer() == "domain" && it.subLayer() == "usecases" }.flatMap { file ->
+            val own = projectOf(file)!!.module
+            val imports = file.importNames().associateBy { it.substringAfterLast('.') }
+            file.classes().flatMap { cls ->
+                val parameters =
+                    cls.primaryConstructor
+                        ?.parameters
+                        .orEmpty()
+                        .map { it.name to it.type.name }
+                val transactors = parameters.filter { (_, type) -> type == "Transactor" }.map { it.first }
+                val leaving =
+                    parameters.filter { (_, type) ->
+                        val origin = imports[type].orEmpty()
+                        type in portsThatLeave ||
+                            portSuffixesThatLeave.any { type.endsWith(it) } ||
+                            origin.startsWith("com.circaso.integrations.api.") ||
+                            origin == "com.circaso.shared.EventBus" ||
+                            origin.startsWith("com.circaso.shared.Realtime") ||
+                            (
+                                origin.startsWith("com.circaso.") && projectOfImport(origin)?.kind == "module-api" &&
+                                    projectOfImport(origin)?.module != own
+                            )
+                    }
+                transactors.flatMap { transactor ->
+                    blocksAfter(cls.text, "$transactor.run").flatMap { block ->
+                        leaving
+                            .filter { (name, _) ->
+                                Regex("""\b$name\b""").containsMatchIn(block)
+                            }.map { (name, type) ->
+                                violation(
+                                    file,
+                                    "'${cls.name}' uses '$name' ($type) inside $transactor.run; a transaction holds " +
+                                        "database work only, so call it after the commit",
+                                )
+                            }
+                    }
+                }
+            }
+        }
+
+    /** The text inside each `{ … }` that follows [call] in [text], matched by braces. */
+    private fun blocksAfter(text: String, call: String): List<String> =
+        Regex(Regex.escape(call) + """\s*(\([^)]*\))?\s*\{""")
+            .findAll(text)
+            .map { match ->
+                var depth = 1
+                var end = match.range.last + 1
+                while (end < text.length && depth > 0) {
+                    when (text[end]) {
+                        '{' -> depth++
+                        '}' -> depth--
+                    }
+                    end++
+                }
+                text.substring(match.range.last + 1, (end - 1).coerceAtLeast(match.range.last + 1))
+            }.toList()
+
+    private val jdbcPackages =
+        listOf("java.sql.", "javax.sql.", "org.jetbrains.exposed.v1.jdbc", "org.flywaydb", "org.postgresql.")
+
+    /**
+     * The app reaches PostgreSQL only over R2DBC, which never blocks a thread. JDBC (and Flyway, which is JDBC-only) is
+     * used in one place: the `Migrate` step's code in infrastructure's `database.migrate` package.
+     */
+    fun jdbcOnlyInMigrate(files: List<KoFileDeclaration>): List<String> =
+        files
+            .filterNot { projectOf(it)?.kind == "infrastructure-impl" && it.pkg().endsWith(".database.migrate") }
+            .flatMap { file ->
+                file
+                    .importNames()
+                    .filter { import -> jdbcPackages.any { import.startsWith(it) } }
+                    .map {
+                        violation(
+                            file,
+                            "imports '$it'; JDBC is only for Flyway in infrastructure's database.migrate",
+                        )
+                    }
+            }
+
+    /** `runBlocking` parks a thread until a coroutine ends; nothing on a main code path may do that. */
+    fun noRunBlocking(files: List<KoFileDeclaration>): List<String> =
+        files.filter { Regex("""\brunBlocking\b""").containsMatchIn(it.text) }.map {
+            violation(it, "calls runBlocking; suspend instead (the database and every client are non-blocking)")
+        }
 
     val all: Map<String, (List<KoFileDeclaration>) -> List<String>> =
         linkedMapOf(
@@ -734,5 +964,10 @@ object Rules {
             "controllersAreRouteFunctions" to ::controllersAreRouteFunctions,
             "httpOnlyThroughKtor" to ::httpOnlyThroughKtor,
             "payloadsAreTyped" to ::payloadsAreTyped,
+            "tablesStayInTheirModule" to ::tablesStayInTheirModule,
+            "noWayInButDatabaseTx" to ::noWayInButDatabaseTx,
+            "transactionsHoldDatabaseWorkOnly" to ::transactionsHoldDatabaseWorkOnly,
+            "jdbcOnlyInMigrate" to ::jdbcOnlyInMigrate,
+            "noRunBlocking" to ::noRunBlocking,
         )
 }

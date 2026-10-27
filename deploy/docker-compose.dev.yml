@@ -18,6 +18,9 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
+      # The app opens its PostgreSQL pools at start (PG1), so the database must be up first.
+      postgres:
+        condition: service_healthy
     networks: [backend, data]
     read_only: true
     tmpfs: [/tmp]
@@ -79,7 +82,8 @@ services:
       - log_min_duration_statement=500
     volumes:
       - postgres-data:/var/lib/postgresql
-      # Runs once, on the first start with an empty volume: creates the read-only browsing role.
+      # Run once, on the first start with an empty volume: the read-only browsing role and the app's three login roles
+      # (on the existing volume, run 20-login-roles.sh by hand once: postgres/README.md).
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d circaso"]

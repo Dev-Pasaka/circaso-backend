@@ -38,6 +38,8 @@ import io.kandra.test.KandraTestBackend
 import io.kandra.test.KandraTestUtils
 import io.kandra.test.KandraTestcontainers
 import kotlinx.coroutines.runBlocking
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import kotlin.test.AfterTest
@@ -77,7 +79,10 @@ class DataLayerTest {
     private val waiting = WaitingContactRepositoryImpl(db.suspendRepository())
     private val blocks = BlockRepositoryImpl(db.suspendRepository(), db.suspendRepository())
     private val invites = InviteRepositoryImpl(db.suspendRepository())
-    private val outbox = UsersOutboxStore(db.suspendRepository())
+
+    // Two minutes ahead, so the event's minute-bucket has ended and the bucket-less scan reads it.
+    private val outbox =
+        UsersOutboxStore(db.suspendRepository(), Clock.offset(Clock.systemUTC(), Duration.ofMinutes(2)))
     private val store =
         UsersStoreImpl(
             db.runtime,
@@ -223,9 +228,9 @@ class DataLayerTest {
 
             store.commit(UsersChanges(profiles = listOf(profile(id)), events = listOf(event)))
 
-            assertEquals(listOf(event.eventId), outbox.unpublished(event.bucket).map { it.eventId })
+            assertTrue(event.eventId in outbox.unpublished().map { it.eventId })
             outbox.markPublished(event, Instant.now())
-            assertTrue(outbox.unpublished(event.bucket).isEmpty())
+            assertTrue(event.eventId !in outbox.unpublished().map { it.eventId })
         }
 
     @Test

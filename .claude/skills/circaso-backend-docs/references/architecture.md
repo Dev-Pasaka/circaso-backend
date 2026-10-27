@@ -47,7 +47,7 @@ circaso-backend/
 ├─ infrastructure/
 │  ├─ api/                       handles modules borrow: Database (transactions), RedisScope,
 │  │                             Scheduler, ObjectStore, HttpClients, Secrets, Telemetry
-│  └─ impl/                      PostgreSQL + Exposed (Hikari pools, Flyway), Redis, the EventBus implementation
+│  └─ impl/                      PostgreSQL + Exposed (R2DBC pools; Flyway), Redis, the EventBus implementation
 │                                (outbox relay, Redis Streams consumers), Cloudflare R2,
 │                                Ktor HTTP client (retries, timeouts, circuit breaker),
 │                                config, OpenTelemetry, migrations, scheduled jobs
@@ -521,8 +521,8 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 | Provides | Library / service | Handle a module receives | Scoped by |
 | --- | --- | --- | --- |
-| Database | PostgreSQL 18 through Exposed 1.6 (DSL, JDBC, HikariCP pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
-| Schema migrations | Flyway, one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
+| Database | PostgreSQL 18 through Exposed 1.6 (DSL, non-blocking R2DBC, r2dbc-pool pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
+| Schema migrations | Flyway (over JDBC, the only JDBC in the system), one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
 | Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`) |
 | Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
 | Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
@@ -536,7 +536,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 > **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Until their slices ship (PG2 identity, PG3 users, PG4 assistant, PG5 messaging; `.claude/plans/postgres-migration.md`), those modules still run on ScyllaDB Cloud through Kandra 0.5.1, side by side with Postgres: `KandraModuleSpec` per keyspace `circaso_<module>`, `kandra-migrate` in the `Migrate` main, claim tables with `saveIfNotExists` before a logged batch, sentinels for cleared values (bugs in `docs/kandra-bugs.md`), `/kandra/health`, `FakeKandraSession` and the Cassandra container in tests. Fixes to their code follow those rules; nothing new is built on them.
 
-**Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is JDBC (`org.postgresql:postgresql`) with HikariCP. Versions live in `gradle/libs.versions.toml`, like every other library.
+**Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-jdbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is the non-blocking R2DBC driver (`exposed-r2dbc`, `org.postgresql:r2dbc-postgresql`, `io.r2dbc:r2dbc-pool`), so no thread ever blocks on the database (decision 2026-10-27: "queries must be non-blocking"). JDBC (`org.postgresql:postgresql`) is used only by Flyway in the `Migrate` step, because Flyway has no R2DBC driver; a Konsist rule keeps it there. Versions live in `gradle/libs.versions.toml`, like every other library.
 
 **One database, a schema and a role per module.** There is one database (`circaso`) with a schema per module: `identity`, `users`, `messaging`, `assistant`, later `wallet`. Each module also gets its own database role, with rights only on its own schema, so a module that queries another module's table fails in the database, not only in Konsist. There are no foreign keys across schemas, because modules stay independent.
 
@@ -565,14 +565,14 @@ object ContactsTable : Table("users.contacts") {
 }
 ```
 
-Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Exposed's `Schema` class is the alternative. The name is always given explicitly, because Exposed strips a `Table` suffix from the object's name. Tables are plain `Table` with an explicit `primaryKey`, not `IntIdTable` or `UUIDTable`; composite keys use `PrimaryKey(a, b)`.
+Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked in PG1). Exposed 1.6's `uuid()` column is `kotlin.uuid.Uuid`; for `java.util.UUID` use `javaUUID()` (`org.jetbrains.exposed.v1.core.java`). The name is always given explicitly, because Exposed strips a `Table` suffix from the object's name. Tables are plain `Table` with an explicit `primaryKey`, not `IntIdTable` or `UUIDTable`; composite keys use `PrimaryKey(a, b)`.
 
-**Transactions: `Database.tx`.** Every database call runs in a transaction, and the only way in is infrastructure's `Database.tx { }`, a thin wrapper over Exposed's `suspendTransaction(db = …)` (`org.jetbrains.exposed.v1.jdbc.transactions`).
+**Transactions: `Database.tx`.** Every database call runs in a transaction, and the only way in is infrastructure's `Database.tx { }`, a thin wrapper over Exposed's R2DBC `suspendTransaction(db = …)` (`org.jetbrains.exposed.v1.r2dbc.transactions`).
 
-- **Bounded dispatcher.** It runs on `Dispatchers.IO.limitedParallelism(poolSize)`, one dispatcher per pool, so at most `poolSize` coroutines ever hold a JDBC thread and the rest suspend cheaply. Threads never block waiting for a connection.
+- **Non-blocking.** Nothing holds a thread: at most the pool's `maxSize` transactions hold a connection, the rest suspend in the pool's queue, and one that waits longer than `maxAcquireTime` (3 s) fails as `service.unavailable` (503). Repositories consume result `Flow`s (`toList()`, `singleOrNull()`) inside the transaction.
 - **The module's role.** Each transaction starts with `SET LOCAL ROLE <module>`. The app pool logs in as `circaso_app` and the jobs pool as `circaso_jobs`; both are granted every module role. `SET LOCAL` ends with the transaction, so a connection returns to the pool clean, and it works behind PgBouncer in transaction mode.
-- **Settings.** Isolation `READ_COMMITTED` and `autoCommit = false` are set in Hikari, not in `DatabaseConfig`. `defaultQueryTimeout` is 5 s per statement, backed by the role's `statement_timeout`. `maxAttempts` stays `1`, so nothing runs twice by surprise; only a block that is pure database work and safe to repeat may raise it, and the call site says why. Nested transactions stay off.
-- **`connect()` runs once.** Infrastructure creates the Exposed `Database` from each Hikari `DataSource` at startup and shares it; calling `connect()` again leaks resources.
+- **Settings.** `R2dbcDatabaseConfig` sets isolation `READ_COMMITTED`, `defaultMaxAttempts = 1` (nothing runs twice by surprise; only a block that is pure database work and safe to repeat may raise it, and the call site says why) and nested transactions off. The statement timeout is the connection's own `statement_timeout` (5 s app, 60 s jobs), sent when it connects and matching the login role; Exposed's per-statement timeout call is ignored, because r2dbc-postgresql would turn it into a `SET` round trip before every statement.
+- **`connect()` runs once.** Infrastructure creates one `R2dbcDatabase` per r2dbc-pool `ConnectionPool` at startup and shares it; calling `connect()` again leaks resources.
 - **One operation, one transaction: the `Transactor` port.** The domain opens a transaction through a port it declares, `interface Transactor { suspend fun <T> run(block: suspend () -> T): T }`, which each module's `data` implements over `Database.tx`. Repositories called inside `run` join the open transaction through the coroutine context; outside it, each repository call opens its own. A store's `commit(changes)` stays as a convenience built on `run`.
   - Everything an operation changes (its rows, its uniqueness claims and its outbox row) is written inside one `run`.
   - A decision that depends on what was read is made inside the same `run` as the write it guards: a version-checked write, a phone or provider claim, a group's member cap, the successor when an owner leaves, the last-ack delete of a media file.
@@ -592,7 +592,7 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 | Safe concurrent edits (profile updates) | `UPDATE … SET version = version + 1 WHERE id = ? AND version = ?`; 0 rows means a concurrent edit |
 | A second way to look a row up (contacts by target, chats by user, support case by request id) | A secondary or unique index on the one table |
 | Idempotent writes | `upsert` with explicit `keys` (without them the behaviour varies by database) |
-| Fan-out writes (a group message to 1,000 inboxes) | `batchInsert(items, shouldReturnGeneratedValues = false)` with `reWriteBatchedInserts=true` on the JDBC URL, in the sending transaction |
+| Fan-out writes (a group message to 1,000 inboxes) | `batchInsert(items, shouldReturnGeneratedValues = false)` in the sending transaction (R2DBC has no `reWriteBatchedInserts`; a multi-row `INSERT` is measured in PG5) |
 | Time-ordered lists and paging | An index such as `(owner_id, created_at DESC)` and keyset paging, `WHERE (created_at, id) < (?, ?)`; never `OFFSET` for feeds |
 | Counters kept in rows (a group's member count) | `UPDATE … SET count = count + 1` in the same transaction; exact |
 | A cleared value | A real `NULL`: columns are `NOT NULL` unless `.nullable()`, with a nullable Kotlin type |
@@ -608,32 +608,32 @@ Schema-qualified names in `Table("<schema>.<table>")` are checked in PG1; Expose
 - **Raw SQL** (`exec`) only for what the DSL can't express (partition management), in infrastructure or a migration, never with values spliced in.
 - **The SQL logger is off.** `StdOutSqlLogger` is never installed outside a local debug run, because it would print bound phone numbers and keys.
 
-**Pools.** Postgres pays for each connection with a server process, so the pools stay small and bounded, and coroutines wait in memory for a connection.
+**Pools.** Postgres pays for each connection with a server process, so the pools stay small and bounded. They are r2dbc-pool `ConnectionPool`s: coroutines wait in the pool's queue for a connection, never on a thread.
 
 | Pool | Used by | Size | Why separate |
 | --- | --- | --- | --- |
-| `circaso-app` | Requests and socket frames (every `Database.tx` from a route or frame handler) | max 10, min idle 2 | The hot path |
-| `circaso-jobs` | Outbox relay, event consumers, purge and partition jobs, scheduler | max 3, min idle 1 | A slow purge or a burst of events can never take the connections requests need |
-| `circaso-migrate` | The `Migrate` main only, during deploy | 2, closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
+| `circaso-app` | Requests and socket frames (every `Database.tx` from a route or frame handler) | max 10, initial 2 | The hot path |
+| `circaso-jobs` | Outbox relay, event consumers, purge and partition jobs, scheduler | max 3, initial 1 | A slow purge or a burst of events can never take the connections requests need |
+| `circaso-migrate` | The `Migrate` main only, during deploy: one direct JDBC connection, plus Flyway's own | no pool; closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
 
-- **Two URLs.** `DATABASE_URL` is for the app pools; in production behind a provider's pooler (PgBouncer in transaction mode), it is the pooled endpoint. `DATABASE_MIGRATION_URL` is always a direct connection. On the sandbox's self-hosted Postgres both are the same address.
-- **Settings:** `DATABASE_USER`, `DATABASE_PASSWORD` (a secret), `DATABASE_JOBS_USER`, `DATABASE_JOBS_PASSWORD` (a secret), `DATABASE_MIGRATION_PASSWORD` (a secret, for `circaso_migrator`), `DATABASE_POOL_APP_SIZE` (10), `DATABASE_POOL_JOBS_SIZE` (3) and `DATABASE_SSL_MODE` (`require` outside local); other `DATABASE_POOL_*` settings override the Hikari values below.
-- **Hikari:** `connectionTimeout` 3 s (with no free connection in time, the request fails fast as `service.unavailable`, 503, instead of piling up), `idleTimeout` 10 min, `maxLifetime` 30 min, `keepaliveTime` 2 min, `validationTimeout` 2 s, `leakDetectionThreshold` 10 s locally and on the sandbox and off in production, `poolName` per pool.
-- **JDBC URL:** `ApplicationName=circaso-app` (or `-jobs`, `-migrate`) so `pg_stat_activity` shows who holds what, `reWriteBatchedInserts=true`, `sslmode=require` outside local, `tcpKeepAlive=true`. Behind PgBouncer in transaction mode, server-side prepared statements need PgBouncer 1.21+ with `max_prepared_statements` set, or `prepareThreshold=0` on the pooled URL.
+- **Two URLs.** `DATABASE_URL` (`r2dbc:postgresql://…`) is for the app pools; in production behind a provider's pooler (PgBouncer in transaction mode), it is the pooled endpoint. `DATABASE_MIGRATION_URL` (`jdbc:postgresql://…`) is always a direct connection, used only by `Migrate`. On the sandbox's self-hosted Postgres both are the same address.
+- **Settings:** `DATABASE_USER`, `DATABASE_PASSWORD` (a secret), `DATABASE_JOBS_USER`, `DATABASE_JOBS_PASSWORD` (a secret), `DATABASE_MIGRATION_USER`, `DATABASE_MIGRATION_PASSWORD` (a secret, for `circaso_migrator`), `DATABASE_POOL_APP_SIZE` (10), `DATABASE_POOL_JOBS_SIZE` (3) and `DATABASE_SSL_MODE` (`require` outside local); other `DATABASE_POOL_*` settings (`ACQUIRE_TIMEOUT_MS`, `MAX_IDLE_MS`, `MAX_LIFE_MS`) override the pool values below.
+- **r2dbc-pool:** `maxAcquireTime` 3 s (with no free connection in time, the request fails fast as `service.unavailable`, 503, instead of piling up), `maxIdleTime` 10 min, `maxLifeTime` 30 min, `validationQuery "SELECT 1"`, a `name` per pool.
+- **Driver options** (an option already in the URL wins): `applicationName=circaso-app` (or `-jobs`; Flyway's connections `circaso-migrate`) so `pg_stat_activity` shows who holds what, `statement_timeout` as a startup option, `sslMode=require` outside local, `tcpKeepAlive=true`, and `preparedStatementCacheQueries=256` (named statements, bounded). Behind PgBouncer in transaction mode, named statements need PgBouncer 1.21+ with `max_prepared_statements` set, or `preparedStatementCacheQueries=0` on the pooled URL.
 - **Limits on the login roles,** so a bad query can't hold a pooled connection: `circaso_app` has `statement_timeout = 5s`, `lock_timeout = 2s` and `idle_in_transaction_session_timeout = 10s`; `circaso_jobs` has `statement_timeout = 60s` for purges and partition work. The limits sit on the login role, so they hold whichever module role a transaction switches to.
 - **Budget.** On the sandbox (`max_connections = 50`, 3 reserved): app 10, jobs 3, migrate 2 during deploy, pgAdmin about 3, the nightly backup 1, about 22 in all, which leaves room for a second app container during a rolling deploy. In production: `containers × (app + jobs) + migrate + tools ≤ 80%` of the server's limit; past that, the pooled endpoint goes in front, not bigger pools.
 - **Long reads** (exports, admin listings) page with keyset queries, each page its own short transaction.
 
 **Migrations.** Flyway applies plain SQL files: `src/main/resources/db/<module>/V<n>__<what>.sql`, one Flyway run per schema (`schemas = [<module>]`) with that schema's own history table, so each module numbers its migrations on its own. The SQL declares the same constraints as the `Table` objects: primary keys, unique indexes for the claims, secondary indexes, partial indexes (the outbox's `published_at IS NULL`), checks and partitions.
 
-- **No `SchemaUtils.create` anywhere, development included.** Development runs the same Flyway scripts, so what is tested is what ships. At startup the app only checks that Flyway's history is current.
+- **No `SchemaUtils.create` anywhere, development included.** Development runs the same Flyway scripts, so what is tested is what ships. At startup the app only checks, over R2DBC and in the background, that each module's `flyway_schema_history` has every script the build ships (Flyway checks checksums at every `Migrate`); readiness reports `postgres` down until the pools are open and the check passes.
 - **Applied scripts are never edited;** Flyway's checksum check fails the deploy otherwise. A change is a new `V<n+1>` script.
 - **Drafting.** A developer may run the Exposed Gradle plugin's `generateMigrations` (against a Testcontainers Postgres, the module's `tablesPackages`, `fileDirectory` = the module's `db/<module>`) to draft the next script. A draft can contain `DROP`s, so it is always reviewed before it is committed, and only Flyway applies it (decision 2026-10-27).
 
-**Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), on the `circaso-migrate` pool over the direct URL.
+**Who runs migrations.** Each deploy runs them once, as a one-shot job before the new containers start (the same image started with the `Migrate` main class instead of `MainKt`), over JDBC on the direct URL (`circaso-migrate`), the one place JDBC is used.
 
-- **The migrator role.** `Migrate` logs in as `circaso_migrator` (password `DATABASE_MIGRATION_PASSWORD`), a login role with `CREATEROLE` that owns the database's schemas. It is created once by the superuser from `deploy/postgres/initdb`, as a server change in PG1.
-- **What it does.** It creates any missing schema, module role and login role (`circaso_app`, `circaso_jobs`, each granted the module roles), then runs Flyway for each module's spec with `SET ROLE <module>`, so each module's tables are owned by that module's role and `SET LOCAL ROLE <module>` can use them. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
+- **The migrator role.** `Migrate` logs in as `circaso_migrator` (password `DATABASE_MIGRATION_PASSWORD`), a login role with `CREATEROLE` that owns the database's schemas. It is created once by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, as a server change in PG1, together with the `circaso_app` and `circaso_jobs` login roles and their limits (the script carries their passwords, so `Migrate` never needs them).
+- **What it does.** It checks the login roles exist, creates any missing schema (owned by `circaso_migrator`) and module role (`NOLOGIN`), grants itself `SET` on the module role (PostgreSQL 16+ gives a role's creator only ADMIN), grants the module role `USAGE, CREATE` on its own schema and grants it to `circaso_app` and `circaso_jobs`, then runs Flyway for each module's spec with `SET ROLE <module>`, so each module's tables are owned by that module's role and `SET LOCAL ROLE <module>` can use them. The containers never migrate at boot, so two instances can't race on the same schema. A failed migration stops the deploy and the old containers keep serving.
 
 **Rows that expire.** A table whose rows expire uses one of two mechanisms:
 
@@ -646,7 +646,7 @@ Each module's Data section names the mechanism per table.
 
 - **Sandbox: self-hosted on the sandbox server, running now.** `postgres:18` and pgAdmin are services in `/opt/circaso/docker-compose.yml` (reference copy `deploy/docker-compose.dev.yml`). The app starts using Postgres as its modules move.
   - **Postgres:** database `circaso`, on the internal `circaso-data` network with no published port, so only the app and pgAdmin reach it. Volume `postgres-data`, memory limit 1.5 GB, `max_connections=50` (3 reserved), `shared_buffers=384MB`, `effective_cache_size=1GB`, `work_mem=8MB`, `maintenance_work_mem=128MB`, and statements over 500 ms logged.
-  - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The app role and the module roles are created by the `Migrate` step (PG1).
+  - **Secrets** live in `/opt/circaso/postgres.env` (mode 600; template `deploy/postgres.env.example`), not in `.env`, so the app container never sees the superuser or pgAdmin passwords. They are never printed. The login roles are created by `postgres/initdb/20-login-roles.sh` (run once by hand on the existing volume); the module roles by the `Migrate` step (PG1).
   - **Backups:** a nightly `pg_dump -Fc` to R2 under `backups/postgres/`, kept 7 days (set up by devops in PG1); a restore is tested once in PG6. In production, the host's point-in-time recovery, retention at least 7 days.
 - **pgAdmin at `https://sandbox-db.circaso.com`,** behind three locks in a row:
   1. **Cloudflare Access** (Zero Trust application, only Pasaka's email). nginx (`deploy/nginx/sandbox-db.conf`) accepts only Cloudflare's addresses and refuses, with 403, a request without the `Cf-Access-Jwt-Assertion` header, so nothing reaches pgAdmin around Access. The name is one level under `circaso.com` because the origin and free edge certificates only cover `*.circaso.com`.
@@ -660,7 +660,7 @@ Each module's Data section names the mechanism per table.
 **Guardrails**
 
 - **Table ownership.** A Konsist rule: an Exposed `Table` object is referenced only from the `data` package of the module that owns it. The module's role enforces the same thing in the database.
-- **No way in but `Database.tx`.** A Konsist rule fails the build on a raw `transaction {}` (it blocks the calling thread) or `Database.connect` in a module. Only infrastructure connects.
+- **No way in but `Database.tx`.** Konsist fails the build on an Exposed transaction or `R2dbcDatabase.connect` in a module (only infrastructure connects), on JDBC (`java.sql`, `exposed-jdbc`, Flyway) anywhere but infrastructure's `Migrate` code, and on `runBlocking` in main code.
 - **Nothing but database work inside a transaction.** A Konsist rule and review catch an HTTP call, a Redis call or an `XADD` inside `Database.tx` or a `Transactor.run` block.
 
 **The shared HTTP client.** Infrastructure owns one Ktor client factory. Each vendor gets a named client with its base URL, timeouts (5 s to connect, 15 s per request; a vendor client with `webSockets = true` never retries an upgrade, the circuit breaker neither counts nor blocks upgrades, and only the handshake is bounded (`handshakeTimeout` 10 s, `pingInterval` 20 s); per-vendor overrides: Workers AI 60 s, and its chat completions are not retried, so one Asha turn waits at most about a minute), retries, a circuit breaker, tracing and logging with phone numbers, tokens and amounts hidden. The retry policy is careful, because retrying the wrong call sends money or an OTP twice:
@@ -689,7 +689,7 @@ Everything is instrumented with OpenTelemetry and lands in a self-hosted Grafana
 | --- | --- | --- |
 | OpenTelemetry Java agent | In the app: traces, metrics, logs | No code changes for the basics |
 | OpenTelemetry Collector | Receives OTLP from the app; scrubs sensitive attributes, samples traces, routes signals | The one place privacy filtering and sampling happen |
-| Prometheus | Metrics storage and queries | Scrapes the app (including the Hikari pool metrics), the Redis exporter, the Collector and the hosts |
+| Prometheus | Metrics storage and queries | Scrapes the app (including the database pool gauges), the Redis exporter, the Collector and the hosts |
 | Tempo | Trace storage | OTLP from the Collector; trace blocks stored in Cloudflare R2 |
 | Loki | Log storage | OTLP from the Collector (native ingest, no Promtail); chunks stored in R2 |
 | Grafana | Dashboards, exploring, alerting | Metrics jump to traces (exemplars), traces to their logs, logs back to traces, all by trace id |
@@ -744,11 +744,11 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 
 | Signal | How | Covers |
 | --- | --- | --- |
-| Traces | Java agent, automatic → Collector → Tempo | Ktor server, Ktor client (every vendor call), JDBC (PostgreSQL), Redis client |
+| Traces | Java agent, automatic → Collector → Tempo | Ktor server, Ktor client (every vendor call), R2DBC (PostgreSQL; verify the agent's coverage when it is installed), Redis client |
 | Traces | Manual spans | Each use case, each stream handler, each outbox relay sweep |
 | Traces across events | `traceparent` field in the event envelope | A sign-up trace runs from identity's route through the stream into users' handler |
 | Metrics | Agent, automatic → Prometheus scrape | HTTP rate, errors and duration per route; JVM memory, GC, threads |
-| Metrics | `Telemetry` meters and the agent's HikariCP instrumentation → Prometheus scrape | Business, events, vendors, database pools (catalog below) |
+| Metrics | `Telemetry` meters (r2dbc-pool's counts included) → Prometheus scrape | Business, events, vendors, database pools (catalog below) |
 | Metrics | Exporters | Redis (redis_exporter), hosts (node_exporter) |
 | Logs | Logback JSON with trace and span ids → agent → Collector → Loki | Every log line links to its trace in Grafana |
 | Health | `/health/live`, `/health/ready` (PostgreSQL `SELECT 1` through the pool, Redis, stream consumers) | Restarts and load balancer checks |
@@ -769,7 +769,7 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 | `circaso_gateway_socket_frames_dropped_total` | counter | reason | Phone frames dropped by the gateway (`rate_limited`) |
 | `circaso_events_dlq` | gauge | stream | Events that gave up |
 | `circaso_outbox_unpublished` | gauge | module | Events the relay had to rescue |
-| Hikari pool metrics (agent; exact names per the OpenTelemetry semantic conventions, checked in PG1) | gauges, counter | pool | Connections active, idle and pending; connection timeouts; usage time |
+| `circaso_db_pool_connections` | gauge | pool, state (acquired, idle, allocated, pending, max) | r2dbc-pool's own counts: is a pool saturated, are requests waiting. Acquire timeouts are WARN log lines `kind=db.pool` |
 | `circaso_contacts_sync_matches_ratio` | histogram | — | Share of a phone book already on Circaso |
 | `http_server_request_duration_seconds` | histogram (agent) | route, method, status | Rate, errors and latency per route |
 
@@ -781,7 +781,7 @@ Attributes never include a user id, phone number or handle: they would leak pers
 2. **Sign-up funnel:** sign-in → code sent → verified → device registered → profile created, with drop-off between each step.
 3. **Events:** publish rate, consumer lag, handler failures, dead letters, outbox rescues.
 4. **Vendors:** latency, errors and circuit state per vendor; SMS spend per day.
-5. **Data stores:** database pool usage, waits and timeouts per pool, query latency from the JDBC spans, Redis memory and connections.
+5. **Data stores:** database pool usage, waits and timeouts per pool, query latency from the slow-transaction log lines, Redis memory and connections.
 
 ### Alerts
 

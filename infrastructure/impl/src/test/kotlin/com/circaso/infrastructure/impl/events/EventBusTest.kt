@@ -272,7 +272,7 @@ class EventBusTest {
         }
 
     @Test
-    fun `the relay publishes what a crashed node left unpublished, once, and moves its checkpoint`() =
+    fun `the relay publishes what a crashed node left unpublished, once`() =
         runBlocking<Unit> {
             val store = FakeOutbox(producer)
             val bus = bus(listOf(store))
@@ -288,17 +288,16 @@ class EventBusTest {
             store.rows += FakeOutbox.Row(stuck)
             store.rows += FakeOutbox.Row(alreadyOut, publishedAt = Instant.now())
             store.rows += FakeOutbox.Row(tooFresh)
-            val relay = OutboxRelay(redis, bus, { listOf(store) })
+            val relay = OutboxRelay(bus, { listOf(store) })
 
             val first = relay.sweep()
             val second = relay.sweep()
 
             assertEquals(1, first)
-            assertEquals(0, second, "the checkpoint moved past the swept buckets")
+            assertEquals(0, second, "a stamped row is no longer unpublished")
             assertEquals(1L, redis.commands.xlen(stream))
             assertNotNull(store.rows.first { it.envelope.eventId == stuck.eventId }.publishedAt)
             assertEquals(null, store.rows.first { it.envelope.eventId == tooFresh.eventId }.publishedAt)
-            assertNotNull(redis.commands.get("evt:relay:$producer"))
         }
 
     @Test
@@ -318,7 +317,7 @@ class EventBusTest {
                     ),
                 )
 
-            OutboxRelay(redis, bus, { listOf(store) }).sweep()
+            OutboxRelay(bus, { listOf(store) }).sweep()
 
             eventually { received.toList() == listOf(9) }
         }
@@ -335,6 +334,29 @@ class EventBusTest {
             eventually { bus.consumersHealthy() }
         }
 
+    @Test
+    fun `a stamp that keeps failing does not make the relay publish the same rows for ever`() =
+        runBlocking<Unit> {
+            val store = StuckOutbox(producer)
+            val bus = bus(listOf(store))
+            val old = Instant.now().minusSeconds(60)
+            store.rows += FakeOutbox.Row(EventEnvelope.of(Pinged(producer, 1), Pinged.serializer(), occurredAt = old))
+
+            val published = OutboxRelay(bus, { listOf(store) }).sweep()
+
+            assertEquals(1, published, "published once; the same row in the next batch is left for the next sweep")
+            assertEquals(1L, redis.commands.xlen(stream))
+        }
+
+    /** An outbox whose stamps never land, as when its table is unreachable after the XADD. */
+    private class StuckOutbox(override val producer: String) : OutboxStore {
+        val rows = ConcurrentLinkedQueue<FakeOutbox.Row>()
+
+        override suspend fun unpublished(limit: Int): List<EventEnvelope> = rows.map { it.envelope }
+
+        override suspend fun markPublished(envelope: EventEnvelope, at: Instant): Unit = error("the table is down")
+    }
+
     /** An in-memory outbox, standing in for a module's outbox table. */
     private class FakeOutbox(override val producer: String) : OutboxStore {
         class Row(
@@ -344,8 +366,13 @@ class EventBusTest {
 
         val rows = ConcurrentLinkedQueue<Row>()
 
-        override suspend fun unpublished(bucket: String): List<EventEnvelope> =
-            rows.filter { it.publishedAt == null && it.envelope.bucket == bucket }.map { it.envelope }
+        /** What the PostgreSQL query returns: unpublished, older than 10 seconds, oldest first. */
+        override suspend fun unpublished(limit: Int): List<EventEnvelope> =
+            rows
+                .filter { it.publishedAt == null && it.envelope.occurredAt < Instant.now().minusSeconds(10) }
+                .map { it.envelope }
+                .sortedBy { it.occurredAt }
+                .take(limit)
 
         override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
             rows.first { it.envelope.eventId == envelope.eventId }.publishedAt = at

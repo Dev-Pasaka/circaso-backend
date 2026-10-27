@@ -69,6 +69,7 @@ On failure `status` is `false`, `data` is `null`, and `code` is a stable string 
 | `426` `request.client_outdated` | Force-update screen. |
 | `429` `request.rate_limited` | Wait `Retry-After` seconds; show the wait, do not loop. |
 | `409` `request.in_progress` | The same `Idempotency-Key` is still running: wait a moment and retry **with the same key**. |
+| `503` `service.unavailable` | The server is briefly overloaded (no database connection came free in time). Retry after a second or two, with backoff, using the **same** `Idempotency-Key`. |
 | `5xx`, timeouts | Retry only with the **same** `Idempotency-Key`; never mint a new key for a repeat of the same action. |
 
 **Tokens.** Access tokens are JWTs valid **15 minutes**. Scopes: `onboarding` (after social sign-in, before the phone and device are verified: phone verification, device registration, recovery only), `app` (everything about your own account), `agent` (read-only, issued with `app`; only used for Asha, see section 9). Refresh before expiry (for example at 12–13 minutes) and on a `401`, **one refresh at a time** (single-flight): the refresh token rotates, so two parallel refreshes would revoke each other.

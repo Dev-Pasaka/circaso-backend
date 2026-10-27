@@ -2,10 +2,18 @@ plugins {
     id("circaso.impl")
 }
 
-// Plumbing, no business logic: Kandra and migrations, Redis, the event runtime, the scheduler, the shared HTTP
-// client, config and secrets, logging. Hands each module a handle scoped to it.
+// Plumbing, no business logic: PostgreSQL (Exposed over R2DBC pools; Flyway over JDBC for Migrate) and Kandra for
+// the modules not moved yet, Redis, the event runtime, the scheduler, the shared HTTP client, config and secrets,
+// logging. Hands each module a handle scoped to it.
 dependencies {
     implementation(project(":observability:api"))
+
+    implementation(libs.r2dbc.postgresql)
+    implementation(libs.r2dbc.pool)
+    // JDBC only for the Migrate step: Flyway and its PostgreSQL driver (Konsist keeps them in database.migrate)
+    implementation(libs.flyway.core)
+    implementation(libs.flyway.database.postgresql)
+    implementation(libs.postgresql)
 
     implementation(platform(libs.kandra.bom))
     implementation(libs.kandra.ktor)
@@ -40,5 +48,6 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.scylladb)
+    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.opentelemetry.sdk.testing)
 }

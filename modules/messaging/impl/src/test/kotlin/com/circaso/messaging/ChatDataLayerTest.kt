@@ -49,6 +49,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import java.lang.reflect.Modifier
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.CompletionStage
@@ -115,7 +117,10 @@ class ChatDataLayerTest {
             runtime.suspendRepository(),
             bus,
         )
-    private val outbox = MessagingOutboxStore(db.suspendRepository())
+
+    // Two minutes ahead, so the event's minute-bucket has ended and the bucket-less scan reads it.
+    private val outbox =
+        MessagingOutboxStore(db.suspendRepository(), Clock.offset(Clock.systemUTC(), Duration.ofMinutes(2)))
 
     @AfterTest
     fun close() {
@@ -235,8 +240,8 @@ class ChatDataLayerTest {
             val batch = recording.batches.single()
             val tables = batch.mapNotNull { (it as? BoundStatement)?.preparedStatement?.query }.map(::tableOf)
             assertEquals(listOf("members_by_chat", "chats_by_user", "outbox"), tables)
-            val stored = outbox.unpublished(joined.event!!.bucket).map { it.eventId }
-            assertTrue(joined.event.eventId in stored)
+            val stored = outbox.unpublished().map { it.eventId }
+            assertTrue(joined.event!!.eventId in stored)
             assertEquals(listOf(MemberAdded.TYPE), bus.published.map(EventEnvelope::type))
         }
 

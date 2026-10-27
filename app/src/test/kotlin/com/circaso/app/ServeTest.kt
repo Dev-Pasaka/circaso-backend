@@ -32,8 +32,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
+import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.scylladb.ScyllaDBContainer
 import org.testcontainers.utility.DockerImageName
+import org.testcontainers.utility.MountableFile
+import java.io.File
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -47,7 +50,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis and ScyllaDB. */
+/**
+ * `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis, ScyllaDB and
+ * PostgreSQL (started with the server's own init scripts, so the login roles are the sandbox's).
+ */
 class ServeTest {
     private companion object {
         val redis: GenericContainer<*> =
@@ -60,6 +66,21 @@ class ServeTest {
             ScyllaDBContainer(
                 DockerImageName.parse("scylladb/scylla:2026.1"),
             ).also { it.start() }
+        val postgres: PostgreSQLContainer<*> =
+            PostgreSQLContainer(DockerImageName.parse("postgres:18"))
+                .withDatabaseName("circaso")
+                .withEnv(
+                    mapOf(
+                        "CIRCASO_READONLY_PASSWORD" to "readonly-test",
+                        "CIRCASO_MIGRATOR_PASSWORD" to "migrator-test",
+                        "CIRCASO_APP_PASSWORD" to "app-test",
+                        "CIRCASO_JOBS_PASSWORD" to "jobs-test",
+                    ),
+                ).withCopyFileToContainer(
+                    MountableFile.forHostPath(File("../deploy/postgres/initdb").absolutePath, 0b111_101_101),
+                    "/docker-entrypoint-initdb.d/",
+                ).also { it.start() }
+        val postgresAddress get() = "${postgres.host}:${postgres.getMappedPort(5432)}/circaso"
     }
 
     private fun env(extra: Map<String, String> = emptyMap()) =
@@ -71,6 +92,11 @@ class ServeTest {
             "SCYLLA_TLS" to "false",
             "SCYLLA_CREATE_SCHEMA" to "true",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
+            "DATABASE_URL" to "r2dbc:postgresql://$postgresAddress",
+            "DATABASE_MIGRATION_URL" to "jdbc:postgresql://$postgresAddress",
+            "DATABASE_PASSWORD" to "app-test",
+            "DATABASE_JOBS_PASSWORD" to "jobs-test",
+            "DATABASE_MIGRATION_PASSWORD" to "migrator-test",
         ) + extra
 
     @AfterTest
@@ -79,7 +105,7 @@ class ServeTest {
             .reset()
 
     @Test
-    fun `serve starts and reports Redis, ScyllaDB and the stream consumers ready`() =
+    fun `serve starts and reports PostgreSQL, Redis, ScyllaDB and the stream consumers ready`() =
         testApplication {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
 
@@ -88,7 +114,7 @@ class ServeTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals(
-                listOf("redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
+                listOf("postgres", "redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
                 checks.sortedBy { it.name },
             )
         }

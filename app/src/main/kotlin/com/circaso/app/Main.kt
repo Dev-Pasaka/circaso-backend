@@ -1,12 +1,15 @@
 package com.circaso.app
 
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.KandraModuleSpec
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.impl.database.DatabaseMigrator
+import com.circaso.infrastructure.impl.database.PostgresSettings
 import com.circaso.infrastructure.impl.database.ScyllaSettings
+import com.circaso.infrastructure.impl.database.migrate.PostgresMigrator
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import net.logstash.logback.argument.StructuredArguments.kv
@@ -44,8 +47,9 @@ fun main() {
 
 /**
  * The migration entry point: `./gradlew :app:migrate`, or the same image started with this main class. Runs each
- * module's migrations once, then exits. Containers never migrate at boot, so two of them can't race on one keyspace;
- * a failed migration fails this command, which stops the deploy while the old containers keep serving.
+ * module's migrations once, then exits: PostgreSQL's (Flyway, one schema and role per module, as `circaso_migrator`)
+ * and, until every module has moved, ScyllaDB's (Kandra). Containers never migrate at boot, so two of them can't race
+ * on one schema; a failed migration fails this command, which stops the deploy while the old containers keep serving.
  */
 object Migrate {
     @JvmStatic
@@ -65,14 +69,19 @@ object Migrate {
 /** Runs the migrations of every module and returns how many were applied. */
 fun migrate(config: Config, secrets: Secrets): Int {
     // The specs are plain values in each module's Koin module; nothing else of the module is started.
-    val specs = koinApplication { modules(businessModules(config)) }.koin.getAll<KandraModuleSpec>()
-    val outcome = DatabaseMigrator(ScyllaSettings(config, secrets)).migrate(specs)
-    // on the app logger, so the deploy's log tail shows a created keyspace whatever LOG_LEVEL_DATABASE is
+    val koin = koinApplication { modules(businessModules(config)) }.koin
+    val postgres = PostgresMigrator(PostgresSettings(config, secrets)).migrate(koin.getAll<DatabaseModuleSpec>())
+    val kandraSpecs = koin.getAll<KandraModuleSpec>()
+    val scylla = DatabaseMigrator(ScyllaSettings(config, secrets)).migrate(kandraSpecs)
+    // on the app logger, so the deploy's log tail shows a created schema or keyspace whatever LOG_LEVEL_DATABASE is
     log().info(
         "Migrations done",
-        kv("keyspaces", specs.size),
-        kv("applied", outcome.applied),
-        kv("created", outcome.createdKeyspaces),
+        kv("schemas", koin.getAll<DatabaseModuleSpec>().map { it.schema }),
+        kv("createdSchemas", postgres.createdSchemas),
+        kv("createdRoles", postgres.createdRoles),
+        kv("keyspaces", kandraSpecs.size),
+        kv("applied", postgres.applied + scylla.applied),
+        kv("created", scylla.createdKeyspaces),
     )
-    return outcome.applied
+    return postgres.applied + scylla.applied
 }

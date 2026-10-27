@@ -2,6 +2,7 @@ package com.circaso.infrastructure.impl.events
 
 import com.circaso.infrastructure.api.HealthCheck
 import com.circaso.infrastructure.api.OutboxStore
+import com.circaso.infrastructure.impl.database.OnJobsPool
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.millisSince
 import com.circaso.infrastructure.impl.redis.RedisConnection
@@ -33,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import org.slf4j.LoggerFactory
 import java.time.Clock
@@ -61,7 +63,7 @@ data class EventRuntimeConfig(
 
 /**
  * Durable events over Redis Streams (Architecture → Durable events). `publish` is the fast path, a single `XADD`
- * right after the module's batch landed; the [OutboxRelay] is the rescue path. Consumers read through one
+ * right after the module's transaction committed; the [OutboxRelay] is the rescue path. Consumers read through one
  * consumer group per subscribing module, acknowledge only after their handler succeeds, are retried after
  * [EventRuntimeConfig.claimIdle], and dead-lettered after [EventRuntimeConfig.maxAttempts]. Each group records
  * handled event ids in `evt:done:{group}:{eventId}`, so a duplicate (a retry, a relay rescue) is skipped.
@@ -299,7 +301,9 @@ class RedisEventBus(
                 kv("attempt", attempt),
             )
         try {
-            telemetry.span("event.${envelope.type}", mapOf("group" to subscription.group)) { handler.handle(envelope) }
+            telemetry.span("event.${envelope.type}", mapOf("group" to subscription.group)) {
+                withContext(OnJobsPool) { handler.handle(envelope) } // handlers are background work: the jobs pool
+            }
             reader.set(doneKey, "1", SetArgs().px(config.retention.toMillis()))
             reader.xack(stream, subscription.group, message.id)
             telemetry.record(

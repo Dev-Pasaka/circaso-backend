@@ -1,7 +1,19 @@
 package com.circaso.shared
 
 /** What went wrong, not which HTTP status: `shared-web` maps each kind to a status in one place. */
-enum class ErrorKind { INVALID, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, RATE_LIMITED, UPSTREAM, INTERNAL }
+enum class ErrorKind {
+    INVALID,
+    UNAUTHORIZED,
+    FORBIDDEN,
+    NOT_FOUND,
+    CONFLICT,
+    RATE_LIMITED,
+    UPSTREAM,
+
+    /** Saturated for now (503): retry after a moment. */
+    UNAVAILABLE,
+    INTERNAL,
+}
 
 interface DomainError {
     /** Stable, `module.reason` (`identity.phone_taken`); the app keys its copy on it. */
@@ -54,6 +66,16 @@ sealed class SharedError(
     data object NotFound : SharedError("request.not_found", "That does not exist.", ErrorKind.NOT_FOUND)
 
     data object Internal : SharedError("internal.error", "Something went wrong", ErrorKind.INTERNAL)
+
+    /**
+     * A shared resource is saturated for now (no database connection came free within the pool's timeout), so the
+     * request fails fast instead of piling up. Safe to retry after a moment.
+     */
+    data object ServiceUnavailable : SharedError(
+        "service.unavailable",
+        "Circaso is busy right now. Try again in a moment.",
+        ErrorKind.UNAVAILABLE,
+    )
 
     data object TokenMissing : SharedError("auth.token_missing", "Sign in to continue.", ErrorKind.UNAUTHORIZED)
 

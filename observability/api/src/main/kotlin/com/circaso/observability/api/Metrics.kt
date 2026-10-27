@@ -16,6 +16,9 @@ object Metrics {
     const val EVENTS_LAG = "circaso_events_lag" // group (gauge)
     const val EVENTS_DLQ = "circaso_events_dlq" // stream (gauge)
     const val OUTBOX_UNPUBLISHED = "circaso_outbox_unpublished" // module (gauge)
+
+    /** r2dbc-pool's own counts per pool: state is acquired, idle, allocated, pending or max. */
+    const val DB_POOL_CONNECTIONS = "circaso_db_pool_connections" // pool, state (gauge)
     const val KANDRA_QUERY_DURATION = "kandra_query_duration_seconds" // table, op
     const val CONTACTS_SYNC_MATCHES_RATIO = "circaso_contacts_sync_matches_ratio"
     const val GATEWAY_SOCKET_FRAMES_DROPPED = "circaso_gateway_socket_frames_dropped_total" // reason

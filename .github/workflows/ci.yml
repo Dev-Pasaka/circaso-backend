@@ -24,7 +24,8 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
-      # The tests start ScyllaDB, Cassandra and Valkey in Docker, which the runner has.
+      # The tests start PostgreSQL 18, ScyllaDB, Cassandra and Valkey in Docker (Testcontainers), which the runner has, so the
+      # job needs no service containers.
       - run: ./gradlew build --console=plain
 
   docs-ui:

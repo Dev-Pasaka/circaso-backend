@@ -1,5 +1,6 @@
 package com.circaso.users.data.repositories
 
+import com.circaso.infrastructure.api.BucketedOutboxScan
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
@@ -35,6 +36,7 @@ import io.kandra.core.exception.KandraOptimisticLockException
 import io.kandra.runtime.KandraRuntime
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.repository.KandraSuspendRepository
+import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
@@ -242,11 +244,22 @@ class UsersStoreImpl(
 private fun EventEnvelope.toOutboxRow() = UsersOutboxRow(bucket, eventId.value, type, toJson())
 
 /** The relay's view of users' outbox: events written but not yet on the stream. */
-class UsersOutboxStore(private val outbox: KandraSuspendRepository<UsersOutboxRow>) : OutboxStore {
+class UsersOutboxStore(private val outbox: KandraSuspendRepository<UsersOutboxRow>, clock: Clock = Clock.systemUTC()) :
+    OutboxStore {
     override val producer = "users"
 
-    override suspend fun unpublished(bucket: String): List<EventEnvelope> =
-        outbox.findAll { BUCKET eq bucket }.filter { it.publishedAt == null }.map { EventEnvelope.fromJson(it.payload) }
+    // The rows are keyed by minute-bucket; the bucket-less relay walks them through this until the outbox moves to
+    // PostgreSQL.
+    private val scan =
+        BucketedOutboxScan(clock) { bucket ->
+            outbox.findAll { BUCKET eq bucket }.filter { it.publishedAt == null }.map {
+                EventEnvelope.fromJson(
+                    it.payload,
+                )
+            }
+        }
+
+    override suspend fun unpublished(limit: Int): List<EventEnvelope> = scan.unpublished(limit)
 
     override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
         val row = outbox.findById(envelope.bucket, envelope.eventId.value) ?: return
