@@ -24,6 +24,7 @@ The spec for the Circaso backend, exported from the Claude Docs document "Circas
 
 - Routes are grouped by path with `route("/…") { }`; endpoints carry only their own segment, no leading slash (see working-rules.md).
 
+- **Payloads are typed, never untyped JSON.** Every REST body, WebSocket frame (both ways), event, realtime frame `data`, tool argument and result, JWT and vendor request or response is a kotlinx `@Serializable` data class (phone frames: a `sealed interface` keyed on `type`). No `Map<String, Any>`, `buildJsonObject`, `JsonObject(...)`, `.jsonObject["key"]` or `.jsonPrimitive` in payload code. Only exceptions: opaque model strings (tool `arguments`) and maps a vendor requires (FCM `data`), encoded from a typed class inside the vendor package. See working-rules.md and decision 2026-10-27.
 - Pasaka owns the architecture, standards and code review. Never change the architecture in code; if the spec is wrong or missing something, stop and ask or write the question down.
 - Open questions in `decisions.md` stay open: build behind an interface or config value and leave `// TODO(decision: <question>)`.
 - Report doc gaps in the summary with the exact place.
