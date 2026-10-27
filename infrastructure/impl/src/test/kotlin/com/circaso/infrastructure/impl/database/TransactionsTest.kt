@@ -1,8 +1,10 @@
 package com.circaso.infrastructure.impl.database
 
+import com.circaso.infrastructure.api.DatabaseException
 import com.circaso.infrastructure.api.DatabaseModuleSpec
-import com.circaso.infrastructure.impl.TestPostgres
 import com.circaso.infrastructure.impl.database.migrate.PostgresMigrator
+import com.circaso.infrastructure.impl.settings
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.shared.DomainException
 import com.circaso.shared.SharedError
 import kotlinx.coroutines.async
@@ -63,7 +65,7 @@ class TransactionsTest {
             }
         }
 
-    private suspend fun count(db: ModuleDatabase): Long = db.tx { ItemsTable.selectAll().count() }
+    private suspend fun count(db: ModuleDatabase): Long = db.tx("test") { ItemsTable.selectAll().count() }
 
     private suspend fun R2dbcTransaction.current(setting: String): String =
         query("SELECT $setting") { it.text(0) }.single()
@@ -77,7 +79,7 @@ class TransactionsTest {
 
             assertEquals(
                 "first",
-                db.tx { ItemsTable.selectAll().where { ItemsTable.id eq id }.single()[ItemsTable.name] },
+                db.tx("test") { ItemsTable.selectAll().where { ItemsTable.id eq id }.single()[ItemsTable.name] },
             )
         }
 
@@ -87,7 +89,7 @@ class TransactionsTest {
             val db = database()
 
             assertFailsWith<IllegalStateException> {
-                db.tx {
+                db.tx("test") {
                     add("lost")
                     error("the use case changed its mind")
                 }
@@ -119,7 +121,7 @@ class TransactionsTest {
             val pools = pools(mapOf("DATABASE_POOL_APP_SIZE" to "1"))
             val db = database(pools)
 
-            assertEquals("pgtx", db.tx { current("current_user") })
+            assertEquals("pgtx", db.tx("test") { current("current_user") })
             val connection =
                 pools.app.connections
                     .create()
@@ -146,9 +148,9 @@ class TransactionsTest {
             PostgresMigrator(TestPostgres.settings()).migrate(listOf(pgpart))
             val other = database(schema = "pgpart")
 
-            val refused = assertFailsWith<Exception> { other.tx { ItemsTable.selectAll().count() } }
+            val refused = assertFailsWith<DatabaseException> { other.tx("test") { ItemsTable.selectAll().count() } }
 
-            assertTrue("permission denied" in refused.message.orEmpty(), refused.message)
+            assertEquals("42501", refused.sqlState, "insufficient_privilege")
         }
 
     @Test
@@ -157,7 +159,7 @@ class TransactionsTest {
             val pools = pools()
 
             assertFailsWith<IllegalStateException> {
-                database(pools).tx { database(pools, "pgpart").tx { 1 } }
+                database(pools).tx("test") { database(pools, "pgpart").tx("test") { 1 } }
             }
         }
 
@@ -169,9 +171,9 @@ class TransactionsTest {
             val db = database(PostgresPools(settings, appSettings = quick).also { opened += it })
             val started = System.nanoTime()
 
-            val cancelled = assertFailsWith<Exception> { db.tx { exec("SELECT pg_sleep(5)") } }
+            val cancelled = assertFailsWith<DatabaseException> { db.tx("test") { exec("SELECT pg_sleep(5)") } }
 
-            assertTrue("statement timeout" in cancelled.message.orEmpty(), cancelled.message)
+            assertEquals("57014", cancelled.sqlState, "query_canceled by the statement timeout")
 
             assertTrue((System.nanoTime() - started) / 1_000_000 < 4_000, "cancelled after about a second")
         }
@@ -181,10 +183,10 @@ class TransactionsTest {
         runBlocking<Unit> {
             val db = database()
 
-            assertEquals("circaso-app", db.tx { current("current_setting('application_name')") })
+            assertEquals("circaso-app", db.tx("test") { current("current_setting('application_name')") })
             withContext(OnJobsPool) {
-                assertEquals("circaso-jobs", db.tx { current("current_setting('application_name')") })
-                assertEquals("circaso_jobs", db.tx { current("session_user") })
+                assertEquals("circaso-jobs", db.tx("test") { current("current_setting('application_name')") })
+                assertEquals("circaso_jobs", db.tx("test") { current("session_user") })
             }
         }
 
@@ -200,7 +202,7 @@ class TransactionsTest {
                     (1..6)
                         .map { n ->
                             async {
-                                db.tx {
+                                db.tx("test") {
                                     most.accumulateAndGet(running.incrementAndGet(), ::maxOf)
                                     exec("SELECT pg_sleep(0.4)")
                                     running.decrementAndGet()
@@ -222,9 +224,9 @@ class TransactionsTest {
 
             val outcome =
                 coroutineScope {
-                    val holders = (1..4).map { async { db.tx { exec("SELECT pg_sleep(1.5)") } } }
+                    val holders = (1..4).map { async { db.tx("test") { exec("SELECT pg_sleep(1.5)") } } }
                     delay(200) // all four connections are taken
-                    val waiting = runCatching { db.tx { 1 } }
+                    val waiting = runCatching { db.tx("test") { 1 } }
                     holders.awaitAll()
                     waiting
                 }
@@ -232,7 +234,7 @@ class TransactionsTest {
             val error = outcome.exceptionOrNull()
             assertTrue(error is DomainException, "$error")
             assertEquals(SharedError.ServiceUnavailable, error.error)
-            assertEquals(1, db.tx { 1 }, "the pool serves again once a connection is back")
+            assertEquals(1, db.tx("test") { 1 }, "the pool serves again once a connection is back")
         }
 
     @Test
@@ -241,7 +243,7 @@ class TransactionsTest {
             val pools = pools()
             val db = database(pools)
 
-            assertEquals("5s", db.tx { current("current_setting('statement_timeout')") })
+            assertEquals("5s", db.tx("test") { current("current_setting('statement_timeout')") })
             assertTrue(
                 pools.app.connections.metadata.name
                     .contains("PostgreSQL"),

@@ -204,6 +204,18 @@ class RuleFixturesTest {
         )
 
     @Test
+    fun `a transaction is named by a string literal`() {
+        assertFlags(
+            "operationsAreNamedLiterals",
+            "VerifyEmail.kt: 'transactor.run(",
+            "EmailRepositoryImpl.kt: 'db.tx(",
+        )
+        val violations = Rules.all.getValue("operationsAreNamedLiterals")(filesIn("operationsAreNamedLiterals"))
+        assertTrue(violations.none { "EmailTransactor" in it }, violations.joinToString("\n"))
+        assertEquals(2, violations.size, violations.joinToString("\n"))
+    }
+
+    @Test
     fun `nothing blocks a thread on runBlocking`() = assertFlags("noRunBlocking", "Blocking.kt: calls runBlocking")
 
     @Test

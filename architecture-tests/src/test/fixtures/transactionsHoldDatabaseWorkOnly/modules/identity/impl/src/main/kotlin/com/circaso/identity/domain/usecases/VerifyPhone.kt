@@ -17,7 +17,7 @@ class VerifyPhone(
     private val reach: ReachPolicy,
 ) {
     suspend operator fun invoke(userId: UserId): Resource<Unit> {
-        transactor.run {
+        transactor.run("phone.verify") {
             val account = accounts.find(userId)
             if (account != null) {
                 sms.send(account.phone, "verified")

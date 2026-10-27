@@ -35,7 +35,8 @@ interface OutboxStore {
  * held an unpublished row the last time (or [firstLookback] back on this node's first call), at most [maxBuckets] a
  * call. [read] returns a bucket's unpublished rows.
  *
- * Where to start is kept in memory: a node that takes over the relay starts [firstLookback] back.
+ * Where to start is kept in memory and never more than [firstLookback] back: a node that takes over the relay starts
+ * there, and a row older than that is no longer rescued by this scan.
  * Temporary: PG2–PG5 replace each Kandra outbox with a PostgreSQL one, and PG6 deletes this.
  */
 class BucketedOutboxScan(
@@ -50,7 +51,10 @@ class BucketedOutboxScan(
 
     suspend fun unpublished(limit: Int): List<EventEnvelope> {
         val now = clock.instant()
-        var bucket = from ?: EventEnvelope.bucketOf(now.minus(firstLookback))
+        val oldest = EventEnvelope.bucketOf(now.minus(firstLookback))
+        // Never further back than the lookback: a row whose stamp keeps failing must not pin the start for ever, or
+        // the scan, capped at maxBuckets, would stop reaching newer rows.
+        var bucket = from?.takeIf { it > oldest } ?: oldest
         var firstWithRows: String? = null
         val found = mutableListOf<EventEnvelope>()
         var buckets = 0

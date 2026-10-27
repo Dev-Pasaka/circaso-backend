@@ -1,9 +1,10 @@
 package com.circaso.infrastructure.impl.database
 
 import com.circaso.infrastructure.api.DatabaseModuleSpec
-import com.circaso.infrastructure.impl.TestPostgres
 import com.circaso.infrastructure.impl.database.migrate.PostgresMigrationOutcome
 import com.circaso.infrastructure.impl.database.migrate.PostgresMigrator
+import com.circaso.infrastructure.impl.settings
+import com.circaso.infrastructure.testing.TestPostgres
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.java.javaUUID

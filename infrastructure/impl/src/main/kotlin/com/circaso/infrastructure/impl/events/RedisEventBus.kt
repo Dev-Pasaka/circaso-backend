@@ -3,6 +3,7 @@ package com.circaso.infrastructure.impl.events
 import com.circaso.infrastructure.api.HealthCheck
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.impl.database.OnJobsPool
+import com.circaso.infrastructure.impl.database.requireOutsideTransaction
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.millisSince
 import com.circaso.infrastructure.impl.redis.RedisConnection
@@ -10,6 +11,7 @@ import com.circaso.observability.api.Metrics
 import com.circaso.observability.api.NoopTelemetry
 import com.circaso.observability.api.Telemetry
 import com.circaso.shared.DomainEvent
+import com.circaso.shared.DomainException
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventSubscription
@@ -59,6 +61,11 @@ data class EventRuntimeConfig(
     val readBlock: Duration = Duration.ofSeconds(2),
     val batchSize: Int = 10,
     val metricsInterval: Duration = Duration.ofSeconds(30),
+    /**
+     * How long a consumer waits after a handler found the database saturated (`service.unavailable`). That failure is
+     * the pool's, not the event's: it is not counted as an attempt, so a burst never moves events toward the DLQ.
+     */
+    val busyBackoff: Duration = Duration.ofSeconds(5),
 )
 
 /**
@@ -102,6 +109,7 @@ class RedisEventBus(
         EventEnvelope.of(event, eventSerializer, occurredAt = clock.instant(), traceparent = telemetry.traceparent())
 
     override suspend fun publish(envelope: EventEnvelope) {
+        requireOutsideTransaction("EventBus.publish") // publish right after the commit, never inside
         if (appendToStream(envelope)) stampOutbox(envelope)
     }
 
@@ -285,12 +293,8 @@ class RedisEventBus(
             return
         }
 
-        val attempt =
-            redis
-                .incrementWithTtl(
-                    "evt:att:${subscription.group}:${envelope.eventId}",
-                    config.retention,
-                ).toInt()
+        val attemptKey = "evt:att:${subscription.group}:${envelope.eventId}"
+        val attempt = redis.incrementWithTtl(attemptKey, config.retention).toInt()
         val start = System.nanoTime()
         val tags =
             arrayOf(
@@ -315,6 +319,12 @@ class RedisEventBus(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            if (e.isServiceUnavailable()) {
+                reader.decr(attemptKey) // the pool's failure, not the event's: not an attempt
+                log.warn("database busy; will be retried", *tags, kv("backoffMs", config.busyBackoff.toMillis()))
+                delay(config.busyBackoff.toMillis()) // left unacknowledged: reclaimed after the idle time
+                return
+            }
             telemetry.record(
                 Metrics.EVENTS_HANDLED_DURATION,
                 (System.nanoTime() - start) / 1e9,
@@ -405,3 +415,9 @@ class StreamConsumersHealth(private val bus: RedisEventBus) : HealthCheck {
             Resource.error(SharedError.Internal)
         }
 }
+
+/** A handler that failed because no database connection came free in time (`service.unavailable`). */
+private fun Throwable.isServiceUnavailable(): Boolean =
+    generateSequence(this) { it.cause }
+        .take(8)
+        .any { it is DomainException && it.error == SharedError.ServiceUnavailable }

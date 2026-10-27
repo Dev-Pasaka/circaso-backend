@@ -9,15 +9,16 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped
 import io.r2dbc.spi.Connection
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.async
-import kotlinx.coroutines.reactive.awaitFirst
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.ktor.ext.getKoin
 import org.slf4j.LoggerFactory
+import reactor.core.publisher.Mono
 import java.io.File
 import java.net.JarURLConnection
 import java.net.URL
@@ -30,9 +31,10 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.datab
  * creates a table, so a missing `Migrate` step must keep it out of service rather than fail later on a missing column.
  *
  * Both run in the background, started here: nothing in the application's start blocks a thread or waits on the
- * database (Ktor would also cancel a module that suspends past its startup timeout). Until they succeed, readiness
- * reports `postgres` down, so the deploy never routes traffic to an instance whose database isn't ready; a failure is
- * logged at ERROR with what is missing. Closes the pools when the application stops.
+ * database (Ktor would also cancel a module that suspends past its startup timeout). They are retried until they pass
+ * (the database may start after the app, or `Migrate` may still be running); until then readiness reports `postgres`
+ * down, so the deploy never routes traffic to an instance whose database isn't ready. Closes the pools when the
+ * application stops.
  */
 fun Application.installPostgres(specs: List<DatabaseModuleSpec>) {
     val koin = getKoin()
@@ -44,29 +46,51 @@ fun Application.installPostgres(specs: List<DatabaseModuleSpec>) {
     monitor.subscribe(ApplicationStopped) { pools.close() }
 }
 
-/** The background start of [installPostgres]: done, still running, or failed (and why). */
-class PostgresStartup {
+/**
+ * The background start of [installPostgres]: retried with a backoff from [firstWait] doubling up to [longestWait],
+ * logged at ERROR once per kind of failure (then at DEBUG, so a database that is down for an hour isn't an hour of
+ * stack traces), and at INFO when it finally passes. [ready] answers for the latest attempt.
+ */
+class PostgresStartup(
+    private val firstWait: Duration = Duration.ofSeconds(1),
+    private val longestWait: Duration = Duration.ofSeconds(30),
+) {
+    private val passed = CompletableDeferred<Unit>()
+
     @Volatile
-    private var job: Deferred<Unit>? = null
+    private var began = false
 
     fun begin(scope: CoroutineScope, start: suspend () -> Unit) {
-        job =
-            scope.async {
+        began = true
+        scope.launch {
+            val reported = mutableSetOf<String>()
+            var wait = firstWait
+            while (true) {
                 try {
                     start()
+                    if (reported.isNotEmpty()) log.info("PostgreSQL is ready", kv("kind", "db.start"))
+                    passed.complete(Unit)
+                    return@launch
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    log.error("PostgreSQL is not ready; this instance stays out of service", e)
-                    throw e
+                    val kind = "${e::class.simpleName}: ${e.message?.lineSequence()?.firstOrNull()}"
+                    if (reported.add(kind)) {
+                        log.error("PostgreSQL is not ready; this instance stays out of service until it is", e)
+                    } else {
+                        log.debug("PostgreSQL still not ready", kv("kind", "db.start"), kv("reason", kind))
+                    }
                 }
+                delay(wait.toMillis())
+                wait = minOf(wait.multipliedBy(2), longestWait)
             }
+        }
     }
 
-    /** True once the start succeeded; waits up to [wait] for one still running. False if none began. */
+    /** True once an attempt has passed; waits up to [wait] for one still trying. False if none began. */
     suspend fun ready(wait: Duration): Boolean {
-        val started = job ?: return false
-        return withTimeoutOrNull(wait.toMillis()) { runCatching { started.await() }.isSuccess } ?: false
+        if (!began) return false
+        return withTimeoutOrNull(wait.toMillis()) { passed.await() } != null
     }
 }
 
@@ -76,7 +100,11 @@ class PostgresStartup {
  */
 class MigrationHistory(private val pools: PostgresPools) {
     suspend fun requireCurrent(specs: List<DatabaseModuleSpec>) {
-        val problems = specs.flatMap { problems(it) }
+        val findings = specs.map { compare(it) }
+        findings.flatMap { it.newer }.forEach { newer ->
+            log.warn("applied script not in this build (a rollback?)", kv("kind", "db.migrate"), kv("script", newer))
+        }
+        val problems = findings.flatMap { it.problems }
         check(problems.isEmpty()) {
             "The database is not migrated to this build; run the Migrate step (locally ./gradlew :app:migrate):\n" +
                 problems.joinToString("\n") { " - $it" }
@@ -84,8 +112,16 @@ class MigrationHistory(private val pools: PostgresPools) {
         specs.forEach { log.info("migrations current", kv("kind", "db.migrate"), kv("schema", it.schema)) }
     }
 
-    /** Scripts not applied, applied scripts the build no longer has, and failed runs. */
-    suspend fun problems(spec: DatabaseModuleSpec): List<String> {
+    /**
+     * What stops the start (scripts this build ships that aren't applied, and failed runs) and what doesn't: scripts
+     * applied but not in this build. Those are what a rollback to the previous image looks like, and the previous
+     * image must still serve (migrations are additive), so they are only logged.
+     */
+    class Findings(val problems: List<String>, val newer: List<String>)
+
+    suspend fun problems(spec: DatabaseModuleSpec): List<String> = compare(spec).problems
+
+    suspend fun compare(spec: DatabaseModuleSpec): Findings {
         val shipped = MigrationScripts.versions(spec.migrationsLocation)
         val history =
             try {
@@ -94,12 +130,15 @@ class MigrationHistory(private val pools: PostgresPools) {
                 throw e
             } catch (e: Exception) {
                 // Most often the module's role doesn't exist yet, so the transaction can't switch to it.
-                return listOf("${spec.schema}: never migrated (${e.message?.lineSequence()?.first()})")
-            } ?: return listOf("${spec.schema}: never migrated (no history table)")
+                return Findings(listOf("${spec.schema}: never migrated (${e.message})"), emptyList())
+            } ?: return Findings(listOf("${spec.schema}: never migrated (no history table)"), emptyList())
         val applied = history.filter { it.second }.map { it.first }.toSet()
-        return history.filterNot { it.second }.map { "${spec.schema} V${it.first}: failed" } +
-            (shipped - applied).sorted().map { "${spec.schema} V$it: not applied" } +
-            (applied - shipped).sorted().map { "${spec.schema} V$it: applied, but not in this build" }
+        return Findings(
+            problems =
+                history.filterNot { it.second }.map { "${spec.schema} V${it.first}: failed" } +
+                    (shipped - applied).sorted().map { "${spec.schema} V$it: not applied" },
+            newer = (applied - shipped).sorted().map { "${spec.schema} V$it" },
+        )
     }
 
     /** `(version, success)` per versioned row of the module's history, or null when it has no history table. */
@@ -175,16 +214,18 @@ class PostgresHealth(private val pools: PostgresPools, private val startup: Post
     override suspend fun check(): Resource<Unit> {
         if (!startup.ready(Duration.ofSeconds(5))) return Resource.error(SharedError.ServiceUnavailable)
         val pool = pools.app
-        val answered =
-            withTimeoutOrNull(pool.settings.statementTimeout.toMillis()) {
-                val connection: Connection = pool.connections.create().awaitFirst()
-                try {
-                    val result = connection.createStatement("SELECT 1").execute().awaitFirst()
-                    result.map { row, _ -> row.get(0) }.awaitFirstOrNull() != null
-                } finally {
-                    connection.close().awaitFirstOrNull()
-                }
-            }
-        return if (answered == true) Resource.success(Unit) else Resource.error(SharedError.ServiceUnavailable)
+        // usingWhen gives the connection back however the query ends, a timeout's cancellation included.
+        val select1 =
+            Mono.usingWhen(
+                pool.connections.create(),
+                { connection: Connection ->
+                    Mono
+                        .from(connection.createStatement("SELECT 1").execute())
+                        .flatMap { result -> Mono.from(result.map { row, _ -> row.get(0) }) }
+                },
+                { connection: Connection -> connection.close() },
+            )
+        val answered = withTimeoutOrNull(pool.settings.statementTimeout.toMillis()) { select1.awaitFirstOrNull() }
+        return if (answered != null) Resource.success(Unit) else Resource.error(SharedError.ServiceUnavailable)
     }
 }

@@ -12,6 +12,7 @@ import io.r2dbc.pool.PoolMetrics
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.APPLICATION_NAME
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.PREPARED_STATEMENT_CACHE_QUERIES
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.SSL_MODE
+import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.SSL_ROOT_CERT
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.TCP_KEEPALIVE
 import io.r2dbc.postgresql.client.SSLMode
 import io.r2dbc.spi.Connection
@@ -93,17 +94,18 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
         fun open(
             url: String,
             sslMode: String,
+            sslRootCert: String?,
             settings: PoolSettings,
             timings: PoolTimings,
         ): Pool {
-            val factory = ConnectionFactories.get(connectionOptions(url, sslMode, settings))
+            val factory = ConnectionFactories.get(connectionOptions(url, sslMode, sslRootCert, settings))
             val configuration =
                 ConnectionPoolConfiguration
                     .builder(factory)
                     .name(settings.name)
                     .initialSize(minOf(settings.initialSize, settings.maxSize))
                     .maxSize(settings.maxSize)
-                    .maxAcquireTime(timings.maxAcquireTime)
+                    .maxAcquireTime(settings.maxAcquireTime)
                     .maxIdleTime(timings.maxIdleTime)
                     .maxLifeTime(timings.maxLifeTime)
                     .validationQuery("SELECT 1")
@@ -119,6 +121,7 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
         fun connectionOptions(
             url: String,
             sslMode: String,
+            sslRootCert: String?,
             settings: PoolSettings,
         ): ConnectionFactoryOptions {
             val fromUrl = ConnectionFactoryOptions.parse(url)
@@ -130,6 +133,7 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
                     .option(APPLICATION_NAME, settings.name)
                     .option(ConnectionFactoryOptions.STATEMENT_TIMEOUT, settings.statementTimeout)
             builder.unlessIn(fromUrl, SSL_MODE, SSLMode.fromValue(sslMode))
+            sslRootCert?.let { builder.unlessIn(fromUrl, SSL_ROOT_CERT, it) }
             builder.unlessIn(fromUrl, TCP_KEEPALIVE, true)
             // A bounded cache of named statements; PgBouncer 1.21+ with max_prepared_statements keeps them working.
             builder.unlessIn(fromUrl, PREPARED_STATEMENT_CACHE_QUERIES, 256)
@@ -173,7 +177,7 @@ class PostgresPools(
     }
 
     private fun open(pool: PoolSettings): Pool =
-        Pool.open(settings.url, settings.sslMode, pool, settings.timings).also {
+        Pool.open(settings.url, settings.sslMode, settings.sslRootCert, pool, settings.timings).also {
             registerGauges(it)
             log.info(
                 "pool open",

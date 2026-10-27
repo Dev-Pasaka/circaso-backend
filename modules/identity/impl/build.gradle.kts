@@ -21,4 +21,6 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.cassandra)
+    // PostgreSQL for data tests, as infrastructure:api types (the one test-only exception in DependencyRules)
+    testImplementation(testFixtures(project(":infrastructure:impl")))
 }

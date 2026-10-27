@@ -1,5 +1,6 @@
 package com.circaso.infrastructure.api
 
+import com.circaso.shared.EventEnvelope
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.r2dbc.R2dbcTransaction
 import java.time.Duration
@@ -16,6 +17,12 @@ data class DatabaseModuleSpec(
     val tables: List<Table>,
     /** `classpath:db/<schema>`: plain SQL, `V<n>__<what>.sql`, numbered by the module on its own. */
     val migrationsLocation: String,
+    /**
+     * Whether the module publishes events. Its V1 script then creates `<schema>.outbox` in the shared shape
+     * (architecture.md → Durable events), it writes rows with [Database.writeOutbox], and infrastructure gives the
+     * relay an `OutboxStore` over that table: the module writes no outbox code of its own.
+     */
+    val outbox: Boolean = false,
 ) {
     init {
         require(SCHEMA_NAME.matches(schema)) { "'$schema' is not a valid schema name (lowercase letters, digits, _)" }
@@ -36,8 +43,8 @@ data class DatabaseModuleSpec(
  * A module's way into PostgreSQL, scoped to its schema and role: every database call runs inside [tx].
  *
  * A transaction runs as the module's role (`SET LOCAL ROLE <schema>`), so a query against another module's table fails
- * in the database. It holds database work only: no Redis call, HTTP call or `XADD` inside, because each would hold a
- * pooled connection for the whole wait. Publish events right after the commit.
+ * in the database. It holds database work only: a Redis call, an outbound HTTP call or `EventBus.publish` made inside
+ * one throws, because each would hold a pooled connection for the whole wait. Publish events right after the commit.
  */
 interface Database {
     /** The module's schema and role. */
@@ -51,9 +58,17 @@ interface Database {
      * pool. Everything is non-blocking (R2DBC): a call waiting for a connection suspends, and when none comes free
      * within the pool's acquire timeout this throws a `DomainException` carrying `SharedError.ServiceUnavailable` (503)
      * instead of waiting longer. Results are `Flow`s: consume them (`toList()`, `singleOrNull()`) inside [block].
-     * [operation] names the work in the per-transaction log line (`accounts.find`); it never carries a value.
+     *
+     * [operation] names the work in the per-transaction log line (`accounts.find`): a string literal, never a value
+     * (Konsist checks it). A failed statement surfaces as a [DatabaseException], which never carries a bound value.
      */
-    suspend fun <T> tx(operation: String = "tx", block: suspend R2dbcTransaction.() -> T): T
+    suspend fun <T> tx(operation: String, block: suspend R2dbcTransaction.() -> T): T
+
+    /**
+     * Writes [envelope] to the module's `<schema>.outbox` in the transaction that is open (it must be called inside
+     * [tx], so the event lands with the change that caused it or not at all). Needs `outbox = true` in the spec.
+     */
+    suspend fun writeOutbox(envelope: EventEnvelope)
 
     /**
      * Deletes the rows of `<schema>.<table>` whose `expires_at` has passed, in chunks of [chunk] rows, each chunk its
@@ -68,6 +83,28 @@ interface Database {
      * [retention] ago. For the module's `<module>.purge-expired` job, on the jobs pool.
      */
     suspend fun maintainDailyPartitions(table: String, retention: Duration): PartitionChanges
+}
+
+/**
+ * A statement that failed in PostgreSQL. It names the [operation], the [sqlState] and, for a constraint, the
+ * [constraint]; it never carries the statement's bound values or the server's detail (which can quote them), and
+ * keeps no cause, so a log line or a 500 can't leak a phone number or a key.
+ */
+class DatabaseException(val operation: String, val sqlState: String, val constraint: String?) :
+    RuntimeException(describe(operation, sqlState, constraint)) {
+    /** `23505`: a unique index refused the row; [constraint] says which claim was lost. */
+    val isUniqueViolation: Boolean get() = sqlState == "23505"
+
+    /** `23514`: a `CHECK` refused the row. */
+    val isCheckViolation: Boolean get() = sqlState == "23514"
+
+    private companion object {
+        fun describe(
+            operation: String,
+            sqlState: String,
+            constraint: String?,
+        ): String = "Database operation '$operation' failed: SQLSTATE $sqlState" + (constraint?.let { " ($it)" } ?: "")
+    }
 }
 
 /** What a [Database.maintainDailyPartitions] run did, by partition name (`outbox_p20261027`). */

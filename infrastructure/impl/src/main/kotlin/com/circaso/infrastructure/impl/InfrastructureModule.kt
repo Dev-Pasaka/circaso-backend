@@ -1,6 +1,7 @@
 package com.circaso.infrastructure.impl
 
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.GrpcClients
 import com.circaso.infrastructure.api.HealthCheck
@@ -12,6 +13,7 @@ import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.impl.database.PostgresDatabases
 import com.circaso.infrastructure.impl.database.PostgresHealth
+import com.circaso.infrastructure.impl.database.PostgresOutboxes
 import com.circaso.infrastructure.impl.database.PostgresPools
 import com.circaso.infrastructure.impl.database.PostgresSettings
 import com.circaso.infrastructure.impl.database.PostgresStartup
@@ -42,10 +44,11 @@ import org.koin.dsl.module
 import org.koin.ktor.ext.getKoin
 
 /**
- * Everything infrastructure hands out, as one Koin module: config and secrets, PostgreSQL (its pools and each
- * module's `Database`), Redis and its scopes, the scheduler, the event bus and its relay, the vendor HTTP and gRPC clients, and the health checks. Needs `Telemetry`
- * (observability) bound alongside. Modules add their own `OutboxStore` and `EventSubscription` bindings, which
- * the event runtime collects when [startInfrastructure] runs.
+ * Everything infrastructure hands out, as one Koin module: config and secrets, PostgreSQL (its pools and each module's
+ * `Database`), Redis and its scopes, the scheduler, the event bus and its relay, the vendor HTTP and gRPC clients, and
+ * the health checks. Needs `Telemetry` (observability) bound alongside. A module on PostgreSQL gets its `OutboxStore`
+ * from its spec (`outbox = true`); a module still on ScyllaDB binds its own. Modules add their `EventSubscription`s,
+ * which the event runtime collects when [startInfrastructure] runs.
  */
 fun infrastructureModule(config: Config, secrets: Secrets) =
     module {
@@ -56,6 +59,10 @@ fun infrastructureModule(config: Config, secrets: Secrets) =
         single { PostgresSettings(get(), get()) }
         single { PostgresPools(get(), get()) }
         single { PostgresDatabases(get()) } bind Databases::class
+        single {
+            val koin = this
+            PostgresOutboxes(get(), { koin.getAll<DatabaseModuleSpec>() })
+        }
 
         single { RedisConnection(get<Config>().section("redis").string("url", "redis://localhost:6379")) }
         single { LettuceRedisScopes(get()) } bind RedisScopes::class
@@ -64,11 +71,11 @@ fun infrastructureModule(config: Config, secrets: Secrets) =
 
         single {
             val koin = this
-            RedisEventBus(get(), { koin.getAll<OutboxStore>() }, get())
+            RedisEventBus(get(), { koin.getAll<OutboxStore>() + koin.get<PostgresOutboxes>().stores }, get())
         } bind EventBus::class
         single {
             val koin = this
-            OutboxRelay(get(), { koin.getAll<OutboxStore>() })
+            OutboxRelay(get(), { koin.getAll<OutboxStore>() + koin.get<PostgresOutboxes>().stores })
         }
 
         single { ConfiguredObjectStores(get<Config>(), secrets) } bind ObjectStores::class

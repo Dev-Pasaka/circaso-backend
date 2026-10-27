@@ -1,40 +1,29 @@
 package com.circaso.infrastructure.impl.events
 
-import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.DatabaseModuleSpec
-import com.circaso.infrastructure.api.OutboxStore
-import com.circaso.infrastructure.impl.TestPostgres
 import com.circaso.infrastructure.impl.TestRedis
-import com.circaso.infrastructure.impl.database.ModuleDatabase
+import com.circaso.infrastructure.impl.database.PostgresDatabases
+import com.circaso.infrastructure.impl.database.PostgresOutboxes
 import com.circaso.infrastructure.impl.database.PostgresPools
+import com.circaso.infrastructure.impl.database.list
 import com.circaso.infrastructure.impl.database.migrate.PostgresMigrator
+import com.circaso.infrastructure.impl.database.single
+import com.circaso.infrastructure.impl.settings
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.EventEnvelope
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
 import io.lettuce.core.Range
-import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
-import org.jetbrains.exposed.v1.core.Expression
-import org.jetbrains.exposed.v1.core.QueryBuilder
-import org.jetbrains.exposed.v1.core.SortOrder
-import org.jetbrains.exposed.v1.core.Table
-import org.jetbrains.exposed.v1.core.and
-import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.isNull
-import org.jetbrains.exposed.v1.core.java.javaUUID
-import org.jetbrains.exposed.v1.core.less
-import org.jetbrains.exposed.v1.javatime.timestamp
-import org.jetbrains.exposed.v1.r2dbc.insert
-import org.jetbrains.exposed.v1.r2dbc.selectAll
-import org.jetbrains.exposed.v1.r2dbc.update
 import java.time.Duration
 import java.time.Instant
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -43,50 +32,18 @@ private data class Noted(val n: Int) : DomainEvent {
     override val type: String get() = "pgrelay.Noted"
 }
 
-/** A module's outbox table, as each module declares its own in `data/tables`. */
-private object RelayOutboxTable : Table("pgrelay.outbox") {
-    val eventId = javaUUID("event_id")
-    val occurredAt = timestamp("occurred_at")
-    val type = text("type")
-    val payload = text("payload")
-    val publishedAt = timestamp("published_at").nullable()
-    override val primaryKey = PrimaryKey(eventId, occurredAt)
-}
-
-/** The store a module's `data` layer writes over its outbox: the relay's query, then the stamp. */
-private class RelayOutboxStore(private val db: Database) : OutboxStore {
-    override val producer = "pgrelay"
-
-    override suspend fun unpublished(limit: Int): List<EventEnvelope> =
-        db.tx("outbox.unpublished") {
-            RelayOutboxTable
-                .selectAll()
-                .where {
-                    RelayOutboxTable.publishedAt.isNull() and
-                        (RelayOutboxTable.occurredAt less TenSecondsAgo)
-                }.orderBy(RelayOutboxTable.occurredAt to SortOrder.ASC)
-                .limit(limit)
-                .toList()
-                .map { EventEnvelope.fromJson(it[RelayOutboxTable.payload]) }
-        }
-
-    override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
-        db.tx("outbox.stamp") {
-            RelayOutboxTable.update({
-                (RelayOutboxTable.eventId eq envelope.eventId.value) and
-                    (RelayOutboxTable.occurredAt eq envelope.occurredAt)
-            }) { it[publishedAt] = at }
-        }
-    }
-}
-
-/** The relay against a real PostgreSQL outbox, read and stamped over R2DBC: `published_at IS NULL AND occurred_at < now() - 10 s`. */
+/**
+ * The shared PostgreSQL outbox (decision 2026-10-27, PG1 review): a module writes with `Database.writeOutbox` inside its
+ * transaction, and the relay reads it through the store infrastructure registers for a spec with `outbox = true`:
+ * `published_at IS NULL AND occurred_at < now() - 10 s`, served by the partial index.
+ */
 @OptIn(ExperimentalLettuceCoroutinesApi::class)
 class PostgresOutboxRelayTest {
-    private val spec = DatabaseModuleSpec("pgrelay", listOf(RelayOutboxTable), "classpath:db/pgrelay")
+    private val spec = DatabaseModuleSpec("pgrelay", emptyList(), "classpath:db/pgrelay", outbox = true)
     private val pools = PostgresPools(TestPostgres.settings())
-    private val db = ModuleDatabase("pgrelay", pools)
-    private val store = RelayOutboxStore(db)
+    private val databases = PostgresDatabases(pools)
+    private val module = databases.scope("pgrelay")
+    private val store = PostgresOutboxes(databases) { listOf(spec) }.stores.single()
     private val redis = TestRedis.connect()
     private val bus = RedisEventBus(redis, { listOf(store) })
 
@@ -104,30 +61,23 @@ class PostgresOutboxRelayTest {
         pools.close()
     }
 
-    private suspend fun write(
-        n: Int,
-        ago: Duration,
-        publishedAt: Instant? = null,
-    ): EventEnvelope {
+    private suspend fun write(n: Int, ago: Duration): EventEnvelope {
         val envelope = EventEnvelope.of(Noted(n), Noted.serializer(), occurredAt = Instant.now().minus(ago))
-        db.tx("outbox.write") {
-            RelayOutboxTable.insert {
-                it[eventId] = envelope.eventId.value
-                it[occurredAt] = envelope.occurredAt
-                it[type] = envelope.type
-                it[payload] = envelope.toJson()
-                it[RelayOutboxTable.publishedAt] = publishedAt
-            }
-        }
+        module.tx("test.write") { module.writeOutbox(envelope) }
         return envelope
     }
 
-    private suspend fun publishedAt(envelope: EventEnvelope): Instant? =
-        db.tx {
-            RelayOutboxTable
-                .selectAll()
-                .where { RelayOutboxTable.eventId eq envelope.eventId.value }
-                .single()[RelayOutboxTable.publishedAt]
+    private fun publishedAt(envelope: EventEnvelope): Instant? =
+        TestPostgres.superuser { connection ->
+            connection
+                .prepareStatement("SELECT published_at FROM pgrelay.outbox WHERE event_id = ?::uuid")
+                .use { statement ->
+                    statement.setString(1, envelope.eventId.value.toString())
+                    statement.executeQuery().use { rows ->
+                        rows.next()
+                        rows.getTimestamp(1)?.toInstant()
+                    }
+                }
         }
 
     @Test
@@ -135,7 +85,8 @@ class PostgresOutboxRelayTest {
         runBlocking<Unit> {
             val older = write(1, Duration.ofMinutes(3))
             val stuck = write(2, Duration.ofMinutes(2))
-            val sent = write(3, Duration.ofMinutes(2), publishedAt = Instant.now().minusSeconds(100))
+            val sent = write(3, Duration.ofMinutes(2))
+            store.markPublished(sent, Instant.now().minusSeconds(100))
             val fresh = write(4, Duration.ofSeconds(1)) // the normal publish path still owns it
             val relay = OutboxRelay(bus, { listOf(store) })
 
@@ -152,12 +103,63 @@ class PostgresOutboxRelayTest {
             assertNotNull(publishedAt(older))
             assertNotNull(publishedAt(stuck))
             assertNull(publishedAt(fresh))
-            assertNotNull(publishedAt(sent))
         }
+
+    @Test
+    fun `the store belongs to the module, named after its schema, and only for a spec that asks for one`() {
+        assertEquals("pgrelay", store.producer)
+        val quiet = DatabaseModuleSpec("pgquiet", emptyList(), "classpath:db/pgquiet")
+        assertEquals(emptyList(), PostgresOutboxes(databases) { listOf(quiet) }.stores)
+    }
+
+    @Test
+    fun `writing the outbox needs the transaction that makes the change`() =
+        runBlocking<Unit> {
+            val envelope = EventEnvelope.of(Noted(1), Noted.serializer())
+
+            assertFailsWith<IllegalStateException> { module.writeOutbox(envelope) }
+        }
+
+    @Test
+    fun `the shared DDL has the shape the store reads and writes, with its partial index`() {
+        // The module's V1 script carries the snippet from architecture.md → Durable events; this pins both together.
+        val columns =
+            TestPostgres.superuser {
+                it.list(
+                    "SELECT column_name || ' ' || data_type || ' ' || is_nullable FROM information_schema.columns " +
+                        "WHERE table_schema = 'pgrelay' AND table_name = 'outbox' ORDER BY ordinal_position",
+                )
+            }
+        assertEquals(
+            listOf(
+                "event_id uuid NO",
+                "occurred_at timestamp with time zone NO",
+                "type text NO",
+                "payload text NO",
+                "published_at timestamp with time zone YES",
+            ),
+            columns,
+        )
+        TestPostgres.superuser {
+            assertEquals(
+                "p",
+                it.single("SELECT relkind::text FROM pg_class WHERE oid = 'pgrelay.outbox'::regclass"),
+                "partitioned",
+            )
+            assertEquals(
+                "CREATE INDEX outbox_unpublished_idx ON ONLY pgrelay.outbox USING btree (occurred_at) " +
+                    "WHERE (published_at IS NULL)",
+                it.single(
+                    "SELECT indexdef FROM pg_indexes WHERE schemaname = 'pgrelay' AND indexname LIKE '%unpublished%'",
+                ),
+            )
+        }
+    }
 
     @Test
     fun `the unpublished query is served by the partial index`() =
         runBlocking<Unit> {
+            write(1, Duration.ofMinutes(1))
             val plan =
                 TestPostgres.superuser { connection ->
                     connection.createStatement().use { statement ->
@@ -175,11 +177,4 @@ class PostgresOutboxRelayTest {
             assertEquals(true, "Index Scan using outbox_p" in text && "occurred_at_idx" in text, text)
             assertEquals(false, "Seq Scan" in text, text)
         }
-}
-
-/** `now() - interval '10 seconds'`, on the database's clock, as the relay's query has it. */
-private object TenSecondsAgo : Expression<Instant>() {
-    override fun toQueryBuilder(queryBuilder: QueryBuilder) {
-        queryBuilder.append("now() - interval '10 seconds'")
-    }
 }

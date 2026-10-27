@@ -1,5 +1,6 @@
 plugins {
     id("circaso.impl")
+    `java-test-fixtures` // TestPostgres, for every module's data-layer tests (decision 2026-10-27, PG1 review)
 }
 
 // Plumbing, no business logic: PostgreSQL (Exposed over R2DBC pools; Flyway over JDBC for Migrate) and Kandra for
@@ -49,5 +50,9 @@ dependencies {
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.scylladb)
     testImplementation(libs.testcontainers.postgresql)
+
+    testFixturesApi(project(":infrastructure:api")) // what modules use: Database, DatabaseModuleSpec
+    testFixturesImplementation(libs.testcontainers)
+    testFixturesImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.opentelemetry.sdk.testing)
 }

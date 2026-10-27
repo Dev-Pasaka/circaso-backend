@@ -141,8 +141,8 @@ Messaging is the write-heavy module: a group message to 1,000 members writes 1,0
 - **Settings** replace the `SCYLLA_*` ones: `DATABASE_URL` (`r2dbc:postgresql://…`, the app), `DATABASE_USER`,
   `DATABASE_PASSWORD` (secret), `DATABASE_JOBS_USER`, `DATABASE_JOBS_PASSWORD` (secret), `DATABASE_MIGRATION_URL`
   (`jdbc:postgresql://…`, direct, Flyway only), `DATABASE_MIGRATION_USER`, `DATABASE_MIGRATION_PASSWORD` (secret),
-  `DATABASE_POOL_APP_SIZE` (10) and `DATABASE_POOL_JOBS_SIZE` (3) (§2.9), `DATABASE_SSL_MODE` (`require` outside
-  local).
+  `DATABASE_POOL_APP_SIZE` (10) and `DATABASE_POOL_JOBS_SIZE` (3) (§2.9), `DATABASE_SSL_MODE` (`verify-full` with the provider's CA outside
+  local; `disable` only on the sandbox's internal network).
 - **Health:** readiness runs `SELECT 1` through the pool. `/kandra/health` and its nginx block are removed.
 - **Logging:** Exposed's SQL logger stays off in every environment except local `DEBUG`, and never logs bound values
   (phone numbers, keys). `LOG_LEVEL_DATABASE` replaces the Kandra level.
@@ -236,8 +236,10 @@ That leaves room for a second app container (+13) during a rolling deploy. In pr
 **r2dbc-pool settings** (in `Config`, overridable by `DATABASE_POOL_*` settings):
 
 - **Timeouts:**
-  - `maxAcquireTime` 3 s (`DATABASE_POOL_ACQUIRE_TIMEOUT_MS`). When no connection comes free in time, the request
-    fails fast as `service.unavailable` (503) instead of piling up.
+  - `maxAcquireTime` 3 s on the app pool (`DATABASE_POOL_ACQUIRE_TIMEOUT_MS`). When no connection comes free in time,
+    the request fails fast as `service.unavailable` (503) instead of piling up.
+  - 30 s on the jobs pool (`DATABASE_POOL_JOBS_ACQUIRE_TIMEOUT_MS`): background work waits out a burst, and an event
+    handler that still gets `service.unavailable` is retried after a back-off without counting as an attempt.
   - `maxIdleTime` 10 min; `maxLifeTime` 30 min (below any proxy or firewall idle cut).
   - `validationQuery "SELECT 1"` on acquire.
 - **Transactions:** isolation `READ_COMMITTED` (`R2dbcDatabaseConfig { defaultR2dbcIsolationLevel }`),
@@ -246,7 +248,8 @@ That leaves room for a second app container (+13) during a rolling deploy. In pr
   - `applicationName=circaso-app` (or `-jobs`; Flyway's connections `circaso-migrate`), so `pg_stat_activity` shows
     who holds what.
   - `statement_timeout` as a startup option, the same value as the login role's (5 s app, 60 s jobs).
-  - `sslMode=require` outside local; `tcpKeepAlive=true`.
+  - `sslMode=verify-full` outside local, against the provider's CA (`DATABASE_SSL_ROOT_CERT`); `disable` only on the
+    sandbox's internal Docker network. `tcpKeepAlive=true`.
   - `preparedStatementCacheQueries=256`: a bounded cache of named statements (see "Prepared statements" below).
 - **Name** per pool (`circaso-app`, `circaso-jobs`).
 
@@ -297,7 +300,7 @@ a page did not cover a point, it is marked "verify in PG1" rather than assumed.
 
 **Transactions**
 - **Every database call runs in a transaction**, as the docs require. The only entry point is infrastructure's
-  `Database.tx { }`, a thin wrapper over `org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction(db = …)`.
+  `Database.tx("<operation>") { }`, a thin wrapper over `org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction(db = …)`.
   Modules never open an Exposed transaction or call `R2dbcDatabase.connect`; a Konsist rule enforces both, and another
   keeps JDBC out of everything but the `Migrate` code.
 - **`connect()` runs once:** infrastructure creates one `R2dbcDatabase` per r2dbc-pool `ConnectionPool` at startup
@@ -313,7 +316,7 @@ a page did not cover a point, it is marked "verify in PG1" rather than assumed.
   session `SET STATEMENT_TIMEOUT` round trip; with the default `queryTimeout` of 0 it would switch the timeout off.
   Infrastructure's connection factory ignores that per-statement call.
 - **No nested transactions:** `useNestedTransactions` stays off. A use case opens one transaction through the domain
-  port `Transactor.run { }` (implemented in `data` over `Database.tx`); repositories join it through the coroutine
+  port `Transactor.run("<operation>") { }` (implemented in `data` over `Database.tx`); repositories join it through the coroutine
   context.
 - **`text` and `blob` columns are read inside the transaction**, using `eagerLoading = true` where they are used after
   it. The docs say they are unavailable outside a transaction otherwise.
@@ -371,7 +374,7 @@ its own, and Scylla is switched off only in the last slice.
 | Slice | Content | Done when |
 | --- | --- | --- |
 | **PG0: spec** | Decision row; architecture.md (Infrastructure, outbox step 1, Kandra section replaced by "Exposed and Postgres", guardrails); working-rules (drop Kandra sentinels and the Kandra bugs rule, add the transaction rule and the purge/partition rule); each module doc's Data section rewritten as Postgres tables; agent files (developer, architect, QA) updated | Pasaka approves the docs |
-| **PG1: foundation** | Version catalog: Exposed (`exposed-r2dbc`), r2dbc-postgresql, r2dbc-pool, Flyway and the JDBC driver (Migrate only), Testcontainers postgres, the Exposed Gradle plugin. Infrastructure: `DatabaseModuleSpec`, the app and jobs r2dbc pools with their metrics (§2.9), `Database.tx { }` (R2DBC suspended transaction, `SET LOCAL ROLE`), Flyway per schema in the `Migrate` main over JDBC, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Postgres, pgAdmin and `circaso_readonly` already run on the sandbox (main `ae6e233`). Devops adds the `circaso_migrator`, `circaso_app` and `circaso_jobs` login roles with their limits (created by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, run once by hand on the existing volume; passwords in `/opt/circaso/postgres.env` and `/opt/circaso/.env`) and the nightly R2 backup, with Pasaka's go-ahead for the server change. `Migrate` creates the schemas and the module roles and grants them. The `Transactor` port and its Konsist rule. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule, no way in but `Database.tx`, JDBC only in the Migrate code, no `runBlocking` | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
+| **PG1: foundation** | Version catalog: Exposed (`exposed-r2dbc`), r2dbc-postgresql, r2dbc-pool, Flyway and the JDBC driver (Migrate only), Testcontainers postgres, the Exposed Gradle plugin. Infrastructure: `DatabaseModuleSpec`, the app and jobs r2dbc pools with their metrics (§2.9), `Database.tx { }` (R2DBC suspended transaction, `SET LOCAL ROLE`, a named operation, `DatabaseException` without values, guards against Redis/HTTP/publish inside), the shared outbox (`DatabaseModuleSpec(outbox = true)`, `Database.writeOutbox`), test fixtures for module data tests, Flyway per schema in the `Migrate` main over JDBC, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Postgres, pgAdmin and `circaso_readonly` already run on the sandbox (main `ae6e233`). Devops adds the `circaso_migrator`, `circaso_app` and `circaso_jobs` login roles with their limits (created by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, run once by hand on the existing volume; passwords in `/opt/circaso/postgres.env` and `/opt/circaso/.env`) and the nightly R2 backup, with Pasaka's go-ahead for the server change. `Migrate` creates the schemas and the module roles and grants them. The `Transactor` port and its Konsist rule. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule, no way in but `Database.tx`, JDBC only in the Migrate code, no `runBlocking` | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
 | **PG2: identity** | `V1__identity.sql` (accounts with unique phone, provider links with unique (provider, subject), devices, sessions with `expires_at`, security log, support recoveries with unique request id, outbox partitioned); Exposed tables; repository impls behind the existing ports; claim tables dropped (the unique constraints are the claims); data tests on Postgres | All identity tests green on Postgres; sign-up, sign-in, refresh and recovery pass QA on local |
 | **PG3: users** | Profiles with unique handle, contacts (one table, index on target), waiting contacts, blocks (one table, index on blocked), invites, realtime, outbox | Same, for users |
 | **PG4: assistant** | Asha messages, daily usage, entitlements, audit, outbox | Same, for assistant |

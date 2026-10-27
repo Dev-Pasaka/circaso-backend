@@ -916,6 +916,39 @@ object Rules {
                 text.substring(match.range.last + 1, (end - 1).coerceAtLeast(match.range.last + 1))
             }.toList()
 
+    private val literalOperation = Regex("""^\s*"[^"$\\]*"\s*[,)]""")
+
+    /**
+     * Every transaction is named by a string literal (decision 2026-10-27, PG1 review): `transactor.run("accounts.claim")`
+     * in a use case, `db.tx("accounts.find")` in `data`. The name goes into the per-transaction log line, so it may never
+     * carry a value. A `Transactor` implementation passes its own `operation` parameter through, and only that.
+     */
+    fun operationsAreNamedLiterals(files: List<KoFileDeclaration>): List<String> =
+        files.filter { it.isBusiness() && (it.layer() == "data" || it.subLayer() == "usecases") }.flatMap { file ->
+            val forwards = Regex(""":\s*Transactor\b""").containsMatchIn(file.text)
+            Regex("""\b(\w+)\.(tx|run)\(""")
+                .findAll(file.text)
+                .filter { call ->
+                    val receiver = call.groupValues[1]
+                    when (call.groupValues[2]) {
+                        "tx" -> {
+                            file.layer() == "data"
+                        }
+
+                        else -> {
+                            file.subLayer() == "usecases" &&
+                                Regex("""\b$receiver\s*:\s*Transactor\b""").containsMatchIn(file.text)
+                        }
+                    }
+                }.filterNot { call ->
+                    val rest = file.text.substring(call.range.last + 1)
+                    literalOperation.containsMatchIn(rest.take(200)) ||
+                        (forwards && Regex("""^\s*operation\s*[,)]""").containsMatchIn(rest))
+                }.map { call ->
+                    violation(file, "'${call.value}…' names its transaction with something other than a string literal")
+                }.toList()
+        }
+
     private val jdbcPackages =
         listOf("java.sql.", "javax.sql.", "org.jetbrains.exposed.v1.jdbc", "org.flywaydb", "org.postgresql.")
 
@@ -969,5 +1002,6 @@ object Rules {
             "transactionsHoldDatabaseWorkOnly" to ::transactionsHoldDatabaseWorkOnly,
             "jdbcOnlyInMigrate" to ::jdbcOnlyInMigrate,
             "noRunBlocking" to ::noRunBlocking,
+            "operationsAreNamedLiterals" to ::operationsAreNamedLiterals,
         )
 }

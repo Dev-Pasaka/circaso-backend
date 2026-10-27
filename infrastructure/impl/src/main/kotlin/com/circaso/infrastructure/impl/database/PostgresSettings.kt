@@ -19,6 +19,8 @@ data class PoolSettings(
     val initialSize: Int,
     val statementTimeout: Duration,
     val slowAfter: Duration,
+    /** How long a transaction waits for a free connection before it fails as `service.unavailable`. */
+    val maxAcquireTime: Duration,
 ) {
     // The password is a secret: never in a log line, even if something prints this object.
     override fun toString(): String = "PoolSettings(name=$name, user=$user, maxSize=$maxSize)"
@@ -26,8 +28,6 @@ data class PoolSettings(
 
 /** The pool values both pools share; each can be overridden by its `DATABASE_POOL_*` setting. */
 data class PoolTimings(
-    /** No connection free in this time and the request fails as `service.unavailable` (503). */
-    val maxAcquireTime: Duration = Duration.ofSeconds(3),
     val maxIdleTime: Duration = Duration.ofMinutes(10),
     /** Below any proxy or firewall idle cut. */
     val maxLifeTime: Duration = Duration.ofMinutes(30),
@@ -54,12 +54,18 @@ class PostgresSettings(config: Config, secrets: Secrets) {
     /** The app and jobs pools' address. In production behind a transaction pooler, this is the pooled endpoint. */
     val url: String = database.string("url", "r2dbc:postgresql://localhost:5432/circaso")
 
-    /** `require` outside local; the compose Postgres speaks plain TCP. */
-    val sslMode: String = database.string("ssl-mode", if (environment.isLocal) "disable" else "require")
+    /**
+     * `verify-full` outside local, against [sslRootCert] (the provider's CA) for a managed or remote host; `disable` only
+     * on the sandbox's internal Docker network and locally, where Postgres speaks plain TCP (decision 2026-10-27, PG1
+     * review).
+     */
+    val sslMode: String = database.string("ssl-mode", if (environment.isLocal) "disable" else "verify-full")
+
+    /** The CA file `verify-full` checks the server against; unset means the JVM's trust store. */
+    val sslRootCert: String? = database.string("ssl-root-cert")
 
     val timings: PoolTimings =
         PoolTimings(
-            maxAcquireTime = pool.millis("acquire-timeout-ms", PoolTimings().maxAcquireTime),
             maxIdleTime = pool.millis("max-idle-ms", PoolTimings().maxIdleTime),
             maxLifeTime = pool.millis("max-life-ms", PoolTimings().maxLifeTime),
         )
@@ -74,6 +80,8 @@ class PostgresSettings(config: Config, secrets: Secrets) {
             initialSize = 2,
             statementTimeout = Duration.ofSeconds(5),
             slowAfter = Duration.ofMillis(100),
+            // A request fails fast (503) rather than piling up.
+            maxAcquireTime = pool.millis("acquire-timeout-ms", Duration.ofSeconds(3)),
         )
 
     /** The outbox relay, event handlers, scheduled jobs: never takes the connections requests need. */
@@ -86,6 +94,8 @@ class PostgresSettings(config: Config, secrets: Secrets) {
             initialSize = 1,
             statementTimeout = Duration.ofSeconds(60),
             slowAfter = Duration.ofSeconds(5),
+            // Background work can wait out a burst: an event retried later costs nothing, a lost one would.
+            maxAcquireTime = pool.millis("jobs-acquire-timeout-ms", Duration.ofSeconds(30)),
         )
 
     /** Always a direct connection: Flyway takes a session-level lock, which a transaction pooler would break. */

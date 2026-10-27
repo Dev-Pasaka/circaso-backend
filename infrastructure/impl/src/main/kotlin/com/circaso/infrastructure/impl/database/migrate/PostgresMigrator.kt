@@ -73,6 +73,7 @@ class PostgresMigrator(private val settings: PostgresSettings, private val clock
             setProperty("password", migration.password)
             setProperty("ApplicationName", "circaso-migrate")
             setProperty("sslmode", settings.sslMode)
+            settings.sslRootCert?.let { setProperty("sslrootcert", it) }
             setProperty("tcpKeepAlive", "true")
             setProperty("logServerErrorDetail", "false")
         }

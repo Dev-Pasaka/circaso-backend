@@ -20,5 +20,5 @@ class ProviderRepositoryImpl(private val db: Database) : ProviderRepository {
 }
 
 class DatabaseTransactor(private val db: Database) : Transactor {
-    override suspend fun <T> run(block: suspend () -> T): T = db.tx { block() }
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T = db.tx(operation) { block() }
 }

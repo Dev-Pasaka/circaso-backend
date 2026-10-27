@@ -29,9 +29,10 @@ passwords and limits of those that exist, so it is also how a password is rotate
 
 ## Nightly backup
 
-`backup.sh` dumps the database inside the `postgres` container and uploads it to R2 as
-`backups/postgres/circaso-<Mon…Sun>.dump`: seven files, each overwritten a week later. It uses one connection, for a few
-seconds a night. Install it once, as the deploy user:
+`backup.sh` dumps the database inside the `postgres` container and uploads it to its own R2 bucket
+(`R2_BACKUP_BUCKET`, default `circaso-backups-dev`) as `backups/postgres/circaso-<Mon…Sun>.dump`: seven files, each
+overwritten a week later. It uses one connection, for a few seconds a night. Create the bucket and a token with
+"Object Read & Write" on it only (R2 > Manage API tokens), then install it once, as the deploy user:
 
 ```sh
 install -m 600 /dev/null /opt/circaso/backup.env  # then fill it in from backup.env.example
@@ -43,8 +44,10 @@ sudo touch /var/log/circaso-backup.log && sudo chown deploy /var/log/circaso-bac
 ## Restoring a backup
 
 ```sh
-docker run --rm -e AWS_ACCESS_KEY_ID=… -e AWS_SECRET_ACCESS_KEY=… -e AWS_DEFAULT_REGION=auto -v /tmp:/backup \
-  amazon/aws-cli:2.38.0 s3 cp s3://circaso-backend-dev/backups/postgres/circaso-Tue.dump /backup/ \
+set -a; . /opt/circaso/backup.env; set +a      # the keys stay out of the command line
+export AWS_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_BACKUP_SECRET_ACCESS_KEY"
+docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION=auto -v /tmp:/backup \
+  amazon/aws-cli:2.38.0 s3 cp s3://circaso-backups-dev/backups/postgres/circaso-Tue.dump /backup/ \
   --endpoint-url https://<account>.r2.cloudflarestorage.com
 docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
   </tmp/circaso-Tue.dump

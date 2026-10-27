@@ -1,11 +1,15 @@
 package com.circaso.infrastructure.impl.database
 
 import com.circaso.infrastructure.api.Database
+import com.circaso.infrastructure.api.DatabaseException
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.PartitionChanges
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.millisSince
+import com.circaso.shared.EventEnvelope
+import io.r2dbc.postgresql.api.PostgresqlException
+import io.r2dbc.spi.R2dbcException
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.toList
@@ -28,6 +32,19 @@ private class OpenTransaction(val schema: String, val transaction: R2dbcTransact
     object Key : CoroutineContext.Key<OpenTransaction>
 }
 
+/**
+ * The runtime half of "a transaction holds database work only" (Konsist is the other): Redis, outbound HTTP and
+ * `EventBus.publish` call this first, and it throws when the calling coroutine is inside a `Database.tx`, where the
+ * wait would hold a pooled connection.
+ */
+internal suspend fun requireOutsideTransaction(what: String) {
+    val open = currentCoroutineContext()[OpenTransaction.Key] ?: return
+    throw IllegalStateException(
+        "$what called inside a '${open.schema}' transaction; a transaction holds database work only, so call it " +
+            "after the commit",
+    )
+}
+
 /** Hands each module a [Database] on the shared pools, scoped to its schema and role. */
 class PostgresDatabases(private val pools: PostgresPools, private val clock: Clock = Clock.systemUTC()) : Databases {
     override fun scope(schema: String): Database = ModuleDatabase(schema, pools, clock)
@@ -48,15 +65,26 @@ class ModuleDatabase(
         require(DatabaseModuleSpec.SCHEMA_NAME.matches(schema)) { "'$schema' is not a valid schema name" }
     }
 
+    private val outboxTable by lazy { OutboxTable(schema) }
+
     override suspend fun <T> tx(operation: String, block: suspend R2dbcTransaction.() -> T): T {
         val context = currentCoroutineContext()
         context[OpenTransaction.Key]?.let { open ->
             check(open.schema == schema) {
                 "A '$schema' transaction can't open inside a '${open.schema}' one: no transaction spans two modules"
             }
-            return open.transaction.block()
+            return withoutValues(operation) { open.transaction.block() }
         }
         return run(pools.forWork(context), operation, block)
+    }
+
+    override suspend fun writeOutbox(envelope: EventEnvelope) {
+        val open =
+            checkNotNull(currentCoroutineContext()[OpenTransaction.Key]) {
+                "writeOutbox belongs inside the transaction that makes the change"
+            }
+        check(open.schema == schema) { "'$schema' can't write its outbox inside a '${open.schema}' transaction" }
+        withoutValues("outbox.write") { outboxTable.write(envelope) }
     }
 
     private suspend fun <T> run(
@@ -78,7 +106,7 @@ class ModuleDatabase(
             return result
         } catch (e: Exception) {
             if (e.isAcquireTimeout()) throw pool.unavailable(e)
-            throw e
+            throw e.withoutValues(operation)
         } finally {
             // The role switch is ours, not the caller's: it isn't counted.
             val statements = ((transaction?.statementCount ?: 1) - 1).coerceAtLeast(0)
@@ -155,6 +183,27 @@ class ModuleDatabase(
                 PartitionChanges(created, dropped)
             }
         }
+}
+
+/** Runs [block], turning a failed statement into a [DatabaseException] that carries no bound value. */
+private suspend fun <T> withoutValues(operation: String, block: suspend () -> T): T =
+    try {
+        block()
+    } catch (e: Exception) {
+        throw e.withoutValues(operation)
+    }
+
+/**
+ * Exposed's exception message quotes the statement (with its values when a transaction debugs), and the server's text
+ * can quote a value too (`invalid input syntax for type uuid: "…"`). What leaves `Database.tx` keeps only the
+ * operation, the SQLSTATE and the constraint's name, and no cause; anything that isn't a database error passes as is.
+ */
+private fun Exception.withoutValues(operation: String): Exception {
+    if (this is DatabaseException) return this
+    val failures = generateSequence<Throwable>(this) { it.cause }.take(8).filterIsInstance<R2dbcException>().toList()
+    val failure = failures.lastOrNull { !it.sqlState.isNullOrEmpty() } ?: failures.lastOrNull() ?: return this
+    val constraint = (failure as? PostgresqlException)?.errorDetails?.constraintName?.orElse(null)
+    return DatabaseException(operation, failure.sqlState.orEmpty().ifEmpty { "unknown" }, constraint)
 }
 
 /** Runs a hand-written query with text values bound in order, and reads every row inside the transaction. */

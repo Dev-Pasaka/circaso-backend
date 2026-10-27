@@ -3,9 +3,11 @@ package com.circaso.infrastructure.impl.events
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.impl.TestRedis
 import com.circaso.shared.DomainEvent
+import com.circaso.shared.DomainException
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventHandler
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.SharedError
 import com.circaso.shared.decode
 import com.circaso.shared.envelope
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
@@ -228,6 +230,31 @@ class EventBusTest {
                 redis.commands.exists("evt:done:$group:${envelope.eventId}") == 1L,
                 "a failed event is never recorded as done",
             )
+        }
+
+    @Test
+    fun `a handler that found the database saturated is retried without counting toward the DLQ`() =
+        runBlocking<Unit> {
+            val calls = AtomicInteger()
+            val bus = bus(config = fast.copy(busyBackoff = Duration.ofMillis(50)))
+            bus.subscribe(
+                subscription(
+                    "$producer.Pinged" to
+                        EventHandler {
+                            // More busy failures than maxAttempts allows: none of them may dead-letter the event.
+                            if (calls.incrementAndGet() <= 7) throw DomainException(SharedError.ServiceUnavailable)
+                        },
+                ),
+            )
+            bus.start(scope)
+
+            val envelope = bus.envelope(Pinged(producer, 1))
+            bus.publish(envelope)
+
+            eventually(20_000) { redis.commands.exists("evt:done:$group:${envelope.eventId}") == 1L }
+            assertEquals(8, calls.get())
+            val dead = redis.commands.xrange(DEAD_LETTER_STREAM, Range.create("-", "+")).toList()
+            assertTrue(dead.none { it.body["group"] == group }, "never dead-lettered")
         }
 
     @Test

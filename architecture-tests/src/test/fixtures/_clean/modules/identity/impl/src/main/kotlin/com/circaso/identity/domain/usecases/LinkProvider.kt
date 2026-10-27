@@ -16,7 +16,7 @@ class LinkProvider(
 ) {
     suspend operator fun invoke(userId: UserId, provider: String, subject: String): Resource<Unit> {
         val linked =
-            transactor.run {
+            transactor.run("providers.link") {
                 accounts.find(userId) ?: return@run false
                 providers.link(userId, provider, subject)
                 true

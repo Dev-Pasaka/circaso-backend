@@ -54,7 +54,7 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.testcontainers)
     testImplementation(libs.testcontainers.scylladb)
-    testImplementation(libs.testcontainers.postgresql)
+    testImplementation(testFixtures(project(":infrastructure:impl")))
     testImplementation(platform(libs.kandra.bom))
     testImplementation(libs.kandra.test)
 }

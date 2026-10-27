@@ -1,8 +1,9 @@
 package com.circaso.infrastructure.impl.database
 
 import com.circaso.infrastructure.api.DatabaseModuleSpec
-import com.circaso.infrastructure.impl.TestPostgres
 import com.circaso.infrastructure.impl.database.migrate.PostgresMigrator
+import com.circaso.infrastructure.impl.settings
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.shared.Uuid7
 import kotlinx.coroutines.runBlocking
 import java.time.Clock
