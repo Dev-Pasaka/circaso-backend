@@ -12,8 +12,17 @@ interface WebhookVendor {
     /** The `{vendor}` in the path. */
     val name: String
 
-    /** True if [body] carries a valid signature in [headers] (header names lowercase). */
-    fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean
+    /**
+     * True if the gateway must wait for [translate] and answer non-200 when it fails, so the vendor delivers again
+     * (Circle: a lost transaction update is a wrong balance). False answers `200` at once and translates afterwards.
+     */
+    val answersAfterTranslation: Boolean get() = false
+
+    /**
+     * True if [body] carries a valid signature in [headers] (header names lowercase). Suspends because a vendor may
+     * have to fetch the public key named in the headers the first time it sees it (Circle).
+     */
+    suspend fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean
 
     /** When the vendor says this was sent, for the replay window; null if it doesn't say. */
     fun sentAt(headers: Map<String, String>, body: ByteArray): Instant?

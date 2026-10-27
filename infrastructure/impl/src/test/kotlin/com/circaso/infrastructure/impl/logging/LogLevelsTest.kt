@@ -23,6 +23,7 @@ class LogLevelsTest {
             "LOG_LEVEL_MESSAGING",
             "LOG_LEVEL_ASSISTANT",
             "LOG_LEVEL_INTEGRATIONS",
+            "LOG_LEVEL_CIRCLE",
             "LOG_LEVEL_EVENTS",
             "LOG_LEVEL_SCHEDULER",
             "LOG_LEVEL_DATABASE",
@@ -119,6 +120,16 @@ class LogLevelsTest {
         assertEquals(Level.ERROR, levelOf("com.circaso.messaging.domain.usecases.SendMessage"))
         assertEquals(Level.OFF, levelOf("com.circaso.assistant.domain.usecases.StartTurn"))
         assertEquals(Level.WARN, levelOf("com.circaso.app.Main"), "anything else of Circaso follows LOG_LEVEL")
+    }
+
+    @Test
+    fun `LOG_LEVEL_CIRCLE moves Circle alone and otherwise follows LOG_LEVEL_INTEGRATIONS`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL_INTEGRATIONS" to "ERROR")
+        assertEquals(Level.ERROR, levelOf("com.circaso.integrations.impl.circle.CircleCustody"))
+
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL_INTEGRATIONS" to "ERROR", "LOG_LEVEL_CIRCLE" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.integrations.impl.circle.CircleWebhook"))
+        assertEquals(Level.ERROR, levelOf("com.circaso.integrations.impl.resend.ResendEmail"))
     }
 
     @Test

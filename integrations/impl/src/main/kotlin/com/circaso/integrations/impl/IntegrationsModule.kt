@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
 import com.circaso.integrations.api.LanguageModel
@@ -16,11 +17,18 @@ import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
+import com.circaso.integrations.impl.circle.CircleClient
+import com.circaso.integrations.impl.circle.CircleCustody
+import com.circaso.integrations.impl.circle.CircleSettings
+import com.circaso.integrations.impl.circle.CircleWebhook
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
+import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeLanguageModel
 import com.circaso.integrations.impl.dev.FakeLiveSpeech
@@ -31,6 +39,7 @@ import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeSpeechToText
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
+import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
@@ -51,13 +60,17 @@ import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
+import org.koin.core.module.Module
+import org.koin.dsl.bind
 import org.koin.dsl.module
+import java.time.Clock
 import java.time.Duration
 
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
- * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`).
+ * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
@@ -240,6 +253,20 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        single<StablecoinCustody> {
+            pick(
+                "custody",
+                providers =
+                    mapOf(
+                        "log" to { LogCustody() },
+                        "fake" to { FakeCustody() },
+                        "circle" to { CircleCustody(get<CircleClient>(), get<CircleSettings>(), Clock.systemUTC()) },
+                    ),
+            )
+        }
+        if (integrations.string("custody.provider", "log") == "circle") {
+            circle(integrations.section("custody"), secrets)
+        }
         single<LiveSpeech> {
             pick(
                 "live-tts",
@@ -263,6 +290,33 @@ fun integrationsModule(config: Config, secrets: Secrets) =
             )
         }
     }
+
+/**
+ * Circle needs the secret `CIRCLE_API_KEY` (testnet and mainnet keys are separate), `INTEGRATIONS_CUSTODY_APP_ID`
+ * (handed to the phone's SDK), `INTEGRATIONS_CUSTODY_USDC_TOKEN_ADDRESS` (USDC's contract on the chain) and
+ * optionally `INTEGRATIONS_CUSTODY_BLOCKCHAIN` (default `BASE-SEPOLIA`) and `INTEGRATIONS_CUSTODY_ACCOUNT_TYPE`
+ * (default `SCA`). The custody calls and the webhook share one client. The webhook's listener,
+ * [CustodyNotifications], is bound by the wallet module and looked up on each delivery, so integrations never depend
+ * on the wallet.
+ */
+private fun Module.circle(custody: Config, secrets: Secrets) {
+    single {
+        CircleSettings(
+            appId = custody.requireString("app-id"),
+            blockchain = custody.string("blockchain", "BASE-SEPOLIA"),
+            accountType = custody.string("account-type", "SCA"),
+            usdcTokenAddress = custody.requireString("usdc-token-address"),
+        )
+    }
+    single {
+        CircleClient(
+            http = get<HttpClients>().named("circle") { baseUrl = "https://api.circle.com" },
+            apiKey = secrets.require("circle.api-key"),
+        )
+    }
+    single { CircleWebhook(get(), get(), notifications = { getOrNull<CustodyNotifications>() }) } bind
+        WebhookVendor::class
+}
 
 /**
  * Resend needs `RESEND_API_KEY`, `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified domain) and

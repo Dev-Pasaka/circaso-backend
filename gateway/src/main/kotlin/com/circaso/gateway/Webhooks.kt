@@ -15,6 +15,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
@@ -28,8 +29,10 @@ private val SEEN_FOR: Duration = Duration.ofDays(7)
 /**
  * `POST /v1/hooks/{vendor}`: the gateway's guards, then the vendor's own translation. The guards are the vendor's
  * signature, a timestamp window against replays, a record of delivery ids so a repeat is processed once, and an
- * IP allowlist where the vendor publishes one. The answer is `200` at once; the verified body is handed to the
- * vendor's translation afterwards, so a slow translation never makes the vendor retry.
+ * IP allowlist where the vendor publishes one. The answer is `200` at once and the verified body is handed to the
+ * vendor's translation afterwards, so a slow translation never makes the vendor retry; except for a vendor that
+ * [WebhookVendor.answersAfterTranslation] (Circle), which waits for it and answers the error when it fails, so the
+ * vendor delivers again.
  */
 fun Route.webhookRoutes(
     vendors: List<WebhookVendor>,
@@ -70,29 +73,26 @@ fun Route.webhookRoutes(
                     return@post
                 }
             }
-            val duplicate =
-                vendor.deliveryId(headers, body)?.let { id -> !redis.setIfAbsent("hook:$name:$id", "1", SEEN_FOR) }
-                    ?: false
+            val seenKey = vendor.deliveryId(headers, body)?.let { id -> "hook:$name:$id" }
+            val duplicate = seenKey?.let { !redis.setIfAbsent(it, "1", SEEN_FOR) } ?: false
 
-            call.respondDefault(DefaultResponse<Unit>(HttpStatusCode.OK.value, true, "Received"))
-            if (!duplicate) {
-                scope.launch {
-                    val result =
-                        runCatching {
-                            vendor.translate(
-                                body,
-                            )
-                        }.getOrElse { Resource.error(SharedError.Internal, it) }
-                    if (result is Resource.Error) {
-                        log.warn(
-                            "webhook not translated: vendor={} code={}",
-                            name,
-                            result.error.code,
-                            result.cause,
-                        )
-                    }
-                }
+            if (duplicate) {
+                call.respondDefault(RECEIVED)
+                return@post
             }
+            if (!vendor.answersAfterTranslation) {
+                call.respondDefault(RECEIVED)
+                scope.launch { translate(vendor, body) }
+                return@post
+            }
+            // The vendor delivers again until it gets a 2xx, so a failure must not leave the id marked as seen.
+            val result = translate(vendor, body)
+            if (result is Resource.Error) {
+                seenKey?.let { redis.delete(it) }
+                call.respondDefault(result.error.toResponse())
+                return@post
+            }
+            call.respondDefault(RECEIVED)
         }.docs<NoBody, NoBody>(
             "Receive a vendor's callback",
             "Webhooks",
@@ -102,10 +102,25 @@ fun Route.webhookRoutes(
                     "carry the vendor's signature, " +
                     "a timestamp inside a 5-minute window and a delivery id not seen before, and come from the " +
                     "vendor's allowlisted address where it publishes one. " +
-                    "A repeated delivery is acknowledged but processed once. Answers `200` at once; the body is " +
-                    "handled afterwards.",
+                    "A repeated delivery is acknowledged but processed once. Answers `200` at once and handles the " +
+                    "body afterwards, except for `circle`: it waits, and answers the error when the update can't be " +
+                    "applied, so Circle delivers it again.",
         )
     }
+}
+
+private val RECEIVED = DefaultResponse<Unit>(HttpStatusCode.OK.value, true, "Received")
+
+private suspend fun translate(vendor: WebhookVendor, body: ByteArray): Resource<Unit> {
+    val result =
+        runCatching { vendor.translate(body) }.getOrElse {
+            if (it is CancellationException) throw it
+            Resource.error(SharedError.Internal, it)
+        }
+    if (result is Resource.Error) {
+        log.warn("webhook not translated: vendor={} code={}", vendor.name, result.error.code, result.cause)
+    }
+    return result
 }
 
 private fun DomainError.toResponse(): DefaultResponse<Unit> = toDefaultResponse()

@@ -26,11 +26,15 @@ import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechEvent
 import com.circaso.integrations.api.SpeechToText
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.WebhookVendor
+import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
+import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -44,6 +48,7 @@ import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -309,5 +314,61 @@ class IntegrationsModuleTest {
                 ).get<PhoneVerificationGateway>()
             }
         assertTrue("twilio" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() })
+    }
+
+    @Test
+    fun `custody defaults to log, whose wallets appear at once, and binds no webhook`() =
+        runTest {
+            val koin = koin()
+            val custody = koin.get<StablecoinCustody>()
+            assertIs<LogCustody>(custody)
+            custody.createUser("u-1")
+            assertTrue((custody.createWallet("u-1", UUID.randomUUID()) as Resource.Success).data.needsSignature)
+            assertEquals(1, (custody.wallets("u-1") as Resource.Success).data.size)
+            assertTrue(koin.getAll<WebhookVendor>().isEmpty())
+        }
+
+    @Test
+    fun `circle needs its key, app id and USDC address, then serves custody and the webhook on one client`() {
+        val e =
+            assertFailsWith<Exception> {
+                koin(
+                    "integrations.custody.provider" to "circle",
+                    "integrations.custody.usdc-token-address" to "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                ).get<StablecoinCustody>()
+            }
+        val messages = generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() }
+        assertTrue("circle.api-key" in messages || "app-id" in messages, messages)
+        stopKoin()
+
+        val clients = FakeHttpClients { _ -> respondOk() }
+        val koin =
+            startKoin {
+                modules(
+                    integrationsModule(
+                        MapConfig(
+                            mapOf(
+                                "integrations.custody.provider" to "circle",
+                                "integrations.custody.app-id" to "app-1",
+                                "integrations.custody.usdc-token-address" to
+                                    "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                            ),
+                        ),
+                        object : Secrets {
+                            override fun get(name: String): String? =
+                                "TEST_API_KEY:a:b".takeIf {
+                                    name ==
+                                        "circle.api-key"
+                                }
+                        },
+                    ),
+                    module { single<HttpClients> { clients } },
+                )
+            }.koin
+
+        assertIs<CircleCustody>(koin.get<StablecoinCustody>())
+        assertEquals(listOf("circle"), koin.getAll<WebhookVendor>().map { it.name })
+        assertEquals(listOf("circle"), clients.names)
+        assertEquals("https://api.circle.com", clients.configs.getValue("circle").baseUrl)
     }
 }

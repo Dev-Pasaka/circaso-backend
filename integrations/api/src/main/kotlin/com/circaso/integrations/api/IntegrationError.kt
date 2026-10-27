@@ -24,6 +24,26 @@ sealed class IntegrationError(override val code: String, override val message: S
             ErrorKind.INVALID,
         )
 
+    /** Custody: the user typed a wrong PIN too often and PIN entry is locked for a while. */
+    class PinLocked :
+        IntegrationError("integrations.custody_pin_locked", "PIN entry is locked for now.", ErrorKind.INVALID)
+
+    /** Custody: the wallet holds less than the transfer needs. */
+    class InsufficientFunds :
+        IntegrationError(
+            "integrations.custody_insufficient_funds",
+            "The wallet doesn't hold enough for this transfer.",
+            ErrorKind.INVALID,
+        )
+
+    /** Custody: the destination isn't a valid address on the wallet's chain. */
+    class AddressInvalid :
+        IntegrationError(
+            "integrations.custody_address_invalid",
+            "The address isn't valid on this chain.",
+            ErrorKind.INVALID,
+        )
+
     /** The configured provider has no implementation yet; only placeholders return this. */
     class NotImplemented(contract: String, provider: String) :
         IntegrationError(

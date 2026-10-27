@@ -5,6 +5,8 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.DeviceId
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
@@ -21,6 +23,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.routing.get
@@ -29,9 +32,12 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
@@ -125,6 +131,34 @@ class GatewayTest {
 
     private val hits = AtomicInteger()
 
+    private val translated = AtomicInteger()
+
+    @Volatile
+    private var failingTranslations = 0
+
+    /** A vendor like Circle: the answer waits for the translation, and a failure must reach the vendor. */
+    private val waitingVendor =
+        object : WebhookVendor {
+            override val name = "waiting"
+            override val answersAfterTranslation = true
+
+            override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray) =
+                headers["x-signature"] == "good"
+
+            override fun sentAt(headers: Map<String, String>, body: ByteArray): Instant? = null
+
+            override fun deliveryId(headers: Map<String, String>, body: ByteArray) = headers["x-delivery"]
+
+            override suspend fun translate(body: ByteArray): Resource<Unit> {
+                if (failingTranslations > 0) {
+                    failingTranslations -= 1
+                    return Resource.error(IntegrationError.Unavailable("Wallet"))
+                }
+                translated.incrementAndGet()
+                return Resource.success(Unit)
+            }
+        }
+
     private fun gatewayApp(config: GatewayConfig = GatewayConfig(), block: suspend ApplicationTestBuilder.() -> Unit) =
         testApplication {
             val redis = MemoryRedis()
@@ -158,6 +192,7 @@ class GatewayTest {
                             ) { call.respondDefault(DefaultResponse(status = true, data = "list")) }
                         }
                         post("/auth/nonce") { call.respondDefault(DefaultResponse(status = true, data = "n")) }
+                        webhookRoutes(listOf(waitingVendor), config, redis, CoroutineScope(Dispatchers.Unconfined))
                     }
                 }
             }
@@ -273,5 +308,29 @@ class GatewayTest {
                     header("Authorization", "Bearer app")
                 }
             assertEquals(HttpStatusCode.OK, current.status)
+        }
+
+    @Test
+    fun `a vendor that waits gets the failure, delivers again, and is processed once`() =
+        gatewayApp {
+            suspend fun deliver(signature: String = "good") =
+                client.post("/v1/hooks/waiting") {
+                    header("x-signature", signature)
+                    header("x-delivery", "notification-1")
+                    setBody("{}")
+                }
+
+            assertEquals(HttpStatusCode.Unauthorized, deliver(signature = "bad").status)
+
+            failingTranslations = 1
+            val failed = deliver()
+            assertEquals(HttpStatusCode.BadGateway, failed.status)
+            assertTrue("integrations.unavailable" in failed.bodyAsText())
+            assertEquals(0, translated.get())
+
+            assertEquals(HttpStatusCode.OK, deliver().status, "the failed delivery wasn't marked as seen")
+            assertEquals(1, translated.get())
+            assertEquals(HttpStatusCode.OK, deliver().status)
+            assertEquals(1, translated.get(), "a repeat after success is acknowledged, not processed")
         }
 }
