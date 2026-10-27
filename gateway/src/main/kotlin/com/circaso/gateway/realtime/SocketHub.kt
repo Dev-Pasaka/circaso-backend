@@ -301,9 +301,9 @@ class SocketHub(
 
     /**
      * Reads the auth frame. Anything but an auth frame is refused with `auth required`; an auth frame whose `last`
-     * isn't a list of `{module, seq}` with whole numbers, or names a module twice, with `invalid last`, so the phone
-     * can tell a bug in its own frame from a missing token; a token that doesn't verify as an app token with
-     * `unauthorized`.
+     * isn't a list of `{module, seq}` with whole numbers of 0 or more, or names a module twice, with `invalid last`,
+     * so the phone can tell a bug in its own frame from a missing token; a token that doesn't verify as an app token
+     * with `unauthorized`.
      */
     private suspend fun WebSocketSession.authenticate(): Auth {
         val text = firstText() ?: return Auth.Gone
@@ -325,6 +325,8 @@ class SocketHub(
     private fun parseLast(text: String): Map<String, Long>? {
         val last =
             runCatching { CircasoJson.decodeFromString(AuthFrame.serializer(), text) }.getOrNull()?.last ?: return null
+        // A seq counts up from 0, so a negative one is as malformed as a missing one.
+        if (last.any { it.seq < 0 }) return null
         val byModule = last.associate { it.module to it.seq }
         return byModule.takeIf { it.size == last.size }
     }

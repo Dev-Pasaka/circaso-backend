@@ -42,7 +42,7 @@ fun Route.recoveryController(recovery: RecoveryService) {
             }.docs<RecoveryRequest, RecoveryResponse>(
                 "I15 · Open a support case for a lost Google or Apple login",
                 TAG,
-                listOf("identity.recovery_not_eligible", "request.rate_limited"),
+                listOf("identity.phone_invalid", "identity.recovery_not_eligible", "request.rate_limited"),
                 notes = "Scope: `onboarding`.",
             )
 

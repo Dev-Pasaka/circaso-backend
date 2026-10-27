@@ -225,7 +225,7 @@ When the server closes the socket it says why:
 | Code | Reason | Meaning |
 | --- | --- | --- |
 | 1008 | `auth required` | The first frame wasn't an auth frame, or didn't arrive within 10 seconds |
-| 1008 | `invalid last` | The auth frame's `last` isn't a list of `{"module","seq"}` with whole numbers, such as `[{"module":"users","seq":1042}]`, or names a module twice |
+| 1008 | `invalid last` | The auth frame's `last` isn't a list of `{"module","seq"}` with whole numbers of 0 or more, such as `[{"module":"users","seq":1042}]`, or names a module twice |
 | 1008 | `unauthorized` | The access token is expired, revoked or not an app token: refresh it, then reconnect |
 | 1008 | `session revoked` | Sent after a `system` / `session.revoked` frame: this session ended (signed out, a new phone, or the account closed) |
 | 1009 | `Frame is too big: …` | A frame over 64 KB |

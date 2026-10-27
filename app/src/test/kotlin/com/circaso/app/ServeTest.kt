@@ -204,6 +204,11 @@ class ServeTest {
             assertEquals("VERIFY_PHONE", signIn["next"]!!.jsonPrimitive.content)
             val onboarding = signIn["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content
 
+            // identity.md's own code for a number that isn't E.164, not a generic request.malformed
+            val badNumber = client.call("/v1/auth/phone/start", """{"phone":"0712 345 678"}""", onboarding)
+            assertEquals(HttpStatusCode.BadRequest, badNumber.status)
+            assertEquals("identity.phone_invalid", json(badNumber)["code"]!!.jsonPrimitive.content)
+
             val started =
                 json(
                     client.call("/v1/auth/phone/start", """{"phone":"$number"}""", onboarding),

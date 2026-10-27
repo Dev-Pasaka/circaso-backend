@@ -27,5 +27,5 @@ dependencies {
     testImplementation(libs.ktor.client.websockets)
     testImplementation(libs.ktor.server.content.negotiation)
     testImplementation(libs.kotlinx.coroutines.test)
-    testRuntimeOnly(libs.logback.classic)
+    testImplementation(libs.logback.classic) // RequestLogTest reads the log events
 }
