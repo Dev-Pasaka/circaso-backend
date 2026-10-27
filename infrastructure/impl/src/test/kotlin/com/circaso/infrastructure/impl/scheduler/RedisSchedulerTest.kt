@@ -1,6 +1,8 @@
 package com.circaso.infrastructure.impl.scheduler
 
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.impl.TestRedis
+import com.circaso.infrastructure.impl.registerAll
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
 import io.lettuce.core.SetArgs
 import kotlinx.coroutines.CoroutineScope
@@ -146,5 +148,19 @@ class RedisSchedulerTest {
             scheduler.close()
 
             assertTrue(attempts.get() >= 2, "should have retried, attempts=${attempts.get()}")
+        }
+
+    @Test
+    fun `a module's bound ScheduledJob is registered when infrastructure starts, and runs`() =
+        runBlocking<Unit> {
+            val runs = AtomicInteger()
+            val scheduler = RedisScheduler(redis, nodeId = "a")
+            scheduler.registerAll(listOf(ScheduledJob(name, Duration.ofMillis(500)) { runs.incrementAndGet() }))
+            scheduler.start(scope)
+
+            delay(1200)
+            scheduler.close()
+
+            assertTrue(runs.get() >= 1, "the registered job should have run, runs=${runs.get()}")
         }
 }

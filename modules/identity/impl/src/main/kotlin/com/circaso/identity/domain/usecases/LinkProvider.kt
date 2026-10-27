@@ -1,11 +1,14 @@
 package com.circaso.identity.domain.usecases
 
+import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.errors.IdentityError
 import com.circaso.identity.domain.models.LinkProviderCommand
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
 import com.circaso.identity.domain.ports.IdentityCache
+import com.circaso.identity.domain.ports.Transactor
+import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.IdentityStore
 import com.circaso.identity.domain.repositories.ProviderRepository
@@ -14,10 +17,15 @@ import com.circaso.integrations.api.SocialSignIn
 import com.circaso.shared.Resource
 import java.time.Clock
 
-/** I12: adds a Google or Apple login to the account. A login that belongs to another account is refused. */
+/**
+ * I12: adds a Google or Apple login to the account. A login that belongs to another account is refused: the unique
+ * `(provider, subject)` index settles two accounts claiming it at once.
+ */
 class LinkProvider(
+    private val transactor: Transactor,
     private val cache: IdentityCache,
     private val social: SocialSignIn,
+    private val accounts: AccountRepository,
     private val providers: ProviderRepository,
     private val store: IdentityStore,
     private val clock: Clock,
@@ -41,26 +49,22 @@ class LinkProvider(
                 }
             }
         val userId = command.principal.userId
-        if (!providers.claim(
-                command.provider,
-                identity.subject,
-                userId,
-            )
-        ) {
-            return Resource.error(IdentityError.ProviderInUse)
-        }
-        store.commit(
-            Changes(
-                providerLinks =
-                    listOf(
-                        ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant()),
-                    ),
-                securityEvents =
-                    listOf(
-                        SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name),
-                    ),
-            ),
-        )
-        return Resource.success(Unit)
+        val link = ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant())
+        val linked =
+            try {
+                transactor.run("providers.link") {
+                    accounts.lock(userId)
+                    val claimed = providers.claim(link)
+                    if (claimed) {
+                        val event =
+                            SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name)
+                        store.write(Changes(securityEvents = listOf(event)))
+                    }
+                    claimed
+                }
+            } catch (_: ClaimLost) {
+                false
+            }
+        return if (linked) Resource.success(Unit) else Resource.error(IdentityError.ProviderInUse)
     }
 }

@@ -537,7 +537,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 | Schema migrations | Flyway (over JDBC, the only JDBC in the system), one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
 | Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`) |
 | Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
-| Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
+| Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `ScheduledJob(name, interval, job)` bound in the module's Koin module, which infrastructure registers at start (run on the jobs pool); `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
 | Files | Cloudflare R2 (S3 compatible) | `ObjectStore` | A bucket prefix per module; uploads by pre-signed URL |
 | Outbound HTTP | Ktor client with timeouts, retries, circuit breaker, tracing | `HttpClients.named("africastalking")` | A named client per vendor, used by integrations |
 | Configuration and secrets | Typed config, environment secrets now, a key store later | `Config`, `Secrets` | Own config section per module and vendor |

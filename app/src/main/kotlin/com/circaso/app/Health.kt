@@ -10,8 +10,10 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
 /** `ready` or `not_ready` (`up` on `/health/live`), with each connection's own result (decision 2026-10-27: a list). */
 @Serializable
@@ -30,6 +32,7 @@ private const val TAG = "Health"
  * Neither is logged by the request log; metrics count them.
  */
 fun Route.healthRoutes(checks: List<HealthCheck>) {
+    val transitions = HealthTransitions()
     route("/health") {
         get("live") {
             call.respond(HttpStatusCode.OK, HealthReport("up"))
@@ -47,10 +50,12 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
                     val outcome =
                         try {
                             check.check()
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (e: Exception) {
-                            log.warn("Health check '${check.name}' threw", e)
                             Resource.Error(SharedError.Internal, e)
                         }
+                    transitions.record(check.name, outcome)
                     HealthCheckStatus(check.name, if (outcome is Resource.Success) "up" else "down")
                 }
             val ready = report.all { it.status == "up" }
@@ -68,5 +73,26 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
                     "`status: not_ready` and the failing check marked `down` otherwise. " +
                     "Load balancers take the instance out of rotation when this fails. No token needed.",
         )
+    }
+}
+
+/**
+ * Logs a check only when its state changes: one WARN line when it goes down (with the exception's class, never its
+ * message or stack, which can carry a host or a value), one INFO line when it comes back. A load balancer probes every
+ * few seconds, so logging every failed probe would bury everything else while a dependency is down.
+ */
+internal class HealthTransitions {
+    private val up = ConcurrentHashMap<String, Boolean>()
+
+    fun record(name: String, outcome: Resource<Unit>) {
+        val isUp = outcome is Resource.Success
+        val was = up.put(name, isUp)
+        if (was == isUp || (was == null && isUp)) return
+        if (isUp) {
+            log.info("Health check '$name' is up again")
+        } else {
+            val reason = (outcome as Resource.Error).cause?.let { it::class.simpleName } ?: outcome.error.code
+            log.warn("Health check '$name' is down ($reason)")
+        }
     }
 }

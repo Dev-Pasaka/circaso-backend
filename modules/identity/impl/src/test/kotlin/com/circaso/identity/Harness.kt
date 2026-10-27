@@ -15,6 +15,12 @@ import com.circaso.identity.domain.models.StartPhoneCommand
 import com.circaso.identity.domain.models.VerifyCodeCommand
 import com.circaso.identity.domain.ports.AttestationMode
 import com.circaso.identity.domain.ports.AttestationVerifier
+import com.circaso.identity.domain.ports.Transactor
+import com.circaso.identity.domain.repositories.AccountRepository
+import com.circaso.identity.domain.repositories.DeviceRepository
+import com.circaso.identity.domain.repositories.IdentityStore
+import com.circaso.identity.domain.repositories.ProviderRepository
+import com.circaso.identity.domain.repositories.SessionRepository
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
@@ -163,12 +169,26 @@ class FakeVendorVerification : PhoneVerificationGateway {
         )
 }
 
+/** The storage ports the use cases need: all [MemoryStore] by default, or the PostgreSQL data layer. */
+class IdentityPorts(
+    val transactor: Transactor,
+    val accounts: AccountRepository,
+    val providers: ProviderRepository,
+    val devices: DeviceRepository,
+    val sessions: SessionRepository,
+    val store: IdentityStore,
+)
+
+fun MemoryStore.ports() = IdentityPorts(this, this, this, this, this, this)
+
 class Harness(
     attestation: AttestationMode = AttestationMode.LOG,
     attested: Boolean = true,
     vendor: PhoneVerificationGateway = NoVendorVerification,
+    ports: IdentityPorts? = null,
 ) {
     val store = MemoryStore()
+    private val p = ports ?: store.ports()
     val cache = MemoryCache()
     val bus = MemoryBus()
     val sms = RecordingSms()
@@ -182,9 +202,9 @@ class Harness(
     private val tokens = Ed25519Tokens(secrets, local = true, clock = clock)
     private val phones = KeyedPhoneProtection(secrets, local = true)
     private val keys = EcdsaDeviceKeyVerifier()
-    private val opener = SessionOpener(tokens, store, cache, clock)
+    private val opener = SessionOpener(tokens, p.sessions, cache, clock)
     private val proofs = DeviceProofs(keys, clock, config.proofWindow)
-    private val ownership = PhoneOwnership(store, store, cache, phones, clock)
+    private val ownership = PhoneOwnership(p.transactor, p.accounts, p.store, cache, phones, clock)
     private val attestationVerifier =
         object : AttestationVerifier {
             override suspend fun verify(
@@ -196,16 +216,29 @@ class Harness(
 
     val issueNonce = IssueNonce(cache)
     val signInWithProvider =
-        SignInWithProvider(cache, FakeSocial(), store, store, store, store, opener, proofs, tokens, clock)
-    val startPhone = StartPhoneVerification(cache, store, phones, sms, config, vendor)
-    val verifyCode = VerifyPhoneCode(cache, store, phones, ownership, config, vendor)
-    val verifyCarrier = VerifyCarrierToken(FakeCarrier(), store, ownership)
+        SignInWithProvider(
+            p.transactor,
+            cache,
+            FakeSocial(),
+            p.accounts,
+            p.providers,
+            p.devices,
+            p.store,
+            opener,
+            proofs,
+            tokens,
+            clock,
+        )
+    val startPhone = StartPhoneVerification(cache, p.accounts, phones, sms, config, vendor)
+    val verifyCode = VerifyPhoneCode(cache, p.accounts, phones, ownership, config, vendor)
+    val verifyCarrier = VerifyCarrierToken(FakeCarrier(), p.accounts, ownership)
     val registerDevice =
         RegisterDevice(
-            store,
-            store,
-            store,
-            store,
+            p.transactor,
+            p.accounts,
+            p.devices,
+            p.providers,
+            p.store,
             cache,
             phones,
             keys,
@@ -216,15 +249,16 @@ class Harness(
             config,
             clock,
         )
-    val refresh = RefreshSession(store, store, store, store, cache, opener, proofs)
-    val signOut = SignOut(store, store, cache, bus)
+    val refresh = RefreshSession(p.transactor, p.sessions, p.accounts, p.devices, p.store, cache, opener, proofs)
+    val signOut = SignOut(p.transactor, p.sessions, p.store, cache, bus)
     val verifyToken = VerifyAccessToken(tokens, cache)
-    val overview = GetSecurityOverview(store, store, store)
-    val link = LinkProvider(cache, FakeSocial(), store, store, clock)
-    val unlink = UnlinkProvider(store, store)
-    val delete = RequestAccountDeletion(store, store, emptyList(), store, cache, bus)
-    val recovery = RequestSupportRecovery(store, store, store, cache, phones, email)
-    val release = RequestPhoneRelease(cache, store, store, phones, store, email, config, clock)
+    val overview = GetSecurityOverview(p.accounts, p.providers, p.devices)
+    val link = LinkProvider(p.transactor, cache, FakeSocial(), p.accounts, p.providers, p.store, clock)
+    val unlink = UnlinkProvider(p.transactor, p.accounts, p.providers, p.store)
+    val delete =
+        RequestAccountDeletion(p.transactor, p.accounts, p.sessions, emptyList(), p.store, cache, bus, config, clock)
+    val recovery = RequestSupportRecovery(p.accounts, p.providers, p.store, cache, phones, email)
+    val release = RequestPhoneRelease(cache, p.accounts, p.providers, phones, p.store, email, config, clock)
 
     suspend fun nonce(): String = issueNonce().getOrNull()!!
 

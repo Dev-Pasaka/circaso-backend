@@ -333,7 +333,7 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 | `POST /v1/account/providers`<br>**I12** Link a Google or Apple login | `app` | LinkProviderRequest → NoBody | **READY** | Link Google or Apple. Errors: `identity.provider_in_use`, `identity.nonce_invalid`. |
 | `DELETE /v1/account/providers/{provider}`<br>**I12** Unlink a login, only if the other one stays | `app` | — → NoBody | **READY** | Only while the other login stays. Errors: `identity.provider_last`. |
 | `GET /v1/account/security-log`<br>**I13** Security activity, newest first | `app` | — → SecurityLogResponse | **READY** | Query: `cursor`, `limit` (default 50, at most 200). Paged. |
-| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion. What finishes it, and how long it stays recoverable, is not decided; revoking Apple access at deletion is not built. The wallet-empty guard is a placeholder (there is no wallet yet). Errors: `identity.wallet_not_empty`. |
+| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion: the account turns `DELETED` at once (sign-in answers `identity.account_deleted`) and stays recoverable for 30 days; then the server deletes its data and every module deletes that user's data. Revoking Apple access at deletion is not built. The wallet-empty guard is a placeholder (there is no wallet yet). Errors: `identity.wallet_not_empty`. |
 
 ### Account recovery
 

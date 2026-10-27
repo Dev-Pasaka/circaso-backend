@@ -1,5 +1,8 @@
 package com.circaso.app
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HealthCheck
 import com.circaso.shared.DomainError
@@ -12,9 +15,11 @@ import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.slf4j.LoggerFactory
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
+import java.net.ConnectException
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -105,6 +110,40 @@ class AppTest {
                 body,
             )
         }
+
+    @Test
+    fun `a check that goes down and comes back is logged once each way, in one line with no stack trace`() {
+        val captured = ListAppender<ILoggingEvent>().also { it.start() }
+        val logger = LoggerFactory.getLogger("com.circaso.app.Health") as Logger
+        logger.addAppender(captured)
+        try {
+            var postgresUp = false
+            val postgres =
+                check("postgres") {
+                    if (!postgresUp) throw ConnectException("refused")
+                    Resource.success(Unit)
+                }
+            testApplication {
+                application { circasoModule(AppConfig(), listOf(postgres)) }
+
+                repeat(3) { client.get("/health/ready") }
+                postgresUp = true
+                repeat(3) { client.get("/health/ready") }
+            }
+
+            val lines = captured.list.map { "${it.level} ${it.formattedMessage}" }
+            assertEquals(
+                listOf(
+                    "WARN Health check 'postgres' is down (ConnectException)",
+                    "INFO Health check 'postgres' is up again",
+                ),
+                lines,
+            )
+            assertTrue(captured.list.all { it.throwableProxy == null }, "no stack trace")
+        } finally {
+            logger.detachAppender(captured)
+        }
+    }
 
     @Test
     fun `the app answers unknown routes in the envelope`() =

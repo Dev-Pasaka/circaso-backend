@@ -1,5 +1,6 @@
 package com.circaso.app
 
+import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
@@ -31,6 +32,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.scylladb.ScyllaDBContainer
@@ -50,7 +52,7 @@ import kotlin.test.assertTrue
 
 /**
  * `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis, ScyllaDB and
- * PostgreSQL (infrastructure's test container, started with the server's own init scripts).
+ * PostgreSQL (infrastructure's test container, started with the server's own init scripts, and migrated first).
  */
 class ServeTest {
     private companion object {
@@ -64,6 +66,14 @@ class ServeTest {
             ScyllaDBContainer(
                 DockerImageName.parse("scylladb/scylla:2026.1"),
             ).also { it.start() }
+
+        init {
+            // serve never migrates: as the deploy's Migrate step does, every module's Flyway scripts run first
+            koinApplication { modules(businessModules(EnvConfig(emptyMap()))) }
+                .koin
+                .getAll<DatabaseModuleSpec>()
+                .forEach(TestPostgres::migrate)
+        }
     }
 
     private fun env(extra: Map<String, String> = emptyMap()) =
