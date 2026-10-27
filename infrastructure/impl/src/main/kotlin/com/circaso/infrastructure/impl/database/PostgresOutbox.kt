@@ -3,6 +3,7 @@ package com.circaso.infrastructure.impl.database
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
+import com.circaso.infrastructure.api.OutboxPage
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.shared.EventEnvelope
@@ -25,6 +26,7 @@ import org.slf4j.LoggerFactory
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.database.Outbox")
 
@@ -65,31 +67,45 @@ private object TenSecondsAgo : Expression<Instant>() {
  * Each row is decoded on its own. A row whose payload no longer decodes (a poison row) would otherwise fail every
  * sweep and hold back every row behind it, so it is skipped: logged once at ERROR with its event id and producer
  * (never its content, which can hold anything the event carried) and left out of later reads. It keeps no stamp, so
- * it stays visible to an operator until its partition is dropped after 7 days. The skip list is this node's, in
- * memory: a node that takes over the relay logs the row once more and skips it from then on.
+ * it stays visible to an operator until its partition is dropped after 7 days. What is skipped is this node's, in
+ * memory: a node that takes over the relay logs each row once more and skips it from then on.
+ *
+ * At most [maxPoisoned] rows are left out of the query (it binds them all). Past that, one ERROR line says so
+ * (`outbox.poison-cap`); each further poison row is still logged once, but is read again by every sweep and takes a
+ * place in its window.
  */
-internal class PostgresOutboxStore(private val database: Database) : OutboxStore {
+internal class PostgresOutboxStore(private val database: Database, private val maxPoisoned: Int = MAX_POISONED) :
+    OutboxStore {
     private val outbox = OutboxTable(database.schema)
-    private val poisoned: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+
+    /** Left out of every read: at most [maxPoisoned]. */
+    private val skipped: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+
+    /** Every poison row this node has logged, so each is logged once. */
+    private val logged: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+    private val capReported = AtomicBoolean(false)
 
     override val producer: String = database.schema
 
-    override suspend fun unpublished(limit: Int): List<EventEnvelope> {
-        val skipped = poisoned.take(MAX_POISONED)
+    override suspend fun unpublished(limit: Int): List<EventEnvelope> = page(limit).events
+
+    override suspend fun page(limit: Int): OutboxPage {
+        val leftOut = skipped.toList()
         val rows =
             database.tx("outbox.unpublished") {
                 outbox
                     .select(outbox.eventId, outbox.payload)
                     .where {
                         var condition = outbox.publishedAt.isNull() and (outbox.occurredAt less TenSecondsAgo)
-                        if (skipped.isNotEmpty()) condition = condition and (outbox.eventId notInList skipped)
+                        if (leftOut.isNotEmpty()) condition = condition and (outbox.eventId notInList leftOut)
                         condition
                     }.orderBy(outbox.occurredAt to SortOrder.ASC)
                     .limit(limit)
                     .toList()
                     .map { it[outbox.eventId] to it[outbox.payload] }
             }
-        return rows.mapNotNull { (eventId, payload) -> decode(eventId, payload) }
+        val events = rows.mapNotNull { (eventId, payload) -> decode(eventId, payload) }
+        return OutboxPage(events, full = rows.size >= limit)
     }
 
     private fun decode(eventId: UUID, payload: String): EventEnvelope? =
@@ -97,16 +113,28 @@ internal class PostgresOutboxStore(private val database: Database) : OutboxStore
             EventEnvelope.fromJson(payload)
         } catch (e: IllegalArgumentException) {
             // SerializationException is one; its message can quote the payload, so neither it nor the cause is logged.
-            if (poisoned.size < MAX_POISONED && poisoned.add(eventId)) {
-                log.error(
-                    "undecodable outbox row skipped",
-                    kv("kind", "outbox.poison"),
-                    kv("producer", producer),
-                    kv("eventId", eventId),
-                )
-            }
+            poisoned(eventId)
             null
         }
+
+    private fun poisoned(eventId: UUID) {
+        if (!logged.add(eventId)) return
+        log.error(
+            "undecodable outbox row skipped",
+            kv("kind", "outbox.poison"),
+            kv("producer", producer),
+            kv("eventId", eventId),
+        )
+        if (skipped.size < maxPoisoned) {
+            skipped += eventId
+        } else if (capReported.compareAndSet(false, true)) {
+            log.error(
+                "too many undecodable outbox rows to leave out; the rest are read by every sweep",
+                kv("kind", "outbox.poison-cap"),
+                kv("producer", producer),
+            )
+        }
+    }
 
     override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
         database.tx("outbox.stamp") {
@@ -117,7 +145,7 @@ internal class PostgresOutboxStore(private val database: Database) : OutboxStore
     }
 
     private companion object {
-        /** How many poison rows a node remembers; a sweep's query binds them all, so the list stays short. */
+        /** How many poison rows a node leaves out of its reads; the query binds them all, so the list stays short. */
         const val MAX_POISONED = 1_000
     }
 }

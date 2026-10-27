@@ -21,6 +21,7 @@ import java.time.Instant
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
@@ -474,6 +475,28 @@ class AssistantTest {
             h.start(ask("again"))
             h.deleteData(AccountDeleted(me)).data()
             assertTrue(h.memory.messages.isEmpty())
+        }
+
+    @Test
+    fun `a deleted account's parked turns and counters leave Redis, only once the database has committed`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.call("searchChats", """{"query":"rent"}""")
+            assertIs<TurnResult.NeedsDevice>(h.start(ask("what did Mum say about the rent?")).data())
+            val today = Clock.systemUTC().today()
+            assertEquals(1, h.pending.parked(me))
+            assertEquals(1L, h.quota.textTurns(me, today))
+
+            h.memory.eraseFails = true
+            assertFailsWith<IllegalStateException> { h.deleteData(AccountDeleted(me)) }
+            assertEquals(1, h.pending.parked(me), "nothing leaves Redis while the account's rows are still there")
+
+            h.memory.eraseFails = false
+            h.deleteData(AccountDeleted(me)).data()
+            assertEquals(0, h.pending.parked(me), "no parked turn keeps the conversation")
+            assertEquals(0L, h.quota.textTurns(me, today))
+            assertEquals(0L to 0L, h.quota.tokens(me, today))
+            assertEquals(listOf(me), h.memory.erased)
         }
 
     // ---- voice ----

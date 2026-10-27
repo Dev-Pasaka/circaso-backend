@@ -26,8 +26,8 @@ import java.time.Instant
 import java.time.LocalDate
 
 /**
- * Writes one operation's messages, audit records and outbox rows in one transaction: the use case's own when it has
- * one open, otherwise a transaction of its own. Publishing is the caller's, after the commit.
+ * Writes one operation's messages and audit records in one transaction: the use case's own when it has one open,
+ * otherwise a transaction of its own. The outbox (`outbox = true`) waits for Phase B's events.
  */
 class AssistantStoreImpl(private val database: Database, private val vault: TextVault, private val clock: Clock) :
     AssistantStore {
@@ -36,7 +36,6 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
         database.tx("assistant.commit") {
             addMessages(changes.messages)
             addAudit(changes.audit)
-            changes.events.forEach { database.writeOutbox(it) }
         }
     }
 

@@ -122,7 +122,7 @@ fun assistantModule(config: Config): Module =
         single { GetUsage(get(), get(), get(), clock) }
         single { TranscribeVoice(get(), get(), get(), get(), clock) }
         single { SynthesizeSpeech(get(), get(), get(), get(), clock) }
-        single { DeleteAssistantData(get(), get()) }
+        single { DeleteAssistantData(get(), get(), get(), get(), clock) }
         single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), clock) }
         single { MeterLiveVoice(get(), clock) }
         single { CheckLiveSession(get()) }

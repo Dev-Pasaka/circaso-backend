@@ -2,7 +2,6 @@ package com.circaso.assistant.domain.repositories
 
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Plan
-import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
 import java.time.Instant
 import java.util.UUID
@@ -26,14 +25,10 @@ interface EntitlementRepository {
 }
 
 /**
- * What one operation adds, written in one transaction with its outbox rows. The caller publishes [events] after the
- * commit; nothing is published from inside one.
+ * What one operation adds, written in one transaction. Phase A publishes no events; Phase B adds them here, written to
+ * the outbox in the same transaction and published by the caller after the commit.
  */
-data class AssistantChanges(
-    val messages: List<ChatMessage> = emptyList(),
-    val audit: List<AuditEntry> = emptyList(),
-    val events: List<EventEnvelope> = emptyList(),
-)
+data class AssistantChanges(val messages: List<ChatMessage> = emptyList(), val audit: List<AuditEntry> = emptyList())
 
 /** An audit record says what happened, never what was said. */
 data class AuditEntry(

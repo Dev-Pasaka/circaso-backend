@@ -50,15 +50,16 @@ class OutboxRelay(
     private suspend fun sweep(store: OutboxStore): Int {
         val published = mutableSetOf<EventId>()
         for (round in 1..maxBatches) {
-            val batch = store.unpublished(OutboxStore.BATCH)
-            val fresh = batch.filter { it.eventId !in published }
+            val page = store.page(OutboxStore.BATCH)
+            val fresh = page.events.filter { it.eventId !in published }
             for (envelope in fresh) {
                 if (!bus.appendToStream(envelope)) return done(store, published.size) // Redis is down: next sweep
                 bus.stampOutbox(envelope)
                 published += envelope.eventId
             }
-            // A short batch was the last one; a batch of rows already sent means their stamps failed.
-            if (batch.size < OutboxStore.BATCH || fresh.isEmpty()) break
+            // A short read was the last one (counted in rows read, so a skipped poison row doesn't end the sweep); a
+            // batch of rows already sent means their stamps failed.
+            if (!page.full || fresh.isEmpty()) break
         }
         return done(store, published.size)
     }

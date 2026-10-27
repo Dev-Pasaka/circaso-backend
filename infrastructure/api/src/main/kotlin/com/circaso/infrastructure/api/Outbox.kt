@@ -20,6 +20,15 @@ interface OutboxStore {
      */
     suspend fun unpublished(limit: Int = BATCH): List<EventEnvelope>
 
+    /**
+     * [unpublished], saying whether the read filled its window of [limit] rows. A store that skips rows it can't
+     * decode returns fewer events than it read, and the relay must not take that for the last batch.
+     */
+    suspend fun page(limit: Int = BATCH): OutboxPage {
+        val events = unpublished(limit)
+        return OutboxPage(events, full = events.size >= limit)
+    }
+
     /** Stamps `publishedAt` once the event is on the stream. */
     suspend fun markPublished(envelope: EventEnvelope, at: Instant)
 
@@ -28,6 +37,9 @@ interface OutboxStore {
         const val BATCH = 500
     }
 }
+
+/** One read of an outbox: the [events] to relay, and whether the read came back with as many rows as it asked for. */
+data class OutboxPage(val events: List<EventEnvelope>, val full: Boolean)
 
 /**
  * How a module still on ScyllaDB answers [OutboxStore.unpublished]: its outbox is keyed by minute-buckets

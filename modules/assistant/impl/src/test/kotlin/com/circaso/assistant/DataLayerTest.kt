@@ -20,8 +20,6 @@ import com.circaso.identity.api.AccountDeleted
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.testing.TestPostgres
-import com.circaso.shared.DomainEvent
-import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
@@ -31,7 +29,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.Serializable
 import java.sql.Timestamp
 import java.time.Clock
 import java.time.Duration
@@ -46,16 +43,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** An event only this test writes to the outbox; Phase A publishes none of its own. */
-@Serializable
-private data class Noted(val n: Int) : DomainEvent {
-    override val type: String get() = "assistant.Noted"
-}
-
 /**
  * The assistant's data layer on a real PostgreSQL (infrastructure's test container), migrated by its own Flyway
  * scripts: every repository method, the races the database settles, the deletion handler, the partition job and the
- * outbox's atomicity.
+ * transactions' atomicity.
  */
 class DataLayerTest {
     private val database: Database = TestPostgres.database(assistantDatabaseSpec)
@@ -74,7 +65,7 @@ class DataLayerTest {
     private val store = AssistantStoreImpl(database, vault, clock)
     private val deleteExchange = DeleteExchange(chat, transactor, store)
     private val deleteChat = DeleteChat(transactor, store)
-    private val deleteData = DeleteAssistantData(transactor, store)
+    private val deleteData = DeleteAssistantData(transactor, store, MemoryPending(), MemoryQuota(), clock)
 
     @BeforeTest
     fun clean() = TestPostgres.truncate("assistant")
@@ -354,28 +345,32 @@ class DataLayerTest {
             )
         }
 
-    // ---- outbox ----
+    // ---- transactions ----
 
     @Test
-    fun `an event lands with the change, and neither lands when the transaction rolls back`() =
+    fun `a refused attempt rolls back what it wrote, and the outbox waits empty for Phase B`() =
         runBlocking<Unit> {
             val user = UserId.new()
-            val kept = EventEnvelope.of(Noted(1), Noted.serializer())
-            val lost = EventEnvelope.of(Noted(2), Noted.serializer())
             val keptMessage = message(user, "kept")
             val lostMessage = message(user, "lost", at = now.plusMillis(5))
 
-            store.commit(AssistantChanges(messages = listOf(keptMessage), events = listOf(kept)))
-            transactor.attempt("test.refused") {
-                store.commit(AssistantChanges(messages = listOf(lostMessage), events = listOf(lost)))
-                Resource.error(SharedError.NotFound)
-            }
+            store.commit(AssistantChanges(messages = listOf(keptMessage)))
+            val refused =
+                transactor.attempt("test.refused") {
+                    store.commit(
+                        AssistantChanges(
+                            messages = listOf(lostMessage),
+                            audit = listOf(AuditEntry(user, "TURN", "tools=none", null)),
+                        ),
+                    )
+                    Resource.error(SharedError.NotFound)
+                }
 
-            val outbox = "SELECT count(*) FROM assistant.outbox WHERE event_id = ? AND published_at IS NULL"
-            assertEquals(1, count(outbox, kept.eventId.value))
+            assertEquals(Resource.error(SharedError.NotFound), refused)
             assertEquals("kept", chat.find(user, keptMessage.messageId)?.text)
-            assertEquals(0, count(outbox, lost.eventId.value))
             assertNull(chat.find(user, lostMessage.messageId))
+            assertEquals(0, count("SELECT count(*) FROM assistant.audit WHERE user_id = ?", user.value))
+            assertEquals(0, count("SELECT count(*) FROM assistant.outbox"), "Phase A publishes no events")
         }
 
     @Test

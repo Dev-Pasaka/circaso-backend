@@ -8,6 +8,7 @@ import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.impl.TestRedis
 import com.circaso.infrastructure.impl.database.PostgresDatabases
+import com.circaso.infrastructure.impl.database.PostgresOutboxStore
 import com.circaso.infrastructure.impl.database.PostgresOutboxes
 import com.circaso.infrastructure.impl.database.PostgresPools
 import com.circaso.infrastructure.impl.database.list
@@ -174,6 +175,50 @@ class PostgresOutboxRelayTest {
             } finally {
                 outboxLog.detachAppender(logs)
             }
+        }
+
+    @Test
+    fun `past the cap each poison row is still logged once, and the cap itself once`() =
+        runBlocking<Unit> {
+            val logs = ListAppender<ILoggingEvent>().apply { start() }
+            val outboxLog = LoggerFactory.getLogger("com.circaso.infrastructure.impl.database.Outbox") as Logger
+            outboxLog.addAppender(logs)
+            try {
+                val capped = PostgresOutboxStore(module, maxPoisoned = 1)
+                val first = writePoison(Duration.ofMinutes(5), "marker_a")
+                val second = writePoison(Duration.ofMinutes(4), "marker_b")
+                val good = write(1, Duration.ofMinutes(3))
+
+                repeat(3) { assertEquals(listOf(good.eventId), capped.unpublished(10).map { it.eventId }) }
+
+                val lines = logs.list.filter { it.level == Level.ERROR }.map { it.argumentArray.joinToString() }
+                assertEquals(3, lines.size, lines.joinToString("\n"))
+                assertEquals(1, lines.count { "outbox.poison-cap" in it && "pgrelay" in it })
+                assertEquals(1, lines.count { first.toString() in it })
+                assertEquals(1, lines.count { second.toString() in it })
+                assertTrue(lines.none { "marker" in it }, lines.joinToString("\n"))
+            } finally {
+                outboxLog.detachAppender(logs)
+            }
+        }
+
+    @Test
+    fun `a skipped poison row does not cut the sweep short`() =
+        runBlocking<Unit> {
+            writePoison(Duration.ofMinutes(5), "marker_c")
+            val at = Instant.now().minus(Duration.ofMinutes(4))
+            val envelopes =
+                (1..OutboxStore.BATCH).map {
+                    EventEnvelope.of(
+                        Noted(it),
+                        Noted.serializer(),
+                        occurredAt = at,
+                    )
+                }
+            module.tx("test.write-many") { envelopes.forEach { module.writeOutbox(it) } }
+
+            // The first read is 1 poison row and 499 good ones: a full window, so the sweep goes on for the last one.
+            assertEquals(OutboxStore.BATCH, OutboxRelay(bus, { listOf(store) }).sweep())
         }
 
     @Test

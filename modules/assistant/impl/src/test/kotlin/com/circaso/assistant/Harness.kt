@@ -93,7 +93,11 @@ class MemoryAssistant :
         return gone.size
     }
 
+    /** Makes the next [erase] fail, as a database that is down would. */
+    var eraseFails = false
+
     override suspend fun erase(userId: UserId) {
+        if (eraseFails) error("the database is down")
         deleteChat(userId)
         erased += userId
     }
@@ -181,6 +185,10 @@ class MemoryQuota : QuotaCounters {
 
     override suspend fun tokens(userId: UserId, day: String) =
         (counters["i:$userId:$day"] ?: 0) to (counters["o:$userId:$day"] ?: 0)
+
+    override suspend fun forget(userId: UserId, days: List<String>) {
+        counters.keys.removeAll { key -> days.any { day -> key.endsWith(":$userId:$day") } }
+    }
 }
 
 class MemoryPending : PendingTurns {
@@ -193,6 +201,12 @@ class MemoryPending : PendingTurns {
     override suspend fun callIdOf(userId: UserId, turnId: UUID) = turns[userId to turnId]?.callId
 
     override suspend fun take(userId: UserId, turnId: UUID) = turns.remove(userId to turnId)
+
+    override suspend fun forget(userId: UserId) {
+        turns.keys.removeAll { it.first == userId }
+    }
+
+    fun parked(userId: UserId) = turns.keys.count { it.first == userId }
 }
 
 class Plans(var plan: Plan = Plan.FREE) : EntitlementRepository {
@@ -361,7 +375,7 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val usage = GetUsage(plans, quota, config, clock)
     val transcribe = TranscribeVoice(speech, plans, quota, config, clock)
     val speak = SynthesizeSpeech(speech, plans, quota, config, clock)
-    val deleteData = DeleteAssistantData(memory, memory)
+    val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)
 }
 
 fun smallLimits(turns: Int = 2, context: Int = 4) = AssistantConfig(free = Limits(turns, 30, context))

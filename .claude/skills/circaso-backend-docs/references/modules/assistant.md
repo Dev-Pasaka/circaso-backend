@@ -23,7 +23,7 @@ Asha answers "what do I want to know or do, said in my own words": she is Circas
 - **Stored by this module.** The thread lives in the `assistant` schema, encrypted at rest. It is not end-to-end encrypted, because Asha has to read what you write to answer; the top of her chat says so in one line.
 - **Not a person.** Asha has a fixed system id, no account in identity and no profile in users. She can't be blocked, paid, called, added to a group or found by handle, and she never appears in anyone else's contacts. The app opens her chat through the assistant routes, so the reach rule doesn't apply.
 - **Memory of the thread.** She uses the recent part of the thread as context: the last few exchanges on the free plan, much more on Asha Plus.
-- **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Two things remain, neither holding conversation text: the audit records of Phase B actions (what was proposed, to whom, the amount and the user's decision), because they back money movements, and usage counts for billing.
+- **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Deleting the account deletes the chat and the entitlement in one transaction and, once it has committed, the user's `ast:` Redis keys (turns parked for the phone, which hold the conversation, and the day's counters), so nothing of the conversation stays in caches. All audit records (what was done, never what was said; in Phase B what was proposed, to whom, the amount and the user's decision, which back money movements) and usage counts for billing remain.
 
 ### Reading encrypted chats
 
@@ -200,7 +200,7 @@ CREATE TABLE assistant.usage_daily (                    -- daily totals for cost
     input_tokens  bigint      NOT NULL,
     output_tokens bigint      NOT NULL,
     updated_at    timestamptz NOT NULL,
-    PRIMARY KEY (user_id, usage_day)                    -- added to with upsert (keys: user_id, usage_day), count = count + n
+    PRIMARY KEY (user_id, usage_day)                    -- upsert (keys: user_id, usage_day) keeping the larger of stored and new totals (the live Redis counters only grow within a day)
 );
 
 CREATE TABLE assistant.entitlements (
