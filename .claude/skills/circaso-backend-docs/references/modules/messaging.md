@@ -263,7 +263,7 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 
 | Type | `data` |
 | --- | --- |
-| `message.new` | `messageId`, `chatId`, `senderId`, `kind`, `pushable` (missing means `false`), `sentAt`; the ciphertext is fetched from the inbox (M13) when it doesn't fit in the frame |
+| `message.new` | `messageId`, `chatId`, `senderId`, `kind`, `pushable` (missing means `false`), `sentAt`, `mediaIds`, `ciphertext` (null when over `MESSAGING_FRAME_CIPHERTEXT_MAX_CHARS`, 16 K base64 characters); the ciphertext is fetched from the inbox (M13) when it doesn't fit in the frame |
 | `message.deleted` | `chatId`, `messageId` |
 | `message.undeliverable` | `chatId`, `messageId`, `recipientId` |
 | `receipt` | `chatId`, `receipts: [{ messageId, userId, status: DELIVERED \| READ, at }]` |
