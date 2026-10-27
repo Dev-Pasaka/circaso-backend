@@ -663,7 +663,7 @@ object Rules {
      */
     val untypedPayloadAllowList: Map<String, String> =
         linkedMapOf(
-            // Owned by the parallel slices that convert them. Each entry is removed when MS4, AI1b or WS1 merges.
+            // Owned by the parallel slices that convert them. Each entry is removed when MS4 or AI1b merges.
             "integrations/impl/fcm/FcmPush.kt" to
                 "MS4 converts it; FCM's `data` stays a string map, the FCM API requires it, encoded from a typed class",
             "messaging/data/cache/RealtimeFramesImpl.kt" to
