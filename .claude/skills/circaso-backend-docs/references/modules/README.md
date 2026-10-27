@@ -30,7 +30,7 @@ A new module is a new file here plus the same code skeleton as the first two; no
    - **Schema** `<name>` and a **role** `<name>` with rights only on that schema, both created by the `Migrate` step; `circaso_app` and `circaso_jobs` are granted the role, and the module's tables are owned by it.
    - **Flyway location** `classpath:db/<name>`: plain SQL in `impl/src/main/resources/db/<name>/V1__<name>.sql`, numbered on its own, with its own history table.
    - **`DatabaseModuleSpec(schema = "<name>", tables, migrationsLocation = "classpath:db/<name>")`** contributed from the module's `di`.
-   - Exposed `Table` objects in `data/tables`, named `<Thing>Table` with the schema in the table name (`Table("<name>.<things>")`), including its `realtime` if it sends frames (partitioned by day). Its `outbox` is infrastructure's: `outbox = true` in the spec, the shared DDL (architecture.md → Durable events) in V1, and `Database.writeOutbox` in the transaction.
+   - Exposed `Table` objects in `data/tables`, named `<Thing>Table` with the schema in the table name (`Table("<name>.<things>")`), including its `realtime` if it sends frames (partitioned by day). Its `outbox` is infrastructure's: `outbox = true` in the spec, the shared DDL (architecture.md → Durable events) in V1, and `database.writeOutbox(envelope)` in the transaction.
    - A `<name>.purge-expired` job if any table has `expires_at` or daily partitions.
 3. Redis prefix, stream `events:<name>`, consumer group `<name>` on any stream it reads.
 4. Error codes `<name>.<reason>`, an OpenAPI tag `<name>`, metrics prefixed `circaso_<name>_`.

@@ -227,7 +227,7 @@ object ProfilesTable : Table("users.profiles") {
 }
 
 // data/repositories: every call inside Database.tx; the mapper is private to the file
-class ProfileRepositoryImpl(private val db: Database) : ProfileRepository { … }
+class ProfileRepositoryImpl(private val database: Database) : ProfileRepository { … }   // named `database`: inside tx { } a `db` would be Exposed's
 private fun ResultRow.toProfile(): Profile = …
 
 // di
@@ -399,7 +399,7 @@ An event must never be lost between the change that caused it and the module tha
 
 **Delivery, step by step**
 
-1. **Write with the change.** The operation writes its rows, its uniqueness claims and an outbox row (in its own schema, with `Database.writeOutbox(envelope)`) in one `Database.tx` transaction, so all of them land or none does. The outbox is infrastructure's code (decision 2026-10-27, PG1 review): a module sets `outbox = true` in its `DatabaseModuleSpec`, creates the table in its V1 script with the DDL below, and infrastructure registers the relay's `OutboxStore` for it. Infrastructure's tests pin this shape.
+1. **Write with the change.** The operation writes its rows, its uniqueness claims and an outbox row (in its own schema, with `database.writeOutbox(envelope)`, inside `database.tx(…) { }`) in one `Database.tx` transaction, so all of them land or none does. The outbox is infrastructure's code (decision 2026-10-27, PG1 review): a module sets `outbox = true` in its `DatabaseModuleSpec`, creates the table in its V1 script with the DDL below, and infrastructure registers the relay's `OutboxStore` for it. Infrastructure's tests pin this shape.
 
    ```sql
    CREATE TABLE <schema>.outbox (

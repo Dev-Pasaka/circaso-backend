@@ -216,6 +216,14 @@ class RuleFixturesTest {
     }
 
     @Test
+    fun `a Database handle is named database`() {
+        assertFlags("databaseHandlesAreNamedDatabase", "Database handle 'db'", "Database handle 'store'")
+        val violations =
+            Rules.all.getValue("databaseHandlesAreNamedDatabase")(filesIn("databaseHandlesAreNamedDatabase"))
+        assertEquals(2, violations.size, violations.joinToString("\n"))
+    }
+
+    @Test
     fun `nothing blocks a thread on runBlocking`() = assertFlags("noRunBlocking", "Blocking.kt: calls runBlocking")
 
     @Test

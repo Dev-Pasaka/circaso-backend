@@ -949,6 +949,24 @@ object Rules {
                 }.toList()
         }
 
+    private val databaseDeclaration = Regex("""(?:\bva[lr]\s+|[(,]\s*)(\w+)\s*:\s*Database\b(?![\w.])""")
+
+    /**
+     * A `Database` handle is called `database` (decision 2026-10-27, PG1 review): inside `tx { }` the transaction's own
+     * `db` (Exposed's) shadows a field named `db`, so `db.writeOutbox(…)` there would not reach the module's handle.
+     */
+    fun databaseHandlesAreNamedDatabase(files: List<KoFileDeclaration>): List<String> =
+        files
+            .filter { "com.circaso.infrastructure.api.Database" in it.importNames() }
+            .flatMap { file ->
+                databaseDeclaration
+                    .findAll(file.text)
+                    .map { it.groupValues[1] }
+                    .filter { it != "database" }
+                    .map { violation(file, "Database handle '$it' must be named 'database' (tx's 'db' shadows it)") }
+                    .toList()
+            }
+
     private val jdbcPackages =
         listOf("java.sql.", "javax.sql.", "org.jetbrains.exposed.v1.jdbc", "org.flywaydb", "org.postgresql.")
 
@@ -1003,5 +1021,6 @@ object Rules {
             "jdbcOnlyInMigrate" to ::jdbcOnlyInMigrate,
             "noRunBlocking" to ::noRunBlocking,
             "operationsAreNamedLiterals" to ::operationsAreNamedLiterals,
+            "databaseHandlesAreNamedDatabase" to ::databaseHandlesAreNamedDatabase,
         )
 }

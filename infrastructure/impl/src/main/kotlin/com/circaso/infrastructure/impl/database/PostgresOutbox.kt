@@ -53,13 +53,13 @@ private object TenSecondsAgo : Expression<Instant>() {
 }
 
 /** The relay's view of one module's PostgreSQL outbox, run as the module's role (on the jobs pool, from the relay). */
-internal class PostgresOutboxStore(private val db: Database) : OutboxStore {
-    private val outbox = OutboxTable(db.schema)
+internal class PostgresOutboxStore(private val database: Database) : OutboxStore {
+    private val outbox = OutboxTable(database.schema)
 
-    override val producer: String = db.schema
+    override val producer: String = database.schema
 
     override suspend fun unpublished(limit: Int): List<EventEnvelope> =
-        db.tx("outbox.unpublished") {
+        database.tx("outbox.unpublished") {
             outbox
                 .selectAll()
                 .where { outbox.publishedAt.isNull() and (outbox.occurredAt less TenSecondsAgo) }
@@ -70,7 +70,7 @@ internal class PostgresOutboxStore(private val db: Database) : OutboxStore {
         }
 
     override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
-        db.tx("outbox.stamp") {
+        database.tx("outbox.stamp") {
             outbox.update({
                 (outbox.eventId eq envelope.eventId.value) and (outbox.occurredAt eq envelope.occurredAt)
             }) { it[publishedAt] = at }

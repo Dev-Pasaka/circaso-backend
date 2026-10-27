@@ -7,9 +7,9 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.shared.UserId
 import org.jetbrains.exposed.v1.r2dbc.insert
 
-class ProviderRepositoryImpl(private val db: Database) : ProviderRepository {
+class ProviderRepositoryImpl(private val database: Database) : ProviderRepository {
     override suspend fun link(userId: UserId, provider: String, subject: String) {
-        db.tx("providers.link") {
+        database.tx("providers.link") {
             ProvidersTable.insert {
                 it[ProvidersTable.userId] = userId.value
                 it[ProvidersTable.provider] = provider
@@ -19,6 +19,6 @@ class ProviderRepositoryImpl(private val db: Database) : ProviderRepository {
     }
 }
 
-class DatabaseTransactor(private val db: Database) : Transactor {
-    override suspend fun <T> run(operation: String, block: suspend () -> T): T = db.tx(operation) { block() }
+class DatabaseTransactor(private val database: Database) : Transactor {
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T = database.tx(operation) { block() }
 }
