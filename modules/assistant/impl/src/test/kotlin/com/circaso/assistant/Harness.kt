@@ -16,6 +16,7 @@ import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.usecases.ContinueTurn
@@ -371,6 +372,7 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     private val agent = AshaAgent(model, tools, config)
     private val ids = OrderedIds(clock)
     private val recorder = TurnRecorder(memory, pending, quota, config, ids, memory, clock)
+    val dailyUsage = DailyUsage(quota, memory, memory, clock)
 
     val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
     val resume = ContinueTurn(verifier, pending, agent, recorder, config)
@@ -382,8 +384,8 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val deleteAll = DeleteChat(memory, memory)
     val deleteOne = DeleteExchange(memory, memory, memory)
     val usage = GetUsage(plans, quota, config, clock)
-    val transcribe = TranscribeVoice(speech, plans, quota, memory, memory, config, clock)
-    val speak = SynthesizeSpeech(speech, plans, quota, config, clock)
+    val transcribe = TranscribeVoice(speech, plans, quota, dailyUsage, config, clock)
+    val speak = SynthesizeSpeech(speech, plans, quota, dailyUsage, config, clock)
     val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)
 }
 

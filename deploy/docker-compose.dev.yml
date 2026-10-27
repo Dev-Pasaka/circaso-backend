@@ -18,7 +18,7 @@ services:
     depends_on:
       valkey:
         condition: service_healthy
-      # The app opens its PostgreSQL pools at start (PG1), so the database must be up first.
+      # The app opens its PostgreSQL pools at start, so the database must be up first.
       postgres:
         condition: service_healthy
     networks: [backend, data]

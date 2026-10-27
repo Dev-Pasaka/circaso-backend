@@ -51,7 +51,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * What other people see of an account that isn't active (QA, PG2+PG3): hidden while deleted in its grace period,
+ * What other people see of an account that isn't active (found in QA): hidden while deleted in its grace period,
  * back when it is active again; deletion's invites; same-user handle races; blocks of unknown ids. On PostgreSQL.
  */
 class AccountLifecycleTest {

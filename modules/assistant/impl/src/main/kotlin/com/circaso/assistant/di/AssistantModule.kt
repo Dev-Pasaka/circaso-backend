@@ -23,6 +23,7 @@ import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.usecases.CheckLiveSession
@@ -34,6 +35,7 @@ import com.circaso.assistant.domain.usecases.GetUsage
 import com.circaso.assistant.domain.usecases.ListChat
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
 import com.circaso.assistant.domain.usecases.TranscribeVoice
@@ -113,6 +115,7 @@ fun assistantModule(config: Config): Module =
         // domain
         single { AshaAgent(get(), get(), get()) }
         single { OrderedIds(clock) }
+        single { DailyUsage(get(), get(), get(), clock) }
         single { TurnRecorder(get(), get(), get(), get(), get(), get(), clock) }
         single { StartTurn(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { ContinueTurn(get(), get(), get(), get(), get()) }
@@ -120,18 +123,19 @@ fun assistantModule(config: Config): Module =
         single { DeleteChat(get(), get()) }
         single { DeleteExchange(get(), get(), get()) }
         single { GetUsage(get(), get(), get(), clock) }
-        single { TranscribeVoice(get(), get(), get(), get(), get(), get(), clock) }
-        single { SynthesizeSpeech(get(), get(), get(), get(), clock) }
+        single { TranscribeVoice(get(), get(), get(), get(), get(), clock) }
+        single { SynthesizeSpeech(get(), get(), get(), get(), get(), clock) }
         single { DeleteAssistantData(get(), get(), get(), get(), clock) }
         single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), clock) }
         single { MeterLiveVoice(get(), clock) }
+        single { SaveLiveVoiceUsage(get()) }
         single { CheckLiveSession(get()) }
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
         single { VoiceService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
-        single { LiveVoiceService(get(), get(), get(), get(), get()) }
+        single { LiveVoiceService(get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
             val voice = get<VoiceService>()

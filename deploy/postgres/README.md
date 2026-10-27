@@ -49,8 +49,25 @@ export AWS_ACCESS_KEY_ID="$R2_BACKUP_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_B
 docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION=auto -v /tmp:/backup \
   amazon/aws-cli:2.38.0 s3 cp s3://circaso-backups-dev/backups/postgres/circaso-Tue.dump /backup/ \
   --endpoint-url https://<account>.r2.cloudflarestorage.com
-docker compose exec -T postgres sh -c 'pg_restore --clean --if-exists --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' \
-  </tmp/circaso-Tue.dump
 ```
 
-A restore is tested once in PG6.
+A restore from these backups is not yet tested (Decisions → Open questions → Backups). Test it on a throwaway
+`postgres:18` container, never with `pg_restore --clean` against the live database:
+
+```sh
+cd /opt/circaso
+docker run -d --name circaso-restore-test --env-file postgres.env \
+  -v "$PWD/postgres/initdb:/docker-entrypoint-initdb.d:ro" postgres:18
+docker network connect "$(docker network ls --format '{{.Name}}' | grep circaso-data)" circaso-restore-test
+# the login roles come from initdb on first start; the module roles own the restored tables, so make them first
+for role in identity users messaging assistant; do
+  docker exec circaso-restore-test psql -U postgres -d circaso -c "CREATE ROLE $role NOLOGIN"
+done
+docker exec -i circaso-restore-test pg_restore --exit-on-error -U postgres -d circaso </tmp/circaso-Tue.dump
+# Migrate's history check: against an up-to-date copy it validates every module's history and applies nothing
+docker compose run --rm --no-deps -e DATABASE_MIGRATION_URL=jdbc:postgresql://circaso-restore-test:5432/circaso \
+  --entrypoint java app -cp "/app/lib/*" com.circaso.app.Migrate
+docker rm -f circaso-restore-test && rm /tmp/circaso-Tue.dump
+```
+
+`Migrate` must end with `applied=0` and no history problem; anything else means the backup can't be trusted.

@@ -134,7 +134,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved and when a voice clip is transcribed (A3).
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved, a clip is transcribed (A3) or spoken (A4), and when a live conversation ends (A11).
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
 - **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
@@ -174,7 +174,7 @@ The user talks to Asha with the **user** token; Asha's tools call other modules 
 
 ## Data
 
-PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), built in PG4, and three Redis key families.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), and three Redis key families.
 
 ```sql
 -- V1__assistant.sql (shape; the script is modules/assistant/impl/src/main/resources/db/assistant/V1__assistant.sql)

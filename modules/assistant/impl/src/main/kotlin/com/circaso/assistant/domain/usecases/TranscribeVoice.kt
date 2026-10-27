@@ -3,13 +3,10 @@ package com.circaso.assistant.domain.usecases
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.ports.QuotaCounters
-import com.circaso.assistant.domain.ports.Transactor
-import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
-import com.circaso.assistant.domain.support.saveUsage
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.today
-import com.circaso.assistant.domain.support.totals
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.Transcript
 import com.circaso.shared.Resource
@@ -25,8 +22,7 @@ class TranscribeVoice(
     private val speech: SpeechToText,
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
-    private val store: AssistantStore,
-    private val transactor: Transactor,
+    private val usage: DailyUsage,
     private val config: AssistantConfig,
     private val clock: Clock,
 ) {
@@ -50,8 +46,7 @@ class TranscribeVoice(
         if (transcript.seconds > config.maxVoiceSeconds) return Resource.error(AssistantError.VoiceTooLong)
         // the clip's real length may be longer than claimed: charged up to the cap, never past it
         quota.addVoiceSecondsUpTo(userId, day, transcript.seconds, limit)
-        val totals = quota.totals(userId, day)
-        transactor.run("usage.save-voice") { store.saveUsage(userId, day, totals, clock.instant()) }
+        usage.save(userId, day)
         return Resource.success(transcript)
     }
 

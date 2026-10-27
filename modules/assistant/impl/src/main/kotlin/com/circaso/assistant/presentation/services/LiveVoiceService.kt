@@ -8,6 +8,7 @@ import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.shared.Resource
 
@@ -21,6 +22,7 @@ class LiveVoiceService(
     private val startTurn: StartTurn,
     private val continueTurn: ContinueTurn,
     private val checkLiveSession: CheckLiveSession,
+    private val saveLiveVoiceUsage: SaveLiveVoiceUsage,
 ) {
     suspend fun open(start: LiveVoiceStart): Resource<LiveConversation> =
         when (val opened = openLiveVoice(start)) {
@@ -35,6 +37,7 @@ class LiveVoiceService(
             answerDevice = { result, reply -> continueTurn(result, reply) },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
             checkSession = { access, agent -> checkLiveSession(line.userId, access, agent) is Resource.Success },
+            saveUsage = { saveLiveVoiceUsage(line.userId) },
         )
 
     private fun turn(

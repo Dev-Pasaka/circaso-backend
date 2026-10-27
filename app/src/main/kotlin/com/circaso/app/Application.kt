@@ -41,10 +41,9 @@ fun Application.circasoModule(
 
 /**
  * Wires everything, in the order it depends on itself. Koin first (observability, infrastructure and the business
- * modules); then PostgreSQL (its pools, and a check that every module's schema is migrated), once, with what every module
- * contributed; then the running parts (event consumers,
- * the outbox relay, the scheduler); then the web side with every health check collected. [config] and [secrets] are
- * where settings come from; tests pass their own.
+ * modules); then PostgreSQL (its pools, and a check that every module's schema is migrated), once, with what every
+ * module contributed; then the running parts (event consumers, the outbox relay, the scheduler); then the web side with
+ * every health check collected. [config] and [secrets] are where settings come from; tests pass their own.
  */
 fun Application.circasoServe(
     app: AppConfig,

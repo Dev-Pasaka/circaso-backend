@@ -15,6 +15,7 @@ import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AuditEntry
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.today
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
@@ -347,7 +348,15 @@ class DataLayerTest {
             val day = clock.today()
             val speech = RecordingSpeech().apply { seconds = 7 }
             val quota = MemoryQuota()
-            val transcribe = TranscribeVoice(speech, Plans(), quota, store, transactor, AssistantConfig(), clock)
+            val transcribe =
+                TranscribeVoice(
+                    speech,
+                    Plans(),
+                    quota,
+                    DailyUsage(quota, store, transactor, clock),
+                    AssistantConfig(),
+                    clock,
+                )
             store.saveUsage(user, day, 2, 0, 300, 40, now) // an earlier text turn's totals
 
             assertTrue(transcribe(user, VoiceClip("hello".toByteArray(), "audio/mp4", 7, null)) is Resource.Success)

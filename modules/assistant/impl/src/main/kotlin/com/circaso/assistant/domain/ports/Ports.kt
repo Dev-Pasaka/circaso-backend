@@ -72,8 +72,8 @@ interface PendingTurns {
 /** Daily allowance counters (`ast:quota:…`). */
 interface QuotaCounters {
     /**
-     * Counts one text turn unless the day already holds [cap]; the count with this one. Above [cap] means refused, and a
-     * refused turn is given back, so the day's count never ends above [cap] however many arrive at once.
+     * Counts one text turn unless the day already holds [cap]; the count with this one. Above [cap] means refused,
+     * and a refused turn is given back, so the day's count never ends above [cap] however many arrive at once.
      */
     suspend fun countTextTurn(
         userId: UserId,

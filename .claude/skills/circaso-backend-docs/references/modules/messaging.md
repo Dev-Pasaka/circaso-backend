@@ -4,7 +4,7 @@ Messaging answers "get this message to these people, so that only they can read 
 
 Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the decision log; points still to settle are under Open questions at the end.
 
-> **Not built yet: MS6.** The `identity.AccountDeleted` and `identity.AccountStatusChanged` consumers (Events → Consumed) and the agent route `GET /v1/agent/messaging/chats` arrive with MS6, together with history (M18–M21) and settings (M22). Until MS6 ships, a deleted user's messaging rows (key bundle and prekeys, chat memberships, inbox, settings) stay in the `messaging` schema, a suspended account can still send, and Asha has no messaging route to call.
+> **Not built yet: MS6.** The `identity.AccountDeleted` and `identity.AccountStatusChanged` consumers (Events → Consumed) and the agent route `GET /v1/agent/messaging/chats` arrive with MS6, together with history (M18–M21). Until MS6 ships, a deleted user's messaging rows (key bundle and prekeys, chat memberships, inbox, settings) stay in the `messaging` schema, a suspended account can still send, and Asha has no messaging route to call.
 
 ## Overview
 
@@ -139,7 +139,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). A top-up checks and inserts in one transaction under the bundle's row lock, so the 100 cap holds for concurrent top-ups too, and a refused one is rolled back whole: nothing of it was ever stored or handed out, so the phone can drop that request's private keys at once (PG5 relaxed the earlier rule that kept them until the next `PUT /keys`). `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). A top-up checks and inserts in one transaction under the bundle's row lock, so the 100 cap holds for concurrent top-ups too, and a refused one is rolled back whole: nothing of it was ever stored or handed out, so the phone can drop that request's private keys at once. `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -296,7 +296,7 @@ Frames marked "Replayed" are kept 7 days in the `realtime` table for `RealtimeRe
 PostgreSQL tables in schema `messaging` (role `messaging`, Flyway location `db/messaging`) and Redis keys under `msg:`. Foreign keys stay inside the schema.
 
 ```sql
--- V1__messaging.sql (PG5) has every table below but the media and history ones, which come with MS5 and MS6
+-- V1__messaging.sql has every table below but the media and history ones, which come with MS5 and MS6
 
 CREATE TABLE messaging.chats (
     chat_id         uuid        PRIMARY KEY,

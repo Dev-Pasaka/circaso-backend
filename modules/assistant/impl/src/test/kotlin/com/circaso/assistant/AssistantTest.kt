@@ -586,6 +586,11 @@ class AssistantTest {
         runTest {
             val h = Harness(smallLimits(), owner = me)
             assertEquals("audio/mpeg", h.speak(me, "Habari yako", "sw").data().contentType)
+            assertEquals(
+                listOf<Number>(0, 1, 0L, 0L),
+                h.memory.usage["$me:${Clock.systemUTC().today()}"],
+                "the day's totals are stored with the speech, not at the next text turn",
+            )
             assertEquals("request.malformed", h.speak(me, "", null).errorCode())
             assertEquals("request.malformed", h.speak(me, "x".repeat(1_001), null).errorCode())
             assertEquals(

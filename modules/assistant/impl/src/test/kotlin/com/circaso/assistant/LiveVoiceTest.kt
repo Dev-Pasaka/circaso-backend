@@ -716,6 +716,12 @@ class LiveVoiceTest {
             }
             assertEquals(16_000, got.frames.filterIsInstance<ByteArray>().sumOf { it.size })
             assertEquals(2, voiceSeconds(live))
+            // the turn stored its totals before Asha's audio played; the 2 s arrive when the conversation ends
+            val today = "${live.userId}:${Clock.systemUTC().today()}"
+            eventually {
+                live.h.memory.usage[today]
+                    ?.get(1) == 2
+            }
         }
 
     @Test

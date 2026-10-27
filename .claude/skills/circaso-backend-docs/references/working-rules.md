@@ -69,9 +69,9 @@ Work in this order. Each milestone ends green: it builds, its tests and the Kons
 - Rate limits (the table in Gateway), idempotency with the in-progress marker, the `RequestLog` plugin, webhooks at `/v1/hooks/{vendor}`, OpenAPI generation with Swagger UI outside production behind `ops`.
 - WebSocket hub: auth on first frame, heartbeat, per-node Redis channel delivery, push fallback, replay through `RealtimeReplay`.
 
-**M4 — Identity**: I1–I17, the sign-in decision table, the nine entities, Redis keys, events (with `phoneHmac`, never raw numbers), error codes and the attestation rules, exactly as `docs/modules/identity.md`. The flow in `identity-signin-flow.md` is the acceptance test: every screen's call must return what that screen needs.
+**M4 — Identity**: I1–I17, the sign-in decision table, the tables, Redis keys, events (with `phoneHmac`, never raw numbers), error codes and the attestation rules, exactly as `docs/modules/identity.md`. The flow in `identity-signin-flow.md` is the acceptance test: every screen's call must return what that screen needs.
 
-**M5 — Users**: U1–U16, the reach rule, contact sync with HMACs, the entities and Redis keys, consumed and published events, `RealtimeReplay`, error codes, and the read-only agent routes, as `docs/modules/users.md`.
+**M5 — Users**: U1–U16, the reach rule, contact sync with HMACs, the tables and Redis keys, consumed and published events, `RealtimeReplay`, error codes, and the read-only agent routes, as `docs/modules/users.md`.
 
 **Not yet**: messaging, wallet, calls and the assistant need their own design first. Only build what their docs say when Pasaka asks.
 

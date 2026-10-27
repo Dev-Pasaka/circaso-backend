@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
 
 /**
  * The request log names the route, never what the caller put in the path or the query: a path parameter can be a
- * handle or an invite token (QA on PG2 and PG3).
+ * handle or an invite token (found in QA).
  */
 class RequestLogTest {
     private val captured = ListAppender<ILoggingEvent>()
@@ -95,7 +95,7 @@ class RequestLogTest {
             val response = client.get("/v1/nothing/here")
 
             assertEquals(HttpStatusCode.NotFound, response.status)
-            assertEquals(listOf(UNMATCHED_ROUTE), routes(), "one line per request (QA on PG2/PG3)")
+            assertEquals(listOf(UNMATCHED_ROUTE), routes(), "one line per request")
             assertTrue("http.status=404" in captured.list.single().text(), captured.list.single().text())
         }
 }

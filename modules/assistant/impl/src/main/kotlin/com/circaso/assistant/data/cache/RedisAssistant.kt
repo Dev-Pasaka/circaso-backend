@@ -13,7 +13,9 @@ import kotlinx.serialization.Serializable
 import java.time.Duration
 import java.util.UUID
 
-/** Daily allowance counters, `ast:quota:…`; each lives two days so a day's totals can still be read after midnight. */
+/**
+ * Daily allowance counters, `ast:quota:…`; each lives two days so a day's totals can still be read after midnight.
+ */
 class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
     private fun key(
         kind: String,
@@ -22,8 +24,9 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
     ) = "quota:$kind:$userId:$day"
 
     /**
-     * `INCR` first, then give back the turn if it went over the cap, as [addVoiceSecondsUpTo] does: every refused caller
-     * takes back exactly the one it added, so the count settles at the cap, and `usage_daily` never counts a refusal.
+     * `INCR` first, then give back the turn if it went over the cap, as [addVoiceSecondsUpTo] does: every refused
+     * caller takes back exactly the one it added, so the count settles at the cap, and `usage_daily` never counts a
+     * refusal.
      */
     override suspend fun countTextTurn(
         userId: UserId,

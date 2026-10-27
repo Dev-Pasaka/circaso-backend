@@ -1,11 +1,11 @@
 name: Deploy to dev
 
 # Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
-# GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. Everything the server runs with
-# lives on the server in /opt/circaso (docker-compose.yml, nginx, certs, .env): this workflow copies nothing there. It logs in,
-# runs the migrations once with the new image (the server reaches its PostgreSQL; a laptop does not), starts the new image
-# with the server's docker-compose.yml, waits for ready and prunes old images. A failed migration stops the deploy before
-# anything is restarted, so the old version keeps serving.
+# GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. Everything the server
+# runs with lives on the server in /opt/circaso (docker-compose.yml, nginx, certs, .env): this workflow copies nothing
+# there. It logs in, runs the migrations once with the new image (the server reaches its PostgreSQL; a laptop does
+# not), starts the new image with the server's docker-compose.yml, waits for ready and prunes old images. A failed
+# migration stops the deploy before anything is restarted, so the old version keeps serving.
 on:
   push:
     branches: [main]

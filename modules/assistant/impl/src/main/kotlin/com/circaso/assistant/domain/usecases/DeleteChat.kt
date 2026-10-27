@@ -8,8 +8,9 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
 /**
- * A5: deletes the whole history with Asha, with its audit record, in one transaction (no record when nothing was there). Afterwards she has no copy of
- * what was said. What remains holds no conversation text: audit records of what was done, and usage counts for billing.
+ * A5: deletes the whole history with Asha, with its audit record, in one transaction (no record when nothing was
+ * there). Afterwards she has no copy of what was said. What remains holds no conversation text: audit records of what
+ * was done, and usage counts for billing.
  */
 class DeleteChat(private val transactor: Transactor, private val store: AssistantStore) {
     suspend operator fun invoke(userId: UserId, requestId: String?): Resource<Unit> {
