@@ -137,7 +137,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). The 100 cap is soft under concurrent top-ups; the phone tops up one request at a time. After a refused top-up the phone keeps that request's private keys until it next publishes a full set with `PUT /keys` (at least every 7 days, with the signed prekey rotation; M2 reports a count, not ids); it costs nothing. `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). A top-up checks and inserts in one transaction under the bundle's row lock, so the 100 cap holds for concurrent top-ups too, and a refused one is rolled back whole: nothing of it was ever stored or handed out, so the phone can drop that request's private keys at once (PG5 relaxed the earlier rule that kept them until the next `PUT /keys`). `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -293,10 +293,8 @@ Frames marked "Replayed" are kept 7 days in the `realtime` table for `RealtimeRe
 
 PostgreSQL tables in schema `messaging` (role `messaging`, Flyway location `db/messaging`) and Redis keys under `msg:`. Foreign keys stay inside the schema.
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Messaging still runs on its Kandra tables in keyspace `circaso_messaging` until slice PG5 builds the tables below.
-
 ```sql
--- V<n>__messaging.sql (shape; the scripts themselves are written in PG5, and the media and history tables in MS5 and MS6)
+-- V1__messaging.sql (PG5) has every table below but the media and history ones, which come with MS5 and MS6
 
 CREATE TABLE messaging.chats (
     chat_id         uuid        PRIMARY KEY,
@@ -431,7 +429,8 @@ CREATE TABLE messaging.settings (
 );
 
 CREATE TABLE messaging.realtime (…);                    -- the same shape as users' realtime: daily partitions, 7 days
-CREATE TABLE messaging.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
+CREATE TABLE messaging.outbox (…);                      -- the shared outbox DDL (architecture.md → Durable events):
+                                                        -- daily partitions, 7 days
 ```
 
 | Table | Expiry | How the race is settled |
@@ -439,11 +438,11 @@ CREATE TABLE messaging.outbox (…);                      -- the same shape as i
 | `chats` | — | M4 inserts a direct chat with `insertIgnore`; `insertedCount = 0` means the other person opened it at the same moment, and the winner's chat is read, so both get the same one. M8 and ownership changes use the `version` check |
 | `members` | — | **Lock order:** every membership transaction (add, remove or leave, role, ownership change, group delete) locks the `chats` row first, with `FOR UPDATE` or the conditional update below, and only then touches `members`, so two membership changes to one group run one after the other and the successor is chosen from a settled member list. An add reserves its places with `UPDATE chats SET member_count = member_count + :n WHERE chat_id = ? AND member_count + :n <= 1000 RETURNING …` (`updateReturning`); 0 rows is `messaging.group_full`. Removal and leave take the member row with `deleteReturning` (below); role writes use `updateReturning` |
 | `key_bundles` | — | `PUT /keys` replaces the bundle and the one-time prekeys in one transaction |
-| `one_time_prekeys` | — | M3 takes one key with `deleteReturning` over the lowest `key_id` (`FOR UPDATE SKIP LOCKED`), so two fetches never get the same key. A top-up inserts in one transaction and is refused whole (rolled back) on a resent key id or more than 100 kept. On `DeviceReplaced`: `DELETE … WHERE user_id = ? AND device_id = ? AND uploaded_at < :occurredAt` |
+| `one_time_prekeys` | — | M3 takes one key with `deleteReturning` over the lowest `key_id` (`FOR UPDATE SKIP LOCKED`), so two fetches never get the same key; the pick is a scalar subquery (`key_id = (SELECT …)`), which runs once, never `IN (…)`, which PostgreSQL may re-run per scanned row and so take several keys. A top-up inserts in one transaction and is refused whole (rolled back) on a resent key id or more than 100 kept. On `DeviceReplaced`: `DELETE … WHERE user_id = ? AND device_id = ? AND uploaded_at < :occurredAt` |
 | `inbox` | Daily partitions, 30 days | An ack is `DELETE … WHERE user_id = ? AND message_id = ? RETURNING …`: exactly one ack gets the row and sends the `delivered` receipt |
 | `group_messages` | Daily partitions, 30 days | Deleted on the last ack (`msg:pending:{messageId}` counts down) |
 | `message_records` | Daily partitions, 30 days | — |
-| `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result |
+| `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result. An expired row the purge hasn't reached yet is taken over (`ON CONFLICT … DO UPDATE … WHERE expires_at <= :now`), so it never answers a send a day later |
 | `media` | `expires_at`, 30 days (none for group avatars) | **Lock order:** every path that touches both tables (complete, M17, purge) locks the `media` row (`FOR UPDATE`) first, then `media_pending`, so exactly one ack sees that none are left |
 | `media_pending` | Deleted with its `media` row | M17 takes the caller's row with `deleteReturning` |
 | `history` | — (until cleared or the account is deleted) | — |
