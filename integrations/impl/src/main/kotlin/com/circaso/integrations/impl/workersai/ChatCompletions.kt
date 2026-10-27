@@ -11,6 +11,7 @@ import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** The OpenAI-compatible chat completions route of the AI REST API, shared by the text and image models. */
@@ -144,3 +145,10 @@ internal object EmbeddedJson : KSerializer<String> {
 
     override fun deserialize(decoder: Decoder): String = (decoder as JsonDecoder).decodeJsonElement().toString()
 }
+
+/**
+ * A tool's schema is opaque text (decision B, 2026-10-27, AI1b review); it must still read as a JSON object to be
+ * sent as one by [EmbeddedJson].
+ */
+internal fun isSchemaObject(schema: String) =
+    runCatching { Json.decodeFromString(JsonObject.serializer(), schema) }.isSuccess

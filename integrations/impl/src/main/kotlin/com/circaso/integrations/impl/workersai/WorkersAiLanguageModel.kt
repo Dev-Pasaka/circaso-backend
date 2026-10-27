@@ -10,8 +10,6 @@ import com.circaso.integrations.api.ModelUsage
 import com.circaso.integrations.api.ToolCall
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import org.slf4j.LoggerFactory
 
 /**
@@ -141,8 +139,4 @@ class WorkersAiLanguageModel(
             type = "function",
             function = ChatFunctionSpec(tool.name, tool.description, tool.parametersJsonSchema),
         )
-
-    /** A schema is opaque text (decision 2026-10-27); it must still read as a JSON object to be sent as one. */
-    private fun isSchemaObject(schema: String) =
-        runCatching { Json.decodeFromString(JsonObject.serializer(), schema) }.isSuccess
 }
