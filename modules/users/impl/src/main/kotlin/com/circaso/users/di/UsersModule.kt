@@ -184,10 +184,10 @@ fun usersModule(config: Config): Module =
         single { GetPublicProfile(get(), get(), get()) }
         single { Connect(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { CreateInvite(get(), get(), clock) }
-        single { RevokeInvite(get(), get(), get()) }
+        single { RevokeInvite(get()) }
         single { ListBlocks(get(), get(), get()) }
         single { BlockUser(get(), get(), get(), get(), get(), clock) }
-        single { UnblockUser(get(), get(), get(), get(), get(), clock) }
+        single { UnblockUser(get(), get(), get(), get(), get()) }
         single { CheckReach(get()) }
         single { RemoveContact(get(), get(), get(), get(), get(), clock) }
         single { SearchContacts(get(), get(), get()) }

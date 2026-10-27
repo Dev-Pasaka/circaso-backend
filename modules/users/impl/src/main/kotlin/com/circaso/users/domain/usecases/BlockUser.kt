@@ -28,11 +28,9 @@ class BlockUser(
         val event = bus.envelope(UserBlocked(userId, target))
         val blocked =
             transactor.run("blocks.add") {
-                if (blocks.blocked(userId, target)) return@run false
-                store.commit(
-                    UsersChanges(blocks = listOf(Block(userId, target, clock.instant())), events = listOf(event)),
-                )
-                true
+                blocks.add(Block(userId, target, clock.instant())).also { added ->
+                    if (added) store.commit(UsersChanges(events = listOf(event)))
+                }
             }
         if (!blocked) return Resource.success(Unit)
         bus.publish(event)

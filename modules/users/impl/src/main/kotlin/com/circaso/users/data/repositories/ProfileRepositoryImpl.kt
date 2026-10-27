@@ -18,6 +18,7 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
@@ -66,6 +67,16 @@ class ProfileRepositoryImpl(private val database: Database, private val clock: C
                     it[version] = version + 1
                     it.write(new)
                 }.singleOrNull()
+                ?.toProfile()
+        }
+
+    override suspend fun lock(userId: UserId): Profile? =
+        database.tx("profiles.lock") {
+            ProfilesTable
+                .selectAll()
+                .where { ProfilesTable.userId eq userId.value }
+                .forUpdate(ForUpdateOption.PostgreSQL.ForShare)
+                .singleOrNull()
                 ?.toProfile()
         }
 

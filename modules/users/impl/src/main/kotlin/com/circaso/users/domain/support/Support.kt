@@ -1,6 +1,5 @@
 package com.circaso.users.domain.support
 
-import com.circaso.shared.DomainError
 import com.circaso.shared.UserId
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.domain.models.Contact
@@ -33,13 +32,6 @@ data class UsersConfig(
 )
 
 fun fallbackProfile(userId: UserId) = PublicProfile(userId, DEFAULT_DISPLAY_NAME, null, null, null)
-
-/**
- * Thrown inside `Transactor.run` to undo what the operation already wrote there and answer [error] instead: a handle
- * claimed just before a stale profile version must not stay claimed. The use case that throws it catches it; it
- * never leaves the domain.
- */
-class Rollback(val error: DomainError) : RuntimeException(error.message, null, false, false)
 
 /** A profile that is always there: if the activation event is late or lost, the first read creates an empty one. */
 class ProfileProvisioner(

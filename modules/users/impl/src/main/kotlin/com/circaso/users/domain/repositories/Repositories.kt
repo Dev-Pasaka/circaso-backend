@@ -21,6 +21,12 @@ interface ProfileRepository {
 
     /** Optimistic lock on `version`: the saved profile one version on, or null if it changed since [old] was read. */
     suspend fun update(old: Profile, new: Profile): Profile?
+
+    /**
+     * Reads the profile `FOR SHARE`, inside the caller's transaction: until it commits, nobody can delete the profile
+     * (an account deletion locks it first too), so contacts are never written for a profile that is going away.
+     */
+    suspend fun lock(userId: UserId): Profile?
 }
 
 interface HandleRepository {
@@ -55,6 +61,12 @@ interface ContactRepository {
     /** Who has [contactId] as an active contact, for fan-out. */
     suspend fun ownersOf(contactId: UserId, limit: Int): List<UserId>
 
+    /**
+     * U11: makes [contact] active, adding the row or restoring a removed one (keeping its first `addedAt`). True only
+     * when it changed something, so of two connects at once exactly one is told it created the contact.
+     */
+    suspend fun connect(contact: Contact): Boolean
+
     /** U16: marks the active contact removed at [at]; false when there is no active contact to remove. */
     suspend fun remove(
         ownerId: UserId,
@@ -75,23 +87,27 @@ interface BlockRepository {
     suspend fun eitherWay(a: UserId, b: UserId): Boolean
 
     suspend fun list(userId: UserId): List<Block>
+
+    /** U14: true when this call added the block, false when it was already there. */
+    suspend fun add(block: Block): Boolean
+
+    /** U14: true when this call lifted the block, false when there was none. */
+    suspend fun remove(userId: UserId, blockedId: UserId): Boolean
 }
 
 interface InviteRepository {
     /** An invite that is neither revoked nor expired. */
     suspend fun find(token: String): Invite?
+
+    /** U12: deletes [token] if [ownerId] owns it; false when there was no such invite of theirs. */
+    suspend fun revoke(token: String, ownerId: UserId): Boolean
 }
 
 /** Everything one operation writes, with its outbox rows. */
 data class UsersChanges(
     /** Added only where the pair has no row yet, so a contact its owner removed stays removed (sync, joins). */
     val contacts: List<Contact> = emptyList(),
-    /** Written over whatever is there: a QR, invite or handle connection restores a removed contact. */
-    val connections: List<Contact> = emptyList(),
-    val blocks: List<Block> = emptyList(),
-    val unblocks: List<Block> = emptyList(),
     val invites: List<Invite> = emptyList(),
-    val revokedInvites: List<String> = emptyList(),
     /** Written or renewed for another 180 days. */
     val waiting: List<WaitingContact> = emptyList(),
     val clearedWaiting: List<WaitingContact> = emptyList(),

@@ -74,6 +74,9 @@ enum class ConnectVia { HANDLE, QR, INVITE }
 
 data class Connection(val user: PublicProfile, val created: Boolean)
 
+/** Whom a U11 connect reaches, how, and whether the contact goes both ways (a QR code or invite) or one (a handle). */
+data class ConnectTarget(val userId: UserId, val source: ContactSource, val mutual: Boolean)
+
 data class InviteLink(
     val token: String,
     val url: String,

@@ -8,6 +8,7 @@ import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ConnectionAdded
 import com.circaso.users.domain.errors.UsersError
+import com.circaso.users.domain.models.ConnectTarget
 import com.circaso.users.domain.models.ConnectVia
 import com.circaso.users.domain.models.Connection
 import com.circaso.users.domain.models.Contact
@@ -26,7 +27,6 @@ import com.circaso.users.domain.repositories.UsersChanges
 import com.circaso.users.domain.repositories.UsersStore
 import com.circaso.users.domain.support.HandleRules
 import com.circaso.users.domain.support.ProfileViews
-import com.circaso.users.domain.support.Rollback
 import com.circaso.users.domain.support.UserNotifier
 import java.time.Clock
 import java.time.Instant
@@ -34,8 +34,11 @@ import java.time.Instant
 /**
  * U11: connects through a typed @handle, a QR code or an invite link. A QR code or link was handed over on
  * purpose, so the contact is created both ways; a typed handle only lets the person who typed it reach the
- * handle's owner. Blocks win over everything, and the answer never says whether it was a block. The block check,
- * the contact reads and the writes they decide are one transaction.
+ * handle's owner. Blocks win over everything, and the answer never says whether it was a block.
+ *
+ * Everything after the rate limit is one transaction: who the value names, the target's profile (read `FOR SHARE`,
+ * so an account deletion can't slip in between), the block check, and each direction's conditional write, which
+ * alone decides whether this call created the contact and writes the event.
  */
 class Connect(
     private val handles: HandleRepository,
@@ -62,108 +65,99 @@ class Connect(
                 SharedError.RateLimited(usersCache.handleLookupRetryAfter(viewer)?.seconds ?: 3_600),
             )
         }
-        val (target, source, mutual) =
-            when (val found = resolve(via, value)) {
-                is Resource.Success -> found.data
-                is Resource.Error -> return found
-            }
-        if (target == viewer) {
-            return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.InviteInvalid)
+        // Building an envelope is pure (no I/O): the event is written inside the transaction, published after it.
+        val announce = { target: ConnectTarget ->
+            bus.envelope(ConnectionAdded(viewer, target.userId, target.source.name, target.mutual))
         }
-
-        val event = bus.envelope(ConnectionAdded(viewer, target, source.name, mutual))
-        val (targetProfile, created) =
-            try {
-                transactor.run("contacts.connect") { connect(viewer, via, Triple(target, source, mutual), event) }
-            } catch (e: Rollback) {
-                return Resource.error(e.error)
+        val outcome =
+            transactor.attempt("contacts.connect") {
+                val target = resolve(via, value) ?: return@attempt Resource.error(notFound(via))
+                connect(viewer, via, target, announce)
+            }
+        val (target, profile, event) =
+            when (outcome) {
+                is Resource.Success -> outcome.data
+                is Resource.Error -> return outcome
             }
 
-        if (created) {
+        val created = event != null
+        if (event != null) {
             bus.publish(event)
-            cache.invalidateTarget(target)
+            cache.invalidateTarget(target.userId)
             cache.invalidateTarget(viewer)
-            if (mutual) {
-                profiles.find(viewer)?.let { notifier.connectionAdded(target, it) }
-                notifier.connectionAdded(viewer, targetProfile)
+            if (target.mutual) {
+                profiles.find(viewer)?.let { notifier.connectionAdded(target.userId, it) }
+                notifier.connectionAdded(viewer, profile)
             }
         }
-        return Resource.success(Connection(views.forViewer(viewer, targetProfile), created))
+        return Resource.success(Connection(views.forViewer(viewer, profile), created))
     }
 
-    /**
-     * Who [value] names, how, and whether both ways: the live owner of a handle that allows lookup, or the owner of a
-     * valid invite.
-     */
-    private suspend fun resolve(via: ConnectVia, value: String): Resource<Triple<UserId, ContactSource, Boolean>> =
+    /** Who [value] names: the live owner of a handle, or the owner of a valid invite. */
+    private suspend fun resolve(via: ConnectVia, value: String): ConnectTarget? =
         when (via) {
             ConnectVia.HANDLE -> {
-                val owner =
-                    HandleRules
-                        .normalise(value)
-                        ?.let { handles.find(it) }
-                        ?.takeIf { it.releasedAt == null }
-                        ?.userId
-                        ?.takeIf { profiles.find(it)?.privacy?.handleLookup == true }
-                if (owner == null) {
-                    Resource.error(UsersError.HandleNotFound)
-                } else {
-                    Resource.success(Triple(owner, ContactSource.HANDLE, false))
-                }
+                HandleRules
+                    .normalise(value)
+                    ?.let { handles.find(it) }
+                    ?.takeIf { it.releasedAt == null }
+                    ?.let { ConnectTarget(it.userId, ContactSource.HANDLE, false) }
             }
 
             ConnectVia.QR, ConnectVia.INVITE -> {
-                val invite = invites.find(value.trim().substringAfterLast('/'))
-                if (invite == null) {
-                    Resource.error(UsersError.InviteInvalid)
-                } else {
-                    val source = if (via == ConnectVia.QR) ContactSource.QR else ContactSource.INVITE
-                    Resource.success(Triple(invite.ownerId, source, true))
-                }
+                val source = if (via == ConnectVia.QR) ContactSource.QR else ContactSource.INVITE
+                invites
+                    .find(value.trim().substringAfterLast('/'))
+                    ?.let { ConnectTarget(it.ownerId, source, true) }
             }
         }
 
     /**
-     * Inside the transaction: refuses a block either way, then writes the contacts that aren't active yet. Answers the
-     * target's profile and whether anything was created.
+     * Inside the transaction: checks the target may be reached this way, then makes each direction active. Answers
+     * the target, its profile and, only when this call changed a contact, the event it wrote to the outbox.
      */
     private suspend fun connect(
         viewer: UserId,
         via: ConnectVia,
-        resolved: Triple<UserId, ContactSource, Boolean>,
-        event: EventEnvelope,
-    ): Pair<Profile, Boolean> {
-        val (target, source, mutual) = resolved
-        if (blocks.eitherWay(viewer, target)) {
-            throw Rollback(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.NotReachable)
+        target: ConnectTarget,
+        announce: (ConnectTarget) -> EventEnvelope,
+    ): Resource<Triple<ConnectTarget, Profile, EventEnvelope?>> {
+        if (target.userId == viewer) return Resource.error(notFound(via))
+        val profile = profiles.lock(target.userId)
+        if (via == ConnectVia.HANDLE && profile?.privacy?.handleLookup != true) {
+            return Resource.error(UsersError.HandleNotFound)
         }
-        val profile = profiles.find(target) ?: throw Rollback(SharedError.NotFound)
-        val now = clock.instant()
-        val forward = contacts.find(viewer, target)
-        val back = if (mutual) contacts.find(target, viewer) else null
-        val newForward = forward?.status != ContactStatus.ACTIVE
-        val newBack = mutual && back?.status != ContactStatus.ACTIVE
-        if (!newForward && !newBack) return profile to false
+        if (blocks.eitherWay(viewer, target.userId)) {
+            return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.NotReachable)
+        }
+        if (profile == null) return Resource.error(SharedError.NotFound)
 
-        store.commit(
-            UsersChanges(
-                connections =
-                    listOfNotNull(
-                        contact(viewer, target, source, forward?.addedAt ?: now).takeIf { newForward },
-                        contact(target, viewer, source, back?.addedAt ?: now).takeIf { newBack },
-                    ),
-                events = listOf(event),
-            ),
-        )
-        return profile to true
+        val now = clock.instant()
+        val directions =
+            listOfNotNull(
+                contact(viewer, target.userId, target.source, now),
+                contact(target.userId, viewer, target.source, now).takeIf { target.mutual },
+            )
+        // Rows are always written in owner-id order, so A connecting to B while B connects to A can't deadlock.
+        var changed = false
+        for (direction in directions.sortedBy { it.ownerId.value }) {
+            if (contacts.connect(direction)) changed = true
+        }
+        if (!changed) return Resource.success(Triple(target, profile, null))
+        val event = announce(target)
+        store.commit(UsersChanges(events = listOf(event)))
+        return Resource.success(Triple(target, profile, event))
     }
+
+    private fun notFound(via: ConnectVia) =
+        if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.InviteInvalid
 
     private fun contact(
         owner: UserId,
         other: UserId,
         source: ContactSource,
-        addedAt: Instant,
-    ) = Contact(owner, other, source, ContactStatus.ACTIVE, null, addedAt)
+        at: Instant,
+    ) = Contact(owner, other, source, ContactStatus.ACTIVE, null, at)
 
     private companion object {
         const val MAX_LOOKUPS_PER_HOUR = 30

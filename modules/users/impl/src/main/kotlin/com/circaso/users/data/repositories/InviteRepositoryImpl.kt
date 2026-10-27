@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import java.time.Clock
 
@@ -28,5 +29,16 @@ class InviteRepositoryImpl(private val database: Database, private val clock: Cl
                         it[InvitesTable.expiresAt],
                     )
                 }
+        }
+
+    override suspend fun revoke(token: String, ownerId: UserId): Boolean =
+        database.tx("invites.revoke") {
+            val deleted =
+                InvitesTable.deleteWhere {
+                    (InvitesTable.token eq token) and
+                        (InvitesTable.ownerId eq ownerId.value) and
+                        (InvitesTable.expiresAt greater clock.instant())
+                }
+            deleted == 1
         }
 }

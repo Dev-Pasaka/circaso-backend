@@ -2,6 +2,8 @@ package com.circaso.users
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ProfileUpdated
@@ -17,6 +19,7 @@ import com.circaso.users.data.repositories.WaitingContactRepositoryImpl
 import com.circaso.users.di.usersDatabaseSpec
 import com.circaso.users.domain.errors.UsersError
 import com.circaso.users.domain.models.Block
+import com.circaso.users.domain.models.ConnectVia
 import com.circaso.users.domain.models.Contact
 import com.circaso.users.domain.models.ContactSource
 import com.circaso.users.domain.models.ContactStatus
@@ -26,7 +29,11 @@ import com.circaso.users.domain.models.Privacy
 import com.circaso.users.domain.models.Profile
 import com.circaso.users.domain.models.WaitingContact
 import com.circaso.users.domain.repositories.UsersChanges
-import com.circaso.users.domain.support.Rollback
+import com.circaso.users.domain.support.ProfileViews
+import com.circaso.users.domain.support.UserNotifier
+import com.circaso.users.domain.usecases.BlockUser
+import com.circaso.users.domain.usecases.Connect
+import com.circaso.users.domain.usecases.UnblockUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -67,6 +74,33 @@ class DataLayerTest {
     private val blocks = BlockRepositoryImpl(database)
     private val invites = InviteRepositoryImpl(database, clock)
     private val store = UsersStoreImpl(database)
+
+    // The use cases whose races only the database settles, wired to the real repositories.
+    private val reachCache = MemoryReachCache()
+    private val views = ProfileViews(FakeAvatars(), contacts)
+    private val notifier = UserNotifier(RecordingFrames(), contacts)
+    private val connect =
+        Connect(
+            handles,
+            invites,
+            profiles,
+            contacts,
+            blocks,
+            transactor,
+            store,
+            bus,
+            reachCache,
+            MemoryUsersCache(),
+            views,
+            notifier,
+            clock,
+        )
+    private val blockUser = BlockUser(blocks, transactor, store, bus, reachCache, clock)
+    private val unblockUser = UnblockUser(blocks, transactor, store, bus, reachCache)
+
+    private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
+
+    private fun outboxRows(type: String) = count("SELECT count(*) FROM users.outbox WHERE type = ?", type)
 
     @BeforeTest
     fun clean() = TestPostgres.truncate("users")
@@ -216,13 +250,13 @@ class DataLayerTest {
         runBlocking<Unit> {
             val amina = UserId.new()
 
-            assertFailsWith<Rollback> {
-                transactor.run("handles.claim") {
+            val answer =
+                transactor.attempt("handles.claim") {
                     handles.claim("amina", amina, now)
-                    throw Rollback(UsersError.VersionConflict)
+                    Resource.error(UsersError.VersionConflict)
                 }
-            }
 
+            assertEquals(UsersError.VersionConflict, (answer as Resource.Error).error)
             assertNull(handles.find("amina"))
         }
 
@@ -246,11 +280,14 @@ class DataLayerTest {
             store.commit(UsersChanges(contacts = listOf(contact(me, her))))
             assertEquals(ContactStatus.REMOVED, contacts.find(me, her)?.status, "the sync's insert is ignored")
 
-            store.commit(UsersChanges(connections = listOf(contact(me, her, source = ContactSource.QR))))
+            assertTrue(contacts.connect(contact(me, her, source = ContactSource.QR).copy(addedAt = now.plusSeconds(9))))
             val restored = contacts.find(me, her)!!
             assertEquals(ContactStatus.ACTIVE, restored.status, "a connection restores it")
             assertEquals(ContactSource.QR, restored.source)
             assertNull(restored.removedAt)
+            assertEquals(now, restored.addedAt, "it keeps when it was first added")
+            assertFalse(contacts.connect(contact(me, her, source = ContactSource.HANDLE)), "already active: no change")
+            assertEquals(ContactSource.QR, contacts.find(me, her)?.source)
         }
 
     @Test
@@ -258,7 +295,8 @@ class DataLayerTest {
         runBlocking<Unit> {
             val amina = UserId.new()
             val brian = UserId.new()
-            store.commit(UsersChanges(connections = listOf(contact(amina, brian), contact(brian, amina))))
+            assertTrue(contacts.connect(contact(amina, brian)))
+            assertTrue(contacts.connect(contact(brian, amina)))
 
             assertEquals(listOf(brian), contacts.ownersOf(amina, 10))
             assertEquals(listOf(amina), contacts.ownersOf(brian, 10))
@@ -298,6 +336,67 @@ class DataLayerTest {
             assertTrue(contacts.findAll(me, emptySet()).isEmpty())
         }
 
+    @Test
+    fun `of many connects of one pair exactly one creates the contact and writes the event`() =
+        runBlocking<Unit> {
+            val owner = UserId.new()
+            val guest = UserId.new()
+            profiles.create(profile(owner))
+            profiles.create(profile(guest, "Guest"))
+            store.commit(UsersChanges(invites = listOf(Invite("inv_pair", owner, "LINK", now, now.plusSeconds(600)))))
+
+            val created = concurrently(8) { connect(guest, ConnectVia.QR, "inv_pair").data().created }
+
+            assertEquals(1, created.count { it })
+            assertEquals(1, outboxRows("users.ConnectionAdded"))
+            assertEquals(ContactStatus.ACTIVE, contacts.find(guest, owner)?.status)
+            assertEquals(ContactStatus.ACTIVE, contacts.find(owner, guest)?.status)
+        }
+
+    @Test
+    fun `two people connecting to each other at once both succeed`() =
+        runBlocking<Unit> {
+            repeat(10) { round ->
+                val amina = UserId.new()
+                val brian = UserId.new()
+                profiles.create(profile(amina))
+                profiles.create(profile(brian, "Brian"))
+                val invitesOf = listOf(Invite("inv_a$round", amina, "LINK", now, now.plusSeconds(600)))
+                store.commit(
+                    UsersChanges(invites = invitesOf + Invite("inv_b$round", brian, "LINK", now, now.plusSeconds(600))),
+                )
+
+                val answers =
+                    coroutineScope {
+                        listOf(
+                            async(Dispatchers.Default) { connect(amina, ConnectVia.QR, "inv_b$round") },
+                            async(Dispatchers.Default) { connect(brian, ConnectVia.QR, "inv_a$round") },
+                        ).awaitAll()
+                    }
+
+                assertTrue(answers.all { it is Resource.Success }, "round $round: $answers")
+                assertEquals(ContactStatus.ACTIVE, contacts.find(amina, brian)?.status)
+                assertEquals(ContactStatus.ACTIVE, contacts.find(brian, amina)?.status)
+            }
+        }
+
+    @Test
+    fun `a connect that finds a block or no profile writes nothing`() =
+        runBlocking<Unit> {
+            val owner = UserId.new()
+            val guest = UserId.new()
+            profiles.create(profile(guest, "Guest"))
+            store.commit(UsersChanges(invites = listOf(Invite("inv_gone", owner, "LINK", now, now.plusSeconds(600)))))
+
+            assertEquals(SharedError.NotFound, (connect(guest, ConnectVia.QR, "inv_gone") as Resource.Error).error)
+            profiles.create(profile(owner))
+            blocks.add(Block(owner, guest, now))
+            assertEquals(UsersError.NotReachable, (connect(guest, ConnectVia.QR, "inv_gone") as Resource.Error).error)
+
+            assertNull(contacts.find(guest, owner))
+            assertEquals(0, outboxRows("users.ConnectionAdded"))
+        }
+
     // ---- waiting contacts ----
 
     @Test
@@ -321,7 +420,7 @@ class DataLayerTest {
         runBlocking<Unit> {
             val me = UserId.new()
             val pest = UserId.new()
-            concurrently(4) { store.commit(UsersChanges(blocks = listOf(Block(me, pest, now)))) }
+            assertEquals(1, concurrently(6) { blocks.add(Block(me, pest, now)) }.count { it })
 
             assertTrue(blocks.blocked(me, pest))
             assertFalse(blocks.blocked(pest, me))
@@ -330,7 +429,20 @@ class DataLayerTest {
             assertEquals(listOf(pest), blocks.list(me).map { it.blockedId })
             assertTrue(blocks.list(pest).isEmpty())
 
-            store.commit(UsersChanges(unblocks = listOf(Block(me, pest, now))))
+            assertEquals(1, concurrently(6) { blocks.remove(me, pest) }.count { it })
+            assertFalse(blocks.eitherWay(me, pest))
+        }
+
+    @Test
+    fun `of many blocks and unblocks of one pair exactly one each writes its event`() =
+        runBlocking<Unit> {
+            val me = UserId.new()
+            val pest = UserId.new()
+
+            concurrently(8) { blockUser(me, pest) }
+            assertEquals(1, outboxRows("users.UserBlocked"))
+            concurrently(8) { unblockUser(me, pest) }
+            assertEquals(1, outboxRows("users.UserUnblocked"))
             assertFalse(blocks.eitherWay(me, pest))
         }
 
@@ -347,7 +459,10 @@ class DataLayerTest {
             assertNull(InviteRepositoryImpl(database, later(8)).find("inv_one"), "expired")
             assertNull(invites.find("inv_missing"))
 
-            store.commit(UsersChanges(revokedInvites = listOf("inv_one")))
+            assertFalse(invites.revoke("inv_one", UserId.new()), "only its owner can revoke it")
+            assertFalse(InviteRepositoryImpl(database, later(8)).revoke("inv_one", me), "an expired one is gone")
+            assertTrue(invites.revoke("inv_one", me))
+            assertFalse(invites.revoke("inv_one", me))
             assertNull(invites.find("inv_one"))
         }
 
@@ -358,20 +473,12 @@ class DataLayerTest {
             val people = (1..4).map { UserId.new() }
             store.commit(UsersChanges(invites = listOf(Invite("inv_qr", owner, "LINK", now, now.plusSeconds(600)))))
 
-            concurrently(people.size) { i ->
-                transactor.run("contacts.connect") {
-                    val target = invites.find("inv_qr")!!.ownerId
-                    store.commit(
-                        UsersChanges(
-                            connections =
-                                listOf(
-                                    contact(people[i], target, source = ContactSource.QR),
-                                    contact(target, people[i], source = ContactSource.QR),
-                                ),
-                        ),
-                    )
-                }
-            }
+            profiles.create(profile(owner))
+            people.forEach { profiles.create(profile(it, "Guest")) }
+
+            val created = concurrently(people.size) { connect(people[it], ConnectVia.QR, "inv_qr").data().created }
+
+            assertTrue(created.all { it }, "each person connects once")
 
             assertEquals(people.toSet(), contacts.list(owner, null, 10, activeOnly = true).map { it.contactId }.toSet())
             people.forEach { assertEquals(ContactStatus.ACTIVE, contacts.find(it, owner)?.status) }
@@ -387,12 +494,11 @@ class DataLayerTest {
             val other = UserId.new()
             profiles.create(profile(gone))
             profiles.create(profile(other, "Other"))
-            store.commit(
-                UsersChanges(
-                    connections = listOf(contact(gone, other), contact(other, gone, ContactStatus.REMOVED)),
-                    blocks = listOf(Block(gone, UserId.new(), now), Block(UserId.new(), gone, now)),
-                ),
-            )
+            contacts.connect(contact(gone, other))
+            contacts.connect(contact(other, gone))
+            contacts.remove(other, gone, now)
+            blocks.add(Block(gone, UserId.new(), now))
+            blocks.add(Block(UserId.new(), gone, now))
 
             store.commit(UsersChanges(erasedUsers = listOf(gone)))
 
@@ -423,11 +529,9 @@ class DataLayerTest {
             val lost = bus.envelope(ProfileUpdated(her, 1, listOf(ProfileUpdated.ABOUT)))
 
             store.commit(UsersChanges(contacts = listOf(contact(me, her)), events = listOf(kept)))
-            assertFailsWith<Rollback> {
-                transactor.run("contacts.sync") {
-                    store.commit(UsersChanges(contacts = listOf(contact(her, me)), events = listOf(lost)))
-                    throw Rollback(UsersError.VersionConflict)
-                }
+            transactor.attempt("contacts.sync") {
+                store.commit(UsersChanges(contacts = listOf(contact(her, me)), events = listOf(lost)))
+                Resource.error(UsersError.VersionConflict)
             }
 
             val outbox = "SELECT count(*) FROM users.outbox WHERE event_id = ? AND published_at IS NULL"
@@ -482,6 +586,30 @@ class DataLayerTest {
                     ),
                     "$table has tomorrow's partition",
                 )
+            }
+        }
+
+    @Test
+    fun `a claim racing the purge of an expired hold always wins`() =
+        runBlocking<Unit> {
+            val past = Instant.now().minus(Duration.ofDays(60))
+            repeat(25) { round ->
+                val handle = "race_$round"
+                val old = UserId.new()
+                handles.claim(handle, old, past)
+                store.commit(UsersChanges(releasedHandles = listOf(HandleClaim(handle, old, past, past))))
+
+                val newOwner = UserId.new()
+                val claimed =
+                    coroutineScope {
+                        val purge = async(Dispatchers.Default) { UsersExpiry(database).run() }
+                        val claim = async(Dispatchers.Default) { handles.claim(handle, newOwner, now) }
+                        purge.await()
+                        claim.await()
+                    }
+
+                assertTrue(claimed, "round $round")
+                assertEquals(newOwner, handles.find(handle)?.userId)
             }
         }
 

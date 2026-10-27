@@ -16,8 +16,10 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.time.Instant
 import java.util.UUID
 
@@ -77,6 +79,29 @@ class ContactRepositoryImpl(private val database: Database) : ContactRepository 
                 .limit(limit)
                 .toList()
                 .map { UserId(it[ContactsTable.ownerId]) }
+        }
+
+    /**
+     * `INSERT … ON CONFLICT (owner_id, contact_id) DO UPDATE … WHERE status <> 'ACTIVE'`: an active row is left alone
+     * and counts as no change; a removed one comes back with the new source and its first `added_at`.
+     */
+    override suspend fun connect(contact: Contact): Boolean =
+        database.tx("contacts.connect") {
+            val statement =
+                ContactsTable.upsert(
+                    ContactsTable.ownerId,
+                    ContactsTable.contactId,
+                    onUpdateExclude = listOf(ContactsTable.addedAt),
+                    where = { ContactsTable.status neq ContactStatus.ACTIVE.name },
+                ) {
+                    it[ownerId] = contact.ownerId.value
+                    it[contactId] = contact.contactId.value
+                    it[contactSource] = contact.source.name
+                    it[status] = ContactStatus.ACTIVE.name
+                    it[removedAt] = null
+                    it[addedAt] = contact.addedAt
+                }
+            statement.insertedCount > 0
         }
 
     override suspend fun remove(

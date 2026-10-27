@@ -7,7 +7,6 @@ import com.circaso.users.data.tables.HandlesTable
 import com.circaso.users.data.tables.InvitesTable
 import com.circaso.users.data.tables.ProfilesTable
 import com.circaso.users.data.tables.WaitingContactsTable
-import com.circaso.users.domain.models.Block
 import com.circaso.users.domain.models.Contact
 import com.circaso.users.domain.models.HandleClaim
 import com.circaso.users.domain.models.WaitingContact
@@ -33,13 +32,7 @@ class UsersStoreImpl(private val database: Database) : UsersStore {
         if (changes == UsersChanges()) return
         database.tx("users.commit") {
             addContacts(changes.contacts)
-            connect(changes.connections)
-            block(changes.blocks)
-            changes.unblocks.forEach { unblock(it) }
             addInvites(changes)
-            if (changes.revokedInvites.isNotEmpty()) {
-                InvitesTable.deleteWhere { token inList changes.revokedInvites }
-            }
             keepWaiting(changes.waiting)
             changes.clearedWaiting.forEach { clearWaiting(it) }
             changes.releasedHandles.forEach { release(it) }
@@ -54,17 +47,6 @@ class UsersStoreImpl(private val database: Database) : UsersStore {
         ContactsTable.batchInsert(contacts, ignore = true, shouldReturnGeneratedValues = false) { write(it) }
     }
 
-    /** Written over whatever is there, so a connection restores a removed contact. */
-    private suspend fun connect(contacts: List<Contact>) {
-        if (contacts.isEmpty()) return
-        ContactsTable.batchUpsert(
-            contacts,
-            ContactsTable.ownerId,
-            ContactsTable.contactId,
-            shouldReturnGeneratedValues = false,
-        ) { write(it) }
-    }
-
     private fun BatchInsertStatement.write(contact: Contact) {
         this[ContactsTable.ownerId] = contact.ownerId.value
         this[ContactsTable.contactId] = contact.contactId.value
@@ -72,19 +54,6 @@ class UsersStoreImpl(private val database: Database) : UsersStore {
         this[ContactsTable.status] = contact.status.name
         this[ContactsTable.removedAt] = contact.removedAt
         this[ContactsTable.addedAt] = contact.addedAt
-    }
-
-    private suspend fun block(blocks: List<Block>) {
-        if (blocks.isEmpty()) return
-        BlocksTable.batchInsert(blocks, ignore = true, shouldReturnGeneratedValues = false) {
-            this[BlocksTable.userId] = it.userId.value
-            this[BlocksTable.blockedId] = it.blockedId.value
-            this[BlocksTable.blockedAt] = it.blockedAt
-        }
-    }
-
-    private suspend fun unblock(block: Block) {
-        BlocksTable.deleteWhere { (userId eq block.userId.value) and (blockedId eq block.blockedId.value) }
     }
 
     private suspend fun addInvites(changes: UsersChanges) {

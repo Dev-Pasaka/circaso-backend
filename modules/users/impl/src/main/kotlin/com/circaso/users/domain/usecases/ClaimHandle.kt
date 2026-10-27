@@ -17,7 +17,6 @@ import com.circaso.users.domain.support.HANDLE_COOLDOWN
 import com.circaso.users.domain.support.HandleRules
 import com.circaso.users.domain.support.ProfileProvisioner
 import com.circaso.users.domain.support.ProfileViews
-import com.circaso.users.domain.support.Rollback
 import com.circaso.users.domain.support.UserNotifier
 import java.time.Clock
 
@@ -46,18 +45,19 @@ class ClaimHandle(
 
         val released = old.handle?.let { HandleClaim(it, userId, old.handleChangedAt ?: old.createdAt, now) }
         val event = bus.envelope(ProfileUpdated(userId, old.version + 1, listOf(ProfileUpdated.HANDLE)))
+        val claimed =
+            transactor.attempt("handles.claim") {
+                if (!handles.claim(handle, userId, now)) return@attempt Resource.error(UsersError.HandleTaken)
+                val updated =
+                    profiles.update(old, old.copy(handle = handle, handleChangedAt = now))
+                        ?: return@attempt Resource.error(UsersError.VersionConflict)
+                store.commit(UsersChanges(releasedHandles = listOfNotNull(released), events = listOf(event)))
+                Resource.success(updated)
+            }
         val saved =
-            try {
-                transactor.run("handles.claim") {
-                    if (!handles.claim(handle, userId, now)) throw Rollback(UsersError.HandleTaken)
-                    val updated =
-                        profiles.update(old, old.copy(handle = handle, handleChangedAt = now))
-                            ?: throw Rollback(UsersError.VersionConflict)
-                    store.commit(UsersChanges(releasedHandles = listOfNotNull(released), events = listOf(event)))
-                    updated
-                }
-            } catch (e: Rollback) {
-                return Resource.error(e.error)
+            when (claimed) {
+                is Resource.Success -> claimed.data
+                is Resource.Error -> return claimed
             }
 
         bus.publish(event)

@@ -10,6 +10,8 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
+import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 
 /** One table; both directions of a pair are primary-key reads. */
@@ -34,6 +36,26 @@ class BlockRepositoryImpl(private val database: Database) : BlockRepository {
                 }.limit(1)
                 .toList()
                 .isNotEmpty()
+        }
+
+    override suspend fun add(block: Block): Boolean =
+        database.tx("blocks.add") {
+            val statement =
+                BlocksTable.insertIgnore {
+                    it[userId] = block.userId.value
+                    it[blockedId] = block.blockedId.value
+                    it[blockedAt] = block.blockedAt
+                }
+            statement.insertedCount == 1
+        }
+
+    override suspend fun remove(userId: UserId, blockedId: UserId): Boolean =
+        database.tx("blocks.remove") {
+            val deleted =
+                BlocksTable.deleteWhere {
+                    (BlocksTable.userId eq userId.value) and (BlocksTable.blockedId eq blockedId.value)
+                }
+            deleted == 1
         }
 
     override suspend fun list(userId: UserId): List<Block> =

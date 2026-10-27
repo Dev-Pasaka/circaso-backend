@@ -242,15 +242,15 @@ CREATE TABLE users.outbox (…);                          -- the shared outbox D
 | Table | Expiry | How the race is settled |
 | --- | --- | --- |
 | `profiles` | — | U2 updates with `WHERE version = ?` (0 rows is `users.version_conflict`). A missing profile is created with `insertIgnore`, so two readers can't create two |
-| `handles` | On release, `expires_at` = 30 days; purged by `users.purge-expired` | U6 claims with `insertIgnore` in the same transaction that updates `profiles.handle` and releases the old handle. On a conflict the existing row is taken over only if it is the caller's own hold or an expired one (`updateReturning … WHERE user_id = ? OR expires_at <= now()`); a claim that loses to the purge between the `insertIgnore` and the takeover retries once. Otherwise (owned, or on hold for someone else) the answer is `users.handle_taken` |
-| `contacts` | — | `insertIgnore` keeps a sync from re-adding a `REMOVED` row; U16 updates the one row to `REMOVED` |
-| `waiting_contacts` | `expires_at`, 180 days | — |
-| `blocks` | — | — |
-| `invites` | `expires_at`, 7 days | — |
-| `realtime` | Daily partitions, 7 days | — |
-| `outbox` | Daily partitions, 7 days | — |
+| `handles` | On release, `expires_at` = 30 days; purged by `users.purge-expired` (every 5 minutes) | U6 claims with `insertIgnore` in the same transaction that updates `profiles.handle` and releases the old handle. On a conflict the existing row is taken over only if it is the caller's own hold or an expired one (`updateReturning … WHERE user_id = ? OR expires_at <= now()`); a claim that loses to the purge between the `insertIgnore` and the takeover retries once. Otherwise (owned, or on hold for someone else) the answer is `users.handle_taken` |
+| `contacts` | — | `insertIgnore` keeps a sync from re-adding a `REMOVED` row; U16 updates the one row to `REMOVED` (`WHERE status = 'ACTIVE'`, the count answers). U11 makes each direction active with `INSERT … ON CONFLICT (owner_id, contact_id) DO UPDATE SET status = 'ACTIVE', source = EXCLUDED.source, removed_at = NULL WHERE status <> 'ACTIVE'` (`added_at` kept): the affected count says whether this call created the contact, and only then is `ConnectionAdded` written. Both directions go in owner-id order, so two people connecting to each other can't deadlock; the target's profile is read `FOR SHARE` first, as account deletion deletes the profile before the contacts |
+| `waiting_contacts` | `expires_at`, 180 days; purged by `users.purge-expired` | — |
+| `blocks` | — | U14 block is `insertIgnore` (inserted count 1), unblock a delete (count 1); the event is written only then |
+| `invites` | `expires_at`, 7 days; purged by `users.purge-expired` | U12 revoke deletes on token and owner; the count answers |
+| `realtime` | Daily partitions, 7 days; kept by `users.purge-expired` | — |
+| `outbox` | Daily partitions, 7 days; kept by `users.purge-expired` | — |
 
-Every read of a table with `expires_at` filters `expires_at > now()`.
+Every read of a table with `expires_at` filters `expires_at > :now` (the app's clock); the purge compares with the database's `now()`. `users.purge-expired` runs every 5 minutes.
 
 **How the reach rule reads:** `canReach(a, b)` = `b` is active (identity, cached) ∧ no row in `blocks` for (a, b) or (b, a) ∧ a row in `contacts` for (a, b) with status `ACTIVE`. Three primary-key reads, cached in Redis.
 
