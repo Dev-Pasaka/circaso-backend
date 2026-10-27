@@ -68,6 +68,10 @@
   <logger name="com.circaso.infrastructure.impl.database" level="${LOG_LEVEL_DATABASE:-${LOG_LEVEL:-INFO}}"/>
   <!-- never above ERROR, whatever LOG_LEVEL_DATABASE says: Exposed's statement messages can carry bound values -->
   <logger name="Exposed" level="ERROR"/>
+  <!-- never at DEBUG, whatever LOG_LEVEL_DATABASE says: r2dbc-postgresql's PARAM logger prints every bound value -->
+  <logger name="io.r2dbc.postgresql.PARAM" level="INFO"/>
+  <!-- also pinned: at DEBUG the protocol client logs every server response, an error's DETAIL (the failing row) included -->
+  <logger name="io.r2dbc.postgresql.client.ReactorNettyClient" level="INFO"/>
   <logger name="io.r2dbc" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.flywaydb" level="${LOG_LEVEL_DATABASE:-WARN}"/>
   <logger name="org.postgresql" level="${LOG_LEVEL_DATABASE:-WARN}"/>

@@ -10,11 +10,13 @@ import io.r2dbc.pool.ConnectionPool
 import io.r2dbc.pool.ConnectionPoolConfiguration
 import io.r2dbc.pool.PoolMetrics
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.APPLICATION_NAME
+import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.ERROR_RESPONSE_LOG_LEVEL
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.PREPARED_STATEMENT_CACHE_QUERIES
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.SSL_MODE
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.SSL_ROOT_CERT
 import io.r2dbc.postgresql.PostgresqlConnectionFactoryProvider.TCP_KEEPALIVE
 import io.r2dbc.postgresql.client.SSLMode
+import io.r2dbc.postgresql.util.LogLevel
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactories
 import io.r2dbc.spi.ConnectionFactory
@@ -135,6 +137,9 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
             builder.unlessIn(fromUrl, SSL_MODE, SSLMode.fromValue(sslMode))
             sslRootCert?.let { builder.unlessIn(fromUrl, SSL_ROOT_CERT, it) }
             builder.unlessIn(fromUrl, TCP_KEEPALIVE, true)
+            // The driver logs a server error with all its fields, the DETAIL that quotes the failing row included; a
+            // failure reaches us as a DatabaseException instead (operation, SQLSTATE, constraint). Not overridable.
+            builder.option(ERROR_RESPONSE_LOG_LEVEL, LogLevel.OFF)
             // A bounded cache of named statements; PgBouncer 1.21+ with max_prepared_statements keeps them working.
             builder.unlessIn(fromUrl, PREPARED_STATEMENT_CACHE_QUERIES, 256)
             return builder.build()

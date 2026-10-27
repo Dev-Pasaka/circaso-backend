@@ -79,7 +79,7 @@ class LogLevelsTest {
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.events.EventBus"))
         assertEquals(
             Level.WARN,
-            levelOf("io.r2dbc.postgresql.client.ReactorNettyClient"),
+            levelOf("io.r2dbc.pool.ConnectionPool"),
             "the driver follows its own switch",
         )
     }
@@ -121,6 +121,13 @@ class LogLevelsTest {
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Kandra"))
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Transactions"))
         assertEquals(Level.ERROR, levelOf("Exposed"), "Exposed stays at ERROR whatever LOG_LEVEL_DATABASE says")
+        assertEquals(Level.INFO, levelOf("io.r2dbc.postgresql.PARAM"), "bound values are never logged")
+        assertEquals(
+            Level.INFO,
+            levelOf("io.r2dbc.postgresql.client.ReactorNettyClient"),
+            "nor a server error's detail",
+        )
+        assertEquals(Level.DEBUG, levelOf("io.r2dbc.postgresql.QUERY"), "the SQL itself, with placeholders, may be")
         assertEquals(Level.DEBUG, levelOf("io.r2dbc.pool.ConnectionPool"))
         assertEquals(Level.DEBUG, levelOf("org.flywaydb.core.Flyway"))
         assertEquals(Level.DEBUG, levelOf("org.postgresql.Driver"))

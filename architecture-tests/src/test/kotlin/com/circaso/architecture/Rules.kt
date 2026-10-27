@@ -967,6 +967,28 @@ object Rules {
                     .toList()
             }
 
+    private val moduleTestSource = Regex(""".*/modules/[a-z]+/(api|impl)/src/test/.*""")
+
+    /**
+     * Test fixtures put `infrastructure:impl`'s main classes on a module's test classpath, so its tests could reach the
+     * pools or `ModuleDatabase`. They may import only `com.circaso.infrastructure.testing` (`TestPostgres`, which hands
+     * out `infrastructure:api` types), never `com.circaso.infrastructure.impl` (decision 2026-10-27, PG1 review).
+     * Runs on test sources, not main ones: see [testRules].
+     */
+    fun moduleTestsUseOnlyTheFixtures(files: List<KoFileDeclaration>): List<String> =
+        files
+            .filter { moduleTestSource.matches(it.path.replace('\\', '/')) }
+            .flatMap { file ->
+                file
+                    .importNames()
+                    .filter { it.startsWith("com.circaso.infrastructure.impl") }
+                    .map { violation(file, "test imports '$it'; module tests use com.circaso.infrastructure.testing") }
+            }
+
+    /** Rules that read test sources; [all] reads main sources only. */
+    val testRules: Map<String, (List<KoFileDeclaration>) -> List<String>> =
+        linkedMapOf("moduleTestsUseOnlyTheFixtures" to ::moduleTestsUseOnlyTheFixtures)
+
     private val jdbcPackages =
         listOf("java.sql.", "javax.sql.", "org.jetbrains.exposed.v1.jdbc", "org.flywaydb", "org.postgresql.")
 

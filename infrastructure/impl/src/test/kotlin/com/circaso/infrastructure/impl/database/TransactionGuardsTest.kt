@@ -54,6 +54,7 @@ class TransactionGuardsTest {
     private val logs = ListAppender<ILoggingEvent>().apply { start() }
     private val root = LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME) as Logger
     private val circaso = LoggerFactory.getLogger("com.circaso") as Logger
+    private val r2dbc = LoggerFactory.getLogger("io.r2dbc") as Logger
 
     @BeforeTest
     fun migrate() {
@@ -61,12 +62,14 @@ class TransactionGuardsTest {
         TestPostgres.truncate("pgtx")
         root.addAppender(logs)
         circaso.level = Level.DEBUG // every line Circaso writes about the transaction, the per-transaction one included
+        r2dbc.level = Level.DEBUG // the driver at its most talkative; its PARAM logger stays pinned at INFO
     }
 
     @AfterTest
     fun close() {
         root.detachAppender(logs)
         circaso.level = null
+        r2dbc.level = null
         pools.close()
     }
 

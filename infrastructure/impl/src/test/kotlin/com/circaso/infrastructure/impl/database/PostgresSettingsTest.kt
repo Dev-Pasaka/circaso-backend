@@ -16,7 +16,7 @@ class PostgresSettingsTest {
         val defaults = settings(emptyMap())
 
         assertEquals(Duration.ofSeconds(3), defaults.app.maxAcquireTime)
-        assertEquals(Duration.ofSeconds(30), defaults.jobs.maxAcquireTime)
+        assertEquals(Duration.ofSeconds(20), defaults.jobs.maxAcquireTime)
         val tuned =
             settings(
                 mapOf("DATABASE_POOL_ACQUIRE_TIMEOUT_MS" to "500", "DATABASE_POOL_JOBS_ACQUIRE_TIMEOUT_MS" to "9000"),

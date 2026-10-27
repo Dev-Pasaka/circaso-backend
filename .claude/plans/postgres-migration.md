@@ -238,7 +238,8 @@ That leaves room for a second app container (+13) during a rolling deploy. In pr
 - **Timeouts:**
   - `maxAcquireTime` 3 s on the app pool (`DATABASE_POOL_ACQUIRE_TIMEOUT_MS`). When no connection comes free in time,
     the request fails fast as `service.unavailable` (503) instead of piling up.
-  - 30 s on the jobs pool (`DATABASE_POOL_JOBS_ACQUIRE_TIMEOUT_MS`): background work waits out a burst, and an event
+  - 20 s on the jobs pool (`DATABASE_POOL_JOBS_ACQUIRE_TIMEOUT_MS`), below the consumers' 30 s reclaim: background
+    work waits out a burst without a message being reclaimed mid-wait, and an event
     handler that still gets `service.unavailable` is retried after a back-off without counting as an attempt.
   - `maxIdleTime` 10 min; `maxLifeTime` 30 min (below any proxy or firewall idle cut).
   - `validationQuery "SELECT 1"` on acquire.

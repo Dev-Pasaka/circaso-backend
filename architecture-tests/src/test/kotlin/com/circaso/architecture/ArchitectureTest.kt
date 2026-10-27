@@ -33,6 +33,19 @@ class ArchitectureTest {
     }
 
     @Test
+    fun `every test-source rule passes on the real project`() {
+        val tests =
+            Konsist
+                .scopeFromProject()
+                .files
+                .filter { "/src/test/" in it.path && "/architecture-tests/" !in it.path }
+        val violations = Rules.testRules.flatMap { (name, rule) -> rule(tests).map { "[$name] $it" } }
+
+        assertTrue(tests.isNotEmpty(), "Konsist found no test sources")
+        assertTrue(violations.isEmpty(), "Architecture rules broken:\n" + violations.joinToString("\n") { " - $it" })
+    }
+
+    @Test
     fun `every rule passes on the real project`() {
         val violations = Rules.all.flatMap { (name, rule) -> rule(files).map { "[$name] $it" } }
 

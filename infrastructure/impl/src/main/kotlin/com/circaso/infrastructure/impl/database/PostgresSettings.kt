@@ -94,8 +94,9 @@ class PostgresSettings(config: Config, secrets: Secrets) {
             initialSize = 1,
             statementTimeout = Duration.ofSeconds(60),
             slowAfter = Duration.ofSeconds(5),
-            // Background work can wait out a burst: an event retried later costs nothing, a lost one would.
-            maxAcquireTime = pool.millis("jobs-acquire-timeout-ms", Duration.ofSeconds(30)),
+            // Background work can wait out a burst, but less than the consumers' 30 s claimIdle, so a message is never
+            // reclaimed by another node while its handler is still waiting for a connection.
+            maxAcquireTime = pool.millis("jobs-acquire-timeout-ms", Duration.ofSeconds(20)),
         )
 
     /** Always a direct connection: Flyway takes a session-level lock, which a transaction pooler would break. */

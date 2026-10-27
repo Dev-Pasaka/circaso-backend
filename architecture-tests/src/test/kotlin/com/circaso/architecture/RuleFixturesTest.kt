@@ -224,6 +224,24 @@ class RuleFixturesTest {
     }
 
     @Test
+    fun `a module's tests reach infrastructure only through its test fixtures`() {
+        val tests =
+            Konsist
+                .scopeFromDirectory(
+                    "architecture-tests/src/test/fixtures/moduleTestsUseOnlyTheFixtures",
+                ).files
+                .filter {
+                    "/src/test/" in it.path
+                }
+        val violations = Rules.testRules.getValue("moduleTestsUseOnlyTheFixtures")(tests)
+
+        assertTrue(tests.size == 2, "fixture files: ${tests.map { it.name }}")
+        assertEquals(2, violations.size, violations.joinToString("\n"))
+        assertTrue(violations.all { "ReachesThePools.kt" in it }, violations.joinToString("\n"))
+        assertTrue(violations.any { "com.circaso.infrastructure.impl.database.PostgresPools" in it })
+    }
+
+    @Test
     fun `nothing blocks a thread on runBlocking`() = assertFlags("noRunBlocking", "Blocking.kt: calls runBlocking")
 
     @Test
