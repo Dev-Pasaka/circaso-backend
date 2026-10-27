@@ -110,7 +110,7 @@ Not decided yet. Where code depends on one of these, build behind an interface o
 - [ ] **Signing key storage.** Environment secret for the pilot; which key store before real money moves.
 - [ ] **Support recovery tooling.** The ops screen, the KYC vendor and the selfie match that recovery relies on.
 - [ ] **CI/CD and environments.** How a build reaches staging and production, who approves a production deploy, and where the one-shot migration step runs.
-- [ ] **Backups and disaster recovery.** The sandbox's nightly `pg_dump` to R2 (kept 7 days) runs, but a restore from it has not been tested yet; production uses its host's point-in-time recovery (at least 7 days); Redis AOF backups; how long the service may be down and how much data it may lose.
+- [ ] **Backups and disaster recovery.** The sandbox's nightly `pg_dump` to R2 (kept 7 days) runs, and a restore from it was tested on 2026-10-28 (downloaded from R2 into a throwaway container; Migrate validated every schema with nothing to apply); production uses its host's point-in-time recovery (at least 7 days); Redis AOF backups; how long the service may be down and how much data it may lose.
 - [ ] **Kenya Data Protection Act.** Registering with the Office of the Data Protection Commissioner as a data controller and processor, a retention schedule per table, and how account deletion reaches every module.
 - [x] **Creating the Circle user.** Decided 2026-10-25: on demand, when the user creates a wallet from the wallet section.
 - [x] **Reading history on a new phone.** Decided 2026-10-25: (b) plus (a). The old phone hands the history key to the new one by QR when both are present; otherwise it comes from a passphrase-sealed backup.

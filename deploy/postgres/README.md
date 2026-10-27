@@ -51,17 +51,20 @@ docker run --rm -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REG
   --endpoint-url https://<account>.r2.cloudflarestorage.com
 ```
 
-A restore from these backups is not yet tested (Decisions → Open questions → Backups). Test it on a throwaway
-`postgres:18` container, never with `pg_restore --clean` against the live database:
+Test a restore on a throwaway `postgres:18` container, never with `pg_restore --clean` against the live database
+(last done 2026-10-28). Download the night's dump from the backup bucket to `/tmp` first. Run the steps as a script
+file, not a heredoc piped into ssh: `docker exec -i` and `docker compose run` read standard input.
 
 ```sh
 cd /opt/circaso
 docker run -d --name circaso-restore-test --env-file postgres.env \
   -v "$PWD/postgres/initdb:/docker-entrypoint-initdb.d:ro" postgres:18
 docker network connect "$(docker network ls --format '{{.Name}}' | grep circaso-data)" circaso-restore-test
-# the login roles come from initdb on first start; the module roles own the restored tables, so make them first
+# the login roles come from initdb on first start; the module roles own the restored tables, so make them first, granted
+# to circaso_migrator with ADMIN OPTION as Migrate itself would have made them
 for role in identity users messaging assistant; do
-  docker exec circaso-restore-test psql -U postgres -d circaso -c "CREATE ROLE $role NOLOGIN"
+  docker exec circaso-restore-test psql -U postgres -d circaso \
+    -c "CREATE ROLE $role NOLOGIN; GRANT $role TO circaso_migrator WITH ADMIN OPTION"
 done
 docker exec -i circaso-restore-test pg_restore --exit-on-error -U postgres -d circaso </tmp/circaso-Tue.dump
 # Migrate's history check: against an up-to-date copy it validates every module's history and applies nothing
