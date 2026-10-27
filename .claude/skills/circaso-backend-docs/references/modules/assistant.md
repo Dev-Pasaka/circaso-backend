@@ -134,7 +134,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); daily totals go to `usage_daily` for cost reports.
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
 - **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
@@ -174,7 +174,7 @@ The user talks to Asha with the **user** token; Asha's tools call other modules 
 
 ## Data
 
-PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), built in PG4.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), built in PG4, and three Redis key families.
 
 ```sql
 -- V1__assistant.sql (shape; the script is modules/assistant/impl/src/main/resources/db/assistant/V1__assistant.sql)
@@ -228,6 +228,16 @@ CREATE TABLE assistant.outbox (…);                      -- the shared outbox D
 | `entitlements` | — |
 | `audit` | — |
 | `outbox` | Daily partitions, 7 days, kept one day ahead and dropped by `assistant.purge-expired` (every 5 minutes) |
+
+**Redis (`ast:` prefix)**
+
+| Key | Value | Expiry | Purpose |
+| --- | --- | --- | --- |
+| `ast:quota:{kind}:{userId}:{day}` | counter; `kind` is `text`, `voice`, `in` or `out` | 2 days | The day's live allowance counters (text turns, voice seconds, input and output tokens) |
+| `ast:turn:{userId}:{turnId}` | JSON: the turn parked for the phone, with the conversation so far | 10 min | A turn waiting on a device tool (A9, A11); taken once |
+| `ast:turns:{userId}` | hash: the user's parked turn ids | 10 min, renewed on each save | Lets account deletion find and delete the parked turns without scanning keys |
+
+All three are deleted for a user on `identity.AccountDeleted`, after its transaction commits.
 
 **Phase B** adds `assistant.proposals` (by user, with an `expires_at` 10 minutes after the proposal is decided or expires, purged by `assistant.purge-expired`), designed with Phase B.
 
