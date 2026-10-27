@@ -255,6 +255,8 @@ class RuleFixturesTest {
         val violations =
             Rules.all.getValue("transactionsHoldDatabaseWorkOnly")(filesIn("transactionsHoldDatabaseWorkOnly"))
         assertTrue(violations.none { "'accounts'" in it }, "a repository call is what the block is for")
+        assertTrue(violations.none { "'ConfirmPhone'" in it }, "building an envelope inside is allowed: $violations")
+        assertTrue(violations.any { "'VerifyPhone' uses 'events'" in it }, "publishing inside is not")
     }
 
     @Test

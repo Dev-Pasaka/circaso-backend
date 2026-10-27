@@ -1,7 +1,6 @@
 package com.circaso.users.domain.usecases
 
 import com.circaso.shared.EventBus
-import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
@@ -36,7 +35,7 @@ import java.time.Instant
  * purpose, so the contact is created both ways; a typed handle only lets the person who typed it reach the
  * handle's owner. Blocks win over everything, and the answer never says whether it was a block.
  *
- * Everything after the rate limit is one transaction: who the value names, the target's profile (read `FOR SHARE`,
+ * Everything after the rate limit is one transaction: who the value names, the target's profile (read `FOR KEY SHARE`,
  * so an account deletion can't slip in between), the block check, and each direction's conditional write, which
  * alone decides whether this call created the contact and writes the event.
  */
@@ -65,14 +64,18 @@ class Connect(
                 SharedError.RateLimited(usersCache.handleLookupRetryAfter(viewer)?.seconds ?: 3_600),
             )
         }
-        // Building an envelope is pure (no I/O): the event is written inside the transaction, published after it.
-        val announce = { target: ConnectTarget ->
-            bus.envelope(ConnectionAdded(viewer, target.userId, target.source.name, target.mutual))
-        }
         val outcome =
             transactor.attempt("contacts.connect") {
                 val target = resolve(via, value) ?: return@attempt Resource.error(notFound(via))
-                connect(viewer, via, target, announce)
+                val profile =
+                    when (val reached = reach(viewer, via, target)) {
+                        is Resource.Success -> reached.data
+                        is Resource.Error -> return@attempt reached
+                    }
+                if (!makeActive(viewer, target)) return@attempt Resource.success(Triple(target, profile, null))
+                val event = bus.envelope(ConnectionAdded(viewer, target.userId, target.source.name, target.mutual))
+                store.commit(UsersChanges(events = listOf(event)))
+                Resource.success(Triple(target, profile, event))
             }
         val (target, profile, event) =
             when (outcome) {
@@ -112,16 +115,12 @@ class Connect(
             }
         }
 
-    /**
-     * Inside the transaction: checks the target may be reached this way, then makes each direction active. Answers
-     * the target, its profile and, only when this call changed a contact, the event it wrote to the outbox.
-     */
-    private suspend fun connect(
+    /** Inside the transaction: the target's profile, locked, if the viewer may reach the target this way. */
+    private suspend fun reach(
         viewer: UserId,
         via: ConnectVia,
         target: ConnectTarget,
-        announce: (ConnectTarget) -> EventEnvelope,
-    ): Resource<Triple<ConnectTarget, Profile, EventEnvelope?>> {
+    ): Resource<Profile> {
         if (target.userId == viewer) return Resource.error(notFound(via))
         val profile = profiles.lock(target.userId)
         if (via == ConnectVia.HANDLE && profile?.privacy?.handleLookup != true) {
@@ -130,23 +129,25 @@ class Connect(
         if (blocks.eitherWay(viewer, target.userId)) {
             return Resource.error(if (via == ConnectVia.HANDLE) UsersError.HandleNotFound else UsersError.NotReachable)
         }
-        if (profile == null) return Resource.error(SharedError.NotFound)
+        return if (profile == null) Resource.error(SharedError.NotFound) else Resource.success(profile)
+    }
 
+    /**
+     * Inside the transaction: makes each direction active, in owner-id order so A connecting to B while B connects to
+     * A can't deadlock. True if this call changed either one.
+     */
+    private suspend fun makeActive(viewer: UserId, target: ConnectTarget): Boolean {
         val now = clock.instant()
         val directions =
             listOfNotNull(
                 contact(viewer, target.userId, target.source, now),
                 contact(target.userId, viewer, target.source, now).takeIf { target.mutual },
             )
-        // Rows are always written in owner-id order, so A connecting to B while B connects to A can't deadlock.
         var changed = false
         for (direction in directions.sortedBy { it.ownerId.value }) {
             if (contacts.connect(direction)) changed = true
         }
-        if (!changed) return Resource.success(Triple(target, profile, null))
-        val event = announce(target)
-        store.commit(UsersChanges(events = listOf(event)))
-        return Resource.success(Triple(target, profile, event))
+        return changed
     }
 
     private fun notFound(via: ConnectVia) =

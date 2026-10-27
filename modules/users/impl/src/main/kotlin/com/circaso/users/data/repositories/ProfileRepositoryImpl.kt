@@ -75,7 +75,7 @@ class ProfileRepositoryImpl(private val database: Database, private val clock: C
             ProfilesTable
                 .selectAll()
                 .where { ProfilesTable.userId eq userId.value }
-                .forUpdate(ForUpdateOption.PostgreSQL.ForShare)
+                .forUpdate(ForUpdateOption.PostgreSQL.ForKeyShare)
                 .singleOrNull()
                 ?.toProfile()
         }

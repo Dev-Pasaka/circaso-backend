@@ -23,7 +23,7 @@ interface ProfileRepository {
     suspend fun update(old: Profile, new: Profile): Profile?
 
     /**
-     * Reads the profile `FOR SHARE`, inside the caller's transaction: until it commits, nobody can delete the profile
+     * Reads the profile `FOR KEY SHARE`, inside the caller's transaction: until it commits, nobody can delete the profile
      * (an account deletion locks it first too), so contacts are never written for a profile that is going away.
      */
     suspend fun lock(userId: UserId): Profile?

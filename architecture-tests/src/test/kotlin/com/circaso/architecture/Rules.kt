@@ -887,8 +887,18 @@ object Rules {
                     val blocks = blocksAfter(cls.text, "$transactor.run") + blocksAfter(cls.text, "$transactor.attempt")
                     blocks.flatMap { block ->
                         leaving
-                            .filter { (name, _) ->
-                                Regex("""\b$name\b""").containsMatchIn(block)
+                            .filter { (name, type) ->
+                                // Building an envelope is pure and the outbox row needs it; anything else the bus
+                                // does (publishing) waits for the commit.
+                                val checked =
+                                    if (type ==
+                                        "EventBus"
+                                    ) {
+                                        block.replace(Regex("""\b$name\.envelope\("""), "(")
+                                    } else {
+                                        block
+                                    }
+                                Regex("""\b$name\b""").containsMatchIn(checked)
                             }.map { (name, type) ->
                                 violation(
                                     file,
