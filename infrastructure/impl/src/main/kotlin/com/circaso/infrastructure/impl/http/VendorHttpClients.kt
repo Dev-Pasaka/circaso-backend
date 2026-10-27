@@ -26,6 +26,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodedPath
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.time.Clock
@@ -102,8 +103,10 @@ class VendorHttpClients(
                     withTimeoutOrNull(timeout.toMillis()) { proceed(request) }
                         ?: throw HandshakeTimeoutException(vendor)
                 val status = call.response.status
-                if (status != HttpStatusCode.SwitchingProtocols) throw HandshakeRefusedException(vendor, status.value)
-                call
+                if (status == HttpStatusCode.SwitchingProtocols) return@on call
+                // nobody reads the refusal's body: let go of it and the connection before failing
+                runCatching { call.response.cancel() }
+                throw HandshakeRefusedException(vendor, status.value)
             }
         }
 

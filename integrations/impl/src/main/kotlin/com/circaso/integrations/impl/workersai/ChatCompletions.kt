@@ -132,7 +132,10 @@ internal object RawJsonText : KSerializer<String> {
     override fun serialize(encoder: Encoder, value: String) = encoder.encodeString(value)
 }
 
-/** Writes JSON held as text (a tool's schema) as the JSON itself, not as a string. */
+/**
+ * Writes JSON held as text (a tool's schema) as the JSON itself, not as a string. A tool's `parametersJsonSchema` is
+ * an opaque JSON Schema document, not a payload, so it stays text (decision 2026-10-27, AI1b review).
+ */
 internal object EmbeddedJson : KSerializer<String> {
     override val descriptor = PrimitiveSerialDescriptor("EmbeddedJson", PrimitiveKind.STRING)
 

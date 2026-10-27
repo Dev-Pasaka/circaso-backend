@@ -215,10 +215,14 @@ object Rules {
                 }
             }
 
-    /** Request and response DTOs live in `presentation` and never leave it. */
+    /**
+     * Request and response DTOs live in `presentation` and never leave it. The exception is a module's `api`: a
+     * response another module reads over HTTP is part of the contract and is declared there (users' agent routes,
+     * read by the assistant; decision 2026-10-27, AI1b review).
+     */
     fun dtosStayInPresentation(files: List<KoFileDeclaration>): List<String> =
         files.filter { it.isBusiness() }.flatMap { file ->
-            val inPresentation = file.layer() == "presentation"
+            val inPresentation = file.layer() == "presentation" || file.layer() == "api"
             val leaked =
                 if (inPresentation) {
                     emptyList()

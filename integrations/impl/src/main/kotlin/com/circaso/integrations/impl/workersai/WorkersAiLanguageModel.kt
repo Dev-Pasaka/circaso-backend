@@ -142,7 +142,7 @@ class WorkersAiLanguageModel(
             function = ChatFunctionSpec(tool.name, tool.description, tool.parametersJsonSchema),
         )
 
-    /** A schema is the assistant's text; it must parse to a JSON object to be sent as one. */
+    /** A schema is opaque text (decision 2026-10-27); it must still read as a JSON object to be sent as one. */
     private fun isJsonObject(schema: String) =
-        runCatching { Json.parseToJsonElement(schema) is JsonObject }.getOrDefault(false)
+        runCatching { Json.decodeFromString(JsonObject.serializer(), schema) }.isSuccess
 }

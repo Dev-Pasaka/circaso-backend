@@ -22,15 +22,19 @@ import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -239,6 +243,48 @@ class WorkersAiLanguageModelStreamTest {
                 }
             reading.await()
             withTimeout(2_000) { caller.cancelAndJoin() }
+        }
+
+    /** The connection is let go: the body Workers AI is still writing is cancelled under it. */
+    private suspend fun assertBodyCancelled() =
+        withContext(Dispatchers.Default) {
+            withTimeout(2_000) {
+                while (!body.isClosedForWrite) delay(20)
+            }
+        }
+
+    @Test
+    fun `closing the stream cancels the read of the body`() =
+        runBlocking<Unit> {
+            send(text("One"))
+            val stream = open()
+            assertEquals(ModelStreamEvent.Text("One"), stream.next())
+
+            stream.close()
+
+            assertBodyCancelled()
+        }
+
+    @Test
+    fun `an answer past the stream deadline fails after its words, and the connection is cancelled`() =
+        runBlocking<Unit> {
+            val gateway =
+                WorkersAiGateway(
+                    http = clients.named("workers-ai") { baseUrl = WorkersAiGateway.baseUrl("acc123") },
+                    token = "cf-token",
+                    gateway = "asha",
+                    streamDeadline = Duration.ofMillis(300),
+                )
+            val slow = WorkersAiLanguageModel(gateway, "@cf/moonshotai/kimi-k2.6", maxOutputTokens = 4096)
+            send(text("You sent"))
+
+            val stream = (slow.stream(request) as Resource.Success).data
+
+            assertEquals(ModelStreamEvent.Text("You sent"), stream.next())
+            val failed = withTimeout(3_000) { stream.next() }
+            assertIs<IntegrationError.Unavailable>(assertIs<ModelStreamEvent.Failed>(failed).error)
+            assertNull(stream.next())
+            assertBodyCancelled()
         }
 
     @Test

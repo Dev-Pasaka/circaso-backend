@@ -135,10 +135,20 @@ fun Route.chatController(chat: ChatService) {
                     }.docs<ToolResultsRequest, NoBody>(
                         "A9 · The phone's answer to a device tool; the reply then continues as server-sent events",
                         TAG,
-                        listOf("assistant.turn_not_found", "auth.token_invalid", "request.malformed"),
+                        listOf(
+                            "assistant.turn_not_found",
+                            "assistant.model_unavailable",
+                            "auth.token_invalid",
+                            "request.malformed",
+                        ),
                         notes =
                             "$SCOPE `messageId` is the `turnId` from the `tool_request` event. At most 30 short " +
-                                "snippets; they are used for this turn and never stored.",
+                                "snippets; they are used for this turn and never stored. The response is a new " +
+                                "`text/event-stream` carrying on the same reply (errors before any text are the " +
+                                "envelope): `message` events `{delta}` as the model writes, another `tool_request` " +
+                                "if Asha needs the phone again, `done` with the saved reply (including what was " +
+                                "said before the pause), or an `error` event `{code, message}` if the model fails " +
+                                "after text has gone out (nothing is saved).",
                     )
                 }
             }

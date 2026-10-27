@@ -107,8 +107,9 @@ class WorkersAiLiveSpeech(
      * new socket and [next] carries on reading from it. Only a close while text is still being spoken, or a socket
      * that can't be reopened, is [SpeechEvent.Failed].
      *
-     * TODO(decision: the 5 s idle close and the one-space keep-alive are what Workers AI does today, not documented
-     *  behaviour; confirm with Cloudflare, or speak replies as clips if it changes)
+     * Decided 2026-10-27 (AI1b, and its review): one Aura socket per conversation, held open by this keep-alive; the
+     * idle close is observed Workers AI behaviour, not documented, so if Cloudflare changes it replies are spoken as
+     * clips ([WorkersAiTextToSpeech]) instead.
      */
     private class AuraSession(
         first: DefaultClientWebSocketSession,
@@ -212,8 +213,10 @@ class WorkersAiLiveSpeech(
                 if (now.ws.isOpen()) return@withLock now.ws
                 when (val reopened = reopen()) {
                     is Resource.Success -> {
-                        line.compareAndSet(now, Line.Open(reopened.data))
-                        reopened.data
+                        if (line.compareAndSet(now, Line.Open(reopened.data))) return@withLock reopened.data
+                        // closed by us (or lost) while it opened: nobody would read or close the new socket
+                        runCatching { reopened.data.close() }
+                        null
                     }
 
                     is Resource.Error -> {

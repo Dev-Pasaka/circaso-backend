@@ -16,10 +16,8 @@ import java.util.Base64
  *
  * Every Deepgram call sends `mip_opt_out=true`, keeping the audio out of Deepgram's model improvement programme; it is
  * a privacy guarantee, so there is no switch (decision 2026-10-25). Workers AI's published input schema for Aura 2
- * doesn't list the field (Nova-3 and Flux do).
- *
- * TODO(decision: Workers AI accepts mip_opt_out for Aura 2, here and on the live socket, but likely ignores it;
- *  accepted by decision 2026-10-27, relying on Cloudflare's terms for the models it hosts)
+ * doesn't list the field (Nova-3 and Flux do): Workers AI accepts it for Aura 2, here and on the live socket, but
+ * likely ignores it, which is accepted, relying on Cloudflare's terms for the models it hosts (decision 2026-10-27).
  */
 class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val model: String) : TextToSpeech {
     private val log = LoggerFactory.getLogger(WorkersAiTextToSpeech::class.java)

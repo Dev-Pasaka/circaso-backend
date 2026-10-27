@@ -6,6 +6,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
+import com.circaso.users.api.AgentContactsResponse
 import com.circaso.web.DefaultResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -17,6 +18,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import org.slf4j.LoggerFactory
 
 /**
  * Asha's tools call the other modules' read-only `/v1/agent/` routes with the user's agent token, as an outside
@@ -28,6 +30,8 @@ import kotlinx.serialization.Serializable
  * class per tool, and a route's answer into the envelope around its data, which alone goes back to the model.
  */
 class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) : AgentTools {
+    private val log = LoggerFactory.getLogger(HttpAgentTools::class.java)
+
     override fun specs(): List<ToolSpec> = listOf(AshaPrompt.searchContacts, AshaPrompt.listContacts)
 
     override fun handles(toolName: String) = toolName == SEARCH_CONTACTS || toolName == LIST_CONTACTS
@@ -43,12 +47,17 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
                     SEARCH_CONTACTS -> searchContacts(arguments(argumentsJson, SearchContactsArgs()), agentToken)
                     else -> listContacts(arguments(argumentsJson, ListContactsArgs()), agentToken)
                 }
-            }.getOrElse { return Resource.error(IntegrationError.Unavailable("the contacts lookup"), it) }
+            }.getOrElse { return Resource.error(IntegrationError.Unavailable(CONTACTS_LOOKUP), it) }
 
         if (!response.status.isSuccess()) {
             return Resource.error(IntegrationError.Rejected("status ${response.status.value}"))
         }
-        return Resource.success(dataOf(response, AgentContacts.serializer()))
+        val data =
+            dataOf(response, AgentContactsResponse.serializer()) ?: run {
+                log.warn("agent route answer didn't decode: operation={}", toolName)
+                return Resource.error(IntegrationError.Unavailable(CONTACTS_LOOKUP))
+            }
+        return Resource.success(CircasoJson.encodeToString(AgentContactsResponse.serializer(), data))
     }
 
     private suspend fun searchContacts(arguments: SearchContactsArgs, agentToken: String) =
@@ -68,17 +77,14 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
     private inline fun <reified T> arguments(json: String, fallback: T): T =
         runCatching { CircasoJson.decodeFromString<T>(json) }.getOrDefault(fallback)
 
-    /** Only the envelope's data goes to the model, written from its class. */
-    private suspend fun <T : Any> dataOf(response: HttpResponse, serializer: KSerializer<T>): String {
-        val envelope =
-            runCatching {
-                CircasoJson.decodeFromString(DefaultResponse.serializer(serializer), response.bodyAsText())
-            }.getOrNull()
-        val data = envelope?.data ?: return ""
-        return CircasoJson.encodeToString(serializer, data)
-    }
+    /** The route's data, read from its envelope; null when the answer isn't one (only the data goes to the model). */
+    private suspend fun <T : Any> dataOf(response: HttpResponse, serializer: KSerializer<T>): T? =
+        runCatching {
+            CircasoJson.decodeFromString(DefaultResponse.serializer(serializer), response.bodyAsText()).data
+        }.getOrNull()
 
     private companion object {
+        const val CONTACTS_LOOKUP = "the contacts lookup"
         const val SEARCH_CONTACTS = "searchContacts"
         const val LIST_CONTACTS = "listContacts"
         const val SEARCH_LIMIT = 5
@@ -94,10 +100,3 @@ private data class SearchContactsArgs(val query: String = "")
 /** `listContacts` (its schema is [AshaPrompt.listContacts]). */
 @Serializable
 private data class ListContactsArgs(val limit: Int? = null)
-
-/** What users' agent contact routes answer (`AgentContactsResponse` there), as this client reads it. */
-@Serializable
-private data class AgentContacts(val contacts: List<AgentContact> = emptyList(), val nextCursor: String? = null)
-
-@Serializable
-private data class AgentContact(val userId: String, val displayName: String, val handle: String? = null)

@@ -60,6 +60,16 @@ class HttpAgentToolsTest {
         }
 
     @Test
+    fun `an answer that isn't the route's shape is an error, not an empty success`() =
+        runTest {
+            answer = """{"httpStatusCode":200,"status":true,"data":{"contacts":"not a list"}}"""
+
+            val result = tools.call("searchContacts", """{"query":"x"}""", "agent-tok")
+
+            assertIs<Resource.Error>(result)
+        }
+
+    @Test
     fun `a refused lookup is an error for the model to read`() =
         runTest {
             status = HttpStatusCode.Forbidden

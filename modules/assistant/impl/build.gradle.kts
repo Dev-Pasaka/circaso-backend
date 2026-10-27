@@ -8,6 +8,9 @@ dependencies {
     implementation(libs.kandra.runtime)
     implementation(libs.kandra.migrate)
 
+    // the answers of users' agent routes, which Asha's tools read over HTTP (decision 2026-10-27)
+    implementation(project(":modules:users:api"))
+
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.websockets) // the live voice socket (A11); the gateway installs the plugin
     implementation(libs.ktor.client.core)

@@ -15,7 +15,9 @@ import com.circaso.assistant.domain.support.today
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.ModelResponse
+import com.circaso.integrations.api.ModelStreamEvent
 import com.circaso.integrations.api.ModelUsage
+import com.circaso.integrations.api.ToolCall
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -285,6 +287,93 @@ class LiveVoiceTest {
             )
             assertEquals(
                 "You sent Mum 2,000 shillings. Anything else?",
+                got
+                    .ofType("reply_done")
+                    .single()["message"]!!
+                    .jsonObject
+                    .text("text"),
+            )
+        }
+
+    @Test
+    fun `a model that fails after some text lets out the sentences queued, then an error, and saves nothing`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.streamed(
+                "You sent Mum 2,000 shillings. Any",
+                "thing",
+                end = ModelStreamEvent.Failed(IntegrationError.Unavailable("model")),
+            )
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("how much did I send Mum", endOfTurn = true))
+                readUntil(got) { it.ofType("error").isNotEmpty() && it.ofType("reply").isNotEmpty() }
+                hangUp(got)
+            }
+
+            val voice = live.voice.sessions.single()
+            assertEquals(listOf("You sent Mum 2,000 shillings."), voice.spoken, "the half sentence is never spoken")
+            assertEquals(1, voice.flushes.get(), "what was queued is let out")
+            assertEquals("assistant.model_unavailable", got.ofType("error").single().text("code"))
+            assertTrue(got.ofType("reply_done").isEmpty())
+            assertTrue(
+                live.h.memory.messages
+                    .isEmpty(),
+                "a failed turn saves nothing",
+            )
+        }
+
+    @Test
+    fun `text before a device tool is flushed on its own, a stale Flushed is ignored, and the reply holds both`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .streamed("Let me look in your chats. ", toolCalls = listOf(ToolCall("c9", "searchChats", "{}")))
+                .streamed("You agreed KES 2,000.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val voice = live.voice.sessions.single()
+                voice.holdsFlushed = true
+                live.ears.session().push(TranscriptionEvent.Final("what did the chama agree", endOfTurn = true))
+                readUntil(got) { it.ofType("tool_request").isNotEmpty() }
+                val request = got.ofType("tool_request").single()
+                send(
+                    Frame.Text(
+                        """{"type":"tool_results","turnId":"${request.text("turnId")}","callId":"c9",""" +
+                            """"snippets":[{"chatId":"family","chatName":"Family","sender":"Amina",""" +
+                            """"at":"2026-10-20T10:00:00Z","text":"2,000 each"}]}""",
+                    ),
+                )
+                eventually { voice.flushes.get() == 2 }
+
+                // the first reply's Flushed comes late: it must not end the second reply
+                voice.releaseFlushed()
+                withContext(Dispatchers.Default) {
+                    withTimeoutOrNull(1_000) { readUntil(got) { it.ofType("reply_done").isNotEmpty() } }
+                }
+                assertTrue(got.ofType("reply_done").isEmpty(), "the second reply waits for its own Flushed")
+
+                voice.releaseFlushed()
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+
+            assertEquals(
+                listOf("Let me look in your chats.", "You agreed KES 2,000."),
+                live.voice.sessions
+                    .single()
+                    .spoken,
+            )
+            assertEquals(
+                "Let me look in your chats.\n\nYou agreed KES 2,000.",
                 got
                     .ofType("reply_done")
                     .single()["message"]!!
