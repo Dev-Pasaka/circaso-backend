@@ -258,7 +258,8 @@ interface DomainError {
 
 data class ErrorDetails(
     val retryAfterSeconds: Long? = null,             // RATE_LIMITED: also sent as the Retry-After header
-    val fields: Map<String, String> = emptyMap(),    // INVALID: field name → what is wrong with it
+    val fields: List<FieldError> = emptyList(),      // INVALID: which field and what is wrong with it
+@Serializable data class FieldError(val field: String, val problem: String)
 )
 
 class DomainException(val error: DomainError, cause: Throwable? = null) : RuntimeException(error.message, cause)
@@ -930,7 +931,7 @@ Each phone keeps one WebSocket open to the gateway while the app is in the foreg
 
 1. App comes to the foreground and opens `wss://api.circaso.com/v1/ws`.
 2. First frame authenticates with the access token; the gateway checks it like any request.
-3. App sends its last `seq` per module; each module returns what was missed from its own tables.
+3. App sends its last `seq` per module as `last: [{"module": "users", "seq": 1042}]` (each module at most once; a malformed `last` closes with `invalid last`); each module returns what was missed from its own tables.
 4. Heartbeat every 25 seconds (Cloudflare closes idle sockets after about 100).
 5. App goes to the background and closes the socket.
 
@@ -991,7 +992,7 @@ These apply to every module from the first line of code, so later modules look l
 | Phone numbers | E.164 only, parsed once at the edge into `PhoneNumber`; masked in responses (`+254 7•• ••• 678`); never logged in full |
 | Time | ISO-8601 UTC strings in the API (`2026-10-21T18:06:00Z`); epoch milliseconds in storage; the app formats for the user |
 | Results | Every use case and module contract returns `Resource<T>`; expected failures are `Resource.Error(DomainError)`; exceptions only for bugs and outages |
-| Errors over HTTP | Always the `DefaultResponse` envelope, for example `{"httpStatusCode": 409, "status": false, "message": "…", "code": "identity.phone_taken", "requestId": "…", "data": null}`; codes are `module.reason` and stable, and the app keys its copy on them |
+| Errors over HTTP | Always the `DefaultResponse` envelope, for example `{"httpStatusCode": 409, "status": false, "message": "…", "code": "identity.phone_taken", "requestId": "…", "data": null}`; an INVALID error lists its fields as `details.fields: [{"field": "displayName", "problem": "required"}]`; codes are `module.reason` and stable, and the app keys its copy on them |
 | Auth | `Authorization: Bearer <accessToken>`; each route declares the scope it needs |
 | Client headers | `X-Client-Version` (e.g. `android/1.4.0`); `X-Device-Id` on every call after sign-in |
 | Idempotency | Every `POST`, `PUT`, `PATCH`, `DELETE` that changes state takes `Idempotency-Key: <uuid>`; a repeat within 24 h returns the first response |
