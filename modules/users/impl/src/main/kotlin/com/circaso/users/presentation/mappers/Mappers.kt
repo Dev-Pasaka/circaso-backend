@@ -4,6 +4,8 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.users.api.AgentContactDto
+import com.circaso.users.api.AgentContactsResponse
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.domain.models.AboutVisibility
 import com.circaso.users.domain.models.AvatarVisibility
@@ -18,8 +20,6 @@ import com.circaso.users.domain.models.ProfileChange
 import com.circaso.users.domain.models.SyncCommand
 import com.circaso.users.domain.models.SyncMatch
 import com.circaso.users.domain.models.UploadTarget
-import com.circaso.users.presentation.dto.AgentContactDto
-import com.circaso.users.presentation.dto.AgentContactsResponse
 import com.circaso.users.presentation.dto.BlocksResponse
 import com.circaso.users.presentation.dto.ConnectRequest
 import com.circaso.users.presentation.dto.ConnectResponse

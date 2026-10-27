@@ -4,8 +4,8 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.shared.Resource
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.util.Base64
 
@@ -16,20 +16,15 @@ import java.util.Base64
  *
  * Every Deepgram call sends `mip_opt_out=true`, keeping the audio out of Deepgram's model improvement programme; it is
  * a privacy guarantee, so there is no switch (decision 2026-10-25). Workers AI's published input schema for Aura 2
- * doesn't list the field (Nova-3 and Flux do); the smoke test confirms it is accepted.
- *
- * TODO(decision: does Workers AI accept and honour mip_opt_out for Aura 2? Answered by the smoke test)
+ * doesn't list the field (Nova-3 and Flux do): Workers AI accepts it for Aura 2, here and on the live socket, but
+ * likely ignores it, which is accepted, relying on Cloudflare's terms for the models it hosts (decision 2026-10-27).
  */
 class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val model: String) : TextToSpeech {
     private val log = LoggerFactory.getLogger(WorkersAiTextToSpeech::class.java)
 
     override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
         if (!speaksEnglish(language)) return Resource.error(IntegrationError.UnsupportedLanguage(language.orEmpty()))
-        val body =
-            buildJsonObject {
-                put("text", text)
-                put("mip_opt_out", true)
-            }
+        val body = WorkersAiJson.encodeToString(AuraClipRequest.serializer(), AuraClipRequest(text, mipOptOut = true))
 
         return when (val reply = gateway.post("run/$model", "speak", body)) {
             is Resource.Success -> read(reply.data)
@@ -61,7 +56,7 @@ class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val m
     }
 
     private fun fromJson(reply: GatewayReply): SpokenAudio? {
-        val encoded = reply.json()?.text("audio") ?: return null
+        val encoded = reply.decode(AuraClip.serializer())?.audio ?: return null
         val bytes = runCatching { Base64.getDecoder().decode(encoded) }.getOrNull() ?: return null
         return SpokenAudio(bytes, MP3).takeIf { bytes.isNotEmpty() }
     }
@@ -72,3 +67,13 @@ class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val m
         const val MP3 = "audio/mpeg"
     }
 }
+
+@Serializable
+private class AuraClipRequest(
+    val text: String,
+    @SerialName("mip_opt_out") val mipOptOut: Boolean,
+)
+
+/** The JSON shape of a clip, base64 audio, when the route wraps it rather than answering with the bytes. */
+@Serializable
+private class AuraClip(val audio: String? = null)

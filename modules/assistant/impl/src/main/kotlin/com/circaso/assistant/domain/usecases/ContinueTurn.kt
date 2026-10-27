@@ -4,9 +4,11 @@ import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.ports.PendingReadNote
+import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.toModel
@@ -26,7 +28,10 @@ class ContinueTurn(
     private val recorder: TurnRecorder,
     private val config: AssistantConfig,
 ) {
-    suspend operator fun invoke(result: DeviceToolResult): Resource<TurnResult> {
+    suspend operator fun invoke(
+        result: DeviceToolResult,
+        listener: ReplyListener = ReplyListener.None,
+    ): Resource<TurnResult> {
         // checked before the pending turn is taken, so a wrong token doesn't use it up
         if (!isOwnAgentToken(verifier, result.userId, result.agentToken)) {
             return Resource.error(SharedError.TokenInvalid)
@@ -55,7 +60,7 @@ class ContinueTurn(
                 ModelMessage.ToolResult(turn.callId, turn.toolName, AshaAgent.snippetsAsText(snippets))
 
         val outcome =
-            when (val r = agent.run(conversation, result.agentToken, deviceTools = true, startSteps = turn.steps)) {
+            when (val r = carryOn(turn, conversation, result.agentToken, listener)) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }
@@ -69,4 +74,19 @@ class ContinueTurn(
             PendingReadNote(note.chatIds, note.chatNames, note.messageCount),
         )
     }
+
+    /** The saved answer starts with what the user was shown before the pause; only the rest streams now. */
+    private suspend fun carryOn(
+        turn: PendingTurn,
+        conversation: List<ModelMessage>,
+        agentToken: String?,
+        listener: ReplyListener,
+    ) = agent.run(
+        conversation,
+        agentToken,
+        deviceTools = true,
+        startSteps = turn.steps,
+        shownBefore = AshaAgent.shownSoFar(turn.conversation),
+        listener = listener,
+    )
 }

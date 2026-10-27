@@ -1,7 +1,7 @@
 package com.circaso.users.presentation.agent
 
 import com.circaso.shared.Scope
-import com.circaso.users.presentation.dto.AgentContactsResponse
+import com.circaso.users.api.AgentContactsResponse
 import com.circaso.users.presentation.mappers.toAgentContacts
 import com.circaso.users.presentation.mappers.toAgentResponse
 import com.circaso.users.presentation.services.ContactService

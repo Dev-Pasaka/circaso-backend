@@ -1,15 +1,15 @@
 package com.circaso.assistant.presentation.controllers
 
-import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.presentation.dto.SpeechRequest
 import com.circaso.assistant.presentation.dto.TranscriptResponse
 import com.circaso.assistant.presentation.dto.UsageResponse
+import com.circaso.assistant.presentation.mappers.DURATION_HEADER
 import com.circaso.assistant.presentation.mappers.toResponse
+import com.circaso.assistant.presentation.mappers.voiceClipOf
 import com.circaso.assistant.presentation.services.VoiceService
-import com.circaso.integrations.api.Transcript
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
-import com.circaso.shared.SharedError
+import com.circaso.shared.flatMap
 import com.circaso.web.EnvelopeSent
 import com.circaso.web.NoBody
 import com.circaso.web.authenticate
@@ -29,39 +29,30 @@ import io.ktor.server.routing.route
 
 private const val TAG = "Asha voice and usage"
 private const val SCOPE = "Scope: `app` (the user token)."
-private const val MAX_CLIP_BYTES = 3 * 1024 * 1024
 
 /** Voice in and out, and the day's allowance. A3, A4 and A7. */
 fun Route.voiceController(voice: VoiceService) {
     authenticate(Scope.APP) {
         route("/assistant") {
             post("voice") {
-                val bytes = call.receive<ByteArray>()
-                val seconds = call.request.header("X-Duration-Seconds")?.toIntOrNull()
-                val result: Resource<Transcript> =
-                    if (seconds == null || bytes.size > MAX_CLIP_BYTES) {
-                        Resource.error(
-                            SharedError.Malformed("X-Duration-Seconds", "is required, and the clip must be under 3 MB"),
-                        )
-                    } else {
-                        voice.transcribe(
-                            call.userId(),
-                            VoiceClip(
-                                bytes,
-                                call.request.header("Content-Type") ?: "audio/mp4",
-                                seconds,
-                                call.request.header("Accept-Language"),
-                            ),
-                        )
-                    }
+                val clip =
+                    voiceClipOf(
+                        call.receive<ByteArray>(),
+                        call.request.header(DURATION_HEADER),
+                        call.request.header("Content-Type"),
+                        call.request.header("Accept-Language"),
+                    )
+                val result = clip.flatMap { voice.transcribe(call.userId(), it) }
                 call.respondDefault(result.toDefaultResponse { TranscriptResponse(it.text, it.seconds) })
             }.docs<NoBody, TranscriptResponse>(
                 "A3 · Transcribe a voice clip",
                 TAG,
-                listOf("assistant.voice_too_long", "assistant.quota_exceeded"),
+                listOf("assistant.voice_too_long", "assistant.quota_exceeded", "request.malformed"),
                 notes =
                     "$SCOPE The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio " +
-                        "and `X-Duration-Seconds`.",
+                        "and `X-Duration-Seconds`, the clip's length in seconds (a decimal such as `5.5` is " +
+                        "fine; it is rounded up). A missing or non-positive length and a clip over 3 MB are " +
+                        "`request.malformed`, each named in `details.fields`.",
             )
 
             post("speech") {

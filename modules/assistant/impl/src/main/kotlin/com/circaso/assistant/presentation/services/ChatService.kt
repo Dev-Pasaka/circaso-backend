@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.models.ChatPage
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.models.TurnResult
+import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.DeleteChat
 import com.circaso.assistant.domain.usecases.DeleteExchange
@@ -21,9 +22,10 @@ class ChatService(
     private val deleteChat: DeleteChat,
     private val deleteExchange: DeleteExchange,
 ) {
-    suspend fun ask(command: TurnCommand): Resource<TurnResult> = startTurn(command)
+    suspend fun ask(command: TurnCommand, listener: ReplyListener): Resource<TurnResult> = startTurn(command, listener)
 
-    suspend fun answerDevice(result: DeviceToolResult): Resource<TurnResult> = continueTurn(result)
+    suspend fun answerDevice(result: DeviceToolResult, listener: ReplyListener): Resource<TurnResult> =
+        continueTurn(result, listener)
 
     suspend fun listChat(
         userId: UserId,

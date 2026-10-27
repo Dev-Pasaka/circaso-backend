@@ -6,10 +6,10 @@ import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.presentation.dto.LiveAudioDto
-import com.circaso.assistant.presentation.dto.LiveAuthFrame
 import com.circaso.assistant.presentation.dto.LiveClosingFrame
 import com.circaso.assistant.presentation.dto.LiveErrorFrame
 import com.circaso.assistant.presentation.dto.LiveInterruptedFrame
+import com.circaso.assistant.presentation.dto.LivePhoneFrame
 import com.circaso.assistant.presentation.dto.LiveReadyFrame
 import com.circaso.assistant.presentation.dto.LiveReplyDoneFrame
 import com.circaso.assistant.presentation.dto.LiveReplyFrame
@@ -19,7 +19,7 @@ import com.circaso.assistant.presentation.dto.LiveTurnFrame
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
 
-fun LiveAuthFrame.toRequest(requestId: String?) =
+fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
     LiveVoiceStart(accessToken, agentToken?.takeIf { it.isNotBlank() }, language, chatReading, requestId)
 
 fun LiveVoiceLine.toReadyJson(): String =

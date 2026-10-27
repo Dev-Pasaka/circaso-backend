@@ -30,6 +30,8 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
+import com.circaso.integrations.api.ModelStream
+import com.circaso.integrations.api.ModelStreamEvent
 import com.circaso.integrations.api.ModelUsage
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.SpokenAudio
@@ -39,6 +41,7 @@ import com.circaso.integrations.api.ToolSpec
 import com.circaso.integrations.api.Transcript
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import kotlinx.coroutines.CompletableDeferred
 import java.time.Clock
 import java.time.Instant
 import java.util.ArrayDeque
@@ -175,12 +178,62 @@ class FakeTools : AgentTools {
     }
 }
 
-/** A model that follows a script and records what it was asked. */
+/** A streamed answer played from a list: each entry makes the next event (and may wait first). */
+class ScriptedStream(private val events: List<suspend () -> ModelStreamEvent>) : ModelStream {
+    private var next = 0
+
+    @Volatile var isClosed = false
+
+    override suspend fun next(): ModelStreamEvent? = if (isClosed || next >= events.size) null else events[next++]()
+
+    override suspend fun close() {
+        isClosed = true
+    }
+}
+
+/** A model that follows a script and records what it was asked. Asha's turns stream; [complete] reads a stream whole. */
 class ScriptedModel : LanguageModel {
     val requests = CopyOnWriteArrayList<ModelRequest>()
-    private val steps = ArrayDeque<(ModelRequest) -> Resource<ModelResponse>>()
+    val streams = CopyOnWriteArrayList<ScriptedStream>()
+    private val steps = ArrayDeque<suspend (ModelRequest) -> Resource<ModelStream>>()
 
-    fun then(step: (ModelRequest) -> Resource<ModelResponse>) = apply { steps.add(step) }
+    /** A whole answer, streamed as the contract's default does: its text in one piece, then done. */
+    fun then(step: (ModelRequest) -> Resource<ModelResponse>) =
+        apply {
+            steps.add { request ->
+                when (val answer = step(request)) {
+                    is Resource.Error -> answer
+                    is Resource.Success -> Resource.success(whole(answer.data))
+                }
+            }
+        }
+
+    /**
+     * An answer written in [pieces]; after the first piece it waits for [gate], if given. It ends with [end], by
+     * default the whole answer (the pieces joined, and [toolCalls]).
+     */
+    fun streamed(
+        vararg pieces: String,
+        toolCalls: List<ToolCall> = emptyList(),
+        gate: CompletableDeferred<Unit>? = null,
+        end: ModelStreamEvent? = null,
+    ) = apply {
+        val text = pieces.joinToString("").takeIf { it.isNotEmpty() }
+        val last = end ?: ModelStreamEvent.Done(ModelResponse(text, toolCalls, ModelUsage(100, 20)))
+        val events =
+            pieces.mapIndexed { i, piece ->
+                suspend {
+                    if (i == 1) gate?.await()
+                    ModelStreamEvent.Text(piece)
+                }
+            } + listOf(suspend { last })
+        steps.add { Resource.success(ScriptedStream(events).also { streams += it }) }
+    }
+
+    private fun whole(response: ModelResponse): ModelStream {
+        val text = response.text?.takeIf { it.isNotEmpty() }?.let { listOf(suspend { ModelStreamEvent.Text(it) }) }
+        return ScriptedStream(text.orEmpty() + listOf(suspend { ModelStreamEvent.Done(response) }))
+    }
 
     fun say(text: String) = then { Resource.success(ModelResponse(text, emptyList(), ModelUsage(100, 20))) }
 
@@ -192,10 +245,25 @@ class ScriptedModel : LanguageModel {
 
     fun fail() = then { Resource.error(IntegrationError.Unavailable("model")) }
 
-    override suspend fun complete(request: ModelRequest): Resource<ModelResponse> {
+    override suspend fun stream(request: ModelRequest): Resource<ModelStream> {
         requests += request
         return steps.pollFirst()?.invoke(request)
-            ?: Resource.success(ModelResponse("(unscripted)", emptyList(), ModelUsage(1, 1)))
+            ?: Resource.success(whole(ModelResponse("(unscripted)", emptyList(), ModelUsage(1, 1))))
+    }
+
+    override suspend fun complete(request: ModelRequest): Resource<ModelResponse> {
+        val stream =
+            when (val opened = stream(request)) {
+                is Resource.Error -> return opened
+                is Resource.Success -> opened.data
+            }
+        while (true) {
+            when (val event = stream.next() ?: return Resource.error(IntegrationError.Unavailable("model"))) {
+                is ModelStreamEvent.Done -> return Resource.success(event.response)
+                is ModelStreamEvent.Failed -> return Resource.error(event.error)
+                else -> continue
+            }
+        }
     }
 }
 

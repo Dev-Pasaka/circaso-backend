@@ -4,9 +4,9 @@ import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.support.LiveConversation
 import com.circaso.assistant.domain.support.LiveOutput
-import com.circaso.assistant.presentation.dto.LiveAuthFrame
-import com.circaso.assistant.presentation.dto.LiveClientFrame
 import com.circaso.assistant.presentation.dto.LiveErrorFrame
+import com.circaso.assistant.presentation.dto.LivePhoneFrame
+import com.circaso.assistant.presentation.dto.LivePhoneFrameType
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
 import com.circaso.assistant.presentation.mappers.toClosing
 import com.circaso.assistant.presentation.mappers.toCommand
@@ -38,14 +38,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.circaso.assistant.presentation.controllers.LiveVoice")
 
 /** As on the main socket: the first frame must authenticate within this window. */
 private const val AUTH_WINDOW_MILLIS = 10_000L
+private const val TOOL_RESULTS = "tool_results"
 
 /**
  * Frames on this socket are at most 64 KB both ways, like the main socket (decision 2026-10-25). Opus packets are far
@@ -118,12 +117,15 @@ private suspend fun DefaultWebSocketServerSession.say(end: LiveEnd) {
     }
 }
 
-private suspend fun DefaultWebSocketServerSession.readAuth(): LiveAuthFrame? {
+private suspend fun DefaultWebSocketServerSession.readAuth(): LivePhoneFrame.Auth? {
     val first =
         withTimeoutOrNull(AUTH_WINDOW_MILLIS) { incoming.receiveCatching().getOrNull() } as? Frame.Text ?: return null
-    val auth = runCatching { CircasoJson.decodeFromString(LiveAuthFrame.serializer(), first.readText()) }.getOrNull()
-    return auth?.takeIf { it.type == "auth" && it.accessToken.isNotBlank() }
+    val auth = phoneFrame(first.readText()) as? LivePhoneFrame.Auth
+    return auth?.takeIf { it.accessToken.isNotBlank() }
 }
+
+private fun phoneFrame(text: String): LivePhoneFrame? =
+    runCatching { CircasoJson.decodeFromString(LivePhoneFrame.serializer(), text) }.getOrNull()
 
 /**
  * A refused opening. A bad or agent token closes the socket the way the main socket does; a language without a live
@@ -187,22 +189,21 @@ private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveCo
  * is ignored, as on the main socket.
  */
 private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conversation: LiveConversation) {
-    val frame = runCatching { CircasoJson.decodeFromString(LiveClientFrame.serializer(), text) }.getOrNull()
-    if (frame == null) {
-        // a `tool_results` the phone got wrong is answered, so the phone can send it again; the turn keeps waiting
-        if (typeOf(text) == "tool_results") sendError(SharedError.Malformed("snippets", "are not valid"))
-        return
-    }
-    when (frame.type) {
-        "end" -> {
+    when (val frame = phoneFrame(text)) {
+        null -> {
+            // a `tool_results` the phone got wrong is answered, so the phone can send it again; the turn keeps waiting
+            if (typeOf(text) == TOOL_RESULTS) sendError(SharedError.Malformed("snippets", "are not valid"))
+        }
+
+        is LivePhoneFrame.End -> {
             conversation.hangUp()
         }
 
-        "auth" -> {
+        is LivePhoneFrame.Auth -> {
             conversation.refresh(frame.accessToken, frame.agentToken?.takeIf { it.isNotBlank() })
         }
 
-        "tool_results" -> {
+        is LivePhoneFrame.ToolResults -> {
             val result =
                 ToolResultsRequest(frame.callId, frame.snippets).toCommand(
                     conversation.line.userId,
@@ -253,13 +254,7 @@ private suspend fun DefaultWebSocketServerSession.sendError(error: DomainError) 
 
 /** The `type` of a frame that didn't decode as a whole, if it is JSON with one. */
 private fun typeOf(text: String): String? =
-    runCatching {
-        CircasoJson
-            .parseToJsonElement(text)
-            .jsonObject["type"]
-            ?.jsonPrimitive
-            ?.content
-    }.getOrNull()
+    runCatching { CircasoJson.decodeFromString(LivePhoneFrameType.serializer(), text).type }.getOrNull()
 
 private fun LiveEnd.closeCode(): CloseReason.Codes =
     when (this) {

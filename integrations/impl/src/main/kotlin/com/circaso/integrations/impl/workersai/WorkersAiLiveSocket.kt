@@ -1,5 +1,6 @@
 package com.circaso.integrations.impl.workersai
 
+import com.circaso.infrastructure.api.HandshakeRefusedException
 import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.shared.Resource
@@ -19,13 +20,13 @@ import org.slf4j.LoggerFactory
  * only its opening is timed).
  *
  * The socket is `wss://api.cloudflare.com/client/v4/accounts/<account>/ai/run/<model>?<options>` with the API token
- * as a bearer header (Cloudflare's Workers AI WebSocket examples). As on the HTTP routes, AI Gateway is named by the
- * `cf-aig-gateway-id` header and its log is switched off with `cf-aig-collect-log: false`, so no transcript or audio
- * is kept by the gateway. Deepgram's options travel in the query string, `mip_opt_out=true` among them.
+ * as a bearer header (Cloudflare's Workers AI WebSocket examples). Deepgram's options travel in the query string,
+ * `mip_opt_out=true` among them.
  *
- * TODO(decision: Cloudflare documents the gateway header for the AI REST API's HTTP routes, and documents live
- *  sockets through AI Gateway only at gateway.ai.cloudflare.com/v1/<account>/<gateway>/workers-ai?model=…; the
- *  smoke test confirms the header is honoured on a live socket at api.cloudflare.com)
+ * AI Gateway (decision 2026-10-27, from the real smoke test): Nova-3's socket goes through the gateway, named by the
+ * `cf-aig-gateway-id` header with its log off (`cf-aig-collect-log: false`), as the HTTP routes do. AI Gateway refuses
+ * Aura's socket (`400`, "Unsupported websocket provider/model"), so Aura connects to Workers AI directly, with no
+ * `cf-aig-*` header: [open] with `throughGateway = false`.
  */
 class WorkersAiLiveSocket(
     private val http: HttpClient,
@@ -40,6 +41,7 @@ class WorkersAiLiveSocket(
         model: String,
         operation: String,
         options: Map<String, String>,
+        throughGateway: Boolean = true,
     ): Resource<DefaultClientWebSocketSession> {
         val url =
             URLBuilder(socketBase)
@@ -53,12 +55,18 @@ class WorkersAiLiveSocket(
                 http.webSocketSession(url) {
                     operation(operation)
                     header(HttpHeaders.Authorization, "Bearer $token")
-                    header(WorkersAiGateway.GATEWAY_HEADER, gateway)
-                    header(WorkersAiGateway.COLLECT_LOG_HEADER, "false")
+                    if (throughGateway) {
+                        header(WorkersAiGateway.GATEWAY_HEADER, gateway)
+                        header(WorkersAiGateway.COLLECT_LOG_HEADER, "false")
+                    }
                 }
             Resource.success(session)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: HandshakeRefusedException) {
+            // the status is on the attempt log line; Workers AI or the gateway said no, nothing more to tell
+            log.warn("workers-ai live socket refused: operation={}", operation)
+            Resource.error(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         } catch (e: Exception) {
             // the class only: a handshake error's message carries the URL
             log.warn("workers-ai live socket didn't open: operation={} error={}", operation, e::class.simpleName)

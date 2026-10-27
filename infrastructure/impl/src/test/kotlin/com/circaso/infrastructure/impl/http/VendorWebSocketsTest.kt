@@ -1,5 +1,6 @@
 package com.circaso.infrastructure.impl.http
 
+import com.circaso.infrastructure.api.HandshakeRefusedException
 import com.circaso.infrastructure.api.HandshakeTimeoutException
 import io.ktor.client.plugins.pluginOrNull
 import io.ktor.client.plugins.websocket.WebSockets
@@ -19,8 +20,11 @@ import io.ktor.websocket.readText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -103,6 +107,46 @@ class VendorWebSocketsTest {
             client.get("http://localhost/plain")
             assertEquals(3, plainCalls.get(), "the circuit is still closed, and a GET keeps its retries")
         }
+
+    /**
+     * Ktor's test host fails a refused upgrade inside its own engine, so this one runs the real engine against a
+     * socket that answers like AI Gateway refusing Aura: a `400` with a JSON body, which Ktor would otherwise try to
+     * read as the socket and fail with a serialization error.
+     */
+    @Test
+    fun `an upgrade answered with an error status fails as refused, with that status`() {
+        val refusing = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+        val server =
+            thread(isDaemon = true) {
+                refusing.accept().use { socket ->
+                    val request = socket.getInputStream().bufferedReader()
+                    while (request.readLine()?.isNotEmpty() == true) continue
+                    val body = """{"name":"AiGatewayError","internalCode":2029}"""
+                    socket.getOutputStream().write(
+                        (
+                            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n" +
+                                "Content-Length: ${body.length}\r\nConnection: close\r\n\r\n$body"
+                        ).toByteArray(),
+                    )
+                }
+            }
+        val clients = VendorHttpClients()
+        try {
+            val client = clients.named("live") { webSockets = true }
+
+            val refused =
+                assertFailsWith<HandshakeRefusedException> {
+                    runBlocking { client.webSocketSession("ws://127.0.0.1:${refusing.localPort}/run") }
+                }
+
+            assertEquals(400, refused.status)
+            assertEquals("live", refused.vendor)
+        } finally {
+            clients.close()
+            refusing.close()
+            server.join(1_000)
+        }
+    }
 
     @Test
     fun `an open socket outlives the request timeout`() =

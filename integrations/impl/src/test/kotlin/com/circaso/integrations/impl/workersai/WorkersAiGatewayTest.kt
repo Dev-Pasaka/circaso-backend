@@ -14,8 +14,7 @@ import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import kotlinx.serialization.Serializable
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,7 +32,7 @@ class WorkersAiGatewayTest {
             json(reply, status)
         }
     private val gateway = WorkersAiKit.gateway(clients)
-    private val body = buildJsonObject { put("model", "@cf/x/y") }
+    private val body = """{"model":"@cf/x/y"}"""
 
     private suspend fun post() = gateway.post("v1/chat/completions", "chat_completion", body)
 
@@ -118,8 +117,11 @@ class WorkersAiGatewayTest {
     @Test
     fun `Cloudflare's result envelope is unwrapped`() {
         val wrapped = GatewayReply("""{"result":{"text":"hi"},"success":true}""".toByteArray(), "application/json")
-        assertEquals("hi", wrapped.json()?.text("text"))
+        assertEquals("hi", wrapped.decode(Said.serializer())?.text)
         val bare = GatewayReply("""{"text":"hi"}""".toByteArray(), "application/json")
-        assertEquals("hi", bare.json()?.text("text"))
+        assertEquals("hi", bare.decode(Said.serializer())?.text)
     }
+
+    @Serializable
+    private class Said(val text: String? = null)
 }

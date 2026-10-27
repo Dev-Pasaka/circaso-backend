@@ -1,32 +1,44 @@
 package com.circaso.assistant.presentation.dto
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 // The live voice socket's text frames (A11). Every frame carries `type`; binary frames are audio both ways.
 
-/** The phone's first frame: `{"type":"auth","accessToken":…,"agentToken":…,"language":"en","chatReading":true}`. */
+/** The phone's text frames, one class per `type` (decision 2026-10-27), read with `type` as the discriminator. */
 @Serializable
-data class LiveAuthFrame(
-    val type: String,
-    val accessToken: String = "",
-    val agentToken: String? = null,
-    val language: String? = null,
-    val chatReading: Boolean = true,
-)
+sealed interface LivePhoneFrame {
+    /**
+     * The first frame (`{"type":"auth","accessToken":…,"agentToken":…,"language":"en","chatReading":true}`), and
+     * later fresh tokens before the access token's 15 minutes are up.
+     */
+    @Serializable
+    @SerialName("auth")
+    data class Auth(
+        val accessToken: String = "",
+        val agentToken: String? = null,
+        val language: String? = null,
+        val chatReading: Boolean = true,
+    ) : LivePhoneFrame
 
-/**
- * The phone's later text frames: `tool_results` (the answer to a `tool_request`), `auth` (fresh tokens before the
- * access token's 15 minutes are up) and `end` (hang up).
- */
+    /** The answer to a `tool_request`. */
+    @Serializable
+    @SerialName("tool_results")
+    data class ToolResults(
+        val turnId: String? = null,
+        val callId: String = "",
+        val snippets: List<SnippetDto> = emptyList(),
+    ) : LivePhoneFrame
+
+    /** Hang up. */
+    @Serializable
+    @SerialName("end")
+    data object End : LivePhoneFrame
+}
+
+/** Only a frame's `type`: what a frame that didn't decode meant to be, so a bad `tool_results` can be answered. */
 @Serializable
-data class LiveClientFrame(
-    val type: String,
-    val accessToken: String = "",
-    val agentToken: String? = null,
-    val turnId: String? = null,
-    val callId: String = "",
-    val snippets: List<SnippetDto> = emptyList(),
-)
+data class LivePhoneFrameType(val type: String? = null)
 
 @Serializable
 data class LiveAudioDto(val encoding: String, val sampleRate: Int)

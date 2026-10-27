@@ -91,6 +91,14 @@ class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
 
         @Volatile var isClosed = false
 
+        /** True holds each `Flushed` until [releaseFlushed], as a slow voice would. */
+        @Volatile var holdsFlushed = false
+
+        /** Answers the oldest flush held by [holdsFlushed]. */
+        fun releaseFlushed() {
+            events.trySend(SpeechEvent.Flushed)
+        }
+
         override val format = LiveAudioFormat(AudioEncoding.MULAW, sampleRate)
 
         override suspend fun speak(text: String) {
@@ -102,7 +110,7 @@ class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
             flushes.incrementAndGet()
             queued.filter { it.isNotEmpty() }.forEach { events.trySend(SpeechEvent.Audio(it.toByteArray())) }
             queued.clear()
-            if (answersFlush) events.trySend(SpeechEvent.Flushed)
+            if (answersFlush && !holdsFlushed) events.trySend(SpeechEvent.Flushed)
         }
 
         override suspend fun clear() {

@@ -76,3 +76,7 @@ data class ToolRequestEvent(
 
 @Serializable
 data class DoneEvent(val message: ChatMessageDto)
+
+/** The turn failed after its reply had started streaming, so the status line was already sent: nothing is saved. */
+@Serializable
+data class ErrorEvent(val code: String, val message: String)

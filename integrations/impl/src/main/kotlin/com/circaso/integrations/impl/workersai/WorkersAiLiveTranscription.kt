@@ -16,13 +16,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.double
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -129,63 +124,54 @@ class WorkersAiLiveTranscription(
             return TranscriptionEvent.Failed(IntegrationError.Unavailable(WorkersAiGateway.VENDOR))
         }
 
-        private fun event(text: String): TranscriptionEvent? {
-            val message = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return null
-            return when (message.string("type")) {
-                "Results" -> result(message)
-                "SpeechStarted" -> TranscriptionEvent.SpeechStarted
-                "UtteranceEnd" -> TranscriptionEvent.TurnEnded
-                else -> null // Metadata, and anything Deepgram adds later
+        /** Metadata, and any message Deepgram adds later, doesn't decode as one of ours and is skipped. */
+        private fun event(text: String): TranscriptionEvent? =
+            when (
+                val message =
+                    runCatching {
+                        WorkersAiJson.decodeFromString(
+                            NovaMessage.serializer(),
+                            text,
+                        )
+                    }.getOrNull()
+            ) {
+                is NovaMessage.Results -> result(message)
+                is NovaMessage.SpeechStarted -> TranscriptionEvent.SpeechStarted
+                is NovaMessage.UtteranceEnd -> TranscriptionEvent.TurnEnded
+                null -> null
             }
-        }
 
-        private fun result(message: JsonObject): TranscriptionEvent? {
-            val transcript =
-                runCatching {
-                    message["channel"]!!
-                        .jsonObject["alternatives"]!!
-                        .jsonArray
-                        .first()
-                        .jsonObject
-                        .string("transcript")
-                }.getOrNull().orEmpty().trim()
-            val isFinal = message.flag("is_final")
-            val speechFinal = message.flag("speech_final")
-            val audio = if (transcript.isEmpty()) null else wordsSpan(message) ?: windowSpan(message)
+        private fun result(message: NovaMessage.Results): TranscriptionEvent? {
+            val best = message.channel?.alternatives?.firstOrNull()
+            val transcript = best?.transcript.orEmpty().trim()
+            val audio = if (transcript.isEmpty()) null else wordsSpan(best?.words.orEmpty()) ?: windowSpan(message)
             return when {
-                isFinal || speechFinal -> TranscriptionEvent.Final(transcript, endOfTurn = speechFinal, audio = audio)
-                transcript.isNotEmpty() -> TranscriptionEvent.Interim(transcript, audio)
-                else -> null
+                message.isFinal || message.speechFinal -> {
+                    TranscriptionEvent.Final(transcript, endOfTurn = message.speechFinal, audio = audio)
+                }
+
+                transcript.isNotEmpty() -> {
+                    TranscriptionEvent.Interim(transcript, audio)
+                }
+
+                else -> {
+                    null
+                }
             }
         }
 
         /** The first word's `start` to the last word's `end`, in seconds from the start of the stream. */
-        private fun wordsSpan(message: JsonObject): AudioSpan? =
-            runCatching {
-                val words =
-                    message["channel"]!!
-                        .jsonObject["alternatives"]!!
-                        .jsonArray
-                        .first()
-                        .jsonObject["words"]!!
-                        .jsonArray
-                AudioSpan(words.first().jsonObject.number("start"), words.last().jsonObject.number("end"))
-            }.getOrNull()
+        private fun wordsSpan(words: List<NovaWord>): AudioSpan? {
+            if (words.isEmpty()) return null
+            return AudioSpan(words.first().start, words.last().end)
+        }
 
         /** Without words, the result's own window (`start`, `duration`), which may hold some silence. */
-        private fun windowSpan(message: JsonObject): AudioSpan? =
-            runCatching {
-                val start = message.number("start")
-                AudioSpan(start, start + message.number("duration"))
-            }.getOrNull()
-
-        private fun JsonObject.number(name: String): Double = get(name)!!.jsonPrimitive.double
-
-        private fun JsonObject.string(name: String): String? =
-            runCatching { get(name)!!.jsonPrimitive.content }.getOrNull()
-
-        private fun JsonObject.flag(name: String): Boolean =
-            runCatching { get(name)?.jsonPrimitive?.booleanOrNull }.getOrNull() ?: false
+        private fun windowSpan(message: NovaMessage.Results): AudioSpan? {
+            val start = message.start ?: return null
+            val duration = message.duration ?: return null
+            return AudioSpan(start, start + duration)
+        }
     }
 
     companion object {
@@ -195,8 +181,8 @@ class WorkersAiLiveTranscription(
         const val DEFAULT_UTTERANCE_END_MILLIS = 1_000
 
         private const val KEEP_ALIVE_MILLIS = 5_000L
-        private const val KEEP_ALIVE = """{"type":"KeepAlive"}"""
-        private const val CLOSE_STREAM = """{"type":"CloseStream"}"""
+        private val KEEP_ALIVE = WorkersAiJson.encodeToString(NovaCommand.serializer(), NovaCommand.KeepAlive)
+        private val CLOSE_STREAM = WorkersAiJson.encodeToString(NovaCommand.serializer(), NovaCommand.CloseStream)
 
         /**
          * Languages Nova-3 transcribes live on Workers AI (Cloudflare's Nova-3 changelog of 2026-03-06). Swahili isn't
@@ -204,4 +190,48 @@ class WorkersAiLiveTranscription(
          */
         val LIVE_LANGUAGES = setOf("en", "es", "fr", "de", "hi", "ru", "pt", "ja", "it", "nl")
     }
+}
+
+/** What Nova-3 sends, told apart by `type`; the ones we don't act on (`Metadata`) aren't listed. */
+@Serializable
+private sealed interface NovaMessage {
+    @Serializable
+    @SerialName("Results")
+    class Results(
+        val channel: NovaChannel? = null,
+        @SerialName("is_final") val isFinal: Boolean = false,
+        @SerialName("speech_final") val speechFinal: Boolean = false,
+        val start: Double? = null,
+        val duration: Double? = null,
+    ) : NovaMessage
+
+    @Serializable
+    @SerialName("SpeechStarted")
+    data object SpeechStarted : NovaMessage
+
+    @Serializable
+    @SerialName("UtteranceEnd")
+    data object UtteranceEnd : NovaMessage
+}
+
+@Serializable
+private class NovaChannel(val alternatives: List<NovaAlternative> = emptyList())
+
+@Serializable
+private class NovaAlternative(val transcript: String = "", val words: List<NovaWord> = emptyList())
+
+@Serializable
+private class NovaWord(val start: Double, val end: Double)
+
+/** What we send Nova-3 besides audio. */
+@Serializable
+private sealed interface NovaCommand {
+    /** Keeps the stream open while the phone sends nothing. */
+    @Serializable
+    @SerialName("KeepAlive")
+    data object KeepAlive : NovaCommand
+
+    @Serializable
+    @SerialName("CloseStream")
+    data object CloseStream : NovaCommand
 }

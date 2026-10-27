@@ -106,10 +106,3 @@ data class ReachResponse(val reachable: Boolean)
 
 @Serializable
 data class RemovedResponse(val removed: Boolean)
-
-/** What the assistant gets: a smaller shape than the app's, with only what it needs to resolve "Mum" to a person. */
-@Serializable
-data class AgentContactDto(val userId: String, val displayName: String, val handle: String? = null)
-
-@Serializable
-data class AgentContactsResponse(val contacts: List<AgentContactDto>, val nextCursor: String? = null)

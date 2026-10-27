@@ -12,6 +12,7 @@ import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.OrderedIds
+import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.today
@@ -27,6 +28,8 @@ import java.time.ZoneOffset
  * A2: one question to Asha. It counts against the day's allowance, gives the model the recent part of the chat as
  * context (a few exchanges on the free plan, many on Asha Plus) and runs the agent. The answer, or a question for
  * the phone, comes back. The agent token, which Asha's tools act with, must be the user's own (decision 2026-10-26).
+ * The reply's text goes to the [ReplyListener] as the model writes it (decision 2026-10-27); a refusal (allowance,
+ * token, a malformed question) comes before any of it.
  */
 class StartTurn(
     private val verifier: TokenVerifier,
@@ -39,7 +42,10 @@ class StartTurn(
     private val ids: OrderedIds,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(command: TurnCommand): Resource<TurnResult> {
+    suspend operator fun invoke(
+        command: TurnCommand,
+        listener: ReplyListener = ReplyListener.None,
+    ): Resource<TurnResult> {
         val text = command.text.trim()
         if (text.isEmpty() || text.length > config.maxMessageChars) {
             return Resource.error(
@@ -58,7 +64,7 @@ class StartTurn(
         val history = context + ModelMessage.User(asked + text)
 
         val outcome =
-            when (val r = agent.run(history, command.agentToken, command.chatReading)) {
+            when (val r = agent.run(history, command.agentToken, command.chatReading, listener = listener)) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }

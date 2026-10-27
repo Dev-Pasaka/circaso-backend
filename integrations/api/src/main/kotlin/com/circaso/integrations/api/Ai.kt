@@ -8,6 +8,68 @@ import com.circaso.shared.Resource
  */
 interface LanguageModel {
     suspend fun complete(request: ModelRequest): Resource<ModelResponse>
+
+    /**
+     * The same answer as [complete], handed over while the model writes it, so the user reads (and hears) Asha's
+     * reply at once instead of after it is whole (decision 2026-10-27). A refusal before the first word is the
+     * [Resource.Error]; once the answer has started, a failure is a [ModelStreamEvent.Failed].
+     *
+     * The default streams [complete]'s answer as one piece, for providers that can't stream (the development models).
+     */
+    suspend fun stream(request: ModelRequest): Resource<ModelStream> =
+        when (val answer = complete(request)) {
+            is Resource.Success -> Resource.success(CompletedStream(answer.data))
+            is Resource.Error -> answer
+        }
+}
+
+/**
+ * One answer as the model writes it. Pull-based, like the live voice sessions, so the contract needs nothing beyond
+ * the standard library: the caller reads [next] until it returns null, and calls [close] however it stops.
+ */
+interface ModelStream {
+    /** The next event, waiting for it; null after [ModelStreamEvent.Done] or [ModelStreamEvent.Failed]. */
+    suspend fun next(): ModelStreamEvent?
+
+    /** Stops the answer (the caller no longer wants it) and lets go of the connection. Safe to call twice. */
+    suspend fun close()
+}
+
+sealed interface ModelStreamEvent {
+    /** The next piece of the answer's text, in order. */
+    data class Text(val delta: String) : ModelStreamEvent
+
+    /**
+     * A piece of a tool call. The pieces of one call share its [index]; its [id] and [name] come once, its arguments
+     * a fragment at a time. [Done] carries the calls whole, so most callers can ignore these.
+     */
+    data class ToolCallDelta(
+        val index: Int,
+        val id: String?,
+        val name: String?,
+        val argumentsDelta: String,
+    ) : ModelStreamEvent
+
+    /** The whole answer, as [LanguageModel.complete] would have returned it; [next] returns null after it. */
+    data class Done(val response: ModelResponse) : ModelStreamEvent
+
+    /** The answer broke off (or came out empty); [next] returns null after it. */
+    data class Failed(val error: IntegrationError) : ModelStreamEvent
+}
+
+/** A whole answer as a stream: its text in one piece, then [ModelStreamEvent.Done]. */
+private class CompletedStream(response: ModelResponse) : ModelStream {
+    private val events =
+        ArrayDeque(
+            listOfNotNull(
+                response.text?.takeIf { it.isNotEmpty() }?.let { ModelStreamEvent.Text(it) },
+                ModelStreamEvent.Done(response),
+            ),
+        )
+
+    override suspend fun next(): ModelStreamEvent? = events.removeFirstOrNull()
+
+    override suspend fun close() = events.clear()
 }
 
 data class ModelRequest(val system: String, val messages: List<ModelMessage>, val tools: List<ToolSpec> = emptyList())
