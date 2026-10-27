@@ -369,6 +369,10 @@ data class GroupMessageRow(
     val senderId: UUID, val ciphertext: String, val sentAt: Instant,
 )
 
+@ScyllaTable(name = "messages_by_id", keyspace = KS)              // who sent what, for M14 and group read receipts after delivery
+@Ttl(seconds = 60 * 60 * 24 * 30)
+data class MessageRecordRow(@PartitionKey val messageId: UUID, val chatId: UUID, val senderId: UUID, val kind: String, val sentAt: Instant)
+
 @ScyllaTable(name = "sent_by_client_id", keyspace = KS)        // idempotent send
 @Ttl(seconds = 60 * 60 * 24)
 data class ClientMessageRow(@PartitionKey val senderId: UUID, @ClusteringKey val clientMessageId: UUID, val messageId: UUID)
