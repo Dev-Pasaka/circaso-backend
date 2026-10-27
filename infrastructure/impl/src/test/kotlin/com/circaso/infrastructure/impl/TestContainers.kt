@@ -2,8 +2,10 @@ package com.circaso.infrastructure.impl
 
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
+import com.circaso.infrastructure.impl.database.PostgresSettings
 import com.circaso.infrastructure.impl.database.ScyllaSettings
 import com.circaso.infrastructure.impl.redis.RedisConnection
+import com.circaso.infrastructure.testing.TestPostgres
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.scylladb.ScyllaDBContainer
 import org.testcontainers.utility.DockerImageName
@@ -46,3 +48,7 @@ object TestScylla {
             EnvSecrets(emptyMap()),
         )
 }
+
+/** Settings pointed at the shared test container, for infrastructure's own tests of the pools and Migrate. */
+fun TestPostgres.settings(extra: Map<String, String> = emptyMap()): PostgresSettings =
+    env(extra).let { PostgresSettings(EnvConfig(it), EnvSecrets(it)) }

@@ -38,9 +38,9 @@ Wallet isn't built yet, so it is designed for Postgres from the start.
 | Concern | Choice | Notes |
 | --- | --- | --- |
 | Database | PostgreSQL 18 (`postgres:18`): self-hosted on the sandbox server; production host decided before launch (§2.8) | Same image locally, in CI and on the sandbox. 18 has a native `uuidv7()`, but ids keep being generated in the app |
-| ORM | Exposed 1.6.0 (`org.jetbrains.exposed`): `exposed-core`, `exposed-jdbc`, `exposed-java-time`. **DSL API only** (`Table` objects + typed queries), not the DAO API | The DSL matches today's shape: row classes mapped to domain models in the data layer, no lazy-loaded entities. `exposed-java-time` because the code uses `java.time.Instant` |
-| Driver and pool | JDBC (`org.postgresql:postgresql`) + HikariCP, with `suspendTransaction` from `exposed-jdbc` | The docs say R2DBC "is less mature than JDBC", and a module must pick one transport. JDBC is the proven path |
-| Migrations | Flyway applies plain SQL files. The Exposed Gradle plugin (`org.jetbrains.exposed.plugin`, `generateMigrations` against a Testcontainers Postgres) drafts them from the `Table` objects | Per the docs, Exposed "does not apply generated scripts automatically", so a separate tool runs them, and every generated script is reviewed before it is committed |
+| ORM | Exposed 1.6.0 (`org.jetbrains.exposed`): `exposed-core`, `exposed-r2dbc`, `exposed-java-time`. **DSL API only** (`Table` objects + typed queries), not the DAO API | The DSL matches today's shape: row classes mapped to domain models in the data layer, no lazy-loaded entities. `exposed-java-time` because the code uses `java.time.Instant` |
+| Driver and pool | R2DBC: `org.postgresql:r2dbc-postgresql` + `io.r2dbc:r2dbc-pool`, with `suspendTransaction` from `exposed-r2dbc` (decision 2026-10-27, Pasaka: "queries must be non-blocking") | Nothing in the app blocks a thread on the database: a coroutine waiting for a connection or a result suspends. The Exposed docs call R2DBC "still evolving"; what PG1 found is in §2.10. JDBC (`org.postgresql:postgresql`) is used only by Flyway in the `Migrate` step, because Flyway has no R2DBC driver |
+| Migrations | Flyway applies plain SQL files, over JDBC, in the `Migrate` step only. The Exposed Gradle plugin (`org.jetbrains.exposed.plugin`, `generateMigrations` against a Testcontainers Postgres) drafts them from the `Table` objects | Per the docs, Exposed "does not apply generated scripts automatically", so a separate tool runs them, and every generated script is reviewed before it is committed |
 | Tests | Testcontainers `postgres` for data-layer tests; in-memory port fakes for use-case tests | Replaces `FakeKandraSession` and the Cassandra 4.1 container |
 
 All versions go in `gradle/libs.versions.toml` (the one-catalog rule).
@@ -138,13 +138,15 @@ Messaging is the write-heavy module: a group message to 1,000 members writes 1,0
 
 ### 2.7 Config, health, ops
 
-- **Settings** replace the `SCYLLA_*` ones: `DATABASE_URL` (or `DATABASE_HOST`/`PORT`/`NAME`), `DATABASE_USER`,
-  `DATABASE_PASSWORD` (secret), `DATABASE_MIGRATION_URL` (direct), `DATABASE_POOL_APP_SIZE` (10) and `DATABASE_POOL_JOBS_SIZE` (3) (§2.9), `DATABASE_SSL_MODE` (`require`
-  outside local).
+- **Settings** replace the `SCYLLA_*` ones: `DATABASE_URL` (`r2dbc:postgresql://…`, the app), `DATABASE_USER`,
+  `DATABASE_PASSWORD` (secret), `DATABASE_JOBS_USER`, `DATABASE_JOBS_PASSWORD` (secret), `DATABASE_MIGRATION_URL`
+  (`jdbc:postgresql://…`, direct, Flyway only), `DATABASE_MIGRATION_USER`, `DATABASE_MIGRATION_PASSWORD` (secret),
+  `DATABASE_POOL_APP_SIZE` (10) and `DATABASE_POOL_JOBS_SIZE` (3) (§2.9), `DATABASE_SSL_MODE` (`verify-full` with the provider's CA outside
+  local; `disable` only on the sandbox's internal network).
 - **Health:** readiness runs `SELECT 1` through the pool. `/kandra/health` and its nginx block are removed.
 - **Logging:** Exposed's SQL logger stays off in every environment except local `DEBUG`, and never logs bound values
   (phone numbers, keys). `LOG_LEVEL_DATABASE` replaces the Kandra level.
-- **Observability:** Hikari pool metrics and JDBC spans through the existing OpenTelemetry agent.
+- **Observability:** r2dbc-pool's counts per pool as `Telemetry` gauges (`circaso_db_pool_connections{pool, state}`).
 - **Backups:** on the sandbox, a nightly `pg_dump` to R2 kept 7 days (§2.8); in production, the host's point-in-time
   recovery, retention at least 7 days.
 
@@ -196,21 +198,22 @@ Frankfurt) for failover and point-in-time restore. The app only reads `DATABASE_
 
 ### 2.9 Connection pools
 
-Postgres pays for each connection with a server process, so pools stay small and bounded. Coroutines wait in memory
-for a connection; threads never block waiting on one.
+Postgres pays for each connection with a server process, so pools stay small and bounded. The app's pools are
+r2dbc-pool `ConnectionPool`s over the non-blocking R2DBC driver: a coroutine waiting for a connection suspends in the
+pool's queue, and no thread ever blocks on the database.
 
 **Pools per app container**
 
 | Pool | Used by | Size | Why separate |
 | --- | --- | --- | --- |
-| `circaso-app` | Requests and socket frames (every `Database.tx` from a route or frame handler) | max 10, min idle 2 | The hot path |
-| `circaso-jobs` | Outbox relay, event consumers, purge and partition jobs, scheduler | max 3, min idle 1 | A slow purge or a burst of events can never take the connections requests need |
-| `circaso-migrate` | The `Migrate` main only, during deploy | 2, closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
+| `circaso-app` | Requests and socket frames (every `Database.tx` from a route or frame handler) | max 10, initial 2 | The hot path |
+| `circaso-jobs` | Outbox relay, event consumers, purge and partition jobs, scheduler | max 3, initial 1 | A slow purge or a burst of events can never take the connections requests need |
+| `circaso-migrate` | The `Migrate` main only, during deploy: one direct JDBC connection for the setup, and Flyway's own (it holds a few at once) | no pool; closed when it ends | Flyway takes a session-level lock, so it uses the **direct** URL, never a transaction pooler |
 
 Two URLs:
-- `DATABASE_URL` is for the app pools. In production, behind a provider's pooler (PgBouncer in transaction mode),
-  this is the pooled endpoint.
-- `DATABASE_MIGRATION_URL` is always a direct connection.
+- `DATABASE_URL` (`r2dbc:postgresql://…`) is for the app pools. In production, behind a provider's pooler (PgBouncer
+  in transaction mode), this is the pooled endpoint.
+- `DATABASE_MIGRATION_URL` (`jdbc:postgresql://…`) is always a direct connection, used only by `Migrate`.
 
 On the sandbox's self-hosted Postgres, both are the same address.
 
@@ -220,7 +223,7 @@ On the sandbox's self-hosted Postgres, both are the same address.
 | --- | --- |
 | app | 10 |
 | jobs | 3 |
-| migrate | 2, only during deploy |
+| migrate | about 3, only during deploy |
 | pgAdmin | about 3 |
 | nightly backup | 1 |
 | reserved | 3 |
@@ -230,25 +233,26 @@ That leaves room for a second app container (+13) during a rolling deploy. In pr
 `containers × (app + jobs) + migrate + tools ≤ 80%` of the server's limit. Past that, the pooled endpoint
 (PgBouncer) goes in front, not bigger pools.
 
-**HikariCP settings** (in `Config`, overridable by `DATABASE_POOL_*` settings):
+**r2dbc-pool settings** (in `Config`, overridable by `DATABASE_POOL_*` settings):
 
 - **Timeouts:**
-  - `connectionTimeout` 3 s. When no connection is free in time, the request fails fast as
-    `service.unavailable` (503) instead of piling up.
-  - `idleTimeout` 10 min; `maxLifetime` 30 min (below any proxy or firewall idle cut).
-  - `keepaliveTime` 2 min.
-  - `validationTimeout` 2 s.
-- **Transactions:**
-  - `autoCommit = false`, because Exposed opens and commits the transactions.
-  - `transactionIsolation = TRANSACTION_READ_COMMITTED`.
-  - These are set in Hikari rather than `DatabaseConfig`, as the Exposed docs recommend.
-- **Debugging:** `leakDetectionThreshold` 10 s locally and on the sandbox, off in production. `poolName` is set
-  per pool.
-- **JDBC URL parameters:**
-  - `ApplicationName=circaso-app` (or `-jobs`, `-migrate`), so `pg_stat_activity` shows who holds what.
-  - `reWriteBatchedInserts=true` for fan-out writes.
-  - `sslmode=require` outside local.
-  - `tcpKeepAlive=true`.
+  - `maxAcquireTime` 3 s on the app pool (`DATABASE_POOL_ACQUIRE_TIMEOUT_MS`). When no connection comes free in time,
+    the request fails fast as `service.unavailable` (503) instead of piling up.
+  - 20 s on the jobs pool (`DATABASE_POOL_JOBS_ACQUIRE_TIMEOUT_MS`), below the consumers' 30 s reclaim: background
+    work waits out a burst without a message being reclaimed mid-wait, and an event
+    handler that still gets `service.unavailable` is retried after a back-off without counting as an attempt.
+  - `maxIdleTime` 10 min; `maxLifeTime` 30 min (below any proxy or firewall idle cut).
+  - `validationQuery "SELECT 1"` on acquire.
+- **Transactions:** isolation `READ_COMMITTED` (`R2dbcDatabaseConfig { defaultR2dbcIsolationLevel }`),
+  `defaultMaxAttempts = 1`, nested transactions off; Exposed opens and commits the transactions.
+- **Driver options** (r2dbc-postgresql; an option already in the URL wins):
+  - `applicationName=circaso-app` (or `-jobs`; Flyway's connections `circaso-migrate`), so `pg_stat_activity` shows
+    who holds what.
+  - `statement_timeout` as a startup option, the same value as the login role's (5 s app, 60 s jobs).
+  - `sslMode=verify-full` outside local, against the provider's CA (`DATABASE_SSL_ROOT_CERT`); `disable` only on the
+    sandbox's internal Docker network. `tcpKeepAlive=true`.
+  - `preparedStatementCacheQueries=256`: a bounded cache of named statements (see "Prepared statements" below).
+- **Name** per pool (`circaso-app`, `circaso-jobs`).
 
 **Server-side limits on the login roles** (so a bad query can't hold a pooled connection for long; decision A of the
 PG0 review):
@@ -259,8 +263,10 @@ PG0 review):
 
 **Coroutines and the pool**
 
-- `Database.tx` runs on `Dispatchers.IO.limitedParallelism(poolSize)`, one dispatcher per pool. At most `poolSize`
-  coroutines ever hold a JDBC thread, and the rest suspend cheaply.
+- `Database.tx` is Exposed's R2DBC `suspendTransaction`: no dispatcher of its own and no thread held. At most
+  `maxSize` transactions hold a connection; the rest suspend in the pool's queue until one frees or `maxAcquireTime`
+  passes.
+- Repositories consume result `Flow`s (`toList()`, `singleOrNull()`) inside the transaction.
 - A transaction holds only database work (the §2.3 rule). An HTTP call or Redis round trip inside one would hold a
   connection for the whole wait, and a Konsist rule plus review catch it.
 - Long reads (exports, admin listings) page with keyset queries, each page its own short transaction.
@@ -273,17 +279,18 @@ run as `circaso_migrator` (`CREATEROLE`, owns the schemas, secret `DATABASE_MIGR
 - It also works behind PgBouncer in transaction mode.
 - The alternative, one pool per module role, would multiply connections by 5.
 
-**Prepared statements.** The JDBC driver caches server-side prepared statements per connection (`prepareThreshold` 5).
-Behind PgBouncer in transaction mode that needs PgBouncer 1.21+ with `max_prepared_statements` set. Neon's pooler
-already supports this. Otherwise set `prepareThreshold=0` on the pooled URL.
+**Prepared statements.** r2dbc-postgresql caches named server-side prepared statements per connection (bounded at
+256). Behind PgBouncer in transaction mode that needs PgBouncer 1.21+ with `max_prepared_statements` set. Neon's pooler
+already supports this. Otherwise add `preparedStatementCacheQueries=0` to the pooled `DATABASE_URL`.
 
 **Watching it.**
-- Hikari's metrics (active, idle, pending, timeouts, usage time) go through the OpenTelemetry agent into Grafana.
+- r2dbc-pool's counts (acquired, idle, allocated, pending, max) per pool go through `Telemetry` as the gauge
+  `circaso_db_pool_connections{pool, state}`; an acquire timeout is a WARN line `kind=db.pool`.
 - Alerts fire when `pending > 0` for 1 minute, on any connection timeout, or when connections in use stay above 80%
   of `max_connections`.
-- Readiness fails if a connection can't be borrowed within the timeout.
+- Readiness runs `SELECT 1` over R2DBC through the app pool and fails if a connection can't be borrowed in time.
 
-**Tests.** Testcontainers Postgres with one pool of 4 per test JVM. A test that saturates the pool checks that the
+**Tests.** Testcontainers Postgres (one container per test JVM) over R2DBC, with a pool of 4 for the saturation test. A test that saturates the pool checks that the
 6th concurrent `Database.tx` waits and then succeeds, and that a timeout maps to `service.unavailable`.
 
 ### 2.10 Exposed conventions (Kotlin best practice, checked against the Exposed docs, 1.6.0)
@@ -294,20 +301,23 @@ a page did not cover a point, it is marked "verify in PG1" rather than assumed.
 
 **Transactions**
 - **Every database call runs in a transaction**, as the docs require. The only entry point is infrastructure's
-  `Database.tx { }`, a thin wrapper over `org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction(db = …)`.
-  Modules never call `transaction {}` (it blocks the calling thread, per the docs) or `Database.connect`; a Konsist
-  rule enforces both.
-- **`connect()` runs once:** infrastructure creates the Exposed `Database` from the Hikari `DataSource` at startup and
-  shares it. The docs warn that calling `connect()` repeatedly leaks resources.
-- **Pool settings live in Hikari, not `DatabaseConfig`:** isolation `READ_COMMITTED`, pool size and read-only flags.
-  The docs recommend this, and `DatabaseConfig` only overrides when a module truly needs it.
-- **Retries:** `maxAttempts` re-runs the whole block on an `SQLException`. The default stays `1`, so nothing runs
+  `Database.tx("<operation>") { }`, a thin wrapper over `org.jetbrains.exposed.v1.r2dbc.transactions.suspendTransaction(db = …)`.
+  Modules never open an Exposed transaction or call `R2dbcDatabase.connect`; a Konsist rule enforces both, and another
+  keeps JDBC out of everything but the `Migrate` code.
+- **`connect()` runs once:** infrastructure creates one `R2dbcDatabase` per r2dbc-pool `ConnectionPool` at startup
+  and shares it. The docs warn that calling `connect()` repeatedly leaks resources.
+- **Pool settings live in r2dbc-pool and the driver options;** `R2dbcDatabaseConfig` sets the dialect, isolation
+  (`READ_COMMITTED`), attempts and the SQL logger.
+- **Retries:** `maxAttempts` re-runs the whole block on an `R2dbcException`. The default stays `1`, so nothing runs
   twice by surprise. Only a block that is pure database work and safe to repeat may raise it (for example a
   `SERIALIZABLE` claim), and the call site says why.
-- **`queryTimeout` is 5 s per statement** by default, set in `DatabaseConfig { defaultQueryTimeout }` and backed by a
-  `statement_timeout` on the role.
+- **The statement timeout is the connection's** (`statement_timeout` 5 s on the app pool, 60 s on the jobs pool, sent
+  as a startup option and matching the login role). Checked in PG1: Exposed's R2DBC module calls
+  `Connection.setStatementTimeout(queryTimeout)` before every statement, and r2dbc-postgresql turns that into a
+  session `SET STATEMENT_TIMEOUT` round trip; with the default `queryTimeout` of 0 it would switch the timeout off.
+  Infrastructure's connection factory ignores that per-statement call.
 - **No nested transactions:** `useNestedTransactions` stays off. A use case opens one transaction through the domain
-  port `Transactor.run { }` (implemented in `data` over `Database.tx`); repositories join it through the coroutine
+  port `Transactor.run("<operation>") { }` (implemented in `data` over `Database.tx`); repositories join it through the coroutine
   context.
 - **`text` and `blob` columns are read inside the transaction**, using `eagerLoading = true` where they are used after
   it. The docs say they are unavailable outside a transaction otherwise.
@@ -336,8 +346,8 @@ a page did not cover a point, it is marked "verify in PG1" rather than assumed.
   "who won"; `deleteReturning` / `updateReturning` for claims, acks and optimistic updates; `upsert` with explicit
   `keys` for idempotent writes. The docs warn that without explicit keys, behaviour varies by database.
 - **Fan-out writes** use `batchInsert(items, shouldReturnGeneratedValues = false)` with
-  `reWriteBatchedInserts=true` on the JDBC URL, or `useMultiRowValues = true`, as the docs recommend for batching
-  performance.
+  `useMultiRowValues = true` where a single multi-row `INSERT` suits (R2DBC has no `reWriteBatchedInserts`; measure in
+  PG5).
 - **Pagination is keyset** (`where { (createdAt less cursorAt) or … }.orderBy(createdAt to DESC).limit(n)`); there is
   no `offset` for feeds.
 - **Raw SQL** (`exec`) only for what the DSL can't express (partition management), in infrastructure or a migration.
@@ -365,7 +375,7 @@ its own, and Scylla is switched off only in the last slice.
 | Slice | Content | Done when |
 | --- | --- | --- |
 | **PG0: spec** | Decision row; architecture.md (Infrastructure, outbox step 1, Kandra section replaced by "Exposed and Postgres", guardrails); working-rules (drop Kandra sentinels and the Kandra bugs rule, add the transaction rule and the purge/partition rule); each module doc's Data section rewritten as Postgres tables; agent files (developer, architect, QA) updated | Pasaka approves the docs |
-| **PG1: foundation** | Version catalog: Exposed, Hikari, Flyway, Postgres driver, Testcontainers postgres. Infrastructure: `DatabaseModuleSpec`, the app, jobs and migrate pools with their dispatchers and metrics (§2.9), `Database.tx { }` (suspended transaction, bounded dispatcher), Flyway per schema in the `Migrate` main, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Postgres, pgAdmin and `circaso_readonly` already run on the sandbox (main `ae6e233`). Devops adds the `circaso_migrator` login role (created once by the superuser from `deploy/postgres/initdb`; `DATABASE_MIGRATION_PASSWORD` in `/opt/circaso/.env`) and the nightly R2 backup, with Pasaka's go-ahead for the server change. `Migrate` creates the module roles and the `circaso_app` and `circaso_jobs` login roles with their limits. The `Transactor` port and its Konsist rule. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
+| **PG1: foundation** | Version catalog: Exposed (`exposed-r2dbc`), r2dbc-postgresql, r2dbc-pool, Flyway and the JDBC driver (Migrate only), Testcontainers postgres, the Exposed Gradle plugin. Infrastructure: `DatabaseModuleSpec`, the app and jobs r2dbc pools with their metrics (§2.9), `Database.tx { }` (R2DBC suspended transaction, `SET LOCAL ROLE`, a named operation, `DatabaseException` without values, guards against Redis/HTTP/publish inside), the shared outbox (`DatabaseModuleSpec(outbox = true)`, `database.writeOutbox`), test fixtures for module data tests, Flyway per schema in the `Migrate` main over JDBC, health check, purge/partition helper for the scheduler, a Testcontainers fixture shared per test JVM (schema reset by `TRUNCATE`). Postgres added to `deploy/docker-compose.yml` and the CI services. Postgres, pgAdmin and `circaso_readonly` already run on the sandbox (main `ae6e233`). Devops adds the `circaso_migrator`, `circaso_app` and `circaso_jobs` login roles with their limits (created by the superuser from `deploy/postgres/initdb/20-login-roles.sh`, run once by hand on the existing volume; passwords in `/opt/circaso/postgres.env` and `/opt/circaso/.env`) and the nightly R2 backup, with Pasaka's go-ahead for the server change. `Migrate` creates the schemas and the module roles and grants them. The `Transactor` port and its Konsist rule. `OutboxStore` without buckets; relay updated. Kandra still installed for the modules not yet moved. Konsist: the Exposed table-ownership rule, no way in but `Database.tx`, JDBC only in the Migrate code, no `runBlocking` | Migrate creates the schemas and roles; health is green with both databases; relay works against a Postgres outbox in a test |
 | **PG2: identity** | `V1__identity.sql` (accounts with unique phone, provider links with unique (provider, subject), devices, sessions with `expires_at`, security log, support recoveries with unique request id, outbox partitioned); Exposed tables; repository impls behind the existing ports; claim tables dropped (the unique constraints are the claims); data tests on Postgres | All identity tests green on Postgres; sign-up, sign-in, refresh and recovery pass QA on local |
 | **PG3: users** | Profiles with unique handle, contacts (one table, index on target), waiting contacts, blocks (one table, index on blocked), invites, realtime, outbox | Same, for users |
 | **PG4: assistant** | Asha messages, daily usage, entitlements, audit, outbox | Same, for assistant |

@@ -27,6 +27,7 @@ import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.infrastructure.api.BucketedOutboxScan
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
@@ -38,6 +39,7 @@ import io.kandra.core.ExperimentalKandraApi
 import io.kandra.runtime.KandraRuntime
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.repository.KandraSuspendRepository
+import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 
@@ -156,11 +158,24 @@ class IdentityStoreImpl(
 private fun EventEnvelope.toOutboxRow() = IdentityOutboxRow(bucket, eventId.value, type, toJson())
 
 /** The relay's view of identity's outbox: events written but not yet on the stream. */
-class IdentityOutboxStore(private val outbox: KandraSuspendRepository<IdentityOutboxRow>) : OutboxStore {
+class IdentityOutboxStore(
+    private val outbox: KandraSuspendRepository<IdentityOutboxRow>,
+    clock: Clock = Clock.systemUTC(),
+) : OutboxStore {
     override val producer = "identity"
 
-    override suspend fun unpublished(bucket: String): List<EventEnvelope> =
-        outbox.findAll { BUCKET eq bucket }.filter { it.publishedAt == null }.map { EventEnvelope.fromJson(it.payload) }
+    // The rows are keyed by minute-bucket; the bucket-less relay walks them through this until the outbox moves to
+    // PostgreSQL.
+    private val scan =
+        BucketedOutboxScan(clock) { bucket ->
+            outbox.findAll { BUCKET eq bucket }.filter { it.publishedAt == null }.map {
+                EventEnvelope.fromJson(
+                    it.payload,
+                )
+            }
+        }
+
+    override suspend fun unpublished(limit: Int): List<EventEnvelope> = scan.unpublished(limit)
 
     override suspend fun markPublished(envelope: EventEnvelope, at: Instant) {
         val row = outbox.findById(envelope.bucket, envelope.eventId.value) ?: return

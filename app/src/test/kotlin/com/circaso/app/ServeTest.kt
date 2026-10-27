@@ -2,6 +2,7 @@ package com.circaso.app
 
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.shared.Uuid7
@@ -47,7 +48,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis and ScyllaDB. */
+/**
+ * `serve` booted for real: Koin, infrastructure, the gateway and identity, against a real Redis, ScyllaDB and
+ * PostgreSQL (infrastructure's test container, started with the server's own init scripts).
+ */
 class ServeTest {
     private companion object {
         val redis: GenericContainer<*> =
@@ -71,7 +75,7 @@ class ServeTest {
             "SCYLLA_TLS" to "false",
             "SCYLLA_CREATE_SCHEMA" to "true",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
-        ) + extra
+        ) + TestPostgres.env().filterKeys { it.startsWith("DATABASE_") } + extra
 
     @AfterTest
     fun resetKandra() =
@@ -79,7 +83,7 @@ class ServeTest {
             .reset()
 
     @Test
-    fun `serve starts and reports Redis, ScyllaDB and the stream consumers ready`() =
+    fun `serve starts and reports PostgreSQL, Redis, ScyllaDB and the stream consumers ready`() =
         testApplication {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
 
@@ -88,7 +92,7 @@ class ServeTest {
 
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals(
-                listOf("redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
+                listOf("postgres", "redis", "scylla", "streams").map { HealthCheckStatus(it, "up") },
                 checks.sortedBy { it.name },
             )
         }

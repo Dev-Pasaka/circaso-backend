@@ -47,6 +47,8 @@ import io.kandra.test.KandraTestBackend
 import io.kandra.test.KandraTestUtils
 import io.kandra.test.KandraTestcontainers
 import kotlinx.coroutines.runBlocking
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import kotlin.test.AfterTest
@@ -86,7 +88,10 @@ class DataLayerTest {
     private val sessions = SessionRepositoryImpl(db.suspendRepository())
     private val log = SecurityLogRepositoryImpl(db.suspendRepository())
     private val recoveries = RecoveryRepositoryImpl(db.suspendRepository(), db.suspendRepository())
-    private val outbox = IdentityOutboxStore(db.suspendRepository())
+
+    // Two minutes ahead, so the event's minute-bucket has ended and the bucket-less scan reads it.
+    private val outbox =
+        IdentityOutboxStore(db.suspendRepository(), Clock.offset(Clock.systemUTC(), Duration.ofMinutes(2)))
     private val store =
         IdentityStoreImpl(
             db.runtime,
@@ -162,16 +167,13 @@ class DataLayerTest {
             assertEquals(listOf(SocialProvider.GOOGLE), providers.links(user).map { it.provider })
             assertEquals(1, log.list(user, null, 10).size)
             assertEquals(listOf(event.eventId), bus.published.map { it.eventId })
-            assertEquals(
-                listOf(event.eventId),
-                outbox.unpublished(event.bucket).map {
-                    it.eventId
-                },
+            assertTrue(
+                event.eventId in outbox.unpublished().map { it.eventId },
                 "the outbox row waits for its publishedAt stamp",
             )
 
             outbox.markPublished(event, Instant.now())
-            assertTrue(outbox.unpublished(event.bucket).isEmpty())
+            assertTrue(event.eventId !in outbox.unpublished().map { it.eventId })
         }
 
     @Test

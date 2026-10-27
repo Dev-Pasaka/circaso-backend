@@ -27,6 +27,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -62,7 +64,9 @@ class DataLayerTest {
         }
 
     private val rows = db.suspendRepository<MessagingOutboxRow>()
-    private val outbox = MessagingOutboxStore(rows)
+
+    // Two minutes ahead, so the event's minute-bucket has ended and the bucket-less scan reads it.
+    private val outbox = MessagingOutboxStore(rows, Clock.offset(Clock.systemUTC(), Duration.ofMinutes(2)))
     private val keys = KeyRepositoryImpl(db.runtime, db.suspendRepository(), db.suspendRepository())
 
     @AfterTest
@@ -97,9 +101,9 @@ class DataLayerTest {
             rows.save(MessagingOutboxRow(event.bucket, event.eventId.value, event.type, event.toJson()))
 
             // The outbox table is shared with the other data tests, so only this event's presence is checked.
-            assertTrue(event.eventId in outbox.unpublished(event.bucket).map { it.eventId })
+            assertTrue(event.eventId in outbox.unpublished().map { it.eventId })
             outbox.markPublished(event, Instant.now())
-            assertTrue(event.eventId !in outbox.unpublished(event.bucket).map { it.eventId })
+            assertTrue(event.eventId !in outbox.unpublished().map { it.eventId })
         }
 
     @Test

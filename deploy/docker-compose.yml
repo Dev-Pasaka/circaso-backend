@@ -1,13 +1,54 @@
-# Local development: ScyllaDB and Redis (Valkey is wire-compatible). The vendors (SMS, email, push, Circle) are
-# not here: locally the `log` and `fake` integrations stand in for them.
+# Local development: PostgreSQL, ScyllaDB (until every module has moved to PostgreSQL) and Redis (Valkey is
+# wire-compatible). The vendors (SMS, email, push, Circle) are not here: locally the `log` and `fake` integrations stand
+# in for them.
 #
 #   docker compose -f deploy/docker-compose.yml up -d
+#   ./gradlew :app:migrate                   # create the schemas and roles and run the migrations, as a deploy does
 #   ./gradlew :app:run                       # serve on :8080, colored console
-#   ./gradlew :app:migrate                   # run migrations once
 #   settings come from environment variables, locally from .env (copy .env.example)
+#
+#   docker compose -f deploy/docker-compose.yml --profile tools up -d   # adds pgAdmin on http://localhost:5050
 name: circaso
 
 services:
+  # The same image as the sandbox and CI. The init scripts are the server's: they create the read-only browsing role and
+  # the three login roles, here with the local passwords below (also the defaults in .env.example). They run once, on an
+  # empty volume.
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: circaso
+      CIRCASO_READONLY_PASSWORD: circaso_readonly
+      CIRCASO_MIGRATOR_PASSWORD: circaso_migrator
+      CIRCASO_APP_PASSWORD: circaso_app
+      CIRCASO_JOBS_PASSWORD: circaso_jobs
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d circaso"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional: browse the local database. Log in with the email and password below, then add a server for host `postgres`.
+  pgadmin:
+    image: dpage/pgadmin4:9.18
+    profiles: [tools]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: dev@circaso.local
+      PGADMIN_DEFAULT_PASSWORD: circaso
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   scylla:
     image: scylladb/scylla:2026.1
     # Small and single-node for a laptop. Keyspaces are created by Kandra (AUTO_CREATE) in local runs.
@@ -38,5 +79,6 @@ services:
       retries: 10
 
 volumes:
+  postgres-data:
   scylla-data:
   redis-data:

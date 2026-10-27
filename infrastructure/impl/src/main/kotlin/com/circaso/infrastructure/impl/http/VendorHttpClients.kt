@@ -6,6 +6,7 @@ import com.circaso.infrastructure.api.HandshakeTimeoutException
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.HttpOperation
 import com.circaso.infrastructure.api.VendorHttpConfig
+import com.circaso.infrastructure.impl.database.requireOutsideTransaction
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.millisSince
 import com.circaso.observability.api.Metrics
@@ -62,6 +63,7 @@ class VendorHttpClients(
 
         return HttpClient(engine()) {
             expectSuccess = false // vendor errors are answers to translate, not exceptions
+            install(outsideTransactions(vendor))
             install(ContentNegotiation) { json(CircasoJson) }
             install(HttpTimeout) {
                 connectTimeoutMillis = config.connectTimeout.toMillis()
@@ -85,6 +87,12 @@ class VendorHttpClients(
             install(attemptLogging(vendor, breaker))
         }
     }
+
+    /** A vendor call inside a database transaction would hold its pooled connection for the whole wait: refused. */
+    private fun outsideTransactions(vendor: String) =
+        createClientPlugin("VendorOutsideTransactions-$vendor") {
+            onRequest { _, _ -> requireOutsideTransaction("HTTP to $vendor") }
+        }
 
     /**
      * Bounds the opening of a socket only. `HttpTimeout`'s request timeout leaves WebSockets alone, so without this a

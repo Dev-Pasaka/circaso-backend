@@ -60,8 +60,12 @@ class LogLevelsTest {
 
         assertEquals(Level.INFO, levelOf("com.circaso.identity.domain.usecases.SignInWithProvider"))
         assertEquals(Level.INFO, levelOf("com.circaso.gateway.RequestLog"))
-        assertEquals(Level.WARN, levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"))
-        assertEquals(Level.WARN, levelOf("io.kandra.runtime.BatchEngine"))
+        assertEquals(Level.ERROR, levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"))
+        assertEquals(Level.ERROR, levelOf("io.kandra.runtime.BatchEngine"))
+        assertEquals(Level.ERROR, levelOf("Exposed"), "Exposed's own logger can quote values")
+        assertEquals(Level.WARN, levelOf("io.r2dbc.pool.ConnectionPool"))
+        assertEquals(Level.WARN, levelOf("io.r2dbc.pool.ConnectionPool"))
+        assertEquals(Level.WARN, levelOf("org.flywaydb.core.internal.command.DbMigrate"))
         assertEquals(Level.WARN, levelOf("io.netty.handler.codec.http.HttpObjectDecoder"))
         assertEquals(Level.WARN, levelOf("io.lettuce.core.protocol.CommandHandler"))
         assertEquals(Level.WARN, levelOf("org.apache.anything.Else"))
@@ -75,7 +79,7 @@ class LogLevelsTest {
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.events.EventBus"))
         assertEquals(
             Level.WARN,
-            levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"),
+            levelOf("io.r2dbc.pool.ConnectionPool"),
             "the driver follows its own switch",
         )
     }
@@ -108,9 +112,26 @@ class LogLevelsTest {
         )
         assertEquals(Level.ERROR, levelOf("com.circaso.infrastructure.impl.events.OutboxRelay"))
         assertEquals(Level.OFF, levelOf("com.circaso.infrastructure.impl.scheduler.Scheduler"))
-        assertEquals(Level.DEBUG, levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"))
-        assertEquals(Level.DEBUG, levelOf("io.kandra.runtime.BatchEngine"))
+        assertEquals(
+            Level.ERROR,
+            levelOf("com.datastax.oss.driver.internal.core.channel.InFlightHandler"),
+            "the noisy ScyllaDB driver keeps its own level",
+        )
+        assertEquals(Level.ERROR, levelOf("io.kandra.runtime.BatchEngine"))
         assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Kandra"))
+        assertEquals(Level.DEBUG, levelOf("com.circaso.infrastructure.impl.database.Transactions"))
+        assertEquals(Level.ERROR, levelOf("Exposed"), "Exposed stays at ERROR whatever LOG_LEVEL_DATABASE says")
+        assertEquals(Level.INFO, levelOf("io.r2dbc.postgresql.PARAM"), "bound values are never logged")
+        assertEquals(
+            Level.INFO,
+            levelOf("io.r2dbc.postgresql.client.ReactorNettyClient"),
+            "nor a server error's detail",
+        )
+        assertEquals(Level.INFO, levelOf("io.r2dbc.postgresql.PostgresqlConnection"), "nor a server message")
+        assertEquals(Level.DEBUG, levelOf("io.r2dbc.postgresql.QUERY"), "the SQL itself, with placeholders, may be")
+        assertEquals(Level.DEBUG, levelOf("io.r2dbc.pool.ConnectionPool"))
+        assertEquals(Level.DEBUG, levelOf("org.flywaydb.core.Flyway"))
+        assertEquals(Level.DEBUG, levelOf("org.postgresql.Driver"))
         assertEquals(Level.TRACE, levelOf("io.lettuce.core.protocol.CommandHandler"))
         assertEquals(Level.TRACE, levelOf("com.circaso.infrastructure.impl.redis.Redis"))
         assertEquals(Level.INFO, levelOf("io.ktor.server.engine.EmbeddedServer"))

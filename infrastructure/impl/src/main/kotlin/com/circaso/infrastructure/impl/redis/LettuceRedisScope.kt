@@ -2,6 +2,7 @@ package com.circaso.infrastructure.impl.redis
 
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.infrastructure.impl.database.requireOutsideTransaction
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.shortenIds
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
@@ -52,6 +53,7 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
         key: String,
         block: suspend () -> T,
     ): T {
+        requireOutsideTransaction("Redis $command")
         val start = System.nanoTime()
         try {
             return block()

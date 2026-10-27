@@ -45,6 +45,7 @@ fun ErrorKind.httpStatus(): HttpStatusCode =
         ErrorKind.CONFLICT -> HttpStatusCode.Conflict
         ErrorKind.RATE_LIMITED -> HttpStatusCode.TooManyRequests
         ErrorKind.UPSTREAM -> HttpStatusCode.BadGateway
+        ErrorKind.UNAVAILABLE -> HttpStatusCode.ServiceUnavailable
         ErrorKind.INTERNAL -> HttpStatusCode.InternalServerError
     }
 

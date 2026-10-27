@@ -120,6 +120,7 @@ The shared ones, then each area's own. Codes are stable.
 | `request.in_progress` | 409 | The same `Idempotency-Key` is still running |
 | `auth.token_missing`, `auth.token_invalid` | 401 | No token, or a bad or expired one |
 | `auth.scope_insufficient` | 403 | The token's scope cannot use this route |
+| `service.unavailable` | 503 | The server is too busy to take the request right now (no database connection came free within 3 seconds); retry after a moment with the same `Idempotency-Key` |
 | `internal.error` | 500 | Something unexpected; quote the `requestId` |
 | `identity.nonce_invalid` | 400 | The nonce is missing, used or older than 5 minutes |
 | `identity.provider_token_invalid` | 401 | Google or Apple did not accept the token |

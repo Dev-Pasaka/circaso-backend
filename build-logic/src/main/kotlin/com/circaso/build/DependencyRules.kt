@@ -95,6 +95,17 @@ object DependencyRules {
             (group == "org.jetbrains" && name == "annotations")
     }
 
+    /**
+     * The one exception to the table (decision 2026-10-27, PG1 review): a module's tests may use infrastructure's test
+     * fixtures (`testImplementation(testFixtures(project(":infrastructure:impl")))`), which hand out the PostgreSQL test
+     * container as `infrastructure:api` types. Never its main code, and never outside tests.
+     */
+    private fun isPostgresTestFixtures(from: Kind, configuration: String, dependency: ProjectDependency): Boolean =
+        from is Kind.ModuleImpl &&
+            configuration == "testImplementation" &&
+            dependency.path == ":infrastructure:impl" &&
+            dependency.requestedCapabilities.any { it.name.endsWith("test-fixtures") }
+
     fun verify(project: Project) {
         val from = kindOf(project.path) ?: return
         val problems = mutableListOf<String>()
@@ -104,7 +115,10 @@ object DependencyRules {
                 when (dependency) {
                     is ProjectDependency -> {
                         val to = kindOf(dependency.path)
-                        if (to != null && !allows(from, to)) {
+                        val allowed =
+                            to == null || dependency.path == project.path || allows(from, to) ||
+                                isPostgresTestFixtures(from, configuration.name, dependency)
+                        if (!allowed) {
                             problems += "${project.path} may not depend on ${dependency.path} (configuration " +
                                 "'${configuration.name}')"
                         }
