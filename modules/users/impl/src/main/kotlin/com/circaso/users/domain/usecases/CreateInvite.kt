@@ -15,9 +15,8 @@ class CreateInvite(private val store: UsersStore, private val config: UsersConfi
     suspend operator fun invoke(userId: UserId): Resource<InviteLink> {
         val now = clock.instant()
         val token = randomInviteToken()
-        store.commit(UsersChanges(invites = listOf(Invite(token, userId, "LINK", now))))
-        return Resource.success(
-            InviteLink(token, config.inviteBaseUrl + token, "circaso://i/$token", now.plus(config.inviteTtl)),
-        )
+        val expiresAt = now.plus(config.inviteTtl)
+        store.commit(UsersChanges(invites = listOf(Invite(token, userId, "LINK", now, expiresAt))))
+        return Resource.success(InviteLink(token, config.inviteBaseUrl + token, "circaso://i/$token", expiresAt))
     }
 }

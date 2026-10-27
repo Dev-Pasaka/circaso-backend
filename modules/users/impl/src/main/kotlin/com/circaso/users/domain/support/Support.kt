@@ -1,5 +1,6 @@
 package com.circaso.users.domain.support
 
+import com.circaso.shared.DomainError
 import com.circaso.shared.UserId
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.domain.models.Contact
@@ -9,6 +10,7 @@ import com.circaso.users.domain.models.Privacy
 import com.circaso.users.domain.models.Profile
 import com.circaso.users.domain.models.WaitingContact
 import com.circaso.users.domain.ports.ReachCache
+import com.circaso.users.domain.ports.Transactor
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.repositories.UsersChanges
@@ -32,10 +34,17 @@ data class UsersConfig(
 
 fun fallbackProfile(userId: UserId) = PublicProfile(userId, DEFAULT_DISPLAY_NAME, null, null, null)
 
+/**
+ * Thrown inside `Transactor.run` to undo what the operation already wrote there and answer [error] instead: a handle
+ * claimed just before a stale profile version must not stay claimed. The use case that throws it catches it; it
+ * never leaves the domain.
+ */
+class Rollback(val error: DomainError) : RuntimeException(error.message, null, false, false)
+
 /** A profile that is always there: if the activation event is late or lost, the first read creates an empty one. */
 class ProfileProvisioner(
     private val profiles: ProfileRepository,
-    private val store: UsersStore,
+    private val transactor: Transactor,
     private val clock: Clock,
 ) {
     suspend fun ensure(userId: UserId, displayName: String? = null): Profile {
@@ -51,8 +60,11 @@ class ProfileProvisioner(
                 Privacy(),
                 clock.instant(),
             )
-        store.commit(UsersChanges(profiles = listOf(created)))
-        return profiles.find(userId) ?: created
+        // Two first reads at once both try; the one that loses reads the winner's row.
+        return transactor.run("profiles.ensure") {
+            profiles.create(created)
+            profiles.find(userId) ?: created
+        }
     }
 }
 
@@ -63,33 +75,31 @@ class ProfileProvisioner(
 class WaitingContactMatcher(
     private val waiting: WaitingContactRepository,
     private val contacts: ContactRepository,
+    private val transactor: Transactor,
     private val store: UsersStore,
     private val cache: ReachCache,
     private val clock: Clock,
 ) {
     suspend fun match(phoneHmac: String, joined: UserId): List<UserId> {
-        val rows = waiting.waitingFor(phoneHmac).filter { it.ownerId != joined }
-        if (rows.isEmpty()) return emptyList()
         val now = clock.instant()
-        val fresh = rows.filter { contacts.find(it.ownerId, joined) == null }
-        store.commit(
-            UsersChanges(
-                contacts =
-                    fresh.map {
-                        Contact(
-                            it.ownerId,
-                            joined,
-                            ContactSource.PHONEBOOK,
-                            ContactStatus.ACTIVE,
-                            null,
-                            now,
-                        )
-                    },
-                clearedWaiting = rows,
-            ),
-        )
+        val matched =
+            transactor.run("contacts.match-waiting") {
+                val rows = waiting.waitingFor(phoneHmac).filter { it.ownerId != joined }
+                if (rows.isEmpty()) return@run null
+                val fresh = rows.filter { contacts.find(it.ownerId, joined) == null }
+                store.commit(
+                    UsersChanges(
+                        contacts =
+                            fresh.map {
+                                Contact(it.ownerId, joined, ContactSource.PHONEBOOK, ContactStatus.ACTIVE, null, now)
+                            },
+                        clearedWaiting = rows,
+                    ),
+                )
+                fresh.map(WaitingContact::ownerId)
+            } ?: return emptyList()
         cache.invalidateTarget(joined)
-        return fresh.map(WaitingContact::ownerId)
+        return matched
     }
 }
 

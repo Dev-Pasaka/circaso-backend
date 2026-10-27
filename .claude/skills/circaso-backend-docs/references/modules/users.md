@@ -163,10 +163,8 @@ Users exposes read-only routes for the assistant under `presentation/agent/` (`G
 
 Eight PostgreSQL tables in schema `users` (role `users`, Flyway location `db/users`) and four Redis key families. Contacts and blocks are each one table, read from both sides through a second index.
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Users still runs on its Kandra tables in keyspace `circaso_users` until slice PG3 builds the tables below.
-
 ```sql
--- V1__users.sql (shape; the script itself is written in PG3)
+-- modules/users/impl/src/main/resources/db/users/V1__users.sql
 
 CREATE TABLE users.profiles (
     user_id           uuid        PRIMARY KEY,
@@ -238,7 +236,7 @@ CREATE TABLE users.realtime (
     PRIMARY KEY (user_id, seq, sent_at)                 -- replay reads WHERE user_id = ? AND seq > ? ORDER BY seq
 ) PARTITION BY RANGE (sent_at);                         -- daily partitions, dropped after 7 days
 
-CREATE TABLE users.outbox (…);                          -- the same shape as identity's outbox: daily partitions, 7 days
+CREATE TABLE users.outbox (…);                          -- the shared outbox DDL: architecture.md → Durable events
 ```
 
 | Table | Expiry | How the race is settled |

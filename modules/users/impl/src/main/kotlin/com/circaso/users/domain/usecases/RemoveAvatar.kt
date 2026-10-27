@@ -8,6 +8,7 @@ import com.circaso.users.api.ProfileUpdated
 import com.circaso.users.domain.errors.UsersError
 import com.circaso.users.domain.models.MyProfile
 import com.circaso.users.domain.ports.AvatarStorage
+import com.circaso.users.domain.ports.Transactor
 import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.repositories.UsersChanges
 import com.circaso.users.domain.repositories.UsersStore
@@ -21,6 +22,7 @@ class RemoveAvatar(
     private val provisioner: ProfileProvisioner,
     private val profiles: ProfileRepository,
     private val storage: AvatarStorage,
+    private val transactor: Transactor,
     private val store: UsersStore,
     private val bus: EventBus,
     private val notifier: UserNotifier,
@@ -30,14 +32,16 @@ class RemoveAvatar(
         val old = provisioner.ensure(userId)
         val key =
             old.avatarKey ?: return Resource.success(MyProfile(old, null, old.handleChangedAt?.plus(HANDLE_COOLDOWN)))
+        val event = bus.envelope(ProfileUpdated(userId, old.version + 1, listOf(ProfileUpdated.AVATAR)))
         val saved =
-            profiles.update(old, old.copy(avatarKey = null)) ?: return Resource.error(UsersError.VersionConflict)
+            transactor.run("profiles.remove-avatar") {
+                profiles
+                    .update(old, old.copy(avatarKey = null))
+                    ?.also { store.commit(UsersChanges(events = listOf(event))) }
+            } ?: return Resource.error(UsersError.VersionConflict)
+
         storage.delete(key)
-        store.commit(
-            UsersChanges(
-                events = listOf(bus.envelope(ProfileUpdated(userId, saved.version, listOf(ProfileUpdated.AVATAR)))),
-            ),
-        )
+        bus.publish(event)
         notifier.profileUpdated(userId, saved.version)
         return Resource.success(MyProfile(saved, views.avatarUrl(saved), saved.handleChangedAt?.plus(HANDLE_COOLDOWN)))
     }

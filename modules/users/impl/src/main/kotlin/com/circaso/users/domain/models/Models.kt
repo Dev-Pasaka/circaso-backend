@@ -56,6 +56,7 @@ data class Invite(
     val ownerId: UserId,
     val kind: String,
     val createdAt: Instant,
+    val expiresAt: Instant,
 )
 
 data class WaitingContact(val phoneHmac: String, val ownerId: UserId, val addedAt: Instant)

@@ -3,7 +3,6 @@ package com.circaso.users.domain.usecases
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.PublicProfile
-import com.circaso.users.domain.models.ContactStatus
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.support.ProfileViews
@@ -23,10 +22,8 @@ class SearchContacts(
         if (needle.isEmpty()) return Resource.success(emptyList())
         val ids =
             contacts
-                .list(userId, null, SEARCHED)
-                .filter {
-                    it.status == ContactStatus.ACTIVE
-                }.map { it.contactId }
+                .list(userId, null, SEARCHED, activeOnly = true)
+                .map { it.contactId }
                 .toSet()
         val matches =
             profiles

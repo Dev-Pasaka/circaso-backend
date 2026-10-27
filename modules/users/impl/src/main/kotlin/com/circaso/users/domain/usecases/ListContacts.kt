@@ -5,14 +5,13 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.users.domain.models.ContactEntry
 import com.circaso.users.domain.models.ContactPage
-import com.circaso.users.domain.models.ContactStatus
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.support.ProfileViews
 import com.circaso.users.domain.support.fallbackProfile
 import java.util.UUID
 
-/** U8: the user's contacts with public profiles, paged by an opaque cursor. */
+/** U8: the user's active contacts with public profiles, paged by an opaque cursor (the last contact id). */
 class ListContacts(
     private val contacts: ContactRepository,
     private val profiles: ProfileRepository,
@@ -30,11 +29,9 @@ class ListContacts(
             }
         val size = limit.coerceIn(1, 200)
 
-        // Removed contacts stay in the table (so a sync doesn't add them back); skip them here.
-        val rows = contacts.list(userId, after, size * 3)
-        val active = rows.filter { it.status == ContactStatus.ACTIVE }
-        val page = active.take(size)
-        val more = active.size > size || (rows.size == size * 3 && active.size >= size)
+        // One row past the page says whether there is another.
+        val rows = contacts.list(userId, after, size + 1, activeOnly = true)
+        val page = rows.take(size)
         val found = profiles.findAll(page.map { it.contactId }.toSet())
         val entries =
             page.map {
@@ -43,18 +40,13 @@ class ListContacts(
                     found[it.contactId]?.let { p -> views.forViewer(userId, p) } ?: fallbackProfile(it.contactId),
                 )
             }
-        return Resource.success(
-            ContactPage(
-                entries,
-                if (more) {
-                    page
-                        .last()
-                        .contactId.value
-                        .toString()
-                } else {
-                    null
-                },
-            ),
-        )
+        val next =
+            page
+                .lastOrNull()
+                ?.contactId
+                ?.value
+                ?.toString()
+                ?.takeIf { rows.size > size }
+        return Resource.success(ContactPage(entries, next))
     }
 }
