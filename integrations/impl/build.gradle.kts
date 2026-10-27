@@ -3,7 +3,8 @@ plugins {
 }
 
 // One package per vendor (`twilio`, `africastalking`, `resend`, `social` for Google and Apple, which share one contract, `workersai` for
-// Asha's models on Cloudflare Workers AI), each calling out through the shared
+// Asha's models on Cloudflare Workers AI, `circle` for the wallet's user-controlled wallets and their webhook), each
+// calling out through the shared
 // `HttpClients.named("<vendor>")`. Beside them: `dev` (log and fake) and `placeholder`
 // (vendors whose credentials are still to come).
 dependencies {

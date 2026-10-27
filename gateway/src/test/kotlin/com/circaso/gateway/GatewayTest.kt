@@ -5,6 +5,8 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.DeviceId
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
@@ -18,9 +20,11 @@ import com.circaso.web.installStatusPages
 import com.circaso.web.respondDefault
 import com.circaso.web.userId
 import io.ktor.client.request.get
+import io.ktor.client.request.head
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.routing.get
@@ -29,10 +33,15 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -125,6 +134,49 @@ class GatewayTest {
 
     private val hits = AtomicInteger()
 
+    private val translated = AtomicInteger()
+    private val translatedAtOnce = AtomicInteger()
+
+    /** How the next translations go wrong, one entry each: the vendor's error, an exception or a cancelled call. */
+    private enum class Trouble { ERROR, THROW, CANCEL }
+
+    private val trouble = ConcurrentLinkedQueue<Trouble>()
+
+    private abstract class TestVendor(override val name: String) : WebhookVendor {
+        override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray) =
+            headers["x-signature"] == "good"
+
+        override fun sentAt(headers: Map<String, String>, body: ByteArray): Instant? = null
+
+        override fun deliveryId(headers: Map<String, String>, body: ByteArray) = headers["x-delivery"]
+    }
+
+    /** A vendor like Circle: the answer waits for the translation, and a failure must reach the vendor. */
+    private val waitingVendor =
+        object : TestVendor("waiting") {
+            override val answersAfterTranslation = true
+
+            override suspend fun translate(body: ByteArray): Resource<Unit> {
+                when (trouble.poll()) {
+                    Trouble.ERROR -> return Resource.error(IntegrationError.Unavailable("Wallet"))
+                    Trouble.THROW -> throw IllegalStateException("handler broke")
+                    Trouble.CANCEL -> throw CancellationException("call cancelled")
+                    null -> Unit
+                }
+                translated.incrementAndGet()
+                return Resource.success(Unit)
+            }
+        }
+
+    /** Every other vendor: `200` at once, translated afterwards; its failures stay on our side. */
+    private val atOnceVendor =
+        object : TestVendor("at-once") {
+            override suspend fun translate(body: ByteArray): Resource<Unit> {
+                translatedAtOnce.incrementAndGet()
+                return Resource.error(IntegrationError.Unavailable("Somebody"))
+            }
+        }
+
     private fun gatewayApp(config: GatewayConfig = GatewayConfig(), block: suspend ApplicationTestBuilder.() -> Unit) =
         testApplication {
             val redis = MemoryRedis()
@@ -158,6 +210,12 @@ class GatewayTest {
                             ) { call.respondDefault(DefaultResponse(status = true, data = "list")) }
                         }
                         post("/auth/nonce") { call.respondDefault(DefaultResponse(status = true, data = "n")) }
+                        webhookRoutes(
+                            listOf(waitingVendor, atOnceVendor),
+                            config,
+                            redis,
+                            CoroutineScope(Dispatchers.Unconfined),
+                        )
                     }
                 }
             }
@@ -273,5 +331,75 @@ class GatewayTest {
                     header("Authorization", "Bearer app")
                 }
             assertEquals(HttpStatusCode.OK, current.status)
+        }
+
+    private suspend fun ApplicationTestBuilder.deliver(
+        vendor: String = "waiting",
+        signature: String = "good",
+        delivery: String = "notification-1",
+    ) = client.post("/v1/hooks/$vendor") {
+        header("x-signature", signature)
+        header("x-delivery", delivery)
+        setBody("{}")
+    }
+
+    @Test
+    fun `a translation that throws leaves the delivery retryable`() =
+        gatewayApp {
+            trouble += Trouble.THROW
+            assertEquals(HttpStatusCode.InternalServerError, deliver().status)
+            assertEquals(0, translated.get())
+
+            assertEquals(HttpStatusCode.OK, deliver().status)
+            assertEquals(1, translated.get(), "the redelivery ran")
+        }
+
+    @Test
+    fun `a cancelled translation leaves the delivery retryable`() =
+        gatewayApp {
+            trouble += Trouble.CANCEL
+            runCatching { deliver() }.onSuccess { assertTrue(it.status != HttpStatusCode.OK, "${it.status}") }
+            assertEquals(0, translated.get())
+
+            assertEquals(HttpStatusCode.OK, deliver().status)
+            assertEquals(1, translated.get(), "the redelivery ran")
+        }
+
+    @Test
+    fun `other vendors get 200 at once even when the translation fails, and a duplicate isn't translated twice`() =
+        gatewayApp {
+            assertEquals(HttpStatusCode.OK, deliver(vendor = "at-once").status)
+            assertEquals(1, translatedAtOnce.get())
+            assertEquals(HttpStatusCode.OK, deliver(vendor = "at-once").status)
+            assertEquals(1, translatedAtOnce.get(), "the id was claimed before translating, so a repeat is skipped")
+            assertEquals(HttpStatusCode.OK, deliver(vendor = "at-once", delivery = "notification-2").status)
+            assertEquals(2, translatedAtOnce.get())
+        }
+
+    @Test
+    fun `a vendor that waits gets the failure, delivers again, and is processed once`() =
+        gatewayApp {
+            assertEquals(HttpStatusCode.Unauthorized, deliver(signature = "bad").status)
+
+            trouble += Trouble.ERROR
+            val failed = deliver()
+            assertEquals(HttpStatusCode.BadGateway, failed.status)
+            assertTrue("integrations.unavailable" in failed.bodyAsText())
+            assertEquals(0, translated.get())
+
+            assertEquals(HttpStatusCode.OK, deliver().status, "the failed delivery wasn't marked as seen")
+            assertEquals(1, translated.get())
+            assertEquals(HttpStatusCode.OK, deliver().status)
+            assertEquals(1, translated.get(), "a repeat after success is acknowledged, not processed")
+        }
+
+    @Test
+    fun `HEAD on a hook answers 200 for a registered vendor and 404 otherwise, with no body and no signature`() =
+        gatewayApp {
+            val known = client.head("/v1/hooks/waiting")
+            assertEquals(HttpStatusCode.OK, known.status)
+            assertEquals("", known.bodyAsText())
+            assertEquals(HttpStatusCode.NotFound, client.head("/v1/hooks/nobody").status)
+            assertEquals(0, translated.get(), "a HEAD never reaches the vendor")
         }
 }

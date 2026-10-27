@@ -12,9 +12,13 @@ import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.RoutingContext
+import io.ktor.server.routing.head
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
@@ -28,8 +32,10 @@ private val SEEN_FOR: Duration = Duration.ofDays(7)
 /**
  * `POST /v1/hooks/{vendor}`: the gateway's guards, then the vendor's own translation. The guards are the vendor's
  * signature, a timestamp window against replays, a record of delivery ids so a repeat is processed once, and an
- * IP allowlist where the vendor publishes one. The answer is `200` at once; the verified body is handed to the
- * vendor's translation afterwards, so a slow translation never makes the vendor retry.
+ * IP allowlist where the vendor publishes one. The answer is `200` at once and the verified body is handed to the
+ * vendor's translation afterwards, so a slow translation never makes the vendor retry; except for a vendor that
+ * [WebhookVendor.answersAfterTranslation] (Circle), which waits for it and answers the error when it fails, so the
+ * vendor delivers again.
  */
 fun Route.webhookRoutes(
     vendors: List<WebhookVendor>,
@@ -40,6 +46,18 @@ fun Route.webhookRoutes(
     val byName = vendors.associateBy { it.name }
 
     route("/hooks") {
+        // Circle checks a notification URL with a HEAD before it sends anything to it; nothing is verified or read.
+        head("{vendor}") {
+            val known = call.parameters["vendor"].orEmpty() in byName
+            call.respond(if (known) HttpStatusCode.OK else HttpStatusCode.NotFound)
+        }.docs<NoBody, NoBody>(
+            "Check a vendor's callback address",
+            "Webhooks",
+            notes =
+                "`200` with no body when `{vendor}` is a registered sender, `404` otherwise. Vendors that validate " +
+                    "an endpoint before using it (Circle) call this; no signature is needed.",
+            envelope = false,
+        )
         post("{vendor}") {
             val name = call.parameters["vendor"].orEmpty()
             val vendor = byName[name]
@@ -70,28 +88,11 @@ fun Route.webhookRoutes(
                     return@post
                 }
             }
-            val duplicate =
-                vendor.deliveryId(headers, body)?.let { id -> !redis.setIfAbsent("hook:$name:$id", "1", SEEN_FOR) }
-                    ?: false
-
-            call.respondDefault(DefaultResponse<Unit>(HttpStatusCode.OK.value, true, "Received"))
-            if (!duplicate) {
-                scope.launch {
-                    val result =
-                        runCatching {
-                            vendor.translate(
-                                body,
-                            )
-                        }.getOrElse { Resource.error(SharedError.Internal, it) }
-                    if (result is Resource.Error) {
-                        log.warn(
-                            "webhook not translated: vendor={} code={}",
-                            name,
-                            result.error.code,
-                            result.cause,
-                        )
-                    }
-                }
+            val seenKey = vendor.deliveryId(headers, body)?.let { id -> "hook:$name:$id" }
+            if (vendor.answersAfterTranslation) {
+                answerAfterTranslation(vendor, body, seenKey, redis)
+            } else {
+                answerAtOnce(vendor, body, seenKey, redis, scope)
             }
         }.docs<NoBody, NoBody>(
             "Receive a vendor's callback",
@@ -102,10 +103,62 @@ fun Route.webhookRoutes(
                     "carry the vendor's signature, " +
                     "a timestamp inside a 5-minute window and a delivery id not seen before, and come from the " +
                     "vendor's allowlisted address where it publishes one. " +
-                    "A repeated delivery is acknowledged but processed once. Answers `200` at once; the body is " +
-                    "handled afterwards.",
+                    "A repeated delivery is acknowledged but processed once. Answers `200` at once and handles the " +
+                    "body afterwards, except for `circle`: it waits, and answers the error when the update can't be " +
+                    "applied, so Circle delivers it again.",
         )
     }
+}
+
+private val RECEIVED = DefaultResponse<Unit>(HttpStatusCode.OK.value, true, "Received")
+
+/** Most vendors: the id is claimed first, the answer is `200` at once, and the body is translated afterwards. */
+private suspend fun RoutingContext.answerAtOnce(
+    vendor: WebhookVendor,
+    body: ByteArray,
+    seenKey: String?,
+    redis: RedisScope,
+    scope: CoroutineScope,
+) {
+    val duplicate = seenKey?.let { !redis.setIfAbsent(it, "1", SEEN_FOR) } ?: false
+    call.respondDefault(RECEIVED)
+    if (!duplicate) scope.launch { translate(vendor, body) }
+}
+
+/**
+ * A vendor that delivers again until it gets a 2xx (Circle): the id is marked as seen only once the translation has
+ * succeeded. A failure, an exception or a cancelled call leaves no mark, so the next delivery runs; two deliveries at
+ * once may both run, which the handlers allow (they are idempotent and ignore older versions).
+ */
+private suspend fun RoutingContext.answerAfterTranslation(
+    vendor: WebhookVendor,
+    body: ByteArray,
+    seenKey: String?,
+    redis: RedisScope,
+) {
+    if (seenKey != null && redis.exists(seenKey)) {
+        call.respondDefault(RECEIVED)
+        return
+    }
+    val result = translate(vendor, body)
+    if (result is Resource.Error) {
+        call.respondDefault(result.error.toResponse())
+        return
+    }
+    seenKey?.let { redis.set(it, "1", SEEN_FOR) }
+    call.respondDefault(RECEIVED)
+}
+
+private suspend fun translate(vendor: WebhookVendor, body: ByteArray): Resource<Unit> {
+    val result =
+        runCatching { vendor.translate(body) }.getOrElse {
+            if (it is CancellationException) throw it
+            Resource.error(SharedError.Internal, it)
+        }
+    if (result is Resource.Error) {
+        log.warn("webhook not translated: vendor={} code={}", vendor.name, result.error.code, result.cause)
+    }
+    return result
 }
 
 private fun DomainError.toResponse(): DefaultResponse<Unit> = toDefaultResponse()

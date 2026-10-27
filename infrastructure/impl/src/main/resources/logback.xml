@@ -37,6 +37,7 @@
     LOG_LEVEL_GATEWAY          auth, limits, idempotency, WebSockets, webhooks
     LOG_LEVEL_IDENTITY, LOG_LEVEL_USERS, LOG_LEVEL_MESSAGING, LOG_LEVEL_ASSISTANT    the business modules
     LOG_LEVEL_INTEGRATIONS     SMS, email, push and the other vendors, and the HTTP calls to them
+    LOG_LEVEL_CIRCLE           Circle wallets and its webhook (follows LOG_LEVEL_INTEGRATIONS when unset)
     LOG_LEVEL_EVENTS           the outbox relay and the stream consumers
     LOG_LEVEL_SCHEDULER        scheduled jobs
     LOG_LEVEL_DATABASE         ScyllaDB and Kandra, Circaso's side and the driver's
@@ -57,6 +58,7 @@
   <logger name="com.circaso.messaging" level="${LOG_LEVEL_MESSAGING:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.assistant" level="${LOG_LEVEL_ASSISTANT:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.integrations" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>
+  <logger name="com.circaso.integrations.impl.circle" level="${LOG_LEVEL_CIRCLE:-${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}}"/>
   <logger name="com.circaso.infrastructure.impl.http" level="${LOG_LEVEL_INTEGRATIONS:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.infrastructure.impl.events" level="${LOG_LEVEL_EVENTS:-${LOG_LEVEL:-INFO}}"/>
   <logger name="com.circaso.infrastructure.impl.scheduler" level="${LOG_LEVEL_SCHEDULER:-${LOG_LEVEL:-INFO}}"/>

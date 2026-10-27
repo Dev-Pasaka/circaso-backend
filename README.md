@@ -44,6 +44,7 @@ set in `.env` or the environment, per service, each `OFF`, `ERROR`, `WARN`, `INF
 | `LOG_LEVEL_REQUESTS` | the one line per HTTP request |
 | `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_ASSISTANT` | the gateway and each module |
 | `LOG_LEVEL_INTEGRATIONS`, `_EVENTS`, `_SCHEDULER` | vendors, the event streams, scheduled jobs |
+| `LOG_LEVEL_CIRCLE` | Circle wallets and its webhook (follows `LOG_LEVEL_INTEGRATIONS` when unset) |
 | `LOG_LEVEL_DATABASE`, `_REDIS`, `_HTTP` | ScyllaDB and Kandra, Redis, the Ktor server and Netty (the libraries' side too) |
 
 To watch sign-in only: `LOG_LEVEL=WARN`, `LOG_LEVEL_IDENTITY=DEBUG`, `LOG_LEVEL_REQUESTS=INFO`.
@@ -58,6 +59,12 @@ To watch sign-in only: `LOG_LEVEL=WARN`, `LOG_LEVEL_IDENTITY=DEBUG`, `LOG_LEVEL_
 `SCYLLA_CONTACT_POINTS`). Secrets are never logged: `PHONE_HMAC_KEY`, `ASSISTANT_VAULT_KEY`, `IDENTITY_SIGNING_KEY` with
 `IDENTITY_SIGNING_PUBLIC_KEY` (Ed25519), `SCYLLA_USERNAME` and `SCYLLA_PASSWORD`. Locally, throwaway values are made
 when they are missing; elsewhere startup stops. The `.env` made for a machine holds generated ones, so tokens survive a restart.
+
+Vendor webhooks at `/v1/hooks/{vendor}` can be limited to the vendor's published source addresses with
+`GATEWAY_WEBHOOKS_<VENDOR>_ALLOWED_IPS` (comma separated, exact IPs; `africastalking`, `resend`, `circle`, `cloudflare`).
+Unset, any address may call and the signature is the guard. For Circle, each node also fetches at most 10 unknown
+signing keys a minute, so posts with made-up key ids can't spend our Circle rate limit; set
+`GATEWAY_WEBHOOKS_CIRCLE_ALLOWED_IPS` to Circle's published IPs to turn such traffic away before it is read.
 
 ## Deploying to the dev server
 
