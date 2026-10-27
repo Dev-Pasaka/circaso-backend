@@ -13,7 +13,12 @@ data class IdentityConfig(
     val resendAfter: Duration = Duration.ofSeconds(30),
     val maxCodeAttempts: Int = 5,
     val proofWindow: Duration = Duration.ofMinutes(5),
-    /** TODO(decision: how long a deleted account stays recoverable before AccountDeleted is published) */
+    /**
+     * How long a deleted account stays recoverable before its rows go and `AccountDeleted` is published: 30 days
+     * (decision 2026-10-27).
+     */
     val deletionGrace: Duration = Duration.ofDays(30),
     val phoneReleaseNotice: Duration = Duration.ofDays(7),
+    /** A sign-up that never verified its number is deleted this long after it began (identity.md). */
+    val pendingAccountLifetime: Duration = Duration.ofDays(30),
 )

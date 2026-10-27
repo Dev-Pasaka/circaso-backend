@@ -20,6 +20,9 @@ data class Account(
     val verification: Verification,
     val sessionVersion: Int,
     val createdAt: Instant,
+    /** Set when the account turns `DELETED`: when its grace period ends. */
+    val deleteAfter: Instant? = null,
+    /** The row's version when it was read; a write checks it, so a stale copy never overwrites a newer one. */
     val version: Long = 0,
 )
 

@@ -15,6 +15,7 @@ import com.circaso.identity.domain.models.SignInResult
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.TokenIssuer
+import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.DeviceRepository
@@ -32,10 +33,11 @@ import java.time.Clock
 
 /**
  * I2: verifies the Google/Apple token and decides the next step (Identity → Sign-in decision table). A new login
- * creates the account at once as `PENDING_PHONE`, its provider claim taken with `saveIfNotExists` so two taps
- * can't create two accounts.
+ * creates the account at once as `PENDING_PHONE`, in the same transaction that claims the login through the unique
+ * `(provider, subject)` index, so two taps can't create two accounts.
  */
 class SignInWithProvider(
+    private val transactor: Transactor,
     private val cache: IdentityCache,
     private val social: SocialSignIn,
     private val accounts: AccountRepository,
@@ -79,38 +81,39 @@ class SignInWithProvider(
     }
 
     private suspend fun findOrCreate(command: SignInCommand, identity: SocialIdentity): Account {
-        val known = providers.ownerOf(command.provider, identity.subject)
-        if (known != null) accounts.find(known)?.let { return it }
-
-        val userId = known ?: UserId.new()
-        // Two taps race here; whoever's claim lands first owns the account, the other adopts it.
-        if (!providers.claim(command.provider, identity.subject, userId)) {
-            val winner = providers.ownerOf(command.provider, identity.subject)
-            accounts.find(winner ?: userId)?.let { return it }
+        providers.ownerOf(command.provider, identity.subject)?.let { known ->
+            return checkNotNull(accounts.find(known)) { "A login is linked to an account that doesn't exist" }
         }
-        val account = Account(userId, null, AccountStatus.PENDING_PHONE, null, Verification.NONE, 1, clock.instant())
-        store.commit(
-            Changes(
-                accounts = listOf(account),
-                providerLinks =
-                    listOf(
-                        ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant()),
-                    ),
-                securityEvents =
-                    listOf(
-                        SecurityEvent(
-                            userId,
-                            null,
-                            SecurityEventType.PROVIDER_LINKED,
-                            command.device.model,
-                            command.provider.name,
-                        ),
-                    ),
-            ),
-        )
-        cache.saveHints(userId, command.appleName ?: identity.displayName, identity.pictureUrl)
+
+        val now = clock.instant()
+        val account = Account(UserId.new(), null, AccountStatus.PENDING_PHONE, null, Verification.NONE, 1, now)
+        val link = ProviderLink(account.userId, command.provider, identity.subject, identity.email, now)
+        // Two taps race here: the unique login index lets one claim land; the other writes nothing and adopts it.
+        val created =
+            transactor.run("accounts.sign-up") {
+                if (!providers.claim(link)) return@run false
+                accounts.create(account)
+                store.write(Changes(securityEvents = listOf(linked(account, command))))
+                true
+            }
+        if (!created) return winnerOf(command, identity)
+        cache.saveHints(account.userId, command.appleName ?: identity.displayName, identity.pictureUrl)
         return account
     }
+
+    private suspend fun winnerOf(command: SignInCommand, identity: SocialIdentity): Account {
+        val winner = checkNotNull(providers.ownerOf(command.provider, identity.subject)) { "A lost claim has no owner" }
+        return checkNotNull(accounts.find(winner)) { "A login is linked to an account that doesn't exist" }
+    }
+
+    private fun linked(account: Account, command: SignInCommand) =
+        SecurityEvent(
+            account.userId,
+            null,
+            SecurityEventType.PROVIDER_LINKED,
+            command.device.model,
+            command.provider.name,
+        )
 
     private suspend fun pendingPhone(account: Account, command: SignInCommand): Resource<SignInResult> {
         val next =
@@ -133,16 +136,27 @@ class SignInWithProvider(
             return reverify(account, command)
         }
 
-        val opened = sessions.open(account, command.device.deviceId)
-        store.commit(
-            Changes(
-                sessions = opened.ended + opened.issued.session,
-                securityEvents =
-                    listOf(
-                        SecurityEvent(account.userId, null, SecurityEventType.SIGN_IN, registered?.model, null),
+        val previous = sessions.previous(account, command.device.deviceId)
+        val opened =
+            transactor.run("sessions.sign-in") {
+                // The phone was checked against the account read above; it must still be the active one.
+                val current =
+                    accounts
+                        .lock(account.userId)
+                        ?.takeIf { it.status == AccountStatus.ACTIVE && it.activeDeviceId == command.device.deviceId }
+                        ?: return@run null
+                val opened = sessions.open(current, command.device.deviceId, previous)
+                store.write(
+                    Changes(
+                        sessions = opened.ended + opened.issued.session,
+                        securityEvents =
+                            listOf(
+                                SecurityEvent(current.userId, null, SecurityEventType.SIGN_IN, registered?.model, null),
+                            ),
                     ),
-            ),
-        )
+                )
+                opened
+            } ?: return reverify(account, command)
         sessions.afterCommit(account, opened)
         return Resource.success(
             SignInResult(

@@ -9,6 +9,7 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.ObjectStores
 import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.impl.database.PostgresDatabases
@@ -91,8 +92,8 @@ fun infrastructureModule(config: Config, secrets: Secrets) =
 
 /**
  * Starts the runtime that needs a running application: subscribes every module's `EventSubscription`, registers
- * the outbox relay, and starts the stream consumers and the scheduler. Stops them, and closes Redis and the
- * HTTP clients, when the application stops.
+ * the outbox relay and every module's `ScheduledJob`, and starts the stream consumers and the scheduler. Stops them,
+ * and closes Redis and the HTTP clients, when the application stops.
  */
 fun Application.startInfrastructure() {
     val koin = getKoin()
@@ -102,6 +103,7 @@ fun Application.startInfrastructure() {
 
     koin.getAll<EventSubscription>().forEach(bus::subscribe)
     koin.get<OutboxRelay>().register(scheduler)
+    scheduler.registerAll(koin.getAll<ScheduledJob>())
     bus.start(scope)
     scheduler.start(scope)
 
@@ -115,4 +117,9 @@ fun Application.startInfrastructure() {
         koin.get<PeerGrpcClients>().close()
         koin.get<RedisConnection>().close()
     }
+}
+
+/** Hands each module's [ScheduledJob] to the scheduler, which runs it on one node at a time, on the jobs pool. */
+internal fun Scheduler.registerAll(jobs: Collection<ScheduledJob>) {
+    jobs.forEach { every(it.name, it.interval, it.job) }
 }

@@ -16,6 +16,7 @@ import com.circaso.identity.domain.ports.AttestationVerifier
 import com.circaso.identity.domain.ports.DeviceKeyVerifier
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PhoneProtection
+import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.DeviceRepository
@@ -38,6 +39,7 @@ import java.time.Clock
  * `DeviceReplaced`. Release builds must pass device attestation (`identity.attestation = ENFORCE`).
  */
 class RegisterDevice(
+    private val transactor: Transactor,
     private val accounts: AccountRepository,
     private val devices: DeviceRepository,
     private val providers: ProviderRepository,
@@ -91,7 +93,7 @@ class RegisterDevice(
         val replacedOld = old?.copy(status = DeviceStatus.REPLACED)
 
         val activated = account.copy(status = AccountStatus.ACTIVE, activeDeviceId = command.deviceId)
-        val opened = sessions.open(activated, command.deviceId)
+        val previous = sessions.previous(activated, command.deviceId)
         val oldSession = replacedOld?.let { cache.deviceSession(userId, it.deviceId) }
 
         val events =
@@ -115,24 +117,32 @@ class RegisterDevice(
                 }
             }
         val newPhone = replacedOld != null
-        store.commit(
-            Changes(
-                accounts = listOf(activated),
-                devices = listOfNotNull(device, replacedOld),
-                sessions = opened.ended + opened.issued.session,
-                securityEvents =
-                    listOf(
-                        SecurityEvent(
-                            userId,
-                            null,
-                            if (newPhone) SecurityEventType.NEW_PHONE else SecurityEventType.SIGN_IN,
-                            command.model,
-                            null,
-                        ),
+        val securityEvent =
+            SecurityEvent(
+                userId,
+                null,
+                if (newPhone) SecurityEventType.NEW_PHONE else SecurityEventType.SIGN_IN,
+                command.model,
+                null,
+            )
+        // Everything above was decided on the account as it was read; the lock confirms it is still that version. If
+        // a second request for the same account got there first, this one's reading is stale.
+        val opened =
+            transactor.run("devices.register") {
+                if (accounts.lock(userId)?.version != account.version) return@run null
+                val opened = sessions.open(activated, command.deviceId, previous)
+                store.write(
+                    Changes(
+                        accounts = listOf(activated),
+                        devices = listOfNotNull(device, replacedOld),
+                        sessions = opened.ended + opened.issued.session,
+                        securityEvents = listOf(securityEvent),
+                        events = events,
                     ),
-                events = events,
-            ),
-        )
+                )
+                opened
+            } ?: return Resource.error(SharedError.InProgress)
+        store.publish(Changes(events = events))
         sessions.afterCommit(activated, opened)
         oldSession?.let { cache.revoke(it) }
         if (newPhone) alertOldPhoneOwner(account.userId, command.model)

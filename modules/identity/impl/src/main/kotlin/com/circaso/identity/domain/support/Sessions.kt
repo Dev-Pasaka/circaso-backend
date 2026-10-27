@@ -1,6 +1,7 @@
 package com.circaso.identity.domain.support
 
 import com.circaso.identity.api.SessionId
+import com.circaso.identity.domain.errors.IdentityError
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SessionStatus
@@ -50,10 +51,18 @@ class SessionOpener(
     private val cache: IdentityCache,
     private val clock: Clock,
 ) {
-    suspend fun open(account: Account, deviceId: DeviceId): OpenedSession {
+    /** The phone's live session as Redis remembers it; read before the transaction, which can't call Redis. */
+    suspend fun previous(account: Account, deviceId: DeviceId): SessionId? =
+        cache.deviceSession(account.userId, deviceId)
+
+    /** Inside the transaction: the new session, and [previous] ended with it if it is still active. */
+    suspend fun open(
+        account: Account,
+        deviceId: DeviceId,
+        previous: SessionId?,
+    ): OpenedSession {
         val ended =
-            cache
-                .deviceSession(account.userId, deviceId)
+            previous
                 ?.let { sessions.find(it) }
                 ?.takeIf { it.status == SessionStatus.ACTIVE }
                 ?.copy(status = SessionStatus.REVOKED)
@@ -119,4 +128,13 @@ class SessionOpener(
                 ?.substringBefore('.')
                 ?.let(SessionId::parse)
     }
+}
+
+/** What a refresh's transaction decided (I7): rotate, refuse, or end the session because an old token came back. */
+sealed interface RefreshOutcome {
+    data class Rotated(val issued: IssuedSession) : RefreshOutcome
+
+    data class Reused(val session: Session) : RefreshOutcome
+
+    data class Refused(val error: IdentityError) : RefreshOutcome
 }

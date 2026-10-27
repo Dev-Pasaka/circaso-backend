@@ -7,11 +7,13 @@ import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
+import com.circaso.identity.domain.models.SessionStatus
 import com.circaso.identity.domain.models.SupportRecovery
 import com.circaso.identity.domain.ports.Hints
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PendingOtp
 import com.circaso.identity.domain.ports.PhoneRelease
+import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.DeviceRepository
@@ -27,15 +29,22 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.KSerializer
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** One in-memory stand-in for every repository port, so use cases run without a database. */
+/**
+ * One in-memory stand-in for every repository port, so use cases run without a database. The claims behave like the
+ * unique indexes: a number or a login another account holds is refused.
+ */
 class MemoryStore :
     AccountRepository,
     ProviderRepository,
@@ -43,45 +52,95 @@ class MemoryStore :
     SessionRepository,
     SecurityLogRepository,
     RecoveryRepository,
-    IdentityStore {
+    IdentityStore,
+    Transactor {
     val accounts = ConcurrentHashMap<UserId, Account>()
-    val phoneClaims = ConcurrentHashMap<PhoneNumber, UserId>()
-    val providerClaims = ConcurrentHashMap<Pair<SocialProvider, String>, UserId>()
     val links = CopyOnWriteArrayList<ProviderLink>()
     val devices = ConcurrentHashMap<Pair<UserId, DeviceId>, Device>()
     val sessions = ConcurrentHashMap<SessionId, Session>()
     val log = CopyOnWriteArrayList<SecurityEvent>()
     val recoveries = ConcurrentHashMap<UUID, SupportRecovery>()
     val events = CopyOnWriteArrayList<EventEnvelope>()
+    private val lock = Mutex()
+
+    /** One transaction at a time, like the account lock every write takes. */
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T = lock.withLock { block() }
+
+    /** No rollback in memory: the use cases under test refuse before they write. */
+    override suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T> =
+        lock.withLock { block() }
 
     override suspend fun find(userId: UserId) = accounts[userId]
 
-    override suspend fun findByPhone(phone: PhoneNumber) = phoneClaims[phone]?.let { accounts[it] }
+    override suspend fun lock(userId: UserId) = accounts[userId]
 
-    override suspend fun claimPhone(phone: PhoneNumber, userId: UserId) =
-        phoneClaims.putIfAbsent(phone, userId).let {
-            it ==
-                null ||
-                it == userId
-        }
+    override suspend fun findByPhone(phone: PhoneNumber) = accounts.values.firstOrNull { it.phone == phone }
 
-    override suspend fun releasePhone(phone: PhoneNumber) {
-        phoneClaims.remove(phone)
+    override suspend fun create(account: Account) {
+        accounts[account.userId] = account
     }
 
-    override suspend fun ownerOf(provider: SocialProvider, subject: String) = providerClaims[provider to subject]
+    override suspend fun claimPhone(account: Account, phone: PhoneNumber): Boolean {
+        val holder = findByPhone(phone)
+        if (holder != null && holder.userId != account.userId) return false
+        accounts[account.userId] = account.copy(phone = phone, version = account.version + 1)
+        return true
+    }
 
-    override suspend fun claim(
-        provider: SocialProvider,
-        subject: String,
-        userId: UserId,
-    ) = providerClaims.putIfAbsent(provider to subject, userId).let { it == null || it == userId }
+    override suspend fun deleteAbandoned(createdBefore: Instant, limit: Int): Int {
+        val due =
+            accounts.values
+                .filter { it.status == AccountStatus.PENDING_PHONE && it.createdAt < createdBefore }
+                .take(limit)
+        due.forEach { account ->
+            accounts.remove(account.userId)
+            links.removeAll { it.userId == account.userId }
+        }
+        return due.size
+    }
+
+    override suspend fun dueForDeletion(now: Instant, limit: Int) =
+        accounts.values
+            .filter { it.status == AccountStatus.DELETED && it.deleteAfter?.let { at -> at <= now } == true }
+            .take(limit)
+            .map { it.userId }
+
+    override suspend fun completeDeletion(userId: UserId, now: Instant): Boolean {
+        val account = accounts[userId] ?: return false
+        if (account.status != AccountStatus.DELETED || account.deleteAfter?.let { it <= now } != true) return false
+        accounts.remove(userId)
+        links.removeAll { it.userId == userId }
+        return true
+    }
+
+    override suspend fun ownerOf(provider: SocialProvider, subject: String) =
+        links.firstOrNull { it.provider == provider && it.subject == subject }?.userId
+
+    override suspend fun claim(link: ProviderLink): Boolean {
+        val owner = ownerOf(link.provider, link.subject)
+        if (owner != null) return owner == link.userId
+        links.removeAll { it.userId == link.userId && it.provider == link.provider }
+        links += link
+        return true
+    }
 
     override suspend fun links(userId: UserId) = links.filter { it.userId == userId }
 
     override suspend fun find(userId: UserId, deviceId: DeviceId) = devices[userId to deviceId]
 
     override suspend fun find(sessionId: SessionId) = sessions[sessionId]
+
+    override suspend fun revoke(sessionId: SessionId): Session? {
+        val session = sessions[sessionId]?.takeIf { it.status == SessionStatus.ACTIVE } ?: return null
+        return session.copy(status = SessionStatus.REVOKED).also { sessions[sessionId] = it }
+    }
+
+    override suspend fun revokeAll(userId: UserId): List<SessionId> =
+        sessions.values
+            .filter { it.userId == userId && it.status == SessionStatus.ACTIVE }
+            .map { session ->
+                session.also { sessions[it.sessionId] = it.copy(status = SessionStatus.REVOKED) }.sessionId
+            }
 
     override suspend fun list(
         userId: UserId,
@@ -95,17 +154,14 @@ class MemoryStore :
 
     override suspend fun find(requestId: UUID) = recoveries[requestId]
 
-    override suspend fun commit(changes: Changes) {
-        changes.accounts.forEach { accounts[it.userId] = it }
+    override suspend fun write(changes: Changes) {
+        changes.accounts.forEach { account ->
+            val holder = account.phone?.let { phone -> findByPhone(phone) }
+            check(holder == null || holder.userId == account.userId) { "a number is set only by claimPhone" }
+            accounts[account.userId] = account.copy(version = account.version + 1)
+        }
         changes.devices.forEach { devices[it.userId to it.deviceId] = it }
         changes.sessions.forEach { sessions[it.sessionId] = it }
-        changes.providerLinks.forEach { link ->
-            links.removeAll {
-                it.userId == link.userId &&
-                    it.provider == link.provider
-            }
-            ; links += link
-        }
         changes.removedProviderLinks.forEach { gone ->
             links.removeAll {
                 it.userId == gone.userId &&
@@ -117,8 +173,11 @@ class MemoryStore :
         events += changes.events
     }
 
-    override suspend fun releaseProvider(provider: SocialProvider, subject: String) {
-        providerClaims.remove(provider to subject)
+    override suspend fun publish(changes: Changes) = Unit
+
+    override suspend fun commit(changes: Changes) {
+        run("test.commit") { write(changes) }
+        publish(changes)
     }
 
     fun eventTypes() = events.map { it.type }

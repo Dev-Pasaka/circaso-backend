@@ -215,16 +215,15 @@ After verifying the Google/Apple token, `SignInWithProvider` looks up the provid
 - On sign-up, `VerifyPhoneCode` claims the number through the unique index on `accounts.phone`. A number already claimed by another account returns `identity.phone_taken`.
 - The account turns `ACTIVE` and `AccountActivated` is written to the outbox when the first device is registered (I6), so every active account has a device and a session.
 - Registering a new phone on an active account marks the old device `REPLACED`, ends its sessions (the gateway deny-list picks this up within one access-token lifetime), and writes `DeviceReplaced`.
-- Pending accounts that never finish are deleted after 30 days by a scheduled sweep.
+- Pending accounts that never finish are deleted after 30 days by a scheduled sweep (`identity.sweep-pending-accounts`, hourly), with their logins and security log, which frees the number and the login. Such an account was never activated, so nothing is published.
+- A deleted account stays recoverable for 30 days (`identity.deletion-grace-days`; decision 2026-10-27). At its `delete_after`, `identity.complete-deletions` (every 15 minutes) deletes the account and every identity row of it (logins, devices, sessions, security log, support cases) and writes `AccountDeleted` to the outbox in the same transaction, one account per transaction; every module then deletes that user's data. A second run, or a second node, finds nothing to do.
 
 ## Data
 
 Seven PostgreSQL tables in schema `identity` (role `identity`, Flyway location `db/identity`) and five Redis key families.
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Identity still runs on its Kandra tables in keyspace `circaso_identity` until slice PG2 builds the tables below.
-
 ```sql
--- V1__identity.sql (shape; the script itself is written in PG2)
+-- db/identity/V1__identity.sql (this is its shape; the script is the source of truth)
 
 CREATE TABLE identity.accounts (
     user_id          uuid        PRIMARY KEY,
@@ -312,23 +311,16 @@ CREATE INDEX support_recoveries_relink_idx ON identity.support_recoveries (relin
 CREATE INDEX support_recoveries_status_idx ON identity.support_recoveries (status, request_id);
                                                         -- /ops/recoveries: the cases in a status, oldest first
 
-CREATE TABLE identity.outbox (
-    event_id     uuid        NOT NULL,                  -- UUIDv7
-    occurred_at  timestamptz NOT NULL,
-    type         text        NOT NULL,
-    payload      text        NOT NULL,                  -- the JSON envelope
-    published_at timestamptz,
-    PRIMARY KEY (event_id, occurred_at)
-) PARTITION BY RANGE (occurred_at);                     -- daily partitions, dropped after 7 days
-CREATE INDEX outbox_unpublished_idx ON identity.outbox (occurred_at) WHERE published_at IS NULL;   -- the relay's query
+-- identity.outbox: the shared outbox, created with the DDL in architecture.md → Durable events
+-- (DatabaseModuleSpec(outbox = true); infrastructure writes and relays it)
 ```
 
 | Table | Expiry | How the race is settled |
 | --- | --- | --- |
-| `accounts` | — (a `DELETED` account is removed by its job at `delete_after`) | The number is claimed by setting `phone` inside the verifying transaction (one `Transactor.run`); the unique index makes a second account's write fail (unique violation), which answers `identity.phone_taken`. Profile-style edits use the `version` check |
-| `provider_links` | — | A new login inserts the account and the link in one transaction with `insertIgnore`; `insertedCount = 0` means another tap won, so the transaction is rolled back and the winner's account is read |
-| `devices` | — | — |
-| `sessions` | `expires_at`, purged by `identity.purge-expired` | — |
+| `accounts` | — (a `DELETED` account is removed by `identity.complete-deletions` at `delete_after`, 30 days after the request; a `PENDING_PHONE` one by the 30-day sweep) | The number is claimed by `AccountRepository.claimPhone` (setting `phone`) inside the verifying transaction (one `Transactor.attempt`); the unique index refuses a second account's write, `claimPhone` answers false, the transaction is rolled back and the answer is `identity.phone_taken`. A take-over after an I16 release closes the abandoned account in the same transaction, like a deletion (I14): `DELETED`, `delete_after` set, its sessions ended and `AccountStatusChanged` written; a lost claim rolls that back too. A repeated I14 changes nothing. Every write checks the `version` it read, and every operation that changes an account, its devices, sessions or logins locks the account row first (`SELECT … FOR UPDATE`), so two requests for one person run one after the other |
+| `provider_links` | — | A new login claims the link with `insertIgnore` and inserts the account in the same transaction only when it won; `insertedCount = 0` means another tap won, so nothing is written and the winner's account is read |
+| `devices` | — | Under the account's lock |
+| `sessions` | `expires_at`, purged by `identity.purge-expired` | Sign-out is `UPDATE … WHERE status = 'ACTIVE' RETURNING`, so one caller ends a session; a refresh checks and rotates under the account's lock, so a second refresh with the same token is a reuse |
 | `security_log` | — | — |
 | `support_recoveries` | — | — |
 | `outbox` | Daily partitions, dropped after 7 days | — |
@@ -357,7 +349,7 @@ All on stream `events:identity`, in the envelope described on the Architecture t
 | `identity.SignedOut` v1 | A session signed out (I8), only when it goes from active to revoked | `userId`, `sessionId` | gateway: send `system.session.revoked` to that session's socket and close it (no push) |
 | `identity.AccountStatusChanged` v1 | Suspended, reinstated, blocked | `userId`, `status` | users: hide or restore the profile, clear cached reach decisions; gateway: close sockets when not active |
 | `identity.AccountRelinked` v1 | Support recovery completed after the 48-hour notice | `userId`, `provider` | gateway: close old sockets; the user id is unchanged, so the Circle user and wallets carry over |
-| `identity.AccountDeleted` v1 | Deletion completed | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |
+| `identity.AccountDeleted` v1 | Deletion completed, 30 days after I14 (written in the transaction that deletes the rows) | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |
 
 No raw phone number goes on a stream: `AccountActivated` and `PhoneChanged` carry the number's HMAC only, so neither Redis nor its backups hold phone numbers.
 

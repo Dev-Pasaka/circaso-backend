@@ -6,31 +6,25 @@ import com.circaso.identity.api.DeviceSignatures
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.identity.data.cache.RedisIdentityCache
-import com.circaso.identity.data.entities.AccountRow
-import com.circaso.identity.data.entities.DeviceRow
-import com.circaso.identity.data.entities.IdentityOutboxRow
-import com.circaso.identity.data.entities.PhoneClaimRow
-import com.circaso.identity.data.entities.ProviderClaimRow
-import com.circaso.identity.data.entities.ProviderLinkRow
-import com.circaso.identity.data.entities.RecoveryByRequestRow
-import com.circaso.identity.data.entities.SecurityEventRow
-import com.circaso.identity.data.entities.SessionRow
-import com.circaso.identity.data.entities.SupportRecoveryRow
-import com.circaso.identity.data.migrations.V001_CreateIdentityTables
-import com.circaso.identity.data.migrations.identityEntities
 import com.circaso.identity.data.repositories.AccountRepositoryImpl
+import com.circaso.identity.data.repositories.DatabaseTransactor
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
-import com.circaso.identity.data.repositories.IdentityOutboxStore
+import com.circaso.identity.data.repositories.ExpiredRows
 import com.circaso.identity.data.repositories.IdentityStoreImpl
 import com.circaso.identity.data.repositories.ProviderRepositoryImpl
 import com.circaso.identity.data.repositories.RecoveryRepositoryImpl
 import com.circaso.identity.data.repositories.SecurityLogRepositoryImpl
 import com.circaso.identity.data.repositories.SessionRepositoryImpl
-import com.circaso.identity.data.rows
 import com.circaso.identity.data.security.EcdsaDeviceKeyVerifier
 import com.circaso.identity.data.security.Ed25519Tokens
 import com.circaso.identity.data.security.KeyedPhoneProtection
 import com.circaso.identity.data.security.UnconfiguredAttestation
+import com.circaso.identity.data.tables.AccountsTable
+import com.circaso.identity.data.tables.DevicesTable
+import com.circaso.identity.data.tables.ProviderLinksTable
+import com.circaso.identity.data.tables.SecurityLogTable
+import com.circaso.identity.data.tables.SessionsTable
+import com.circaso.identity.data.tables.SupportRecoveriesTable
 import com.circaso.identity.domain.ports.AccessTokenVerifier
 import com.circaso.identity.domain.ports.AttestationMode
 import com.circaso.identity.domain.ports.AttestationVerifier
@@ -38,6 +32,7 @@ import com.circaso.identity.domain.ports.DeviceKeyVerifier
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PhoneProtection
 import com.circaso.identity.domain.ports.TokenIssuer
+import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
@@ -49,6 +44,7 @@ import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
+import com.circaso.identity.domain.usecases.CompleteDeletions
 import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
@@ -67,6 +63,7 @@ import com.circaso.identity.domain.usecases.ResolvePhones
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
+import com.circaso.identity.domain.usecases.SweepPendingAccounts
 import com.circaso.identity.domain.usecases.UnlinkProvider
 import com.circaso.identity.domain.usecases.UpdatePushToken
 import com.circaso.identity.domain.usecases.VerifyAccessToken
@@ -86,14 +83,18 @@ import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
 import com.circaso.identity.presentation.services.DirectoryService
+import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.Database
+import com.circaso.infrastructure.api.DatabaseModuleSpec
+import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.Environment
-import com.circaso.infrastructure.api.KandraModuleSpec
-import com.circaso.infrastructure.api.OutboxStore
 import com.circaso.infrastructure.api.RedisScopes
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.shared.getOrNull
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -112,7 +113,32 @@ fun identityConfig(config: Config): IdentityConfig {
     )
 }
 
-/** Identity's Koin bindings: data, domain, presentation, its `api`, its Kandra spec and its outbox. */
+private const val IDENTITY_SCHEMA = "identity"
+private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
+private val SWEEP_INTERVAL: Duration = Duration.ofHours(1)
+private val DELETION_INTERVAL: Duration = Duration.ofMinutes(15)
+
+/**
+ * Identity's PostgreSQL: schema and role `identity`, its tables, its Flyway scripts in `db/identity`, and the shared
+ * outbox, which infrastructure relays.
+ */
+fun identityDatabaseSpec() =
+    DatabaseModuleSpec(
+        schema = IDENTITY_SCHEMA,
+        tables =
+            listOf(
+                AccountsTable,
+                ProviderLinksTable,
+                DevicesTable,
+                SessionsTable,
+                SecurityLogTable,
+                SupportRecoveriesTable,
+            ),
+        migrationsLocation = "classpath:db/identity",
+        outbox = true,
+    )
+
+/** Identity's Koin bindings: data, domain, presentation, its `api`, its database spec and its scheduled jobs. */
 fun identityModule(config: Config): Module =
     module {
         val clock = Clock.systemUTC()
@@ -131,38 +157,32 @@ fun identityModule(config: Config): Module =
         single<AttestationVerifier> { UnconfiguredAttestation() }
         single<IdentityCache> { RedisIdentityCache(get<RedisScopes>().scope("idn")) }
 
-        // data: repositories
-        single<AccountRepository> { AccountRepositoryImpl(rows<AccountRow>(), rows<PhoneClaimRow>()) }
-        single<ProviderRepository> { ProviderRepositoryImpl(rows<ProviderClaimRow>(), rows<ProviderLinkRow>()) }
-        single<DeviceRepository> { DeviceRepositoryImpl(rows<DeviceRow>()) }
-        single<SessionRepository> { SessionRepositoryImpl(rows<SessionRow>()) }
-        single<SecurityLogRepository> { SecurityLogRepositoryImpl(rows<SecurityEventRow>()) }
-        single<RecoveryRepository> { RecoveryRepositoryImpl(rows<SupportRecoveryRow>(), rows<RecoveryByRequestRow>()) }
+        // data: PostgreSQL, schema and role `identity`
+        single(named("identity.spec")) { identityDatabaseSpec() }
+        single<Database>(named("identity.database")) { get<Databases>().scope(IDENTITY_SCHEMA) }
+        single<Transactor> { DatabaseTransactor(get(named("identity.database"))) }
+        single { AccountRepositoryImpl(get(named("identity.database")), clock) }
+        single { ProviderRepositoryImpl(get(named("identity.database"))) }
+        single { DeviceRepositoryImpl(get(named("identity.database"))) }
+        single { SessionRepositoryImpl(get(named("identity.database")), clock) }
+        single { SecurityLogRepositoryImpl(get(named("identity.database")), clock) }
+        single { RecoveryRepositoryImpl(get(named("identity.database"))) }
+        single<AccountRepository> { get<AccountRepositoryImpl>() }
+        single<ProviderRepository> { get<ProviderRepositoryImpl>() }
+        single<DeviceRepository> { get<DeviceRepositoryImpl>() }
+        single<SessionRepository> { get<SessionRepositoryImpl>() }
+        single<SecurityLogRepository> { get<SecurityLogRepositoryImpl>() }
+        single<RecoveryRepository> { get<RecoveryRepositoryImpl>() }
         single<IdentityStore> {
-            IdentityStoreImpl(
-                get(),
-                rows<AccountRow>(),
-                rows<DeviceRow>(),
-                rows<SessionRow>(),
-                rows<ProviderLinkRow>(),
-                rows<SecurityEventRow>(),
-                rows<SupportRecoveryRow>(),
-                rows<RecoveryByRequestRow>(),
-                rows<IdentityOutboxRow>(),
-                rows<ProviderClaimRow>(),
-                get(),
-            )
+            IdentityStoreImpl(get(named("identity.database")), get(), get(), get(), get(), get(), get(), get())
         }
-        single<OutboxStore>(named("identity.outbox")) { IdentityOutboxStore(rows<IdentityOutboxRow>()) }
-        single(named("identity.spec")) {
-            KandraModuleSpec("circaso_identity", identityEntities, listOf(V001_CreateIdentityTables))
-        }
+        single { ExpiredRows(get(named("identity.database"))) }
 
         // domain: helpers and use cases
         single { SessionOpener(get(), get(), get(), clock) }
-        single { PhoneOwnership(get(), get(), get(), get(), clock) }
+        single { PhoneOwnership(get(), get(), get(), get(), get(), get(), get(), identity, clock) }
         single { IssueNonce(get()) }
-        single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { StartPhoneVerification(get(), get(), get(), get(), get(), get()) }
         single { VerifyPhoneCode(get(), get(), get(), get(), get(), get()) }
         single { VerifyCarrierToken(get(), get(), get()) }
@@ -180,18 +200,21 @@ fun identityModule(config: Config): Module =
                 get(),
                 get(),
                 get(),
+                get(),
                 clock,
             )
         }
-        single { RefreshSession(get(), get(), get(), get(), get(), get(), get()) }
-        single { SignOut(get(), get(), get(), get()) }
-        single { UpdatePushToken(get(), get()) }
-        single { RemoveDevice(get(), get(), get(), get(), get()) }
+        single { RefreshSession(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SignOut(get(), get(), get(), get(), get()) }
+        single { UpdatePushToken(get(), get(), get(), get()) }
+        single { RemoveDevice(get(), get(), get(), get(), get(), get()) }
         single { GetSecurityOverview(get(), get(), get()) }
-        single { LinkProvider(get(), get(), get(), get(), clock) }
-        single { UnlinkProvider(get(), get()) }
+        single { LinkProvider(get(), get(), get(), get(), get(), get(), clock) }
+        single { UnlinkProvider(get(), get(), get(), get()) }
         single { ListSecurityEvents(get()) }
-        single { RequestAccountDeletion(get(), get(), getAll<DeletionGuard>(), get(), get(), get()) }
+        single {
+            RequestAccountDeletion(get(), get(), get(), getAll<DeletionGuard>(), get(), get(), get(), identity, clock)
+        }
         single { RequestSupportRecovery(get(), get(), get(), get(), get(), get()) }
         single { RequestPhoneRelease(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetRecoveryCase(get(), get()) }
@@ -201,6 +224,8 @@ fun identityModule(config: Config): Module =
         single { ResolvePhones(get()) }
         single { VerifyDeviceSignature(get(), get()) }
         single { GetPushTarget(get(), get()) }
+        single { SweepPendingAccounts(get(), identity, clock) }
+        single { CompleteDeletions(get(), get(), get(), get(), clock) }
 
         // presentation
         single { AuthService(get(), get(), get(), get(), get()) }
@@ -209,6 +234,7 @@ fun identityModule(config: Config): Module =
         single { AccountService(get(), get(), get(), get(), get()) }
         single { RecoveryService(get(), get()) }
         single { DirectoryService(get(), get(), get(), get(), get()) }
+        single { MaintenanceService(get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
             val phone = get<PhoneService>()
@@ -221,6 +247,24 @@ fun identityModule(config: Config): Module =
                 route.deviceController(devices)
                 route.accountController(account)
                 route.recoveryController(recovery)
+            }
+        }
+
+        // scheduled jobs, run on one node at a time
+        single(named("identity.purge-expired")) {
+            val expired = get<ExpiredRows>()
+            ScheduledJob("identity.purge-expired", PURGE_INTERVAL) { expired.purge() }
+        }
+        single(named("identity.sweep-pending-accounts")) {
+            val maintenance = get<MaintenanceService>()
+            ScheduledJob("identity.sweep-pending-accounts", SWEEP_INTERVAL) {
+                maintenance.sweepPendingAccounts().getOrNull() ?: 0
+            }
+        }
+        single(named("identity.complete-deletions")) {
+            val maintenance = get<MaintenanceService>()
+            ScheduledJob("identity.complete-deletions", DELETION_INTERVAL) {
+                maintenance.completeDeletions().getOrNull() ?: 0
             }
         }
 
