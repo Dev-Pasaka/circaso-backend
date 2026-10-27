@@ -34,6 +34,13 @@ if redis.call('EXISTS', KEYS[1]) == 0 then return false end
 return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
 """
 
+// HGETALL then DEL in one script: nothing written between the two is lost.
+private const val HASH_TAKE = """
+local fields = redis.call('HGETALL', KEYS[1])
+redis.call('DEL', KEYS[1])
+return fields
+"""
+
 @OptIn(ExperimentalLettuceCoroutinesApi::class)
 class LettuceRedisScopes(private val redis: RedisConnection) : RedisScopes {
     override fun scope(prefix: String): RedisScope {
@@ -145,6 +152,15 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
     override suspend fun hashGetAll(key: String): Map<String, String> =
         timed("HGETALL", key) {
             commands.hgetall(key(key)).toList().associate { it.key to it.value }
+        }
+
+    override suspend fun hashTake(key: String): Map<String, String> =
+        timed("HGETALL+DEL", key) {
+            commands
+                .eval<List<String>>(HASH_TAKE, ScriptOutputType.MULTI, arrayOf(key(key)))
+                .orEmpty()
+                .chunked(2)
+                .associate { (field, value) -> field to value }
         }
 
     override suspend fun hashIncrement(

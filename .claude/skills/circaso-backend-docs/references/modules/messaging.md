@@ -137,7 +137,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 // → data { "oneTimePreKeysLeft": 100 }
 ```
 
-`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). The 100 cap is soft under concurrent top-ups; the phone tops up one request at a time. After a refused top-up the phone keeps that request's private keys until it next publishes a full set with `PUT /keys` (at least every 7 days, with the signed prekey rotation; M2 reports a count, not ids); it costs nothing. `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
+`PUT /keys` replaces the whole set: one-time prekeys from an earlier upload are deleted, because after a reinstall they may belong to keys the phone no longer holds. `POST /keys/one-time` adds to the set, needs a bundle published by the same device, and is refused whole with `messaging.too_many_prekeys` if more than 100 would be kept, or with `messaging.prekey_id_exists` if it resends a key id already stored (replacing it could let a concurrent fetch hand out the old public key). A top-up checks and inserts in one transaction under the bundle's row lock, so the 100 cap holds for concurrent top-ups too, and a refused one is rolled back whole: nothing of it was ever stored or handed out, so the phone can drop that request's private keys at once (PG5 relaxed the earlier rule that kept them until the next `PUT /keys`). `PUT /keys` deletes the old set and inserts the new one in one transaction. M2 and the top-up answer `messaging.keys_not_found` when the stored bundle was published by another device, so a new phone publishes its own set. The phone rotates the signed prekey every 7 days and tops up one-time prekeys when M2 shows fewer than 20. When none are left, M3 returns a bundle without one, which X3DH allows.
 
 ### M3 Fetch a key bundle
 
@@ -146,7 +146,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 { "userId": "0193…", "identityKey": "BcF2…", "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" }, "oneTimePreKey": { "keyId": 101, "publicKey": "BQm…" } }
 ```
 
-Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), so nobody can drain someone's one-time prekeys; a per-target limit would let anyone block a person's key fetches.
+The one-time prekey comes only from those uploaded by the device that published the stored bundle; another phone's leftovers are never handed out (decision 2026-10-28, PG5 review). Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), so nobody can drain someone's one-time prekeys; a per-target limit would let anyone block a person's key fetches.
 
 ### M4–M5 Chats
 
@@ -169,7 +169,7 @@ Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), s
 
 `lastMessageId` is the newest message the server still holds a record of, so it is `null` for a chat with no message in the last 30 days; the app then keeps the last id it saw.
 
-A group's id is derived from the creator and the request's `Idempotency-Key`, so a retried create resumes the same group; a resume only completes a create that nothing else has changed since (otherwise it returns the group as it is), so it never re-adds someone who left. A direct chat is claimed through the unique index on the pair in `chats` (`insertIgnore`; the loser reads the winner's chat), so two people opening a chat at the same moment get the same one.
+A group's id is derived from the creator and the request's `Idempotency-Key`, and the create (chat, every member row, `ChatCreated` and each `MemberAdded`) is one transaction, so it is never half written. A retried create finds that group and returns it as it is, adding nobody, so it never re-adds someone who left; a creator who has left it since gets `messaging.chat_not_found`. A direct chat is claimed through the unique index on the pair in `chats` (`insertIgnore`; the loser reads the winner's chat), so two people opening a chat at the same moment get the same one.
 
 **Leaving and removing (M10)** is one transaction: the member row (which is also the chat-list line) is taken with `deleteReturning`, and only the caller that gets it decrements `member_count`, picks the successor when the owner left, deletes the group when it is empty and writes `MemberRemoved` (event id from chat, user and `joinedAt`) to the outbox; it sends `member.removed` after the commit. A caller that gets no row changed nothing, so either party can retry and a removal is never left half done. **Roles (M11, succession)** are written with `updateReturning … WHERE chat_id = ? AND user_id = ?`, so a role write never brings back a member who left; the chat's `owner_id` is the authority on who owns it.
 
@@ -293,10 +293,8 @@ Frames marked "Replayed" are kept 7 days in the `realtime` table for `RealtimeRe
 
 PostgreSQL tables in schema `messaging` (role `messaging`, Flyway location `db/messaging`) and Redis keys under `msg:`. Foreign keys stay inside the schema.
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Messaging still runs on its Kandra tables in keyspace `circaso_messaging` until slice PG5 builds the tables below.
-
 ```sql
--- V<n>__messaging.sql (shape; the scripts themselves are written in PG5, and the media and history tables in MS5 and MS6)
+-- V1__messaging.sql (PG5) has every table below but the media and history ones, which come with MS5 and MS6
 
 CREATE TABLE messaging.chats (
     chat_id         uuid        PRIMARY KEY,
@@ -431,7 +429,8 @@ CREATE TABLE messaging.settings (
 );
 
 CREATE TABLE messaging.realtime (…);                    -- the same shape as users' realtime: daily partitions, 7 days
-CREATE TABLE messaging.outbox (…);                      -- the same shape as identity's outbox: daily partitions, 7 days
+CREATE TABLE messaging.outbox (…);                      -- the shared outbox DDL (architecture.md → Durable events):
+                                                        -- daily partitions, 7 days
 ```
 
 | Table | Expiry | How the race is settled |
@@ -439,11 +438,11 @@ CREATE TABLE messaging.outbox (…);                      -- the same shape as i
 | `chats` | — | M4 inserts a direct chat with `insertIgnore`; `insertedCount = 0` means the other person opened it at the same moment, and the winner's chat is read, so both get the same one. M8 and ownership changes use the `version` check |
 | `members` | — | **Lock order:** every membership transaction (add, remove or leave, role, ownership change, group delete) locks the `chats` row first, with `FOR UPDATE` or the conditional update below, and only then touches `members`, so two membership changes to one group run one after the other and the successor is chosen from a settled member list. An add reserves its places with `UPDATE chats SET member_count = member_count + :n WHERE chat_id = ? AND member_count + :n <= 1000 RETURNING …` (`updateReturning`); 0 rows is `messaging.group_full`. Removal and leave take the member row with `deleteReturning` (below); role writes use `updateReturning` |
 | `key_bundles` | — | `PUT /keys` replaces the bundle and the one-time prekeys in one transaction |
-| `one_time_prekeys` | — | M3 takes one key with `deleteReturning` over the lowest `key_id` (`FOR UPDATE SKIP LOCKED`), so two fetches never get the same key. A top-up inserts in one transaction and is refused whole (rolled back) on a resent key id or more than 100 kept. On `DeviceReplaced`: `DELETE … WHERE user_id = ? AND device_id = ? AND uploaded_at < :occurredAt` |
+| `one_time_prekeys` | — | M3 takes one key, among those uploaded by the device of the stored bundle, with `deleteReturning` over the lowest `key_id` (`FOR UPDATE SKIP LOCKED`), so two fetches never get the same key; the pick is a scalar subquery (`key_id = (SELECT …)`), which runs once, never `IN (…)`, which PostgreSQL may re-run per scanned row and so take several keys. A top-up inserts in one transaction and is refused whole (rolled back) on a resent key id or more than 100 kept. On `DeviceReplaced`: `DELETE … WHERE user_id = ? AND device_id = ? AND uploaded_at < :occurredAt` |
 | `inbox` | Daily partitions, 30 days | An ack is `DELETE … WHERE user_id = ? AND message_id = ? RETURNING …`: exactly one ack gets the row and sends the `delivered` receipt |
 | `group_messages` | Daily partitions, 30 days | Deleted on the last ack (`msg:pending:{messageId}` counts down) |
 | `message_records` | Daily partitions, 30 days | — |
-| `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result |
+| `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result. An expired row the purge hasn't reached yet is taken over (`ON CONFLICT … DO UPDATE … WHERE expires_at <= :now`), so it never answers a send a day later |
 | `media` | `expires_at`, 30 days (none for group avatars) | **Lock order:** every path that touches both tables (complete, M17, purge) locks the `media` row (`FOR UPDATE`) first, then `media_pending`, so exactly one ack sees that none are left |
 | `media_pending` | Deleted with its `media` row | M17 takes the caller's row with `deleteReturning` |
 | `history` | — (until cleared or the account is deleted) | — |
@@ -467,7 +466,8 @@ Every read of a table with `expires_at` filters `expires_at > now()`; `messaging
 | --- | --- | --- | --- |
 | `msg:pending:{messageId}` | count of members yet to ack | 30 days | Deletes the group body on the last ack |
 | `msg:members:{chatId}` | userIds, one comma-separated value | 10 min; a change writes a 5 s marker and readers fill only with set-if-absent | Membership for sends and fan-out without reading `members` each time |
-| `msg:receipts:{messageId}` | hash userId → `delivered` / `read` | 10 s | Group receipts collected for the 5-second batch to the sender |
+| `msg:receipts:{messageId}` | hash `<userId>:delivered` / `<userId>:read` → `1` | 10 s | Group receipts collected for the 5-second batch to the sender; one field per status, so a delivered receipt never replaces a read one; the batch takes and clears the hash in one step (`RedisScope.hashTake`) and sends each person's furthest status |
+| `msg:receipts-due:{messageId}` | `1` | 5 s | Claims the next receipt batch for one node; a batched receipt's `at` is when the batch is sent |
 | `msg:bundle-rate:{userId}` | counter | 1 h | 60 key bundles per user per hour |
 | `msg:hk-fetch:{userId}` | counter | 24 h | 5 backup fetches per user per day |
 | `msg:typing:{chatId}:{userId}` | `1` | 6 s | Drops repeated typing frames |

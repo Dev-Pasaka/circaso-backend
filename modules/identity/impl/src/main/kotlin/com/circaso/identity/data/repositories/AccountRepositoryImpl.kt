@@ -18,12 +18,16 @@ import com.circaso.shared.UserId
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.AbstractQuery
+import org.jetbrains.exposed.v1.core.ComplexExpression
+import org.jetbrains.exposed.v1.core.Expression
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
-import org.jetbrains.exposed.v1.core.inSubQuery
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
@@ -81,7 +85,9 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
     override suspend fun deleteAbandoned(createdBefore: Instant, limit: Int): Int =
         database.tx("accounts.delete-abandoned") {
             val pending = (AccountsTable.status eq AccountStatus.PENDING_PHONE.name)
-            // Oldest first, skipping a sign-up that is finishing right now (its transaction holds the row's lock).
+            // Oldest first, skipping a sign-up that is finishing right now (its transaction holds the row's lock). The
+            // pick is taken as one array (`= ANY(ARRAY(…))`): as `IN (…)` PostgreSQL may run it again for each row the
+            // delete scans, and with SKIP LOCKED each run can pick other rows, so a chunk could pass its limit.
             val due =
                 AccountsTable
                     .select(AccountsTable.userId)
@@ -91,7 +97,7 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
                     .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
             val deleted =
                 AccountsTable
-                    .deleteReturning(listOf(AccountsTable.userId)) { (AccountsTable.userId inSubQuery due) and pending }
+                    .deleteReturning(listOf(AccountsTable.userId)) { AnyOfPick(AccountsTable.userId, due) and pending }
                     .map { it[AccountsTable.userId] }
                     .toList()
             if (deleted.isNotEmpty()) deleteBelongings(deleted)
@@ -170,6 +176,20 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
         SessionsTable.deleteWhere { SessionsTable.userId inList userIds }
         SecurityLogTable.deleteWhere { SecurityLogTable.userId inList userIds }
         SupportRecoveriesTable.deleteWhere { SupportRecoveriesTable.userId inList userIds }
+    }
+}
+
+/**
+ * `expr = ANY(ARRAY(pick))`: the pick runs once, as an init plan, so a `DELETE` takes exactly the rows it chose. The
+ * DSL has no such operator; the pick is the DSL's own query, so nothing is spliced in.
+ */
+private class AnyOfPick<T>(private val expr: Expression<T>, private val pick: AbstractQuery<*>) :
+    Op<Boolean>(),
+    ComplexExpression {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) {
+        queryBuilder.append(expr).append(" = ANY(ARRAY(")
+        pick.prepareSQL(queryBuilder)
+        queryBuilder.append("))")
     }
 }
 

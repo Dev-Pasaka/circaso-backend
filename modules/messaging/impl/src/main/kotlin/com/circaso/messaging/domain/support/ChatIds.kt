@@ -7,12 +7,6 @@ import com.circaso.shared.UserId
 import java.util.Base64
 import java.util.UUID
 
-/** The `direct_chats_by_pair` key: `<smaller userId>:<larger userId>`, the same whoever opens the chat. */
-fun pairKey(a: UserId, b: UserId): String {
-    val (first, second) = listOf(a.toString(), b.toString()).sorted()
-    return "$first:$second"
-}
-
 /**
  * A group's chat id, made from its creator and the request's `Idempotency-Key` (decision 2026-10-26): a retry of the
  * same request names the same group and resumes it, so a create that failed half-way never leaves two groups.

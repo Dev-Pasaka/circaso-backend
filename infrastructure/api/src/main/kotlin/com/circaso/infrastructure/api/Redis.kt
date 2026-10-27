@@ -63,6 +63,12 @@ interface RedisScope {
     suspend fun hashGetAll(key: String): Map<String, String>
 
     /**
+     * Reads a hash and deletes it in one step, so a field written while it is read is never lost: it lands in a new
+     * hash for the next take (a receipt batch). Empty when the hash is gone.
+     */
+    suspend fun hashTake(key: String): Map<String, String>
+
+    /**
      * Adds [by] to one field of a hash that already exists; the hash keeps its expiry. Returns null when the
      * hash is gone (expired), rather than creating one that would never expire.
      */

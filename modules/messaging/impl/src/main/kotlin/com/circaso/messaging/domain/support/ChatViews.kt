@@ -31,7 +31,7 @@ class ChatViews(private val chats: ChatRepository, private val profiles: Profile
 
     /** Many chats with one profile lookup for every member of all of them. */
     suspend fun views(chatsWithLast: List<Pair<Chat, UUID?>>): List<ChatView> {
-        val membersByChat = chatsWithLast.associate { (chat, _) -> chat.chatId to chats.members(chat.chatId) }
+        val membersByChat = chats.members(chatsWithLast.map { (chat, _) -> chat.chatId })
         val ids =
             membersByChat.values
                 .flatten()

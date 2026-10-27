@@ -68,6 +68,8 @@ class QuotaCountersTest {
 
         override suspend fun hashGetAll(key: String) = error("not used")
 
+        override suspend fun hashTake(key: String) = error("not used")
+
         override suspend fun hashIncrement(
             key: String,
             field: String,

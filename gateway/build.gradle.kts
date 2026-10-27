@@ -13,6 +13,7 @@ dependencies {
     api(project(":observability:api"))
     api(project(":modules:identity:api"))
     api(project(":modules:users:api"))
+    api(project(":modules:messaging:api"))
     api(libs.ktor.server.core)
     api(libs.ktor.server.websockets)
     implementation(libs.ktor.server.compression)

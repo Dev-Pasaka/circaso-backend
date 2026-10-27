@@ -3,20 +3,23 @@ package com.circaso.gateway.realtime
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
+import com.circaso.integrations.api.PushPayload
 import com.circaso.integrations.api.PushPlatform
 import com.circaso.integrations.api.PushTarget
+import com.circaso.messaging.api.MemberAddedFrame
+import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.decodeData
+import com.circaso.users.api.ConnectionAddedFrame
+import com.circaso.users.api.ContactJoinedFrame
+import com.circaso.users.api.UsersFrames
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.KSerializer
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.GatewayRealtime")
@@ -70,42 +73,58 @@ class GatewayRealtime(
      * The frames worth a push when the phone is offline (Realtime and push → Events identity and users send;
      * Messaging → Socket frames). Messaging's pushes carry ids, never text from the chat.
      */
-    private fun pushFor(frame: RealtimeEnvelope, recipient: UserId): PushMessage? {
-        val data = frame.data as? JsonObject
-        val name = data.text("displayName")
-        return when ("${frame.module}.${frame.type}") {
-            "system.session.revoked" -> PushMessage("Signed out", "Circaso was opened on another phone.")
-            "users.contact.joined" -> PushMessage("Circaso", "${name ?: "Someone you know"} is on Circaso")
-            "users.connection.added" -> PushMessage("Circaso", "${name ?: "Someone"} connected with you")
-            "messaging.message.new" -> newMessagePush(data)
-            "messaging.member.added" -> addedToGroupPush(data, recipient)
-            else -> null
+    private fun pushFor(frame: RealtimeEnvelope, recipient: UserId): PushMessage? =
+        when ("${frame.module}.${frame.type}") {
+            "system.session.revoked" -> {
+                PushMessage("Signed out", "Circaso was opened on another phone.")
+            }
+
+            "${UsersFrames.MODULE}.${UsersFrames.CONTACT_JOINED}" -> {
+                val name = decode(ContactJoinedFrame.serializer(), frame)?.displayName
+                PushMessage("Circaso", "${name ?: "Someone you know"} is on Circaso")
+            }
+
+            "${UsersFrames.MODULE}.${UsersFrames.CONNECTION_ADDED}" -> {
+                val name = decode(ConnectionAddedFrame.serializer(), frame)?.displayName
+                PushMessage("Circaso", "${name ?: "Someone"} connected with you")
+            }
+
+            "messaging.${MessageNewFrame.TYPE}" -> {
+                decode(MessageNewFrame.serializer(), frame)?.let(::newMessagePush)
+            }
+
+            "messaging.${MemberAddedFrame.TYPE}" -> {
+                decode(MemberAddedFrame.serializer(), frame)?.let { addedToGroupPush(it, recipient) }
+            }
+
+            else -> {
+                null
+            }
         }
-    }
 
     /**
      * Only when the sender marked it `pushable`; a frame without the field wakes nobody (Messaging → Frame data), so
-     * sender keys and control messages never do.
+     * sender keys and control messages never do. Data-only (decision 2026-10-25): the app fetches the message from
+     * the inbox, decrypts it and words the notification itself; the text here shows only if it can't.
      */
-    private fun newMessagePush(data: JsonObject?): PushMessage? {
-        val pushable = (data?.get("pushable") as? JsonPrimitive)?.booleanOrNull ?: false
-        if (!pushable) return null
-        return PushMessage("Circaso", NEW_MESSAGE, ids(data, "chatId", "messageId"))
+    private fun newMessagePush(frame: MessageNewFrame): PushMessage? {
+        if (!frame.pushable) return null
+        val ids = PushPayload(chatId = frame.chatId.toString(), messageId = frame.messageId.toString())
+        return PushMessage("Circaso", NEW_MESSAGE, ids, dataOnly = true)
     }
 
     /**
      * Only the people added are woken (`userIds` in the frame, one frame per action, decision 2026-10-26); the other
      * members just see it next time.
      */
-    private fun addedToGroupPush(data: JsonObject?, recipient: UserId): PushMessage? {
-        val added = (data?.get("userIds") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-        if (recipient.toString() !in added) return null
-        // Never the group name, which is sealed; once pushes are data-only (MS4) the phone words it itself.
-        return PushMessage("Circaso", "You were added to a group", ids(data, "chatId"))
+    private fun addedToGroupPush(frame: MemberAddedFrame, recipient: UserId): PushMessage? {
+        if (recipient !in frame.userIds) return null
+        // Never the group name, which is sealed: the push is data-only and the phone words it from the sealed name.
+        val ids = PushPayload(chatId = frame.chatId.toString())
+        return PushMessage("Circaso", "You were added to a group", ids, dataOnly = true)
     }
 
-    private fun ids(data: JsonObject?, vararg names: String): Map<String, String> =
-        names.mapNotNull { name -> data.text(name)?.let { name to it } }.toMap()
-
-    private fun JsonObject?.text(name: String): String? = (this?.get(name) as? JsonPrimitive)?.contentOrNull
+    /** A frame's `data` as its class, from the module's `api`; null (no push) when it doesn't decode. */
+    private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
+        runCatching { frame.decodeData(serializer) }.getOrNull()
 }

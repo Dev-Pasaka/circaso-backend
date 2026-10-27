@@ -3,9 +3,9 @@ package com.circaso.messaging.domain.usecases
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.FetchedBundle
 import com.circaso.messaging.domain.ports.BundleRateLimit
+import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.KeyRepository
 import com.circaso.messaging.domain.support.MessagingConfig
-import com.circaso.messaging.domain.support.SharedGroups
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.ReachPolicy
@@ -19,7 +19,7 @@ import com.circaso.users.api.ReachPolicy
 class FetchKeyBundle(
     private val keys: KeyRepository,
     private val reach: ReachPolicy,
-    private val sharedGroups: SharedGroups,
+    private val chats: ChatRepository,
     private val rateLimit: BundleRateLimit,
     private val config: MessagingConfig,
 ) {
@@ -33,13 +33,13 @@ class FetchKeyBundle(
         }
 
         val bundle = keys.bundle(target) ?: return Resource.error(MessagingError.KeysNotFound)
-        val oneTimePreKey = keys.claimOneTimeKey(target)
+        val oneTimePreKey = keys.claimOneTimeKey(target, bundle.deviceId)
         return Resource.success(FetchedBundle(target, bundle.identityKey, bundle.signedPreKey, oneTimePreKey))
     }
 
     /** A shared group stands in for reach, but never overrides a block (decision 2026-10-26). */
     private suspend fun sharesGroupUnblocked(caller: UserId, target: UserId) =
-        sharedGroups.share(caller, target) && !reach.blockedEitherWay(caller, target)
+        chats.shareGroup(caller, target) && !reach.blockedEitherWay(caller, target)
 
     private companion object {
         const val SECONDS_PER_HOUR = 3_600L

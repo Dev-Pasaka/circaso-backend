@@ -1,7 +1,9 @@
 package com.circaso.messaging.data.cache
 
+import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.RedisScope
-import com.circaso.messaging.data.entities.MessagingRealtimeRow
+import com.circaso.messaging.api.MessagingFrame
+import com.circaso.messaging.data.tables.RealtimeTable
 import com.circaso.messaging.domain.ports.LoggedFrame
 import com.circaso.messaging.domain.ports.RealtimeFrames
 import com.circaso.messaging.domain.ports.RealtimeLog
@@ -9,90 +11,86 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
-import com.circaso.shared.Uuid7
-import io.kandra.runtime.dsl.KandraColumnRef
-import io.kandra.runtime.repository.KandraSuspendRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.r2dbc.batchInsert
+import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
-import java.util.UUID
+import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
 
 private val log = LoggerFactory.getLogger("com.circaso.messaging.data")
 
-/** At most this many recipients are being written and delivered at the same time. */
-private const val PARALLEL = 16
+/** Recipients handled together: their `seq`s taken at once, their rows one insert, their deliveries at once. */
+private const val CHUNK = 100
 
 /**
  * Each replayed frame takes the recipient's next `seq` from `msg:seq:{userId}` (renewed on use), is kept 7 days in
- * `realtime_by_user`, then goes to the gateway, as in users. The `seq` is per user, so a replayed frame is one
- * envelope per recipient through `Realtime.deliver`: `deliverMany` carries one envelope, one `seq`, for everyone.
- * A failure to deliver is logged and dropped: the phone catches up from the kept frames.
+ * `messaging.realtime` (daily partitions, dropped by `messaging.purge-expired`), then goes to the gateway, as in
+ * users. The `seq` is per user, so a replayed frame is one envelope per recipient through `Realtime.deliver`:
+ * `deliverMany` carries one envelope, one `seq`, for everyone. A group's recipients are kept with one multi-row
+ * insert per [CHUNK], so a frame to 1,000 members holds a pooled connection ten times, not a thousand. A failure is
+ * logged and dropped: the phone catches up from the kept frames.
  */
 class RealtimeFramesImpl(
     private val redis: RedisScope,
-    private val frames: KandraSuspendRepository<MessagingRealtimeRow>,
+    private val database: Database,
     private val realtime: Realtime,
     private val clock: Clock,
 ) : RealtimeFrames,
     RealtimeLog {
-    override suspend fun send(
-        userIds: Collection<UserId>,
-        type: String,
-        data: Map<String, Any>,
-    ) {
-        val payload = JsonObject(data.mapValues { (_, value) -> value.toJson() })
-        for (batch in userIds.distinct().chunked(PARALLEL)) {
-            coroutineScope {
-                batch
-                    .map { userId ->
-                        async {
-                            sendOne(
-                                userId,
-                                type,
-                                payload,
-                            )
-                        }
-                    }.awaitAll()
+    override suspend fun send(userIds: Collection<UserId>, frame: MessagingFrame) {
+        for (chunk in userIds.distinct().chunked(CHUNK)) {
+            try {
+                sendChunk(chunk, frame)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("realtime frame not sent: type={} error={}", frame.type, e.javaClass.name)
             }
         }
     }
 
-    private suspend fun sendOne(
+    private suspend fun sendChunk(userIds: List<UserId>, frame: MessagingFrame) {
+        val sentAt = clock.instant()
+        val envelopes =
+            coroutineScope {
+                userIds.map { userId -> async { userId to envelopeFor(userId, frame, sentAt) } }.awaitAll()
+            }
+        database.tx("realtime.keep") {
+            RealtimeTable.batchInsert(envelopes, useMultiRowValues = true, shouldReturnGeneratedValues = false) {
+                val (userId, envelope) = it
+                this[RealtimeTable.userId] = userId.value
+                this[RealtimeTable.seq] = envelope.seq
+                this[RealtimeTable.frame] = CircasoJson.encodeToString(RealtimeEnvelope.serializer(), envelope)
+                this[RealtimeTable.sentAt] = sentAt
+            }
+        }
+        coroutineScope { envelopes.map { (userId, envelope) -> async { deliver(userId, envelope) } }.awaitAll() }
+    }
+
+    private suspend fun envelopeFor(
         userId: UserId,
-        type: String,
-        payload: JsonObject,
-    ) {
+        frame: MessagingFrame,
+        sentAt: Instant,
+    ): RealtimeEnvelope = frame.envelope(redis.incrementRenewing(seqKey(userId), SEQ_TTL), sentAt)
+
+    private suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope) {
         try {
-            val seq = redis.incrementRenewing(seqKey(userId), SEQ_TTL)
-            val envelope =
-                RealtimeEnvelope(
-                    MODULE,
-                    type,
-                    Uuid7.generate().toString(),
-                    seq,
-                    clock.instant(),
-                    payload,
-                )
-            frames.save(
-                MessagingRealtimeRow(
-                    userId.value,
-                    seq,
-                    CircasoJson.encodeToString(RealtimeEnvelope.serializer(), envelope),
-                ),
-            )
             realtime.deliver(userId, envelope)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("realtime frame not sent: type={}", type, e)
+            log.warn("realtime frame not delivered: type={} error={}", envelope.type, e.javaClass.name)
         }
     }
 
@@ -101,27 +99,21 @@ class RealtimeFramesImpl(
         seq: Long,
         limit: Int,
     ): List<LoggedFrame> =
-        frames
-            .findAll(limit) {
-                KandraColumnRef<UUID>("user_id") eq userId.value
-                KandraColumnRef<Long>("seq") gt seq
-            }.map { LoggedFrame(it.seq, it.frame) }
-            .sortedBy { it.seq }
+        database.tx("realtime.since") {
+            RealtimeTable
+                .selectAll()
+                .where { (RealtimeTable.userId eq userId.value) and (RealtimeTable.seq greater seq) }
+                .orderBy(RealtimeTable.seq to SortOrder.ASC)
+                .limit(limit)
+                .map { LoggedFrame(it[RealtimeTable.seq], it[RealtimeTable.frame]) }
+                .toList()
+        }
 
     override suspend fun latest(userId: UserId): Long? = redis.get(seqKey(userId))?.toLongOrNull()
 
     private fun seqKey(userId: UserId) = "seq:$userId"
 
-    private fun Any.toJson(): JsonElement =
-        when (this) {
-            is Collection<*> -> JsonArray(mapNotNull { it?.toJson() })
-            is Number -> JsonPrimitive(this)
-            is Boolean -> JsonPrimitive(this)
-            else -> JsonPrimitive(toString())
-        }
-
     private companion object {
-        const val MODULE = "messaging"
         val SEQ_TTL: Duration = Duration.ofDays(8)
     }
 }

@@ -15,6 +15,6 @@ class GetKeyStatus(private val keys: KeyRepository) {
     suspend operator fun invoke(userId: UserId, deviceId: DeviceId): Resource<KeyStatus> {
         val bundle = keys.bundle(userId)
         if (bundle == null || bundle.deviceId != deviceId) return Resource.error(MessagingError.KeysNotFound)
-        return Resource.success(KeyStatus(keys.oneTimeKeyIds(userId).size, bundle.signedPreKeyAt))
+        return Resource.success(KeyStatus(keys.oneTimeKeyIds(userId, deviceId).size, bundle.signedPreKeyAt))
     }
 }

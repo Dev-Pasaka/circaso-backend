@@ -166,6 +166,9 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.group_invalid` | 400 | The sealed name and avatar (`sealedMeta`) are missing, not base64, or over 4 KB |
 | `messaging.version_conflict` | 409 | The group changed since you read its `version`: load it again and retry |
 | `messaging.not_a_group` | 400 | Leaving a direct chat, or removing someone from one: only groups have members to remove |
+| `messaging.message_too_large` | 400 | A ciphertext over 64 KB once decoded; send files as chat media |
+| `messaging.recipients_mismatch` | 400 | A direct message whose `recipients` isn't exactly the other person, or a `SENDER_KEY` message to someone who isn't another member |
+| `messaging.delete_window_passed` | 409 | Delete for everyone after 48 hours, or by someone other than the sender |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
@@ -214,9 +217,9 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 { "module": "users", "type": "contact.joined", "id": "0193…", "seq": 1043, "ts": "2026-10-21T18:07:12Z", "data": { "userId": "…", "displayName": "Amina" } }
 ```
 
-`seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds.
+`seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. Frames that are never replayed (`messaging` / `message.new` and `typing`) carry `seq` 0: don't record it as the last you saw; a missed message is in the inbox (`GET /v1/inbox`). When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds. Chat pushes are data-only: they carry `chatId` and `messageId`, the app fetches the inbox, decrypts and shows the notification itself (on iOS in a Notification Service Extension, which receives a placeholder "New message" alert to replace).
 
-After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped.
+After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped. Messaging takes `ack` `{messageIds}` (delivered: the messages leave the inbox and their senders get a receipt), `read` `{chatId, upToMessageId}` (read up to there; the sender gets a receipt unless you turned read receipts off) and `typing` `{chatId, on}` (relayed to the chat's other members in chats of 50 people or fewer, unless you turned typing off).
 
 A socket may send at most **100 frames per second**. Frames over the limit are dropped without a reply and the socket stays open, so slow down rather than reconnect. A single frame may be at most **64 KB** (65,536 bytes); a bigger one closes the socket.
 

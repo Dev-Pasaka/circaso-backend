@@ -20,17 +20,22 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
 import org.slf4j.LoggerFactory
 import java.time.Clock
 
 private const val SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+
+/** FCM's bodies: unknown fields ignored, and a null field left out, so `data` holds only the ids that are set. */
+private val FcmJson =
+    Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        encodeDefaults = true
+    }
 
 /**
  * Sends through Firebase Cloud Messaging's HTTP v1 API (`POST /v1/projects/{id}/messages:send`) for both phones: Firebase hands an iOS
@@ -41,7 +46,7 @@ private const val SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
  *
  * A token Firebase no longer knows (app uninstalled, token rotated, or issued for another project) is `Rejected`, so the caller can
  * drop it. Our own credentials failing (`401`, `403`), `429`, `5xx`, a timeout or an open circuit is `Unavailable`. The device token and
- * the message text are never logged.
+ * the message text are never logged. Request and response bodies are the private classes at the end of this file.
  */
 class FcmPush(
     private val account: ServiceAccount,
@@ -63,7 +68,7 @@ class FcmPush(
                         operation("send_push")
                         header(HttpHeaders.Authorization, "Bearer $bearer")
                         contentType(ContentType.Application.Json)
-                        setBody(body(target, message))
+                        setBody(FcmJson.encodeToString(FcmRequest.serializer(), request(target, message)))
                     }
                 response.status.value to response.bodyAsText()
             } catch (e: CancellationException) {
@@ -83,14 +88,7 @@ class FcmPush(
         val error = errorCode(text)
         return when {
             status in 200..299 -> {
-                val name =
-                    runCatching {
-                        Json
-                            .parseToJsonElement(text)
-                            .jsonObject["name"]
-                            ?.jsonPrimitive
-                            ?.content
-                    }.getOrNull()
+                val name = decode(FcmSent.serializer(), text)?.name
                 if (name == null) {
                     log.warn("fcm answered {} without a message name", status)
                     Resource.error(IntegrationError.Unavailable("Firebase"))
@@ -122,33 +120,44 @@ class FcmPush(
         }
     }
 
-    /** A notification both phones show on their own, with the data for the app to route on when it is opened. */
-    private fun body(target: PushTarget, message: PushMessage): String =
-        buildJsonObject {
-            putJsonObject("message") {
-                put("token", target.token)
-                putJsonObject("notification") {
-                    put("title", message.title)
-                    put("body", message.body)
-                }
-                if (message.data.isNotEmpty()) putJsonObject("data") { message.data.forEach { (k, v) -> put(k, v) } }
-                putJsonObject("android") { put("priority", "HIGH") }
-                putJsonObject("apns") {
-                    putJsonObject("headers") { put("apns-priority", "10") }
-                    putJsonObject("payload") { putJsonObject("aps") { put("sound", "default") } }
-                }
+    /**
+     * A notification both phones show on their own, with the data for the app to route on when it is opened. A
+     * data-only push has no `notification` block, so Android hands it to the app; iOS gets the text as an alert with
+     * `mutable-content`, so the Notification Service Extension can replace it (see [PushMessage]).
+     */
+    private fun request(target: PushTarget, message: PushMessage): FcmRequest {
+        val text = FcmNotification(message.title, message.body)
+        val data = FcmData(message.data.chatId, message.data.messageId).takeIf { it != FcmData() }
+        val aps =
+            if (message.dataOnly) {
+                FcmAps(alert = text, mutableContent = 1)
+            } else {
+                FcmAps()
             }
-        }.toString()
+        val apns =
+            FcmApns(
+                headers = FcmApnsHeaders(pushType = if (message.dataOnly) "alert" else null),
+                payload = FcmApnsPayload(aps),
+            )
+        return FcmRequest(
+            FcmMessage(
+                token = target.token,
+                notification = text.takeUnless { message.dataOnly },
+                data = data,
+                android = FcmAndroid(),
+                apns = apns,
+            ),
+        )
+    }
 
     /** FCM's own error code (`UNREGISTERED`, `SENDER_ID_MISMATCH`, ...) from the `details` of an error body, else its `status`. */
-    private fun errorCode(text: String): String? =
-        runCatching {
-            val error = Json.parseToJsonElement(text).jsonObject["error"]!!.jsonObject
-            val detail =
-                (error["details"] as? JsonArray)
-                    ?.firstNotNullOfOrNull { it.jsonObject["errorCode"]?.jsonPrimitive?.content }
-            detail ?: error["status"]?.jsonPrimitive?.content
-        }.getOrNull()
+    private fun errorCode(text: String): String? {
+        val error = decode(FcmErrorBody.serializer(), text)?.error ?: return null
+        return error.details.firstNotNullOfOrNull { it.errorCode } ?: error.status
+    }
+
+    private fun <T> decode(serializer: KSerializer<T>, text: String): T? =
+        runCatching { FcmJson.decodeFromString(serializer, text) }.getOrNull()
 
     private suspend fun accessToken(): String? =
         lock.withLock {
@@ -172,9 +181,9 @@ class FcmPush(
                     log.error("google refused the fcm service account: status={}", response.status.value)
                     return null
                 }
-                val json = Json.parseToJsonElement(text).jsonObject
-                accessToken = json["access_token"]!!.jsonPrimitive.content
-                expiresAt = now + (json["expires_in"]?.jsonPrimitive?.content?.toLongOrNull() ?: 3600)
+                val token = FcmJson.decodeFromString(GoogleToken.serializer(), text)
+                accessToken = token.accessToken
+                expiresAt = now + (token.expiresIn ?: 3600)
                 accessToken
             } catch (e: CancellationException) {
                 throw e
@@ -186,3 +195,64 @@ class FcmPush(
 
     private suspend fun forgetToken() = lock.withLock { accessToken = null }
 }
+
+// ---- FCM HTTP v1 bodies (https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages) ----
+
+@Serializable
+private data class FcmRequest(val message: FcmMessage)
+
+@Serializable
+private data class FcmMessage(
+    val token: String,
+    val notification: FcmNotification? = null,
+    val data: FcmData? = null,
+    val android: FcmAndroid,
+    val apns: FcmApns,
+)
+
+@Serializable
+private data class FcmNotification(val title: String, val body: String)
+
+/** FCM's `data` must be a map of strings: these fields, the ones that are set. */
+@Serializable
+private data class FcmData(val chatId: String? = null, val messageId: String? = null)
+
+@Serializable
+private data class FcmAndroid(val priority: String = "HIGH")
+
+@Serializable
+private data class FcmApns(val headers: FcmApnsHeaders, val payload: FcmApnsPayload)
+
+@Serializable
+private data class FcmApnsHeaders(
+    @SerialName("apns-priority") val priority: String = "10",
+    @SerialName("apns-push-type") val pushType: String? = null,
+)
+
+@Serializable
+private data class FcmApnsPayload(val aps: FcmAps)
+
+@Serializable
+private data class FcmAps(
+    val sound: String = "default",
+    val alert: FcmNotification? = null,
+    @SerialName("mutable-content") val mutableContent: Int? = null,
+)
+
+@Serializable
+private data class FcmSent(val name: String? = null)
+
+@Serializable
+private data class FcmErrorBody(val error: FcmError? = null)
+
+@Serializable
+private data class FcmError(val status: String? = null, val details: List<FcmErrorDetail> = emptyList())
+
+@Serializable
+private data class FcmErrorDetail(val errorCode: String? = null)
+
+@Serializable
+private data class GoogleToken(
+    @SerialName("access_token") val accessToken: String,
+    @SerialName("expires_in") val expiresIn: Long? = null,
+)

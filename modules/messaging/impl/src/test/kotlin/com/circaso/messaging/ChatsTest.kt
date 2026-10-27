@@ -2,9 +2,12 @@ package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatCreated
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.ChatUpdatedFrame
 import com.circaso.messaging.api.GroupDeleted
 import com.circaso.messaging.api.MemberAdded
+import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MemberRemoved
+import com.circaso.messaging.api.MemberRemovedFrame
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SignedPreKey
@@ -50,7 +53,7 @@ class ChatsTest {
             assertEquals(1, opened.map { it.chat.chatId }.toSet().size, "one chat for the pair")
             assertEquals(listOf(false, true), opened.map { it.created!! }.sorted())
             assertEquals(1, h.chats.chats.size)
-            assertEquals(listOf(ChatCreated.TYPE), h.chats.eventTypes(), "created once")
+            assertEquals(listOf(ChatCreated.TYPE), h.outbox.types(), "created once")
             assertEquals(
                 setOf(amina, brian),
                 opened
@@ -78,26 +81,12 @@ class ChatsTest {
         }
 
     @Test
-    fun `a claimed pair whose chat was never written is written by the next opener`() =
-        runTest {
-            val h = ChatHarness()
-            h.connect(amina, brian)
-            val claimed = ChatId.new()
-            h.chats.claims[h.pair(amina, brian)] = claimed
-
-            val opened = h.openDirectChat(amina, brian).data()
-
-            assertEquals(claimed, opened.chat.chatId)
-            assertEquals(2, h.chats.members(claimed).size)
-        }
-
-    @Test
     fun `a direct chat needs reach, and not with yourself`() =
         runTest {
             val h = ChatHarness()
 
             assertEquals("users.not_reachable", h.openDirectChat(amina, brian).errorCode())
-            assertTrue(h.chats.claims.isEmpty(), "nothing is claimed for someone you can't reach")
+            assertTrue(h.chats.chats.isEmpty(), "nothing is written for someone you can't reach")
             assertEquals("request.malformed", h.openDirectChat(amina, amina).errorCode())
         }
 
@@ -132,29 +121,32 @@ class ChatsTest {
             val added = h.frames.sent.filter { it.type == "member.added" }
             assertEquals(setOf(amina, brian, chidi), added.map { it.to }.toSet())
             assertEquals(3, added.size, "one frame to each of the three members")
-            val frame = added.first().data
-            assertEquals(listOf(brian.toString(), chidi.toString()).sorted(), frame["userIds"])
-            assertEquals(group.chat.chatId.toString(), frame["chatId"])
-            assertEquals(amina.toString(), frame["byUserId"])
+            val frame = added.first().data<MemberAddedFrame>()
+            assertEquals(listOf(brian, chidi).sortedBy { it.toString() }, frame.userIds)
+            assertEquals(group.chat.chatId, frame.chatId)
+            assertEquals(amina, frame.byUserId)
         }
 
     @Test
-    fun `each member's rows and their event are committed together`() =
+    fun `the chat, its members and their events are one transaction`() =
         runTest {
             val h = ChatHarness()
 
             val group = h.group(amina, listOf(brian, chidi))
 
-            val commit = h.chats.commits.single()
-            assertEquals(listOf(ChatCreated.TYPE), commit.events.map { it.type })
-            val owner = commit.joins.first()
-            assertEquals(amina, owner.member.userId)
-            assertNull(owner.event, "the creator is in ChatCreated")
-            for (join in commit.joins.drop(1)) {
-                assertEquals(MemberAdded.TYPE, join.event!!.type)
-                assertTrue(join.member.userId.toString() in join.event.data.toString())
-            }
-            assertEquals(group.chat.chatId, commit.chats.single().chatId)
+            assertEquals(listOf("chats.create-group"), h.transactor.operations)
+            assertEquals(listOf(ChatCreated.TYPE, MemberAdded.TYPE, MemberAdded.TYPE), h.outbox.types())
+            val added =
+                h.outbox.written
+                    .drop(1)
+                    .map { it.data.toString() }
+            assertTrue(added.any { brian.toString() in it } && added.any { chidi.toString() in it })
+            assertTrue(
+                added.none { amina.toString() in it.substringBefore("byUserId") },
+                "the creator is in ChatCreated",
+            )
+            assertEquals(h.outbox.written, h.bus.published, "published after the transaction, each once")
+            assertEquals(3, h.chats.members(group.chat.chatId).size)
         }
 
     @Test
@@ -309,7 +301,7 @@ class ChatsTest {
             assertEquals(Role.MEMBER, h.role(group.chat.chatId, chidi))
             assertNull(h.role(group.chat.chatId, dalia))
             assertEquals(3, result.chat.memberCount)
-            val types = h.chats.eventTypes().filter { it == MemberAdded.TYPE }
+            val types = h.outbox.types().filter { it == MemberAdded.TYPE }
             assertEquals(2, types.size, "brian at creation and chidi now; dalia never")
         }
 
@@ -318,12 +310,12 @@ class ChatsTest {
         runTest {
             val h = ChatHarness()
             val group = h.group(amina, listOf(brian))
-            val commits = h.chats.commits.size
+            val transactions = h.transactor.operations.size
 
             val result = h.addMembers(amina, group.chat.chatId, setOf(dalia)).data()
 
             assertEquals(listOf(dalia), result.notAdded)
-            assertEquals(commits, h.chats.commits.size)
+            assertEquals(transactions, h.transactor.operations.size)
             assertEquals(group.chat.version, h.chats.chats[group.chat.chatId]!!.version)
         }
 
@@ -343,14 +335,19 @@ class ChatsTest {
             assertEquals(2, h.chats.chats[chatId]!!.memberCount)
             val removed = h.frames.sent.filter { it.type == "member.removed" }
             assertEquals(setOf(amina, brian, chidi), removed.map { it.to }.toSet())
-            assertEquals(brian.toString(), removed.first().data["userId"])
-            assertEquals(amina.toString(), removed.first().data["byUserId"])
-            val leave =
-                h.chats.commits
+            assertEquals(brian, removed.first().data<MemberRemovedFrame>().userId)
+            assertEquals(amina, removed.first().data<MemberRemovedFrame>().byUserId)
+            assertEquals(
+                "chats.remove-member",
+                h.transactor.operations.last(),
+                "rows, count and event: one transaction",
+            )
+            assertEquals(
+                MemberRemoved.TYPE,
+                h.outbox.written
                     .last()
-                    .leaves
-                    .single()
-            assertEquals(MemberRemoved.TYPE, leave.event!!.type, "the event rides with the rows it describes")
+                    .type,
+            )
             assertEquals("messaging.chat_not_found", h.getChat(brian, chatId).errorCode())
             assertTrue(h.listChats(brian).data().isEmpty())
         }
@@ -365,12 +362,7 @@ class ChatsTest {
             h.leaveGroup(chidi, chatId).data()
 
             assertNull(h.role(chatId, chidi))
-            val event =
-                h.chats.commits
-                    .last()
-                    .leaves
-                    .single()
-                    .event!!
+            val event = h.outbox.written.last()
             assertTrue(chidi.toString() in event.data.toString())
             assertEquals(
                 listOf(amina, brian)
@@ -419,7 +411,7 @@ class ChatsTest {
             assertEquals(Role.OWNER, h.chats.members[chatId]!![chidi]!!.role, "and the row mirrors it")
             val updated = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(brian, chidi, dalia), updated.map { it.to }.toSet())
-            assertEquals(h.chats.chats[chatId]!!.version, updated.first().data["version"])
+            assertEquals(h.chats.chats[chatId]!!.version, updated.first().data<ChatUpdatedFrame>().version)
             assertEquals(1, h.chats.members(chatId).count { it.role == Role.OWNER })
         }
 
@@ -449,8 +441,8 @@ class ChatsTest {
             assertNull(h.chats.chats[group.chat.chatId])
             assertEquals(
                 listOf(GroupDeleted.TYPE, MemberRemoved.TYPE),
-                h.chats
-                    .eventTypes()
+                h.outbox
+                    .types()
                     .takeLast(2)
                     .sorted(),
             )
@@ -513,8 +505,8 @@ class ChatsTest {
             val frames = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(amina, brian), frames.map { it.to }.toSet())
             assertEquals(
-                mapOf("chatId" to group.chat.chatId.toString(), "metaVersion" to 2, "version" to 2L),
-                frames.first().data,
+                ChatUpdatedFrame(group.chat.chatId, metaVersion = 2, version = 2L),
+                frames.first().data<ChatUpdatedFrame>(),
             )
         }
 
@@ -530,24 +522,6 @@ class ChatsTest {
                 "messaging.version_conflict",
                 h.update(amina, chatId, group.chat.version, h.sealed).errorCode(),
             )
-        }
-
-    @Test
-    fun `a change that loses the race for the version is refused`() =
-        runTest {
-            val h = ChatHarness()
-            val group = h.group(amina, listOf(brian, chidi))
-            val chatId = group.chat.chatId
-            h.chats.beforeUpdate = {
-                h.chats.beforeUpdate = {}
-                h.leaveGroup(chidi, chatId)
-            }
-
-            assertEquals(
-                "messaging.version_conflict",
-                h.update(amina, chatId, group.chat.version, h.sealed).errorCode(),
-            )
-            assertEquals(1, h.chats.chats[chatId]!!.metaVersion, "nothing was written")
         }
 
     @Test

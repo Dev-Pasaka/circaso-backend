@@ -57,13 +57,21 @@ class MemoryRedis(override val prefix: String = "msg") : RedisScope {
         return next
     }
 
+    val hashes = ConcurrentHashMap<String, MutableMap<String, String>>()
+
+    /** Every write renews the hash's expiry, as the Lua script behind the real one does. */
     override suspend fun hashSet(
         key: String,
         fields: Map<String, String>,
         ttl: Duration,
-    ) = error("not used by messaging")
+    ) {
+        hashes.getOrPut(key) { ConcurrentHashMap() }.putAll(fields)
+        ttls[key] = ttl
+    }
 
-    override suspend fun hashGetAll(key: String): Map<String, String> = error("not used by messaging")
+    override suspend fun hashGetAll(key: String): Map<String, String> = hashes[key].orEmpty()
+
+    override suspend fun hashTake(key: String): Map<String, String> = hashes.remove(key).orEmpty()
 
     override suspend fun hashIncrement(
         key: String,

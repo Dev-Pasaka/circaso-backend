@@ -393,7 +393,7 @@ An event must never be lost between the change that caused it and the module tha
 
 | Stream | Producer | Consumer groups (today) |
 | --- | --- | --- |
-| `events:identity` | identity | `users`, `gateway` |
+| `events:identity` | identity | `users`, `gateway`, `messaging` |
 | `events:users` | users | `gateway` (later `messaging`, `calls`) |
 | `events:dlq` | the consumer runtime | alerting, manual replay |
 
@@ -546,7 +546,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 
 **Exposed and PostgreSQL.**
 
-> **Until PG6: modules not yet moved.** Temporary; PG6 deletes this block. Until their slices ship (PG5 messaging; `.claude/plans/postgres-migration.md`), those modules still run on ScyllaDB Cloud through Kandra 0.5.1, side by side with Postgres: `KandraModuleSpec` per keyspace `circaso_<module>`, `kandra-migrate` in the `Migrate` main, claim tables with `saveIfNotExists` before a logged batch, sentinels for cleared values (bugs in `docs/kandra-bugs.md`), `/kandra/health`, `FakeKandraSession` and the Cassandra container in tests. Fixes to their code follow those rules; nothing new is built on them.
+> **Until PG6.** Temporary; PG6 deletes this line. Every module (identity, users, assistant, messaging) now runs on PostgreSQL; Kandra and ScyllaDB stay installed, unused by any module, until PG6 removes them.
 
 **Exposed is the only way modules touch PostgreSQL.** The database is PostgreSQL 18 (`postgres:18`, the same image locally, in CI and on the sandbox), reached through JetBrains Exposed 1.6.0 (`exposed-core`, `exposed-r2dbc`, `exposed-java-time`), **DSL API only**: `Table` objects and typed queries, never the DAO API. The transport is the non-blocking R2DBC driver (`exposed-r2dbc`, `org.postgresql:r2dbc-postgresql`, `io.r2dbc:r2dbc-pool`), so no thread ever blocks on the database (decision 2026-10-27: "queries must be non-blocking"). JDBC (`org.postgresql:postgresql`) is used only by Flyway in the `Migrate` step, because Flyway has no R2DBC driver; a Konsist rule keeps it there. Versions live in `gradle/libs.versions.toml`, like every other library.
 
@@ -590,7 +590,7 @@ Schema-qualified names in `Table("<schema>.<table>")` work with the DSL (checked
   - **A write whose outcome decides an event or a response is a repository method that answers it** (a `Boolean`, a count or the rows from a returning form): `claimPhone`, `claim`, `revoke`, `completeDeletion`. Never a read followed by a blind write.
   - Everything an operation changes (its rows, its uniqueness claims and its outbox row) is written inside one `run`.
   - A decision that depends on what was read is made inside the same `run` as the write it guards: a version-checked write, a phone or provider claim, a group's member cap, the successor when an owner leaves, the last-ack delete of a media file.
-  - Inside the block there are repository calls only. Konsist fails the build if a `Transactor.run` lambda in `usecases` references `RedisScope`, an HTTP client, `EventBus` or any other port that leaves the database, and at run time `RedisScope`, the vendor HTTP clients and `EventBus.publish` throw when called inside an open transaction.
+  - Inside the block there are repository calls only. Konsist fails the build if a `Transactor.run` or `attempt` lambda anywhere in `domain` (use cases and `support` helpers alike; decision 2026-10-28, PG5 review) references `RedisScope`, an HTTP client, `EventBus` or any other port that leaves the database, and at run time `RedisScope`, the vendor HTTP clients and `EventBus.publish` throw when called inside an open transaction.
   - **A failed statement is a `DatabaseException`** (`infrastructure:api`): the operation, the SQLSTATE and the constraint's name (`isUniqueViolation` answers a lost claim), with no cause and no server detail, so no bound value reaches a log line or a 500.
 - **Database work only.** A transaction holds no Redis call, HTTP call or `XADD`, which would hold a connection for the whole wait. "Publish at once" still happens right after the commit.
 - **`text` columns are read inside the transaction,** or loaded eagerly (`eagerLoading = true`) where they are used after it.
