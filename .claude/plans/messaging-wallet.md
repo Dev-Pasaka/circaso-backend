@@ -37,6 +37,12 @@ Nobody changes the architecture. A gap or contradiction in the spec stops the sl
 | AI1b | Smoke-test fixes: Aura live socket without the gateway header (and a clear error, not `SerializationException`, when an upgrade is refused; `AuraSession.close` handling of Aura's 1011 on Close); streaming chat completions for A2 and A11 (text and tool-call deltas); A3 decimal `X-Duration-Seconds` and a correct error message | Tests with MockEngine/test host; a short real re-check |
 | AI3 | Images: A10 upload URL, A2 with `imageKey`, `VisionModel` description into the turn, deletion after the turn, metering | Tests for size/type, deletion, metering |
 
+### Typed payloads (decided 2026-10-27)
+
+| Id | Slice | Done when |
+| --- | --- | --- |
+| TY1 | Convert to typed `@Serializable` classes: realtime frame data through a typed send (shared envelope helper; users frames, `session.revoked`, `resync`; `profile.updated` version as a number); the auth frame (`last` as a list of `{module, seq}`); our JWT header and claims; Resend, Twilio, Africa's Talking, Google/Apple JWT and FCM service-account parsing; error `details.fields` as `List<FieldError>` (guide and mobile guide updated); `EmailGateway` variables typed per template. Messaging frames, `PushMessage`/`FcmPush`/`pushFor` go with MS4; Workers AI, Asha tools and live-voice frames with AI1b; Circle with WS1 | A Konsist rule fails the build on `Map<String, Any>`, `buildJsonObject`/`JsonObject(` and `.jsonObject[` in main sources outside an allow-list; tests per converted payload |
+
 ### Gateway follow-ups (from MS1 QA, decided 2026-10-25)
 
 | Id | Slice | Done when |
