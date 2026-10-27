@@ -15,6 +15,7 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 import java.time.Instant
 import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,7 +41,7 @@ class CircleWebhookTest {
                 return answer
             }
         }
-    private val webhook = CircleWebhook(circle.client, circle.settings) { listener }
+    private val webhook = CircleWebhook(circle.client, circle.settings, circle.clock) { listener }
 
     init {
         circle.reply(
@@ -110,7 +111,7 @@ class CircleWebhookTest {
     fun `the notification id is the delivery id and there is no replay window`() {
         val body = notification("transactions.inbound", transaction("INBOUND", "COMPLETE")).toByteArray()
         assertEquals("notification-1", webhook.deliveryId(emptyMap(), body))
-        assertNull(webhook.sentAt(emptyMap(), body), "Circle's retries keep the first timestamp")
+        assertNull(webhook.sentAt(emptyMap(), body), "Circle signs no send time")
         assertNull(webhook.deliveryId(emptyMap(), "not json".toByteArray()))
         assertTrue(webhook.answersAfterTranslation)
         assertEquals("circle", webhook.name)
@@ -220,6 +221,51 @@ class CircleWebhookTest {
             assertIs<IntegrationError.Unavailable>(
                 (webhook.translate(notification("transactions.inbound", unresolved).toByteArray()) as Resource.Error)
                     .error,
+            )
+        }
+
+    @Test
+    fun `a key id Circle refused is not asked about again for a few minutes`() =
+        runBlocking<Unit> {
+            val junk = "11111111-2222-3333-4444-555555555555"
+            val route = "GET /v2/notifications/publicKey/$junk"
+            val body = "{}".toByteArray()
+
+            repeat(3) { assertFalse(webhook.verifySignature(headers(body, junk), body)) }
+            assertEquals(1, circle.requests(route).size, "Circle answered 404 once; the id is remembered as unknown")
+
+            circle.now = circle.now.plus(CircleNotificationKeys.UNKNOWN_FOR).plusSeconds(1)
+            assertFalse(webhook.verifySignature(headers(body, junk), body))
+            assertEquals(2, circle.requests(route).size, "after the pause Circle is asked again")
+        }
+
+    @Test
+    fun `a key id that couldn't be checked while Circle was down is asked again`() =
+        runBlocking<Unit> {
+            val body = "{}".toByteArray()
+            circle.down = true
+            assertFalse(webhook.verifySignature(headers(body), body))
+            circle.down = false
+
+            assertTrue(webhook.verifySignature(headers(body), body), "the real key still verifies")
+            assertEquals(2, circle.requests("GET /v2/notifications/publicKey/$KEY_ID").size)
+        }
+
+    @Test
+    fun `the unknown ids are bounded, so a flood of junk can't grow without end`() =
+        runBlocking<Unit> {
+            val body = "{}".toByteArray()
+            val first = UUID.randomUUID().toString()
+            webhook.verifySignature(headers(body, first), body)
+            repeat(CircleNotificationKeys.UNKNOWN_LIMIT) {
+                webhook.verifySignature(headers(body, UUID.randomUUID().toString()), body)
+            }
+
+            webhook.verifySignature(headers(body, first), body)
+            assertEquals(
+                2,
+                circle.requests("GET /v2/notifications/publicKey/$first").size,
+                "when full the memory is emptied, so the first junk id is asked about again",
             )
         }
 

@@ -49,11 +49,12 @@ interface StablecoinCustody {
     ): Resource<Challenge>
 }
 
-/** A challenge for the user to run in the SDK, with the session values it runs under. */
+/**
+ * A challenge for the user to run in the SDK, with the session values it runs under. [StablecoinCustody.createWallet]
+ * for a user who has already set their PIN and has a wallet returns one with an empty [challengeId]: there is nothing
+ * to sign, and the caller reads [StablecoinCustody.wallets] instead. Every other call returns a real challenge.
+ */
 data class Challenge(val challengeId: String, val sdk: SdkSession) {
-    // TODO(decision: wallet.md says "user already initialized" (155106) is success "with the existing wallet", but
-    //  createWallet returns a Challenge; until the contract says otherwise it is a Challenge with an empty id.)
-
     /** False when the vendor had nothing for the user to sign (the wallet already exists). */
     val needsSignature: Boolean get() = challengeId.isNotEmpty()
 }

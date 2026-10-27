@@ -20,6 +20,7 @@ import com.circaso.web.installStatusPages
 import com.circaso.web.respondDefault
 import com.circaso.web.userId
 import io.ktor.client.request.get
+import io.ktor.client.request.head
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -332,5 +333,15 @@ class GatewayTest {
             assertEquals(1, translated.get())
             assertEquals(HttpStatusCode.OK, deliver().status)
             assertEquals(1, translated.get(), "a repeat after success is acknowledged, not processed")
+        }
+
+    @Test
+    fun `HEAD on a hook answers 200 for a registered vendor and 404 otherwise, with no body and no signature`() =
+        gatewayApp {
+            val known = client.head("/v1/hooks/waiting")
+            assertEquals(HttpStatusCode.OK, known.status)
+            assertEquals("", known.bodyAsText())
+            assertEquals(HttpStatusCode.NotFound, client.head("/v1/hooks/nobody").status)
+            assertEquals(0, translated.get(), "a HEAD never reaches the vendor")
         }
 }

@@ -12,7 +12,9 @@ import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.head
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.coroutines.CancellationException
@@ -43,6 +45,18 @@ fun Route.webhookRoutes(
     val byName = vendors.associateBy { it.name }
 
     route("/hooks") {
+        // Circle checks a notification URL with a HEAD before it sends anything to it; nothing is verified or read.
+        head("{vendor}") {
+            val known = call.parameters["vendor"].orEmpty() in byName
+            call.respond(if (known) HttpStatusCode.OK else HttpStatusCode.NotFound)
+        }.docs<NoBody, NoBody>(
+            "Check a vendor's callback address",
+            "Webhooks",
+            notes =
+                "`200` with no body when `{vendor}` is a registered sender, `404` otherwise. Vendors that validate " +
+                    "an endpoint before using it (Circle) call this; no signature is needed.",
+            envelope = false,
+        )
         post("{vendor}") {
             val name = call.parameters["vendor"].orEmpty()
             val vendor = byName[name]

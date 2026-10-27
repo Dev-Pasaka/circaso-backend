@@ -6,6 +6,7 @@ import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.security.Signature
+import java.time.Clock
 import java.time.Instant
 import java.util.Base64
 
@@ -15,19 +16,20 @@ import java.util.Base64
  * `transactions.outbound` are handed to [notifications] in our words; every other type is acknowledged and ignored.
  *
  * The gateway waits for the translation ([answersAfterTranslation]): a failure answers non-200, so Circle delivers
- * again with the same `notificationId`, which is the delivery id for the duplicate check. No replay window: Circle's
- * retries keep the first `timestamp`, so a window would turn away the retries this relies on, while the signature
- * and the duplicate check already stop a replayed body from counting twice.
+ * again with the same `notificationId`, which is the delivery id for the duplicate check. No replay window: Circle
+ * signs no send time, so the replay guard is the signature plus the `notificationId` duplicate check (decision
+ * 2026-10-27).
  *
  * [notifications] is looked up on each delivery: the wallet module binds it and integrations never depend on it.
  */
 class CircleWebhook internal constructor(
     client: CircleClient,
     settings: CircleSettings,
+    clock: Clock = Clock.systemUTC(),
     private val notifications: () -> CustodyNotifications?,
 ) : WebhookVendor {
     private val log = LoggerFactory.getLogger(CircleWebhook::class.java)
-    private val keys = CircleNotificationKeys(client)
+    private val keys = CircleNotificationKeys(client, clock)
     private val transactions = CircleTransactions(CircleTokens(client), settings)
 
     override val name: String = "circle"
