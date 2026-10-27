@@ -9,8 +9,9 @@ import org.koin.core.module.Module
 
 /**
  * Every business module's Koin module, the only place `app` names them. Each one binds its repositories, use
- * cases, services, controllers and routes, plus the three things infrastructure collects: its
- * `KandraModuleSpec`, its `OutboxStore` and its `EventSubscription`s.
+ * cases, services, controllers and routes, plus what infrastructure collects: its `DatabaseModuleSpec` (a
+ * `KandraModuleSpec` and its `OutboxStore` only for the modules not moved to PostgreSQL yet), its
+ * `EventSubscription`s and its `ScheduledJob`s.
  */
 fun businessModules(config: Config): List<Module> =
     listOf(

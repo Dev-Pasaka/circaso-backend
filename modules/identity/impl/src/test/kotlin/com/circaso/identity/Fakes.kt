@@ -2,7 +2,6 @@ package com.circaso.identity
 
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.SessionId
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.ProviderLink
@@ -30,6 +29,7 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
 import kotlinx.coroutines.sync.Mutex
@@ -66,6 +66,10 @@ class MemoryStore :
     /** One transaction at a time, like the account lock every write takes. */
     override suspend fun <T> run(operation: String, block: suspend () -> T): T = lock.withLock { block() }
 
+    /** No rollback in memory: the use cases under test refuse before they write. */
+    override suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T> =
+        lock.withLock { block() }
+
     override suspend fun find(userId: UserId) = accounts[userId]
 
     override suspend fun lock(userId: UserId) = accounts[userId]
@@ -74,6 +78,13 @@ class MemoryStore :
 
     override suspend fun create(account: Account) {
         accounts[account.userId] = account
+    }
+
+    override suspend fun claimPhone(account: Account, phone: PhoneNumber): Boolean {
+        val holder = findByPhone(phone)
+        if (holder != null && holder.userId != account.userId) return false
+        accounts[account.userId] = account.copy(phone = phone, version = account.version + 1)
+        return true
     }
 
     override suspend fun deleteAbandoned(createdBefore: Instant, limit: Int): Int {
@@ -124,6 +135,13 @@ class MemoryStore :
         return session.copy(status = SessionStatus.REVOKED).also { sessions[sessionId] = it }
     }
 
+    override suspend fun revokeAll(userId: UserId): List<SessionId> =
+        sessions.values
+            .filter { it.userId == userId && it.status == SessionStatus.ACTIVE }
+            .map { session ->
+                session.also { sessions[it.sessionId] = it.copy(status = SessionStatus.REVOKED) }.sessionId
+            }
+
     override suspend fun list(
         userId: UserId,
         before: UUID?,
@@ -139,7 +157,7 @@ class MemoryStore :
     override suspend fun write(changes: Changes) {
         changes.accounts.forEach { account ->
             val holder = account.phone?.let { phone -> findByPhone(phone) }
-            if (holder != null && holder.userId != account.userId) throw ClaimLost(ClaimLost.Claim.PHONE)
+            check(holder == null || holder.userId == account.userId) { "a number is set only by claimPhone" }
             accounts[account.userId] = account.copy(version = account.version + 1)
         }
         changes.devices.forEach { devices[it.userId to it.deviceId] = it }

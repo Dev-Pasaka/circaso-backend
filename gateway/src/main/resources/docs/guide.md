@@ -117,7 +117,7 @@ The shared ones, then each area's own. Codes are stable.
 | `request.not_found` | 404 | An unknown route, or something that is not yours |
 | `request.client_outdated` | 426 | `X-Client-Version` is below the minimum |
 | `request.rate_limited` | 429 | Any rate limit |
-| `request.in_progress` | 409 | The same `Idempotency-Key` is still running |
+| `request.in_progress` | 409 | The same `Idempotency-Key` is still running, or (I6) a second registration raced the first: keep the other response, don't retry |
 | `auth.token_missing`, `auth.token_invalid` | 401 | No token, or a bad or expired one |
 | `auth.scope_insufficient` | 403 | The token's scope cannot use this route |
 | `service.unavailable` | 503 | The server is too busy to take the request right now (no database connection came free within 3 seconds); retry after a moment with the same `Idempotency-Key` |

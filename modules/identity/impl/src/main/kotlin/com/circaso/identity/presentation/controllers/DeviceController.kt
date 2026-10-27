@@ -42,10 +42,11 @@ fun Route.deviceController(devices: DeviceService) {
             }.docs<RegisterDeviceRequest, RegisterDeviceResponse>(
                 "I6 · Register this phone's key; activates the account on sign-up and issues the app session",
                 REGISTER,
-                listOf("identity.device_attestation_failed", "request.malformed"),
+                listOf("identity.device_attestation_failed", "request.malformed", "request.in_progress"),
                 notes =
                     "Scope: `onboarding`. Send `X-Client-Version` (`android/1.0.0`): it carries the platform and " +
-                        "app version.",
+                        "app version. `request.in_progress` (409) means a second registration raced the first: keep " +
+                        "the other response; don't retry this one.",
             )
         }
         authenticate(Scope.APP) {

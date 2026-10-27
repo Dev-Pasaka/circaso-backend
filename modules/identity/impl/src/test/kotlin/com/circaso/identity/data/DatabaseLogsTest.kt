@@ -7,13 +7,14 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.spi.IThrowableProxy
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.identity.api.AccountStatus
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
@@ -21,7 +22,6 @@ import java.time.Instant
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -87,20 +87,21 @@ class DatabaseLogsTest {
                 pg.accounts.create(first)
                 pg.accounts.create(second)
             }
-            pg.transactor.run("accounts.claim-phone") {
-                val locked = pg.accounts.lock(first.userId)!!
-                val verified = SecurityEvent(first.userId, null, SecurityEventType.PHONE_VERIFIED, null, null)
-                pg.store.write(
-                    Changes(accounts = listOf(locked.copy(phone = phone)), securityEvents = listOf(verified)),
-                )
-            }
-            pg.accounts.findByPhone(phone)
-            assertFailsWith<ClaimLost> {
-                pg.transactor.run("accounts.claim-phone") {
-                    val locked = pg.accounts.lock(second.userId)!!
-                    pg.store.write(Changes(accounts = listOf(locked.copy(phone = phone))))
+            val claims =
+                listOf(first, second).map { account ->
+                    pg.transactor.attempt("accounts.claim-phone") {
+                        val locked = pg.accounts.lock(account.userId)!!
+                        val verified = SecurityEvent(account.userId, null, SecurityEventType.PHONE_VERIFIED, null, null)
+                        pg.store.write(Changes(securityEvents = listOf(verified)))
+                        if (pg.accounts.claimPhone(locked, phone)) {
+                            Resource.success(Unit)
+                        } else {
+                            Resource.error(SharedError.Internal)
+                        }
+                    }
                 }
-            }
+            pg.accounts.findByPhone(phone)
+            assertTrue(claims[0] is Resource.Success && claims[1] is Resource.Error, "the second claim was refused")
 
             val events = captured.list.toList()
             assertTrue(

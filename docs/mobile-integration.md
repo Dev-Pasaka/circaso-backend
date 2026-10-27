@@ -233,7 +233,7 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/devices`<br>**I6** Register this phone's key; activates the account on sign-up and issues the app session | `onboarding` | RegisterDeviceRequest → RegisterDeviceResponse | **PARTIAL** | Send `X-Client-Version` (`android/1.0.0`): it carries the platform and app version. Works on dev (attestation is only logged). In production no device can register until Play Integrity / App Attest verification is built; the format of `attestation` is not decided yet, so send the platform token if you have one and expect it to be ignored for now. Errors: `identity.device_attestation_failed`, `request.malformed`. |
+| `POST /v1/devices`<br>**I6** Register this phone's key; activates the account on sign-up and issues the app session | `onboarding` | RegisterDeviceRequest → RegisterDeviceResponse | **PARTIAL** | Send `X-Client-Version` (`android/1.0.0`): it carries the platform and app version. Works on dev (attestation is only logged). In production no device can register until Play Integrity / App Attest verification is built; the format of `attestation` is not decided yet, so send the platform token if you have one and expect it to be ignored for now. Errors: `identity.device_attestation_failed`, `request.malformed`, `request.in_progress` (409: a second registration racing the first; keep the other response; don't retry this one). |
 
 ### Profile
 

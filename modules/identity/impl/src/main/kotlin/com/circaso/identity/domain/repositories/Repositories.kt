@@ -33,6 +33,14 @@ interface AccountRepository {
     suspend fun create(account: Account)
 
     /**
+     * Claims [phone] for [account] (read under its lock, at its version) through the unique index on the number. True
+     * when the number is now the account's; false when another account holds it. A false answer leaves the transaction
+     * unusable (the database refused the row), so the caller returns an error from `Transactor.attempt`, which rolls
+     * everything back.
+     */
+    suspend fun claimPhone(account: Account, phone: PhoneNumber): Boolean
+
+    /**
      * Deletes up to [limit] accounts still `PENDING_PHONE` that were created before [createdBefore], with their
      * logins, devices, sessions and security log, in one transaction. Rows another transaction holds are skipped
      * this time. Returns how many accounts went; their numbers are free again.
@@ -57,7 +65,8 @@ interface ProviderRepository {
     /**
      * Claims [link]'s login for its account through the unique `(provider, subject)` index (`INSERT … ON CONFLICT DO
      * NOTHING`). True when the login is now the account's: newly written, already its own, or replacing the account's
-     * other login of the same provider. False when another account holds it.
+     * other login of the same provider. False when another account holds it; a false answer may leave the transaction
+     * unusable, so the caller returns an error from `Transactor.attempt`.
      */
     suspend fun claim(link: ProviderLink): Boolean
 
@@ -77,6 +86,9 @@ interface SessionRepository {
      * null when it had already ended, expired or never existed. Exactly one caller sees it end.
      */
     suspend fun revoke(sessionId: SessionId): Session?
+
+    /** Ends every active session of [userId] the same way; the ones this call ended, for the gateway's deny-list. */
+    suspend fun revokeAll(userId: UserId): List<SessionId>
 }
 
 interface SecurityLogRepository {
@@ -107,8 +119,8 @@ data class Changes(
 
 interface IdentityStore {
     /**
-     * Writes [changes] and their outbox rows inside the open `Transactor.run`. Setting a number another account holds
-     * throws `ClaimLost`.
+     * Writes [changes] and their outbox rows inside the open transaction. An account in [Changes.accounts] keeps its
+     * number; a number is claimed only through `AccountRepository.claimPhone`.
      */
     suspend fun write(changes: Changes)
 

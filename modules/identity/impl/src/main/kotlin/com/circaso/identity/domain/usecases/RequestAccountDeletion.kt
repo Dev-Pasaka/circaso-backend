@@ -6,7 +6,6 @@ import com.circaso.identity.api.DeletionGuard
 import com.circaso.identity.api.Principal
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
-import com.circaso.identity.domain.models.SessionStatus
 import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
@@ -27,7 +26,9 @@ import java.time.Clock
  *
  * The account stays recoverable for 30 days (`identity.deletion-grace-days`, decision 2026-10-27); until then only
  * `AccountStatusChanged` goes out. At `deleteAfter`, `CompleteDeletions` deletes its rows and publishes
- * `AccountDeleted`.
+ * `AccountDeleted`. Asking again while it is `DELETED` changes nothing and publishes nothing.
+ *
+ * TODO(decision: how a deleted account is restored during its 30 days, and by whom) there is no restore path yet.
  */
 class RequestAccountDeletion(
     private val transactor: Transactor,
@@ -48,20 +49,25 @@ class RequestAccountDeletion(
         }
         val statusChanged = bus.envelope(AccountStatusChanged(principal.userId, AccountStatus.DELETED))
         val deleteAfter = clock.instant().plus(config.deletionGrace)
-        val changes =
-            transactor.run("accounts.request-deletion") {
-                val account = accounts.lock(principal.userId) ?: return@run null
-                val session = sessions.find(principal.sessionId)?.takeIf { it.status == SessionStatus.ACTIVE }
-                Changes(
-                    accounts = listOf(account.copy(status = AccountStatus.DELETED, deleteAfter = deleteAfter)),
-                    sessions = listOfNotNull(session?.copy(status = SessionStatus.REVOKED)),
-                    securityEvents =
-                        listOf(
-                            SecurityEvent(principal.userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
-                        ),
-                    events = listOf(statusChanged),
-                ).also { store.write(it) }
-            } ?: return Resource.error(SharedError.NotFound)
+        val deletion =
+            transactor.attempt("accounts.request-deletion") {
+                val account = accounts.lock(principal.userId) ?: return@attempt Resource.error(SharedError.NotFound)
+                // A repeat: the deletion and its grace period are already running, so nothing changes.
+                if (account.status == AccountStatus.DELETED) return@attempt Resource.success(Changes())
+                sessions.revoke(principal.sessionId)
+                val changes =
+                    Changes(
+                        accounts = listOf(account.copy(status = AccountStatus.DELETED, deleteAfter = deleteAfter)),
+                        securityEvents =
+                            listOf(
+                                SecurityEvent(principal.userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
+                            ),
+                        events = listOf(statusChanged),
+                    )
+                store.write(changes)
+                Resource.success(changes)
+            }
+        val changes = (deletion as? Resource.Success)?.data ?: return Resource.error(SharedError.NotFound)
         store.publish(changes)
         cache.revoke(principal.sessionId)
         return Resource.success(Unit)

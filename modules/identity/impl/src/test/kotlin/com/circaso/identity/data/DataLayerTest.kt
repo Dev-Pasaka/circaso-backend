@@ -4,7 +4,6 @@ import com.circaso.identity.api.AccountActivated
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.data.PostgresIdentity.Companion.count
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
@@ -21,9 +20,12 @@ import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
 import com.circaso.shared.Scope
+import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -69,11 +71,12 @@ class DataLayerTest {
     private fun session(userId: UserId, rotatedAt: Instant = now) =
         Session(SessionId.new(), userId, DeviceId.new(), "hash", Scope.APP, SessionStatus.ACTIVE, rotatedAt, rotatedAt)
 
-    private suspend fun setPhone(account: Account, phone: PhoneNumber = number) =
-        pg.transactor.run("test.set-phone") {
+    /** Claims the number for the account as the use cases do: in `attempt`, rolled back when it is lost. */
+    private suspend fun setPhone(account: Account, phone: PhoneNumber = number): Boolean =
+        pg.transactor.attempt("test.claim-phone") {
             val locked = pg.accounts.lock(account.userId)!!
-            pg.store.write(Changes(accounts = listOf(locked.copy(phone = phone))))
-        }
+            if (pg.accounts.claimPhone(locked, phone)) Resource.success(Unit) else Resource.error(SharedError.Internal)
+        } is Resource.Success
 
     @Test
     fun `an account is created, found by id and by number, and each write moves its version on`() =
@@ -94,9 +97,10 @@ class DataLayerTest {
         runBlocking<Unit> {
             val account = created()
             val deviceId = DeviceId.new()
+            setPhone(account)
             pg.transactor.run("test.activate") {
                 val locked = pg.accounts.lock(account.userId)!!
-                val active = locked.copy(phone = number, status = AccountStatus.ACTIVE, activeDeviceId = deviceId)
+                val active = locked.copy(status = AccountStatus.ACTIVE, activeDeviceId = deviceId)
                 pg.store.write(Changes(accounts = listOf(active)))
             }
             pg.transactor.run("test.clear") {
@@ -138,17 +142,19 @@ class DataLayerTest {
             setPhone(first)
 
             val lost =
-                assertFailsWith<ClaimLost> {
-                    pg.transactor.run("test.claim") {
-                        val locked = pg.accounts.lock(second.userId)!!
-                        val verified = SecurityEvent(second.userId, null, SecurityEventType.PHONE_VERIFIED, null, null)
-                        // written first, so the rollback has something to undo
-                        pg.store.write(Changes(securityEvents = listOf(verified)))
-                        pg.store.write(Changes(accounts = listOf(locked.copy(phone = number))))
+                pg.transactor.attempt("test.claim") {
+                    val locked = pg.accounts.lock(second.userId)!!
+                    val verified = SecurityEvent(second.userId, null, SecurityEventType.PHONE_VERIFIED, null, null)
+                    // written first, so the rollback has something to undo
+                    pg.store.write(Changes(securityEvents = listOf(verified)))
+                    if (pg.accounts.claimPhone(locked, number)) {
+                        Resource.success(Unit)
+                    } else {
+                        Resource.error(SharedError.Internal)
                     }
                 }
 
-            assertEquals(ClaimLost.Claim.PHONE, lost.claim)
+            assertTrue(lost is Resource.Error)
             assertEquals(first.userId, pg.accounts.findByPhone(number)!!.userId)
             assertNull(pg.accounts.find(second.userId)!!.phone)
             assertEquals(0, count("SELECT count(*) FROM identity.security_log"))
@@ -162,11 +168,10 @@ class DataLayerTest {
             val outcomes =
                 racers
                     .map { account ->
-                        async(Dispatchers.Default) { runCatching { setPhone(account) } }
+                        async(Dispatchers.Default) { setPhone(account) }
                     }.awaitAll()
 
-            assertEquals(1, outcomes.count { it.isSuccess })
-            assertTrue(outcomes.filter { it.isFailure }.all { it.exceptionOrNull() is ClaimLost })
+            assertEquals(1, outcomes.count { it })
             assertEquals(1, count("SELECT count(*) FROM identity.accounts WHERE phone = '${number.e164}'"))
         }
 
@@ -187,6 +192,19 @@ class DataLayerTest {
 
             assertTrue(pg.providers.claim(link(amina.userId, "apple-1", SocialProvider.APPLE)))
             assertEquals(2, pg.providers.links(amina.userId).size)
+        }
+
+    @Test
+    fun `a replacement whose row is gone by the time it runs reports false, not a link`() =
+        runBlocking<Unit> {
+            // What claim meets when the account's other login is deleted between its insert and ownerOf: nothing to
+            // replace. Called directly, since that window can't be opened from outside.
+            val amina = created()
+
+            val replaced = pg.transactor.run("test.replace") { pg.providers.afterConflict(link(amina.userId, "sub-9")) }
+
+            assertFalse(replaced)
+            assertEquals(emptyList(), pg.providers.links(amina.userId))
         }
 
     @Test
@@ -408,5 +426,34 @@ class DataLayerTest {
             assertNotNull(pg.accounts.find(recent.userId))
             assertNotNull(pg.accounts.find(activeOld.userId))
             assertEquals(0, pg.accounts.deleteAbandoned(now.minus(Duration.ofDays(30)), 500))
+        }
+
+    @Test
+    fun `the sweep skips a sign-up whose phone claim is in flight, and the claim then lands`() =
+        runBlocking<Unit> {
+            val late = created(pending(createdAt = now.minus(Duration.ofDays(31))))
+            val locked = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val claim =
+                async(Dispatchers.Default) {
+                    pg.transactor.attempt("test.claim-in-flight") {
+                        val account = pg.accounts.lock(late.userId)!!
+                        locked.complete(Unit)
+                        release.await()
+                        if (pg.accounts.claimPhone(account, number)) {
+                            Resource.success(Unit)
+                        } else {
+                            Resource.error(SharedError.Internal)
+                        }
+                    }
+                }
+            locked.await()
+
+            val swept = pg.accounts.deleteAbandoned(now.minus(Duration.ofDays(30)), 500)
+            release.complete(Unit)
+
+            assertEquals(0, swept, "the row its claim holds is skipped, not waited for")
+            assertTrue(claim.await() is Resource.Success)
+            assertEquals(number, pg.accounts.find(late.userId)!!.phone)
         }
 }

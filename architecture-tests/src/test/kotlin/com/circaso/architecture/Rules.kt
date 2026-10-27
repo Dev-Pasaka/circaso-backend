@@ -883,7 +883,9 @@ object Rules {
                             )
                     }
                 transactors.flatMap { transactor ->
-                    blocksAfter(cls.text, "$transactor.run").flatMap { block ->
+                    // `attempt` (PG3 review, e) is `run` for a block that may answer an error: checked the same way
+                    val blocks = blocksAfter(cls.text, "$transactor.run") + blocksAfter(cls.text, "$transactor.attempt")
+                    blocks.flatMap { block ->
                         leaving
                             .filter { (name, _) ->
                                 Regex("""\b$name\b""").containsMatchIn(block)
@@ -926,7 +928,7 @@ object Rules {
     fun operationsAreNamedLiterals(files: List<KoFileDeclaration>): List<String> =
         files.filter { it.isBusiness() && (it.layer() == "data" || it.subLayer() == "usecases") }.flatMap { file ->
             val forwards = Regex(""":\s*Transactor\b""").containsMatchIn(file.text)
-            Regex("""\b(\w+)\.(tx|run)\(""")
+            Regex("""\b(\w+)\.(tx|run|attempt)\(""")
                 .findAll(file.text)
                 .filter { call ->
                     val receiver = call.groupValues[1]

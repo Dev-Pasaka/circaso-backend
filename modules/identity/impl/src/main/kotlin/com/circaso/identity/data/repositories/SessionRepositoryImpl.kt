@@ -11,6 +11,7 @@ import com.circaso.shared.Scope
 import com.circaso.shared.UserId
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -48,6 +49,19 @@ class SessionRepositoryImpl(private val database: Database, private val clock: C
                     it[status] = SessionStatus.REVOKED.name
                 }.map { it.toSession() }
                 .singleOrNull()
+        }
+
+    override suspend fun revokeAll(userId: UserId): List<SessionId> =
+        database.tx("sessions.revoke-all") {
+            SessionsTable
+                .updateReturning(listOf(SessionsTable.sessionId), where = {
+                    (SessionsTable.userId eq userId.value) and
+                        (SessionsTable.status eq SessionStatus.ACTIVE.name) and
+                        (SessionsTable.expiresAt greater clock.instant())
+                }) {
+                    it[status] = SessionStatus.REVOKED.name
+                }.map { SessionId(it[SessionsTable.sessionId]) }
+                .toList()
         }
 
     /** For the store: writes the session as it is now, inside the open transaction; its 30 days start again. */

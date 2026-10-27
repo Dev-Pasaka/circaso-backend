@@ -204,7 +204,8 @@ class Harness(
     private val keys = EcdsaDeviceKeyVerifier()
     private val opener = SessionOpener(tokens, p.sessions, cache, clock)
     private val proofs = DeviceProofs(keys, clock, config.proofWindow)
-    private val ownership = PhoneOwnership(p.transactor, p.accounts, p.store, cache, phones, clock)
+    private val ownership =
+        PhoneOwnership(p.transactor, p.accounts, p.sessions, p.store, cache, phones, bus, config, clock)
     private val attestationVerifier =
         object : AttestationVerifier {
             override suspend fun verify(

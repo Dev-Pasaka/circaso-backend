@@ -7,7 +7,6 @@ import com.circaso.identity.data.tables.ProviderLinksTable
 import com.circaso.identity.data.tables.SecurityLogTable
 import com.circaso.identity.data.tables.SessionsTable
 import com.circaso.identity.data.tables.SupportRecoveriesTable
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.AccountRepository
@@ -125,27 +124,40 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
             deleted.isNotEmpty()
         }
 
-    /**
-     * For the store: writes a changed account inside the open transaction, if it is still at the version it was read
-     * at, and moves the version on by one. Setting a number another account holds fails on the unique index, which
-     * is the lost claim: [ClaimLost].
-     */
-    internal suspend fun update(account: Account) {
+    override suspend fun claimPhone(account: Account, phone: PhoneNumber): Boolean {
         val written =
             try {
-                database.tx("accounts.update") {
+                database.tx("accounts.claim-phone") {
                     AccountsTable.update({
                         (AccountsTable.userId eq account.userId.value) and (AccountsTable.version eq account.version)
                     }) {
                         it[version] = account.version + 1
-                        write(it, account, clock.instant())
+                        it[this.phone] = phone.e164
+                        it[updatedAt] = clock.instant()
                     }
                 }
             } catch (e: DatabaseException) {
-                if (e.isUniqueViolation && e.constraint == AccountsTable.PHONE_KEY) {
-                    throw ClaimLost(ClaimLost.Claim.PHONE)
-                }
+                // Another account holds the number: the unique index is the claim.
+                if (e.isUniqueViolation && e.constraint == AccountsTable.PHONE_KEY) return false
                 throw e
+            }
+        check(written == 1) { "Account claim lost: not found, or changed since it was read" }
+        return true
+    }
+
+    /**
+     * For the store: writes a changed account inside the open transaction, if it is still at the version it was read
+     * at, and moves the version on by one. A number is set only through [claimPhone].
+     */
+    internal suspend fun update(account: Account) {
+        val written =
+            database.tx("accounts.update") {
+                AccountsTable.update({
+                    (AccountsTable.userId eq account.userId.value) and (AccountsTable.version eq account.version)
+                }) {
+                    it[version] = account.version + 1
+                    write(it, account, clock.instant())
+                }
             }
         // Every use case writes an account it read under its lock, so a stale version is a bug, not a race.
         check(written == 1) { "Account write lost: not found, or changed since it was read" }

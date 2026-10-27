@@ -180,7 +180,7 @@ fun identityModule(config: Config): Module =
 
         // domain: helpers and use cases
         single { SessionOpener(get(), get(), get(), clock) }
-        single { PhoneOwnership(get(), get(), get(), get(), get(), clock) }
+        single { PhoneOwnership(get(), get(), get(), get(), get(), get(), get(), identity, clock) }
         single { IssueNonce(get()) }
         single { SignInWithProvider(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { StartPhoneVerification(get(), get(), get(), get(), get(), get()) }

@@ -1,7 +1,6 @@
 package com.circaso.identity.data.repositories
 
 import com.circaso.identity.data.tables.ProviderLinksTable
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.infrastructure.api.Database
@@ -51,29 +50,33 @@ class ProviderRepositoryImpl(private val database: Database) : ProviderRepositor
 
     /**
      * Why the insert wrote nothing: the login is already this account's (nothing to do), another account's (lost),
-     * or this account already has another login of the same provider, which the new one replaces. A replacement that
-     * races another account's claim for the same login loses on the unique index: [ClaimLost].
+     * or this account already has another login of the same provider, which the new one replaces. A replacement is
+     * true only when it wrote the row; it is false when another account's claim for the login won the unique index
+     * (which leaves the transaction unusable: the caller answers from `Transactor.attempt`) or when the row it was to
+     * replace is gone.
      */
-    private suspend fun afterConflict(link: ProviderLink): Boolean {
+    internal suspend fun afterConflict(link: ProviderLink): Boolean {
         val owner = ownerOf(link.provider, link.subject)
         if (owner != null) return owner == link.userId
-        try {
-            // Its own (joined) tx, so a refused statement arrives here as a DatabaseException.
-            database.tx("providers.replace") {
-                ProviderLinksTable.update({
-                    (ProviderLinksTable.userId eq link.userId.value) and
-                        (ProviderLinksTable.provider eq link.provider.name)
-                }) {
-                    it[subject] = link.subject
-                    it[email] = link.email
-                    it[linkedAt] = link.linkedAt
+        // TODO(decision: whether I12 may replace an account's other Google or Apple login, or must refuse it)
+        val replaced =
+            try {
+                // Its own (joined) tx, so a refused statement arrives here as a DatabaseException.
+                database.tx("providers.replace") {
+                    ProviderLinksTable.update({
+                        (ProviderLinksTable.userId eq link.userId.value) and
+                            (ProviderLinksTable.provider eq link.provider.name)
+                    }) {
+                        it[subject] = link.subject
+                        it[email] = link.email
+                        it[linkedAt] = link.linkedAt
+                    }
                 }
+            } catch (e: DatabaseException) {
+                if (e.isUniqueViolation) return false
+                throw e
             }
-        } catch (e: DatabaseException) {
-            if (e.isUniqueViolation) throw ClaimLost(ClaimLost.Claim.PROVIDER_LOGIN)
-            throw e
-        }
-        return true
+        return replaced == 1
     }
 
     override suspend fun links(userId: UserId): List<ProviderLink> =

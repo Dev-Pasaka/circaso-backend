@@ -1,6 +1,5 @@
 package com.circaso.identity.domain.usecases
 
-import com.circaso.identity.domain.errors.ClaimLost
 import com.circaso.identity.domain.errors.IdentityError
 import com.circaso.identity.domain.models.LinkProviderCommand
 import com.circaso.identity.domain.models.ProviderLink
@@ -50,21 +49,12 @@ class LinkProvider(
             }
         val userId = command.principal.userId
         val link = ProviderLink(userId, command.provider, identity.subject, identity.email, clock.instant())
-        val linked =
-            try {
-                transactor.run("providers.link") {
-                    accounts.lock(userId)
-                    val claimed = providers.claim(link)
-                    if (claimed) {
-                        val event =
-                            SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name)
-                        store.write(Changes(securityEvents = listOf(event)))
-                    }
-                    claimed
-                }
-            } catch (_: ClaimLost) {
-                false
-            }
-        return if (linked) Resource.success(Unit) else Resource.error(IdentityError.ProviderInUse)
+        val event = SecurityEvent(userId, null, SecurityEventType.PROVIDER_LINKED, null, command.provider.name)
+        return transactor.attempt("providers.link") {
+            accounts.lock(userId)
+            if (!providers.claim(link)) return@attempt Resource.error(IdentityError.ProviderInUse)
+            store.write(Changes(securityEvents = listOf(event)))
+            Resource.success(Unit)
+        }
     }
 }
