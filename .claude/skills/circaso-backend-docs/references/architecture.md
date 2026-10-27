@@ -463,7 +463,7 @@ The gateway is the only door into the backend: every request is authenticated, l
 
 The gateway also hosts the WebSocket hub (see Realtime and push), because the socket is an edge concern: it authenticates the same way and only delivers what modules hand it.
 
-**Webhooks.** Vendor callbacks enter at `/v1/hooks/{vendor}` and belong to the gateway. They skip the user-token check but pass their own guards: the vendor's signature (or a shared secret where the vendor offers nothing better), a timestamp window against replays, a Redis record of event ids so a repeated delivery is processed once, and an IP allowlist where the vendor publishes one. The gateway answers `200` quickly, then hands the verified body to that vendor's module in integrations, which translates it into a Circaso event (`SmsDelivered`, `CustodyTransferSettled`).
+**Webhooks.** Vendor callbacks enter at `/v1/hooks/{vendor}` and belong to the gateway. They skip the user-token check but pass their own guards: the vendor's signature (or a shared secret where the vendor offers nothing better), a timestamp window against replays, a Redis record of event ids so a repeated delivery is processed once, and an IP allowlist where the vendor publishes one. The gateway answers `200` quickly (except a vendor that sets `answersAfterTranslation`, today Circle: it answers after translating, so a failure returns non-200 and the vendor retries), then hands the verified body to that vendor's module in integrations, which translates it into a Circaso event (`SmsDelivered`, `CustodyTransferSettled`).
 
 ## API documentation
 

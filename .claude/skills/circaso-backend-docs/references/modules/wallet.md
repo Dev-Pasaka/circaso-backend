@@ -69,7 +69,7 @@ Wallet also implements identity's `DeletionGuard` (refuses while the wallet hold
 | `INTEGRATIONS_CUSTODY_APP_ID` | `…` | Circle app id, handed to the phone's SDK |
 | `INTEGRATIONS_CUSTODY_BLOCKCHAIN` | `BASE-SEPOLIA` (`BASE` in production) | Chain new wallets are created on |
 | `INTEGRATIONS_CUSTODY_ACCOUNT_TYPE` | `SCA` | Account type for new wallets |
-| `INTEGRATIONS_CUSTODY_USDC_TOKEN_ID` | `…` | Circle's token id for USDC on that chain |
+| `INTEGRATIONS_CUSTODY_USDC_TOKEN_ADDRESS` | `0x036C…CF7e` (Base Sepolia) | USDC's contract address on that chain; transfers name the token by address + blockchain (Circle's token ids are resolved to it once and cached) |
 
 Our language in and out. Circle user tokens are the vendor's business: `CircleCustody` asks Circle for one when it needs it and keeps it in memory per node until 5 minutes before it expires, so the wallet only passes our `circleUserId`. Where the phone needs to run a challenge, the result carries the SDK values with it.
 
