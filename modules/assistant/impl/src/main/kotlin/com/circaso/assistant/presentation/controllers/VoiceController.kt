@@ -41,9 +41,7 @@ fun Route.voiceController(voice: VoiceService) {
                 val result: Resource<Transcript> =
                     if (seconds == null || bytes.size > MAX_CLIP_BYTES) {
                         Resource.error(
-                            SharedError.Malformed(
-                                mapOf("X-Duration-Seconds" to "is required, and the clip must be under 3 MB"),
-                            ),
+                            SharedError.Malformed("X-Duration-Seconds", "is required, and the clip must be under 3 MB"),
                         )
                     } else {
                         voice.transcribe(

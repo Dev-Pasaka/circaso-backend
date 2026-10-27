@@ -19,9 +19,12 @@ interface DomainError {
 data class ErrorDetails(
     /** RATE_LIMITED: also sent as the `Retry-After` header. */
     val retryAfterSeconds: Long? = null,
-    /** INVALID: field name → what is wrong with it. */
-    val fields: Map<String, String> = emptyMap(),
+    /** INVALID: each field that is wrong and what is wrong with it. */
+    val fields: List<FieldError> = emptyList(),
 )
+
+/** One field of a request that is wrong: `{"field": "displayName", "problem": "required"}` on the wire. */
+data class FieldError(val field: String, val problem: String)
 
 /** For the rare spot where returning a `Resource.Error` is awkward; it reaches the app in the same envelope. */
 class DomainException(val error: DomainError, cause: Throwable? = null) : RuntimeException(error.message, cause)
@@ -37,13 +40,16 @@ sealed class SharedError(
     override val details: ErrorDetails? = null,
 ) : DomainError {
     /** A request that isn't shaped right: bad JSON, a missing field, a malformed value. Mappers return this. */
-    class Malformed(fields: Map<String, String> = emptyMap()) :
+    class Malformed(fields: List<FieldError> = emptyList()) :
         SharedError(
             code = "request.malformed",
             message = "The request is not valid.",
             kind = ErrorKind.INVALID,
             details = fields.takeIf { it.isNotEmpty() }?.let { ErrorDetails(fields = it) },
-        )
+        ) {
+        /** The usual case: one field and what is wrong with it. */
+        constructor(field: String, problem: String) : this(listOf(FieldError(field, problem)))
+    }
 
     data object NotFound : SharedError("request.not_found", "That does not exist.", ErrorKind.NOT_FOUND)
 
@@ -88,6 +94,6 @@ sealed class SharedError(
         "request.malformed",
         "This request needs an Idempotency-Key header.",
         ErrorKind.INVALID,
-        ErrorDetails(fields = mapOf("Idempotency-Key" to "required")),
+        ErrorDetails(fields = listOf(FieldError("Idempotency-Key", "required"))),
     )
 }

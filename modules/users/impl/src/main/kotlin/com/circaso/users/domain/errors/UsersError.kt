@@ -3,6 +3,7 @@ package com.circaso.users.domain.errors
 import com.circaso.shared.DomainError
 import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.FieldError
 
 /** Users' own codes (Users → Error codes). */
 sealed class UsersError(
@@ -16,10 +17,7 @@ sealed class UsersError(
             "users.profile_invalid",
             "That profile isn't valid.",
             ErrorKind.INVALID,
-            ErrorDetails(
-                fields =
-                    mapOf(field to why),
-            ),
+            ErrorDetails(fields = listOf(FieldError(field, why))),
         )
 
     data object VersionConflict : UsersError(

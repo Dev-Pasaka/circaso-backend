@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.CodeCheck
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PhoneVerificationGateway
+import com.circaso.shared.CircasoJson
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -16,13 +17,19 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.util.Base64
+
+/** Twilio's answer to `VerificationCheck`: `status` is `approved` for a right code, and `valid` says the same. */
+@Serializable
+private data class VerificationCheckReply(val status: String? = null, val valid: Boolean? = null) {
+    val approved: Boolean get() = status == "approved" || valid == true
+}
+
+/** Twilio's error body; only the numeric code is read, never the message, which can hold the number. */
+@Serializable
+private data class TwilioErrorReply(val code: Int? = null)
 
 /**
  * Twilio Verify: Twilio makes the code, texts it, expires it and checks it. `POST /Verifications` starts one for a number;
@@ -72,16 +79,14 @@ class TwilioVerify(
             is Resource.Success -> {
                 when (r.data.status) {
                     in 200..299 -> {
-                        val json = runCatching { Json.parseToJsonElement(r.data.body).jsonObject }.getOrNull()
-                        val approved =
-                            json?.get("status")?.jsonPrimitive?.content == "approved" ||
-                                json?.get("valid")?.jsonPrimitive?.booleanOrNull == true
-                        if (json ==
-                            null
-                        ) {
+                        val reply =
+                            runCatching {
+                                CircasoJson.decodeFromString(VerificationCheckReply.serializer(), r.data.body)
+                            }.getOrNull()
+                        if (reply == null) {
                             Resource.error(IntegrationError.Unavailable("Twilio"))
                         } else {
-                            Resource.success(if (approved) CodeCheck.APPROVED else CodeCheck.DENIED)
+                            Resource.success(if (reply.approved) CodeCheck.APPROVED else CodeCheck.DENIED)
                         }
                     }
 
@@ -99,13 +104,7 @@ class TwilioVerify(
 
     /** Twilio's numeric error code (60200 invalid number, 21608 trial account and unverified number, ...), from its reply. Never the message: it can hold the number. */
     private fun errorCode(body: String): Int? =
-        runCatching {
-            Json
-                .parseToJsonElement(body)
-                .jsonObject["code"]
-                ?.jsonPrimitive
-                ?.intOrNull
-        }.getOrNull()
+        runCatching { CircasoJson.decodeFromString(TwilioErrorReply.serializer(), body).code }.getOrNull()
 
     private fun <T> failure(answer: Answer, step: String): Resource<T> =
         when (val status = answer.status) {

@@ -23,7 +23,7 @@ fun SendMessageRequest.toCommand(
     agentToken: String?,
     requestId: String?,
 ): Resource<TurnCommand> {
-    if (text.isBlank()) return Resource.error(SharedError.Malformed(mapOf("text" to "is required")))
+    if (text.isBlank()) return Resource.error(SharedError.Malformed("text", "is required"))
     return Resource.success(
         TurnCommand(
             userId,
@@ -46,8 +46,8 @@ fun ToolResultsRequest.toCommand(
 ): Resource<DeviceToolResult> {
     val turn =
         runCatching { UUID.fromString(turnId) }.getOrNull()
-            ?: return Resource.error(SharedError.Malformed(mapOf("messageId" to "is not valid")))
-    if (callId.isBlank()) return Resource.error(SharedError.Malformed(mapOf("callId" to "is required")))
+            ?: return Resource.error(SharedError.Malformed("messageId", "is not valid"))
+    if (callId.isBlank()) return Resource.error(SharedError.Malformed("callId", "is required"))
     return Resource.success(
         DeviceToolResult(
             userId,

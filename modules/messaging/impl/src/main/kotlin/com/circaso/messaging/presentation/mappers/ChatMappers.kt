@@ -18,8 +18,7 @@ import com.circaso.shared.UserId
 
 // ---- request → command: shape checks answer `request.malformed`; the sealed name is the use case's to judge ----
 
-private fun malformed(field: String, why: String = "is not valid") =
-    Resource.error(SharedError.Malformed(mapOf(field to why)))
+private fun malformed(field: String, why: String = "is not valid") = Resource.error(SharedError.Malformed(field, why))
 
 fun parseChatId(raw: String?): Resource<ChatId> =
     raw?.let(ChatId::parse)?.let { Resource.success(it) } ?: malformed("chatId")

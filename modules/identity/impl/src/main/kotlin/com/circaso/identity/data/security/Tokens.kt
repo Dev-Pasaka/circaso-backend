@@ -11,13 +11,8 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.DeviceId
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.put
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -47,6 +42,33 @@ private fun keyId(raw: ByteArray): String =
     MessageDigest.getInstance("SHA-256").digest(raw).take(6).joinToString("") {
         "%02x".format(it)
     }
+
+/** A JWT's header as we write it; the fields keep this order, so a token encodes to the same bytes as before. */
+@Serializable
+internal data class JwtHeader(val alg: String, val typ: String, val kid: String)
+
+/**
+ * The claims of an access token, in the order they are written: user, device, session, scope, session version, and
+ * issue and expiry times in epoch seconds. Unknown claims are ignored on read.
+ */
+@Serializable
+internal data class AccessTokenClaims(
+    val sub: String,
+    val did: String,
+    val sid: String,
+    val scp: String,
+    val ver: Int,
+    val iat: Long,
+    val exp: Long,
+)
+
+private const val ALGORITHM = "EdDSA"
+
+private fun <T> encodePart(serializer: KSerializer<T>, value: T): String =
+    b64.encodeToString(CircasoJson.encodeToString(serializer, value).toByteArray())
+
+private fun <T> decodePart(serializer: KSerializer<T>, part: String): T =
+    CircasoJson.decodeFromString(serializer, String(b64Decoder.decode(part)))
 
 /**
  * Access tokens: JWTs signed with an Ed25519 key held by identity, 15 minutes, with `sub` (user), `did` (device),
@@ -101,25 +123,19 @@ class Ed25519Tokens(
         sessionVersion: Int,
     ): IssuedToken {
         val now = clock.instant()
-        val header =
-            buildJsonObject {
-                put("alg", "EdDSA")
-                put("typ", "JWT")
-                put("kid", currentId)
-            }
-        val payload =
-            buildJsonObject {
-                put("sub", userId.toString())
-                put("did", deviceId.toString())
-                put("sid", sessionId.toString())
-                put("scp", scope.wire)
-                put("ver", sessionVersion)
-                put("iat", now.epochSecond)
-                put("exp", now.plus(lifetime).epochSecond)
-            }
+        val claims =
+            AccessTokenClaims(
+                sub = userId.toString(),
+                did = deviceId.toString(),
+                sid = sessionId.toString(),
+                scp = scope.wire,
+                ver = sessionVersion,
+                iat = now.epochSecond,
+                exp = now.plus(lifetime).epochSecond,
+            )
         val signingInput =
-            b64.encodeToString(header.toString().toByteArray()) + "." +
-                b64.encodeToString(payload.toString().toByteArray())
+            encodePart(JwtHeader.serializer(), JwtHeader(ALGORITHM, "JWT", currentId)) + "." +
+                encodePart(AccessTokenClaims.serializer(), claims)
         val signature =
             Signature.getInstance("Ed25519").run {
                 initSign(pair.private)
@@ -141,9 +157,9 @@ class Ed25519Tokens(
         runCatching {
             val parts = token.split('.')
             if (parts.size != 3) return null
-            val header = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[0]))) as JsonObject
-            if ((header["alg"] as? JsonPrimitive)?.contentOrNull != "EdDSA") return null
-            val key = keys[(header["kid"] as? JsonPrimitive)?.contentOrNull] ?: return null
+            val header = decodePart(JwtHeader.serializer(), parts[0])
+            if (header.alg != ALGORITHM) return null
+            val key = keys[header.kid] ?: return null
 
             val ok =
                 Signature.getInstance("Ed25519").run {
@@ -153,18 +169,15 @@ class Ed25519Tokens(
                 }
             if (!ok) return null
 
-            val claims = CircasoJson.parseToJsonElement(String(b64Decoder.decode(parts[1]))) as JsonObject
-
-            fun text(name: String) = (claims[name] as? JsonPrimitive)?.contentOrNull
-            val expires = (claims["exp"] as? JsonPrimitive)?.longOrNull ?: return null
-            if (clock.instant().epochSecond >= expires) return null
+            val claims = decodePart(AccessTokenClaims.serializer(), parts[1])
+            if (clock.instant().epochSecond >= claims.exp) return null
 
             AccessClaims(
-                userId = UserId.parse(text("sub") ?: return null) ?: return null,
-                deviceId = DeviceId.parse(text("did") ?: return null) ?: return null,
-                sessionId = SessionId.parse(text("sid") ?: return null) ?: return null,
-                scope = Scope.fromWire(text("scp") ?: return null) ?: return null,
-                sessionVersion = (claims["ver"] as? JsonPrimitive)?.intOrNull ?: return null,
+                userId = UserId.parse(claims.sub) ?: return null,
+                deviceId = DeviceId.parse(claims.did) ?: return null,
+                sessionId = SessionId.parse(claims.sid) ?: return null,
+                scope = Scope.fromWire(claims.scp) ?: return null,
+                sessionVersion = claims.ver,
             )
         }.getOrNull()
 }

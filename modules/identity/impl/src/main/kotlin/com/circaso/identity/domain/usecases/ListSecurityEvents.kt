@@ -17,7 +17,7 @@ class ListSecurityEvents(private val log: SecurityLogRepository) {
         val before =
             cursor?.let {
                 runCatching { UUID.fromString(it) }.getOrNull()
-                    ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid")))
+                    ?: return Resource.error(SharedError.Malformed("cursor", "invalid"))
             }
         val page = limit.coerceIn(1, 200)
         val events = log.list(principal.userId, before, page + 1)

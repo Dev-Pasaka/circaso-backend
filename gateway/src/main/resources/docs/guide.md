@@ -80,7 +80,7 @@ Every response, success or failure, has the same shape, and `httpStatusCode` alw
 }
 ```
 
-Key the app's text on `code`, never on `message`. `details` carries `retryAfterSeconds` (also sent as the `Retry-After` header) and, for a bad request, `fields`, a map of field name to what is wrong. Quote `requestId` to support: it finds the exact trace and logs. The only responses that are not the envelope are the health routes, the audio from *Turn a reply into audio* and the Asha event stream.
+Key the app's text on `code`, never on `message`. `details` carries `retryAfterSeconds` (also sent as the `Retry-After` header) and, for a bad request, `fields`, a list of the fields that are wrong, each with what is wrong with it: `"fields": [{"field": "displayName", "problem": "required"}]`. Quote `requestId` to support: it finds the exact trace and logs. The only responses that are not the envelope are the health routes, the audio from *Turn a reply into audio* and the Asha event stream.
 
 ## Idempotency
 
@@ -206,7 +206,7 @@ The server closes after 30 seconds of silence (`silence`), when the day's voice 
 
 ## Realtime
 
-While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. The first frame authenticates: `{"type":"auth","accessToken":"…","last":{"users":1042}}`, where `last` is the last `seq` the app saw for each module. The server then sends what was missed, and after that every frame has the same shape:
+While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. The first frame authenticates: `{"type":"auth","accessToken":"…","last":[{"module":"users","seq":1042}]}`, where `last` lists the last `seq` the app saw, one entry per module (leave it out, or send `[]`, on the first connect). The server then sends what was missed, and after that every frame has the same shape:
 
 ```json
 { "module": "users", "type": "contact.joined", "id": "0193…", "seq": 1043, "ts": "2026-10-21T18:07:12Z", "data": { "userId": "…", "displayName": "Amina" } }
@@ -223,7 +223,7 @@ When the server closes the socket it says why:
 | Code | Reason | Meaning |
 | --- | --- | --- |
 | 1008 | `auth required` | The first frame wasn't an auth frame, or didn't arrive within 10 seconds |
-| 1008 | `invalid last` | The auth frame's `last` isn't an object of module name to whole number, such as `{"users":1042}` |
+| 1008 | `invalid last` | The auth frame's `last` isn't a list of `{"module","seq"}` with whole numbers, such as `[{"module":"users","seq":1042}]`, or names a module twice |
 | 1008 | `unauthorized` | The access token is expired, revoked or not an app token: refresh it, then reconnect |
 | 1008 | `session revoked` | Sent after a `system` / `session.revoked` frame: this session ended (signed out, a new phone, or the account closed) |
 | 1009 | `Frame is too big: …` | A frame over 64 KB |

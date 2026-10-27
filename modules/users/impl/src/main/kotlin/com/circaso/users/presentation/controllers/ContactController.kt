@@ -74,7 +74,7 @@ fun Route.contactController(contacts: ContactService) {
                     if (target ==
                         null
                     ) {
-                        Resource.error(SharedError.Malformed(mapOf("userId" to "is not valid")))
+                        Resource.error(SharedError.Malformed("userId", "is not valid"))
                     } else {
                         contacts.remove(call.userId(), target)
                     }

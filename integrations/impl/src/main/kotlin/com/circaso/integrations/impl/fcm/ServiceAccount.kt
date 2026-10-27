@@ -1,14 +1,36 @@
 package com.circaso.integrations.impl.fcm
 
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import com.circaso.shared.CircasoJson
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import java.security.KeyFactory
 import java.security.PrivateKey
 import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.time.Clock
 import java.util.Base64
+
+/** The fields of the service-account JSON file we read; the rest of the file is ignored. */
+@Serializable
+private data class ServiceAccountFile(
+    @SerialName("project_id") val projectId: String = "",
+    @SerialName("client_email") val clientEmail: String = "",
+    @SerialName("private_key") val privateKey: String = "",
+    @SerialName("token_uri") val tokenUri: String? = null,
+)
+
+@Serializable
+private data class AssertionHeader(val alg: String = "RS256", val typ: String = "JWT")
+
+/** Google's OAuth assertion: from [iss] (the service account), for [scope], at [aud] (the token endpoint). */
+@Serializable
+private data class AssertionClaims(
+    val iss: String,
+    val scope: String,
+    val aud: String,
+    val iat: Long,
+    val exp: Long,
+)
 
 /** A Google service account, from the JSON file the Firebase console hands out. The private key never leaves this object. */
 class ServiceAccount(
@@ -20,8 +42,12 @@ class ServiceAccount(
     /** A signed `urn:ietf:params:oauth:grant-type:jwt-bearer` assertion for [scope], valid for an hour. */
     fun assertion(scope: String, clock: Clock): String {
         val now = clock.instant().epochSecond
-        val header = """{"alg":"RS256","typ":"JWT"}"""
-        val claims = """{"iss":"$clientEmail","scope":"$scope","aud":"$tokenUri","iat":$now,"exp":${now + 3600}}"""
+        val header = CircasoJson.encodeToString(AssertionHeader.serializer(), AssertionHeader())
+        val claims =
+            CircasoJson.encodeToString(
+                AssertionClaims.serializer(),
+                AssertionClaims(iss = clientEmail, scope = scope, aud = tokenUri, iat = now, exp = now + 3600),
+            )
         val input = "${encode(header.toByteArray())}.${encode(claims.toByteArray())}"
         val signature =
             Signature.getInstance("SHA256withRSA").run {
@@ -38,20 +64,20 @@ class ServiceAccount(
         /** [raw] is the JSON file's text, or that text in base64 (easier to keep in one environment line). */
         fun parse(raw: String): ServiceAccount {
             val text = raw.trim().let { if (it.startsWith("{")) it else String(Base64.getDecoder().decode(it)) }
-            val json = Json.parseToJsonElement(text).jsonObject
+            val file = CircasoJson.decodeFromString(ServiceAccountFile.serializer(), text)
 
-            fun field(name: String) =
-                json[name]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            fun field(name: String, value: String) =
+                value.takeIf { it.isNotBlank() }
                     ?: throw IllegalStateException("The FCM service account has no '$name'")
             val pem =
-                field("private_key")
+                field("private_key", file.privateKey)
                     .replace("-----BEGIN PRIVATE KEY-----", "")
                     .replace("-----END PRIVATE KEY-----", "")
                     .replace(Regex("\\s"), "")
             return ServiceAccount(
-                projectId = field("project_id"),
-                clientEmail = field("client_email"),
-                tokenUri = json["token_uri"]?.jsonPrimitive?.content ?: "https://oauth2.googleapis.com/token",
+                projectId = field("project_id", file.projectId),
+                clientEmail = field("client_email", file.clientEmail),
+                tokenUri = file.tokenUri ?: "https://oauth2.googleapis.com/token",
                 privateKey =
                     KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(pem))),
             )

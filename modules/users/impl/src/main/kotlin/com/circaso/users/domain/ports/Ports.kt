@@ -59,11 +59,19 @@ data class StoredAvatar(val sizeBytes: Long, val contentType: String)
 
 /** Sends a realtime frame to one user and keeps it for replay. Failures never fail the operation that caused them. */
 interface RealtimeFrames {
-    suspend fun send(
-        userId: UserId,
-        type: String,
-        data: Map<String, String>,
-    )
+    suspend fun send(userId: UserId, frame: UsersFrame)
+}
+
+/** The frames `users` sends (Realtime and push → Events identity and users send); `data` gives each its wire class. */
+sealed interface UsersFrame {
+    /** Someone who has [userId]'s number saved can now reach them. */
+    data class ContactJoined(val userId: UserId, val displayName: String) : UsersFrame
+
+    /** A QR or handle connection with [userId] was made. */
+    data class ConnectionAdded(val userId: UserId, val displayName: String) : UsersFrame
+
+    /** [userId]'s profile is now at [version]; the phone reloads it when it holds an older one. */
+    data class ProfileUpdated(val userId: UserId, val version: Long) : UsersFrame
 }
 
 /** The frames `users` has sent, kept for 7 days so a phone that reconnects can catch up. */

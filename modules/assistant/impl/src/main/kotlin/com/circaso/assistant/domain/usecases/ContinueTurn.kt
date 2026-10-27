@@ -35,7 +35,7 @@ class ContinueTurn(
         val waitingOn =
             pending.callIdOf(result.userId, result.turnId) ?: return Resource.error(AssistantError.TurnNotFound)
         if (waitingOn != result.callId) {
-            return Resource.error(SharedError.Malformed(mapOf("callId" to "is not the call this turn waits on")))
+            return Resource.error(SharedError.Malformed("callId", "is not the call this turn waits on"))
         }
         val turn = pending.take(result.userId, result.turnId) ?: return Resource.error(AssistantError.TurnNotFound)
         if (turn.callId != result.callId) {

@@ -6,6 +6,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SocialIdentity
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.integrations.api.SocialSignIn
+import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.get
@@ -16,6 +17,7 @@ import io.ktor.http.Parameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import java.security.KeyFactory
 import java.security.MessageDigest
@@ -24,6 +26,20 @@ import java.security.Signature
 import java.security.spec.PKCS8EncodedKeySpec
 import java.time.Clock
 import java.util.Base64
+
+/** The header of the client secret Apple's revoke endpoint takes: ES256, signed with the `.p8` key [kid]. */
+@Serializable
+private data class AppleSecretHeader(val alg: String = "ES256", val kid: String)
+
+/** Its claims: our team [iss], ten minutes of life, for Apple, about our app [sub]. */
+@Serializable
+private data class AppleSecretClaims(
+    val iss: String,
+    val iat: Long,
+    val exp: Long,
+    val aud: String = "https://appleid.apple.com",
+    val sub: String,
+)
 
 /** What differs between the two providers: where the keys are, who signs, and who the token must be for. */
 class ProviderSpec(val jwksUrl: String, val issuers: Set<String>, val audiences: Set<String>)
@@ -81,23 +97,24 @@ class GoogleAppleSignIn(
             } ?: return rejected
         if (!jwt.verifyRs256(key)) return rejected
 
+        val claims = jwt.claims
         val now = clock.instant().epochSecond
-        val exp = jwt.seconds("exp") ?: return rejected
-        val iat = jwt.seconds("iat") ?: return rejected
+        val exp = claims.exp ?: return rejected
+        val iat = claims.iat ?: return rejected
         if (exp < now - LEEWAY || iat > now + LEEWAY) return rejected
-        if (jwt.string("iss") !in spec.issuers) return rejected
-        if (jwt.audiences().none { it in spec.audiences }) return rejected
-        if (!nonceMatches(provider, jwt.string("nonce"), nonce)) return rejected
+        if (claims.iss !in spec.issuers) return rejected
+        if (claims.aud.none { it in spec.audiences }) return rejected
+        if (!nonceMatches(provider, claims.nonce, nonce)) return rejected
 
-        val subject = jwt.string("sub")?.takeIf { it.isNotBlank() } ?: return rejected
+        val subject = claims.sub?.takeIf { it.isNotBlank() } ?: return rejected
         return Resource.success(
             SocialIdentity(
                 provider = provider,
                 subject = subject,
-                email = jwt.string("email")?.takeIf { it.isNotBlank() },
-                emailVerified = jwt.flag("email_verified"),
-                displayName = jwt.string("name")?.takeIf { it.isNotBlank() },
-                pictureUrl = jwt.string("picture")?.takeIf { it.startsWith("https://") },
+                email = claims.email?.takeIf { it.isNotBlank() },
+                emailVerified = claims.emailVerified,
+                displayName = claims.name?.takeIf { it.isNotBlank() },
+                pictureUrl = claims.picture?.takeIf { it.startsWith("https://") },
             ),
         )
     }
@@ -177,12 +194,12 @@ class GoogleAppleSignIn(
     private fun clientSecret(settings: AppleRevocation): String {
         val enc = Base64.getUrlEncoder().withoutPadding()
         val now = clock.instant().epochSecond
-        val header = """{"alg":"ES256","kid":"${settings.keyId}"}"""
+        val header = CircasoJson.encodeToString(AppleSecretHeader.serializer(), AppleSecretHeader(kid = settings.keyId))
         val claims =
-            """
-            {"iss":"${settings.teamId}","iat":$now,"exp":${now + 600},
-            "aud":"https://appleid.apple.com","sub":"${settings.clientId}"}
-            """.trimIndent().replace("\n", "")
+            CircasoJson.encodeToString(
+                AppleSecretClaims.serializer(),
+                AppleSecretClaims(iss = settings.teamId, iat = now, exp = now + 600, sub = settings.clientId),
+            )
         val input = enc.encodeToString(header.toByteArray()) + "." + enc.encodeToString(claims.toByteArray())
         val der =
             Base64.getMimeDecoder().decode(

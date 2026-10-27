@@ -41,7 +41,7 @@ class OpenDirectChat(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(caller: UserId, other: UserId): Resource<ChatView> {
-        if (caller == other) return Resource.error(SharedError.Malformed(mapOf("userId" to "is you")))
+        if (caller == other) return Resource.error(SharedError.Malformed("userId", "is you"))
         if (!reach.canReach(caller, other)) return Resource.error(MessagingError.NotReachable)
 
         val pair = pairKey(caller, other)

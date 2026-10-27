@@ -22,6 +22,17 @@ class ArchitectureTest {
     }
 
     @Test
+    fun `every file allowed untyped payloads exists and still needs the exception`() {
+        val stale =
+            Rules.untypedPayloadAllowList.keys.filter { allowed ->
+                val file = files.firstOrNull { it.path.replace('\\', '/').endsWith("/$allowed") }
+                file == null || Rules.untypedPayloadUses(file).isEmpty()
+            }
+
+        assertTrue(stale.isEmpty(), "Remove these from Rules.untypedPayloadAllowList:\n" + stale.joinToString("\n"))
+    }
+
+    @Test
     fun `every rule passes on the real project`() {
         val violations = Rules.all.flatMap { (name, rule) -> rule(files).map { "[$name] $it" } }
 

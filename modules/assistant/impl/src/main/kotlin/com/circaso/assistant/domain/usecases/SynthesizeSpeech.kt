@@ -33,9 +33,7 @@ class SynthesizeSpeech(
         val spoken = text.trim()
         if (spoken.isEmpty() || spoken.length > config.maxSpeechChars) {
             return Resource.error(
-                SharedError.Malformed(
-                    mapOf("text" to "must be 1 to ${config.maxSpeechChars} characters"),
-                ),
+                SharedError.Malformed("text", "must be 1 to ${config.maxSpeechChars} characters"),
             )
         }
         val seconds = (spoken.length + CHARS_PER_SECOND - 1) / CHARS_PER_SECOND

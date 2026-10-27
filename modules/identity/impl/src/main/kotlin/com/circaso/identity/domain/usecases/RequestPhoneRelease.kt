@@ -13,8 +13,8 @@ import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.IdentityStore
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.support.IdentityConfig
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
-import com.circaso.integrations.api.EmailTemplate
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import java.time.Clock
@@ -40,9 +40,7 @@ class RequestPhoneRelease(
     suspend operator fun invoke(command: ReleaseCommand): Resource<Instant> {
         if (!command.confirmAbandon) {
             return Resource.error(
-                SharedError.Malformed(
-                    mapOf("confirmAbandon" to "must be true"),
-                ),
+                SharedError.Malformed("confirmAbandon", "must be true"),
             )
         }
         val userId = command.principal.userId
@@ -78,7 +76,7 @@ class RequestPhoneRelease(
             .links(
                 owner.userId,
             ).firstNotNullOfOrNull { it.email }
-            ?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
+            ?.let { email.send(it, Email.RecoveryStarted) }
         return Resource.success(releaseAt)
     }
 }

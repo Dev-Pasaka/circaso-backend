@@ -2,6 +2,7 @@ package com.circaso.gateway
 
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
+import com.circaso.gateway.realtime.SessionRevokedFrame
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
 import com.circaso.identity.api.AccountRelinked
@@ -33,6 +34,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.decodeData
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.server.application.install
@@ -309,7 +311,7 @@ class SocketHubTest {
             val client = createClient { install(ClientWebSockets) }
 
             client.webSocket("/v1/ws") {
-                send(Frame.Text("""{"type":"auth","accessToken":"good","last":{"users":41}}"""))
+                send(Frame.Text("""{"type":"auth","accessToken":"good","last":[{"module":"users","seq":41}]}"""))
                 assertEquals(42, nextFrame().seq)
 
                 assertTrue(hub.deliver(user, frame(43)))
@@ -633,7 +635,7 @@ class SocketHubTest {
             val client = createClient { install(ClientWebSockets) }
 
             client.webSocket("/v1/ws") {
-                send(Frame.Text("""{"type":"auth","accessToken":"good","last":{"users":"x"}}"""))
+                send(Frame.Text("""{"type":"auth","accessToken":"good","last":[{"module":"users","seq":"x"}]}"""))
 
                 assertEquals(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "invalid last"), closedWith())
             }
@@ -649,7 +651,11 @@ class SocketHubTest {
                     """{"module":"messaging","type":"ack"}""" to "auth required",
                     "not json" to "auth required",
                     """{"type":"auth","accessToken":"good","last":[1]}""" to "invalid last",
-                    """{"type":"auth","accessToken":"bad","last":{"users":4}}""" to "unauthorized",
+                    """{"type":"auth","accessToken":"good","last":{"users":4}}""" to "invalid last",
+                    """{"type":"auth","accessToken":"good","last":[{"module":"users"}]}""" to "invalid last",
+                    """{"type":"auth","accessToken":"good","last":[{"module":"users","seq":1},""" +
+                        """{"module":"users","seq":2}]}""" to "invalid last",
+                    """{"type":"auth","accessToken":"bad","last":[{"module":"users","seq":4}]}""" to "unauthorized",
                 )
 
             cases.forEach { (first, reason) ->
@@ -681,6 +687,8 @@ class SocketHubTest {
 
                     val revoked = ended.nextFrame()
                     assertEquals("system" to "session.revoked", revoked.module to revoked.type)
+                    assertEquals(SessionRevokedFrame, revoked.decodeData<SessionRevokedFrame>())
+                    assertEquals("{}", revoked.data.toString())
                     assertEquals(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "session revoked"), ended.closedWith())
 
                     assertTrue(hub.deliver(user, frame(9)))

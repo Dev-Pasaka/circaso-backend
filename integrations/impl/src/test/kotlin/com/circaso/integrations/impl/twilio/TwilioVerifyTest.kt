@@ -76,6 +76,16 @@ class TwilioVerifyTest {
         }
 
     @Test
+    fun `the check reply reads either field and ignores the rest`() =
+        runBlocking<Unit> {
+            reply = """{"valid":true,"channel":"sms","amount":null}"""
+            assertEquals(CodeCheck.APPROVED, (twilio().check(phone, "123456") as Resource.Success).data)
+
+            reply = """{"status":"canceled"}"""
+            assertEquals(CodeCheck.DENIED, (twilio().check(phone, "123456") as Resource.Success).data)
+        }
+
+    @Test
     fun `Twilio's own refusals are told apart`() =
         runBlocking<Unit> {
             status = 400

@@ -48,11 +48,11 @@ class ResourceAndEventsTest {
 
     @Test
     fun `a malformed request lists the fields that are wrong`() {
-        val error = SharedError.Malformed(mapOf("displayName" to "required"))
+        val error = SharedError.Malformed("displayName", "required")
 
         assertEquals("request.malformed", error.code)
         assertEquals(ErrorKind.INVALID, error.kind)
-        assertEquals(mapOf("displayName" to "required"), error.details?.fields)
+        assertEquals(listOf(FieldError("displayName", "required")), error.details?.fields)
         assertNull(SharedError.Malformed().details)
     }
 

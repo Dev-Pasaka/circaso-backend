@@ -23,8 +23,8 @@ import com.circaso.identity.domain.repositories.IdentityStore
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.SessionOpener
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
-import com.circaso.integrations.api.EmailTemplate
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -55,7 +55,7 @@ class RegisterDevice(
     suspend operator fun invoke(command: RegisterDeviceCommand): Resource<RegisteredDevice> {
         val userId = command.principal.userId
         if (command.deviceId != command.principal.deviceId || !keys.isValid(command.publicKey, command.keyAlgorithm)) {
-            return Resource.error(SharedError.Malformed(mapOf("publicKey" to "not a valid key")))
+            return Resource.error(SharedError.Malformed("publicKey", "not a valid key"))
         }
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
         val phone = account.phone
@@ -154,12 +154,12 @@ class RegisterDevice(
      */
     private suspend fun welcome(userId: UserId) {
         val to = providers.links(userId).firstNotNullOfOrNull { it.email } ?: return
-        email.send(to, EmailTemplate.WELCOME, idempotencyKey = "welcome-$userId")
+        email.send(to, Email.Welcome, idempotencyKey = "welcome-$userId")
     }
 
     /** Best effort: the owner hears about the new phone by email; a failed email never blocks the sign-in. */
     private suspend fun alertOldPhoneOwner(userId: UserId, newModel: String) {
         val to = providers.links(userId).firstNotNullOfOrNull { it.email } ?: return
-        email.send(to, EmailTemplate.NEW_PHONE_SIGN_IN, mapOf("DEVICE_MODEL" to newModel))
+        email.send(to, Email.NewPhoneSignIn(newModel))
     }
 }

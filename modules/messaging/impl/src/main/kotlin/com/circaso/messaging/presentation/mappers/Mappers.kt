@@ -34,9 +34,7 @@ private const val MAX_ONE_TIME_PREKEYS = 100
 
 private fun malformed(field: String, why: String = "is not valid") =
     Resource.error(
-        SharedError.Malformed(
-            mapOf(field to why),
-        ),
+        SharedError.Malformed(field, why),
     )
 
 /** A key upload as it arrived: the exact body bytes and the two proof headers (Messaging → Encryption). */

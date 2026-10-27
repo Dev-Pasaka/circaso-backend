@@ -23,9 +23,17 @@ data class DefaultResponse<T>(
 )
 
 @Serializable
-data class ErrorDetailsDto(val retryAfterSeconds: Long? = null, val fields: Map<String, String> = emptyMap())
+data class ErrorDetailsDto(val retryAfterSeconds: Long? = null, val fields: List<FieldErrorDto> = emptyList())
 
-fun ErrorDetails.toDto(): ErrorDetailsDto = ErrorDetailsDto(retryAfterSeconds, fields)
+/** One wrong field of the request (decision 2026-10-27: a list of these, not a map of field to problem). */
+@Serializable
+data class FieldErrorDto(val field: String, val problem: String)
+
+fun ErrorDetails.toDto(): ErrorDetailsDto =
+    ErrorDetailsDto(
+        retryAfterSeconds = retryAfterSeconds,
+        fields = fields.map { FieldErrorDto(it.field, it.problem) },
+    )
 
 /** The status comes from the error's kind, never chosen per route. */
 fun ErrorKind.httpStatus(): HttpStatusCode =

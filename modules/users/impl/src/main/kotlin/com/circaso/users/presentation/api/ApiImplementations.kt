@@ -5,14 +5,11 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
-import com.circaso.shared.Uuid7
 import com.circaso.shared.getOrNull
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
 import com.circaso.users.presentation.services.DirectoryService
-import kotlinx.serialization.json.JsonObject
-import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
 
 /** users:api for messaging, wallet and calls. Every call goes through a service, like any other way in. */
@@ -54,18 +51,7 @@ class UsersRealtimeReplay(private val directory: DirectoryService) : RealtimeRep
     override suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>> {
         val frames =
             directory.getMissedFrames(userId, seq).getOrNull()
-                ?: return Resource.success(
-                    listOf(
-                        RealtimeEnvelope(
-                            "users",
-                            "resync",
-                            Uuid7.generate().toString(),
-                            seq,
-                            Instant.now(),
-                            JsonObject(emptyMap()),
-                        ),
-                    ),
-                )
+                ?: return Resource.success(listOf(RealtimeEnvelope.resync("users", seq)))
         return Resource.success(frames.map { CircasoJson.decodeFromString(RealtimeEnvelope.serializer(), it.json) })
     }
 }

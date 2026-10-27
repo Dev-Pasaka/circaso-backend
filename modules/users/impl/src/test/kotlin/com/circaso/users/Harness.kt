@@ -9,6 +9,7 @@ import com.circaso.shared.EventSubscription
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.users.data.cache.toEnvelope
 import com.circaso.users.domain.models.Block
 import com.circaso.users.domain.models.Contact
 import com.circaso.users.domain.models.ContactStatus
@@ -25,6 +26,7 @@ import com.circaso.users.domain.ports.RealtimeLog
 import com.circaso.users.domain.ports.StoredAvatar
 import com.circaso.users.domain.ports.UploadedKey
 import com.circaso.users.domain.ports.UsersCache
+import com.circaso.users.domain.ports.UsersFrame
 import com.circaso.users.domain.repositories.BlockRepository
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.HandleRepository
@@ -243,19 +245,15 @@ class FakeAvatars : AvatarStorage {
 class RecordingFrames :
     RealtimeFrames,
     RealtimeLog {
-    data class Sent(val to: UserId, val type: String, val data: Map<String, String>)
+    /** [type] is the wire type, read from the envelope the real sender builds, so tests check that mapping too. */
+    data class Sent(val to: UserId, val type: String, val frame: UsersFrame)
 
     val sent = CopyOnWriteArrayList<Sent>()
     var logged = listOf<LoggedFrame>()
     var latest: Long? = null
 
-    override suspend fun send(
-        userId: UserId,
-        type: String,
-        data: Map<String, String>,
-    ) {
-        sent +=
-            Sent(userId, type, data)
+    override suspend fun send(userId: UserId, frame: UsersFrame) {
+        sent += Sent(userId, frame.toEnvelope(0, Instant.EPOCH).type, frame)
     }
 
     override suspend fun since(

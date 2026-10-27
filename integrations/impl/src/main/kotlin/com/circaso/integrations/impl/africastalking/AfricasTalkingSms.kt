@@ -5,6 +5,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SmsPurpose
 import com.circaso.integrations.api.SmsReceipt
+import com.circaso.shared.CircasoJson
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import io.ktor.client.HttpClient
@@ -16,12 +17,24 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
+
+/** Africa's Talking's answer to a send: one entry per recipient, and we send to one. */
+@Serializable
+private data class SendSmsReply(
+    @SerialName("SMSMessageData") val data: SmsMessageData? = null,
+)
+
+@Serializable
+private data class SmsMessageData(
+    @SerialName("Recipients") val recipients: List<SmsRecipient> = emptyList(),
+)
+
+/** [statusCode] says whether it went (100, 101, 102) or why not; [messageId] names it when it went. */
+@Serializable
+private data class SmsRecipient(val statusCode: Int? = null, val messageId: String? = null)
 
 /** The base URL for [username]: the sandbox (nothing reaches a phone) for `sandbox`, the live service otherwise. */
 fun africasTalkingBaseUrl(username: String): String =
@@ -85,18 +98,13 @@ class AfricasTalkingSms(
         }
 
         val recipient =
-            runCatching {
-                Json
-                    .parseToJsonElement(
-                        body,
-                    ).jsonObject["SMSMessageData"]!!
-                    .jsonObject["Recipients"]!!
-                    .jsonArray
-                    .firstOrNull()
-                    ?.jsonObject
-            }.getOrNull()
-        val code = recipient?.get("statusCode")?.jsonPrimitive?.intOrNull
-        val messageId = recipient?.get("messageId")?.jsonPrimitive?.content
+            runCatching { CircasoJson.decodeFromString(SendSmsReply.serializer(), body) }
+                .getOrNull()
+                ?.data
+                ?.recipients
+                ?.firstOrNull()
+        val code = recipient?.statusCode
+        val messageId = recipient?.messageId
 
         return when (code) {
             100, 101, 102 -> {

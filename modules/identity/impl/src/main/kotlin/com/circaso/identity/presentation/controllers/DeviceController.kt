@@ -54,7 +54,7 @@ fun Route.deviceController(devices: DeviceService) {
                     val token = call.receive<PushTokenRequest>().pushToken
                     val result: Resource<Unit> =
                         if (token.isBlank()) {
-                            Resource.error(SharedError.Malformed(mapOf("pushToken" to "is required")))
+                            Resource.error(SharedError.Malformed("pushToken", "is required"))
                         } else {
                             devices.updatePushToken(call.principal().toPrincipal(), token)
                         }

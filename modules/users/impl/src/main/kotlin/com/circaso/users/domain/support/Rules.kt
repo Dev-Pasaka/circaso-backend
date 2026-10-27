@@ -11,6 +11,7 @@ import com.circaso.users.domain.models.Profile
 import com.circaso.users.domain.ports.AvatarStorage
 import com.circaso.users.domain.ports.ReachCache
 import com.circaso.users.domain.ports.RealtimeFrames
+import com.circaso.users.domain.ports.UsersFrame
 import com.circaso.users.domain.repositories.BlockRepository
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.ProfileRepository
@@ -139,29 +140,15 @@ class ProfileViews(private val avatars: AvatarStorage, private val contacts: Con
 /** Realtime frames `users` sends: a thin helper so use cases name what happened, not how it travels. */
 class UserNotifier(private val frames: RealtimeFrames, private val contacts: ContactRepository) {
     suspend fun contactJoined(owner: UserId, joined: Profile) =
-        frames.send(
-            owner,
-            "contact.joined",
-            mapOf(
-                "userId" to joined.userId.toString(),
-                "displayName" to joined.displayName,
-            ),
-        )
+        frames.send(owner, UsersFrame.ContactJoined(joined.userId, joined.displayName))
 
     suspend fun connectionAdded(to: UserId, other: Profile) =
-        frames.send(
-            to,
-            "connection.added",
-            mapOf(
-                "userId" to other.userId.toString(),
-                "displayName" to other.displayName,
-            ),
-        )
+        frames.send(to, UsersFrame.ConnectionAdded(other.userId, other.displayName))
 
     /** Tells the people who have [userId] saved that the profile changed. */
     suspend fun profileUpdated(userId: UserId, version: Long) {
         for (owner in contacts.ownersOf(userId, FAN_OUT_LIMIT)) {
-            frames.send(owner, "profile.updated", mapOf("userId" to userId.toString(), "version" to version.toString()))
+            frames.send(owner, UsersFrame.ProfileUpdated(userId, version))
         }
     }
 

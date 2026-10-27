@@ -17,7 +17,7 @@ class ListChat(private val chat: ChatRepository) {
         val before =
             cursor?.let {
                 runCatching { UUID.fromString(it) }.getOrNull()
-                    ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid")))
+                    ?: return Resource.error(SharedError.Malformed("cursor", "invalid"))
             }
         val size = limit.coerceIn(1, 100)
         val rows = chat.list(userId, before, size + 1)

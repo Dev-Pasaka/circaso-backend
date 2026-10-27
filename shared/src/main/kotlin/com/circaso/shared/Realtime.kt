@@ -1,8 +1,10 @@
 package com.circaso.shared
 
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.serializer
 import java.time.Instant
 
 /** Every server-to-client frame has this shape; the app routes on [module], then [type]. */
@@ -16,8 +18,50 @@ data class RealtimeEnvelope(
     /** Increases per user per module, so the app can tell what it missed. */
     val seq: Long,
     @Serializable(with = InstantSerializer::class) val ts: Instant,
+    /** The frame's own class, encoded by [of]; never built by hand (decision 2026-10-27). */
     val data: JsonElement,
-)
+) {
+    companion object {
+        /**
+         * A frame whose `data` is [frame] encoded with its own serializer, so the compiler checks every field and a
+         * number goes out as a number. Every producer builds its envelope here.
+         */
+        fun <T> of(
+            module: String,
+            type: String,
+            seq: Long,
+            frame: T,
+            serializer: SerializationStrategy<T>,
+            ts: Instant = Instant.now(),
+            id: String = Uuid7.generate().toString(),
+        ): RealtimeEnvelope =
+            RealtimeEnvelope(
+                module = module,
+                type = type,
+                id = id,
+                seq = seq,
+                ts = ts,
+                data = CircasoJson.encodeToJsonElement(serializer, frame),
+            )
+
+        /** The `resync` frame a [RealtimeReplay] answers when the gap is older than what it keeps. */
+        fun resync(
+            module: String,
+            seq: Long,
+            ts: Instant = Instant.now(),
+        ): RealtimeEnvelope = of(module, "resync", seq, ResyncFrame, ResyncFrame.serializer(), ts)
+    }
+}
+
+/** Reads a frame's `data` back into its class, as a test or a consumer that kept the envelope does. */
+fun <T> RealtimeEnvelope.decodeData(deserializer: DeserializationStrategy<T>): T =
+    CircasoJson.decodeFromJsonElement(deserializer, data)
+
+inline fun <reified T> RealtimeEnvelope.decodeData(): T = decodeData(serializer<T>())
+
+/** `resync`: the gap is older than the 7 days a module keeps, so the app reloads that module over HTTP. No fields. */
+@Serializable
+data object ResyncFrame
 
 /** How a module sends a frame to one user. The gateway finds the node holding the socket, or falls back to push. */
 interface Realtime {
@@ -41,8 +85,21 @@ data class ClientFrame(
     val module: String,
     /** For example `ack`, `read`, `typing`. */
     val type: String,
-    val data: JsonElement = JsonObject(emptyMap()),
+    /** Raw until the module that handles [type] reads it with [decodeData] into that frame's class. */
+    val data: JsonElement = NO_DATA,
 )
+
+/** What a phone frame without `data` carries: `{}`, so a frame class whose fields all have defaults still reads. */
+private val NO_DATA: JsonElement = CircasoJson.parseToJsonElement("{}")
+
+/**
+ * The phone frame's `data` as [deserializer]'s class. Throws `SerializationException` when it doesn't fit, which the
+ * hub logs and drops without closing the socket.
+ */
+fun <T> ClientFrame.decodeData(deserializer: DeserializationStrategy<T>): T =
+    CircasoJson.decodeFromJsonElement(deserializer, data)
+
+inline fun <reified T> ClientFrame.decodeData(): T = decodeData(serializer<T>())
 
 /**
  * Implemented by a module that takes frames from the phone. The hub calls it in the order the frames arrive on one

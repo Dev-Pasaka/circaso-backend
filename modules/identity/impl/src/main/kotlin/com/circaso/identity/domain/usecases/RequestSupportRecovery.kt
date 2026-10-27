@@ -13,8 +13,8 @@ import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.IdentityStore
 import com.circaso.identity.domain.repositories.ProviderRepository
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
-import com.circaso.integrations.api.EmailTemplate
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.Uuid7
@@ -73,7 +73,7 @@ class RequestSupportRecovery(
             .links(
                 target.userId,
             ).firstNotNullOfOrNull { it.email }
-            ?.let { email.send(it, EmailTemplate.RECOVERY_STARTED) }
+            ?.let { email.send(it, Email.RecoveryStarted) }
         return Resource.success(recovery)
     }
 

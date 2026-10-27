@@ -81,6 +81,16 @@ class AfricasTalkingSmsTest {
     }
 
     @Test
+    fun `a reply with no recipients or no status code is Unavailable`() {
+        reply = """{"SMSMessageData":{"Message":"Sent to 0/1","Recipients":[]}}"""
+        assertIs<IntegrationError.Unavailable>((send() as Resource.Error).error)
+        reply = """{"SMSMessageData":{"Recipients":[{"number":"+254712345678"}]}}"""
+        assertIs<IntegrationError.Unavailable>((send() as Resource.Error).error)
+        reply = """{"other":1}"""
+        assertIs<IntegrationError.Unavailable>((send() as Resource.Error).error)
+    }
+
+    @Test
     fun `bad credentials, an outage and an unreadable answer are all Unavailable`() {
         status = 401
         assertIs<IntegrationError.Unavailable>((send() as Resource.Error).error)

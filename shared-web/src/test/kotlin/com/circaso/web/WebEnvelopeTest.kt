@@ -4,7 +4,9 @@ import com.circaso.shared.DomainError
 import com.circaso.shared.DomainException
 import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.FieldError
 import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -88,6 +90,10 @@ class WebEnvelopeTest {
                     get(
                         "/missing",
                     ) { call.respondDefault(Resource.error(ProfileMissing()).toDefaultResponse<Hello, Hello> { it }) }
+                    get("/bad-field") {
+                        val fields = listOf(FieldError("displayName", "required"), FieldError("about", "too long"))
+                        call.respondDefault(SharedError.Malformed(fields).toDefaultResponse<Hello>())
+                    }
                     get("/throws-domain") { throw DomainException(Taken()) }
                     get("/boom") { error("secret vendor detail: api-key-123") }
                     post(
@@ -156,6 +162,23 @@ class WebEnvelopeTest {
             assertEquals(HttpStatusCode.TooManyRequests, response.status)
             assertEquals("600", response.headers[HttpHeaders.RetryAfter])
             assertEquals(600, body["details"]!!.jsonObject["retryAfterSeconds"]!!.jsonPrimitive.int)
+        }
+
+    @Test
+    fun `field errors are a list of field and problem`() =
+        app {
+            val response = client.get("/bad-field")
+            val details = Json.decodeFromString<DefaultResponse<Hello>>(response.bodyAsText()).details
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            assertEquals(
+                listOf(FieldErrorDto("displayName", "required"), FieldErrorDto("about", "too long")),
+                details?.fields,
+            )
+            assertTrue(
+                """"fields":[{"field":"displayName","problem":"required"}""" in response.bodyAsText(),
+                response.bodyAsText(),
+            )
         }
 
     @Test

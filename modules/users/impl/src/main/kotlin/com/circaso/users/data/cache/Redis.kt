@@ -20,10 +20,9 @@ import com.circaso.users.domain.ports.RealtimeLog
 import com.circaso.users.domain.ports.StoredAvatar
 import com.circaso.users.domain.ports.UploadedKey
 import com.circaso.users.domain.ports.UsersCache
+import com.circaso.users.domain.ports.UsersFrame
 import io.kandra.runtime.dsl.KandraColumnRef
 import io.kandra.runtime.repository.KandraSuspendRepository
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
 import java.time.Clock
@@ -138,22 +137,10 @@ class RealtimeFramesImpl(
     private val clock: Clock,
 ) : RealtimeFrames,
     RealtimeLog {
-    override suspend fun send(
-        userId: UserId,
-        type: String,
-        data: Map<String, String>,
-    ) {
+    override suspend fun send(userId: UserId, frame: UsersFrame) {
         runCatching {
             val seq = redis.incrementRenewing("seq:$userId", SEQ_TTL)
-            val envelope =
-                RealtimeEnvelope(
-                    "users",
-                    type,
-                    Uuid7.generate().toString(),
-                    seq,
-                    clock.instant(),
-                    JsonObject(data.mapValues { JsonPrimitive(it.value) }),
-                )
+            val envelope = frame.toEnvelope(seq, clock.instant())
             frames.save(
                 UsersRealtimeRow(
                     userId.value,
@@ -162,7 +149,7 @@ class RealtimeFramesImpl(
                 ),
             )
             realtime.deliver(userId, envelope)
-        }.onFailure { log.warn("realtime frame not sent: type={}", type, it) }
+        }.onFailure { log.warn("realtime frame not sent: type={}", frame.javaClass.simpleName, it) }
     }
 
     override suspend fun since(

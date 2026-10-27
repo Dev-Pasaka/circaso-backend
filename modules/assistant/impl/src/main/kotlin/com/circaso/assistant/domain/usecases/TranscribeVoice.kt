@@ -22,7 +22,7 @@ class TranscribeVoice(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(userId: UserId, clip: VoiceClip): Resource<Transcript> {
-        if (clip.audio.isEmpty()) return Resource.error(SharedError.Malformed(mapOf("audio" to "is empty")))
+        if (clip.audio.isEmpty()) return Resource.error(SharedError.Malformed("audio", "is empty"))
         if (clip.claimedSeconds > config.maxVoiceSeconds) return Resource.error(AssistantError.VoiceTooLong)
 
         val day = clock.today()

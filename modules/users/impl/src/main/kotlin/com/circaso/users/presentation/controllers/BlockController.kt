@@ -91,4 +91,4 @@ fun Route.blockController(blocks: BlockService) {
     }
 }
 
-private fun <T> invalidUserId(): Resource<T> = Resource.error(SharedError.Malformed(mapOf("userId" to "is not valid")))
+private fun <T> invalidUserId(): Resource<T> = Resource.error(SharedError.Malformed("userId", "is not valid"))

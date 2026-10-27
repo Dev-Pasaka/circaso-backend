@@ -38,9 +38,7 @@ import java.util.UUID
 
 private fun malformed(field: String, why: String = "is not valid") =
     Resource.error(
-        SharedError.Malformed(
-            mapOf(field to why),
-        ),
+        SharedError.Malformed(field, why),
     )
 
 // ---- request → command: shape checks live here and answer `request.malformed` ----

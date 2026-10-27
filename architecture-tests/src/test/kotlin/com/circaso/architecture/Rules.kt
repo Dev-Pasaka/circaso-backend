@@ -640,6 +640,79 @@ object Rules {
             other + builds
         }
 
+    /** Hand-built or hand-read JSON, and maps standing in for a payload class (decision 2026-10-27). */
+    private val untypedPayloads =
+        listOf(
+            "Map<String, Any" to "a Map<String, Any> payload",
+            "buildJsonObject" to "buildJsonObject",
+            "JsonObject(" to "JsonObject(…)",
+            ".jsonObject[" to ".jsonObject[…]",
+            ".jsonPrimitive" to ".jsonPrimitive",
+        )
+
+    /**
+     * Main-source files that may still build or read JSON by hand, by path under `com/circaso/`, with why. Every
+     * other file uses typed `@Serializable` classes.
+     */
+    val untypedPayloadAllowList: Map<String, String> =
+        linkedMapOf(
+            // Owned by the parallel slices that convert them. Each entry is removed when MS4, AI1b or WS1 merges.
+            "integrations/impl/fcm/FcmPush.kt" to
+                "MS4 converts it; FCM's `data` stays a string map, the FCM API requires it, encoded from a typed class",
+            "messaging/data/cache/RealtimeFramesImpl.kt" to
+                "MS4 converts the messaging frames",
+            "messaging/domain/ports/Ports.kt" to
+                "MS4 converts the messaging frames",
+            "integrations/impl/workersai/WorkersAiGateway.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiLanguageModel.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiLiveSpeech.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiLiveTranscription.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiSpeechToText.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiTextToSpeech.kt" to
+                "AI1b converts Workers AI",
+            "integrations/impl/workersai/WorkersAiVisionModel.kt" to
+                "AI1b converts Workers AI",
+            "assistant/data/tools/HttpAgentTools.kt" to
+                "AI1b converts Asha's tools",
+            "assistant/presentation/controllers/LiveVoiceController.kt" to
+                "AI1b converts the live-voice frames",
+            // Not payloads, so they stay.
+            "gateway/ApiDocsCatalog.kt" to
+                "the OpenAPI generator builds a JSON schema document",
+            "infrastructure/impl/grpc/PeerGrpcClients.kt" to
+                "grpc-java takes its retry service config as a Map<String, Any>",
+            "infrastructure/impl/logging/LineFormatter.kt" to
+                "a log line's fields, read from logback, not a payload",
+        )
+
+    /**
+     * Every payload is a typed `@Serializable` data class: no `Map<String, Any>`, `buildJsonObject`, `JsonObject(…)`,
+     * `.jsonObject[…]` or `.jsonPrimitive` in main sources outside [untypedPayloadAllowList] (decision 2026-10-27).
+     */
+    fun payloadsAreTyped(files: List<KoFileDeclaration>): List<String> =
+        files
+            .filter { file ->
+                val path = file.path.replace('\\', '/')
+                untypedPayloadAllowList.keys.none { path.endsWith("/$it") }
+            }.flatMap { file ->
+                untypedPayloadUses(file).map { what ->
+                    violation(
+                        file,
+                        "uses $what; payloads are typed @Serializable data classes (decode and encode with their " +
+                            "serializer)",
+                    )
+                }
+            }
+
+    /** What untyped JSON or payload maps [file] uses, whether or not it is allowed to. */
+    fun untypedPayloadUses(file: KoFileDeclaration): List<String> =
+        untypedPayloads.filter { (pattern, _) -> pattern in file.text }.map { (_, what) -> what }
+
     val all: Map<String, (List<KoFileDeclaration>) -> List<String>> =
         linkedMapOf(
             "domainIsPureKotlin" to ::domainIsPureKotlin,
@@ -659,5 +732,6 @@ object Rules {
             "routesGroupByPath" to ::routesGroupByPath,
             "controllersAreRouteFunctions" to ::controllersAreRouteFunctions,
             "httpOnlyThroughKtor" to ::httpOnlyThroughKtor,
+            "payloadsAreTyped" to ::payloadsAreTyped,
         )
 }

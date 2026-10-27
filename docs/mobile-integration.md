@@ -9,6 +9,11 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-27 (breaking, update the app):**
+> 1. `details.fields` in the error envelope is now a **list** `[{ "field": "displayName", "problem": "required" }]`, no longer an object of field name to problem (section 3).
+> 2. The realtime auth frame's `last` is now a **list** `[{ "module": "users", "seq": 1042 }]`, no longer an object `{ "users": 1042 }`; the old form is refused with `invalid last` (section 8).
+> 3. `profile.updated`'s `version` is now a JSON **number**, not a string (section 8).
+
 ## 2. Status at a glance
 
 Of the **59** routes the phone calls: **45 READY**, **8 PARTIAL**, **6 DEV STUB**.
@@ -52,7 +57,7 @@ Of the **59** routes the phone calls: **45 READY**, **8 PARTIAL**, **6 DEV STUB*
 { "httpStatusCode": 200, "status": true, "message": "Success", "code": null,
   "details": null, "requestId": "…", "data": { } }
 ```
-On failure `status` is `false`, `data` is `null`, and `code` is a stable string such as `identity.code_invalid`. **Key your UI text on `code`, never on `message`.** `details.retryAfterSeconds` (also the `Retry-After` header) and `details.fields` (field → what is wrong) may be set. Log `requestId` and show it on error screens; Pasaka can find the exact trace from it.
+On failure `status` is `false`, `data` is `null`, and `code` is a stable string such as `identity.code_invalid`. **Key your UI text on `code`, never on `message`.** `details.retryAfterSeconds` (also the `Retry-After` header) and `details.fields` may be set: a list of the fields that are wrong, each `{ "field": "displayName", "problem": "required" }` (changed on 2026-10-27; it was an object of field name to problem). Log `requestId` and show it on error screens; Pasaka can find the exact trace from it.
 
 **What the app does with the common failures**
 
@@ -341,9 +346,9 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 
 While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSockets` plugin; the server pings every 25 seconds). The **first frame** must authenticate within a few seconds or the server closes it:
 ```json
-{ "type": "auth", "accessToken": "<app token>", "last": { "users": 1042 } }
+{ "type": "auth", "accessToken": "<app token>", "last": [{ "module": "users", "seq": 1042 }] }
 ```
-`last` maps each module to the last `seq` the app saw, for example `{ "users": 1042, "messaging": 17 }` (omit or send `{}` on first connect). Only an **app**-scope token is accepted. The server then replays what was missed and sends live frames:
+`last` lists the last `seq` the app saw for each module, one entry per module, for example `[{ "module": "users", "seq": 1042 }, { "module": "messaging", "seq": 17 }]` (omit it or send `[]` on first connect). Changed on 2026-10-27: it was an object `{ "users": 1042 }`, which is now refused. Only an **app**-scope token is accepted. The server then replays what was missed and sends live frames:
 ```json
 { "module": "users", "type": "contact.joined", "id": "0193…", "seq": 1043, "ts": "2026-10-24T18:07:12Z", "data": { "userId": "…", "displayName": "Amina" } }
 ```
@@ -354,7 +359,7 @@ While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSock
 | Code | Reason | Do |
 | --- | --- | --- |
 | 1008 | `auth required` | The first frame wasn't `{"type":"auth",…}` or came after 10 seconds. Fix the client; reconnecting with the same frame fails again. |
-| 1008 | `invalid last` | `last` isn't an object of module name to whole number (`{"users":"x"}` is refused). Send `{}` or valid numbers. |
+| 1008 | `invalid last` | `last` isn't a list of `{ "module", "seq" }` with whole numbers, or names a module twice (`[{"module":"users","seq":"x"}]` and the old object form `{"users":5}` are refused). Send `[]` or valid entries. |
 | 1008 | `unauthorized` | The token is expired, revoked or not an `app` token. Refresh, then reconnect; if refresh fails, show sign-in. |
 | 1008 | `session revoked` | Comes right after a `system` / `session.revoked` frame. Clear tokens, show sign-in; don't reconnect. |
 | 1009 | `Frame is too big: …` | You sent a frame over 64 KB. A client bug: don't resend it. |
@@ -365,10 +370,10 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 | `module` / `type` | `data` | Do |
 | --- | --- | --- |
-| `system` / `session.revoked` | empty | The session ended: you signed out (on this socket's session), a new phone took over, or the account was closed. Clear tokens, show sign-in. The socket then closes with `session revoked`. |
+| `system` / `session.revoked` | empty (`{}`) | The session ended: you signed out (on this socket's session), a new phone took over, or the account was closed. Clear tokens, show sign-in. The socket then closes with `session revoked`. |
 | `users` / `contact.joined` | `userId`, `displayName` | Someone from your phone book joined: add them to the contacts list. |
 | `users` / `connection.added` | `userId`, `displayName` | Someone connected with you (QR or invite). |
-| `users` / `profile.updated` | `userId`, `version` | A contact changed their profile: reload that profile if `version` is newer than yours. |
+| `users` / `profile.updated` | `userId`, `version` (number) | A contact changed their profile: reload that profile if `version` is newer than yours. |
 | `messaging` / `member.added` | `chatId`, `userIds` (everyone this action added), `byUserId` | One frame per member per action (a group created, or one add of several people), to every member and the people added. Send the newcomers your current sender key; if you are in `userIds`, load the chat (`GET /v1/chats/{chatId}`). Pushed to the people added when offline ("You were added to a group"). |
 | `messaging` / `member.removed` | `chatId`, `userId` (the person removed or who left), `byUserId` | To every member and the person. Remaining phones make a new sender key before their next group message; if it is you, drop the chat. |
 | `messaging` / `chat.updated` | `chatId`, `metaVersion` (number), `version` (number) | The sealed name, avatar, settings or roles changed (a role change, a handover, or the owner leaving): reload the chat if `version` is newer than yours. |
@@ -471,7 +476,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
 - **DeviceProofDto** — `timestamp`: string; `signature`: string
-- **ErrorDetailsDto** — `retryAfterSeconds`?: integer|null; `fields`?: map<string,string>
+- **ErrorDetailsDto** — `retryAfterSeconds`?: integer|null; `fields`?: [FieldErrorDto]
+- **FieldErrorDto** — `field`: string; `problem`: string
 - **HandleAvailabilityResponse** — `handle`: string; `available`: boolean; `status`: string; `suggestion`?: string|null
 - **HealthReport** — `status`: string; `checks`?: map<string,string>
 - **InviteResponse** — `token`: string; `url`: string; `qrPayload`: string; `expiresAt`: string

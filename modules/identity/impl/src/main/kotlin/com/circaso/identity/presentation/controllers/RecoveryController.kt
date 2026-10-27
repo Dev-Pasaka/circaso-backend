@@ -50,7 +50,7 @@ fun Route.recoveryController(recovery: RecoveryService) {
                 val id = parseUuid(call.parameters["requestId"])
                 val result =
                     if (id == null) {
-                        Resource.error(SharedError.Malformed(mapOf("requestId" to "is not valid")))
+                        Resource.error(SharedError.Malformed("requestId", "is not valid"))
                     } else {
                         recovery.get(call.principal().toPrincipal(), id)
                     }

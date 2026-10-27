@@ -43,9 +43,7 @@ class StartTurn(
         val text = command.text.trim()
         if (text.isEmpty() || text.length > config.maxMessageChars) {
             return Resource.error(
-                SharedError.Malformed(
-                    mapOf("text" to "must be 1 to ${config.maxMessageChars} characters"),
-                ),
+                SharedError.Malformed("text", "must be 1 to ${config.maxMessageChars} characters"),
             )
         }
         val userId = command.userId

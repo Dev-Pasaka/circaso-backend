@@ -44,7 +44,7 @@ fun Application.installRequestDecodingErrors() {
             proceed()
         } catch (cause: Throwable) {
             if (call.request.appliedDecoders.isEmpty() || !cause.isDecodingFailure()) throw cause
-            call.respondError(SharedError.Malformed(mapOf("body" to "could not be decoded")))
+            call.respondError(SharedError.Malformed("body", "could not be decoded"))
             finish()
         }
     }

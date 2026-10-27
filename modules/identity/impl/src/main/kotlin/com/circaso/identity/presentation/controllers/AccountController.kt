@@ -85,7 +85,7 @@ fun Route.accountController(account: AccountService) {
                     val provider = parseProvider(call.parameters["provider"])
                     val result: Resource<Unit> =
                         if (provider == null) {
-                            Resource.error(SharedError.Malformed(mapOf("provider" to "is not valid")))
+                            Resource.error(SharedError.Malformed("provider", "is not valid"))
                         } else {
                             account.unlink(call.principal().toPrincipal(), provider)
                         }

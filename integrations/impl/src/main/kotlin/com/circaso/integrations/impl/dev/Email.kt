@@ -1,8 +1,8 @@
 package com.circaso.integrations.impl.dev
 
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailReceipt
-import com.circaso.integrations.api.EmailTemplate
 import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.util.UUID
@@ -14,33 +14,26 @@ class LogEmail : EmailGateway {
 
     override suspend fun send(
         to: String,
-        template: EmailTemplate,
-        variables: Map<String, String>,
+        email: Email,
         idempotencyKey: String?,
     ): Resource<EmailReceipt> {
-        log.info("email: {}", template)
+        log.info("email: {}", email.template)
         return Resource.success(EmailReceipt(UUID.randomUUID().toString(), "log"))
     }
 }
 
 /** Tests: records every email for assertions. */
 class FakeEmail : EmailGateway {
-    data class Sent(
-        val to: String,
-        val template: EmailTemplate,
-        val variables: Map<String, String>,
-        val idempotencyKey: String? = null,
-    )
+    data class Sent(val to: String, val email: Email, val idempotencyKey: String? = null)
 
     val sent: MutableList<Sent> = CopyOnWriteArrayList()
 
     override suspend fun send(
         to: String,
-        template: EmailTemplate,
-        variables: Map<String, String>,
+        email: Email,
         idempotencyKey: String?,
     ): Resource<EmailReceipt> {
-        sent += Sent(to, template, variables, idempotencyKey)
+        sent += Sent(to, email, idempotencyKey)
         return Resource.success(EmailReceipt("fake-${sent.size}", "fake"))
     }
 }

@@ -137,6 +137,17 @@ class RuleFixturesTest {
         assertFlags("httpOnlyThroughKtor", "imports 'java.net.http.HttpClient'", "builds an HttpClient")
 
     @Test
+    fun `payloads are typed classes, not maps or hand-built JSON`() =
+        assertFlags(
+            "payloadsAreTyped",
+            "a Map<String, Any> payload",
+            "buildJsonObject",
+            "JsonObject(…)",
+            ".jsonObject[…]",
+            ".jsonPrimitive",
+        )
+
+    @Test
     fun `a controller is a function on Route, not a class`() =
         assertFlags("controllersAreRouteFunctions", "'ProfileController' is a class", "no 'fun Route.xController")
 }

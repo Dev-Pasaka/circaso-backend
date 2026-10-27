@@ -37,6 +37,7 @@ import com.circaso.identity.domain.usecases.VerifyPhoneCode
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CodeCheck
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailReceipt
 import com.circaso.integrations.api.EmailTemplate
@@ -108,11 +109,10 @@ class RecordingEmail : EmailGateway {
 
     override suspend fun send(
         to: String,
-        template: EmailTemplate,
-        variables: Map<String, String>,
+        email: Email,
         idempotencyKey: String?,
     ): Resource<EmailReceipt> {
-        sent += template
+        sent += email.template
         keys += idempotencyKey
         return Resource.success(EmailReceipt("e", "test"))
     }

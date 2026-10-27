@@ -33,13 +33,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.builtins.MapSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import org.slf4j.LoggerFactory
 import java.time.Duration
-import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.SocketHub")
@@ -58,7 +53,8 @@ private const val INVALID_LAST = "invalid last"
 private const val UNAUTHORIZED = "unauthorized"
 private const val SESSION_REVOKED = "session revoked"
 
-private val lastSerializer = MapSerializer(String.serializer(), Long.serializer())
+/** The heartbeat, `{"type":"ping"}`, encoded once. */
+private val PING = CircasoJson.encodeToString(PingFrame.serializer(), PingFrame())
 
 /** What a node publishes on `rt:node:{nodeId}` for the node that holds the user's socket, or on `rt:fanout` for all. */
 @Serializable
@@ -235,13 +231,12 @@ class SocketHub(
                 .orEmpty()
         if (targets.isEmpty()) return
         val frame =
-            RealtimeEnvelope(
+            RealtimeEnvelope.of(
                 "system",
                 "session.revoked",
-                Uuid7.generate().toString(),
                 nextSystemSeq(message.userId),
-                Instant.now(),
-                JsonObject(emptyMap()),
+                SessionRevokedFrame,
+                SessionRevokedFrame.serializer(),
             )
         targets.forEach {
             send(it, frame)
@@ -291,7 +286,7 @@ class SocketHub(
                         while (true) {
                             delay(HEARTBEAT_MILLIS)
                             redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
-                            runCatching { send(Frame.Text("""{"type":"ping"}""")) }
+                            runCatching { send(Frame.Text(PING)) }
                         }
                     }
                 try {
@@ -306,29 +301,32 @@ class SocketHub(
 
     /**
      * Reads the auth frame. Anything but an auth frame is refused with `auth required`; an auth frame whose `last`
-     * isn't a map of module to `seq` with `invalid last`, so the phone can tell a bug in its own frame from a missing
-     * token; a token that doesn't verify as an app token with `unauthorized`.
+     * isn't a list of `{module, seq}` with whole numbers, or names a module twice, with `invalid last`, so the phone
+     * can tell a bug in its own frame from a missing token; a token that doesn't verify as an app token with
+     * `unauthorized`.
      */
     private suspend fun WebSocketSession.authenticate(): Auth {
         val text = firstText() ?: return Auth.Gone
-        val hello =
-            runCatching { CircasoJson.decodeFromString(Hello.serializer(), text) }
+        val header =
+            runCatching { CircasoJson.decodeFromString(AuthHeader.serializer(), text) }
                 .getOrNull()
                 ?.takeIf { it.type == "auth" }
                 ?: return Auth.Refused(AUTH_REQUIRED)
-        val last = parseLast(hello.last) ?: return Auth.Refused(INVALID_LAST)
+        val last = parseLast(text) ?: return Auth.Refused(INVALID_LAST)
         val principal =
-            (verifier.verify(hello.accessToken) as? Resource.Success)
+            (verifier.verify(header.accessToken) as? Resource.Success)
                 ?.data
                 ?.takeIf { it.scope == Scope.APP }
                 ?: return Auth.Refused(UNAUTHORIZED)
         return Auth.Accepted(principal, last)
     }
 
-    /** The phone's last `seq` per module: empty when it sent none, null when it isn't a map of module to number. */
-    private fun parseLast(raw: JsonElement?): Map<String, Long>? {
-        if (raw == null) return emptyMap()
-        return runCatching { CircasoJson.decodeFromJsonElement(lastSerializer, raw) }.getOrNull()
+    /** The phone's last `seq` per module, empty when it sent none; null when `last` is malformed. */
+    private fun parseLast(text: String): Map<String, Long>? {
+        val last =
+            runCatching { CircasoJson.decodeFromString(AuthFrame.serializer(), text) }.getOrNull()?.last ?: return null
+        val byModule = last.associate { it.module to it.seq }
+        return byModule.takeIf { it.size == last.size }
     }
 
     /**
@@ -405,10 +403,6 @@ class SocketHub(
             }
         }
     }
-
-    /** `last` stays raw here so a malformed one is told apart from a frame that isn't an auth frame at all. */
-    @Serializable
-    private data class Hello(val type: String, val accessToken: String = "", val last: JsonElement? = null)
 
     companion object {
         /** The largest frame a phone may send (plan GW1: 64 KB, the largest chat ciphertext). */

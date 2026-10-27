@@ -110,7 +110,7 @@ fun Route.chatController(chat: ChatService) {
                             if (id ==
                                 null
                             ) {
-                                Resource.error(SharedError.Malformed(mapOf("messageId" to "is not valid")))
+                                Resource.error(SharedError.Malformed("messageId", "is not valid"))
                             } else {
                                 chat.deleteOne(call.userId(), id, call.callId)
                             }

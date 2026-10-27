@@ -190,7 +190,7 @@ private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conver
     val frame = runCatching { CircasoJson.decodeFromString(LiveClientFrame.serializer(), text) }.getOrNull()
     if (frame == null) {
         // a `tool_results` the phone got wrong is answered, so the phone can send it again; the turn keeps waiting
-        if (typeOf(text) == "tool_results") sendError(SharedError.Malformed(mapOf("snippets" to "are not valid")))
+        if (typeOf(text) == "tool_results") sendError(SharedError.Malformed("snippets", "are not valid"))
         return
     }
     when (frame.type) {

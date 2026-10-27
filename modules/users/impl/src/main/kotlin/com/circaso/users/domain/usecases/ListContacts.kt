@@ -26,7 +26,7 @@ class ListContacts(
         val after =
             cursor?.let {
                 runCatching { UUID.fromString(it) }.getOrNull()
-                    ?: return Resource.error(SharedError.Malformed(mapOf("cursor" to "invalid")))
+                    ?: return Resource.error(SharedError.Malformed("cursor", "invalid"))
             }
         val size = limit.coerceIn(1, 200)
 
