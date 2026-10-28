@@ -83,7 +83,6 @@ fun Route.walletController(wallets: WalletService) {
                 }.docs<NoBody, ChainsResponse>(
                     "W12 · The supported chains, and which your wallet is on",
                     TAG,
-                    listOf(CUSTODY),
                     notes =
                         "$SCOPE Each chain is `ENABLED`, `ADDING` (asked for, not signed yet) or `AVAILABLE`. " +
                             "`defaultChain` is where a new wallet starts.",
@@ -107,7 +106,8 @@ fun Route.walletController(wallets: WalletService) {
                     notes =
                         "$SCOPE Answers `ADDING` with a challenge to run in the Circle SDK (the PIN creates the " +
                             "wallet on that chain), or `ENABLED` with no challenge when the wallet is already on " +
-                            "it. The new chain shows in W1 once Circle has made it.",
+                            "it. Circle is asked first every time, so a chain signed elsewhere is found rather than " +
+                            "made twice. The new chain shows in W1 once Circle has made it.",
                 )
             }
         }

@@ -172,8 +172,8 @@ The shared ones, then each area's own. Codes are stable.
 | `wallet.already_exists` | 409 | `POST /v1/wallet` when the wallet is already set up |
 | `wallet.not_ready` | 409 | The wallet is still being set up (the PIN isn't set yet), so a chain can't be added |
 | `wallet.chain_unsupported` | 400 | A blockchain the server doesn't support; `GET /v1/wallet/chains` lists those that are |
-| `wallet.funds_remaining` | 409 | Deleting the account while the wallet holds 0.01 USDC or more on any chain: send it out first |
-| `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call; try again |
+| `wallet.funds_remaining` | 409 | Deleting the account while the wallet holds 0.01 or more of a US dollar stablecoin (USDC), or any amount of any other asset, on any chain: send it out first |
+| `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer supported; try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |

@@ -32,7 +32,18 @@ class WalletSync(
     private val clock: Clock,
 ) {
     /** Every wallet of [user] after recording the new ones; `wallet.custody_unavailable` if Circle can't answer. */
-    suspend fun sync(user: CircleUser): Resource<List<ChainWallet>> {
+    suspend fun sync(user: CircleUser): Resource<List<ChainWallet>> =
+        when (val synced = syncAll(user)) {
+            is Resource.Success -> Resource.success(synced.data.recorded)
+            is Resource.Error -> synced
+        }
+
+    /**
+     * Our rows and Circle's own list, after recording what Circle has that we don't. Circle's list can hold a wallet
+     * our rows never will (a second wallet on a chain, which `wallets_user_chain_key` refuses), so a decision about
+     * money (the deletion guard) reads [Synced.atCircle].
+     */
+    suspend fun syncAll(user: CircleUser): Resource<Synced> {
         val reported =
             when (val listed = custody.wallets(user.circleUserId.toString()).orCustodyUnavailable()) {
                 is Resource.Success -> listed.data
@@ -40,16 +51,17 @@ class WalletSync(
             }
         val known = wallets.wallets(user.userId).map { it.circleWalletId }.toSet()
         val now = clock.instant()
-        val fresh =
-            reported
-                .filter { it.walletId !in known }
-                .map { it.toChainWallet(user.userId, now) }
+        val atCircle = reported.map { it.toChainWallet(user.userId, now) }
+        val fresh = atCircle.filter { it.circleWalletId !in known }
         if (fresh.isNotEmpty()) record(fresh)
 
         val all = wallets.wallets(user.userId)
         forgetAdded(user, all)
-        return Resource.success(all)
+        return Resource.success(Synced(recorded = all, atCircle = atCircle))
     }
+
+    /** Our rows ([recorded]) and every wallet Circle lists for the user ([atCircle]), recorded or not. */
+    data class Synced(val recorded: List<ChainWallet>, val atCircle: List<ChainWallet>)
 
     private suspend fun record(fresh: List<ChainWallet>) {
         val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain)) }

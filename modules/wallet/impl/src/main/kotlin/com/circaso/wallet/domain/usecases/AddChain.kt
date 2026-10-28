@@ -8,7 +8,6 @@ import com.circaso.wallet.domain.models.ChainAddition
 import com.circaso.wallet.domain.models.ChainStatus
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
-import com.circaso.wallet.domain.models.CircleUser
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.WalletSync
@@ -20,8 +19,9 @@ import com.circaso.wallet.domain.support.orCustodyUnavailable
  * added, and W1 picks the new wallet up from Circle. A chain already on the wallet answers at once with nothing to
  * sign, so the call can be repeated safely.
  *
- * Before asking Circle for a challenge, a chain that is being added is looked up at Circle: the user may already have
- * signed, and a second challenge could make a second wallet on the same chain.
+ * Before asking Circle for a challenge, Circle's wallet list is always read and recorded: the user may already have
+ * signed (on this phone or another, whatever `wal:adding` says), and a second challenge could make a second wallet on
+ * the same chain. `wal:adding` only tells W1 and W12's list when to poll Circle.
  */
 class AddChain(
     private val wallets: WalletRepository,
@@ -33,9 +33,14 @@ class AddChain(
         custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(command.userId) ?: return Resource.error(WalletError.NotFound)
 
-        val known = current(user, command.blockchain)
+        if (wallets.wallets(command.userId).isOn(command.blockchain)) return Resource.success(enabled(command))
+        val known =
+            when (val synced = sync.sync(user)) {
+                is Resource.Success -> synced.data
+                is Resource.Error -> return synced
+            }
         if (known.none { it.isOpen() }) return Resource.error(WalletError.NotReady)
-        if (known.any { it.isOpen() && it.blockchain == command.blockchain }) return Resource.success(enabled(command))
+        if (known.isOn(command.blockchain)) return Resource.success(enabled(command))
 
         val challenge =
             when (
@@ -53,16 +58,7 @@ class AddChain(
         )
     }
 
-    /**
-     * Our rows, after asking Circle when the wallet has none yet or this chain is already being added; an error from
-     * Circle there leaves our rows, and the challenge request that follows will meet the same outage.
-     */
-    private suspend fun current(user: CircleUser, blockchain: String): List<ChainWallet> {
-        val known = wallets.wallets(user.userId)
-        val askCircle = known.none { it.isOpen() } || blockchain in adding.list(user.userId)
-        if (!askCircle) return known
-        return (sync.sync(user) as? Resource.Success)?.data ?: known
-    }
+    private fun List<ChainWallet>.isOn(blockchain: String) = any { it.isOpen() && it.blockchain == blockchain }
 
     private fun enabled(command: AddChainCommand) =
         ChainAddition(command.blockchain, ChainStatus.ENABLED, challengeId = null, sdk = null)

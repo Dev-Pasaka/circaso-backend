@@ -37,7 +37,8 @@ class Harness(
     val clock: Clock = Clock.systemUTC()
 
     val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, clock)
-    private val holdings = HoldingsReader(custody, cache)
+    val warnings = RecordingWarnings()
+    private val holdings = HoldingsReader(custody, cache, warnings)
 
     val getWallet = GetWallet(wallets, sync, adding, holdings, rates)
     val createWallet = CreateWallet(wallets, transactor, custody, sync, clock)

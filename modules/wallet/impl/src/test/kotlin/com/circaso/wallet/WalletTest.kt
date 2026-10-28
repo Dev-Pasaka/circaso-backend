@@ -267,6 +267,28 @@ class WalletTest {
         }
 
     @Test
+    fun `W12 reads Circle before every challenge, so a chain signed elsewhere is found without wal adding`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+            h.custody.sign(circleUserId, "SOL-DEVNET")
+            assertTrue(h.adding.list(amina).isEmpty())
+
+            val addition = h.add(amina, "SOL-DEVNET").data()
+
+            assertEquals(ChainStatus.ENABLED, addition.status)
+            assertEquals(0, h.custody.count("addWallet"))
+        }
+
+    @Test
+    fun `W12 with Circle down asks for no challenge and answers custody unavailable`() =
+        runBlocking<Unit> {
+            h.activeWallet(amina)
+            h.custody.down = true
+            assertEquals("wallet.custody_unavailable", h.add(amina, "SOL-DEVNET").code())
+            assertEquals(0, h.custody.count("addWallet"))
+        }
+
+    @Test
     fun `W12 refuses an unsupported chain, a user with no wallet, and a wallet still being set up`() =
         runBlocking<Unit> {
             assertEquals("wallet.chain_unsupported", h.add(amina, "AVAX-FUJI").code())

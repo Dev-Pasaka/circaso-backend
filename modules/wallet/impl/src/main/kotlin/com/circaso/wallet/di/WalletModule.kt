@@ -11,6 +11,7 @@ import com.circaso.wallet.data.cache.REDIS_PREFIX
 import com.circaso.wallet.data.cache.RedisAddingChains
 import com.circaso.wallet.data.cache.RedisBalanceCache
 import com.circaso.wallet.data.repositories.DatabaseTransactor
+import com.circaso.wallet.data.repositories.LogWalletWarnings
 import com.circaso.wallet.data.repositories.WalletExpiry
 import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
@@ -19,6 +20,7 @@ import com.circaso.wallet.data.tables.WalletsTable
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.ports.BalanceCache
 import com.circaso.wallet.domain.ports.Transactor
+import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.HoldingsReader
@@ -73,6 +75,7 @@ fun walletModule(config: Config): Module =
         single<WalletOutbox> { WalletOutboxImpl(get(named("wallet.database"))) }
         single<BalanceCache> { RedisBalanceCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<AddingChains> { RedisAddingChains(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<WalletWarnings> { LogWalletWarnings() }
         single(named("wallet.purge-expired")) {
             val expiry = WalletExpiry(get(named("wallet.database")))
             ScheduledJob("wallet.purge-expired", PURGE_INTERVAL) { expiry.run() }
@@ -80,7 +83,7 @@ fun walletModule(config: Config): Module =
 
         // domain: helpers and use cases
         single { WalletSync(get(), get(), get(), get(), get(), get(), clock) }
-        single { HoldingsReader(get(), get()) }
+        single { HoldingsReader(get(), get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get(), get(), get(), clock) }
         single { OpenSession(get(), get()) }

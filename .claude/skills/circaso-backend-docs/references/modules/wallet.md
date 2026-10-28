@@ -56,7 +56,7 @@ interface Wallets {                  // read by the assistant later (Phase B pro
 }
 ```
 
-Wallet also implements identity's `DeletionGuard` (refuses while the wallet holds 0.01 or more of a US dollar stablecoin, or any amount of another asset, on any chain; built in WS2), `RealtimeReplay`, and the new `CustodyNotifications` listener from integrations (below).
+Wallet also implements identity's `DeletionGuard` (built in WS2): it refuses with `wallet.funds_remaining` while the wallet holds 0.01 or more of a US dollar stablecoin, or any amount of any other asset, on any chain. It reads Circle, never the cache, for every wallet Circle lists for the user (a second wallet on a chain, which `wallets_user_chain_key` keeps out of our rows, included) and every open row of ours. When Circle can't answer, or a wallet sits on a chain no longer configured, it refuses with `wallet.custody_unavailable` and, for the chain, logs a WARN with the chain and Circle's wallet id (`TODO(decision)`: a chain taken out of configuration while wallets are on it). It also implements `RealtimeReplay`, and the new `CustodyNotifications` listener from integrations (below).
 
 ### Integrations used
 
@@ -176,7 +176,7 @@ Amounts of crypto assets are strings (`amountMinor` in the smallest unit, `amoun
 { "blockchain": "SOL", "status": "ADDING", "challengeId": "c7a3…", "sdk": { … } }
 ```
 
-A chain already on the wallet answers `ENABLED` with no challenge, so a repeat is harmless. Before asking Circle for a challenge on a chain that is already `ADDING`, Circle's wallet list is read, so a user who has signed doesn't get a second challenge (and a second wallet on that chain). A chain that isn't supported answers `wallet.chain_unsupported`; a wallet still `SETTING_UP` answers `wallet.not_ready`. The new chain shows in W1 once Circle has made the wallet, and `wallet.WalletCreated` goes out for it.
+A chain already on the wallet answers `ENABLED` with no challenge, so a repeat is harmless. Otherwise Circle's wallet list is **always** read and recorded before asking for a challenge, whatever `wal:adding` says, so a user who has signed (on this phone or another) doesn't get a second challenge and a second wallet on that chain; Circle being down answers `wallet.custody_unavailable` and asks for nothing. A chain that isn't supported answers `wallet.chain_unsupported`; a wallet still `SETTING_UP` answers `wallet.not_ready`. The new chain shows in W1 once Circle has made the wallet, and `wallet.WalletCreated` goes out for it.
 
 ### W2 Create wallet
 
@@ -333,7 +333,7 @@ A payment between two Circaso users writes two `transactions` rows: the sender's
 | Key | Value | Expiry | Purpose |
 | --- | --- | --- | --- |
 | `wal:balance:{circleWalletId}` | JSON list of the chain's holdings (symbol, token address, decimals, US dollar peg, amount in minor units as a string) | 15 s, cleared on any webhook for the wallet | W1 without calling Circle on every open; the deletion guard never reads it |
-| `wal:adding:{userId}` | hash: field per chain being added (W12) | 1 h from the last add (a challenge's session lasts 60 min) | While present, W1 and W12 read Circle's wallet list so the new chain shows as soon as Circle has it; a field goes when its wallet is recorded |
+| `wal:adding:{userId}` | hash: field per chain being added (W12) | 1 h from the last add (a challenge's session lasts 60 min) | Only tells W1 and W12's list when to poll Circle's wallet list, so the new chain shows as soon as Circle has it; a field goes when its wallet is recorded. W12's add never relies on it: it reads Circle every time |
 | `wal:sent:{userId}:{date}` | minor units sent today | 2 days | Daily limit |
 | `wal:remind:{from}:{to}` | `1` | 24 h | W10 once a day per pair |
 | `wal:seq:{userId}` | counter | 8 days, renewed on use | Next realtime seq for wallet frames |
@@ -394,7 +394,7 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 | `wallet.transfer_not_found` | NOT_FOUND → 404 | No such transfer, or not this user's |
 | `wallet.chain_unsupported` | INVALID → 400 | W12 with a blockchain that isn't in the supported list |
 | `wallet.funds_remaining` | CONFLICT → 409 | `DeletionGuard`: the wallet still holds 0.01 or more of a US dollar stablecoin (USDC), or any amount of another asset, on any chain. Reaches the app as is (decision 2026-10-28) |
-| `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open |
+| `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open; also the `DeletionGuard` when a wallet sits on a chain no longer configured (its balance can't be read, so deletion is refused; a WARN names the chain and Circle's wallet id) |
 
 ## Not in v1
 

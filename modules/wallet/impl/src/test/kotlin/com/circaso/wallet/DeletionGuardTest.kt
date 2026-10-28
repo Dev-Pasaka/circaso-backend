@@ -9,6 +9,7 @@ import java.math.BigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /** Identity's `DeletionGuard` answered by the wallet: nothing left of any US dollar stablecoin worth a cent. */
 class DeletionGuardTest {
@@ -73,6 +74,34 @@ class DeletionGuardTest {
             h.custody.held[signed.walletId] = mapOf("USDC" to BigInteger.valueOf(1_000_000))
 
             assertEquals("wallet.funds_remaining", guard.canDelete(amina).code())
+        }
+
+    @Test
+    fun `a second Circle wallet on a chain, which our rows can't hold, is still checked`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+            val second = h.custody.sign(circleUserId, "BASE-SEPOLIA")
+            h.custody.held[second.walletId] = mapOf("USDC" to BigInteger.valueOf(2_000_000))
+
+            assertEquals("wallet.funds_remaining", guard.canDelete(amina).code())
+            assertEquals(1, h.wallets.wallets(amina).size, "one row per chain: the second was never recorded")
+        }
+
+    @Test
+    fun `a wallet on a chain no longer configured refuses with custody unavailable and warns`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+            val removed = h.custody.sign(circleUserId, "AVAX-FUJI")
+
+            assertEquals("wallet.custody_unavailable", guard.canDelete(amina).code())
+            assertEquals(listOf("AVAX-FUJI" to removed.walletId), h.warnings.chainsNotConfigured)
+            val shown =
+                h
+                    .wallet(amina)
+                    .data()
+                    .chains
+                    .single { it.wallet.blockchain == "AVAX-FUJI" }
+            assertTrue(shown.holdings.isEmpty(), "W1 shows the chain with nothing on it")
         }
 
     @Test

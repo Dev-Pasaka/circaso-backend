@@ -15,7 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
-/** A wallet on several chains (decision 2026-10-28): adding a chain, every offered asset's balance, the chain checks. */
+/** A wallet on several chains (decision 2026-10-28): adding a chain, each offered asset's balance, the chain checks. */
 class CircleMultiChainTest {
     private val circle = FakeCircle()
     private val custody = circle.custody

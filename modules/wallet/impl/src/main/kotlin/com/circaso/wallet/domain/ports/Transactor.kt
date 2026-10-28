@@ -11,6 +11,6 @@ interface Transactor {
     /** Runs [block] in one transaction; [operation] is a string literal naming it in the log line. */
     suspend fun <T> run(operation: String, block: suspend () -> T): T
 
-    /** Like [run]; a block that returns `Resource.Error` rolls the whole transaction back and the error is the answer. */
+    /** Like [run]; a block returning `Resource.Error` rolls the whole transaction back, and the error is the answer. */
     suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T>
 }

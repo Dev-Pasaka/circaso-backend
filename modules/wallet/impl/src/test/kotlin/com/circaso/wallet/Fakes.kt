@@ -29,6 +29,7 @@ import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.ports.BalanceCache
 import com.circaso.wallet.domain.ports.Transactor
+import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import kotlinx.serialization.KSerializer
@@ -258,6 +259,15 @@ class MemoryBalanceCache : BalanceCache {
 
     override suspend fun clear(circleWalletId: String) {
         values.remove(circleWalletId)
+    }
+}
+
+/** The warnings the wallet raised, as (chain, Circle wallet id). */
+class RecordingWarnings : WalletWarnings {
+    val chainsNotConfigured: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    override fun chainNotConfigured(blockchain: String, circleWalletId: String) {
+        chainsNotConfigured += blockchain to circleWalletId
     }
 }
 

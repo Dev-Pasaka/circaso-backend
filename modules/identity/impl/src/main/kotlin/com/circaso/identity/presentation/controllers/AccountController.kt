@@ -63,9 +63,10 @@ fun Route.accountController(account: AccountService) {
                 TAG,
                 listOf("wallet.funds_remaining", "wallet.custody_unavailable"),
                 notes =
-                    "Scope: `app`. Each module that holds something of yours is asked first; the wallet refuses " +
-                        "while it holds 0.01 USDC or more on any chain, with its own code, and when Circle can't " +
-                        "answer (`wallet.custody_unavailable`, try again).",
+                    "Scope: `app`. Each module that holds something of yours is asked first. The wallet refuses " +
+                        "with `wallet.funds_remaining` while it holds 0.01 or more of a US dollar stablecoin (USDC), " +
+                        "or any amount of any other asset, on any chain; and with `wallet.custody_unavailable` when " +
+                        "it can't check (Circle down, or a wallet on a chain no longer supported).",
             )
 
             route("/providers") {

@@ -12,8 +12,9 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
 }
 
 /**
- * Identity asks before it schedules a deletion (I14); the wallet refuses while it holds 0.01 USDC or more on any
- * chain, with its own `wallet.funds_remaining`, which reaches the app as is (decision 2026-10-28).
+ * Identity asks before it schedules a deletion (I14); the wallet refuses while it holds 0.01 or more of a US dollar
+ * stablecoin, or any amount of any other asset, on any chain, with its own `wallet.funds_remaining`, which reaches the
+ * app as is (decision 2026-10-28).
  */
 class WalletDeletionGuard(private val directory: WalletDirectoryService) : DeletionGuard {
     override suspend fun canDelete(userId: UserId): Resource<Unit> = directory.canDelete(userId)
