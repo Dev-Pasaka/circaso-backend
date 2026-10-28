@@ -142,13 +142,11 @@ class WalletQaTest {
         return Person(registered["session"]!!.jsonObject["accessToken"]!!.jsonPrimitive.content)
     }
 
-    private suspend fun ApplicationTestBuilder.get(
-        path: String,
-        token: String,
-    ) = client.get(path) {
-        header("Authorization", "Bearer $token")
-        header("X-Client-Version", "android/1.0.0")
-    }
+    private suspend fun ApplicationTestBuilder.get(path: String, token: String) =
+        client.get(path) {
+            header("Authorization", "Bearer $token")
+            header("X-Client-Version", "android/1.0.0")
+        }
 
     private suspend fun ApplicationTestBuilder.send(
         method: String,
@@ -191,7 +189,11 @@ class WalletQaTest {
             val fakes = boot()
             val person = signUp(fakes.sms)
             val circleUser = activeWallet(fakes, person)
-            val walletId = fakes.custody.wallets.getValue(circleUser).single().walletId
+            val walletId =
+                fakes.custody.wallets
+                    .getValue(circleUser)
+                    .single()
+                    .walletId
 
             // dust below 0.01 USDC does not block
             fakes.custody.assetBalances[walletId] = mapOf("USDC" to BigInteger.valueOf(9_999))
@@ -220,7 +222,12 @@ class WalletQaTest {
             val circleUser = activeWallet(fakes, person)
             assertEquals(
                 "ADDING",
-                send("POST", "/v1/wallet/chains", person.app, """{"blockchain":"SOL-DEVNET"}""").data()["status"]!!.jsonPrimitive.content,
+                send(
+                    "POST",
+                    "/v1/wallet/chains",
+                    person.app,
+                    """{"blockchain":"SOL-DEVNET"}""",
+                ).data()["status"]!!.jsonPrimitive.content,
             )
             val sol = fakes.custody.completeSetup(circleUser, blockchain = "SOL-DEVNET")
             fakes.custody.assetBalances[sol.walletId] = mapOf("USDC" to BigInteger.valueOf(5_000_000))
@@ -240,8 +247,22 @@ class WalletQaTest {
             fakes.rates.rates["KES"] = BigDecimal("129.25")
 
             val data = get("/v1/wallet?currency=KES", person.app).data()
-            assertEquals("21750000", data["totals"]!!.jsonArray.single().jsonObject["amountMinor"]!!.jsonPrimitive.content)
-            assertEquals("21.75", data["totals"]!!.jsonArray.single().jsonObject["amount"]!!.jsonPrimitive.content)
+            assertEquals(
+                "21750000",
+                data["totals"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject["amountMinor"]!!
+                    .jsonPrimitive.content,
+            )
+            assertEquals(
+                "21.75",
+                data["totals"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject["amount"]!!
+                    .jsonPrimitive.content,
+            )
             assertEquals("2811.19", data["fiat"]!!.jsonObject["amount"]!!.jsonPrimitive.content)
             assertEquals("129.25", data["fiat"]!!.jsonObject["rate"]!!.jsonPrimitive.content)
             val chains = data["chains"]!!.jsonArray.map { it.jsonObject }
@@ -295,8 +316,16 @@ class WalletQaTest {
             val results =
                 coroutineScope {
                     (1..8)
-                        .map { async { send("POST", "/v1/wallet/chains", person.app, """{"blockchain":"SOL-DEVNET"}""") } }
-                        .awaitAll()
+                        .map {
+                            async {
+                                send(
+                                    "POST",
+                                    "/v1/wallet/chains",
+                                    person.app,
+                                    """{"blockchain":"SOL-DEVNET"}""",
+                                )
+                            }
+                        }.awaitAll()
                 }
             val summary = results.map { it.status.value to it.data()["status"]!!.jsonPrimitive.content }
             println("W12 concurrent: $summary")
