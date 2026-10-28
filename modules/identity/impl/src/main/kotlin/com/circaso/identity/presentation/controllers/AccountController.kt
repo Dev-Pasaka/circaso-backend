@@ -64,9 +64,10 @@ fun Route.accountController(account: AccountService) {
                 listOf("wallet.funds_remaining", "wallet.custody_unavailable"),
                 notes =
                     "Scope: `app`. Each module that holds something of yours is asked first. The wallet refuses " +
-                        "with `wallet.funds_remaining` while it holds 0.01 or more of a US dollar stablecoin (USDC), " +
-                        "or any amount of any other asset, on any chain; and with `wallet.custody_unavailable` when " +
-                        "it can't check (Circle down, or a wallet on a chain no longer supported).",
+                        "with `wallet.funds_remaining` while its US dollar stablecoins (USDC), added up over every " +
+                        "chain, come to 0.01 or more, or while it holds any amount of any other asset; and with " +
+                        "`wallet.custody_unavailable` when it can't check (Circle down, or a wallet on a chain no " +
+                        "longer configured).",
             )
 
             route("/providers") {

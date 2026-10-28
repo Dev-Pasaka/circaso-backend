@@ -287,6 +287,9 @@ internal object ApiDocsCatalog {
                             "chain has its own address, and the PIN creates the wallet there.\n" +
                             "- **Balance** per chain and asset, added up over all chains, and optionally in your " +
                             "own currency (USDC counts as one US dollar; rates by Exchange Rate API).\n" +
+                            "- **Paying:** a payment names its chain and leaves from your address there, to a " +
+                            "person with a wallet on that chain or to an address valid on it; you sign it with the " +
+                            "PIN, and `wallet` frames follow it. Amounts are strings (`amountMinor`, `amount`).\n" +
                             "- **Deleting your account** is refused while the wallet still holds money " +
                             "(`wallet.funds_remaining`).",
                     ),

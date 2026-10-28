@@ -9,6 +9,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-28, wallet payments (new routes and frames; W12 and W1 gain a field):**
+> 1. **Payments are in** (section 7, Wallet): W4 `POST /v1/wallet/transfers`, W5 `GET /v1/wallet/transfers/{transferId}`, W9 `GET /v1/wallet/recipients/{userId}`, W10 `POST /v1/wallet/recipients/{userId}/remind`, W11 `POST /v1/wallet/addresses/validate`. **A payment names its chain** (`blockchain`) and leaves from your wallet's address on that chain; a person must have a wallet on that chain (W9 says `NO_WALLET_ON_CHAIN` otherwise), an outside address must be valid on it. Amounts are **strings** everywhere in the wallet: send `amount: { asset: "USDC", amountMinor: "20000000" }` or `{ asset, amount: "20" }`.
+> 2. **Wallet frames and pushes** (section 8): `wallet` / `transfer.updated`, `payment.received`, `wallet.ready`, `setup.requested`. Send `{"module":"wallet","seq":…}` in `last` like the others.
+> 3. **Retired chains:** W1's chains and W12's list carry `receiveEnabled`. `false` means the chain is retired from receiving: don't show its address to be paid; it can still send out. W12 no longer offers a retired chain to add.
+> 4. **Deleting the account** is now refused when your US dollar stablecoins **added up over every chain** come to 0.01 or more (0.009 USDC on each of four chains is refused).
+>
 > **Changed on 2026-10-28, wallet (new routes; one error code renamed):**
 > 1. **The wallet's first routes are in** (section 7, Wallet): W1 `GET /v1/wallet`, W2 `POST /v1/wallet`, W3 `POST /v1/wallet/session`, and W12 `GET`/`POST /v1/wallet/chains`. A wallet can be on **several chains** (Base, Polygon, Ethereum and Solana, USDC on each; the list is server configuration): it starts on Base, and the user adds others from wallet management. Each chain has its own address. Amounts are **strings** (`amountMinor` in the smallest unit, `amount` in whole units), because some tokens pass what a JSON number holds.
 > 2. **Fiat balance:** `GET /v1/wallet?currency=KES` (the person's country-of-origin currency, any ISO 4217 code) adds `fiat { currency, amount, rate, asOf, partial }` at USDC = 1 USD. `fiat` is null when no rate is known (never an error); a code that isn't ISO 4217 answers `request.malformed`. Show "Rates by Exchange Rate API" wherever the fiat value appears (the source's terms).
@@ -53,7 +59,7 @@ Of the **69** routes the phone calls: **56 READY**, **12 PARTIAL**, **1 DEV STUB
 | Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
 | Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). The free allowance numbers and the paid plan are not decided: show what the server returns. |
 | Asha live voice (socket) | **READY** | Section 9. Real speech-to-text (Opus in) and voice (mulaw 8 kHz out) on dev; English only. |
-| Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`) and for being added to a group. iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
+| Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`), for being added to a group, and for wallet payments (sent, failed, received) and wallet reminders. iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
 | Account security, linked logins, security log | **READY** | |
 | Account deletion | **PARTIAL** | Completes 30 days after the request. No route restores an account during those 30 days yet (undecided); Apple access is not revoked. |
 | Account recovery | **PARTIAL** | A case can be opened and read; no support tool resolves it yet. |
@@ -62,7 +68,8 @@ Of the **69** routes the phone calls: **56 READY**, **12 PARTIAL**, **1 DEV STUB
 | Messages between people (sending, inbox, receipts, typing, delete for everyone) | **READY** | End-to-end encrypted on the phone; the server stores ciphertext until it is acknowledged. |
 | Chat media, chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
 | Wallet (create, PIN session, balance per chain, fiat balance, add a chain) | **PARTIAL** | W1–W3 and W12 work. On dev the custody provider is the `log` stand-in: a wallet exists as soon as you create it (there is no real Circle challenge to run, so the SDK can't be exercised yet) and every balance is zero; fiat rates are fixed sample numbers. |
-| Payments, transaction history, statements, chamas | **MISSING** | Designed (wallet W4–W11); being built in slices. |
+| Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work. On dev the custody provider is the `log` stand-in: a payment is prepared with a made-up challenge and no Circle webhook ever arrives, so it stays `AWAITING_SIGNATURE` (no `transfer.updated` or `payment.received` on dev until Circle's sandbox is connected). Limits are placeholders (500 USDC a payment, 1 000 a day). |
+| Transaction history, statements, PIN change and restore, chamas | **MISSING** | Designed (wallet W6–W8); being built in slices. |
 | Calls | **MISSING** | Not designed yet. |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
 
@@ -353,11 +360,16 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `GET /v1/wallet`<br>**W1** Your wallet: status, chains, assets, totals, fiat value | `app` | — → WalletResponse | **PARTIAL** | `status` is `NONE` (show "Create wallet"), `SETTING_UP` (the PIN isn't set yet: poll this route after the SDK finishes) or `ACTIVE`. `chains` lists each chain with its address and every asset offered there (zero included); `totals` adds each asset up over all chains. `?currency=KES` (any ISO 4217 code) adds `fiat` at USDC = 1 USD, null when no rate is known; `partial: true` means something held has no price yet. Credit "Rates by Exchange Rate API" next to the fiat value. `hold` is always null for now (payments aren't built). Errors: `wallet.custody_unavailable`, `request.malformed`. |
+| `GET /v1/wallet`<br>**W1** Your wallet: status, chains, assets, totals, fiat value | `app` | — → WalletResponse | **PARTIAL** | `status` is `NONE` (show "Create wallet"), `SETTING_UP` (the PIN isn't set yet: poll this route after the SDK finishes) or `ACTIVE`. `chains` lists each chain with its address and every asset offered there (zero included); `totals` adds each asset up over all chains. `?currency=KES` (any ISO 4217 code) adds `fiat` at USDC = 1 USD, null when no rate is known; `partial: true` means something held has no price yet. Credit "Rates by Exchange Rate API" next to the fiat value. `hold` is always null for now (the payment hold arrives with WS4). A chain with `receiveEnabled: false` is retired: don't show its address to be paid. Errors: `wallet.custody_unavailable`, `request.malformed`. |
 | `POST /v1/wallet`<br>**W2** Create your wallet | `app` | — → CreateWalletResponse | **PARTIAL** | Run `challengeId` in the Circle SDK with `sdk` (`appId`, `userToken`, `encryptionKey`): the user sets the PIN and security questions, and Circle creates the wallet on the default chain (Base). Calling again while `SETTING_UP` gives a fresh challenge; `challengeId` is null when the PIN is already set and the wallet is on its way. On dev (`log` provider) the wallet exists at once and the challenge is made up. Errors: `wallet.already_exists`, `wallet.custody_unavailable`. |
 | `POST /v1/wallet/session`<br>**W3** The Circle SDK's session values | `app` | — → SdkDto | **PARTIAL** | `appId`, `userToken`, `encryptionKey`, `expiresAt` (an hour at most). Keep them in memory only, never log them. Errors: `wallet.not_found`, `wallet.custody_unavailable`. |
-| `GET /v1/wallet/chains`<br>**W12** The supported chains, and which the wallet is on | `app` | — → ChainsResponse | **PARTIAL** | Each chain is `ENABLED`, `ADDING` (asked for, not signed yet) or `AVAILABLE`, with the asset symbols offered on it; `defaultChain` is where a new wallet starts. For the wallet-management screen. |
-| `POST /v1/wallet/chains`<br>**W12** Add a supported chain | `app` | AddChainRequest → AddChainResponse | **PARTIAL** | `{ "blockchain": "SOL-DEVNET" }` (a name from the list above). Answers `ADDING` with a challenge to run in the SDK (the PIN creates the wallet there), or `ENABLED` with no challenge when the wallet is already on it, so a repeat is harmless. The chain shows in W1 once Circle has made it. Removing a chain isn't possible. Errors: `wallet.chain_unsupported`, `wallet.not_found`, `wallet.not_ready`, `wallet.custody_unavailable`, `request.malformed`. |
+| `GET /v1/wallet/chains`<br>**W12** The supported chains, and which the wallet is on | `app` | — → ChainsResponse | **PARTIAL** | Each chain is `ENABLED`, `ADDING` (asked for, not signed yet) or `AVAILABLE`, with the asset symbols offered on it; `defaultChain` is where a new wallet starts. A chain retired from receiving (`receiveEnabled: false`) is listed only while your wallet is on it, so it can be emptied. For the wallet-management screen. |
+| `POST /v1/wallet/chains`<br>**W12** Add a supported chain | `app` | AddChainRequest → AddChainResponse | **PARTIAL** | `{ "blockchain": "SOL-DEVNET" }` (a name from the list above). Answers `ADDING` with a challenge to run in the SDK (the PIN creates the wallet there), or `ENABLED` with no challenge when the wallet is already on it, so a repeat is harmless. The chain shows in W1 once Circle has made it. Adds of the same chain within the hour (two taps, two phones) get the same challenge. A retired chain can't be added (`wallet.chain_unsupported`). Removing a chain isn't possible. Errors: `wallet.chain_unsupported`, `wallet.not_found`, `wallet.not_ready`, `wallet.custody_unavailable`, `request.malformed`. |
+| `POST /v1/wallet/transfers`<br>**W4** Prepare a payment | `app` | PrepareTransferRequest → PrepareTransferResponse | **PARTIAL** | `{ "blockchain": "BASE-SEPOLIA", "to": { "userId": "…" } \| { "address": "0x…" }, "amount": { "asset": "USDC", "amountMinor": "20000000" } }` (or `"amount": "20"`; both only if they agree), optional `chatId` (paying from that chat: sharing it stands in for reach) and `proposalId` (Asha, later). The payment leaves from your wallet on that chain. Checks, in this order: account active, your wallet on the chain, hold, amount and limits, the payee, your balance there. Run `challengeId` in the Circle SDK with `sdk` before `expiresAt` (15 minutes); follow it with `transfer.updated` frames or W5. Always the same `Idempotency-Key` for one payment: a retry returns the same transfer (and the same challenge while it can be signed). `fee` is always zero (Circaso pays gas). Show a warning before paying an address: payments on chain can't be reversed. On dev the transfer never leaves `AWAITING_SIGNATURE` (no Circle webhook). Errors: `wallet.account_restricted`, `wallet.chain_unsupported`, `wallet.not_found`, `wallet.not_ready`, `wallet.not_on_chain`, `wallet.on_hold`, `wallet.amount_invalid`, `wallet.limit_exceeded`, `wallet.self_transfer`, `users.not_reachable`, `wallet.recipient_no_wallet`, `wallet.recipient_not_on_chain`, `wallet.address_invalid`, `wallet.insufficient_funds`, `wallet.pin_locked`, `wallet.custody_unavailable`, `request.malformed`. |
+| `GET /v1/wallet/transfers/{transferId}`<br>**W5** One payment and its state | `app` | — → TransferResponse | **PARTIAL** | For the sender (`direction: OUT`) and the person paid (`IN`), so the chat's payment card works on both sides. `state`: `AWAITING_SIGNATURE`, `SUBMITTED`, `CONFIRMED`, `FAILED` (see `failureReason`) or `EXPIRED`. Errors: `wallet.transfer_not_found`, `request.malformed`. |
+| `GET /v1/wallet/recipients/{userId}`<br>**W9** Can this person be paid, and where | `app` | — → RecipientResponse | **PARTIAL** | Query `blockchain` (optional, the chain you mean to pay on) and `chatId` (optional). `status`: `CAN_RECEIVE`, `NO_WALLET` (offer W10: "Amina hasn't set up her wallet yet") or `NO_WALLET_ON_CHAIN` (pick one of `blockchains`, where they can be paid now). Errors: `users.not_reachable`, `wallet.self_transfer`, `wallet.chain_unsupported`, `request.malformed`. |
+| `POST /v1/wallet/recipients/{userId}/remind`<br>**W10** Remind a contact to set up a wallet | `app` | — → RemindResponse | **PARTIAL** | They get a `wallet` / `setup.requested` frame and a push. `status`: `SENT`, `ALREADY_SENT` (once per person per 24 hours) or `HAS_WALLET` (pay them instead). Errors: `users.not_reachable`, `wallet.self_transfer`, `request.malformed`. |
+| `POST /v1/wallet/addresses/validate`<br>**W11** Check an outside address on a chain | `app` | ValidateAddressRequest → ValidateAddressResponse | **PARTIAL** | `{ "blockchain", "address" }` → `valid` (an answer, not an error) and `address` as it will be paid (EVM lowercase). Check before W4 to an address. Errors: `wallet.chain_unsupported`, `wallet.custody_unavailable`, `request.malformed`. |
 
 ### Account and security
 
@@ -369,7 +381,7 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 | `POST /v1/account/providers`<br>**I12** Link a Google or Apple login | `app` | LinkProviderRequest → NoBody | **READY** | Link Google or Apple. Errors: `identity.provider_in_use`, `identity.nonce_invalid`. |
 | `DELETE /v1/account/providers/{provider}`<br>**I12** Unlink a login, only if the other one stays | `app` | — → NoBody | **READY** | Only while the other login stays. Errors: `identity.provider_last`. |
 | `GET /v1/account/security-log`<br>**I13** Security activity, newest first | `app` | — → SecurityLogResponse | **READY** | Query: `cursor`, `limit` (default 50, at most 200). Paged. |
-| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion: the account turns `DELETED` at once (sign-in answers `identity.account_deleted`) then 30 days later the server erases the account and its data (profile, contacts, blocks, invites, Asha chat), and other people stop seeing the person at once. There is no restore route yet: tell the user deletion is final after 30 days and can't be undone from the app. Revoking Apple access at deletion is not built. Refused while the wallet holds 0.01 or more of a US dollar stablecoin (USDC), or any amount of any other asset, on any chain: tell the user to send it out first. Errors: `wallet.funds_remaining`, `wallet.custody_unavailable` (the wallet couldn't check: Circle down, or a wallet on a chain no longer supported; try again later). |
+| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion: the account turns `DELETED` at once (sign-in answers `identity.account_deleted`) then 30 days later the server erases the account and its data (profile, contacts, blocks, invites, Asha chat), and other people stop seeing the person at once. There is no restore route yet: tell the user deletion is final after 30 days and can't be undone from the app. Revoking Apple access at deletion is not built. Refused while the wallet's US dollar stablecoins (USDC), added up over every chain, come to 0.01 or more, or it holds any amount of any other asset: tell the user to send it out first. Errors: `wallet.funds_remaining`, `wallet.custody_unavailable` (the wallet couldn't check: Circle down, or a wallet on a chain no longer configured; try again later). |
 
 ### Account recovery
 
@@ -434,6 +446,10 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `messaging` / `message.deleted` | `chatId`, `messageId` | The sender deleted it for everyone: remove it. |
 | `messaging` / `message.undeliverable` | `chatId`, `messageId`, `recipientId` | That person's phone was replaced before your message reached it: resend it to them from your copy once their new keys are published. |
 | `messaging` / `keys.changed` | `userId` | Their phone and keys changed: show the security-code notice and start a new session with their new bundle. |
+| `wallet` / `transfer.updated` | `transferId`, `state` (`SUBMITTED` \| `CONFIRMED` \| `FAILED`), `blockchain`, `amount` {`asset`, `amountMinor`, `amount`}, `txHash`?, `failureReason`? | To the sender each time a payment moves: update the payment's screen and chat card. Pushed when offline on `CONFIRMED` ("Payment sent") and `FAILED` ("Payment failed"). |
+| `wallet` / `payment.received` | `transactionId`, `blockchain`, `amount`, `fromUserId`?, `fromName`? | Money reached you on chain: refresh the balance (W1). `fromUserId` is null for an outside address. Pushed: "Amina sent you money" (never the amount). |
+| `wallet` / `wallet.ready` | `blockchain` | Your wallet turned `ACTIVE` (its first chain): reload W1 and stop polling. No push. |
+| `wallet` / `setup.requested` | `fromUserId`, `fromName` | Someone wants to pay you and you have no wallet: offer "Create wallet" (W2). Pushed. |
 
 **Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **Limits:** at most 100 frames per second per socket (frames over it are dropped silently, the socket stays open, so batch acks and throttle typing) and at most 64 KB per frame (a bigger frame closes the socket with 1009). Messaging takes three:
 
@@ -484,9 +500,9 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 **Backend MISSING (do not call, do not invent endpoints; stub the UI behind a feature flag):**
 1. Chat media, chat history and the history-key backup (chats, sending, the inbox and receipts exist).
-2. Sending and receiving money (W4, W5, W9–W11), transaction history and statements (W6, W7), PIN change and restore (W8), wallet frames and pushes, chamas. The wallet itself (W1–W3, W12) is in.
+2. Transaction history and statements (W6, W7), PIN change and restore (W8), the payment hold after a support restore, chamas. The wallet (W1–W3, W12) and payments (W4, W5, W9–W11, wallet frames and pushes) are in.
 3. Calls. Not designed yet.
-4. Push for anything other than new messages and group adds.
+4. Push for anything other than new messages, group adds and wallet payments.
 5. Notification inbox, identity verification (KYC).
 6. Production device attestation (Play Integrity, App Attest) and real carrier phone verification (Firebase).
 7. Chat history's handling of deleted accounts, and Asha reading your chats on the server (chat history slice).
@@ -526,14 +542,16 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **AddOneTimeKeysRequest** — `oneTimePreKeys`: [OneTimePreKeyDto]
 - **AgentContactDto** — `userId`: string; `displayName`: string; `handle`?: string|null
 - **AgentContactsResponse** — `contacts`: [AgentContactDto]; `nextCursor`?: string|null
+- **AmountDto** — `asset`: string (`USDC`); `amountMinor`: string; `amount`: string
+- **AmountRequest** — `asset`: string (`USDC`); `amountMinor`?: string (digits); `amount`?: string (whole units, at most the asset's decimals); at least one, both only if they agree
 - **AppleNameDto** — `given`?: string|null; `family`?: string|null
 - **AskedFromDto** — `chatId`: string; `chatName`?: string|null
 - **AssetDto** — `symbol`: string; `tokenAddress`: string (empty for a chain's own coin); `decimals`: integer; `amountMinor`: string; `amount`: string; `fiatAmount`?: string|null
 - **AssetTotalDto** — `symbol`: string; `decimals`: integer; `amountMinor`: string; `amount`: string
 - **BlocksResponse** — `blocks`: [PublicProfileDto2]
 - **CarrierRequest** — `carrierToken`: string
-- **ChainDto** — `blockchain`: string; `address`: string; `state`: string (`ACTIVE` | `FROZEN`); `assets`: [AssetDto]
-- **ChainOptionDto** — `blockchain`: string; `assets`: [string]; `status`: string (`ENABLED` | `ADDING` | `AVAILABLE`)
+- **ChainDto** — `blockchain`: string; `address`: string; `state`: string (`ACTIVE` | `FROZEN`); `assets`: [AssetDto]; `receiveEnabled`: boolean
+- **ChainOptionDto** — `blockchain`: string; `assets`: [string]; `status`: string (`ENABLED` | `ADDING` | `AVAILABLE`); `receiveEnabled`: boolean
 - **ChainsResponse** — `defaultChain`: string; `chains`: [ChainOptionDto]
 - **ChatDto** — `chatId`: string; `kind`: string (`DIRECT` | `GROUP`); `sealedMeta`?: string|null; `metaVersion`: integer; `members`: [ChatMemberDto]; `settings`: ChatSettingsDto; `lastMessageId`?: string|null; `version`: integer; `created`?: boolean|null (M4 only); `notAdded`?: [string]|null (M5, M9 only)
 - **ChatMemberDto** — `user`: ChatProfileDto; `role`: string (`OWNER` | `ADMIN` | `MEMBER`); `joinedAt`: string
@@ -552,8 +570,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
 - **DeviceProofDto** — `timestamp`: string; `signature`: string
 - **ErrorDetailsDto** — `retryAfterSeconds`?: integer|null; `fields`?: [FieldErrorDto]
-- **FieldErrorDto** — `field`: string; `problem`: string
 - **FiatDto** — `currency`: string; `amount`: string; `rate`: string; `asOf`: string; `partial`: boolean
+- **FieldErrorDto** — `field`: string; `problem`: string
 - **HandleAvailabilityResponse** — `handle`: string; `available`: boolean; `status`: string; `suggestion`?: string|null
 - **HealthCheckStatus** — `name`: string; `status`: string
 - **HealthReport** — `status`: string; `checks`?: [HealthCheckStatus]
@@ -564,8 +582,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **JwkDto** — `kty`?: string; `crv`?: string; `use`?: string; `alg`?: string; `kid`: string; `x`: string
 - **JwksResponse** — `keys`: [JwkDto]
 - **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `kyberPreKey`: KyberPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
-- **KyberPreKeyDto** — `keyId`: integer; `publicKey`: string (ML-KEM 1024, up to 2,048 bytes decoded); `signature`: string
 - **KeyStatusResponse** — `oneTimePreKeysLeft`: integer; `signedPreKeyAt`: string
+- **KyberPreKeyDto** — `keyId`: integer; `publicKey`: string (ML-KEM 1024, up to 2,048 bytes decoded); `signature`: string
 - **LinkProviderRequest** — `provider`: string; `idToken`: string; `nonce`: string
 - **MemberRemovedResponse** — `removed`: boolean
 - **MessageDeletedResponse** — `deleted`: boolean
@@ -577,7 +595,11 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **OneTimePreKeyDto** — `keyId`: integer; `publicKey`: string
 - **OneTimePreKeysLeftResponse** — `oneTimePreKeysLeft`: integer
 - **OpenDirectChatRequest** — `userId`: string
+- **PayeeDto** — `userId`?: string|null; `address`: string
+- **PayeeRequest** — `userId`?: string; `address`?: string (exactly one)
 - **PhoneVerifiedResponse** — `phoneVerified`: boolean; `maskedPhone`: string; `next`: string
+- **PrepareTransferRequest** — `blockchain`: string; `to`: PayeeRequest; `amount`: AmountRequest; `chatId`?: string; `proposalId`?: string
+- **PrepareTransferResponse** — `transferId`: string; `state`: string; `blockchain`: string; `amount`: AmountDto; `challengeId`?: string|null; `sdk`?: SdkDto|null; `fee`: AmountDto; `expiresAt`: string
 - **PrivacyChangeDto** — `avatar`?: string|null; `about`?: string|null; `handleLookup`?: boolean|null
 - **PrivacyDto** — `avatar`: string; `about`: string; `handleLookup`: boolean
 - **ProviderDto** — `provider`: string; `maskedEmail`?: string|null; `linkedAt`: string
@@ -588,6 +610,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ReachResponse** — `reachable`: boolean
 - **ReadNoteDto** — `chatIds`: [string]; `chatNames`?: [string]; `messageCount`: integer
 - **RecipientDto** — `userId`: string; `ciphertext`: string (base64)
+- **RecipientResponse** — `userId`: string; `status`: string (`CAN_RECEIVE` | `NO_WALLET` | `NO_WALLET_ON_CHAIN`); `canReceive`: boolean; `blockchains`: [string]
 - **RecoveryRequest** — `phone`: string; `contactEmail`: string; `note`?: string|null
 - **RecoveryResponse** — `requestId`: string; `status`: string; `noticeSentAt`?: string|null; `relinkAfter`?: string|null
 - **RefreshRequest** — `refreshToken`: string; `deviceId`: string; `timestamp`: string; `signature`: string
@@ -596,6 +619,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **RegisterDeviceResponse** — `user`: UserStateDto; `session`: SessionDto; `agentSession`: SessionDto; `replacedDevice`?: ReplacedDeviceDto
 - **ReleaseRequest** — `verificationId`: string; `confirmAbandon`: boolean
 - **ReleaseResponse** — `releaseAt`: string
+- **RemindResponse** — `status`: string (`SENT` | `ALREADY_SENT` | `HAS_WALLET`)
 - **RemovedResponse** — `removed`: boolean
 - **ReplacedDeviceDto** — `model`: string; `lastSeenAt`: string
 - **SdkDto** — `appId`: string; `userToken`: string; `encryptionKey`: string; `expiresAt`: string
@@ -609,8 +633,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SessionDto2** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string
 - **SetAvatarRequest** — `objectKey`: string
 - **SetRoleRequest** — `role`: string (`OWNER` | `ADMIN` | `MEMBER`)
-- **SignedPreKeyDto** — `keyId`: integer; `publicKey`: string; `signature`: string
 - **SignInResponse** — `next`: string; `maskedPhone`?: string|null; `session`: SessionDto; `agentSession`?: SessionDto2
+- **SignedPreKeyDto** — `keyId`: integer; `publicKey`: string; `signature`: string
 - **SnippetDto** — `chatId`: string; `chatName`?: string|null; `sender`: string; `at`: string; `text`: string
 - **SocialSignInRequest** — `provider`: string; `idToken`: string; `nonce`: string; `appleName`?: AppleNameDto; `device`: DeviceDto; `deviceProof`?: DeviceProofDto
 - **SpeechRequest** — `text`: string; `language`?: string|null
@@ -621,11 +645,14 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SyncResponse** — `matches`: [SyncMatchDto]
 - **ToolResultsRequest** — `callId`: string; `snippets`?: [SnippetDto]
 - **TranscriptResponse** — `text`: string; `seconds`: integer
+- **TransferResponse** — `transferId`: string; `direction`: string (`OUT` | `IN`); `state`: string (`AWAITING_SIGNATURE` | `SUBMITTED` | `CONFIRMED` | `FAILED` | `EXPIRED`); `blockchain`: string; `from`: string; `to`: PayeeDto; `amount`: AmountDto; `fee`: AmountDto; `chatId`?: string|null; `origin`: string (`APP` | `ASHA`); `proposalId`?: string|null; `txHash`?: string|null; `failureReason`?: string|null; `createdAt`: string; `updatedAt`: string; `expiresAt`: string
 - **UpdateGroupRequest** — `sealedMeta`?: string|null; `settings`?: ChatSettingsDto|null; `version`: integer
 - **UpdateProfileRequest** — `displayName`?: string|null; `about`?: string|null; `privacy`?: PrivacyChangeDto; `version`: integer
 - **UploadUrlRequest** — `contentType`: string; `sizeBytes`: integer
 - **UploadUrlResponse** — `uploadUrl`: string; `objectKey`: string; `expiresInSeconds`: integer
 - **UsageResponse** — `plan`: string; `textTurnsUsed`: integer; `textTurnsLeft`: integer; `voiceSecondsUsed`: integer; `voiceSecondsLeft`: integer; `resetsAt`: string
 - **UserStateDto** — `userId`: string; `status`: string
+- **ValidateAddressRequest** — `blockchain`: string; `address`: string
+- **ValidateAddressResponse** — `blockchain`: string; `address`: string; `valid`: boolean
 - **VerifyCodeRequest** — `verificationId`: string; `code`: string
 - **WalletResponse** — `status`: string (`NONE` | `SETTING_UP` | `ACTIVE`); `chains`: [ChainDto]; `totals`: [AssetTotalDto]; `fiat`?: FiatDto|null; `hold`?: HoldDto|null
