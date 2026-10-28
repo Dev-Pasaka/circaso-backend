@@ -13,8 +13,8 @@ import java.math.RoundingMode
 import java.time.Instant
 
 /**
- * Circle's transaction (the API's and the webhook's, which share a shape) in our words. Only USDC on the configured
- * chain is offered, so a transaction in any other token translates to null and is left alone.
+ * Circle's transaction (the API's and the webhook's, which share a shape) in our words. Only USDC on a supported
+ * chain is followed, so a transaction in any other token translates to null and is left alone.
  */
 internal class CircleTransactions(private val tokens: CircleTokens, private val settings: CircleSettings) {
     private val log = LoggerFactory.getLogger(CircleTransactions::class.java)
@@ -30,6 +30,7 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
+        // TODO(decision: how a transaction in an offered asset other than USDC is reported; Money holds only Asset)
         if (!settings.isUsdc(token.tokenAddress, token.blockchain)) return Resource.success(null)
 
         val amountMinor =

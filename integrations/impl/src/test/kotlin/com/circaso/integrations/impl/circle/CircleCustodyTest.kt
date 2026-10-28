@@ -141,7 +141,10 @@ class CircleCustodyTest {
             val transferKey = UUID.randomUUID()
             val pinKey = UUID.randomUUID()
 
-            custody.prepareTransfer(user, TransferRequest("w-1", "0x1", Money(1, Asset.USDC), transferKey, "ref"))
+            custody.prepareTransfer(
+                user,
+                TransferRequest("BASE-SEPOLIA", "w-1", "0x1", Money(1, Asset.USDC), transferKey, "ref"),
+            )
             custody.pinChallenge(user, PinChallenge.CHANGE, pinKey)
 
             val transfers = circle.requests("POST /v1/w3s/user/transactions/transfer")
@@ -229,7 +232,7 @@ class CircleCustodyTest {
     fun `assets that aren't offered are refused without calling Circle`() =
         runBlocking<Unit> {
             assertIs<IntegrationError.Rejected>((custody.balance(user, "w-1", Asset.USDT) as Resource.Error).error)
-            val transfer = TransferRequest("w-1", "0x1", Money(1, Asset.USDT), UUID.randomUUID(), "ref")
+            val transfer = TransferRequest("BASE-SEPOLIA", "w-1", "0x1", Money(1, Asset.USDT), UUID.randomUUID(), "ref")
             assertIs<IntegrationError.Rejected>((custody.prepareTransfer(user, transfer) as Resource.Error).error)
             assertTrue(circle.clients.requests.isEmpty())
         }
@@ -241,6 +244,7 @@ class CircleCustodyTest {
             val key = UUID.randomUUID()
             val request =
                 TransferRequest(
+                    blockchain = "BASE-SEPOLIA",
                     walletId = "w-1",
                     destinationAddress = "0x00000000000000000000000000000000000000b0",
                     amount = Money(20_500_000, Asset.USDC),
@@ -270,7 +274,7 @@ class CircleCustodyTest {
     fun `Circle's user errors become our custody errors and everything else is unavailable or rejected`() =
         runBlocking<Unit> {
             val route = "POST /v1/w3s/user/transactions/transfer"
-            val transfer = TransferRequest("w-1", "0x1", Money(1, Asset.USDC), UUID.randomUUID(), "ref")
+            val transfer = TransferRequest("BASE-SEPOLIA", "w-1", "0x1", Money(1, Asset.USDC), UUID.randomUUID(), "ref")
             val cases =
                 listOf(
                     Triple(400, 155119, IntegrationError.PinLocked::class),
@@ -290,7 +294,9 @@ class CircleCustodyTest {
             }
 
             circle.down = true
-            assertIs<IntegrationError.Unavailable>((custody.validateAddress("0x1") as Resource.Error).error)
+            assertIs<IntegrationError.Unavailable>(
+                (custody.validateAddress("BASE-SEPOLIA", "0x1") as Resource.Error).error,
+            )
         }
 
     @Test
@@ -313,16 +319,16 @@ class CircleCustodyTest {
         }
 
     @Test
-    fun `validateAddress checks on the configured chain`() =
+    fun `validateAddress checks on the chain it is given`() =
         runBlocking<Unit> {
             circle.reply("POST /v1/w3s/transactions/validateAddress", """{"data":{"isValid":true}}""")
-            assertTrue(custody.validateAddress("0xabc").data())
+            assertTrue(custody.validateAddress("BASE-SEPOLIA", "0xabc").data())
             val body = circle.requests("POST /v1/w3s/transactions/validateAddress").single().sent<ValidateAddressBody>()
             assertEquals("BASE-SEPOLIA", body.blockchain)
             assertEquals("0xabc", body.address)
 
             circle.reply("POST /v1/w3s/transactions/validateAddress", """{"data":{"isValid":false}}""")
-            assertFalse(custody.validateAddress("0x123").data())
+            assertFalse(custody.validateAddress("BASE-SEPOLIA", "0x123").data())
         }
 
     @Test

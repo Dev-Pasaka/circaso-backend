@@ -45,7 +45,7 @@ internal class FakeCircle {
         }
 
     val client = CircleClient(clients.named("circle") { baseUrl = "https://api.circle.com" }, API_KEY)
-    val settings = CircleSettings(appId = "app-1", usdcTokenAddress = USDC_ADDRESS)
+    val settings = CircleSettings(appId = "app-1")
     val custody = CircleCustody(client, settings, clock)
 
     fun reply(

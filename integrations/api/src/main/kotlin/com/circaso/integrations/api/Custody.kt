@@ -3,28 +3,47 @@ package com.circaso.integrations.api
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
+import java.math.BigInteger
 import java.time.Instant
 import java.util.UUID
 
 /**
  * User-controlled stablecoin wallets (Circle today). The backend only creates challenges: every action that signs is
- * run by the user in the vendor's SDK on the phone, with their PIN. The chain, account type, token and the vendor's
- * user tokens are this contract's business; the wallet passes our `circleUserId` and stores what comes back.
+ * run by the user in the vendor's SDK on the phone, with their PIN. Account types, token ids and the vendor's user
+ * tokens are this contract's business; the wallet passes our `circleUserId` and stores what comes back.
+ *
+ * A user's wallet can live on several chains (decision 2026-10-28): one vendor wallet per chain, each with its own
+ * address. Which chains are supported, and which assets are offered on each, is server configuration ([supported]).
  */
 interface StablecoinCustody {
+    /** The chains a wallet may be on and the assets offered on each; a new wallet starts on the default one. */
+    val supported: SupportedChains
+
     /** Registers [circleUserId] with the vendor; a user that already exists is success. */
     suspend fun createUser(circleUserId: String): Resource<Unit>
 
     /**
-     * The challenge that sets the user's PIN and creates their wallet on the configured chain. A user who has already
+     * The challenge that sets the user's PIN and creates their wallet on the default chain. A user who has already
      * done it gets success with a [Challenge] that has nothing to sign ([Challenge.needsSignature] false): read
      * [wallets] instead.
      */
     suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge>
 
+    /**
+     * The challenge that adds a wallet on one more supported [blockchain] for a user who already set their PIN; the
+     * user signs it with the PIN, the vendor creates the wallet, and it then shows in [wallets]. A chain that isn't
+     * supported is `Rejected`.
+     */
+    suspend fun addWallet(
+        circleUserId: String,
+        blockchain: String,
+        idempotencyKey: UUID,
+    ): Resource<Challenge>
+
     /** What the phone's SDK needs to run a challenge; reused until 5 minutes before it expires. */
     suspend fun sdkSession(circleUserId: String): Resource<SdkSession>
 
+    /** The user's wallets, one per chain they are on. */
     suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>
 
     /** The [asset] balance of one wallet, zero if it holds none. Only USDC is offered. */
@@ -34,19 +53,62 @@ interface StablecoinCustody {
         asset: Asset,
     ): Resource<Money>
 
+    /**
+     * Every asset offered on [blockchain], as held by the wallet [walletId] on that chain: one line per offered asset,
+     * zero for one it doesn't hold, and nothing for tokens that aren't offered (anyone can send a wallet any token).
+     */
+    suspend fun balances(
+        circleUserId: String,
+        walletId: String,
+        blockchain: String,
+    ): Resource<List<AssetBalance>>
+
     /** The challenge the user signs to send [TransferRequest.amount]; nothing moves until they do. */
     suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge>
 
     suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
 
-    /** Whether [address] is a valid address on the configured chain. */
-    suspend fun validateAddress(address: String): Resource<Boolean>
+    /** Whether [address] is a valid address on [blockchain]. */
+    suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean>
 
     suspend fun pinChallenge(
         circleUserId: String,
         kind: PinChallenge,
         idempotencyKey: UUID,
     ): Resource<Challenge>
+}
+
+/**
+ * The supported chains, from configuration, and the one a new wallet starts on. Chain names are the vendor's
+ * (`BASE-SEPOLIA`, `SOL-DEVNET`): they are what the wallet stores and shows.
+ */
+data class SupportedChains(val default: String, val chains: List<CustodyChain>) {
+    init {
+        require(chains.any { it.blockchain == default }) { "The default chain $default must be one of the chains" }
+    }
+
+    fun find(blockchain: String): CustodyChain? = chains.firstOrNull { it.blockchain == blockchain }
+}
+
+data class CustodyChain(val blockchain: String, val assets: List<CustodyAsset>)
+
+/**
+ * An asset offered on a chain. [tokenAddress] is its contract (an EVM address, a Solana mint), empty for the chain's
+ * native coin. [usdPegged] marks a stablecoin worth one US dollar (USDC), the only kind given a fiat value for now.
+ */
+data class CustodyAsset(
+    val symbol: String,
+    val tokenAddress: String,
+    val decimals: Int,
+    val usdPegged: Boolean,
+)
+
+/**
+ * [amountMinor] in the asset's smallest unit. A big integer: an 18-decimal token passes `Long` at about 9 whole
+ * coins. The string form hides the amount, which never reaches a log line.
+ */
+data class AssetBalance(val asset: CustodyAsset, val amountMinor: BigInteger) {
+    override fun toString(): String = "AssetBalance(${asset.symbol}, ***)"
 }
 
 /**
@@ -80,6 +142,8 @@ data class CustodyWallet(
 enum class CustodyWalletState { LIVE, FROZEN }
 
 data class TransferRequest(
+    /** The chain of the sending wallet; the token is named by its contract there. */
+    val blockchain: String,
     val walletId: String,
     val destinationAddress: String,
     val amount: Money,

@@ -7,6 +7,7 @@ import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
+import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
@@ -35,6 +36,7 @@ import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.LogCustody
+import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -48,12 +50,14 @@ import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import java.math.BigDecimal
 import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IntegrationsModuleTest {
@@ -329,13 +333,19 @@ class IntegrationsModuleTest {
         }
 
     @Test
-    fun `circle needs its key, app id and USDC address, then serves custody and the webhook on one client`() {
+    fun `exchange rates default to log, which knows a few currencies and no others`() =
+        runTest {
+            val rates = koin().get<ExchangeRates>()
+            assertIs<LogExchangeRates>(rates)
+            assertEquals(BigDecimal("129.25"), rates.usdRate("KES")?.rate)
+            assertNull(rates.usdRate("XYZ"))
+        }
+
+    @Test
+    fun `circle needs its key and app id, then serves custody and the webhook on one client`() {
         val e =
             assertFailsWith<Exception> {
-                koin(
-                    "integrations.custody.provider" to "circle",
-                    "integrations.custody.usdc-token-address" to "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-                ).get<StablecoinCustody>()
+                koin("integrations.custody.provider" to "circle").get<StablecoinCustody>()
             }
         val messages = generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() }
         assertTrue("circle.api-key" in messages || "app-id" in messages, messages)
@@ -350,8 +360,7 @@ class IntegrationsModuleTest {
                             mapOf(
                                 "integrations.custody.provider" to "circle",
                                 "integrations.custody.app-id" to "app-1",
-                                "integrations.custody.usdc-token-address" to
-                                    "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                                "integrations.custody.chains" to "BASE-SEPOLIA,SOL-DEVNET",
                             ),
                         ),
                         object : Secrets {
@@ -366,7 +375,9 @@ class IntegrationsModuleTest {
                 )
             }.koin
 
-        assertIs<CircleCustody>(koin.get<StablecoinCustody>())
+        val custody = koin.get<StablecoinCustody>()
+        assertIs<CircleCustody>(custody)
+        assertEquals(listOf("BASE-SEPOLIA", "SOL-DEVNET"), custody.supported.chains.map { it.blockchain })
         assertEquals(listOf("circle"), koin.getAll<WebhookVendor>().map { it.name })
         assertEquals(listOf("circle"), clients.names)
         assertEquals("https://api.circle.com", clients.configs.getValue("circle").baseUrl)

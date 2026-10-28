@@ -55,6 +55,14 @@ internal data class InitializeBody(
     val blockchains: List<String>,
 ) : CircleWrite
 
+/** `POST /v1/w3s/user/wallets`: one more wallet, on [blockchains], for a user who has already set the PIN. */
+@Serializable
+internal data class AddWalletsBody(
+    override val idempotencyKey: String,
+    val accountType: String,
+    val blockchains: List<String>,
+) : CircleWrite
+
 @Serializable
 internal data class TransferBody(
     override val idempotencyKey: String,
