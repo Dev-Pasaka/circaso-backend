@@ -8,6 +8,7 @@ import com.circaso.messaging.api.ReceiptFrame
 import com.circaso.messaging.api.ReceiptStatus
 import com.circaso.messaging.api.TypingFrame
 import com.circaso.messaging.domain.models.KeyBundle
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.MessagingSettings
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.RecipientCopy
@@ -319,7 +320,14 @@ class ReceiptsAndKeyChangesTest {
     // ---- a replaced phone ----
 
     private fun bundle(userId: UserId, deviceId: DeviceId) =
-        KeyBundle(userId, deviceId, "id-key", SignedPreKey(1, "spk", "sig"), h.chats.clock.instant())
+        KeyBundle(
+            userId,
+            deviceId,
+            "id-key",
+            SignedPreKey(1, "spk", "sig"),
+            KyberPreKey(3, "kpk", "ksig"),
+            h.chats.clock.instant(),
+        )
 
     @Test
     fun `a replaced phone's waiting messages are dropped, senders told, and keys changed for everyone`() =

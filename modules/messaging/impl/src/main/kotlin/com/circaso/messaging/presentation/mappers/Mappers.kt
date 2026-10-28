@@ -5,12 +5,14 @@ import com.circaso.messaging.domain.models.AddOneTimeKeysCommand
 import com.circaso.messaging.domain.models.FetchedBundle
 import com.circaso.messaging.domain.models.KeyStatus
 import com.circaso.messaging.domain.models.KeyUploadProof
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.PublishKeysCommand
 import com.circaso.messaging.domain.models.SignedPreKey
 import com.circaso.messaging.presentation.dto.AddOneTimeKeysRequest
 import com.circaso.messaging.presentation.dto.KeyBundleResponse
 import com.circaso.messaging.presentation.dto.KeyStatusResponse
+import com.circaso.messaging.presentation.dto.KyberPreKeyDto
 import com.circaso.messaging.presentation.dto.OneTimePreKeyDto
 import com.circaso.messaging.presentation.dto.PublishKeysRequest
 import com.circaso.messaging.presentation.dto.SignedPreKeyDto
@@ -28,6 +30,9 @@ import java.util.Base64
 
 /** Generous for a Curve25519 key (33 bytes), an XEdDSA or a DER ECDSA signature; only stops oversized junk. */
 private const val MAX_KEY_BYTES = 256
+
+/** A Kyber-1024 public key is 1,569 bytes as libsignal serialises it; the cap leaves room, nothing more. */
+private const val MAX_KEM_KEY_BYTES = 2_048
 
 /** At most 100 one-time prekeys per upload (Messaging → M1); the use case checks the total kept. */
 private const val MAX_ONE_TIME_PREKEYS = 100
@@ -58,13 +63,18 @@ private fun <T> SignedUpload.decode(strategy: DeserializationStrategy<T>): T? =
     runCatching { CircasoJson.decodeFromString(strategy, body.decodeToString(throwOnInvalidSequence = true)) }
         .getOrNull()
 
-private fun base64(raw: String): ByteArray? =
-    runCatching { Base64.getDecoder().decode(raw) }.getOrNull()?.takeIf { it.size in 1..MAX_KEY_BYTES }
+private fun base64(raw: String, maxBytes: Int = MAX_KEY_BYTES): ByteArray? =
+    runCatching { Base64.getDecoder().decode(raw) }.getOrNull()?.takeIf { it.size in 1..maxBytes }
 
 private fun isKey(raw: String) = base64(raw) != null
 
+private fun isKemKey(raw: String) = base64(raw, MAX_KEM_KEY_BYTES) != null
+
 private fun SignedPreKeyDto.toModel(): SignedPreKey? =
     takeIf { keyId >= 0 && isKey(publicKey) && isKey(signature) }?.let { SignedPreKey(keyId, publicKey, signature) }
+
+private fun KyberPreKeyDto.toModel(): KyberPreKey? =
+    takeIf { keyId >= 0 && isKemKey(publicKey) && isKey(signature) }?.let { KyberPreKey(keyId, publicKey, signature) }
 
 /** The keys, or null when any is not a key or two share an id. The count is checked first, with its own code. */
 private fun List<OneTimePreKeyDto>.toModels(): List<OneTimePreKey>? {
@@ -82,6 +92,7 @@ fun publishKeysCommand(caller: CallPrincipal, upload: SignedUpload): Resource<Pu
     if (request.oneTimePreKeys.size > MAX_ONE_TIME_PREKEYS) return Resource.error(MessagingError.TooManyPrekeys)
     if (!isKey(request.identityKey)) return malformed("identityKey")
     val signedPreKey = request.signedPreKey.toModel() ?: return malformed("signedPreKey")
+    val kyberPreKey = request.kyberPreKey.toModel() ?: return malformed("kyberPreKey")
     val oneTimePreKeys = request.oneTimePreKeys.toModels() ?: return malformed("oneTimePreKeys", ONE_TIME_WHY)
     return Resource.success(
         PublishKeysCommand(
@@ -89,6 +100,7 @@ fun publishKeysCommand(caller: CallPrincipal, upload: SignedUpload): Resource<Pu
             deviceId = caller.deviceId,
             identityKey = request.identityKey,
             signedPreKey = signedPreKey,
+            kyberPreKey = kyberPreKey,
             oneTimePreKeys = oneTimePreKeys,
             proof = proof,
         ),
@@ -117,5 +129,6 @@ fun FetchedBundle.toResponse() =
         userId = userId.toString(),
         identityKey = identityKey,
         signedPreKey = SignedPreKeyDto(signedPreKey.keyId, signedPreKey.publicKey, signedPreKey.signature),
+        kyberPreKey = KyberPreKeyDto(kyberPreKey.keyId, kyberPreKey.publicKey, kyberPreKey.signature),
         oneTimePreKey = oneTimePreKey?.let { OneTimePreKeyDto(it.keyId, it.publicKey) },
     )

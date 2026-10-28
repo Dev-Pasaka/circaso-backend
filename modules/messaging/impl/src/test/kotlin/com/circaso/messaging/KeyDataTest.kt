@@ -6,6 +6,7 @@ import com.circaso.messaging.PostgresHarness.Companion.concurrently
 import com.circaso.messaging.PostgresHarness.Companion.proof
 import com.circaso.messaging.domain.models.AddOneTimeKeysCommand
 import com.circaso.messaging.domain.models.KeyBundle
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.SignedPreKey
 import com.circaso.shared.DeviceId
@@ -35,7 +36,14 @@ class KeyDataTest {
     fun clean() = TestPostgres.truncate("messaging")
 
     private fun bundle(userId: UserId, deviceId: DeviceId) =
-        KeyBundle(userId, deviceId, "identity", SignedPreKey(7, "signed", "signature"), now)
+        KeyBundle(
+            userId,
+            deviceId,
+            "identity",
+            SignedPreKey(7, "signed", "signature"),
+            KyberPreKey(3, "kyber", "kyber-sig"),
+            now,
+        )
 
     private fun prekeys(ids: IntRange) = ids.map { OneTimePreKey(it, "key-$it") }
 

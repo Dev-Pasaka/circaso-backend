@@ -8,6 +8,7 @@ import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.MessageKind
 import com.circaso.messaging.domain.models.KeyBundle
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.RecipientCopy
 import com.circaso.messaging.domain.models.SendMessageCommand
@@ -69,6 +70,7 @@ class LogsTest {
                     DeviceId.new(),
                     identityKey,
                     SignedPreKey(7, "signed-marker", "signature"),
+                    KyberPreKey(3, "kyber-marker", "signature"),
                     Instant.now(),
                 ),
                 listOf(OneTimePreKey(1, prekey)),

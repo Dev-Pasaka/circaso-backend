@@ -44,7 +44,7 @@ fun Route.keyController(keys: KeyService) {
                 val result = command.flatMap { keys.publish(it) }
                 call.respondDefault(result.toDefaultResponse { OneTimePreKeysLeftResponse(it) })
             }.docs<PublishKeysRequest, OneTimePreKeysLeftResponse>(
-                "M1 · Publish this phone's identity key, signed prekey and up to 100 one-time prekeys",
+                "M1 · Publish this phone's identity key, signed prekey, Kyber prekey and up to 100 one-time prekeys",
                 TAG,
                 listOf("messaging.keys_proof_invalid", "messaging.too_many_prekeys", "request.malformed"),
                 notes =

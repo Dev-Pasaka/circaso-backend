@@ -30,6 +30,7 @@ class PublishKeys(
                 deviceId = command.deviceId,
                 identityKey = command.identityKey,
                 signedPreKey = command.signedPreKey,
+                kyberPreKey = command.kyberPreKey,
                 signedPreKeyAt = now,
             )
         transactor.run("keys.publish") { keys.publish(bundle, command.oneTimePreKeys, now) }

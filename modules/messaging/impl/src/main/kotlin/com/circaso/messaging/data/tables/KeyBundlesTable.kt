@@ -13,6 +13,9 @@ object KeyBundlesTable : Table("messaging.key_bundles") {
     val signedPreKey = text("signed_pre_key")
     val signedPreKeySignature = text("signed_pre_key_signature")
     val signedPreKeyAt = timestamp("signed_pre_key_at")
+    val kyberPreKeyId = integer("kyber_pre_key_id")
+    val kyberPreKey = text("kyber_pre_key")
+    val kyberPreKeySignature = text("kyber_pre_key_signature")
     val uploadedAt = timestamp("uploaded_at")
     override val primaryKey = PrimaryKey(userId)
 }

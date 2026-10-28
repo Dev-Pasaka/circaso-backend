@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.data.tables.KeyBundlesTable
 import com.circaso.messaging.data.tables.OneTimePreKeysTable
 import com.circaso.messaging.domain.models.KeyBundle
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.OneTimePreKey
 import com.circaso.messaging.domain.models.SignedPreKey
 import com.circaso.messaging.domain.repositories.KeyRepository
@@ -74,6 +75,9 @@ class KeyRepositoryImpl(private val database: Database) : KeyRepository {
                 it[signedPreKey] = bundle.signedPreKey.publicKey
                 it[signedPreKeySignature] = bundle.signedPreKey.signature
                 it[signedPreKeyAt] = bundle.signedPreKeyAt
+                it[kyberPreKeyId] = bundle.kyberPreKey.keyId
+                it[kyberPreKey] = bundle.kyberPreKey.publicKey
+                it[kyberPreKeySignature] = bundle.kyberPreKey.signature
                 it[uploadedAt] = at
             }
             OneTimePreKeysTable.deleteWhere { userId eq bundle.userId.value }
@@ -156,6 +160,12 @@ private fun ResultRow.toBundle() =
                 this[KeyBundlesTable.signedPreKeyId],
                 this[KeyBundlesTable.signedPreKey],
                 this[KeyBundlesTable.signedPreKeySignature],
+            ),
+        kyberPreKey =
+            KyberPreKey(
+                this[KeyBundlesTable.kyberPreKeyId],
+                this[KeyBundlesTable.kyberPreKey],
+                this[KeyBundlesTable.kyberPreKeySignature],
             ),
         signedPreKeyAt = this[KeyBundlesTable.signedPreKeyAt],
     )

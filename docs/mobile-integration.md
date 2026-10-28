@@ -9,6 +9,8 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-28, later (update the app):** `PUT /v1/keys` now **requires** `kyberPreKey { keyId, publicKey, signature }` (a signed ML-KEM 1024 prekey, about 1.5 KB base64, signed by the identity key and rotated with the signed prekey) and `GET /v1/keys/{userId}` returns it. libsignal 0.106 opens sessions with PQXDH only and refuses a bundle without one. Every bundle published before this change was removed: publish again.
+>
 > **Changed on 2026-10-28 (update the app):**
 > 1. **The dev server's data was reset.** The backend moved to a new database: every account, profile, contact, Asha chat, key bundle and message on `sandbox.circaso.com` is gone. Clear the app's local data (or reinstall), sign up again, and publish encryption keys again (`PUT /v1/keys`). Old tokens answer `401`/`identity.session_revoked`: treat that as signed out.
 > 2. **Real vendors on dev.** Asha's replies, voice clips, spoken replies and live voice now run on the real models (no more canned replies or text-as-audio); email and push are really sent. Live voice now needs real Opus audio; the old "binary frame of UTF-8 words" trick no longer works.
@@ -297,14 +299,14 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 
 ### Encryption keys
 
-Chats are end-to-end encrypted on the phone with libsignal (X3DH, double ratchet, sender keys); the server only stores public keys and ciphertext. Keys are standard base64.
+Chats are end-to-end encrypted on the phone with libsignal (PQXDH, double ratchet, sender keys); the server only stores public keys and ciphertext. Keys are standard base64.
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `PUT /v1/keys`<br>**M1** Publish this phone's identity key, signed prekey and up to 100 one-time prekeys | `app` | PublishKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the `X-Device-Timestamp` and `X-Device-Signature` headers (section 5, key uploads). Replaces the whole set: one-time prekeys from an earlier upload are deleted, so send fresh ones with it. Publish after registering the device, and again every 7 days to rotate the signed prekey. Errors: `messaging.keys_proof_invalid`, `messaging.too_many_prekeys` (more than 100 keys), `request.malformed`. |
+| `PUT /v1/keys`<br>**M1** Publish this phone's identity key, signed prekey, signed Kyber prekey and up to 100 one-time prekeys | `app` | PublishKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the `X-Device-Timestamp` and `X-Device-Signature` headers (section 5, key uploads). Replaces the whole set: one-time prekeys from an earlier upload are deleted, so send fresh ones with it. Publish after registering the device, and again every 7 days to rotate the signed prekey. Errors: `messaging.keys_proof_invalid`, `messaging.too_many_prekeys` (more than 100 keys), `request.malformed`. |
 | `POST /v1/keys/one-time`<br>**M1** Top up one-time prekeys | `app` | AddOneTimeKeysRequest → OneTimePreKeysLeftResponse | **READY** | Device-signed in the same headers. Top up when `GET /v1/keys/me` shows fewer than 20. At most 100 are kept at once; an upload that would pass that is refused whole with `messaging.too_many_prekeys`. Resending a key id that is already stored is refused whole with `messaging.prekey_id_exists` (409): use new ids. The 100 cap is exact, also for top-ups sent at the same moment (they run one after another on the server). Errors: `messaging.keys_proof_invalid`, `messaging.keys_not_found` (this phone has not published with `PUT /v1/keys`), `messaging.too_many_prekeys`, `messaging.prekey_id_exists`, `request.malformed`. |
 | `GET /v1/keys/me`<br>**M2** One-time prekeys left and when the signed prekey was set | `app` | — → KeyStatusResponse | **READY** | `messaging.keys_not_found` until this phone has published its own keys (also after a new phone, whose keys must be published again). |
-| `GET /v1/keys/{userId}`<br>**M3** A person's key bundle, to start an encrypted session | `app` | — → KeyBundleResponse | **READY** | Uses up one of their one-time prekeys; `oneTimePreKey` is missing or null when none are left, which X3DH allows. You must be able to reach the person, or share a group with them (group members start sessions with each other to hand over sender keys). 60 bundles per user per hour. Errors: `users.not_reachable`, `messaging.keys_not_found`, `messaging.rate_limited`. |
+| `GET /v1/keys/{userId}`<br>**M3** A person's key bundle, to start an encrypted session | `app` | — → KeyBundleResponse | **READY** | Uses up one of their one-time prekeys; `oneTimePreKey` is missing or null when none are left, which PQXDH allows; `kyberPreKey` is always present. You must be able to reach the person, or share a group with them (group members start sessions with each other to hand over sender keys). 60 bundles per user per hour. Errors: `users.not_reachable`, `messaging.keys_not_found`, `messaging.rate_limited`. |
 
 ### Chats and members
 
@@ -533,7 +535,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **InviteResponse** — `token`: string; `url`: string; `qrPayload`: string; `expiresAt`: string
 - **JwkDto** — `kty`?: string; `crv`?: string; `use`?: string; `alg`?: string; `kid`: string; `x`: string
 - **JwksResponse** — `keys`: [JwkDto]
-- **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
+- **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `kyberPreKey`: KyberPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
+- **KyberPreKeyDto** — `keyId`: integer; `publicKey`: string (ML-KEM 1024, up to 2,048 bytes decoded); `signature`: string
 - **KeyStatusResponse** — `oneTimePreKeysLeft`: integer; `signedPreKeyAt`: string
 - **LinkProviderRequest** — `provider`: string; `idToken`: string; `nonce`: string
 - **MemberRemovedResponse** — `removed`: boolean
@@ -552,7 +555,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ProviderDto** — `provider`: string; `maskedEmail`?: string|null; `linkedAt`: string
 - **PublicProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null
 - **PublicProfileDto2** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null
-- **PublishKeysRequest** — `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `oneTimePreKeys`?: [OneTimePreKeyDto]
+- **PublishKeysRequest** — `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `kyberPreKey`: KyberPreKeyDto; `oneTimePreKeys`?: [OneTimePreKeyDto]
 - **PushTokenRequest** — `pushToken`: string
 - **ReachResponse** — `reachable`: boolean
 - **ReadNoteDto** — `chatIds`: [string]; `chatNames`?: [string]; `messageCount`: integer
