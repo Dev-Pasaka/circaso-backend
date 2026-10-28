@@ -59,6 +59,12 @@ class KeyDirectoryTest {
 
     private fun key(seed: Int) = b64(ByteArray(33) { (seed + it).toByte() })
 
+    /** A Kyber-1024 public key as libsignal serialises it: 1,569 bytes, far over the Curve25519 cap. */
+    private fun kemKey(seed: Int) = b64(ByteArray(1_569) { (seed + it).toByte() })
+
+    private fun kyberJson(publicKey: String = kemKey(4)) =
+        """"kyberPreKey":{"keyId":3,"publicKey":"$publicKey","signature":"${b64(ByteArray(64) { 9 })}"},"""
+
     /** A phone with its hardware-backed device key, registered with identity. */
     private inner class Phone(
         val userId: UserId = UserId.new(),
@@ -100,14 +106,33 @@ class KeyDirectoryTest {
 
     private fun oneTimeJson(ids: IntRange) = ids.joinToString(",") { """{"keyId":$it,"publicKey":"${key(it)}"}""" }
 
-    private fun publishBody(signedPreKeyId: Int = 7, oneTimeIds: IntRange = 101..110) =
-        """{"identityKey":"${key(1)}","signedPreKey":{"keyId":$signedPreKeyId,"publicKey":"${key(2)}",""" +
-            """"signature":"${b64(ByteArray(64) { 3 })}"},"oneTimePreKeys":[${oneTimeJson(oneTimeIds)}]}"""
+    private fun publishBody(
+        signedPreKeyId: Int = 7,
+        oneTimeIds: IntRange = 101..110,
+        kyber: String = kyberJson(),
+    ) = """{"identityKey":"${key(1)}","signedPreKey":{"keyId":$signedPreKeyId,"publicKey":"${key(2)}",""" +
+        """"signature":"${b64(ByteArray(64) { 3 })}"},$kyber"oneTimePreKeys":[${oneTimeJson(oneTimeIds)}]}"""
 
     private fun topUpBody(ids: IntRange) = """{"oneTimePreKeys":[${oneTimeJson(ids)}]}"""
 
     private suspend fun publish(phone: Phone, upload: SignedUpload) =
         publishKeysCommand(phone.principal, upload).flatMap { publishKeys(it) }
+
+    @Test
+    fun `the Kyber prekey is required, may be 1,569 bytes, and is handed out with the bundle`() =
+        runTest {
+            val amina = Phone()
+            // without it the upload is malformed: PQXDH cannot start a session from such a bundle
+            assertEquals("request.malformed", publish(amina, amina.sign(publishBody(kyber = ""))).errorCode())
+            // a real Kyber-1024 key is far over the 256-byte cap that Curve25519 keys get
+            assertNotNull(publish(amina, amina.sign(publishBody())).data())
+            val stored = keys.bundles[amina.userId]!!.kyberPreKey
+            assertEquals(3, stored.keyId)
+            assertEquals(kemKey(4), stored.publicKey)
+            // its own cap still holds
+            val tooBig = kyberJson(b64(ByteArray(2_049) { 1 }))
+            assertEquals("request.malformed", publish(amina, amina.sign(publishBody(kyber = tooBig))).errorCode())
+        }
 
     private suspend fun topUp(phone: Phone, upload: SignedUpload) =
         addOneTimeKeysCommand(phone.principal, upload).flatMap { addOneTimeKeys(it) }

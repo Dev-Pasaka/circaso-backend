@@ -15,10 +15,15 @@ data class SignedPreKeyDto(val keyId: Int, val publicKey: String, val signature:
 @Serializable
 data class OneTimePreKeyDto(val keyId: Int, val publicKey: String)
 
+/** The signed Kyber (ML-KEM 1024) prekey; its public key is about 1.5 KB. Required: PQXDH does not work without it. */
+@Serializable
+data class KyberPreKeyDto(val keyId: Int, val publicKey: String, val signature: String)
+
 @Serializable
 data class PublishKeysRequest(
     val identityKey: String,
     val signedPreKey: SignedPreKeyDto,
+    val kyberPreKey: KyberPreKeyDto,
     val oneTimePreKeys: List<OneTimePreKeyDto> = emptyList(),
 )
 
@@ -39,6 +44,7 @@ data class KeyBundleResponse(
     val userId: String,
     val identityKey: String,
     val signedPreKey: SignedPreKeyDto,
-    /** Null once the person's one-time prekeys are used up; X3DH works without one. */
+    val kyberPreKey: KyberPreKeyDto,
+    /** Null once the person's one-time prekeys are used up; PQXDH works without one. */
     val oneTimePreKey: OneTimePreKeyDto? = null,
 )

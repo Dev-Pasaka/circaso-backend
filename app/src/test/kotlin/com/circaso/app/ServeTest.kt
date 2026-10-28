@@ -696,6 +696,7 @@ class ServeTest {
             val oneTime = (1..3).joinToString(",") { """{"keyId":$it,"publicKey":"$key"}""" }
             val keys =
                 """{"identityKey":"$key","signedPreKey":{"keyId":7,"publicKey":"$key","signature":"$key"},""" +
+                    """"kyberPreKey":{"keyId":3,"publicKey":"$key","signature":"$key"},""" +
                     """"oneTimePreKeys":[$oneTime]}"""
 
             // an unsigned upload or one signed by another key is refused; one signed by Amina's own phone is taken

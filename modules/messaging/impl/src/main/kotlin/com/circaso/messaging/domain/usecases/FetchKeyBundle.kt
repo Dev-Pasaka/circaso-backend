@@ -34,7 +34,9 @@ class FetchKeyBundle(
 
         val bundle = keys.bundle(target) ?: return Resource.error(MessagingError.KeysNotFound)
         val oneTimePreKey = keys.claimOneTimeKey(target, bundle.deviceId)
-        return Resource.success(FetchedBundle(target, bundle.identityKey, bundle.signedPreKey, oneTimePreKey))
+        return Resource.success(
+            FetchedBundle(target, bundle.identityKey, bundle.signedPreKey, bundle.kyberPreKey, oneTimePreKey),
+        )
     }
 
     /** A shared group stands in for reach, but never overrides a block (decision 2026-10-26). */

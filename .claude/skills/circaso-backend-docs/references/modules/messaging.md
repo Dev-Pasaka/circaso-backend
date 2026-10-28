@@ -11,7 +11,7 @@ Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the de
 ### Owns
 
 - **Chats** — `DIRECT` (exactly two people, one chat per pair) and `GROUP` (up to 1,000 members, with an owner, admins and members). A group's name and avatar are encrypted on the phone; the server stores them sealed.
-- **Key directory** — each account's public identity key, signed prekey and one-time prekeys, so anyone who can reach a person can start an encrypted session with them. One phone per account, so one key set per account.
+- **Key directory** — each account's public identity key, signed prekey, signed Kyber prekey and one-time prekeys, so anyone who can reach a person can start an encrypted session with them (PQXDH: libsignal 0.106 refuses a bundle without the Kyber prekey; decision 2026-10-28). One phone per account, so one key set per account.
 - **Delivery** — encrypted messages held per recipient until their phone acknowledges them, then deleted; 30 days at the latest.
 - **Media** — encrypted blobs in R2, deleted once every recipient has downloaded them; 30 days at the latest.
 - **Receipts and typing** — delivered and read receipts, and typing signals, over the gateway WebSocket.
@@ -24,7 +24,7 @@ Signal-style, done entirely on the phone with libsignal (or an equivalent implem
 
 | Part | Protocol | What the server sees |
 | --- | --- | --- |
-| Starting a 1:1 session | X3DH: the sender fetches the recipient's key bundle (M3) | Public keys only |
+| Starting a 1:1 session | PQXDH (X3DH plus a Kyber prekey): the sender fetches the recipient's key bundle (M3) | Public keys only |
 | 1:1 messages | Double ratchet | Ciphertext, sender, recipient, time, size |
 | Group messages | Sender keys: each member sends their sender key to every other member once, over 1:1 sessions, then encrypts each group message once | One ciphertext per message, fanned out to members |
 | Media | A random AES-256 key per file; the key and hash travel inside the encrypted message | An encrypted blob and its size |
@@ -98,7 +98,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 
 | # | Route | Use case (domain) | Does |
 | --- | --- | --- | --- |
-| M1 | `PUT /keys` / `POST /keys/one-time` | `PublishKeys` / `AddOneTimeKeys` | Uploads identity key, signed prekey and up to 100 one-time prekeys (device-signed); tops up one-time prekeys |
+| M1 | `PUT /keys` / `POST /keys/one-time` | `PublishKeys` / `AddOneTimeKeys` | Uploads identity key, signed prekey, signed Kyber prekey and up to 100 one-time prekeys (device-signed); tops up one-time prekeys |
 | M2 | `GET /keys/me` | `GetKeyStatus` | How many one-time prekeys are left and when the signed prekey was set, so the phone knows to top up or rotate |
 | M3 | `GET /keys/{userId}` | `FetchKeyBundle` | The person's bundle; uses up one one-time prekey; reach or a shared group required |
 | M4 | `POST /chats/direct` | `OpenDirectChat` | Opens the 1:1 chat with a person, or returns the existing one; reach required |
@@ -132,6 +132,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 {
   "identityKey": "BcF2…",                                  // base64 Curve25519 public key
   "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" },   // signed by the identity key
+  "kyberPreKey": { "keyId": 3, "publicKey": "CAE…", "signature": "9fQ…" },    // ML-KEM 1024 (~1.5 KB), signed by the identity key; required
   "oneTimePreKeys": [ { "keyId": 101, "publicKey": "BQm…" } ]                // up to 100
 }
 // headers: X-Device-Timestamp: 2026-10-25T09:00:00Z
@@ -145,7 +146,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 
 ```json
 // GET /keys/0193… → data
-{ "userId": "0193…", "identityKey": "BcF2…", "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" }, "oneTimePreKey": { "keyId": 101, "publicKey": "BQm…" } }
+{ "userId": "0193…", "identityKey": "BcF2…", "signedPreKey": { "keyId": 7, "publicKey": "BXa…", "signature": "kq3…" }, "kyberPreKey": { "keyId": 3, "publicKey": "CAE…", "signature": "9fQ…" }, "oneTimePreKey": { "keyId": 101, "publicKey": "BQm…" } }
 ```
 
 The one-time prekey comes only from those uploaded by the device that published the stored bundle; another phone's leftovers are never handed out (decision 2026-10-28, PG5 review). Rate-limited to 60 bundles per caller per hour (`msg:bundle-rate:{callerId}`), so nobody can drain someone's one-time prekeys; a per-target limit would let anyone block a person's key fetches.
@@ -336,6 +337,9 @@ CREATE TABLE messaging.key_bundles (
     signed_pre_key           text        NOT NULL,
     signed_pre_key_signature text        NOT NULL,
     signed_pre_key_at        timestamptz NOT NULL,
+    kyber_pre_key_id         int         NOT NULL,      -- V2: the signed Kyber prekey, rotated with the signed prekey
+    kyber_pre_key            text        NOT NULL,
+    kyber_pre_key_signature  text        NOT NULL,
     uploaded_at              timestamptz NOT NULL
 );
 

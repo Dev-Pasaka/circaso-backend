@@ -9,6 +9,7 @@ import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MemberRemoved
 import com.circaso.messaging.api.MemberRemovedFrame
 import com.circaso.messaging.domain.models.KeyBundle
+import com.circaso.messaging.domain.models.KyberPreKey
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SignedPreKey
 import com.circaso.messaging.domain.support.MessagingConfig
@@ -588,9 +589,23 @@ class ChatsTest {
         runTest {
             val h = ChatHarness()
             h.keys.bundles[chidi] =
-                KeyBundle(chidi, DeviceId.new(), "BcF2", SignedPreKey(7, "BXa", "kq3"), Instant.now())
+                KeyBundle(
+                    chidi,
+                    DeviceId.new(),
+                    "BcF2",
+                    SignedPreKey(7, "BXa", "kq3"),
+                    KyberPreKey(3, "CAE", "9fQ"),
+                    Instant.now(),
+                )
             h.keys.bundles[dalia] =
-                KeyBundle(dalia, DeviceId.new(), "BcF2", SignedPreKey(7, "BXa", "kq3"), Instant.now())
+                KeyBundle(
+                    dalia,
+                    DeviceId.new(),
+                    "BcF2",
+                    SignedPreKey(7, "BXa", "kq3"),
+                    KyberPreKey(3, "CAE", "9fQ"),
+                    Instant.now(),
+                )
 
             assertEquals("users.not_reachable", h.fetchKeyBundle(brian, chidi).errorCode())
             h.group(amina, listOf(brian, chidi))
@@ -606,7 +621,14 @@ class ChatsTest {
         runTest {
             val h = ChatHarness()
             h.keys.bundles[chidi] =
-                KeyBundle(chidi, DeviceId.new(), "BcF2", SignedPreKey(7, "BXa", "kq3"), Instant.now())
+                KeyBundle(
+                    chidi,
+                    DeviceId.new(),
+                    "BcF2",
+                    SignedPreKey(7, "BXa", "kq3"),
+                    KyberPreKey(3, "CAE", "9fQ"),
+                    Instant.now(),
+                )
             h.group(amina, listOf(brian, chidi))
             h.reach.blocks += chidi to brian
 
@@ -623,7 +645,14 @@ class ChatsTest {
         runTest {
             val h = ChatHarness()
             h.keys.bundles[brian] =
-                KeyBundle(brian, DeviceId.new(), "BcF2", SignedPreKey(7, "BXa", "kq3"), Instant.now())
+                KeyBundle(
+                    brian,
+                    DeviceId.new(),
+                    "BcF2",
+                    SignedPreKey(7, "BXa", "kq3"),
+                    KyberPreKey(3, "CAE", "9fQ"),
+                    Instant.now(),
+                )
             h.connect(amina, brian)
             h.openDirectChat(amina, brian).data()
             h.reach.pairs.clear()

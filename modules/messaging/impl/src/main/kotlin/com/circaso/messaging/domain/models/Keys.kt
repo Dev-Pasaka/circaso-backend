@@ -9,12 +9,19 @@ data class SignedPreKey(val keyId: Int, val publicKey: String, val signature: St
 
 data class OneTimePreKey(val keyId: Int, val publicKey: String)
 
+/**
+ * A Kyber (ML-KEM 1024) prekey signed by the identity key, replaced together with the signed prekey. PQXDH needs it:
+ * libsignal 0.106 refuses a bundle without one (decision 2026-10-28). Kept as the "last resort" key, never used up.
+ */
+data class KyberPreKey(val keyId: Int, val publicKey: String, val signature: String)
+
 /** One account's published key set: one phone per account, so one bundle. */
 data class KeyBundle(
     val userId: UserId,
     val deviceId: DeviceId,
     val identityKey: String,
     val signedPreKey: SignedPreKey,
+    val kyberPreKey: KyberPreKey,
     val signedPreKeyAt: Instant,
 )
 
@@ -31,6 +38,7 @@ data class PublishKeysCommand(
     val deviceId: DeviceId,
     val identityKey: String,
     val signedPreKey: SignedPreKey,
+    val kyberPreKey: KyberPreKey,
     val oneTimePreKeys: List<OneTimePreKey>,
     val proof: KeyUploadProof,
 )
@@ -46,10 +54,11 @@ data class AddOneTimeKeysCommand(
 /** M2: what the phone needs to decide to top up (fewer than 20 left) or rotate (older than 7 days). */
 data class KeyStatus(val oneTimePreKeysLeft: Int, val signedPreKeyAt: Instant)
 
-/** M3: what a sender needs for X3DH. [oneTimePreKey] is null once they are used up, which X3DH allows. */
+/** M3: what a sender needs for PQXDH. [oneTimePreKey] is null once they are used up, which PQXDH allows. */
 data class FetchedBundle(
     val userId: UserId,
     val identityKey: String,
     val signedPreKey: SignedPreKey,
+    val kyberPreKey: KyberPreKey,
     val oneTimePreKey: OneTimePreKey?,
 )
