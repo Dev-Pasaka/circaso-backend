@@ -61,8 +61,11 @@ fun Route.accountController(account: AccountService) {
             }.docs<NoBody, NoBody>(
                 "I14 · Schedule account deletion once every guard agrees",
                 TAG,
-                listOf("identity.wallet_not_empty"),
-                notes = "Scope: `app`.",
+                listOf("wallet.funds_remaining", "wallet.custody_unavailable"),
+                notes =
+                    "Scope: `app`. Each module that holds something of yours is asked first; the wallet refuses " +
+                        "while it holds 0.01 USDC or more on any chain, with its own code, and when Circle can't " +
+                        "answer (`wallet.custody_unavailable`, try again).",
             )
 
             route("/providers") {

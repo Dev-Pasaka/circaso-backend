@@ -140,7 +140,6 @@ The shared ones, then each area's own. Codes are stable.
 | `identity.session_revoked` | 401 | The session ended (replaced, signed out, suspended) |
 | `identity.provider_last` | 409 | You cannot unlink your only sign-in |
 | `identity.provider_in_use` | 409 | That Google or Apple login belongs to another account |
-| `identity.wallet_not_empty` | 409 | The account still holds funds |
 | `identity.recovery_not_eligible` | 403 | Support can only restore accounts that completed identity verification |
 | `identity.release_not_allowed` | 403 | A verified account's number cannot be released |
 | `users.profile_invalid` | 400 | Name empty or over 40 characters, about over 140 |
@@ -169,6 +168,12 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.message_too_large` | 400 | A ciphertext over 64 KB once decoded; send files as chat media |
 | `messaging.recipients_mismatch` | 400 | A direct message whose `recipients` isn't exactly the other person, or a `SENDER_KEY` message to someone who isn't another member |
 | `messaging.delete_window_passed` | 409 | Delete for everyone after 48 hours, or by someone other than the sender |
+| `wallet.not_found` | 404 | You have no wallet yet: create one first (`POST /v1/wallet`) |
+| `wallet.already_exists` | 409 | `POST /v1/wallet` when the wallet is already set up |
+| `wallet.not_ready` | 409 | The wallet is still being set up (the PIN isn't set yet), so a chain can't be added |
+| `wallet.chain_unsupported` | 400 | A blockchain the server doesn't support; `GET /v1/wallet/chains` lists those that are |
+| `wallet.funds_remaining` | 409 | Deleting the account while the wallet holds 0.01 USDC or more on any chain: send it out first |
+| `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call; try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |

@@ -21,9 +21,11 @@ class LogLevelsTest {
             "LOG_LEVEL_IDENTITY",
             "LOG_LEVEL_USERS",
             "LOG_LEVEL_MESSAGING",
+            "LOG_LEVEL_WALLET",
             "LOG_LEVEL_ASSISTANT",
             "LOG_LEVEL_INTEGRATIONS",
             "LOG_LEVEL_CIRCLE",
+            "LOG_LEVEL_EXCHANGERATE",
             "LOG_LEVEL_EVENTS",
             "LOG_LEVEL_SCHEDULER",
             "LOG_LEVEL_DATABASE",
@@ -142,6 +144,23 @@ class LogLevelsTest {
         configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL_INTEGRATIONS" to "ERROR", "LOG_LEVEL_CIRCLE" to "DEBUG")
         assertEquals(Level.DEBUG, levelOf("com.circaso.integrations.impl.circle.CircleWebhook"))
         assertEquals(Level.ERROR, levelOf("com.circaso.integrations.impl.resend.ResendEmail"))
+    }
+
+    @Test
+    fun `LOG_LEVEL_EXCHANGERATE moves the rates alone and otherwise follows LOG_LEVEL_INTEGRATIONS`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL_INTEGRATIONS" to "ERROR")
+        assertEquals(Level.ERROR, levelOf("com.circaso.integrations.impl.exchangerate.OpenErApiRates"))
+
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL_INTEGRATIONS" to "ERROR", "LOG_LEVEL_EXCHANGERATE" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.integrations.impl.exchangerate.OpenErApiRates"))
+        assertEquals(Level.ERROR, levelOf("com.circaso.integrations.impl.circle.CircleCustody"))
+    }
+
+    @Test
+    fun `LOG_LEVEL_WALLET moves the wallet module alone`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_WALLET" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.wallet.domain.usecases.GetWallet"))
+        assertEquals(Level.WARN, levelOf("com.circaso.users.domain.usecases.SyncContacts"))
     }
 
     @Test
