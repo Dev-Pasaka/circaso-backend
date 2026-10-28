@@ -396,6 +396,7 @@ An event must never be lost between the change that caused it and the module tha
 | --- | --- | --- |
 | `events:identity` | identity | `users`, `gateway`, `messaging` |
 | `events:users` | users | `gateway` (later `messaging`, `calls`) |
+| `events:wallet` | wallet (`WalletCreated`, `TransferConfirmed`, `TransferFailed`) | none yet (later `assistant`, the auditor) |
 | `events:dlq` | the consumer runtime | alerting, manual replay |
 
 **Delivery, step by step**
@@ -536,7 +537,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 | --- | --- | --- | --- |
 | Database | PostgreSQL 18 through Exposed 1.6 (DSL, non-blocking R2DBC, r2dbc-pool pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
 | Schema migrations | Flyway (over JDBC, the only JDBC in the system), one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
-| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`, `msg:`, `wal:`); `fx:` belongs to integrations (the exchange-rate table, `fx:usd`) |
+| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`, `msg:`, `wal:`); `fx:` belongs to integrations (the exchange-rate table, `fx:usd`; confirmed 2026-10-28) |
 | Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
 | Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `ScheduledJob(name, interval, job)` bound in the module's Koin module, which infrastructure registers at start (run on the jobs pool); `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
 | Files | Cloudflare R2 (S3 compatible) | `ObjectStore` | A bucket prefix per module; uploads by pre-signed URL |
@@ -1047,6 +1048,8 @@ Each phone keeps one WebSocket open to the gateway while the app is in the foreg
 | `users` | `contact.joined` | Everyone who has the new user's number | Yes ("Amina is on Circaso") |
 | `users` | `profile.updated` | The user's contacts | No |
 | `users` | `connection.added` | Both people, after a QR or handle connection | Yes |
+
+The wallet's frames (`transfer.updated`, `payment.received`, `wallet.ready`, `setup.requested`) and their pushes are in Wallet → Realtime frames; a wallet push never shows an amount.
 
 ## Modules
 

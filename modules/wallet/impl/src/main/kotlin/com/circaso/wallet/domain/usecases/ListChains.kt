@@ -13,7 +13,8 @@ import com.circaso.wallet.domain.support.WalletSync
 
 /**
  * W12 `GET /wallet/chains`: every supported chain (server configuration; decision 2026-10-28), the assets offered on
- * it, which one a new wallet starts on, and whether this user's wallet is on it, being added, or could be.
+ * it, which one a new wallet starts on, and whether this user's wallet is on it, being added, or could be. A chain
+ * retired from receiving is listed only to a wallet that is on it, marked so.
  */
 class ListChains(
     private val wallets: WalletRepository,
@@ -26,19 +27,22 @@ class ListChains(
         val pending = adding.list(userId)
         val supported = custody.supported
         val options =
-            supported.chains.map { chain ->
-                ChainOption(
-                    blockchain = chain.blockchain,
-                    assets = chain.assets.map { it.symbol },
-                    isDefault = chain.blockchain == supported.default,
-                    status =
-                        when (chain.blockchain) {
-                            in enabled -> ChainStatus.ENABLED
-                            in pending -> ChainStatus.ADDING
-                            else -> ChainStatus.AVAILABLE
-                        },
-                )
-            }
+            supported.chains
+                .filter { it.receiveEnabled || it.blockchain in enabled }
+                .map { chain ->
+                    ChainOption(
+                        blockchain = chain.blockchain,
+                        assets = chain.assets.map { it.symbol },
+                        isDefault = chain.blockchain == supported.default,
+                        status =
+                            when (chain.blockchain) {
+                                in enabled -> ChainStatus.ENABLED
+                                in pending -> ChainStatus.ADDING
+                                else -> ChainStatus.AVAILABLE
+                            },
+                        receiveEnabled = chain.receiveEnabled,
+                    )
+                }
         return Resource.success(options)
     }
 

@@ -16,6 +16,10 @@ import com.circaso.shared.decodeData
 import com.circaso.users.api.ConnectionAddedFrame
 import com.circaso.users.api.ContactJoinedFrame
 import com.circaso.users.api.UsersFrames
+import com.circaso.wallet.api.PaymentReceivedFrame
+import com.circaso.wallet.api.SetupRequestedFrame
+import com.circaso.wallet.api.TransferUpdatedFrame
+import com.circaso.wallet.api.WalletFrames
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -71,7 +75,8 @@ class GatewayRealtime(
 
     /**
      * The frames worth a push when the phone is offline (Realtime and push → Events identity and users send;
-     * Messaging → Socket frames). Messaging's pushes carry ids, never text from the chat.
+     * Messaging → Socket frames; Wallet → Realtime frames). Messaging's pushes carry ids, never text from the chat;
+     * the wallet's never carry an amount.
      */
     private fun pushFor(frame: RealtimeEnvelope, recipient: UserId): PushMessage? =
         when ("${frame.module}.${frame.type}") {
@@ -95,6 +100,20 @@ class GatewayRealtime(
 
             "messaging.${MemberAddedFrame.TYPE}" -> {
                 decode(MemberAddedFrame.serializer(), frame)?.let { addedToGroupPush(it, recipient) }
+            }
+
+            "${WalletFrames.MODULE}.${WalletFrames.TRANSFER_UPDATED}" -> {
+                decode(TransferUpdatedFrame.serializer(), frame)?.let(::transferPush)
+            }
+
+            "${WalletFrames.MODULE}.${WalletFrames.PAYMENT_RECEIVED}" -> {
+                val name = decode(PaymentReceivedFrame.serializer(), frame)?.fromName
+                PushMessage("Circaso", if (name != null) "$name sent you money" else "You received money")
+            }
+
+            "${WalletFrames.MODULE}.${WalletFrames.SETUP_REQUESTED}" -> {
+                val name = decode(SetupRequestedFrame.serializer(), frame)?.fromName ?: "Someone"
+                PushMessage("Circaso", "$name wants to send you money. Set up your wallet")
             }
 
             else -> {
@@ -123,6 +142,17 @@ class GatewayRealtime(
         val ids = PushPayload(chatId = frame.chatId.toString())
         return PushMessage("Circaso", "You were added to a group", ids, dataOnly = true)
     }
+
+    /**
+     * The sender hears only about the end of a payment (Wallet → Realtime frames); a push never shows an amount on
+     * the lock screen.
+     */
+    private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
+        when (frame.state) {
+            "CONFIRMED" -> PushMessage("Circaso", "Payment sent")
+            "FAILED" -> PushMessage("Circaso", "Payment failed")
+            else -> null
+        }
 
     /** A frame's `data` as its class, from the module's `api`; null (no push) when it doesn't decode. */
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =

@@ -40,6 +40,13 @@ import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
+import com.circaso.wallet.api.PaymentReceivedFrame
+import com.circaso.wallet.api.SetupRequestedFrame
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.TransferUpdatedFrame
+import com.circaso.wallet.api.WalletAmount
+import com.circaso.wallet.api.WalletFrames
+import com.circaso.wallet.api.WalletReadyFrame
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.server.application.install
@@ -846,6 +853,68 @@ class SocketHubTest {
                 assertTrue(hub.deliver(user, frame(7)))
                 assertEquals(7, nextFrame().seq)
             }
+        }
+
+    @Test
+    fun `wallet frames push the end of a payment, money received and a setup request, never an amount`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val user = UserId.new()
+            val amount = WalletAmount("USDC", "20000000", "20")
+
+            fun transfer(state: String) =
+                RealtimeEnvelope.of(
+                    WalletFrames.MODULE,
+                    WalletFrames.TRANSFER_UPDATED,
+                    1,
+                    TransferUpdatedFrame(TransferId.new(), state, "BASE", amount),
+                    TransferUpdatedFrame.serializer(),
+                )
+            realtime.deliver(user, transfer("SUBMITTED"))
+            realtime.deliver(user, transfer("CONFIRMED"))
+            realtime.deliver(user, transfer("FAILED"))
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    WalletFrames.MODULE,
+                    WalletFrames.PAYMENT_RECEIVED,
+                    2,
+                    PaymentReceivedFrame("t-1", "BASE", amount, UserId.new(), "Amina"),
+                    PaymentReceivedFrame.serializer(),
+                ),
+            )
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    WalletFrames.MODULE,
+                    WalletFrames.SETUP_REQUESTED,
+                    3,
+                    SetupRequestedFrame(UserId.new(), "Amina"),
+                    SetupRequestedFrame.serializer(),
+                ),
+            )
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    WalletFrames.MODULE,
+                    WalletFrames.WALLET_READY,
+                    4,
+                    WalletReadyFrame("BASE"),
+                    WalletReadyFrame.serializer(),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    "Payment sent",
+                    "Payment failed",
+                    "Amina sent you money",
+                    "Amina wants to send you money. Set up your wallet",
+                ),
+                push.sent.map { it.second.body },
+            )
+            assertTrue(push.sent.none { "20" in it.second.body || "20" in it.second.title })
         }
 
     /** Two nodes sharing [redis], both listening, served at `/one/ws` and `/two/ws`. */

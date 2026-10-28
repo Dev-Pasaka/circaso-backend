@@ -1,9 +1,10 @@
 package com.circaso.wallet
 
+import com.circaso.integrations.api.CustodyAsset
+import com.circaso.integrations.api.CustodyChain
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
-import com.circaso.wallet.presentation.services.WalletDirectoryService
 import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import kotlin.test.Test
@@ -14,7 +15,7 @@ import kotlin.test.assertTrue
 /** Identity's `DeletionGuard` answered by the wallet: nothing left of any US dollar stablecoin worth a cent. */
 class DeletionGuardTest {
     private val h = Harness()
-    private val guard = WalletDeletionGuard(WalletDirectoryService(h.hasWallet, h.checkFunds))
+    private val guard = WalletDeletionGuard(h.directory)
     private val amina = UserId.new()
 
     @Test
@@ -43,6 +44,39 @@ class DeletionGuardTest {
             h.custody.held[solana.walletId] = mapOf("USDC" to BigInteger.valueOf(10_000))
 
             assertEquals("wallet.funds_remaining", guard.canDelete(amina).code())
+        }
+
+    @Test
+    fun `the cent is counted over every chain - 0,009 USDC on each of four chains is 0,036 and refuses`() =
+        runBlocking<Unit> {
+            val fourChains =
+                TEST_CHAINS.copy(
+                    chains =
+                        TEST_CHAINS.chains +
+                            CustodyChain(
+                                "ETH-SEPOLIA",
+                                listOf(CustodyAsset("USDC", USDC_SEPOLIA, 6, usdPegged = true)),
+                            ),
+                )
+            val h4 = Harness(chains = fourChains)
+            val guard4 = WalletDeletionGuard(h4.directory)
+            val chains = listOf("BASE-SEPOLIA", "SOL-DEVNET", "MATIC-AMOY", "ETH-SEPOLIA")
+            chains.forEach { h4.fund(amina, 9_000, it) }
+            assertEquals(4, h4.wallets.wallets(amina).size)
+
+            assertEquals("wallet.funds_remaining", guard4.canDelete(amina).code())
+
+            chains.drop(1).forEach { h4.fund(amina, 0, it) }
+            assertIs<Resource.Success<Unit>>(guard4.canDelete(amina), "0.009 on one chain alone is dust")
+        }
+
+    @Test
+    fun `a chain retired from receiving is still read, and its funds block deletion`() =
+        runBlocking<Unit> {
+            h.fund(amina, 2_000_000, "MATIC-AMOY")
+
+            assertEquals("wallet.funds_remaining", guard.canDelete(amina).code())
+            assertTrue(h.warnings.chainsNotConfigured.isEmpty())
         }
 
     @Test

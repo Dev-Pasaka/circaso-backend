@@ -30,6 +30,8 @@ data class ChainDto(
     /** `ACTIVE` or `FROZEN`. */
     val state: String,
     val assets: List<AssetDto>,
+    /** False on a chain retired from receiving: don't show its address to be paid; it can still send out. */
+    val receiveEnabled: Boolean = true,
 )
 
 @Serializable
@@ -104,6 +106,8 @@ data class ChainOptionDto(
     val assets: List<String>,
     /** `ENABLED` (the wallet is on it), `ADDING` (asked, not signed yet) or `AVAILABLE`. */
     val status: String,
+    /** False on a chain retired from receiving, listed only while the wallet is on it so it can be emptied. */
+    val receiveEnabled: Boolean = true,
 )
 
 /** W12 `POST /wallet/chains`. */

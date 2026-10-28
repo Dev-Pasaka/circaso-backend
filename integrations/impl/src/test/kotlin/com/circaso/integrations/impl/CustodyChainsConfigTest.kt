@@ -85,6 +85,15 @@ class CustodyChainsConfigTest {
     }
 
     @Test
+    fun `a retired chain stays supported with receiving disabled, and the default chain can't be retired`() {
+        val parsed = parse("chain.matic-amoy.receive-disabled" to "true")
+
+        assertEquals(false, parsed.supported.find("MATIC-AMOY")!!.receiveEnabled)
+        assertEquals(true, parsed.supported.find("BASE-SEPOLIA")!!.receiveEnabled)
+        assertFailsWith<IllegalStateException> { parse("chain.base-sepolia.receive-disabled" to "true") }
+    }
+
+    @Test
     fun `EVM token addresses match in any case, Solana mints exactly`() {
         assertTrue(CustodyChainsConfig.sameToken("0xAbC", "0xabc"))
         assertTrue(!CustodyChainsConfig.sameToken("EPjFWdd5", "epjfwdd5"))

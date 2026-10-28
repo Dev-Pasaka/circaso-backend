@@ -84,13 +84,20 @@ interface StablecoinCustody {
  */
 data class SupportedChains(val default: String, val chains: List<CustodyChain>) {
     init {
-        require(chains.any { it.blockchain == default }) { "The default chain $default must be one of the chains" }
+        val start = chains.firstOrNull { it.blockchain == default }
+        require(start != null) { "The default chain $default must be one of the chains" }
+        require(start.receiveEnabled) { "The default chain $default can't have receiving disabled" }
     }
 
     fun find(blockchain: String): CustodyChain? = chains.firstOrNull { it.blockchain == blockchain }
 }
 
-data class CustodyChain(val blockchain: String, val assets: List<CustodyAsset>)
+/**
+ * A supported chain and the assets offered on it. A chain is never taken out of the configuration while any wallet
+ * holds funds on it (decision 2026-10-28); it is retired by turning [receiveEnabled] off instead: it stays readable
+ * (balances, the deletion guard), but no wallet is added on it and nobody is paid on it, so it only empties.
+ */
+data class CustodyChain(val blockchain: String, val assets: List<CustodyAsset>, val receiveEnabled: Boolean = true)
 
 /**
  * An asset offered on a chain. [tokenAddress] is its contract (an EVM address, a Solana mint), empty for the chain's

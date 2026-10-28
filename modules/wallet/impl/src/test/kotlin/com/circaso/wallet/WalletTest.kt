@@ -8,6 +8,7 @@ import com.circaso.wallet.domain.models.WalletStatus
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.time.Duration
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -220,13 +221,11 @@ class WalletTest {
     fun `W12 adds a chain with a challenge, and the new wallet appears in W1 once signed`() =
         runBlocking<Unit> {
             val circleUserId = h.activeWallet(amina)
-            val key = UUID.randomUUID()
 
-            val addition = h.add(amina, "SOL-DEVNET", key).data()
+            val addition = h.add(amina, "SOL-DEVNET").data()
 
             assertEquals(ChainStatus.ADDING, addition.status)
             assertNotNull(addition.challengeId)
-            assertEquals(key, h.custody.keys.last())
             h.custody.sign(circleUserId, "SOL-DEVNET", address = "So1AbC")
             val wallet = h.wallet(amina).data()
             assertEquals(
@@ -286,6 +285,53 @@ class WalletTest {
             h.custody.down = true
             assertEquals("wallet.custody_unavailable", h.add(amina, "SOL-DEVNET").code())
             assertEquals(0, h.custody.count("addWallet"))
+        }
+
+    @Test
+    fun `W12 adds of one chain within the hour ask Circle with one key, whatever the request's key`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+            h.custody.keys.clear()
+
+            val first = h.add(amina, "SOL-DEVNET").data()
+            val second = h.add(amina, "SOL-DEVNET").data()
+            h.clock.advance(Duration.ofHours(1))
+            h.add(amina, "SOL-DEVNET").data()
+
+            assertEquals(3, h.custody.keys.size)
+            assertEquals(h.custody.keys[0], h.custody.keys[1], "two adds at once share Circle's challenge")
+            assertTrue(h.custody.keys[2] != h.custody.keys[0], "a new hour, a new challenge")
+            assertEquals(ChainStatus.ADDING, first.status)
+            assertEquals(ChainStatus.ADDING, second.status)
+            val bob = UserId.new()
+            h.activeWallet(bob)
+            h.add(bob, "SOL-DEVNET").data()
+            assertTrue(h.custody.keys.last() != h.custody.keys[2], "another user's add has its own key")
+            assertNotNull(circleUserId)
+        }
+
+    @Test
+    fun `W12 never adds a chain retired from receiving, and lists it only to a wallet already on it`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+
+            assertEquals("wallet.chain_unsupported", h.add(amina, "MATIC-AMOY").code())
+            assertEquals(0, h.custody.count("addWallet"))
+            assertTrue(h.listChains(amina).data().none { it.blockchain == "MATIC-AMOY" })
+
+            h.custody.sign(circleUserId, "MATIC-AMOY")
+            h.adding.add(amina, "MATIC-AMOY")
+            val retired = h.listChains(amina).data().single { it.blockchain == "MATIC-AMOY" }
+            assertEquals(ChainStatus.ENABLED, retired.status)
+            assertEquals(false, retired.receiveEnabled)
+            assertEquals(ChainStatus.ENABLED, h.add(amina, "MATIC-AMOY").data().status, "already on it: harmless")
+            val shown =
+                h
+                    .wallet(amina)
+                    .data()
+                    .chains
+                    .single { it.wallet.blockchain == "MATIC-AMOY" }
+            assertEquals(false, shown.receiveEnabled, "W1 still reads it, marked as not receiving")
         }
 
     @Test

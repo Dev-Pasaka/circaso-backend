@@ -14,8 +14,9 @@ import com.circaso.wallet.domain.ports.WalletWarnings
  * What a wallet holds on one chain, from Circle, which stays the source of truth for balances (Architecture
  * principle 11). The wallet screen reads through the 15-second cache; the deletion guard always asks Circle.
  *
- * TODO(decision: a chain taken out of configuration while wallets are on it) for now the wallet screen shows such a
- * chain with nothing on it, and the deletion guard fails closed with `wallet.custody_unavailable`.
+ * A chain is never taken out of configuration while any wallet holds funds on it; it is retired by disabling receive
+ * instead, and stays readable (decision 2026-10-28). A chain that is unconfigured anyway stays fail-closed: the wallet
+ * screen shows it with nothing on it, and the deletion guard refuses with `wallet.custody_unavailable`.
  */
 class HoldingsReader(
     private val custody: StablecoinCustody,

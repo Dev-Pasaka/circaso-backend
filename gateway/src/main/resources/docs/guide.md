@@ -170,10 +170,22 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.delete_window_passed` | 409 | Delete for everyone after 48 hours, or by someone other than the sender |
 | `wallet.not_found` | 404 | You have no wallet yet: create one first (`POST /v1/wallet`) |
 | `wallet.already_exists` | 409 | `POST /v1/wallet` when the wallet is already set up |
-| `wallet.not_ready` | 409 | The wallet is still being set up (the PIN isn't set yet), so a chain can't be added |
-| `wallet.chain_unsupported` | 400 | A blockchain the server doesn't support; `GET /v1/wallet/chains` lists those that are |
-| `wallet.funds_remaining` | 409 | Deleting the account while the wallet holds 0.01 or more of a US dollar stablecoin (USDC), or any amount of any other asset, on any chain: send it out first |
-| `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer supported; try again |
+| `wallet.not_ready` | 409 | The wallet is still being set up (the PIN isn't set yet), so a chain can't be added or a payment sent |
+| `wallet.not_on_chain` | 409 | A payment on a chain your wallet isn't on: add the chain first (`POST /v1/wallet/chains`) |
+| `wallet.chain_unsupported` | 400 | A blockchain the server doesn't support (or, when adding one, a chain retired from receiving); `GET /v1/wallet/chains` lists those that are |
+| `wallet.account_restricted` | 403 | A payment from an account that isn't active (suspended, blocked, being deleted) |
+| `wallet.on_hold` | 403 | Payments are on hold for a while after a support restore |
+| `wallet.amount_invalid` | 400 | An amount that can't be sent: zero, more decimals than the asset has, `amountMinor` and `amount` that disagree, or an asset not offered on that chain |
+| `wallet.limit_exceeded` | 400 | Over the per-payment or daily limit |
+| `wallet.insufficient_funds` | 400 | The wallet doesn't hold enough on the payment's chain |
+| `wallet.self_transfer` | 400 | Paying yourself, by user or by your own address |
+| `wallet.recipient_no_wallet` | 409 | The person hasn't set up a wallet: offer `POST /v1/wallet/recipients/{userId}/remind` |
+| `wallet.recipient_not_on_chain` | 409 | The person can't receive on that chain; `GET /v1/wallet/recipients/{userId}` lists where they can |
+| `wallet.address_invalid` | 400 | Not a valid address on the payment's chain |
+| `wallet.pin_locked` | 400 | Circle locked PIN entry after wrong tries; try later |
+| `wallet.transfer_not_found` | 404 | No such payment, or not yours |
+| `wallet.funds_remaining` | 409 | Deleting the account while the wallet's US dollar stablecoins (USDC), added up over every chain, come to 0.01 or more, or it holds any amount of any other asset: send it out first |
+| `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer configured; try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
@@ -223,6 +235,8 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 ```
 
 `seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. Frames that are never replayed (`messaging` / `message.new` and `typing`) carry `seq` 0: don't record it as the last you saw; a missed message is in the inbox (`GET /v1/inbox`). When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds. Chat pushes are data-only: they carry `chatId` and `messageId`, the app fetches the inbox, decrypts and shows the notification itself (on iOS in a Notification Service Extension, which receives a placeholder "New message" alert to replace).
+
+The wallet's frames (module `wallet`, replayed like `users`): `transfer.updated` `{transferId, state, blockchain, amount, txHash?, failureReason?}` to the sender each time a payment moves (pushed on `CONFIRMED` and `FAILED`: "Payment sent" / "Payment failed"); `payment.received` `{transactionId, blockchain, amount, fromUserId?, fromName?}` once money reaches you on chain (pushed: "Amina sent you money"); `wallet.ready` `{blockchain}` when your wallet turns `ACTIVE` (no push); `setup.requested` `{fromUserId, fromName}` when a contact wants to pay you (pushed). Amounts are `{asset, amountMinor, amount}` strings; a push never shows an amount.
 
 After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped. Messaging takes `ack` `{messageIds}` (delivered: the messages leave the inbox and their senders get a receipt), `read` `{chatId, upToMessageId}` (read up to there; the sender gets a receipt unless you turned read receipts off) and `typing` `{chatId, on}` (relayed to the chat's other members in chats of 50 people or fewer, unless you turned typing off).
 

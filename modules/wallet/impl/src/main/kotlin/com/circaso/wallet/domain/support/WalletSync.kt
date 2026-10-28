@@ -6,9 +6,12 @@ import com.circaso.shared.Resource
 import com.circaso.shared.envelope
 import com.circaso.wallet.api.WalletCreated
 import com.circaso.wallet.domain.models.ChainWallet
+import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
 import com.circaso.wallet.domain.ports.AddingChains
+import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.Transactor
+import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import java.time.Clock
@@ -20,7 +23,8 @@ import java.time.Clock
  *
  * Each chain Circle reports that we don't have is inserted with its `WalletCreated` in the same transaction. The
  * insert is a claim: when two requests see the new wallet at once, only the one whose insert lands writes and
- * publishes the event.
+ * publishes the event. The insert that records a user's first wallet also sends them `wallet.ready`: the wallet has
+ * turned `ACTIVE`.
  */
 class WalletSync(
     private val wallets: WalletRepository,
@@ -29,6 +33,7 @@ class WalletSync(
     private val bus: EventBus,
     private val custody: StablecoinCustody,
     private val adding: AddingChains,
+    private val frames: FrameSender,
     private val clock: Clock,
 ) {
     /** Every wallet of [user] after recording the new ones; `wallet.custody_unavailable` if Circle can't answer. */
@@ -53,7 +58,7 @@ class WalletSync(
         val now = clock.instant()
         val atCircle = reported.map { it.toChainWallet(user.userId, now) }
         val fresh = atCircle.filter { it.circleWalletId !in known }
-        if (fresh.isNotEmpty()) record(fresh)
+        if (fresh.isNotEmpty()) record(fresh, isFirst = known.isEmpty())
 
         val all = wallets.wallets(user.userId)
         forgetAdded(user, all)
@@ -63,7 +68,7 @@ class WalletSync(
     /** Our rows ([recorded]) and every wallet Circle lists for the user ([atCircle]), recorded or not. */
     data class Synced(val recorded: List<ChainWallet>, val atCircle: List<ChainWallet>)
 
-    private suspend fun record(fresh: List<ChainWallet>) {
+    private suspend fun record(fresh: List<ChainWallet>, isFirst: Boolean) {
         val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain)) }
         val inserted =
             transactor.run("wallets.record") {
@@ -72,6 +77,9 @@ class WalletSync(
                 won
             }
         inserted.forEach { bus.publish(announced.getValue(it)) }
+        if (!isFirst) return
+        val ready = inserted.firstOrNull { it.state == ChainWalletState.ACTIVE } ?: return
+        frames.send(ready.userId, WalletFrame.WalletReady(ready.blockchain))
     }
 
     /** A chain that is now on the wallet is no longer being added. */

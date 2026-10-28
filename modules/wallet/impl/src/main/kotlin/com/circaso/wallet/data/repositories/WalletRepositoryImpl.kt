@@ -13,17 +13,31 @@ import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
+import java.util.UUID
 
-/** The wallet over `circle_users` and `wallets`; a user's wallets are read through `wallets_user_chain_key`. */
+/**
+ * The wallet over `circle_users` and `wallets`: a user's wallets through `wallets_user_chain_key`, a wallet Circle
+ * names by its primary key, and the wallet at an address through `wallets_address_key`.
+ */
 class WalletRepositoryImpl(private val database: Database) : WalletRepository {
     override suspend fun circleUser(userId: UserId): CircleUser? =
         database.tx("circle-users.find") {
             CircleUsersTable
                 .selectAll()
                 .where { CircleUsersTable.userId eq userId.value }
+                .map { it.toCircleUser() }
+                .singleOrNull()
+        }
+
+    override suspend fun circleUserByCircleId(circleUserId: UUID): CircleUser? =
+        database.tx("circle-users.by-circle-id") {
+            CircleUsersTable
+                .selectAll()
+                .where { CircleUsersTable.circleUserId eq circleUserId }
                 .map { it.toCircleUser() }
                 .singleOrNull()
         }
@@ -47,6 +61,24 @@ class WalletRepositoryImpl(private val database: Database) : WalletRepository {
                 .orderBy(WalletsTable.createdAt to SortOrder.ASC, WalletsTable.blockchain to SortOrder.ASC)
                 .map { it.toChainWallet() }
                 .toList()
+        }
+
+    override suspend fun wallet(circleWalletId: String): ChainWallet? =
+        database.tx("wallets.find") {
+            WalletsTable
+                .selectAll()
+                .where { WalletsTable.circleWalletId eq circleWalletId }
+                .map { it.toChainWallet() }
+                .singleOrNull()
+        }
+
+    override suspend fun walletAt(address: String, blockchain: String): ChainWallet? =
+        database.tx("wallets.at-address") {
+            WalletsTable
+                .selectAll()
+                .where { (WalletsTable.address eq address) and (WalletsTable.blockchain eq blockchain) }
+                .map { it.toChainWallet() }
+                .singleOrNull()
         }
 
     override suspend fun insertWallet(wallet: ChainWallet): Boolean =

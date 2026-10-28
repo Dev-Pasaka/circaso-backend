@@ -15,6 +15,7 @@ import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.models.WalletSetup
 import com.circaso.wallet.domain.models.WalletView
+import com.circaso.wallet.domain.support.Amounts
 import com.circaso.wallet.presentation.dto.AddChainRequest
 import com.circaso.wallet.presentation.dto.AddChainResponse
 import com.circaso.wallet.presentation.dto.AssetDto
@@ -27,8 +28,6 @@ import com.circaso.wallet.presentation.dto.FiatDto
 import com.circaso.wallet.presentation.dto.HoldDto
 import com.circaso.wallet.presentation.dto.SdkDto
 import com.circaso.wallet.presentation.dto.WalletResponse
-import java.math.BigDecimal
-import java.math.BigInteger
 import java.util.Currency
 import java.util.UUID
 
@@ -39,10 +38,13 @@ private const val MAX_CHAIN_LENGTH = 40
 
 private val CHAIN = Regex("^[A-Z0-9-]{1,$MAX_CHAIN_LENGTH}$")
 
+/** A chain name from a phone, in capitals, or null when it can't be one. */
+internal fun chainOf(raw: String): String? = raw.trim().uppercase().takeIf { CHAIN.matches(it) }
+
 /** The ISO 4217 codes the JDK knows; any other `currency` is malformed (decision 2026-10-28). */
 private val CURRENCIES: Set<String> = Currency.getAvailableCurrencies().map { it.currencyCode }.toSet()
 
-private fun malformed(field: String, why: String) = Resource.error(SharedError.Malformed(field, why))
+internal fun malformed(field: String, why: String) = Resource.error(SharedError.Malformed(field, why))
 
 /** W1's `?currency=`: absent, or an ISO 4217 code (any case; answered in capitals). */
 fun walletQuery(userId: UserId, currency: String?): Resource<WalletQuery> {
@@ -55,10 +57,10 @@ fun walletQuery(userId: UserId, currency: String?): Resource<WalletQuery> {
 fun createWalletCommand(userId: UserId, requestKey: String): CreateWalletCommand =
     CreateWalletCommand(userId, circleKey(userId, "wallet.create", requestKey))
 
-fun AddChainRequest.toCommand(userId: UserId, requestKey: String): Resource<AddChainCommand> {
-    val chain = blockchain.trim().uppercase()
-    if (!CHAIN.matches(chain)) return malformed("blockchain", "is not a blockchain name")
-    return Resource.success(AddChainCommand(userId, chain, circleKey(userId, "wallet.add-chain:$chain", requestKey)))
+/** W12's add; Circle's key comes from the user, the chain and the hour, not the request (decision 2026-10-28). */
+fun AddChainRequest.toCommand(userId: UserId): Resource<AddChainCommand> {
+    val chain = chainOf(blockchain) ?: return malformed("blockchain", "is not a blockchain name")
+    return Resource.success(AddChainCommand(userId, chain))
 }
 
 /**
@@ -66,7 +68,7 @@ fun AddChainRequest.toCommand(userId: UserId, requestKey: String): Resource<AddC
  * again asks Circle with the same key, a new request with a new one. Circle wants a UUID; a phone may send any text,
  * so the key is a name-based UUID of the user, the operation and the phone's key.
  */
-private fun circleKey(
+internal fun circleKey(
     userId: UserId,
     operation: String,
     requestKey: String,
@@ -88,7 +90,7 @@ fun WalletSetup.toResponse() = CreateWalletResponse(status.name, challengeId, sd
 fun List<ChainOption>.toResponse() =
     ChainsResponse(
         defaultChain = first { it.isDefault }.blockchain,
-        chains = map { ChainOptionDto(it.blockchain, it.assets, it.status.name) },
+        chains = map { ChainOptionDto(it.blockchain, it.assets, it.status.name, it.receiveEnabled) },
     )
 
 fun ChainAddition.toResponse() = AddChainResponse(blockchain, status.name, challengeId, sdk?.toDto())
@@ -101,6 +103,7 @@ private fun ChainHoldings.toDto() =
         address = wallet.address,
         state = wallet.state.name,
         assets = holdings.map { it.toDto() },
+        receiveEnabled = receiveEnabled,
     )
 
 private fun Holding.toDto() =
@@ -109,14 +112,11 @@ private fun Holding.toDto() =
         tokenAddress = tokenAddress,
         decimals = decimals,
         amountMinor = amountMinor.toString(),
-        amount = whole(amountMinor, decimals),
+        amount = Amounts.whole(amountMinor, decimals),
         fiatAmount = fiatAmount?.toPlainString(),
     )
 
-private fun AssetTotal.toDto() = AssetTotalDto(symbol, decimals, amountMinor.toString(), whole(amountMinor, decimals))
+private fun AssetTotal.toDto() =
+    AssetTotalDto(symbol, decimals, amountMinor.toString(), Amounts.whole(amountMinor, decimals))
 
 private fun FiatValue.toDto() = FiatDto(currency, amount.toPlainString(), rate.toPlainString(), asOf, partial)
-
-/** "20.5" for 20 500 000 of a 6-decimal asset; "0" for nothing. */
-private fun whole(amountMinor: BigInteger, decimals: Int): String =
-    BigDecimal(amountMinor, decimals).stripTrailingZeros().toPlainString()

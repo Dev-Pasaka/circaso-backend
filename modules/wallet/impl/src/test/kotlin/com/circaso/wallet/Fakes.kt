@@ -43,8 +43,13 @@ import java.util.concurrent.atomic.AtomicInteger
 
 const val USDC_BASE = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 const val USDC_SOLANA = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+const val USDC_AMOY = "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582"
+const val USDC_SEPOLIA = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
 
-/** Base Sepolia (USDC and ETH, the native coin) and Solana Devnet (USDC); a wallet starts on Base. */
+/**
+ * Base Sepolia (USDC and ETH, the native coin), Solana Devnet (USDC) and Polygon Amoy (USDC), which is retired from
+ * receiving (decision 2026-10-28); a wallet starts on Base.
+ */
 val TEST_CHAINS =
     SupportedChains(
         default = "BASE-SEPOLIA",
@@ -58,6 +63,11 @@ val TEST_CHAINS =
                     ),
                 ),
                 CustodyChain("SOL-DEVNET", listOf(CustodyAsset("USDC", USDC_SOLANA, 6, usdPegged = true))),
+                CustodyChain(
+                    "MATIC-AMOY",
+                    listOf(CustodyAsset("USDC", USDC_AMOY, 6, usdPegged = true)),
+                    receiveEnabled = false,
+                ),
             ),
     )
 
@@ -76,6 +86,17 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
     val held = ConcurrentHashMap<String, Map<String, BigInteger>>()
     val calls: MutableList<String> = CopyOnWriteArrayList()
     val keys: MutableList<UUID> = CopyOnWriteArrayList()
+
+    /** Every transfer asked for, by Circle user; one challenge per idempotency key, as Circle answers a repeat. */
+    val transfers: MutableList<Pair<String, TransferRequest>> = CopyOnWriteArrayList()
+    private val transferChallenges = ConcurrentHashMap<UUID, String>()
+
+    /** Addresses Circle says aren't valid, on top of the shape check. */
+    val invalidAddresses: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** When set, Circle refuses the next transfers with it. */
+    @Volatile
+    var refuseTransfers: IntegrationError? = null
 
     @Volatile
     var down = false
@@ -153,13 +174,21 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         }
 
     override suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> =
-        error("not used in WS2")
+        call("prepareTransfer") {
+            refuseTransfers?.let { return@call Resource.error(it) }
+            transfers += circleUserId to request
+            val id = transferChallenges.getOrPut(request.idempotencyKey) { "challenge-${challenges.incrementAndGet()}" }
+            Resource.success(Challenge(id, session(circleUserId)))
+        }
 
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
-        error("not used in WS2")
+        error("not used in WS3")
 
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
-        error("not used in WS2")
+        call("validateAddress") {
+            val shape = if (blockchain.startsWith("SOL")) SOLANA_ADDRESS else EVM_ADDRESS
+            Resource.success(shape.matches(address) && address !in invalidAddresses)
+        }
 
     override suspend fun pinChallenge(
         circleUserId: String,
@@ -180,10 +209,13 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         SdkSession("app-1", "token-$circleUserId", "key-$circleUserId", Instant.parse("2026-10-28T10:00:00Z"))
 
     private companion object {
+        val EVM_ADDRESS = Regex("^0x[0-9a-fA-F]{40}$")
+        val SOLANA_ADDRESS = Regex("^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
         fun defaultAddress(blockchain: String): String {
             val random = UUID.randomUUID().toString().replace("-", "")
-            if (blockchain.startsWith("SOL")) return "So1" + random.take(40)
-            return "0xAB" + random.take(38)
+            if (blockchain.startsWith("SOL")) return "So1" + random.take(29).replace('0', '1').replace('l', 'L')
+            return "0xAB" + random.take(32) + "cdef01"
         }
     }
 }
@@ -206,7 +238,19 @@ class MemoryWalletRepository : WalletRepository {
     override suspend fun insertCircleUser(user: CircleUser): Boolean =
         circleUsers.putIfAbsent(user.userId, user) == null
 
+    override suspend fun circleUserByCircleId(circleUserId: UUID): CircleUser? =
+        circleUsers.values.firstOrNull { it.circleUserId == circleUserId }
+
     override suspend fun wallets(userId: UserId): List<ChainWallet> = rows.filter { it.userId == userId }
+
+    override suspend fun wallet(circleWalletId: String): ChainWallet? =
+        rows.firstOrNull {
+            it.circleWalletId ==
+                circleWalletId
+        }
+
+    override suspend fun walletAt(address: String, blockchain: String): ChainWallet? =
+        rows.firstOrNull { it.address == address && it.blockchain == blockchain }
 
     override suspend fun insertWallet(wallet: ChainWallet): Boolean =
         synchronized(rows) {
@@ -266,8 +310,20 @@ class MemoryBalanceCache : BalanceCache {
 class RecordingWarnings : WalletWarnings {
     val chainsNotConfigured: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
 
+    val unknownWallets: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
     override fun chainNotConfigured(blockchain: String, circleWalletId: String) {
         chainsNotConfigured += blockchain to circleWalletId
+    }
+
+    val refIdMismatches: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    override fun refIdOfAnotherWallet(transferId: String, circleWalletId: String) {
+        refIdMismatches += transferId to circleWalletId
+    }
+
+    override fun unknownWallet(blockchain: String, circleWalletId: String) {
+        unknownWallets += blockchain to circleWalletId
     }
 }
 

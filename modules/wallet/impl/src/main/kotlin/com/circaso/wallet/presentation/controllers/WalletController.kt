@@ -85,13 +85,13 @@ fun Route.walletController(wallets: WalletService) {
                     TAG,
                     notes =
                         "$SCOPE Each chain is `ENABLED`, `ADDING` (asked for, not signed yet) or `AVAILABLE`. " +
-                            "`defaultChain` is where a new wallet starts.",
+                            "`defaultChain` is where a new wallet starts. A chain retired from receiving " +
+                            "(`receiveEnabled: false`) is listed only while the wallet is on it, so it can be emptied.",
                 )
 
                 post {
                     val userId = call.principal().userId
-                    val key = call.idempotencyKey()
-                    val result = call.receive<AddChainRequest>().toCommand(userId, key).flatMap { wallets.addChain(it) }
+                    val result = call.receive<AddChainRequest>().toCommand(userId).flatMap { wallets.addChain(it) }
                     call.respondDefault(result.toDefaultResponse { it.toResponse() })
                 }.docs<AddChainRequest, AddChainResponse>(
                     "W12 · Add a supported chain to your wallet",
@@ -106,8 +106,10 @@ fun Route.walletController(wallets: WalletService) {
                     notes =
                         "$SCOPE Answers `ADDING` with a challenge to run in the Circle SDK (the PIN creates the " +
                             "wallet on that chain), or `ENABLED` with no challenge when the wallet is already on " +
-                            "it. Circle is asked first every time, so a chain signed elsewhere is found rather than " +
-                            "made twice. The new chain shows in W1 once Circle has made it.",
+                            "it. Circle is asked first every time, and adds of the same chain within the hour get " +
+                            "the same challenge, so a chain is never made twice. A chain retired from receiving " +
+                            "can't be added (`wallet.chain_unsupported`). The new chain shows in W1 once Circle has " +
+                            "made it.",
                 )
             }
         }
@@ -115,4 +117,4 @@ fun Route.walletController(wallets: WalletService) {
 }
 
 /** The request's `Idempotency-Key`; the gateway refuses a state change without one before it gets here. */
-private fun ApplicationCall.idempotencyKey(): String = request.headers["Idempotency-Key"].orEmpty()
+internal fun ApplicationCall.idempotencyKey(): String = request.headers["Idempotency-Key"].orEmpty()
