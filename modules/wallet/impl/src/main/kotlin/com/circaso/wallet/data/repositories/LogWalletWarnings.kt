@@ -14,4 +14,12 @@ class LogWalletWarnings : WalletWarnings {
             circleWalletId,
         )
     }
+
+    override fun unknownWallet(blockchain: String, circleWalletId: String) {
+        log.warn(
+            "circle notified a transaction of a wallet we don't know, ignored: blockchain={} circleWalletId={}",
+            blockchain,
+            circleWalletId,
+        )
+    }
 }

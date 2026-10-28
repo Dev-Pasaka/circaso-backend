@@ -18,6 +18,10 @@ import com.circaso.integrations.api.SupportedChains
  *   native coin). Default for the four testnets: their USDC. A chain with no assets stops startup.
  * - `INTEGRATIONS_CUSTODY_CHAIN_<CHAIN>_ACCOUNT_TYPE`: `SCA` (default; Gas Station pays the gas) or `EOA` (default on
  *   Solana, which has no SCA).
+ * - `INTEGRATIONS_CUSTODY_CHAIN_<CHAIN>_RECEIVE_DISABLED`: `true` retires a chain (decision 2026-10-28). A chain is
+ *   never removed from `INTEGRATIONS_CUSTODY_CHAINS` while any wallet holds funds on it: it stays readable and the
+ *   deletion guard keeps checking it, but no wallet is added on it and nobody is paid on it. The default chain can't
+ *   be retired.
  *
  * `<CHAIN>` is the chain's name with `-` as `_` (`BASE_SEPOLIA`).
  */
@@ -55,7 +59,17 @@ internal object CustodyChainsConfig {
         val default = custody.string("default-chain", DEFAULT_CHAIN)
         check(default in names) { "integrations.custody.default-chain ($default) must be one of the chains" }
 
-        val chains = names.map { CustodyChain(it, assetsOf(custody, it)) }
+        val chains =
+            names.map {
+                CustodyChain(
+                    blockchain = it,
+                    assets = assetsOf(custody, it),
+                    receiveEnabled = !custody.boolean("${key(it)}.receive-disabled", false),
+                )
+            }
+        check(chains.single { it.blockchain == default }.receiveEnabled) {
+            "integrations.custody.default-chain ($default) can't have receiving disabled"
+        }
         val accountTypes = names.associateWith { custody.string("${key(it)}.account-type", defaultAccountType(it)) }
         return Parsed(SupportedChains(default, chains), accountTypes)
     }

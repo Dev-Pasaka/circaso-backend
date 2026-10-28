@@ -10,6 +10,9 @@ import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.models.WalletStatus
 import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.presentation.dto.AddChainRequest
+import com.circaso.wallet.presentation.dto.AmountRequest
+import com.circaso.wallet.presentation.dto.PayeeRequest
+import com.circaso.wallet.presentation.dto.PrepareTransferRequest
 import com.circaso.wallet.presentation.mappers.createWalletCommand
 import com.circaso.wallet.presentation.mappers.toCommand
 import com.circaso.wallet.presentation.mappers.toResponse
@@ -35,8 +38,8 @@ class MappersTest {
 
     @Test
     fun `the blockchain is checked for shape and the Circle key is derived from the request's key`() {
-        assertEquals("SOL-DEVNET", AddChainRequest("sol-devnet").toCommand(amina, "k-1").data().blockchain)
-        assertEquals("request.malformed", AddChainRequest("base sepolia!").toCommand(amina, "k-1").code())
+        assertEquals("SOL-DEVNET", AddChainRequest("sol-devnet").toCommand(amina).data().blockchain)
+        assertEquals("request.malformed", AddChainRequest("base sepolia!").toCommand(amina).code())
 
         val first = createWalletCommand(amina, "k-1").idempotencyKey
         assertEquals(first, createWalletCommand(amina, "k-1").idempotencyKey, "a repeat asks Circle with the same key")
@@ -79,5 +82,51 @@ class MappersTest {
         assertEquals("0", response.totals.single().amount)
         assertEquals("129.25", response.fiat?.rate)
         assertEquals(true, response.fiat?.partial)
+    }
+
+    private fun transfer(
+        amount: AmountRequest,
+        to: PayeeRequest = PayeeRequest(userId = UserId.new().toString()),
+        blockchain: String = "base-sepolia",
+    ) = PrepareTransferRequest(blockchain, to, amount).toCommand(amina, "k-1")
+
+    @Test
+    fun `W4 amounts are strings - amountMinor exact, amount in whole units, or both when they agree`() {
+        assertEquals(20_000_000, transfer(AmountRequest("USDC", amountMinor = "20000000")).data().amount.amountMinor)
+        assertEquals(20_500_000, transfer(AmountRequest("usdc", amount = "20.5")).data().amount.amountMinor)
+        assertEquals(1, transfer(AmountRequest("USDC", "1", "0.000001")).data().amount.amountMinor)
+
+        assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", "2", "0.000001")).code(), "disagree")
+        assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", amount = "0.0000001")).code())
+        assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", amount = "-1")).code())
+        assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", amountMinor = "1.5")).code())
+        assertEquals(
+            "wallet.amount_invalid",
+            transfer(AmountRequest("USDC", amountMinor = "99999999999999999999")).code(),
+        )
+        assertEquals("wallet.amount_invalid", transfer(AmountRequest("DOGE", amountMinor = "1")).code())
+        assertEquals("request.malformed", transfer(AmountRequest("USDC")).code())
+    }
+
+    @Test
+    fun `W4 needs exactly one payee, ids that read, and a chain name, and keys the transfer by the request`() {
+        val amount = AmountRequest("USDC", amountMinor = "1")
+        assertEquals("BASE-SEPOLIA", transfer(amount).data().blockchain)
+        assertEquals("request.malformed", transfer(amount, PayeeRequest()).code())
+        assertEquals("request.malformed", transfer(amount, PayeeRequest("x", "0xabc")).code())
+        assertEquals("request.malformed", transfer(amount, PayeeRequest(userId = "nope")).code())
+        assertEquals("request.malformed", transfer(amount, PayeeRequest(address = " ")).code())
+        assertEquals("request.malformed", transfer(amount, blockchain = "base sepolia!").code())
+
+        val first = transfer(amount).data().idempotencyKey
+        assertEquals(first, transfer(amount).data().idempotencyKey, "a repeat finds the same transfer")
+        assertNotEquals(
+            first,
+            PrepareTransferRequest(
+                "BASE",
+                PayeeRequest(address = "0x1"),
+                amount,
+            ).toCommand(amina, "k-2").data().idempotencyKey,
+        )
     }
 }

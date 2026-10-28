@@ -4,6 +4,10 @@ import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SmsGateway
@@ -11,6 +15,7 @@ import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeExchangeRates
 import com.circaso.integrations.impl.dev.FakeSms
+import com.circaso.shared.Resource
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -38,6 +43,7 @@ import org.testcontainers.utility.DockerImageName
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.security.KeyPairGenerator
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import kotlin.test.Test
@@ -72,7 +78,12 @@ class WalletQaTest {
             "INTEGRATIONS_RATES_PROVIDER" to "fake",
         ) + TestPostgres.env().filterKeys { it.startsWith("DATABASE_") }
 
-    private class Fakes(val sms: FakeSms, val custody: FakeCustody, val rates: FakeExchangeRates)
+    private class Fakes(
+        val sms: FakeSms,
+        val custody: FakeCustody,
+        val rates: FakeExchangeRates,
+        val notifications: CustodyNotifications,
+    )
 
     private class Person(val app: String)
 
@@ -94,6 +105,7 @@ class WalletQaTest {
                     getKoin().get<SmsGateway>() as FakeSms,
                     getKoin().get<StablecoinCustody>() as FakeCustody,
                     getKoin().get<ExchangeRates>() as FakeExchangeRates,
+                    getKoin().get<CustodyNotifications>(),
                 )
         }
         client.get("/health/live") // start the application
@@ -377,5 +389,64 @@ class WalletQaTest {
             val again = send("POST", "/v1/wallet", person.app, "{}")
             println("W2 after Circle has the wallet: ${again.status} ${again.bodyAsText()}")
             assertTrue(again.status == HttpStatusCode.Conflict || again.status == HttpStatusCode.OK)
+        }
+
+    @Test
+    fun `W11, W4 to an outside address, Circle's update through CustodyNotifications, then W5`() =
+        testApplication {
+            val fakes = boot()
+            val person = signUp(fakes.sms)
+            val address = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01"
+            val validate =
+                send(
+                    "POST",
+                    "/v1/wallet/addresses/validate",
+                    person.app,
+                    """{"blockchain":"BASE-SEPOLIA","address":"$address"}""",
+                ).data()
+            assertEquals("true", validate["valid"]!!.jsonPrimitive.content)
+            val body =
+                """{"blockchain":"BASE-SEPOLIA","to":{"address":"$address"},"amount":{"asset":"USDC","amount":"2.5"}}"""
+            assertEquals("wallet.not_found", send("POST", "/v1/wallet/transfers", person.app, body).code())
+
+            activeWallet(fakes, person, funds = BigInteger.valueOf(10_000_000))
+            val key = UUID.randomUUID().toString()
+            val prepared = send("POST", "/v1/wallet/transfers", person.app, body, key)
+            assertEquals(HttpStatusCode.OK, prepared.status, prepared.bodyAsText())
+            val data = prepared.data()
+            assertEquals("AWAITING_SIGNATURE", data["state"]!!.jsonPrimitive.content)
+            assertEquals("2500000", data["amount"]!!.jsonObject["amountMinor"]!!.jsonPrimitive.content)
+            assertEquals("2.5", data["amount"]!!.jsonObject["amount"]!!.jsonPrimitive.content)
+            assertEquals("0", data["fee"]!!.jsonObject["amountMinor"]!!.jsonPrimitive.content)
+            val transferId = data["transferId"]!!.jsonPrimitive.content
+            val (circleUser, request) = fakes.custody.transfers.single()
+            assertEquals(transferId, request.refId)
+
+            val notifications = fakes.notifications
+            val update =
+                CustodyTransaction(
+                    circleTxId = "tx-qa",
+                    circleUserId = circleUser,
+                    walletId = request.walletId,
+                    blockchain = "BASE-SEPOLIA",
+                    direction = CustodyDirection.OUT,
+                    state = CustodyTransactionState.CONFIRMED,
+                    amount = request.amount,
+                    sourceAddress = "",
+                    destinationAddress = request.destinationAddress,
+                    refId = transferId,
+                    txHash = "0xqa",
+                    failureReason = "",
+                    updatedAt = Instant.now(),
+                )
+            assertTrue(notifications.onTransaction(update) is Resource.Success)
+
+            val shown = get("/v1/wallet/transfers/$transferId", person.app).data()
+            assertEquals("CONFIRMED", shown["state"]!!.jsonPrimitive.content)
+            assertEquals("OUT", shown["direction"]!!.jsonPrimitive.content)
+            assertEquals("0xqa", shown["txHash"]!!.jsonPrimitive.content)
+            assertEquals(address.lowercase(), shown["to"]!!.jsonObject["address"]!!.jsonPrimitive.content)
+            val again = send("POST", "/v1/wallet/transfers", person.app, body, UUID.randomUUID().toString())
+            assertEquals(HttpStatusCode.OK, again.status, "a new key is a new transfer")
         }
 }

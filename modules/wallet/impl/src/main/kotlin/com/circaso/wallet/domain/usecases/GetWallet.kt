@@ -1,6 +1,7 @@
 package com.circaso.wallet.domain.usecases
 
 import com.circaso.integrations.api.ExchangeRates
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.Resource
 import com.circaso.wallet.domain.models.ChainHoldings
 import com.circaso.wallet.domain.models.ChainWallet
@@ -28,6 +29,7 @@ class GetWallet(
     private val adding: AddingChains,
     private val holdings: HoldingsReader,
     private val rates: ExchangeRates,
+    private val custody: StablecoinCustody,
 ) {
     suspend operator fun invoke(query: WalletQuery): Resource<WalletView> {
         val user = wallets.circleUser(query.userId) ?: return Resource.success(empty(WalletStatus.NONE))
@@ -37,7 +39,7 @@ class GetWallet(
         val chains = mutableListOf<ChainHoldings>()
         for (wallet in open) {
             when (val read = holdings.cached(user, wallet)) {
-                is Resource.Success -> chains += ChainHoldings(wallet, read.data)
+                is Resource.Success -> chains += ChainHoldings(wallet, read.data, receives(wallet.blockchain))
                 is Resource.Error -> return read
             }
         }
@@ -70,6 +72,8 @@ class GetWallet(
             hold = null,
         )
     }
+
+    private fun receives(blockchain: String): Boolean = custody.supported.find(blockchain)?.receiveEnabled == true
 
     private fun empty(status: WalletStatus) =
         WalletView(status, chains = emptyList(), totals = emptyList(), fiat = null, hold = null)

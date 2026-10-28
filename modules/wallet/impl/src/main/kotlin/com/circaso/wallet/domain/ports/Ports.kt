@@ -22,6 +22,9 @@ interface BalanceCache {
 interface WalletWarnings {
     /** A wallet sits on [blockchain], which is no longer in the custody configuration, so its balance can't be read. */
     fun chainNotConfigured(blockchain: String, circleWalletId: String)
+
+    /** Circle told us about a transaction of a wallet that isn't ours, even after asking Circle for its user. */
+    fun unknownWallet(blockchain: String, circleWalletId: String)
 }
 
 /**

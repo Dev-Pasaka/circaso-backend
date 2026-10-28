@@ -4,12 +4,15 @@ import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.UserId
 import com.circaso.wallet.data.cache.RedisAddingChains
 import com.circaso.wallet.data.cache.RedisBalanceCache
+import com.circaso.wallet.data.cache.RedisDailySpend
+import com.circaso.wallet.data.cache.RedisReminders
 import com.circaso.wallet.domain.models.Holding
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.time.Duration
+import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -55,8 +58,36 @@ class WalletRedisTest {
             assertFalse(redis.values.containsKey("adding:$amina"), "kept as a hash, not a plain key")
         }
 
+    @Test
+    fun `wal sent adds up a day's transfers for 2 days, and gives back`() =
+        runBlocking<Unit> {
+            val spend = RedisDailySpend(redis)
+            val amina = UserId.new()
+            val day = LocalDate.of(2026, 10, 28)
+
+            assertEquals(0L, spend.total(amina, day))
+            assertEquals(10L, spend.add(amina, day, 10))
+            assertEquals(15L, spend.add(amina, day, 5))
+            assertEquals(5L, spend.add(amina, day, -10))
+            assertEquals(5L, spend.total(amina, day))
+            assertEquals(0L, spend.total(amina, day.plusDays(1)))
+            assertEquals(Duration.ofDays(2), redis.ttls["sent:$amina:2026-10-28"])
+        }
+
+    @Test
+    fun `wal remind lets one reminder per pair through for 24 hours`() =
+        runBlocking<Unit> {
+            val reminders = RedisReminders(redis)
+            val (amina, bob) = UserId.new() to UserId.new()
+
+            assertTrue(reminders.claim(amina, bob))
+            assertFalse(reminders.claim(amina, bob))
+            assertTrue(reminders.claim(bob, amina), "the other way is another pair")
+            assertEquals(Duration.ofHours(24), redis.ttls["remind:$amina:$bob"])
+        }
+
     /** Plain keys and hashes in memory, with the expiry each was last given. */
-    private class MemoryRedis : RedisScope {
+    internal class MemoryRedis : RedisScope {
         override val prefix = "wal"
         val values = ConcurrentHashMap<String, String>()
         val hashes = ConcurrentHashMap<String, MutableMap<String, String>>()
@@ -79,7 +110,10 @@ class WalletRedisTest {
             key: String,
             value: String,
             ttl: Duration,
-        ): Boolean = error("not used")
+        ): Boolean =
+            (values.putIfAbsent(key, value) == null).also {
+                if (it) ttls[key] = ttl
+            }
 
         override suspend fun getAndDelete(key: String): String? = values.remove(key)
 
@@ -93,9 +127,15 @@ class WalletRedisTest {
             key: String,
             by: Long,
             ttl: Duration,
-        ): Long = error("not used")
+        ): Long {
+            ttls.putIfAbsent(key, ttl)
+            return values.merge(key, by.toString()) { old, _ -> (old.toLong() + by).toString() }!!.toLong()
+        }
 
-        override suspend fun incrementRenewing(key: String, ttl: Duration): Long = error("not used")
+        override suspend fun incrementRenewing(key: String, ttl: Duration): Long {
+            ttls[key] = ttl
+            return values.merge(key, "1") { old, _ -> (old.toLong() + 1).toString() }!!.toLong()
+        }
 
         override suspend fun hashSet(
             key: String,

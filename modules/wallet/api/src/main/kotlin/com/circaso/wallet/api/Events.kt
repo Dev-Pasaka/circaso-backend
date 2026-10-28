@@ -18,3 +18,40 @@ data class WalletCreated(val userId: UserId, val blockchain: String) : DomainEve
         const val TYPE = "wallet.WalletCreated"
     }
 }
+
+/**
+ * A transfer the wallet prepared reached the chain (Circle `CONFIRMED` or `COMPLETE`). Published once per transfer,
+ * by the update that moved it there. [proposalId] is set when Asha proposed it (Phase B).
+ */
+@Serializable
+data class TransferConfirmed(
+    val transferId: TransferId,
+    val senderId: UserId,
+    val recipientId: UserId? = null,
+    val blockchain: String,
+    val amount: WalletAmount,
+    /** `APP` or `ASHA`. */
+    val origin: String,
+    val proposalId: String? = null,
+) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "wallet.TransferConfirmed"
+    }
+}
+
+/** A transfer the wallet prepared failed (Circle `FAILED`, `DENIED` or `CANCELLED`); published once per transfer. */
+@Serializable
+data class TransferFailed(
+    val transferId: TransferId,
+    val senderId: UserId,
+    /** Circle's reason as it gave it, or `FAILED` when it gave none. */
+    val reason: String,
+) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "wallet.TransferFailed"
+    }
+}

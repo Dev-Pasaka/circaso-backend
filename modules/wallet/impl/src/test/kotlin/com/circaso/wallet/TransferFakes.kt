@@ -1,0 +1,232 @@
+package com.circaso.wallet
+
+import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.AccountStatus
+import com.circaso.messaging.api.ChatDirectory
+import com.circaso.messaging.api.ChatId
+import com.circaso.shared.PhoneNumber
+import com.circaso.shared.UserId
+import com.circaso.users.api.Profiles
+import com.circaso.users.api.PublicProfile
+import com.circaso.users.api.ReachPolicy
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.domain.models.PaymentHold
+import com.circaso.wallet.domain.models.Transfer
+import com.circaso.wallet.domain.models.TransferChange
+import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.models.WalletTransaction
+import com.circaso.wallet.domain.ports.DailySpend
+import com.circaso.wallet.domain.ports.FrameSender
+import com.circaso.wallet.domain.ports.LoggedFrame
+import com.circaso.wallet.domain.ports.PaymentHolds
+import com.circaso.wallet.domain.ports.RealtimeLog
+import com.circaso.wallet.domain.ports.Reminders
+import com.circaso.wallet.domain.ports.WalletFrame
+import com.circaso.wallet.domain.repositories.TransactionRepository
+import com.circaso.wallet.domain.repositories.TransferRepository
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+
+/** A clock the test moves. */
+class MutableClock(
+    @Volatile var now: Instant = Instant.parse("2026-10-28T09:00:00Z"),
+) : Clock() {
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId?): Clock = this
+
+    override fun instant(): Instant = now
+
+    fun advance(by: Duration) {
+        now = now.plus(by)
+    }
+}
+
+/** `transfers` in memory, with the same key claim and transition guard as the table. */
+class MemoryTransferRepository : TransferRepository {
+    val rows = ConcurrentHashMap<TransferId, Transfer>()
+
+    override suspend fun insert(transfer: Transfer): Boolean =
+        synchronized(rows) {
+            val taken =
+                rows.values.any {
+                    it.transferId == transfer.transferId ||
+                        (it.senderId == transfer.senderId && it.idempotencyKey == transfer.idempotencyKey)
+                }
+            if (!taken) rows[transfer.transferId] = transfer
+            !taken
+        }
+
+    override suspend fun byKey(senderId: UserId, idempotencyKey: UUID): Transfer? =
+        rows.values.firstOrNull { it.senderId == senderId && it.idempotencyKey == idempotencyKey }
+
+    override suspend fun find(transferId: TransferId): Transfer? = rows[transferId]
+
+    override suspend fun move(
+        transferId: TransferId,
+        to: TransferState,
+        change: TransferChange,
+    ): Transfer? =
+        synchronized(rows) {
+            val current = rows[transferId]?.takeIf { it.state in to.from } ?: return null
+            val moved =
+                current.copy(
+                    state = to,
+                    updatedAt = change.at,
+                    circleTxId = change.circleTxId ?: current.circleTxId,
+                    txHash = change.txHash ?: current.txHash,
+                    failureReason = change.failureReason ?: current.failureReason,
+                )
+            rows[transferId] = moved
+            moved
+        }
+}
+
+/** `transactions` in memory, unique per (Circle transaction, user) and per transfer. */
+class MemoryTransactionRepository : TransactionRepository {
+    val rows: MutableList<WalletTransaction> = CopyOnWriteArrayList()
+
+    override suspend fun insert(transaction: WalletTransaction): Boolean =
+        synchronized(rows) {
+            val taken =
+                rows.any {
+                    it.id == transaction.id ||
+                        (
+                            transaction.circleTxId != null &&
+                                it.circleTxId == transaction.circleTxId &&
+                                it.userId == transaction.userId
+                        ) ||
+                        (transaction.transferId != null && it.transferId == transaction.transferId)
+                }
+            if (!taken) rows += transaction
+            !taken
+        }
+
+    override suspend fun moveByTransfer(
+        transferId: TransferId,
+        to: TransferState,
+        change: TransferChange,
+    ): Boolean = move(to, change) { it.transferId == transferId } != null
+
+    override suspend fun moveByCircle(
+        circleTxId: String,
+        userId: UserId,
+        to: TransferState,
+        change: TransferChange,
+    ): WalletTransaction? = move(to, change) { it.circleTxId == circleTxId && it.userId == userId }
+
+    private fun move(
+        to: TransferState,
+        change: TransferChange,
+        where: (WalletTransaction) -> Boolean,
+    ): WalletTransaction? =
+        synchronized(rows) {
+            val index = rows.indexOfFirst { where(it) && it.state in to.from }
+            if (index < 0) return null
+            val current = rows[index]
+            val moved =
+                current.copy(
+                    state = to,
+                    circleTxId = change.circleTxId ?: current.circleTxId,
+                    txHash = change.txHash ?: current.txHash,
+                )
+            rows[index] = moved
+            moved
+        }
+}
+
+/** The frames the wallet sent, by user. */
+class RecordingFrames : FrameSender {
+    val sent: MutableList<Pair<UserId, WalletFrame>> = CopyOnWriteArrayList()
+
+    override suspend fun send(userId: UserId, frame: WalletFrame) {
+        sent += userId to frame
+    }
+
+    inline fun <reified F : WalletFrame> to(userId: UserId): List<F> =
+        sent.filter { it.first == userId }.map { it.second }.filterIsInstance<F>()
+}
+
+/** Use-case tests read no replay; `WalletRealtimeTest` covers the kept frames on PostgreSQL. */
+object NoFramesKept : RealtimeLog {
+    override suspend fun since(
+        userId: UserId,
+        seq: Long,
+        limit: Int,
+    ): List<LoggedFrame> = emptyList()
+
+    override suspend fun latest(userId: UserId): Long? = null
+}
+
+class MemoryDailySpend : DailySpend {
+    val totals = ConcurrentHashMap<Pair<UserId, LocalDate>, Long>()
+
+    override suspend fun total(userId: UserId, day: LocalDate): Long = totals[userId to day] ?: 0
+
+    override suspend fun add(
+        userId: UserId,
+        day: LocalDate,
+        amountMinor: Long,
+    ): Long = totals.merge(userId to day, amountMinor, Long::plus)!!
+}
+
+class MemoryReminders : Reminders {
+    val claimed: MutableSet<Pair<UserId, UserId>> = ConcurrentHashMap.newKeySet()
+
+    override suspend fun claim(from: UserId, to: UserId): Boolean = claimed.add(from to to)
+}
+
+class MemoryHolds : PaymentHolds {
+    val holds = ConcurrentHashMap<UserId, PaymentHold>()
+
+    override suspend fun active(userId: UserId): PaymentHold? = holds[userId]
+}
+
+/** Every account is `ACTIVE` unless the test says otherwise. */
+class FakeAccounts : AccountDirectory {
+    val statuses = ConcurrentHashMap<UserId, AccountStatus>()
+
+    override suspend fun status(userId: UserId): AccountStatus? = statuses[userId] ?: AccountStatus.ACTIVE
+
+    override suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId> = emptyMap()
+}
+
+/** Reach is a set of connected pairs (either way); blocks win over a shared chat. */
+class FakeReach : ReachPolicy {
+    val connected: MutableSet<Set<UserId>> = ConcurrentHashMap.newKeySet()
+    val blocked: MutableSet<Set<UserId>> = ConcurrentHashMap.newKeySet()
+
+    fun connect(a: UserId, b: UserId) {
+        connected += setOf(a, b)
+    }
+
+    override suspend fun canReach(from: UserId, to: UserId): Boolean =
+        setOf(from, to) in connected && setOf(from, to) !in blocked
+
+    override suspend fun reachable(from: UserId, to: Set<UserId>): Set<UserId> =
+        to.filter { canReach(from, it) }.toSet()
+
+    override suspend fun blockedEitherWay(a: UserId, b: UserId): Boolean = setOf(a, b) in blocked
+}
+
+class FakeChats : ChatDirectory {
+    val members = ConcurrentHashMap<ChatId, Set<UserId>>()
+
+    override suspend fun isMember(chatId: ChatId, userId: UserId): Boolean = userId in members[chatId].orEmpty()
+
+    override suspend fun members(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
+}
+
+class FakeProfiles : Profiles {
+    val names = ConcurrentHashMap<UserId, String>()
+
+    override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
+        ids.mapNotNull { id -> names[id]?.let { id to PublicProfile(id, it, null, null, null) } }.toMap()
+}

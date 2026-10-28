@@ -45,8 +45,11 @@ data class Holding(
     override fun toString(): String = "Holding($symbol, ***)"
 }
 
-/** One chain of the wallet and what it holds there. */
-data class ChainHoldings(val wallet: ChainWallet, val holdings: List<Holding>)
+/**
+ * One chain of the wallet and what it holds there. [receiveEnabled] is false on a chain retired from receiving
+ * (decision 2026-10-28): its address must not be handed out to be paid, only emptied.
+ */
+data class ChainHoldings(val wallet: ChainWallet, val holdings: List<Holding>, val receiveEnabled: Boolean = true)
 
 /** The same asset added up over every chain (USDC on Base plus USDC on Solana). */
 data class AssetTotal(val symbol: String, val decimals: Int, val amountMinor: BigInteger)
@@ -91,12 +94,16 @@ enum class ChainStatus {
     AVAILABLE,
 }
 
-/** A supported chain, the assets offered on it, and where this user stands with it. */
+/**
+ * A supported chain, the assets offered on it, and where this user stands with it. [receiveEnabled] is false for a
+ * chain retired from receiving (decision 2026-10-28): listed only while the wallet is on it, so it can be emptied.
+ */
 data class ChainOption(
     val blockchain: String,
     val assets: List<String>,
     val isDefault: Boolean,
     val status: ChainStatus,
+    val receiveEnabled: Boolean,
 )
 
 /** W12 `POST /wallet/chains`: the challenge that adds [blockchain], or none when it is already on the wallet. */
@@ -110,7 +117,8 @@ data class ChainAddition(
 /** A request that asks Circle for a challenge; [idempotencyKey] is derived from the request's `Idempotency-Key`. */
 data class CreateWalletCommand(val userId: UserId, val idempotencyKey: UUID)
 
-data class AddChainCommand(val userId: UserId, val blockchain: String, val idempotencyKey: UUID)
+/** W12's add. Circle's key is derived in the use case from the user, the chain and the hour (decision 2026-10-28). */
+data class AddChainCommand(val userId: UserId, val blockchain: String)
 
 /** W1's query; [currency] is an ISO 4217 code already checked by the mapper. */
 data class WalletQuery(val userId: UserId, val currency: String?)

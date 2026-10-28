@@ -12,6 +12,9 @@ import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
+import java.time.Clock
+import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 /**
  * W12 `POST /wallet/chains`: the user adds one more supported chain to their wallet (decision 2026-10-28). Circle
@@ -22,18 +25,25 @@ import com.circaso.wallet.domain.support.orCustodyUnavailable
  * Before asking Circle for a challenge, Circle's wallet list is always read and recorded: the user may already have
  * signed (on this phone or another, whatever `wal:adding` says), and a second challenge could make a second wallet on
  * the same chain. `wal:adding` only tells W1 and W12's list when to poll Circle.
+ *
+ * Circle's idempotency key is derived from the user, the chain and the hour (decision 2026-10-28), not from the
+ * request's `Idempotency-Key`: two adds of the same chain at once, from two phones or two taps, get the same Circle
+ * challenge instead of two that could each make a wallet. A chain retired from receiving (decision 2026-10-28) is
+ * never added.
  */
 class AddChain(
     private val wallets: WalletRepository,
     private val sync: WalletSync,
     private val adding: AddingChains,
     private val custody: StablecoinCustody,
+    private val clock: Clock,
 ) {
     suspend operator fun invoke(command: AddChainCommand): Resource<ChainAddition> {
-        custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
+        val chain = custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(command.userId) ?: return Resource.error(WalletError.NotFound)
 
         if (wallets.wallets(command.userId).isOn(command.blockchain)) return Resource.success(enabled(command))
+        if (!chain.receiveEnabled) return Resource.error(WalletError.ChainUnsupported)
         val known =
             when (val synced = sync.sync(user)) {
                 is Resource.Success -> synced.data
@@ -46,7 +56,7 @@ class AddChain(
             when (
                 val created =
                     custody
-                        .addWallet(user.circleUserId.toString(), command.blockchain, command.idempotencyKey)
+                        .addWallet(user.circleUserId.toString(), command.blockchain, circleKey(command))
                         .orCustodyUnavailable()
             ) {
                 is Resource.Success -> created.data
@@ -56,6 +66,12 @@ class AddChain(
         return Resource.success(
             ChainAddition(command.blockchain, ChainStatus.ADDING, challenge.challengeId, challenge.sdk),
         )
+    }
+
+    /** The same for every add of this chain by this user within the hour, so concurrent adds share one challenge. */
+    private fun circleKey(command: AddChainCommand): UUID {
+        val window = clock.instant().truncatedTo(ChronoUnit.HOURS)
+        return UUID.nameUUIDFromBytes("${command.userId}|wallet.add-chain|${command.blockchain}|$window".toByteArray())
     }
 
     private fun List<ChainWallet>.isOn(blockchain: String) = any { it.isOpen() && it.blockchain == blockchain }
