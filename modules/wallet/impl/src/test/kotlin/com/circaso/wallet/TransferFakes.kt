@@ -73,9 +73,10 @@ class MemoryTransferRepository : TransferRepository {
         transferId: TransferId,
         to: TransferState,
         change: TransferChange,
+        from: Set<TransferState>,
     ): Transfer? =
         synchronized(rows) {
-            val current = rows[transferId]?.takeIf { it.state in to.from } ?: return null
+            val current = rows[transferId]?.takeIf { it.state in to.from && it.state in from } ?: return null
             val moved =
                 current.copy(
                     state = to,

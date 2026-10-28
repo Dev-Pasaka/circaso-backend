@@ -8,6 +8,8 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
+import com.circaso.shared.decode
+import com.circaso.wallet.api.TransferFailed
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.Direction
@@ -356,6 +358,33 @@ class TransferTest {
             assertEquals("wallet.address_invalid", payBob().code())
             h.custody.refuseTransfers = IntegrationError.PinLocked()
             assertEquals("wallet.pin_locked", payBob().code())
+        }
+
+    @Test
+    fun `a refusal at prepare publishes TransferFailed once, with its outbox row, however often the key is retried`() =
+        runBlocking<Unit> {
+            ready()
+            h.custody.refuseTransfers = IntegrationError.InsufficientFunds()
+            val key = UUID.randomUUID()
+
+            assertEquals("wallet.insufficient_funds", payBob(key = key).code())
+            payBob(key = key)
+            h.custody.refuseTransfers = null
+            payBob(key = key).data()
+
+            val transferId =
+                (h.transfers as MemoryTransferRepository)
+                    .rows.values
+                    .single()
+                    .transferId
+            val published = h.bus.published.filter { it.type == TransferFailed.TYPE }
+            assertEquals(1, published.size)
+            assertEquals(published, (h.outbox as RecordingOutbox).written.filter { it.type == TransferFailed.TYPE })
+            val event = published.single().decode<TransferFailed>()
+            assertEquals(transferId, event.transferId)
+            assertEquals(amina, event.senderId)
+            assertEquals("wallet.insufficient_funds", event.reason)
+            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "given back once, not below zero")
         }
 
     @Test

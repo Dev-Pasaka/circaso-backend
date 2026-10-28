@@ -3,9 +3,6 @@ package com.circaso.wallet.domain.support
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
-import com.circaso.shared.envelope
-import com.circaso.wallet.api.TransferConfirmed
-import com.circaso.wallet.api.TransferFailed
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.Direction
@@ -17,6 +14,7 @@ import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletFrame
+import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
@@ -24,7 +22,8 @@ import com.circaso.wallet.domain.repositories.WalletOutbox
 /**
  * Circle's `transactions.outbound`. A transfer prepared here is found by `refId`: its state, its `OUT` row and the
  * event for a final state (`TransferConfirmed`, `TransferFailed`) are written in one transaction, and only the update
- * that moves it publishes and sends `transfer.updated`. A failed transfer gives its amount back to the daily limit.
+ * that moves it publishes and sends `transfer.updated`. A transfer that fails from an open state gives its amount back
+ * to the daily limit; one that had expired already gave it back.
  */
 class OutgoingUpdates(
     private val transfers: TransferRepository,
@@ -32,30 +31,64 @@ class OutgoingUpdates(
     private val transactor: Transactor,
     private val outbox: WalletOutbox,
     private val bus: EventBus,
+    private val events: TransferEvents,
     private val frames: FrameSender,
     private val rules: SenderRules,
+    private val warnings: WalletWarnings,
     private val ids: OrderedIds,
 ) {
-    /** False when the update isn't about a transfer prepared here (no or unknown `refId`). */
+    /**
+     * False when the update isn't about a transfer prepared here (no or unknown `refId`). An update whose wallet isn't
+     * the transfer's sending wallet is not applied: Circle's `refId` must never move another wallet's transfer.
+     */
     suspend fun applyToTransfer(
         update: CustodyTransaction,
         next: TransferState,
         change: TransferChange,
     ): Boolean {
         val transfer = TransferId.parse(update.refId)?.let { transfers.find(it) } ?: return false
-        val event = eventFor(transfer, next, change)
-        val moved =
-            transactor.run("transfers.apply-update") {
-                transfers.move(transfer.transferId, next, change)?.also {
-                    transactions.moveByTransfer(transfer.transferId, next, change)
-                    outbox.write(listOfNotNull(event))
-                }
-            } ?: return true
+        if (update.walletId != transfer.senderWalletId) {
+            warnings.refIdOfAnotherWallet(transfer.transferId.toString(), update.walletId)
+            return true
+        }
+        val moved = move(transfer, next, change) ?: return true
 
-        event?.let { bus.publish(it) }
-        if (next == TransferState.FAILED) rules.release(moved.senderId, moved.createdAt, moved.amount)
-        frames.send(moved.senderId, moved.toFrame())
+        moved.event?.let { bus.publish(it) }
+        if (moved.givesBack) rules.release(moved.transfer.senderId, moved.transfer.createdAt, moved.transfer.amount)
+        // TODO(WS4): an EXPIRED transfer moved to SUBMITTED or CONFIRMED takes its amount again (wal:sent), once
+        //  ExpireUnsignedTransfers gives it back.
+        frames.send(moved.transfer.senderId, moved.transfer.toFrame())
         return true
+    }
+
+    /** What one update did to a transfer: the transfer now, its event, and whether its amount goes back. */
+    private class Moved(val transfer: Transfer, val event: EventEnvelope?, val givesBack: Boolean)
+
+    /**
+     * The transfer, its `OUT` row and the event for a final state, in one transaction. `FAILED` is tried first from an
+     * open state, whose amount still sits in the daily limit and goes back, then from `EXPIRED`, whose amount was given
+     * back when it expired: so it is given back exactly once.
+     */
+    private suspend fun move(
+        transfer: Transfer,
+        next: TransferState,
+        change: TransferChange,
+    ): Moved? {
+        val event = eventFor(transfer, next, change)
+        val id = transfer.transferId
+        return transactor.run("transfers.apply-update") {
+            val moved =
+                if (next == TransferState.FAILED) {
+                    transfers.move(id, next, change, OPEN)?.let { Moved(it, event, givesBack = true) }
+                        ?: transfers.move(id, next, change, EXPIRED)?.let { Moved(it, event, givesBack = false) }
+                } else {
+                    transfers.move(id, next, change)?.let { Moved(it, event, givesBack = false) }
+                }
+            moved?.also {
+                transactions.moveByTransfer(id, next, change)
+                outbox.write(listOfNotNull(event))
+            }
+        }
     }
 
     /**
@@ -96,29 +129,19 @@ class OutgoingUpdates(
         change: TransferChange,
     ): EventEnvelope? =
         when (next) {
-            TransferState.CONFIRMED -> {
-                bus.envelope(
-                    TransferConfirmed(
-                        transferId = transfer.transferId,
-                        senderId = transfer.senderId,
-                        recipientId = transfer.recipientId,
-                        blockchain = transfer.blockchain,
-                        amount = Amounts.of(transfer.amount),
-                        origin = transfer.origin.name,
-                        proposalId = transfer.proposalId?.toString(),
-                    ),
-                )
-            }
-
-            TransferState.FAILED -> {
-                bus.envelope(TransferFailed(transfer.transferId, transfer.senderId, change.failureReason ?: "FAILED"))
-            }
-
-            else -> {
-                null
-            }
+            TransferState.CONFIRMED -> events.confirmed(transfer)
+            TransferState.FAILED -> events.failed(transfer, change.failureReason)
+            else -> null
         }
 
     private fun Transfer.toFrame() =
         WalletFrame.TransferUpdated(transferId, state.name, blockchain, amount, txHash, failureReason)
+
+    private companion object {
+        /** States whose amount still sits in the daily limit. */
+        val OPEN = setOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED)
+
+        /** Its amount was given back when it expired (WS4). */
+        val EXPIRED = setOf(TransferState.EXPIRED)
+    }
 }

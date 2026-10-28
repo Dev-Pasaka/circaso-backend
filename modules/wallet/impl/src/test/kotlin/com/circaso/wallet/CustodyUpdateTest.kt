@@ -185,6 +185,60 @@ class CustodyUpdateTest {
         }
 
     @Test
+    fun `FAILED after EXPIRED gives nothing back, since the expiry already did, and FAILED once more gives nothing`() =
+        runBlocking<Unit> {
+            val prepared = prepared()
+            h.transfers.move(prepared.transferId, TransferState.EXPIRED, TransferChange(at = h.clock.instant()))
+            // what ExpireUnsignedTransfers (WS4) does when it expires a transfer
+            h.spend.add(amina, LocalDate.of(2026, 10, 28), -tenUsdc)
+
+            outbound(prepared, CustodyTransactionState.FAILED).data()
+            outbound(prepared, CustodyTransactionState.FAILED).data()
+
+            assertEquals(TransferState.FAILED, transfer(prepared).state)
+            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "given back exactly once")
+            assertEquals(1, h.bus.published.count { it.type == TransferFailed.TYPE })
+        }
+
+    @Test
+    fun `FAILED after SUBMITTED gives the amount back once`() =
+        runBlocking<Unit> {
+            val prepared = prepared()
+            outbound(prepared, CustodyTransactionState.SUBMITTED).data()
+
+            outbound(prepared, CustodyTransactionState.FAILED).data()
+            outbound(prepared, CustodyTransactionState.FAILED).data()
+
+            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)))
+        }
+
+    @Test
+    fun `an update naming a transfer from another wallet is warned about and not applied`() =
+        runBlocking<Unit> {
+            val prepared = prepared()
+            val bobsWallet = h.walletOn(bob)
+            val update =
+                h.update(
+                    bobsWallet,
+                    h.circleUserOf(bob),
+                    CustodyDirection.OUT,
+                    CustodyTransactionState.CONFIRMED,
+                    tenUsdc,
+                    refId = prepared.transferId.toString(),
+                )
+
+            h.applyUpdate(update).data()
+
+            assertEquals(TransferState.AWAITING_SIGNATURE, transfer(prepared).state)
+            assertEquals(
+                listOf(prepared.transferId.toString() to bobsWallet.circleWalletId),
+                h.warnings.refIdMismatches,
+            )
+            assertTrue(h.bus.published.none { it.type == TransferConfirmed.TYPE })
+            assertTrue(h.frames.to<WalletFrame.TransferUpdated>(amina).isEmpty())
+        }
+
+    @Test
     fun `any update clears the wallet's cached balance`() =
         runBlocking<Unit> {
             val prepared = prepared()

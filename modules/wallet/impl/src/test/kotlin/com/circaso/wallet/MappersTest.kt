@@ -1,12 +1,19 @@
 package com.circaso.wallet
 
+import com.circaso.shared.Asset
+import com.circaso.shared.Money
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.AssetTotal
 import com.circaso.wallet.domain.models.ChainHoldings
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.FiatValue
 import com.circaso.wallet.domain.models.Holding
+import com.circaso.wallet.domain.models.Transfer
+import com.circaso.wallet.domain.models.TransferOrigin
+import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletStatus
 import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.presentation.dto.AddChainRequest
@@ -20,6 +27,7 @@ import com.circaso.wallet.presentation.mappers.walletQuery
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -128,5 +136,60 @@ class MappersTest {
                 amount,
             ).toCommand(amina, "k-2").data().idempotencyKey,
         )
+    }
+
+    @Test
+    fun `W4 refuses a proposalId until Asha's proposals exist`() {
+        val request =
+            PrepareTransferRequest(
+                "BASE",
+                PayeeRequest(address = "0x1"),
+                AmountRequest("USDC", amountMinor = "1"),
+                proposalId = UUID.randomUUID().toString(),
+            )
+        val error = (request.toCommand(amina, "k-1") as Resource.Error).error
+        assertEquals("request.malformed", error.code)
+        assertEquals(
+            "proposalId",
+            error.details
+                ?.fields
+                ?.single()
+                ?.field,
+        )
+    }
+
+    @Test
+    fun `W5 shows origin and proposalId to the sender only`() {
+        val bob = UserId.new()
+        val transfer =
+            Transfer(
+                transferId = TransferId.new(),
+                senderId = amina,
+                senderWalletId = "w-1",
+                blockchain = "BASE",
+                idempotencyKey = UUID.randomUUID(),
+                recipientId = bob,
+                destinationAddress = "0xabc",
+                amount = Money(1, Asset.USDC),
+                state = TransferState.CONFIRMED,
+                circleTxId = null,
+                txHash = null,
+                chatId = null,
+                origin = TransferOrigin.ASHA,
+                proposalId = UUID.randomUUID(),
+                failureReason = null,
+                createdAt = Instant.EPOCH,
+                updatedAt = Instant.EPOCH,
+            )
+
+        val sender = transfer.toResponse(amina)
+        val recipient = transfer.toResponse(bob)
+
+        assertEquals("OUT", sender.direction)
+        assertEquals("ASHA", sender.origin)
+        assertEquals(transfer.proposalId.toString(), sender.proposalId)
+        assertEquals("IN", recipient.direction)
+        assertEquals(null, recipient.origin)
+        assertEquals(null, recipient.proposalId)
     }
 }

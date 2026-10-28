@@ -6,7 +6,8 @@ import org.jetbrains.exposed.v1.javatime.timestamp
 
 /**
  * One row per transfer W4 prepared, unique per sender and `Idempotency-Key` for good. Its state moves only by the
- * transition guard (`UPDATE … WHERE state IN (<allowed predecessors>)`), so a late or repeated webhook changes nothing.
+ * transition guard (`UPDATE … WHERE state IN (<allowed predecessors>)`), so a late or repeated webhook changes
+ * nothing.
  * The open-transfer index for the jobs (WS4) is a partial index in the migration.
  */
 object TransfersTable : Table("wallet.transfers") {

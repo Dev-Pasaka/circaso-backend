@@ -47,13 +47,15 @@ interface TransferRepository {
     suspend fun find(transferId: TransferId): Transfer?
 
     /**
-     * The transition guard: moves the transfer to [to] only from one of `to.from`, applying [change]; the transfer
-     * as it now is, or null when it was already past that (a late or repeated update changes nothing).
+     * The transition guard: moves the transfer to [to] only from one of [from] (by default every allowed predecessor,
+     * `to.from`; a caller narrows it to learn where the transfer came from), applying [change]; the transfer as it now
+     * is, or null when it wasn't in one of those states (a late or repeated update changes nothing).
      */
     suspend fun move(
         transferId: TransferId,
         to: TransferState,
         change: TransferChange,
+        from: Set<TransferState> = to.from,
     ): Transfer?
 }
 

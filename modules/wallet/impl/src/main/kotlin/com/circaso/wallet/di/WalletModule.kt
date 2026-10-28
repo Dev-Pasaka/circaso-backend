@@ -50,6 +50,7 @@ import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
@@ -156,7 +157,8 @@ fun walletModule(config: Config): Module =
         single { HoldingsReader(get(), get(), get()) }
         single { Payees(get(), get(), get(), get()) }
         single { SenderRules(get(), get(), get(), get(), get(), get(), limits, clock) }
-        single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { TransferEvents(get()) }
+        single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get(), get(), get(), clock) }
@@ -165,7 +167,7 @@ fun walletModule(config: Config): Module =
         single { AddChain(get(), get(), get(), get(), clock) }
         single { CheckFundsBeforeDeletion(get(), get(), get()) }
         single { HasWallet(get()) }
-        single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetTransfer(get()) }
         single { CheckRecipient(get(), get()) }
         single { RequestSetup(get(), get(), get(), get()) }

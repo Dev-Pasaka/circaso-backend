@@ -144,8 +144,8 @@ class GatewayRealtime(
     }
 
     /**
-     * The sender hears only about the end of a payment (Wallet → Realtime frames); a push never shows an amount on the
-     * lock screen.
+     * The sender hears only about the end of a payment (Wallet → Realtime frames); a push never shows an amount on
+     * the lock screen.
      */
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {

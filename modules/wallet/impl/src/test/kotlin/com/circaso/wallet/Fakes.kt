@@ -316,6 +316,12 @@ class RecordingWarnings : WalletWarnings {
         chainsNotConfigured += blockchain to circleWalletId
     }
 
+    val refIdMismatches: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    override fun refIdOfAnotherWallet(transferId: String, circleWalletId: String) {
+        refIdMismatches += transferId to circleWalletId
+    }
+
     override fun unknownWallet(blockchain: String, circleWalletId: String) {
         unknownWallets += blockchain to circleWalletId
     }

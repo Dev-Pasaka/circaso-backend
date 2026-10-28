@@ -77,13 +77,14 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         transferId: TransferId,
         to: TransferState,
         change: TransferChange,
+        from: Set<TransferState>,
     ): Transfer? {
-        val from = to.from.map { it.name }
-        if (from.isEmpty()) return null
+        val allowed = from.intersect(to.from).map { it.name }
+        if (allowed.isEmpty()) return null
         return database.tx("transfers.move") {
             TransfersTable
                 .updateReturning(where = {
-                    (TransfersTable.transferId eq transferId.value) and (TransfersTable.state inList from)
+                    (TransfersTable.transferId eq transferId.value) and (TransfersTable.state inList allowed)
                 }) {
                     it[state] = to.name
                     it[updatedAt] = change.at

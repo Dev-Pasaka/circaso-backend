@@ -35,7 +35,7 @@ data class PrepareTransferRequest(
     val amount: AmountRequest,
     /** Paid from this chat: the payee may be paid as a member of it with you. */
     val chatId: String? = null,
-    /** Set when confirming an Asha proposal (Phase B); the transfer then records `origin: ASHA`. */
+    /** For confirming an Asha proposal (Phase B); refused with `request.malformed` until then. */
     val proposalId: String? = null,
 )
 
@@ -73,8 +73,8 @@ data class TransferResponse(
     val amount: AmountDto,
     val fee: AmountDto,
     val chatId: String? = null,
-    /** `APP` or `ASHA`. */
-    val origin: String,
+    /** `APP` or `ASHA`; only for the sender. */
+    val origin: String? = null,
     val proposalId: String? = null,
     val txHash: String? = null,
     val failureReason: String? = null,

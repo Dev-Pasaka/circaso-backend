@@ -5,7 +5,6 @@ import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
-import com.circaso.shared.Uuid7
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.AddressCheck
@@ -30,7 +29,7 @@ import com.circaso.wallet.presentation.dto.TransferResponse
 import com.circaso.wallet.presentation.dto.ValidateAddressRequest
 import com.circaso.wallet.presentation.dto.ValidateAddressResponse
 
-// ---- request → command: shape checks answer `request.malformed`; an amount that can't be sent, the wallet's code ----
+// ---- request → command: shape checks answer `request.malformed`; an amount that can't be sent, the wallet's ----
 
 /** The longest address we accept from a phone; EVM addresses are 42 characters, Solana's at most 44. */
 private const val MAX_ADDRESS_LENGTH = 128
@@ -49,9 +48,10 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
             is Resource.Error -> return read
         }
     val chat = chatId?.let { ChatId.parse(it) ?: return malformed("chatId", "is not an id") }
-    val proposal = proposalId?.let { Uuid7.parse(it) ?: return malformed("proposalId", "is not an id") }
+    // TODO(Phase B: accept proposalId checked against the assistant's proposal)
+    if (proposalId != null) return malformed("proposalId", "is not accepted until Asha's proposals exist")
     val key = circleKey(userId, "wallet.transfer", requestKey)
-    return Resource.success(TransferCommand(userId, chain, payee, money, chat, proposal, key))
+    return Resource.success(TransferCommand(userId, chain, payee, money, chat, proposalId = null, key))
 }
 
 private fun PayeeRequest.toPayee(): Resource<Payee> {
@@ -118,11 +118,15 @@ fun PreparedTransfer.toResponse() =
         expiresAt = transfer.expiresAt,
     )
 
-/** [viewer] is who asked: the sender sees `OUT`, the person paid `IN`. */
-fun Transfer.toResponse(viewer: UserId) =
-    TransferResponse(
+/**
+ * [viewer] is who asked: the sender sees `OUT` and how it was started (`origin`, `proposalId`); the person paid sees
+ * `IN`, without them, since whether the sender used Asha is the sender's business.
+ */
+fun Transfer.toResponse(viewer: UserId): TransferResponse {
+    val isSender = viewer == senderId
+    return TransferResponse(
         transferId = transferId,
-        direction = if (viewer == senderId) "OUT" else "IN",
+        direction = if (isSender) "OUT" else "IN",
         state = state.name,
         blockchain = blockchain,
         from = senderId,
@@ -130,14 +134,15 @@ fun Transfer.toResponse(viewer: UserId) =
         amount = amount.toDto(),
         fee = Money.zero(amount.asset).toDto(),
         chatId = chatId?.toString(),
-        origin = origin.name,
-        proposalId = proposalId?.toString(),
+        origin = origin.name.takeIf { isSender },
+        proposalId = proposalId?.toString()?.takeIf { isSender },
         txHash = txHash,
         failureReason = failureReason,
         createdAt = createdAt,
         updatedAt = updatedAt,
         expiresAt = expiresAt,
     )
+}
 
 fun RecipientCheck.toResponse() =
     RecipientResponse(userId, status.name, canReceive = status == RecipientStatus.CAN_RECEIVE, blockchains)

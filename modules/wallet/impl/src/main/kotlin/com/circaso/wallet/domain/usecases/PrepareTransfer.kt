@@ -2,6 +2,7 @@ package com.circaso.wallet.domain.usecases
 
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TransferRequest
+import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.Direction
@@ -15,12 +16,14 @@ import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
+import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Destination
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.Sender
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.isRefusal
 import com.circaso.wallet.domain.support.orTransferError
 import java.time.Clock
@@ -34,8 +37,8 @@ import java.time.Clock
  * A transfer is unique per sender and `Idempotency-Key` for good: a repeated key returns the transfer already
  * prepared, with Circle's same challenge (same Circle key) while it still awaits a signature. The row is claimed before
  * Circle is asked, so two requests with one key never make two transfers. When Circle refuses, the transfer is
- * `FAILED` and its amount goes back to the daily limit; when Circle is down it stays `AWAITING_SIGNATURE`, and the same
- * request later asks again.
+ * `FAILED` (with its `TransferFailed`) and its amount goes back to the daily limit; when Circle is down it stays
+ * `AWAITING_SIGNATURE`, and the same request later asks again.
  */
 class PrepareTransfer(
     private val transfers: TransferRepository,
@@ -45,6 +48,9 @@ class PrepareTransfer(
     private val rules: SenderRules,
     private val payees: Payees,
     private val custody: StablecoinCustody,
+    private val outbox: WalletOutbox,
+    private val bus: EventBus,
+    private val events: TransferEvents,
     private val ids: OrderedIds,
     private val clock: Clock,
 ) {
@@ -120,18 +126,27 @@ class PrepareTransfer(
         }
     }
 
-    /** Circle refused (the same request can't work later): the transfer fails and its amount goes back. */
+    /**
+     * Circle refused (the same request can't work later): the transfer fails with its `TransferFailed` in the same
+     * transaction, published after the commit, and its amount goes back to the daily limit. Only a transfer still
+     * awaiting its signature is moved, so the event and the give-back happen once.
+     */
     private suspend fun refused(transfer: Transfer, error: Resource.Error): Resource<PreparedTransfer> {
         val answer = error.orTransferError()
         if (!error.isRefusal) return answer
-        val change = TransferChange(failureReason = (answer as Resource.Error).error.code, at = clock.instant())
+        val reason = (answer as Resource.Error).error.code
+        val change = TransferChange(failureReason = reason, at = clock.instant())
+        val event = events.failed(transfer, reason)
         val failed =
             transactor.run("transfers.refused") {
-                transfers.move(transfer.transferId, TransferState.FAILED, change)?.also {
+                transfers.move(transfer.transferId, TransferState.FAILED, change, OPEN)?.also {
                     transactions.moveByTransfer(transfer.transferId, TransferState.FAILED, change)
+                    outbox.write(listOf(event))
                 }
-            }
-        if (failed != null) rules.release(transfer.senderId, transfer.createdAt, transfer.amount)
+            } ?: return answer
+
+        bus.publish(event)
+        rules.release(failed.senderId, failed.createdAt, failed.amount)
         return answer
     }
 
@@ -179,4 +194,9 @@ class PrepareTransfer(
             origin = transfer.origin,
             occurredAt = transfer.createdAt,
         )
+
+    private companion object {
+        /** A transfer still waiting for its signature: the only one Circle's refusal at prepare can fail. */
+        val OPEN = setOf(TransferState.AWAITING_SIGNATURE)
+    }
 }

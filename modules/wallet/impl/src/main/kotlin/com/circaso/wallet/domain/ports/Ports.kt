@@ -25,6 +25,9 @@ interface WalletWarnings {
 
     /** Circle told us about a transaction of a wallet that isn't ours, even after asking Circle for its user. */
     fun unknownWallet(blockchain: String, circleWalletId: String)
+
+    /** An update carries a transfer's `refId` but comes from another wallet than the transfer's; it isn't applied. */
+    fun refIdOfAnotherWallet(transferId: String, circleWalletId: String)
 }
 
 /**

@@ -27,6 +27,7 @@ import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
@@ -81,6 +82,7 @@ class Harness(
     val warnings = RecordingWarnings()
     private val holdings = HoldingsReader(custody, cache, warnings)
     private val payees = Payees(wallets, reach, chats, custody)
+    private val events = TransferEvents(bus)
     private val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, clock)
 
     val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody)
@@ -91,7 +93,20 @@ class Harness(
     val checkFunds = CheckFundsBeforeDeletion(wallets, sync, holdings)
     val hasWallet = HasWallet(wallets)
     val prepareTransfer =
-        PrepareTransfer(transfers, transactions, wallets, transactor, rules, payees, custody, ids, clock)
+        PrepareTransfer(
+            transfers,
+            transactions,
+            wallets,
+            transactor,
+            rules,
+            payees,
+            custody,
+            outbox,
+            bus,
+            events,
+            ids,
+            clock,
+        )
     val getTransfer = GetTransfer(transfers)
     val checkRecipient = CheckRecipient(payees, custody)
     val requestSetup = RequestSetup(payees, reminders, profiles, frames)
@@ -100,7 +115,7 @@ class Harness(
         ApplyCustodyUpdate(
             wallets,
             sync,
-            OutgoingUpdates(transfers, transactions, transactor, outbox, bus, frames, rules, ids),
+            OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, frames, rules, warnings, ids),
             IncomingUpdates(wallets, transactions, transactor, frames, profiles, ids),
             cache,
             warnings,
