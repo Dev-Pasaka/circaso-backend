@@ -116,7 +116,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 
 | # | Route | Use case (domain) | Does |
 | --- | --- | --- | --- |
-| W1 | `GET /wallet` | `GetWallet` | Status (`NONE`, `SETTING_UP`, `ACTIVE`), address, USDC balance from Circle, and any hold |
+| W1 | `GET /wallet?currency=KES` | `GetWallet` | Status (`NONE`, `SETTING_UP`, `ACTIVE`), address, USDC balance from Circle, and any hold. With `currency` (ISO 4217, the person's country-of-origin currency, chosen by the app), also `fiat { currency, amount, rate, asOf }` at USDC = 1 USD; left out when no rate is available, never an error. An unknown code answers `request.malformed` |
 | W2 | `POST /wallet` | `CreateWallet` | Creates the Circle user if needed and the initialize challenge; returns what the SDK needs |
 | W3 | `POST /wallet/session` | `OpenSession` | The SDK values (`appId`, `userToken`, `encryptionKey`) from `StablecoinCustody.sdkSession` |
 | W4 | `POST /wallet/transfers` | `PrepareTransfer` | Checks the rules and creates a transfer challenge for the user to sign |
@@ -345,17 +345,21 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 
 ## Not in v1
 
-Chama treasuries (a group-owned wallet needs multi-party approval, which user-controlled wallets don't give us directly); payment requests and splitting a bill; recurring payments; cash in and cash out through M-PESA (`MobileMoney`); more than one chain or asset; showing balances in KES.
+Chama treasuries (a group-owned wallet needs multi-party approval, which user-controlled wallets don't give us directly); payment requests and splitting a bill; recurring payments; cash in and cash out through M-PESA (`MobileMoney`); more than one chain or asset.
+
+## Exchange rates
+
+Rates come from an `ExchangeRates` contract in `integrations` (`INTEGRATIONS_RATES_PROVIDER` = log | fake | open-er-api), the real one over `HttpClients.named("exchangerate")` calling `GET https://open.er-api.com/v6/latest/USD` once a day: the whole table is cached in Redis until the source's `time_next_update_utc`, so a balance read never waits on the source. When the source is down the last table is used while it is under 48 hours old, then the fiat part is left out. The wallet module only calls the contract.
 
 ## Open questions
+
+Decided 2026-10-28 (see decisions.md): `wallet.funds_remaining` is the deletion code the app sees; balances can be shown in the person's fiat currency (by country of origin, passed by the app) from an open exchange-rate source; the 48-hour payment hold after a support restore stays.
+
 
 These also go into `decisions.md`.
 
 - **Chain.** Proposed: Base, with SCA accounts and Gas Station. Alternatives: Polygon (similar), Solana (no SCA; Gas Station pays as fee payer), Arc (Circle's chain, USDC as gas) once it's on mainnet.
 - **Authentication method.** Proposed: PIN with security questions, plus biometrics. Social login or email OTP instead?
 - **Who pays gas.** Proposed: Circaso sponsors all gas in v1, with per-wallet daily caps in the Gas Station policy. A small fee on outside transfers later?
-- **Payment hold after a support restore** (already open): keep the 48-hour hold on outgoing transfers, kept here as a `payment_holds` row written on `AccountRelinked`, or drop it because the 48-hour notice already gives the owner time to cancel? Proposed: keep it.
 - **Limits and KYC.** Per-payment and daily limits for accounts that aren't KYC-verified, and higher ones for verified accounts (identity's `verification`). Linked to Kenya's Virtual Asset Service Providers Act, 2025 and whether Circaso needs a licence for user-controlled wallets: a legal question to settle before money moves in production.
 - **Record retention.** How long transaction records are kept after an account is deleted (financial records usually have a statutory minimum; the Data Protection Act question already open).
-- **Deletion error code.** Identity publishes `identity.wallet_not_empty` to the app (guide and mobile doc) while its `DeletionGuard` contract says the guard's own code (`wallet.funds_remaining`) comes back. One of the two has to change.
-- **Showing KES.** A rate source for showing balances and amounts in KES next to USDC.
