@@ -22,7 +22,7 @@ A push to `main` runs `.github/workflows/deploy-dev.yml`: tests, image to Docker
 4. New settings: if the slice added variables to `.env.example` that the sandbox needs, add them to `/opt/circaso/.env` (keep a backup copy `.env.bak-<date>`, mode 600). Leave secrets you don't have (for example `CIRCLE_API_KEY`) unset and report them; the `fake` providers cover them.
 5. Merge: `git merge --no-ff feat/<slice-id>` into `main` with a message ending with the attribution lines from your instructions, then `git push origin main`.
 6. Watch the run: `gh run watch` (or `gh run list --workflow deploy-dev.yml` then `gh run view <id> --log-failed`). If it fails, report the failing step and log lines; don't force anything.
-7. Smoke-test: `curl -s https://sandbox.circaso.com/v1/health` (and ready through the deploy log), check `docker ps` and the last app log lines over SSH for errors, and call one route of the slice that needs no user (or check it's in `/docs/openapi.json` through the server: `ssh … 'curl -s localhost:<app port>/docs/openapi.json'`).
+7. Smoke-test: `curl -s https://sandbox.circaso.com/health/ready` (and `/health/live`; no `/v1`), check `docker ps` and the last app log lines over SSH for errors, and call one route of the slice that needs no user (or check it's in `/docs/openapi.json` through the server: `ssh … 'curl -s localhost:<app port>/docs/openapi.json'`).
 8. Rolling back if the new version is broken: on the server `cd /opt/circaso && IMAGE=<previous image from .current> docker compose up -d`, then report.
 
 ## Report
