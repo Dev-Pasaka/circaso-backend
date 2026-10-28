@@ -82,7 +82,7 @@ Seventeen routes: seven take a person from Google/Apple sign-in to an active ses
 | I11 | `GET /account/security` | app | `GetSecurityOverview` | Phone, linked providers, this phone, verification status |
 | I12 | `POST /account/providers` / `DELETE /account/providers/{provider}` | app | `LinkProvider` / `UnlinkProvider` | Link Google or Apple; unlink only if the other stays |
 | I13 | `GET /account/security-log` | app | `ListSecurityEvents` | Paged, newest first |
-| I14 | `DELETE /account` | app | `RequestAccountDeletion` | Schedules deletion once every `DeletionGuard` agrees (the wallet refuses while it holds funds) |
+| I14 | `DELETE /account` | app | `RequestAccountDeletion` | Schedules deletion once every `DeletionGuard` agrees (the wallet refuses while it holds funds). A guard's own error reaches the app as is: `wallet.funds_remaining`, or `wallet.custody_unavailable` when the wallet can't check (decision 2026-10-28; `identity.wallet_not_empty` was removed) |
 | I15 | `POST /recovery/requests` | onboarding | `RequestSupportRecovery` | Opens a support case for a lost Google/Apple login |
 | I16 | `POST /auth/phone/release` | onboarding | `RequestPhoneRelease` | Frees a number held by a lost, unverified account, after a 7-day notice |
 | I17 | `GET /recovery/requests/{requestId}` | onboarding | `GetRecoveryRequest` | Status of the caller's own support case: received, verifying, notice sent (with relink time), relinked, rejected or cancelled |
@@ -394,6 +394,5 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `identity.session_revoked` | UNAUTHORIZED → 401 | Session ended (replaced, signed out, suspended) |
 | `identity.provider_last` | CONFLICT → 409 | Unlinking the only sign-in provider |
 | `identity.provider_in_use` | CONFLICT → 409 | That Google/Apple login belongs to another account |
-| `identity.wallet_not_empty` | CONFLICT → 409 | Deleting an account that still holds funds |
 | `identity.recovery_not_eligible` | FORBIDDEN → 403 | Support recovery for an unverified account |
 | `identity.release_not_allowed` | FORBIDDEN → 403 | Phone release for a verified account (recovery applies instead) |

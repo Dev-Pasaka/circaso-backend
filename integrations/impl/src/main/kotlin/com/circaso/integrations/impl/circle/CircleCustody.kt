@@ -1,6 +1,8 @@
 package com.circaso.integrations.impl.circle
 
+import com.circaso.integrations.api.AssetBalance
 import com.circaso.integrations.api.Challenge
+import com.circaso.integrations.api.CustodyAsset
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyWallet
 import com.circaso.integrations.api.CustodyWalletState
@@ -8,12 +10,16 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PinChallenge
 import com.circaso.integrations.api.SdkSession
 import com.circaso.integrations.api.StablecoinCustody
+import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.TransferRequest
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import io.ktor.client.HttpClient
 import io.ktor.http.HttpMethod
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.math.RoundingMode
 import java.time.Clock
 import java.util.UUID
 
@@ -39,6 +45,8 @@ class CircleCustody internal constructor(
     private val tokens = CircleUserTokens(client, clock)
     private val transactions = CircleTransactions(CircleTokens(client), settings)
 
+    override val supported: SupportedChains get() = settings.supported
+
     override suspend fun createUser(circleUserId: String): Resource<Unit> {
         val reply =
             client.write<CreateUserBody, CreatedUserData>(
@@ -55,7 +63,8 @@ class CircleCustody internal constructor(
     }
 
     override suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge> {
-        val body = InitializeBody(idempotencyKey.toString(), settings.accountType, listOf(settings.blockchain))
+        val chain = settings.supported.default
+        val body = InitializeBody(idempotencyKey.toString(), settings.accountType(chain), listOf(chain))
         return asUser(circleUserId) { token ->
             client.write<InitializeBody, ChallengeData>(
                 HttpMethod.Post,
@@ -71,6 +80,24 @@ class CircleCustody internal constructor(
                 challengeOf(token, reply, "initialize_user")
             }
         }
+    }
+
+    override suspend fun addWallet(
+        circleUserId: String,
+        blockchain: String,
+        idempotencyKey: UUID,
+    ): Resource<Challenge> {
+        if (settings.supported.find(blockchain) == null) return notSupported(blockchain)
+        val body = AddWalletsBody(idempotencyKey.toString(), settings.accountType(blockchain), listOf(blockchain))
+        return asUser(circleUserId) { token ->
+            client.write<AddWalletsBody, ChallengeData>(
+                HttpMethod.Post,
+                "/v1/w3s/user/wallets",
+                "create_wallet",
+                body,
+                token,
+            )
+        }.flatMapReply { token, reply -> challengeOf(token, reply, "create_wallet") }
     }
 
     override suspend fun sdkSession(circleUserId: String): Resource<SdkSession> =
@@ -101,16 +128,31 @@ class CircleCustody internal constructor(
         }
     }
 
+    override suspend fun balances(
+        circleUserId: String,
+        walletId: String,
+        blockchain: String,
+    ): Resource<List<AssetBalance>> {
+        val chain = settings.supported.find(blockchain) ?: return notSupported(blockchain)
+        return asUser(circleUserId) { token ->
+            client.get<BalancesData>("/v1/w3s/wallets/$walletId/balances", "get_balances", token)
+        }.flatMapReply { _, reply ->
+            if (reply !is CircleReply.Ok) return@flatMapReply CircleErrors.failure(reply, "get_balances")
+            balancesOf(reply.data, blockchain, chain.assets)
+        }
+    }
+
     override suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> {
         if (request.amount.asset != Asset.USDC) return notOffered(request.amount.asset)
+        val usdc = settings.usdcOn(request.blockchain) ?: return notSupported(request.blockchain)
         val body =
             TransferBody(
                 idempotencyKey = request.idempotencyKey.toString(),
                 walletId = request.walletId,
                 destinationAddress = request.destinationAddress,
                 amounts = listOf(CircleTransactions.decimalOf(request.amount)),
-                tokenAddress = settings.usdcTokenAddress,
-                blockchain = settings.blockchain,
+                tokenAddress = usdc.tokenAddress,
+                blockchain = request.blockchain,
                 feeLevel = FEE_LEVEL,
                 refId = request.refId,
             )
@@ -136,13 +178,14 @@ class CircleCustody internal constructor(
             offeredOnly(transactions.translate(transaction))
         }
 
-    override suspend fun validateAddress(address: String): Resource<Boolean> {
+    override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> {
+        if (settings.supported.find(blockchain) == null) return notSupported(blockchain)
         val reply =
             client.write<ValidateAddressBody, ValidateAddressData>(
                 HttpMethod.Post,
                 "/v1/w3s/transactions/validateAddress",
                 "validate_address",
-                ValidateAddressBody(freshKey(), settings.blockchain, address),
+                ValidateAddressBody(freshKey(), blockchain, address),
             )
         if (reply !is CircleReply.Ok) return CircleErrors.failure(reply, "validate_address")
         return Resource.success(reply.data.isValid)
@@ -235,6 +278,41 @@ class CircleCustody internal constructor(
                 ?: return CircleErrors.failure(CircleReply.Failed(200, null), "get_balance")
         return Resource.success(Money(minor, Asset.USDC))
     }
+
+    /**
+     * One line per asset offered on the chain, in the configured order. Circle lists only the tokens a wallet has
+     * held, so an offered asset missing from its answer is zero; a token we don't offer is left out.
+     */
+    private fun balancesOf(
+        data: BalancesData,
+        blockchain: String,
+        offered: List<CustodyAsset>,
+    ): Resource<List<AssetBalance>> {
+        val held = data.tokenBalances.filter { it.token.blockchain == blockchain }
+        val lines =
+            offered.map { asset ->
+                val line =
+                    held.firstOrNull { settings.offered(it.token.tokenAddress, blockchain) == asset }
+                        ?: return@map AssetBalance(asset, BigInteger.ZERO)
+                val minor =
+                    minorUnits(line.amount, asset.decimals)
+                        ?: return CircleErrors.failure(CircleReply.Failed(200, null), "get_balances")
+                AssetBalance(asset, minor)
+            }
+        return Resource.success(lines)
+    }
+
+    /** "20.5" of a 6-decimal token as 20 500 000; null if it isn't a number or has more decimals than the asset. */
+    private fun minorUnits(decimal: String, decimals: Int): BigInteger? =
+        runCatching {
+            BigDecimal(decimal)
+                .movePointRight(decimals)
+                .setScale(0, RoundingMode.UNNECESSARY)
+                .toBigIntegerExact()
+        }.getOrNull()
+
+    private fun <T> notSupported(blockchain: String): Resource<T> =
+        Resource.error(IntegrationError.Rejected("$blockchain is not a supported chain."))
 
     private fun offeredOnly(translated: Resource<CustodyTransaction?>): Resource<CustodyTransaction> =
         when (translated) {

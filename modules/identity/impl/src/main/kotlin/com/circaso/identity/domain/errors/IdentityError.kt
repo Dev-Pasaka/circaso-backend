@@ -128,12 +128,6 @@ sealed class IdentityError(
         ErrorKind.CONFLICT,
     )
 
-    data object WalletNotEmpty : IdentityError(
-        "identity.wallet_not_empty",
-        "Withdraw your funds before deleting the account.",
-        ErrorKind.CONFLICT,
-    )
-
     data object RecoveryNotEligible : IdentityError(
         "identity.recovery_not_eligible",
         "This account can't be restored by support.",

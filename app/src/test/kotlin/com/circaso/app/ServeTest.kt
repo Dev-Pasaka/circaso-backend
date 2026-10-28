@@ -319,6 +319,7 @@ class ServeTest {
                     "Your profile",
                     "People",
                     "Chats",
+                    "Money",
                     "Asha",
                     "Account",
                     "Assistant tools",
@@ -397,6 +398,9 @@ class ServeTest {
                 "/v1/inbox",
                 "/v1/inbox/ack",
                 "/v1/messaging/settings",
+                "/v1/wallet",
+                "/v1/wallet/session",
+                "/v1/wallet/chains",
             ).forEach { assertTrue(it in paths.keys, "$it is documented") }
 
             // the journey order: infrastructure, then nonce before social sign-in before the phone before the device
@@ -472,6 +476,7 @@ class ServeTest {
                 .generate()
                 .toString()
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val address = "198.51.100.${(1..254).random()}"
 
         suspend fun call(
             path: String,
@@ -481,6 +486,8 @@ class ServeTest {
             contentType(ContentType.Application.Json)
             header("Idempotency-Key", UUID.randomUUID().toString())
             header("X-Client-Version", "android/1.0.0")
+            // each person signs up from their own address: the tests together pass 20 sign-ins a minute from one
+            header("CF-Connecting-IP", address)
             token?.let { header("Authorization", "Bearer $it") }
             setBody(body)
         }
@@ -958,6 +965,85 @@ class ServeTest {
             circaso.level = level
         }
     }
+
+    @Test
+    fun `a wallet is created, grows to a second chain, shows a fiat value, and lets an empty account go`() =
+        testApplication {
+            var sms: FakeSms? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+                sms = getKoin().get<SmsGateway>() as FakeSms
+            }
+            client.get("/health/live")
+            val amina = signUp(sms!!, "Amina Otieno", "+254712${(100000..999999).random()}")
+
+            suspend fun get(path: String) = json(client.get(path) { header("Authorization", "Bearer ${amina.app}") })
+
+            suspend fun post(path: String, body: String = "{}") =
+                json(
+                    client.post(path) {
+                        contentType(ContentType.Application.Json)
+                        header("Authorization", "Bearer ${amina.app}")
+                        header("Idempotency-Key", UUID.randomUUID().toString())
+                        setBody(body)
+                    },
+                )
+
+            fun JsonObject.data() = this["data"]!!.jsonObject
+
+            fun JsonObject.code() = this["code"]!!.jsonPrimitive.content
+
+            fun JsonObject.text(field: String) = this[field]!!.jsonPrimitive.content
+
+            assertEquals("NONE", get("/v1/wallet").data().text("status"))
+            assertEquals("wallet.not_found", post("/v1/wallet/session").code())
+
+            // W2: the log custody makes the wallet at once, as if the PIN had been set in the SDK
+            val created = post("/v1/wallet").data()
+            assertEquals("SETTING_UP", created.text("status"))
+            assertEquals("fake-app", created["sdk"]!!.jsonObject.text("appId"))
+            val wallet = get("/v1/wallet?currency=kes").data()
+            assertEquals("ACTIVE", wallet.text("status"))
+            val base = wallet["chains"]!!.jsonArray.single().jsonObject
+            assertEquals("BASE-SEPOLIA", base.text("blockchain"))
+            assertEquals(
+                "0",
+                base["assets"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject
+                    .text("amountMinor"),
+            )
+            val fiat = wallet["fiat"]!!.jsonObject
+            assertEquals("KES", fiat.text("currency"))
+            assertEquals("0.00", fiat.text("amount"))
+            assertEquals("request.malformed", get("/v1/wallet?currency=XYZ").code())
+            assertEquals("wallet.already_exists", post("/v1/wallet").code())
+            assertEquals("fake-app", post("/v1/wallet/session").data().text("appId"))
+
+            // W12: the supported chains, then a second one added
+            val chains = get("/v1/wallet/chains").data()
+            assertEquals("BASE-SEPOLIA", chains.text("defaultChain"))
+            val statuses =
+                chains["chains"]!!.jsonArray.associate {
+                    it.jsonObject.text("blockchain") to
+                        it.jsonObject.text("status")
+                }
+            assertEquals("ENABLED", statuses["BASE-SEPOLIA"])
+            assertEquals("AVAILABLE", statuses["SOL-DEVNET"])
+            assertEquals("ADDING", post("/v1/wallet/chains", """{"blockchain":"SOL-DEVNET"}""").data().text("status"))
+            assertEquals(2, get("/v1/wallet").data()["chains"]!!.jsonArray.size)
+            assertEquals("ENABLED", post("/v1/wallet/chains", """{"blockchain":"SOL-DEVNET"}""").data().text("status"))
+            assertEquals("wallet.chain_unsupported", post("/v1/wallet/chains", """{"blockchain":"AVAX"}""").code())
+
+            // I14: the guard sees an empty wallet and lets the account go
+            val deleted =
+                client.delete("/v1/account") {
+                    header("Authorization", "Bearer ${amina.app}")
+                    header("Idempotency-Key", UUID.randomUUID().toString())
+                }
+            assertEquals(HttpStatusCode.OK, deleted.status)
+        }
 
     @Test
     fun `Asha answers over server-sent events, asks the phone for a chat, and forgets on request`() =

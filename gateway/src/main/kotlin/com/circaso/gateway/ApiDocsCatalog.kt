@@ -274,6 +274,25 @@ internal object ApiDocsCatalog {
                 ),
             ),
             DocGroup(
+                "Money",
+                listOf(
+                    DocTag(
+                        "Wallet",
+                        "Your wallet holds stablecoins (USDC) in a Circle user-controlled wallet. **Circaso never " +
+                            "holds your keys and never moves money on its own**: the server prepares, you sign with " +
+                            "your Circle PIN in the Circle SDK on the phone, and the chain executes.\n\n" +
+                            "- **Create** the wallet from the wallet section: you set a 6-digit PIN and security " +
+                            "questions in the SDK, and the wallet is made on the default chain (Base).\n" +
+                            "- **Several chains:** add Polygon, Ethereum or Solana from wallet management; each " +
+                            "chain has its own address, and the PIN creates the wallet there.\n" +
+                            "- **Balance** per chain and asset, added up over all chains, and optionally in your " +
+                            "own currency (USDC counts as one US dollar; rates by Exchange Rate API).\n" +
+                            "- **Deleting your account** is refused while the wallet still holds money " +
+                            "(`wallet.funds_remaining`).",
+                    ),
+                ),
+            ),
+            DocGroup(
                 "Asha",
                 listOf(
                     DocTag(

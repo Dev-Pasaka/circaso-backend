@@ -9,7 +9,7 @@ One file per business module, each in the same shape, so a new module is a new f
 | identity | Designed — [identity.md](identity.md), screens in [identity-signin-flow.md](identity-signin-flow.md) | `identity` | `events:identity` | Accounts, Google/Apple sign-in, phone, devices, sessions, support recovery | — |
 | users | Designed — [users.md](users.md) | `users` | `events:users` | Profiles, handles, contacts, blocks, the reach rule | identity |
 | messaging | Draft — [messaging.md](messaging.md) | `messaging` | `events:messaging` | 1:1 and group chats, messages, delivery, push for chat | users |
-| wallet | Draft — [wallet.md](wallet.md) | `wallet` | `events:wallet` | Circle user-controlled wallets, transaction records, statements | identity, users, messaging |
+| wallet | Being built (WS2: W1–W3, W12) — [wallet.md](wallet.md) | `wallet` | `events:wallet` | Circle user-controlled wallets on several chains, transaction records, statements | identity, users, messaging |
 | calls | Planned | `calls` | `events:calls` | 1:1 and group calls on Cloudflare Realtime, contributions during calls | users |
 | assistant (Asha) | Outlined — [assistant.md](assistant.md) | `assistant` | `events:assistant` | Asha conversations, voice, usage and Asha Plus, proposals, audit trail | identity, users; later messaging, wallet |
 

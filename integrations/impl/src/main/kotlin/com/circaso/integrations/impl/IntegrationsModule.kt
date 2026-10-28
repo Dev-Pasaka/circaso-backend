@@ -2,12 +2,14 @@ package com.circaso.integrations.impl
 
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
+import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
+import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
@@ -30,6 +32,7 @@ import com.circaso.integrations.impl.circle.CircleWebhook
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
+import com.circaso.integrations.impl.dev.FakeExchangeRates
 import com.circaso.integrations.impl.dev.FakeLanguageModel
 import com.circaso.integrations.impl.dev.FakeLiveSpeech
 import com.circaso.integrations.impl.dev.FakeLiveTranscription
@@ -41,9 +44,11 @@ import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
+import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
+import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
@@ -70,7 +75,7 @@ import java.time.Duration
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
- * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`).
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
@@ -93,6 +98,8 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     )
             return create()
         }
+
+        fun custodyChains() = CustodyChainsConfig.parse(integrations.section("custody")).supported
 
         single<SmsGateway> {
             pick(
@@ -258,14 +265,32 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                 "custody",
                 providers =
                     mapOf(
-                        "log" to { LogCustody() },
-                        "fake" to { FakeCustody() },
+                        "log" to { LogCustody(FakeCustody(supported = custodyChains(), autoCompleteSetup = true)) },
+                        "fake" to { FakeCustody(supported = custodyChains()) },
                         "circle" to { CircleCustody(get<CircleClient>(), get<CircleSettings>(), Clock.systemUTC()) },
                     ),
             )
         }
         if (integrations.string("custody.provider", "log") == "circle") {
             circle(integrations.section("custody"), secrets)
+        }
+        // The wallet's fiat balance (decision 2026-10-28). The open endpoint needs no key; its table is kept in Redis
+        // under `fx:` so every node shares one fetch a day.
+        single<ExchangeRates> {
+            pick(
+                "rates",
+                providers =
+                    mapOf(
+                        "log" to { LogExchangeRates() },
+                        "fake" to { FakeExchangeRates() },
+                        "open-er-api" to {
+                            OpenErApiRates(
+                                http = get<HttpClients>().named("exchangerate") { baseUrl = OpenErApiRates.BASE_URL },
+                                redis = get<RedisScopes>().scope("fx"),
+                            )
+                        },
+                    ),
+            )
         }
         single<LiveSpeech> {
             pick(
@@ -292,20 +317,18 @@ fun integrationsModule(config: Config, secrets: Secrets) =
     }
 
 /**
- * Circle needs the secret `CIRCLE_API_KEY` (testnet and mainnet keys are separate), `INTEGRATIONS_CUSTODY_APP_ID`
- * (handed to the phone's SDK), `INTEGRATIONS_CUSTODY_USDC_TOKEN_ADDRESS` (USDC's contract on the chain) and
- * optionally `INTEGRATIONS_CUSTODY_BLOCKCHAIN` (default `BASE-SEPOLIA`) and `INTEGRATIONS_CUSTODY_ACCOUNT_TYPE`
- * (default `SCA`). The custody calls and the webhook share one client. The webhook's listener,
- * [CustodyNotifications], is bound by the wallet module and looked up on each delivery, so integrations never depend
- * on the wallet.
+ * Circle needs the secret `CIRCLE_API_KEY` (testnet and mainnet keys are separate) and `INTEGRATIONS_CUSTODY_APP_ID`
+ * (handed to the phone's SDK); the chains and their assets are [CustodyChainsConfig]'s. The custody calls and the
+ * webhook share one client. The webhook's listener, [CustodyNotifications], is bound by the wallet module and looked
+ * up on each delivery, so integrations never depend on the wallet.
  */
 private fun Module.circle(custody: Config, secrets: Secrets) {
     single {
+        val chains = CustodyChainsConfig.parse(custody)
         CircleSettings(
             appId = custody.requireString("app-id"),
-            blockchain = custody.string("blockchain", "BASE-SEPOLIA"),
-            accountType = custody.string("account-type", "SCA"),
-            usdcTokenAddress = custody.requireString("usdc-token-address"),
+            supported = chains.supported,
+            accountTypes = chains.accountTypes,
         )
     }
     single {

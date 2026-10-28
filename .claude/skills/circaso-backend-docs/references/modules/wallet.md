@@ -8,7 +8,7 @@ Status: draft, 2026-10-25. Proposals marked **Proposed** are listed again under 
 
 ### Owns
 
-- **Circle users and wallets**: the link between a Circaso account and its Circle user (Circle never sees our user id) and the user's wallet, created when the user taps "Create wallet" in the wallet section (decision 2026-10-25).
+- **Circle users and wallets**: the link between a Circaso account and its Circle user (Circle never sees our user id) and the user's wallet, created when the user taps "Create wallet" in the wallet section (decision 2026-10-25), on one or more chains (decision 2026-10-28): one Circle wallet, with its own address, per chain.
 - **Transfers**: a payment from one wallet, to a Circaso contact or to an outside address, from preparing it to its final state on chain.
 - **Transaction records**: every incoming and outgoing transaction per user, for the history screen, monthly statements and audit. Circle stays the source of truth for balances (Architecture principle 11).
 - **Payment rules** checked before a transfer is prepared: reach, the hold after a support restore, limits, account status.
@@ -30,13 +30,15 @@ Circle splits each wallet key between Circle and the user (2-of-2 MPC). Every ac
 
 ### Chain, account type and gas
 
-**Proposed: USDC on Base, smart-contract accounts (`SCA`), gas paid by Circaso through Circle Gas Station.**
+**Decided 2026-10-28 (Pasaka): a wallet can be on several chains, with several assets on each.** Supported at launch: **Base, Polygon, Ethereum and Solana**, USDC on each. The supported list (chains, and the assets offered on each) is server configuration in integrations (`INTEGRATIONS_CUSTODY_CHAINS`, below), so a chain or an asset is added by configuration, not by a new model. A new wallet starts on **Base** (the default chain); the user adds the other supported chains themselves from wallet management (W12), each with its own address. Removing a chain is not offered (Open questions).
 
-- **Base:** low fees, native USDC, and Circle supports user-controlled wallets and Gas Station on it. Dev and staging use `BASE-SEPOLIA` with test USDC.
-- **SCA:** an ERC-4337 account, which Gas Station needs on EVM chains. Users never hold ETH or see a gas fee.
+**Proposed: smart-contract accounts (`SCA`) on the EVM chains, gas paid by Circaso through Circle Gas Station.**
+
+- **Base:** low fees, native USDC, and Circle supports user-controlled wallets and Gas Station on it. Dev and staging use the testnets (`BASE-SEPOLIA`, `MATIC-AMOY`, `ETH-SEPOLIA`, `SOL-DEVNET`) with test USDC.
+- **SCA:** an ERC-4337 account, which Gas Station needs on EVM chains. Users never hold ETH or see a gas fee. **Solana has no SCA**: its wallets are `EOA` (Gas Station pays there as fee payer). The account type is per chain in integrations' settings.
 - **Gas Station:** Circaso pays the gas plus Circle's 5% fee on it, billed to the Circle account, under a sponsorship policy with per-wallet limits set in Circle's console.
-- **Multi-chain ready:** the chain, account type and token are integration settings (`INTEGRATIONS_CUSTODY_*`, below), and every wallet row stores the `blockchain` the contract returned, so a second chain (Solana, or Arc if it fits) is a config value and a new row, not a new model. v1 creates one wallet per user on one chain.
-- **Asset:** USDC only in v1 (`Asset.USDC`, 6 decimals, already in `shared`). `USDT` stays in the enum but isn't offered.
+- **Chain-agnostic model:** one wallet per user (`circle_users`), one row per chain under it (`wallets`: Circle wallet id, chain, address), every row storing the `blockchain` the contract returned. Addresses are compared per chain: EVM in lowercase, Solana's base58 as given.
+- **Assets:** each chain offers a configured list of assets (symbol, token address or mint, decimals, whether it is a US dollar stablecoin), USDC on every chain at launch. Balances are read for every offered asset; amounts that may pass a `Long` (18-decimal tokens) are big integers. Transfers stay USDC only (`Asset.USDC` in `shared`) until a later decision says otherwise.
 
 ### Paying a person
 
@@ -54,11 +56,11 @@ interface Wallets {                  // read by the assistant later (Phase B pro
 }
 ```
 
-Wallet also implements identity's `DeletionGuard` (refuses while the wallet holds 0.01 USDC or more), `RealtimeReplay`, and the new `CustodyNotifications` listener from integrations (below).
+Wallet also implements identity's `DeletionGuard` (built in WS2): it refuses with `wallet.funds_remaining` while the wallet holds 0.01 or more of a US dollar stablecoin, or any amount of any other asset, on any chain. It reads Circle, never the cache, for every wallet Circle lists for the user (a second wallet on a chain, which `wallets_user_chain_key` keeps out of our rows, included) and every open row of ours. When Circle can't answer, or a wallet sits on a chain no longer configured, it refuses with `wallet.custody_unavailable` and, for the chain, logs a WARN with the chain and Circle's wallet id (`TODO(decision)`: a chain taken out of configuration while wallets are on it). It also implements `RealtimeReplay`, and the new `CustodyNotifications` listener from integrations (below).
 
 ### Integrations used
 
-**All Circle setup and configuration lives in integrations, as for every other vendor; the wallet module only calls the contract.** The wallet never sees the Circle API key, the app id, the chain name, the account type, the USDC token id or a Circle user token's lifetime: `CircleCustody` reads them from its own settings and `Secrets`, and the wallet stores whatever the contract returns (wallet id, address, chain).
+**All Circle setup and configuration lives in integrations, as for every other vendor; the wallet module only calls the contract.** The wallet never sees the Circle API key, the app id, the account types, token ids or a Circle user token's lifetime: `CircleCustody` reads them from its own settings and `Secrets`, and the wallet stores whatever the contract returns (wallet id, address, chain). The supported chains and their assets reach the wallet only through `StablecoinCustody.supported`.
 
 `StablecoinCustody` in `integrations:api`, implemented by `CircleCustody` in `integrations/impl/.../circle/` over `HttpClients.named("circle")`, base URL `https://api.circle.com`. Chosen and configured like the others:
 
@@ -67,25 +69,35 @@ Wallet also implements identity's `DeletionGuard` (refuses while the wallet hold
 | `INTEGRATIONS_CUSTODY_PROVIDER` | `log` \| `fake` \| `circle` | `log` locally and on the sandbox, `fake` in tests, `circle` once real wallets are wanted |
 | `CIRCLE_API_KEY` (secret) | `TEST_API_KEY:…` | Circle API key; testnet and mainnet keys are separate |
 | `INTEGRATIONS_CUSTODY_APP_ID` | `…` | Circle app id, handed to the phone's SDK |
-| `INTEGRATIONS_CUSTODY_BLOCKCHAIN` | `BASE-SEPOLIA` (`BASE` in production) | Chain new wallets are created on |
-| `INTEGRATIONS_CUSTODY_ACCOUNT_TYPE` | `SCA` | Account type for new wallets |
-| `INTEGRATIONS_CUSTODY_USDC_TOKEN_ADDRESS` | `0x036C…CF7e` (Base Sepolia) | USDC's contract address on that chain; transfers name the token by address + blockchain (Circle's token ids are resolved to it once and cached) |
+| `INTEGRATIONS_CUSTODY_CHAINS` | `BASE-SEPOLIA,MATIC-AMOY,ETH-SEPOLIA,SOL-DEVNET` (`BASE,MATIC,ETH,SOL` in production) | The supported chains, by Circle's names. Read by every custody provider, so `log` and `fake` offer what `circle` would; unset, the four testnets |
+| `INTEGRATIONS_CUSTODY_DEFAULT_CHAIN` | `BASE-SEPOLIA` (`BASE` in production) | The chain a new wallet starts on (W2) |
+| `INTEGRATIONS_CUSTODY_CHAIN_<CHAIN>_ASSETS` | `USDC:0x036C…CF7e:6:usd` | The assets offered on one chain (`<CHAIN>` with `-` as `_`), comma separated, each `SYMBOL:tokenAddress:decimals`, `:usd` after a US dollar stablecoin, empty address for the native coin. Default for the four testnets: their USDC; a mainnet chain must name its assets. Transfers name the token by address + blockchain (Circle's token ids are resolved to it once and cached) |
+| `INTEGRATIONS_CUSTODY_CHAIN_<CHAIN>_ACCOUNT_TYPE` | `SCA` | Account type for wallets on that chain: `SCA` by default, `EOA` by default on Solana |
+
+These replace WS1's single-chain `INTEGRATIONS_CUSTODY_BLOCKCHAIN`, `_ACCOUNT_TYPE` and `_USDC_TOKEN_ADDRESS` (changed in WS2).
 
 Our language in and out. Circle user tokens are the vendor's business: `CircleCustody` asks Circle for one when it needs it and keeps it in memory per node until 5 minutes before it expires, so the wallet only passes our `circleUserId`. Where the phone needs to run a challenge, the result carries the SDK values with it.
 
 ```kotlin
 interface StablecoinCustody {
+    val supported: SupportedChains                                                            // default chain, chains, assets per chain
     suspend fun createUser(circleUserId: String): Resource<Unit>                              // already-exists is success
-    suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge> // initialize, on the configured chain
+    suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge> // initialize, on the default chain
+    suspend fun addWallet(circleUserId: String, blockchain: String, idempotencyKey: UUID): Resource<Challenge> // one more chain
     suspend fun sdkSession(circleUserId: String): Resource<SdkSession>                        // appId, userToken, encryptionKey, expiresAt
-    suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>                  // id, address, chain, state
+    suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>                  // one per chain: id, address, chain, state
     suspend fun balance(circleUserId: String, walletId: String, asset: Asset): Resource<Money>
-    suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> // idempotencyKey, refId
+    suspend fun balances(circleUserId: String, walletId: String, blockchain: String): Resource<List<AssetBalance>> // every offered asset
+    suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> // blockchain, idempotencyKey, refId
     suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
-    suspend fun validateAddress(address: String): Resource<Boolean>                           // on the configured chain
+    suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean>
     suspend fun pinChallenge(circleUserId: String, kind: PinChallenge, idempotencyKey: UUID): Resource<Challenge>
 }
 
+data class SupportedChains(val default: String, val chains: List<CustodyChain>)
+data class CustodyChain(val blockchain: String, val assets: List<CustodyAsset>)
+data class CustodyAsset(val symbol: String, val tokenAddress: String, val decimals: Int, val usdPegged: Boolean)
+data class AssetBalance(val asset: CustodyAsset, val amountMinor: BigInteger)   // zero for an offered asset not held
 data class Challenge(val challengeId: String, val sdk: SdkSession)
 
 interface CustodyNotifications {     // implemented by wallet, wired in app; integrations never depend on wallet
@@ -94,6 +106,8 @@ interface CustodyNotifications {     // implemented by wallet, wired in app; int
 ```
 
 **Contract details (as built in WS1).** `createWallet` for a user Circle has already initialized returns a `Challenge` with an empty `challengeId` and `needsSignature == false`; the caller then reads `wallets()`. `CustodyWallet` has id, address, blockchain, account type and state (`LIVE`, `FROZEN`, as Circle reports them; Circle lists a wallet only once it exists, so `SETTING_UP` is the wallet module's own state, not custody's). `CustodyTransaction` has circleTxId, circleUserId, walletId, blockchain, direction (`IN`, `OUT`), state, amount (`Money`), source and destination address, refId, txHash, failure reason and `updatedAt` (to ignore out-of-order updates). States: Circle's INITIATED, CLEARED, QUEUED, SENT → `SUBMITTED`; STUCK → `STUCK`; CONFIRMED, COMPLETE → `CONFIRMED`; FAILED, DENIED, CANCELLED → `FAILED`. Errors in our language: `PinLocked`, `InsufficientFunds`, `AddressInvalid`, plus `Rejected` with a vendor-neutral message and `Unavailable` naming the vendor, as every integration does. **Addresses are returned exactly as the chain gives them**; the wallet module normalises per chain when it compares or indexes them (EVM chains such as Base: lowercase; Solana: unchanged).
+
+**Several chains (WS2).** `addWallet` is Circle's `POST /v1/w3s/user/wallets` (`idempotencyKey`, `accountType`, `blockchains`) as the user: the challenge the user signs with the PIN, after which Circle lists the new wallet. `balances` reads `GET /v1/w3s/wallets/{id}/balances` and answers one line per asset offered on the chain (configured order; zero when not held), ignoring tokens that aren't offered. A chain that isn't supported is `Rejected` without calling Circle. Transactions in assets other than USDC are not translated yet (Open questions).
 
 The `log` provider answers with made-up wallets and challenges and prints what it was asked; `fake` records calls for tests.
 
@@ -116,7 +130,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 
 | # | Route | Use case (domain) | Does |
 | --- | --- | --- | --- |
-| W1 | `GET /wallet?currency=KES` | `GetWallet` | Status (`NONE`, `SETTING_UP`, `ACTIVE`), address, USDC balance from Circle, and any hold. With `currency` (ISO 4217, the person's country-of-origin currency, chosen by the app), also `fiat { currency, amount, rate, asOf }` at USDC = 1 USD; left out when no rate is available, never an error. An unknown code answers `request.malformed` |
+| W1 | `GET /wallet?currency=KES` | `GetWallet` | Status (`NONE`, `SETTING_UP`, `ACTIVE`), each chain the wallet is on with its address and every asset offered there (balances from Circle), the totals per asset over all chains, and any hold. With `currency` (ISO 4217, the person's country-of-origin currency, chosen by the app), also `fiat { currency, amount, rate, asOf, partial }` at USDC = 1 USD: only US dollar stablecoins are priced, `partial` says something held has no price yet; null when no rate is available, never an error. An unknown code answers `request.malformed` |
 | W2 | `POST /wallet` | `CreateWallet` | Creates the Circle user if needed and the initialize challenge; returns what the SDK needs |
 | W3 | `POST /wallet/session` | `OpenSession` | The SDK values (`appId`, `userToken`, `encryptionKey`) from `StablecoinCustody.sdkSession` |
 | W4 | `POST /wallet/transfers` | `PrepareTransfer` | Checks the rules and creates a transfer challenge for the user to sign |
@@ -127,6 +141,42 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 | W9 | `GET /wallet/recipients/{userId}` | `CheckRecipient` | Whether this person can be paid: `canReceive`, or `NO_WALLET` (reach failures answer `users.not_reachable`) |
 | W10 | `POST /wallet/recipients/{userId}/remind` | `RequestSetup` | Tells a contact without a wallet that someone wants to pay them; once per pair per day |
 | W11 | `POST /wallet/addresses/validate` | `ValidateAddress` | Checks an outside address on the wallet's chain |
+| W12 | `GET /wallet/chains` / `POST /wallet/chains` | `ListChains` / `AddChain` | The supported chains with the assets offered on each and whether the wallet is on each (`ENABLED`, `ADDING`, `AVAILABLE`); adding one returns the Circle challenge that creates the wallet there (decision 2026-10-28) |
+
+### W1 The wallet
+
+```json
+// GET /wallet?currency=KES → data
+{
+  "status": "ACTIVE",
+  "chains": [
+    {
+      "blockchain": "BASE", "address": "0x5a3c…", "state": "ACTIVE",
+      "assets": [ { "symbol": "USDC", "tokenAddress": "0x8335…2913", "decimals": 6,
+                    "amountMinor": "20500000", "amount": "20.5", "fiatAmount": "2649.63" } ]
+    },
+    { "blockchain": "SOL", "address": "7xKX…", "state": "ACTIVE", "assets": [ … ] }
+  ],
+  "totals": [ { "symbol": "USDC", "decimals": 6, "amountMinor": "21750000", "amount": "21.75" } ],
+  "fiat": { "currency": "KES", "amount": "2811.19", "rate": "129.25", "asOf": "2026-10-28T00:00:00Z", "partial": false },
+  "hold": null
+}
+```
+
+Amounts of crypto assets are strings (`amountMinor` in the smallest unit, `amount` in whole units for display): an 18-decimal token passes what a JSON number holds exactly. Fiat amounts are decimal strings rounded half up to the currency's minor unit. `SETTING_UP` means the Circle user exists and no chain's wallet does yet: it is derived (a `circle_users` row with no `wallets` row), not stored. While `SETTING_UP`, or while a chain is being added (`wal:adding`), W1 reads Circle's wallet list first and records any new wallet; balances come through `wal:balance` (15 s). `hold` is filled by WS4 (`payment_holds`).
+
+### W12 Chains
+
+```json
+// GET /wallet/chains → data
+{ "defaultChain": "BASE", "chains": [ { "blockchain": "BASE", "assets": ["USDC"], "status": "ENABLED" },
+                                      { "blockchain": "SOL", "assets": ["USDC"], "status": "AVAILABLE" } ] }
+// POST /wallet/chains ← { "blockchain": "SOL" }
+// → data
+{ "blockchain": "SOL", "status": "ADDING", "challengeId": "c7a3…", "sdk": { … } }
+```
+
+A chain already on the wallet answers `ENABLED` with no challenge, so a repeat is harmless. Otherwise Circle's wallet list is **always** read and recorded before asking for a challenge, whatever `wal:adding` says, so a user who has signed (on this phone or another) doesn't get a second challenge and a second wallet on that chain; Circle being down answers `wallet.custody_unavailable` and asks for nothing. A chain that isn't supported answers `wallet.chain_unsupported`; a wallet still `SETTING_UP` answers `wallet.not_ready`. The new chain shows in W1 once Circle has made the wallet, and `wallet.WalletCreated` goes out for it.
 
 ### W2 Create wallet
 
@@ -140,7 +190,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 }
 ```
 
-The app runs the challenge; the user sets the PIN and security questions. When Circle reports the wallet (W1 polls Circle's wallet list while `SETTING_UP`, and the first webhook confirms it), the status turns `ACTIVE` and `wallet.WalletCreated` is published. Calling W2 again while `SETTING_UP` returns a fresh challenge for the same Circle user; once `ACTIVE` it returns `wallet.already_exists`.
+The app runs the challenge; the user sets the PIN and security questions, and Circle creates the wallet on the default chain. When Circle reports the wallet (W1 polls Circle's wallet list while `SETTING_UP`, and the first webhook confirms it), the status turns `ACTIVE` and `wallet.WalletCreated` is published. Calling W2 again while `SETTING_UP` returns a fresh challenge for the same Circle user; once `ACTIVE` it returns `wallet.already_exists`. When Circle has nothing left to sign (the PIN is set) but lists no wallet yet, W2 answers `SETTING_UP` with `challengeId: null`. Circle's idempotency key is a name-based UUID of the user, the operation and the request's `Idempotency-Key` (as W4).
 
 ### W4 Prepare a transfer
 
@@ -187,25 +237,26 @@ Checks, in order: account `ACTIVE`; wallet `ACTIVE`; no payment hold; amount abo
 PostgreSQL tables in schema `wallet` (role `wallet`, Flyway location `db/wallet`), and Redis keys under `wal:`.
 
 ```sql
--- V1__wallet.sql (shape; the script itself is written in WS2–WS4)
+-- V1__wallet.sql (WS2: circle_users, wallets, outbox); transfers, transactions, payment_holds and realtime arrive
+-- as V2+ with WS3 and WS4 (shape below)
 
-CREATE TABLE wallet.circle_users (
+CREATE TABLE wallet.circle_users (                      -- one per user: the wallet itself, whatever chains it is on
     user_id        uuid        PRIMARY KEY,
     circle_user_id uuid        NOT NULL UNIQUE,         -- random; what Circle knows us by, never our user id
     created_at     timestamptz NOT NULL
 );
 
-CREATE TABLE wallet.wallets (
+CREATE TABLE wallet.wallets (                           -- one per chain the user's wallet is on
     circle_wallet_id text        PRIMARY KEY,           -- webhooks carry Circle's wallet id
     user_id          uuid        NOT NULL,
-    blockchain       text        NOT NULL,              -- BASE | BASE-SEPOLIA
-    account_type     text        NOT NULL,              -- SCA
-    address          text        NOT NULL,              -- lowercase hex
-    state            text        NOT NULL,              -- SETTING_UP | ACTIVE | FROZEN | CLOSED
+    blockchain       text        NOT NULL,              -- Circle's name: BASE | MATIC | ETH | SOL (testnets: BASE-SEPOLIA …)
+    account_type     text        NOT NULL,              -- SCA on EVM chains, EOA on Solana
+    address          text        NOT NULL,              -- EVM: lowercase hex; Solana: base58 as given
+    state            text        NOT NULL,              -- ACTIVE | FROZEN | CLOSED (SETTING_UP is derived: no row yet)
     created_at       timestamptz NOT NULL
 );
-CREATE INDEX wallets_user_idx ON wallet.wallets (user_id);
-CREATE UNIQUE INDEX wallets_address_key ON wallet.wallets (address, blockchain);   -- inbound webhooks and paying a contact
+CREATE UNIQUE INDEX wallets_user_chain_key ON wallet.wallets (user_id, blockchain);  -- a user's wallets; one per chain
+CREATE UNIQUE INDEX wallets_address_key ON wallet.wallets (address, blockchain);    -- inbound webhooks and paying a contact
 
 CREATE TABLE wallet.transfers (
     transfer_id         uuid        PRIMARY KEY,        -- Circle's refId
@@ -266,8 +317,8 @@ CREATE TABLE wallet.outbox (…);                         -- the same shape as i
 
 | Table | Expiry | How the race is settled |
 | --- | --- | --- |
-| `circle_users` | — | — |
-| `wallets` | — | — |
+| `circle_users` | — | W2 inserts with `insertIgnore` on the primary key and reads the winner's row in the same transaction, so two taps share one Circle user id |
+| `wallets` | — | A wallet Circle reports is inserted with `insertIgnore` (primary key, `wallets_user_chain_key`, `wallets_address_key`) together with its `WalletCreated` outbox row; only the insert that lands writes and publishes the event, however many reads see the new wallet at once |
 | `transfers` | — | W4 inserts with `insertIgnore` on `(sender_id, idempotency_key)`; `insertedCount = 0` returns the transfer already prepared for that key. A state moves only by a **transition guard**: `UPDATE … SET state = :next WHERE transfer_id = ? AND state IN (<allowed predecessors of :next>) RETURNING …`; 0 rows means the transfer is already past that state, so a late or repeated webhook changes nothing |
 | `transactions` | — (kept for the retention period) | An inbound webhook inserts the `IN` row with `insertIgnore` on `(circle_tx_id, user_id)`, so a repeated webhook adds nothing. `state` moves by the same transition guard as transfers (`WHERE id = ? AND state IN (…)`) |
 | `payment_holds` | `expires_at`, purged by `wallet.purge-expired` | — |
@@ -281,7 +332,8 @@ A payment between two Circaso users writes two `transactions` rows: the sender's
 
 | Key | Value | Expiry | Purpose |
 | --- | --- | --- | --- |
-| `wal:balance:{circleWalletId}` | balance in minor units | 15 s, cleared on any webhook for the wallet | W1 without calling Circle on every open |
+| `wal:balance:{circleWalletId}` | JSON list of the chain's holdings (symbol, token address, decimals, US dollar peg, amount in minor units as a string) | 15 s, cleared on any webhook for the wallet | W1 without calling Circle on every open; the deletion guard never reads it |
+| `wal:adding:{userId}` | hash: field per chain being added (W12) | 1 h from the last add (a challenge's session lasts 60 min) | Only tells W1 and W12's list when to poll Circle's wallet list, so the new chain shows as soon as Circle has it; a field goes when its wallet is recorded. W12's add never relies on it: it reads Circle every time |
 | `wal:sent:{userId}:{date}` | minor units sent today | 2 days | Daily limit |
 | `wal:remind:{from}:{to}` | `1` | 24 h | W10 once a day per pair |
 | `wal:seq:{userId}` | counter | 8 days, renewed on use | Next realtime seq for wallet frames |
@@ -310,7 +362,7 @@ A payment between two Circaso users writes two `transactions` rows: the sender's
 
 | Event | `data` | Consumers |
 | --- | --- | --- |
-| `wallet.WalletCreated` v1 | `userId`, `blockchain` | gateway (frames) |
+| `wallet.WalletCreated` v1 | `userId`, `blockchain` | gateway (frames). One per chain: the first when the wallet turns `ACTIVE`, then one for each chain added (W12) |
 | `wallet.TransferConfirmed` v1 | `transferId`, `senderId`, `recipientId?`, `amount`, `origin`, `proposalId?` | assistant (outcome of a proposal), auditor |
 | `wallet.TransferFailed` v1 | `transferId`, `senderId`, `reason` | assistant, auditor |
 
@@ -340,25 +392,32 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 | `wallet.address_invalid` | INVALID → 400 | Not a valid address on the wallet's chain |
 | `wallet.self_transfer` | INVALID → 400 | Paying your own wallet |
 | `wallet.transfer_not_found` | NOT_FOUND → 404 | No such transfer, or not this user's |
-| `wallet.funds_remaining` | CONFLICT → 409 | `DeletionGuard`: the wallet still holds 0.01 USDC or more |
-| `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open |
+| `wallet.chain_unsupported` | INVALID → 400 | W12 with a blockchain that isn't in the supported list |
+| `wallet.funds_remaining` | CONFLICT → 409 | `DeletionGuard`: the wallet still holds 0.01 or more of a US dollar stablecoin (USDC), or any amount of another asset, on any chain. Reaches the app as is (decision 2026-10-28) |
+| `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open; also the `DeletionGuard` when a wallet sits on a chain no longer configured (its balance can't be read, so deletion is refused; a WARN names the chain and Circle's wallet id) |
 
 ## Not in v1
 
-Chama treasuries (a group-owned wallet needs multi-party approval, which user-controlled wallets don't give us directly); payment requests and splitting a bill; recurring payments; cash in and cash out through M-PESA (`MobileMoney`); more than one chain or asset.
+Chama treasuries (a group-owned wallet needs multi-party approval, which user-controlled wallets don't give us directly); payment requests and splitting a bill; recurring payments; cash in and cash out through M-PESA (`MobileMoney`); sending assets other than USDC.
 
 ## Exchange rates
 
 Rates come from an `ExchangeRates` contract in `integrations` (`INTEGRATIONS_RATES_PROVIDER` = log | fake | open-er-api), the real one over `HttpClients.named("exchangerate")` calling `GET https://open.er-api.com/v6/latest/USD` once a day: the whole table is cached in Redis until the source's `time_next_update_utc`, so a balance read never waits on the source. When the source is down the last table is used while it is under 48 hours old, then the fiat part is left out. The wallet module only calls the contract.
 
+As built (WS2): `ExchangeRates.usdRate(currency)` returns the rate or null, never an error. `OpenErApiRates` keeps the table under `fx:usd` (integrations' own Redis prefix) for 48 hours from its publication and refetches once `time_next_update_unix` has passed; after a failed fetch it doesn't ask the source again for 5 minutes (`fx:usd:failed`). Only US dollar stablecoins (`usdPegged` assets) get a fiat value, at one dollar each.
+
 ## Open questions
 
-Decided 2026-10-28 (see decisions.md): `wallet.funds_remaining` is the deletion code the app sees; balances can be shown in the person's fiat currency (by country of origin, passed by the app) from an open exchange-rate source; the 48-hour payment hold after a support restore stays.
+Decided 2026-10-28 (see decisions.md): `wallet.funds_remaining` is the deletion code the app sees; balances can be shown in the person's fiat currency (by country of origin, passed by the app) from an open exchange-rate source; the 48-hour payment hold after a support restore stays; a wallet can be on several chains (Base, Polygon, Ethereum and Solana at launch, USDC on each), starting on Base, the user adding others (W12).
 
 
 These also go into `decisions.md`.
 
-- **Chain.** Proposed: Base, with SCA accounts and Gas Station. Alternatives: Polygon (similar), Solana (no SCA; Gas Station pays as fee payer), Arc (Circle's chain, USDC as gas) once it's on mainnet.
+- **Removing a chain.** Not offered in v1 (decision 2026-10-28). Whether a user can take a chain off the wallet (and what happens to anything still on it), or only hide it.
+- **Crypto price source.** Assets that aren't US dollar stablecoins have no price; their fiat value is left out and the total says `partial`. Which source prices them, if any.
+- **Dust threshold for other assets.** The deletion guard ignores less than 0.01 of a US dollar stablecoin but refuses any amount of another asset. A threshold per asset?
+- **Transactions in other assets.** `CustodyTransaction.amount` is `Money` (the `Asset` enum, USDC); a transaction in another offered asset isn't translated yet. Decide with the first non-USDC asset (WS3/WS4 record USDC only).
+- **Chain.** Decided 2026-10-28: Base (default), Polygon, Ethereum and Solana. Still proposed: SCA accounts and Gas Station on the EVM chains; Solana EOA with Gas Station as fee payer; Arc (Circle's chain, USDC as gas) once it's on mainnet.
 - **Authentication method.** Proposed: PIN with security questions, plus biometrics. Social login or email OTP instead?
 - **Who pays gas.** Proposed: Circaso sponsors all gas in v1, with per-wallet daily caps in the Gas Station policy. A small fee on outside transfers later?
 - **Limits and KYC.** Per-payment and daily limits for accounts that aren't KYC-verified, and higher ones for verified accounts (identity's `verification`). Linked to Kenya's Virtual Asset Service Providers Act, 2025 and whether Circaso needs a licence for user-controlled wallets: a legal question to settle before money moves in production.

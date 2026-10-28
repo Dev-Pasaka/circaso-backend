@@ -62,7 +62,7 @@ docker run -d --name circaso-restore-test --env-file postgres.env \
 docker network connect "$(docker network ls --format '{{.Name}}' | grep circaso-data)" circaso-restore-test
 # the login roles come from initdb on first start; the module roles own the restored tables, so make them first, granted
 # to circaso_migrator with ADMIN OPTION as Migrate itself would have made them
-for role in identity users messaging assistant; do
+for role in identity users messaging wallet assistant; do
   docker exec circaso-restore-test psql -U postgres -d circaso \
     -c "CREATE ROLE $role NOLOGIN; GRANT $role TO circaso_migrator WITH ADMIN OPTION"
 done

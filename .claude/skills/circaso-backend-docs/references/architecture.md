@@ -55,7 +55,7 @@ circaso-backend/
 ├─ integrations/                 ONE module for every third party
 │  ├─ api/                       the only thing exposed: contracts such as SmsGateway,
 │  │                             EmailGateway, SocialSignIn, CarrierPhoneVerification,
-│  │                             PushGateway, StablecoinCustody, CallMedia
+│  │                             PushGateway, StablecoinCustody, ExchangeRates, CallMedia
 │  └─ impl/                      vendor code, one package per vendor, never visible outside
 │     ├─ sms/africastalking/
 │     ├─ sms/twilio/             (later, same SmsGateway contract)
@@ -65,6 +65,7 @@ circaso-backend/
 │     ├─ firebase/               phone verification, FCM push
 │     ├─ push/apns/
 │     ├─ circle/
+│     ├─ exchangerate/           open.er-api.com (ExchangeRates)
 │     └─ dev/                    log and fake implementations of every contract
 │
 ├─ gateway/                      Ktor edge: auth, scopes, rate limits, idempotency,
@@ -535,7 +536,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 | --- | --- | --- | --- |
 | Database | PostgreSQL 18 through Exposed 1.6 (DSL, non-blocking R2DBC, r2dbc-pool pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
 | Schema migrations | Flyway (over JDBC, the only JDBC in the system), one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
-| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`) |
+| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`, `msg:`, `wal:`); `fx:` belongs to integrations (the exchange-rate table, `fx:usd`) |
 | Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
 | Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `ScheduledJob(name, interval, job)` bound in the module's Koin module, which infrastructure registers at start (run on the jobs pool); `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
 | Files | Cloudflare R2 (S3 compatible) | `ObjectStore` | A bucket prefix per module; uploads by pre-signed URL |
@@ -984,7 +985,8 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | `SocialSignIn` | Verify a Google or Apple ID token; revoke Apple tokens on account deletion | identity | Google and Apple public keys and REST | — |
 | `CarrierPhoneVerification` | Turn a carrier token into a verified number | identity | Firebase PNV (Admin SDK) | — |
 | `PushGateway` | Push a notification to a device | gateway only (when a user has no open socket) | FCM (Firebase Admin SDK), APNs (HTTP/2) | — |
-| `StablecoinCustody` | Create wallets, move funds, read balances | wallet (later) | Circle (REST) | — |
+| `StablecoinCustody` | Create wallets on the supported chains, move funds, read balances | wallet | Circle (REST) | — |
+| `ExchangeRates` | What one US dollar is worth in a currency, for fiat balances (no rate is null, never an error) | wallet | open.er-api.com (REST, no key; the table kept in Redis under `fx:`), chosen by `INTEGRATIONS_RATES_PROVIDER` | Another rates source |
 | `CallMedia` | Create call sessions and join tokens | calls (later) | Cloudflare Realtime (REST) | LiveKit |
 | Later: `MobileMoney`, `KycProvider` | Cash-out to M-PESA; identity checks | cash-out, compliance | Daraja; a KYC vendor | — |
 
