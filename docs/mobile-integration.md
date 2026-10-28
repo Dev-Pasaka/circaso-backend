@@ -1,14 +1,29 @@
 # Circaso mobile integration guide
 
-For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Written 2026-10-25 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
+For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-28 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
 
 ## 1. How to use this file
 
 - **The API reference is the source of truth for exact shapes**: `/docs` on the dev server (behind Cloudflare Access; ask Pasaka for the `openapi.json` file if you cannot open it). This file explains behaviour and order; section 11 repeats every request and response type so you can start offline.
-- **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real Google sign-in and a real database. Providers for push, email, speech and the AI model are stubs there (marked **DEV STUB** below); the HTTP contracts are final.
+- **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real vendors: Google and Apple sign-in, SMS (Twilio Verify), email (Resend), push (FCM), file storage (R2) and Asha's model, speech-to-text and voice (Cloudflare Workers AI). Only the Android carrier check and device attestation are faked there (marked **DEV STUB** below).
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-28 (update the app):**
+> 1. **The dev server's data was reset.** The backend moved to a new database: every account, profile, contact, Asha chat, key bundle and message on `sandbox.circaso.com` is gone. Clear the app's local data (or reinstall), sign up again, and publish encryption keys again (`PUT /v1/keys`). Old tokens answer `401`/`identity.session_revoked`: treat that as signed out.
+> 2. **Real vendors on dev.** Asha's replies, voice clips, spoken replies and live voice now run on the real models (no more canned replies or text-as-audio); email and push are really sent. Live voice now needs real Opus audio; the old "binary frame of UTF-8 words" trick no longer works.
+> 3. **New answers to handle:**
+>    - any route can answer `503` `service.unavailable`: retry with backoff and the **same** `Idempotency-Key` (section 3);
+>    - I3 and I15 answer `identity.phone_invalid` (was `request.malformed`) for a number that isn't E.164;
+>    - I6 can answer `409` `request.in_progress` when two registrations race: keep the other response, don't retry;
+>    - U5 (handle availability) now counts toward the 30-per-hour handle-lookup limit and can answer `request.rate_limited`;
+>    - U14 answers `request.not_found` for an id that is no account;
+>    - U11 through the invite of a deleted or suspended person answers `users.invite_invalid`.
+> 4. **Deleted and suspended people disappear.** Their profile looks like not found (U9, U11 by @handle), they leave your contacts list and block list, U10 answers `users.not_reachable`, and other screens get no name, handle or avatar for them. They come back if the account becomes active again (section 7).
+> 5. **Account deletion now completes:** 30 days after `DELETE /v1/account` the account and all its data are erased (section 7, I14). There is no restore route yet.
+> 6. **Messaging details** (section 7): `GET /v1/chats` `lastMessageId` is null for a chat with no message in the last 30 days; a retried group create returns the group as it is (and answers `messaging.chat_not_found` if you left it meanwhile); after a refused prekey top-up you may delete that request's private keys at once (section 5); the `read` frame's `upToMessageId` must be the newest `MESSAGE` from someone else; a negative `seq` in the socket's `last` closes with `invalid last`.
+> 7. **Push now arrives** for new messages (`pushable: true`) and for being added to a group: data-only on Android, an alert through APNs on iOS (section 8).
+>
 > **Changed on 2026-10-27 (breaking, update the app):**
 > 1. `details.fields` in the error envelope is now a **list** `[{ "field": "displayName", "problem": "required" }]`, no longer an object of field name to problem (section 3).
 > 2. The realtime auth frame's `last` is now a **list** `[{ "module": "users", "seq": 1042 }]`, no longer an object `{ "users": 1042 }`; the old form is refused with `invalid last` (section 8).
@@ -16,7 +31,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **64** routes the phone calls: **50 READY**, **8 PARTIAL**, **6 DEV STUB**.
+Of the **64** routes the phone calls: **56 READY**, **7 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -29,16 +44,16 @@ Of the **64** routes the phone calls: **50 READY**, **8 PARTIAL**, **6 DEV STUB*
 | Profile, @handle, avatar | **READY** | |
 | Contacts sync, connections, invites, blocks, reach | **READY** | |
 | Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
-| Asha chat (text), voice, speech | **DEV STUB** | Protocol final; the model, speech-to-text and text-to-speech are stubs on dev. |
-| Asha live voice (socket) | **DEV STUB** | Protocol final (section 9); on dev a **binary** frame holding UTF-8 words stands in for speech, and the voice's "audio" is the text's bytes. |
-| Push notifications | **MISSING** | The token is stored; nothing is ever sent. |
+| Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). The free allowance numbers and the paid plan are not decided: show what the server returns. |
+| Asha live voice (socket) | **READY** | Section 9. Real speech-to-text (Opus in) and voice (mulaw 8 kHz out) on dev; English only. |
+| Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`) and for being added to a group. iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
 | Account security, linked logins, security log | **READY** | |
-| Account deletion | **PARTIAL** | Schedules only; completion and recovery window not decided. |
+| Account deletion | **PARTIAL** | Completes 30 days after the request. No route restores an account during those 30 days yet (undecided); Apple access is not revoked. |
 | Account recovery | **PARTIAL** | A case can be opened and read; no support tool resolves it yet. |
 | Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key in `X-Device-Timestamp` / `X-Device-Signature` headers over the raw, uncompressed body (section 5). A bundle can be fetched by someone who can reach the person or shares a group with them. |
 | Chats and members (direct chats, groups, roles) | **READY** | |
 | Messages between people (sending, inbox, receipts, typing, delete for everyone) | **READY** | End-to-end encrypted on the phone; the server stores ciphertext until it is acknowledged. |
-| Chat media, chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. |
+| Chat media, chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
 | Payments, wallet, money movement, chamas | **MISSING** | Not designed yet; `identity.wallet_not_empty` is a placeholder. |
 | Calls | **MISSING** | Not designed yet. |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
@@ -310,38 +325,38 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **DEV STUB** | (the user token). Send the user's agent token in `X-Agent-Token` so Asha's tools can read contacts. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). The streaming protocol is final (SSE events `message`, `tool_request`, `done`, `error`), but the model is a stub on the dev server, so replies are canned and come in one piece. Build the client against the protocol. Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
+| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **READY** | (the user token). Send the user's agent token in `X-Agent-Token` so Asha's tools can read contacts. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
 | `DELETE /v1/assistant/chat`<br>**A5** Delete the whole history with Asha | `app` | — → NoBody | **READY** | (the user token). |
 | `GET /v1/assistant/chat`<br>**A1** The Asha chat, newest first | `app` | — → ChatResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100). |
 | `DELETE /v1/assistant/chat/messages/{messageId}`<br>**A6** Delete one exchange | `app` | — → NoBody | **READY** | (the user token). |
-| `POST /v1/assistant/chat/messages/{messageId}/tool-results`<br>**A9** The phone's answer to a device tool; the reply then continues as server-sent events | `app` | ToolResultsRequest → NoBody | **DEV STUB** | (the user token). `messageId` is the `turnId` from the `tool_request` event. At most 30 short snippets; they are used for this turn and never stored. Answer a `tool_request` within 10 minutes. The response is a new `text/event-stream` carrying on the same reply (errors before any text are the envelope): `message` events `{delta}` as the model writes (append them to what was shown before the pause), another `tool_request` if Asha needs the phone again, `done` with the saved reply (it includes what was said before the pause), or an `error` event `{code, message}` if the model fails after text has gone out (nothing is saved). Errors: `assistant.turn_not_found`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
+| `POST /v1/assistant/chat/messages/{messageId}/tool-results`<br>**A9** The phone's answer to a device tool; the reply then continues as server-sent events | `app` | ToolResultsRequest → NoBody | **READY** | (the user token). `messageId` is the `turnId` from the `tool_request` event. At most 30 short snippets; they are used for this turn and never stored. Answer a `tool_request` within 10 minutes. The response is a new `text/event-stream` carrying on the same reply (errors before any text are the envelope): `message` events `{delta}` as the model writes (append them to what was shown before the pause), another `tool_request` if Asha needs the phone again, `done` with the saved reply (it includes what was said before the pause), or an `error` event `{code, message}` if the model fails after text has gone out (nothing is saved). Errors: `assistant.turn_not_found`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
 
 ### Asha voice and usage
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/assistant/voice`<br>**A3** Transcribe a voice clip | `app` | — → TranscriptResponse | **DEV STUB** | (the user token). The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio and `X-Duration-Seconds`, the clip's length in seconds as the recorder reports it (a decimal such as `5.5` is fine; it is rounded up, so `60.2` is over the limit). A missing or non-positive length and a clip over 3 MB are `request.malformed`, each named on its own in `details.fields` (`X-Duration-Seconds`, `audio`). Speech-to-text is a stub on dev. Errors: `assistant.voice_too_long`, `assistant.quota_exceeded`, `request.malformed`. |
-| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **DEV STUB** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. Text-to-speech is a stub on dev (the audio is not real speech). The server voice (Workers AI Aura) speaks English only: speak a Swahili reply with the phone's own text-to-speech instead of calling this route (with `"language": "sw"` the server answers `assistant.language_not_supported`, 400, and nothing is counted against the allowance). That refusal already works on dev, exactly as in production, so the Swahili path can be tested now. Errors: `assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`. |
+| `POST /v1/assistant/voice`<br>**A3** Transcribe a voice clip | `app` | — → TranscriptResponse | **READY** | (the user token). The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio and `X-Duration-Seconds`, the clip's length in seconds as the recorder reports it (a decimal such as `5.5` is fine; it is rounded up, so `60.2` is over the limit). A missing or non-positive length and a clip over 3 MB are `request.malformed`, each named on its own in `details.fields` (`X-Duration-Seconds`, `audio`). Errors: `assistant.voice_too_long`, `assistant.quota_exceeded`, `request.malformed`. |
+| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **READY** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. The server voice (Workers AI Aura) speaks English only: speak a Swahili reply with the phone's own text-to-speech instead of calling this route (with `"language": "sw"` the server answers `assistant.language_not_supported`, 400, and nothing is counted against the allowance). That refusal already works on dev, exactly as in production, so the Swahili path can be tested now. Errors: `assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`. |
 | `GET /v1/assistant/usage`<br>**A7** Today's allowance used and left, and the plan | `app` | — → UsageResponse | **PARTIAL** | (the user token). Works; the free allowance numbers and the paid plan are not decided yet, so show what the server returns and nothing hard-coded. |
 
 ### Account and security
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `PUT /v1/devices/current/push-token`<br>**I9** Store this phone's FCM or APNs token | `app` | PushTokenRequest → NoBody | **PARTIAL** | The token is stored, but no push is ever sent yet: the FCM/APNs sender is not built. |
+| `PUT /v1/devices/current/push-token`<br>**I9** Store this phone's FCM or APNs token | `app` | PushTokenRequest → NoBody | **READY** | Send the FCM token on both platforms (on iOS, FCM's token, which Firebase maps to APNs). Used for message and group-add pushes (section 8). Update it whenever the platform rotates it. |
 | `DELETE /v1/devices/current`<br>**I10** Forget this phone; the next sign-in verifies the number again | `app` | — → NoBody | **READY** | Forget this phone; the next sign-in verifies the number again. |
 | `GET /v1/account/security`<br>**I11** Phone, linked sign-in accounts, this phone and verification status | `app` | — → SecurityOverviewResponse | **READY** |  |
 | `POST /v1/account/providers`<br>**I12** Link a Google or Apple login | `app` | LinkProviderRequest → NoBody | **READY** | Link Google or Apple. Errors: `identity.provider_in_use`, `identity.nonce_invalid`. |
 | `DELETE /v1/account/providers/{provider}`<br>**I12** Unlink a login, only if the other one stays | `app` | — → NoBody | **READY** | Only while the other login stays. Errors: `identity.provider_last`. |
 | `GET /v1/account/security-log`<br>**I13** Security activity, newest first | `app` | — → SecurityLogResponse | **READY** | Query: `cursor`, `limit` (default 50, at most 200). Paged. |
-| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion: the account turns `DELETED` at once (sign-in answers `identity.account_deleted`) and stays recoverable for 30 days; then the server deletes its data and every module deletes that user's data. Revoking Apple access at deletion is not built. The wallet-empty guard is a placeholder (there is no wallet yet). Errors: `identity.wallet_not_empty`. |
+| `DELETE /v1/account`<br>**I14** Schedule account deletion once every guard agrees | `app` | — → NoBody | **PARTIAL** | Schedules deletion: the account turns `DELETED` at once (sign-in answers `identity.account_deleted`) then 30 days later the server erases the account and its data (profile, contacts, blocks, invites, Asha chat), and other people stop seeing the person at once. There is no restore route yet: tell the user deletion is final after 30 days and can't be undone from the app. Revoking Apple access at deletion is not built. The wallet-empty guard is a placeholder (there is no wallet yet). Errors: `identity.wallet_not_empty`. |
 
 ### Account recovery
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `POST /v1/recovery/requests`<br>**I15** Open a support case for a lost Google or Apple login | `onboarding` | RecoveryRequest → RecoveryResponse | **PARTIAL** | Opens a support case. The support-side tools to resolve it are not built, so nothing completes it yet. Errors: `identity.phone_invalid`, `identity.recovery_not_eligible`, `request.rate_limited`. |
-| `wss://<host>/v1/assistant/voice/live`<br>**A11** Live voice with Asha (WebSocket) | `app` (in the first frame) | frames, see section 9 | **DEV STUB** | A second socket, open only while talking to Asha hands-free. Authenticate with the first frame, not a header, and send fresh tokens in a new `auth` frame before the access token's 15 minutes are up. Opus in, mulaw 8 kHz out. On dev the transcription treats a **binary** frame holding UTF-8 words as one spoken turn, and the voice sends the sentence's text bytes as its "audio". Swahili is refused (close reason `assistant.language_not_supported`): use A3 and the phone's own voice. Close reasons: `unauthorized` and `auth required` (1008, no frame), `Frame is too big: N` (1009, Ktor's reason, no frame), and after a `closing` frame `assistant.language_not_supported`, `assistant.quota_exceeded`, `assistant.model_unavailable`, `silence`, `ended`. |
+| `wss://<host>/v1/assistant/voice/live`<br>**A11** Live voice with Asha (WebSocket) | `app` (in the first frame) | frames, see section 9 | **READY** | A second socket, open only while talking to Asha hands-free. Authenticate with the first frame, not a header, and send fresh tokens in a new `auth` frame before the access token's 15 minutes are up. Opus in, mulaw 8 kHz out. Swahili is refused (close reason `assistant.language_not_supported`): use A3 and the phone's own voice. Close reasons: `unauthorized` and `auth required` (1008, no frame), `Frame is too big: N` (1009, Ktor's reason, no frame), and after a `closing` frame `assistant.language_not_supported`, `assistant.quota_exceeded`, `assistant.model_unavailable`, `silence`, `ended`. |
 | `GET /v1/recovery/requests/{requestId}`<br>**I17** Status of your own support case | `onboarding` | — → RecoveryResponse | **PARTIAL** | Status of your own case. |
 
 ### Messages and delivery
@@ -410,7 +425,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 ## 9. Asha (the assistant)
 
-**Status: DEV STUB.** The routes and event format below are final; on the dev server the language model, speech-to-text and text-to-speech are stubs, so replies are canned. Build the full client now.
+**Status: READY.** The routes and event format below are final, and the dev server runs the real model, speech-to-text and voice.
 
 - **History:** `GET /v1/assistant/chat` (newest first, paged); delete one exchange or everything.
 - **Ask:** `POST /v1/assistant/chat/messages` `{ "text", "chatReading": true|false, "askedFrom"? }`. Send `X-Agent-Token: <agentSession.accessToken>` so her tools can read your contacts. The answer is **`text/event-stream`**, not the envelope. Read the response body as a stream and parse `event:` and `data:` lines yourself (works on every Ktor engine). Errors before any text (a used-up allowance, a bad request) arrive as the normal envelope with a non-200 status.
@@ -451,16 +466,16 @@ Any other close (network drop, server restart) means reconnect with backoff.
 1. Chat media, chat history and the history-key backup (chats, sending, the inbox and receipts exist).
 2. Payments, wallet, sending and receiving money, chamas. Not designed yet.
 3. Calls. Not designed yet.
-4. Push delivery (FCM/APNs sender). The token endpoint exists, nothing is sent.
+4. Push for anything other than new messages and group adds.
 5. Notification inbox, identity verification (KYC).
 6. Production device attestation (Play Integrity, App Attest) and real carrier phone verification (Firebase).
-7. Real Asha model, speech-to-text and text-to-speech (stubs on dev).
-8. Support tools that resolve account-recovery cases; finishing account deletion.
+7. Chat history's handling of deleted accounts, and Asha reading your chats on the server (chat history slice).
+8. Support tools that resolve account-recovery cases; restoring an account during its 30-day deletion window.
 9. Realtime frames beyond those in section 8.
 
-**Backend behaviours that will look odd on dev:** email (welcome and security notices) is logged, not sent; push is logged; Asha's answers are canned; the carrier check accepts the number itself as the token.
+**Backend behaviours that will look odd on dev:** the carrier check accepts the number itself as the token; device attestation is only logged. Everything else is real: SMS, email and push really go out, so test with your own number, email and devices.
 
-**Open product decisions that affect screens** (ask Pasaka before building UI for them): Asha's free allowance and paid plan; how long a deleted account can be recovered; how the old phone cancels a number release; whether short Asha replies are cached.
+**Open product decisions that affect screens** (ask Pasaka before building UI for them): Asha's free allowance and paid plan; how a deleted account is restored within its 30 days (no route yet); what happens when a second Google or Apple login is linked (today it replaces the first); how the old phone cancels a number release; whether short Asha replies are cached.
 
 **Suggested build order**
 1. Project skeleton: Ktor client, envelope, headers interceptor, base-URL setting, `X-Client-Version`, force-update screen.
@@ -472,7 +487,8 @@ Any other close (network drop, server restart) means reconnect with backoff.
 7. Realtime socket (section 8).
 8. Asha chat with streaming and tool requests, then voice (section 9).
 9. Account security screens, linked logins, recovery request.
-10. Push: register the token now; delivery arrives later.
+10. Push: register the FCM token (I9) and handle the data-only message push (section 8).
+11. Encrypted chats: keys (M1–M3), chats and groups (M4–M11), sending, inbox and receipts (M12–M14, section 8).
 
 **Definition of done for each screen:** every error `code` in the catalogue's *Errors* column has a message in the app; every `POST`/`PUT`/`PATCH`/`DELETE` sends an `Idempotency-Key`; no token, code, key or phone number is ever logged; retries reuse the same `Idempotency-Key`.
 
