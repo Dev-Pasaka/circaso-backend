@@ -1,5 +1,8 @@
 package com.circaso.gateway.realtime
 
+import com.circaso.chama.api.ChamaFrames
+import com.circaso.chama.api.ContributionAddedFrame
+import com.circaso.chama.api.RequestUpdatedFrame
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
@@ -102,6 +105,17 @@ class GatewayRealtime(
                 decode(MemberAddedFrame.serializer(), frame)?.let { addedToGroupPush(it, recipient) }
             }
 
+            "${ChamaFrames.MODULE}.${ChamaFrames.CONTRIBUTION_ADDED}" -> {
+                // to the other members; the contributor already knows
+                decode(ContributionAddedFrame.serializer(), frame)?.takeIf { it.userId != recipient }?.let {
+                    PushMessage(it.goalName, "${it.displayName} added to ${it.goalName}")
+                }
+            }
+
+            "${ChamaFrames.MODULE}.${ChamaFrames.REQUEST_UPDATED}" -> {
+                decode(RequestUpdatedFrame.serializer(), frame)?.let { requestPush(it, recipient) }
+            }
+
             "${WalletFrames.MODULE}.${WalletFrames.TRANSFER_UPDATED}" -> {
                 decode(TransferUpdatedFrame.serializer(), frame)?.let(::transferPush)
             }
@@ -147,6 +161,51 @@ class GatewayRealtime(
      * The sender hears only about the end of a payment (Wallet → Realtime frames); a push never shows an amount on
      * the lock screen.
      */
+    // The admins still to decide hear of a pending request; the requester hears the outcome. Never an amount.
+    private fun requestPush(frame: RequestUpdatedFrame, recipient: UserId): PushMessage? =
+        when (frame.state) {
+            "PENDING" -> {
+                if (recipient in
+                    frame.waitingOn
+                ) {
+                    PushMessage(
+                        frame.goalName,
+                        "${frame.requesterName} needs your approval to pay from ${frame.goalName}",
+                    )
+                } else {
+                    null
+                }
+            }
+
+            "APPROVED" -> {
+                if (recipient ==
+                    frame.requestedBy
+                ) {
+                    PushMessage(frame.goalName, "Your request was approved")
+                } else {
+                    null
+                }
+            }
+
+            "DECLINED" -> {
+                if (recipient ==
+                    frame.requestedBy
+                ) {
+                    PushMessage(frame.goalName, "Your request was declined")
+                } else {
+                    null
+                }
+            }
+
+            "PAID" -> {
+                if (recipient == frame.requestedBy) PushMessage(frame.goalName, "Your request was paid") else null
+            }
+
+            else -> {
+                null
+            }
+        }
+
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {
             "CONFIRMED" -> PushMessage("Circaso", "Payment sent")

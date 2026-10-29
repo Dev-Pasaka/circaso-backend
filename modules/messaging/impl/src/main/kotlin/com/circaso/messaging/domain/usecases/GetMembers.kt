@@ -9,3 +9,8 @@ import com.circaso.shared.UserId
 class GetMembers(private val membership: Membership) {
     suspend operator fun invoke(chatId: ChatId): Resource<Set<UserId>> = Resource.success(membership.members(chatId))
 }
+
+/** `ChatDirectory.admins`, for chama: who may approve a group's payments. Empty for no chat. */
+class GetAdmins(private val membership: Membership) {
+    suspend operator fun invoke(chatId: ChatId): Resource<Set<UserId>> = Resource.success(membership.admins(chatId))
+}

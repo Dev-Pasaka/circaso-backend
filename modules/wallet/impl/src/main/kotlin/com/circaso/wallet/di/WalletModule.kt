@@ -61,6 +61,7 @@ import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
 import com.circaso.wallet.domain.usecases.ReplayFrames
@@ -174,12 +175,13 @@ fun walletModule(config: Config): Module =
         single { ValidateAddress(get()) }
         single { ApplyCustodyUpdate(get(), get(), get(), get(), get(), get(), clock) }
         single { ReplayFrames(get()) }
+        single { LookupTransfer(get()) }
 
         // presentation
         single { WalletService(get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get()) }
         single { RecipientService(get(), get()) }
-        single { WalletDirectoryService(get(), get(), get(), get()) }
+        single { WalletDirectoryService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()
             val transfers = get<TransferService>()

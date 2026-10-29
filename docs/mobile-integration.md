@@ -9,6 +9,10 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-29, chamas (new routes and frames):**
+> 1. **A group's shared goal is in** (section 7, Chama): CH1–CH6 under `/v1/chama`, with `chama` / `goal.updated`, `contribution.added`, `request.updated` frames (section 8). Send `{"module":"chama","seq":…}` in `last`. The money sits in the treasurer's wallet: contributions are W4 payments to the treasurer with `chatId`.
+> 2. **`wallet` / `transfer.updated` is unchanged**; `TransferConfirmed` (an event, not a frame) now carries `chatId`.
+
 > **Changed on 2026-10-28, wallet payments (new routes and frames; W12 and W1 gain a field):**
 > 1. **Payments are in** (section 7, Wallet): W4 `POST /v1/wallet/transfers`, W5 `GET /v1/wallet/transfers/{transferId}`, W9 `GET /v1/wallet/recipients/{userId}`, W10 `POST /v1/wallet/recipients/{userId}/remind`, W11 `POST /v1/wallet/addresses/validate`. **A payment names its chain** (`blockchain`) and leaves from your wallet's address on that chain; a person must have a wallet on that chain (W9 says `NO_WALLET_ON_CHAIN` otherwise), an outside address must be valid on it. Amounts are **strings** everywhere in the wallet: send `amount: { asset: "USDC", amountMinor: "20000000" }` or `{ asset, amount: "20" }`.
 > 2. **Wallet frames and pushes** (section 8): `wallet` / `transfer.updated`, `payment.received`, `wallet.ready`, `setup.requested`. Send `{"module":"wallet","seq":…}` in `last` like the others.
@@ -370,6 +374,19 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 | `GET /v1/wallet/recipients/{userId}`<br>**W9** Can this person be paid, and where | `app` | — → RecipientResponse | **PARTIAL** | Query `blockchain` (optional, the chain you mean to pay on) and `chatId` (optional). `status`: `CAN_RECEIVE`, `NO_WALLET` (offer W10: "Amina hasn't set up her wallet yet") or `NO_WALLET_ON_CHAIN` (pick one of `blockchains`, where they can be paid now). Errors: `users.not_reachable`, `wallet.self_transfer`, `wallet.chain_unsupported`, `request.malformed`. |
 | `POST /v1/wallet/recipients/{userId}/remind`<br>**W10** Remind a contact to set up a wallet | `app` | — → RemindResponse | **PARTIAL** | They get a `wallet` / `setup.requested` frame and a push. `status`: `SENT`, `ALREADY_SENT` (once per person per 24 hours) or `HAS_WALLET` (pay them instead). Errors: `users.not_reachable`, `wallet.self_transfer`, `request.malformed`. |
 | `POST /v1/wallet/addresses/validate`<br>**W11** Check an outside address on a chain | `app` | ValidateAddressRequest → ValidateAddressResponse | **PARTIAL** | `{ "blockchain", "address" }` → `valid` (an answer, not an error) and `address` as it will be paid (EVM lowercase). Check before W4 to an address. Errors: `wallet.chain_unsupported`, `wallet.custody_unavailable`, `request.malformed`. |
+
+### Chama (a group's shared goal)
+
+A chama is a group chat with a goal. The money sits in the **treasurer's** own wallet (one member; the goal names who): contributing is an ordinary W4 payment to the treasurer with `chatId` = the group, after which you send the payment card into the chat; the server counts it from the confirmed transfer. Paying someone from the group needs the admins' approval, then the treasurer pays it (W4 from the chat) and links the transfer. Amounts are strings as across the wallet.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `GET /v1/chama/chats/{chatId}`<br>**CH1** The goal, totals and open requests | `app` | — → ChamaResponse | **READY** | Members only. `held` = `contributed` − `paidOut`. `chama.no_goal` when the group has none yet (offer the admins "Set a goal"). Errors: `chama.not_a_member`, `chama.no_goal`. |
+| `PUT /v1/chama/chats/{chatId}/goal`<br>**CH2** Set or change the goal | `app` | SetGoalRequest → GoalDto | **READY** | Admins only. `treasurerUserId` defaults to the caller and must be a member. Everyone gets `chama` / `goal.updated`. Errors: `chama.not_admin`, `chama.goal_invalid`, `chama.treasurer_not_member`. |
+| `GET /v1/chama/chats/{chatId}/ledger`<br>**CH3** Contributions in, payments out | `app` | — → LedgerResponse | **READY** | `?limit=` (≤200), `?before=` from the previous page's `next`. |
+| `POST /v1/chama/chats/{chatId}/requests`<br>**CH4** Ask the group to pay someone | `app` | CreateRequestRequest → RequestDto | **READY** | Any member. Needs two admins' approval (all admins when fewer); an admin asking counts as their own. Open 48 hours, then `EXPIRED`. Everyone gets `chama` / `request.updated`; admins still to decide are pushed. Errors: `chama.no_goal`, `chama.amount_invalid`, `chama.payee_invalid`. |
+| `POST /v1/chama/requests/{requestId}/approve` and `/decline`<br>**CH5** Decide | `app` | — → RequestDto | **READY** | Admins, once each. Enough approvals → `APPROVED`; one decline → `DECLINED`. Errors: `chama.not_admin`, `chama.request_closed`, `chama.already_decided`. |
+| `POST /v1/chama/requests/{requestId}/payment`<br>**CH6** Link the treasurer's payment | `app` | AttachPaymentRequest → RequestDto | **READY** | Treasurer only, for an `APPROVED` request: pay with W4 (`to` = the request's payee, the same amount, `chatId` = the group), then send the `transferId` here. `PAID` once confirmed on chain. Errors: `chama.not_treasurer`, `chama.not_approved`, `chama.transfer_mismatch`. |
 
 ### Account and security
 

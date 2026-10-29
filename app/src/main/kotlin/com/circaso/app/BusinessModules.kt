@@ -1,6 +1,7 @@
 package com.circaso.app
 
 import com.circaso.assistant.di.assistantModule
+import com.circaso.chama.di.chamaModule
 import com.circaso.identity.di.identityModule
 import com.circaso.infrastructure.api.Config
 import com.circaso.messaging.di.messagingModule
@@ -19,5 +20,6 @@ fun businessModules(config: Config): List<Module> =
         usersModule(config),
         messagingModule(config),
         walletModule(config),
+        chamaModule(config),
         assistantModule(config),
     )

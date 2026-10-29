@@ -63,6 +63,7 @@ import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.CreateGroup
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
+import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
@@ -214,6 +215,7 @@ fun messagingModule(config: Config): Module =
         single { LeaveGroup(get()) }
         single { SetRole(get(), get(), get(), get(), get()) }
         single { GetMembers(get()) }
+        single { GetAdmins(get()) }
         single { ReplayFrames(get()) }
         single {
             SendMessage(
@@ -240,7 +242,7 @@ fun messagingModule(config: Config): Module =
 
         // presentation
         single { KeyService(get(), get(), get(), get()) }
-        single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { RealtimeService(get()) }
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }

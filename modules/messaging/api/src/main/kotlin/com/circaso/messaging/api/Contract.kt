@@ -29,4 +29,7 @@ interface ChatDirectory {
     suspend fun isMember(chatId: ChatId, userId: UserId): Boolean
 
     suspend fun members(chatId: ChatId): Set<UserId>
+
+    /** The owner and admins of a group, for the modules whose actions need an admin (chama approvals). */
+    suspend fun admins(chatId: ChatId): Set<UserId>
 }

@@ -42,6 +42,8 @@ dependencies {
     implementation(project(":modules:messaging:impl"))
     implementation(project(":modules:wallet:api"))
     implementation(project(":modules:wallet:impl"))
+    implementation(project(":modules:chama:api"))
+    implementation(project(":modules:chama:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
 

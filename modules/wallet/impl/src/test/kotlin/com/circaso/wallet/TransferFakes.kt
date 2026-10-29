@@ -223,6 +223,8 @@ class FakeChats : ChatDirectory {
     override suspend fun isMember(chatId: ChatId, userId: UserId): Boolean = userId in members[chatId].orEmpty()
 
     override suspend fun members(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
+
+    override suspend fun admins(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
 }
 
 class FakeProfiles : Profiles {

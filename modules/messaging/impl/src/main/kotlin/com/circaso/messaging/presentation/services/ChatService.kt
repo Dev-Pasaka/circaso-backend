@@ -7,6 +7,7 @@ import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.UpdateGroupCommand
 import com.circaso.messaging.domain.usecases.AddMembers
 import com.circaso.messaging.domain.usecases.CreateGroup
+import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetMembers
 import com.circaso.messaging.domain.usecases.LeaveGroup
@@ -30,6 +31,7 @@ class ChatService(
     private val leaveGroup: LeaveGroup,
     private val setRole: SetRole,
     private val getMembers: GetMembers,
+    private val getAdmins: GetAdmins,
 ) {
     suspend fun openDirect(caller: UserId, other: UserId): Resource<ChatView> = openDirectChat(caller, other)
 
@@ -80,4 +82,6 @@ class ChatService(
         )
 
     suspend fun members(chatId: ChatId): Resource<Set<UserId>> = getMembers(chatId)
+
+    suspend fun admins(chatId: ChatId): Resource<Set<UserId>> = getAdmins(chatId)
 }
