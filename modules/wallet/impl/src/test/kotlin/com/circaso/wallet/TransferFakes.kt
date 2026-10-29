@@ -225,6 +225,8 @@ class FakeChats : ChatDirectory {
     override suspend fun members(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
 
     override suspend fun admins(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
+
+    override suspend fun isGroup(chatId: ChatId): Boolean = members[chatId].orEmpty().size > 2
 }
 
 class FakeProfiles : Profiles {

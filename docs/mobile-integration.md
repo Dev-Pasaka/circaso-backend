@@ -48,7 +48,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **74** routes the phone calls: **56 READY**, **17 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **83** routes the phone calls: **56 READY**, **26 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ Of the **74** routes the phone calls: **56 READY**, **17 PARTIAL**, **1 DEV STUB
 | Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
 | Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). The free allowance numbers and the paid plan are not decided: show what the server returns. |
 | Asha live voice (socket) | **READY** | Section 9. Real speech-to-text (Opus in) and voice (mulaw 8 kHz out) on dev; English only. |
-| Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`), for being added to a group, and for wallet payments (sent, failed, received) and wallet reminders. iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
+| Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`), for being added to a group, for wallet payments (sent, failed, received) and wallet reminders, and for calls (an incoming call, data-only and high priority; a missed call). iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
 | Account security, linked logins, security log | **READY** | |
 | Account deletion | **PARTIAL** | Completes 30 days after the request. No route restores an account during those 30 days yet (undecided); Apple access is not revoked. |
 | Account recovery | **PARTIAL** | A case can be opened and read; no support tool resolves it yet. |
@@ -74,7 +74,7 @@ Of the **74** routes the phone calls: **56 READY**, **17 PARTIAL**, **1 DEV STUB
 | Wallet (create, PIN session, balance per chain, fiat balance, add a chain) | **PARTIAL** | W1–W3 and W12 work. On dev the custody provider is Circle on testnet (Base Sepolia, Polygon Amoy, Ethereum Sepolia, Solana Devnet): the challenges are real, so run them in the Circle SDK, where the user sets the PIN and the wallet appears on Circle's testnet. Test USDC comes from Circle's testnet faucet (faucet.circle.com), sent to the chain's address from W1. |
 | Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work against Circle's testnet: complete the payment's challenge in the Circle SDK with the PIN, and `transfer.updated` and `payment.received` arrive as Circle's webhooks report the transaction (testnet USDC from Circle's faucet). Limits are placeholders (500 USDC a payment, 1 000 a day). |
 | Transaction history, statements, PIN change and restore, chamas | **MISSING** | Designed (wallet W6–W8); being built in slices. |
-| Calls | **MISSING** | Not designed yet. |
+| Calls (voice and video, up to 8 people) | **PARTIAL** | CL1–CL8 and the `calls` frames work. On dev the SFU is Cloudflare Realtime once `INTEGRATIONS_CALLS_PROVIDER=cloudflare` is set on the sandbox; with the `log` provider the routes answer with made-up SDP, so no media flows. Show "Secure call", never "end-to-end encrypted" (decision 2026-10-29). |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
 
 ## 3. Conventions every call follows
@@ -388,6 +388,28 @@ A chama is a group chat with a goal. The money sits in the **treasurer's** own w
 | `POST /v1/chama/requests/{requestId}/approve` and `/decline`<br>**CH5** Decide | `app` | — → RequestDto | **READY** | Admins, once each. Enough approvals → `APPROVED`; one decline → `DECLINED`. Errors: `chama.not_admin`, `chama.request_closed`, `chama.already_decided`. |
 | `POST /v1/chama/requests/{requestId}/payment`<br>**CH6** Link the treasurer's payment | `app` | AttachPaymentRequest → RequestDto | **READY** | Treasurer only, for an `APPROVED` request: pay with W4 (`to` = the request's payee, the same amount, `chatId` = the group), then send the `transferId` here. `PAID` once confirmed on chain. Errors: `chama.not_treasurer`, `chama.not_approved`, `chama.transfer_mismatch`. |
 
+### Calls
+
+Voice and video calls in a chat (direct or group), at most 8 people in a call at once. Each phone holds **one** WebRTC peer connection to Cloudflare Realtime's SFU; the server only brokers session descriptions and rings people. A chat has one call at a time. Media is encrypted in transit (DTLS-SRTP) but decrypted at the SFU: say **"Secure call"**, never "end-to-end encrypted" (decision 2026-10-29). Every state change sends an `Idempotency-Key`.
+
+The flow: the caller **CL1** (gets `iceServers`), builds the peer connection with them, adds its tracks, creates an offer and **CL3** joins with it (set `answer` as the remote description). The callee gets `call.ringing` (or the push), reads the call with **CL2** (for `iceServers`) and joins the same way, or **CL6** declines. On every `call.updated`, **CL4** pulls the tracks of the people `JOINED` that you don't receive yet (by `userId` and `trackName` from `participants`); when `requiresRenegotiation`, set `offer` as the remote description, create an answer and send it with **CL5**. **CL8** for mute and camera, **CL7** to hang up. Name tracks uniquely in your own session, for example `audio-<yourUserId>` and `video-<yourUserId>`.
+
+**CallResponse**: `callId`, `chatId`, `kind` (`VOICE` \| `VIDEO`), `state` (`RINGING` \| `ACTIVE` \| `ENDED`), `startedBy`, `createdAt`, `startedAt` (when a second person joined; null before), `endedAt`, `endReason` (`COMPLETED` \| `CANCELLED` \| `MISSED` \| `DECLINED`; null until ended), `participants` [{`userId`, `displayName`, `state` (`INVITED` \| `JOINED` \| `DECLINED` \| `MISSED` \| `LEFT`), `audio`, `video`, `tracks` [{`trackName`, `kind`}], `joinedAt`}], `iceServers` [{`urls`, `username`, `credential`}] (STUN always; TURN with credentials valid for a day when configured; empty in frames). Other people's SFU sessions never appear.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/calls`<br>**CL1** Call a chat | `app` | `{ "chatId", "video": false }` → CallResponse | **PARTIAL** | Everyone in the chat is `INVITED`, the caller too until they join (CL3). The others get `call.ringing`. A chat with a call ringing or active answers `calls.already_in_call` (409): fetch it with `GET /v1/chats/{chatId}/call` and join it. Errors: `calls.not_a_member`, `calls.already_in_call`, `request.malformed`. |
+| `GET /v1/calls/{callId}`<br>**CL2** A call | `app` | — → CallResponse | **PARTIAL** | The chat's members only. Errors: `calls.not_found`, `calls.not_a_member`, `request.malformed`. |
+| `GET /v1/chats/{chatId}/call`<br>**CL2** The chat's call going on | `app` | — → CallResponse | **PARTIAL** | The call `RINGING` or `ACTIVE` in the chat, for a group's "Join call" bar; `calls.not_found` (404) when there is none. Errors: `calls.not_found`, `calls.not_a_member`. |
+| `POST /v1/calls/{callId}/join`<br>**CL3** Join with your offer | `app` | `{ "offer": "<sdp>", "tracks": [{ "mid": "0", "trackName": "audio-<userId>", "kind": "audio" }] }` → `{ "sessionId", "answer": "<sdp>", "call": CallResponse }` | **PARTIAL** | 1 to 4 tracks, `kind` `audio` or `video`, `mid` as in the offer. Keep `sessionId` for CL4 and CL5. The second person in makes the call `ACTIVE`; everyone gets `call.updated`. Joining again (after the app restarted, or after leaving a group call still going) gives a new session and drops the old one. A member who was `MISSED` or `DECLINED` in a group call can still join. Errors: `calls.not_found`, `calls.not_a_member`, `calls.call_ended`, `calls.call_full`, `calls.media_unavailable`, `request.malformed`. |
+| `POST /v1/calls/{callId}/pull`<br>**CL4** Receive others' tracks | `app` | `{ "sessionId", "tracks": [{ "userId", "trackName" }] }` → `{ "offer": "<sdp>" \| null, "requiresRenegotiation": true, "tracks": [{ "userId", "trackName", "mid" }] }` | **PARTIAL** | The server finds each person's session. A track that isn't available (they left, or don't publish it) is left out of `tracks`; nothing available → `offer: null`, `requiresRenegotiation: false`. `mid` is the transceiver in the SFU's offer, to match the remote track to its tile. Errors: `calls.not_found`, `calls.call_ended`, `calls.not_in_call`, `calls.session_mismatch`, `calls.media_unavailable`, `request.malformed`. |
+| `POST /v1/calls/{callId}/renegotiate`<br>**CL5** Answer the SFU's offer | `app` | `{ "sessionId", "answer": "<sdp>" }` → `{}` | **PARTIAL** | After a CL4 with `requiresRenegotiation`. Errors: as CL4. |
+| `POST /v1/calls/{callId}/decline`<br>**CL6** Decline | `app` | — → CallResponse | **PARTIAL** | A direct call ends (`DECLINED`; both get `call.ended`). In a group only you become `DECLINED`; the call ends when nobody is left to ring or talk to. Declining a call that no longer rings you changes nothing; the caller declining is CL7. Errors: `calls.not_found`, `calls.call_ended`. |
+| `POST /v1/calls/{callId}/leave`<br>**CL7** Hang up | `app` | — → CallResponse | **PARTIAL** | Your tracks are closed at the SFU. The caller hanging up before anyone answered → `CANCELLED`. Otherwise the call ends (`COMPLETED`) when fewer than two people are left in it. Everyone gets `call.ended` with the final call. Leaving an ended call returns it. Errors: `calls.not_found`. |
+| `POST /v1/calls/{callId}/media`<br>**CL8** Microphone and camera | `app` | `{ "audio": true, "video": false }` → `{}` | **PARTIAL** | Sets `audio`/`video` on your tile for everyone (`call.updated`). Keep the tracks; stop sending on them (`track.enabled = false`). Errors: `calls.not_found`, `calls.call_ended`, `calls.not_in_call`. |
+
+**Timeouts.** A person rung for 45 seconds without answering is `MISSED`; a call nobody answered ends `MISSED` and a direct callee is pushed "Missed call from {name}". The server checks every 15 seconds, so show your own 45-second ring and stop at `call.ended`. An `ACTIVE` call with no join, leave, pull or media change for 2 hours is ended. **Pushes:** see `calls` frames in section 8. iOS: the ring arrives as an FCM alert with `mutable-content` (a Notification Service Extension can enrich it); CallKit's VoIP pushes (PushKit) are not sent yet.
+
 ### Account and security
 
 | Call | Scope | Request → response | Status | What to know |
@@ -467,6 +489,9 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `wallet` / `payment.received` | `transactionId`, `blockchain`, `amount`, `fromUserId`?, `fromName`? | Money reached you on chain: refresh the balance (W1). `fromUserId` is null for an outside address. Pushed: "Amina sent you money" (never the amount). |
 | `wallet` / `wallet.ready` | `blockchain` | Your wallet turned `ACTIVE` (its first chain): reload W1 and stop polling. No push. |
 | `wallet` / `setup.requested` | `fromUserId`, `fromName` | Someone wants to pay you and you have no wallet: offer "Create wallet" (W2). Pushed. |
+| `calls` / `call.ringing` | `callId`, `chatId`, `kind` (`VOICE` \| `VIDEO`), `callerId`, `callerName` | Someone is calling the chat: show the incoming-call screen (ring for 45 seconds at most). To each person rung, not the caller. Offline: a data-only, high-priority push (TTL 45 s) with `kind: "call.ringing"`, `chatId`, `callId`, `callerName`, `callKind`. |
+| `calls` / `call.updated` | CallResponse (with `iceServers` empty) | Someone joined, left, declined or muted, or the call turned `ACTIVE`: redraw the tiles, and pull (CL4) the tracks of anyone newly `JOINED`. To everyone the call rang. No push. |
+| `calls` / `call.ended` | CallResponse (with `iceServers` empty) | The call is over (`endReason`): close the peer connection and the call screen. Offline: `MISSED` → an alert "Missed call from {name}" (`kind: "call.missed"`); `CANCELLED` while it was still ringing you → data-only (`kind: "call.ended"`), so stop ringing and show the missed call yourself. |
 
 **Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **Limits:** at most 100 frames per second per socket (frames over it are dropped silently, the socket stays open, so batch acks and throttle typing) and at most 64 KB per frame (a bigger frame closes the socket with 1009). Messaging takes three:
 
@@ -518,8 +543,8 @@ Any other close (network drop, server restart) means reconnect with backoff.
 **Backend MISSING (do not call, do not invent endpoints; stub the UI behind a feature flag):**
 1. Chat media, chat history and the history-key backup (chats, sending, the inbox and receipts exist).
 2. Transaction history and statements (W6, W7), PIN change and restore (W8), the payment hold after a support restore, chamas. The wallet (W1–W3, W12) and payments (W4, W5, W9–W11, wallet frames and pushes) are in.
-3. Calls. Not designed yet.
-4. Push for anything other than new messages, group adds and wallet payments.
+3. Calls: a call log message in the chat, CallKit VoIP pushes on iOS (PushKit), screen sharing. Calls themselves (CL1–CL8) are in.
+4. Push for anything other than new messages, group adds, wallet payments and calls.
 5. Notification inbox, identity verification (KYC).
 6. Production device attestation (Play Integrity, App Attest) and real carrier phone verification (Firebase).
 7. Chat history's handling of deleted accounts, and Asha reading your chats on the server (chat history slice).

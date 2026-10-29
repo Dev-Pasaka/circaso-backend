@@ -271,6 +271,19 @@ internal object ApiDocsCatalog {
                             "- **Key backup** keeps the history key sealed under a passkey and/or a recovery key, " +
                             "for when the old phone is gone. Fetching it is limited to 5 times a day.",
                     ),
+                    DocTag(
+                        "Calls",
+                        "Voice and video calls in a chat, up to 8 people at once. The phones talk WebRTC to " +
+                            "Cloudflare Realtime's SFU; the server only brokers each connection's session " +
+                            "descriptions and rings people.\n\n" +
+                            "- **Start** a call in a chat (everyone else is rung: `calls/call.ringing`, pushed " +
+                            "data-only to a phone without a socket), then **join** with the phone's offer and " +
+                            "**pull** the others' tracks by user; the server maps each person to their session.\n" +
+                            "- `calls/call.updated` follows every join, leave and mute; `calls/call.ended` the end. " +
+                            "A ring nobody answers in 45 seconds is missed.\n" +
+                            "- Media is encrypted in transit (DTLS-SRTP) but decrypted at the SFU, so a call is " +
+                            "\"secure\", not end-to-end encrypted.",
+                    ),
                 ),
             ),
             DocGroup(
@@ -292,6 +305,14 @@ internal object ApiDocsCatalog {
                             "PIN, and `wallet` frames follow it. Amounts are strings (`amountMinor`, `amount`).\n" +
                             "- **Deleting your account** is refused while the wallet still holds money " +
                             "(`wallet.funds_remaining`).",
+                    ),
+                    DocTag(
+                        "Chama",
+                        "A group chat's shared goal. The money sits in the treasurer's own wallet: contributing is " +
+                            "an ordinary payment to the treasurer from the chat, counted once it is confirmed. " +
+                            "Paying " +
+                            "someone from the group needs the admins' approval, then the treasurer pays and links " +
+                            "the transfer.",
                     ),
                 ),
             ),

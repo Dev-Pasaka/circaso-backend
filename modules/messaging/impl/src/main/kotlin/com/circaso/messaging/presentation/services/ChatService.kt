@@ -10,6 +10,7 @@ import com.circaso.messaging.domain.usecases.CreateGroup
 import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetMembers
+import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.OpenDirectChat
@@ -32,6 +33,7 @@ class ChatService(
     private val setRole: SetRole,
     private val getMembers: GetMembers,
     private val getAdmins: GetAdmins,
+    private val isGroup: IsGroup,
 ) {
     suspend fun openDirect(caller: UserId, other: UserId): Resource<ChatView> = openDirectChat(caller, other)
 
@@ -84,4 +86,6 @@ class ChatService(
     suspend fun members(chatId: ChatId): Resource<Set<UserId>> = getMembers(chatId)
 
     suspend fun admins(chatId: ChatId): Resource<Set<UserId>> = getAdmins(chatId)
+
+    suspend fun isGroup(chatId: ChatId): Resource<Boolean> = isGroup.invoke(chatId)
 }

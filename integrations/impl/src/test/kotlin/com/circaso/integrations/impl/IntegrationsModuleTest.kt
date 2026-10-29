@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioSpan
+import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ExchangeRates
@@ -35,6 +36,7 @@ import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
+import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
@@ -248,6 +250,17 @@ class IntegrationsModuleTest {
         val e = assertFailsWith<Exception> { koin("integrations.push.provider" to "fcm").get<PushGateway>() }
         assertTrue(
             "fcm.service-account" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
+        )
+    }
+
+    @Test
+    fun `calls default to the log media and cloudflare refuses to start without its app id`() {
+        assertIs<LogCallMedia>(koin().get<CallMedia>())
+        stopKoin()
+        val e = assertFailsWith<Exception> { koin("integrations.calls.provider" to "cloudflare").get<CallMedia>() }
+        assertTrue(
+            "cloudflare.realtime-app-id" in
+                generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
     }
 
