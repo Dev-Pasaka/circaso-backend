@@ -35,12 +35,29 @@ class ExpireRings(private val calls: CallRepository, private val changes: CallCh
         result is Resource.Success && result.data.before != result.data.after
 
     private fun missed(call: Call, now: Instant): Call {
-        if (call.isEnded || call.createdAt.isAfter(now.minus(RING_FOR))) return call
+        if (call.isEnded) return call
+        // Each person's ring is timed from when they were rung, so someone rung again mid-call (CL9) rings in full.
+        val cutoff = now.minus(RING_FOR)
+        if (call.participants.none {
+                it.state == ParticipantState.INVITED &&
+                    !it.updatedAt.isAfter(
+                        cutoff,
+                    )
+            }
+        ) {
+            return call
+        }
         val participants =
             call.participants.map { participant ->
                 when {
-                    participant.state != ParticipantState.INVITED -> participant
+                    participant.state != ParticipantState.INVITED ||
+                        participant.updatedAt.isAfter(
+                            cutoff,
+                        )
+                    -> participant
+
                     participant.userId == call.startedBy -> participant.moved(ParticipantState.LEFT, now)
+
                     else -> participant.moved(ParticipantState.MISSED, now)
                 }
             }

@@ -10,11 +10,13 @@ import com.circaso.calls.presentation.dto.MediaRequest
 import com.circaso.calls.presentation.dto.PullRequest
 import com.circaso.calls.presentation.dto.PullResponse
 import com.circaso.calls.presentation.dto.RenegotiateRequest
+import com.circaso.calls.presentation.dto.RingRequest
 import com.circaso.calls.presentation.dto.StartCallRequest
 import com.circaso.calls.presentation.mappers.callIdOf
 import com.circaso.calls.presentation.mappers.chatIdOf
 import com.circaso.calls.presentation.mappers.toCommand
 import com.circaso.calls.presentation.mappers.toResponse
+import com.circaso.calls.presentation.mappers.toUserIds
 import com.circaso.calls.presentation.services.CallService
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
@@ -140,6 +142,23 @@ fun Route.callController(calls: CallService) {
                     notes =
                         "$SCOPE $IDEMPOTENT A direct call ends (`DECLINED`, `calls/call.ended` to both); in a " +
                             "group only you are `DECLINED`. Declining what no longer rings you changes nothing.",
+                )
+
+                post("ring") {
+                    val userId = call.principal().userId
+                    val result =
+                        callIdOf(call.parameters["callId"]).flatMap { callId ->
+                            call.receive<RingRequest>().toUserIds().flatMap { calls.ring(userId, callId, it) }
+                        }
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<RingRequest, CallResponse>(
+                    "CL9 · Ring people again (add people)",
+                    TAG,
+                    listOf(NOT_FOUND, ENDED, NOT_IN_CALL, "calls.not_a_group", MALFORMED),
+                    notes =
+                        "$SCOPE Group calls only, by someone on the call. Members who missed, declined or left are " +
+                            "rung again (`calls/call.ringing`, pushed when offline); `userIds` narrows it, empty is " +
+                            "everyone not on the call. Each ring lasts 45 seconds.",
                 )
 
                 post("leave") { change(calls::leave) }.docs<NoBody, CallResponse>(

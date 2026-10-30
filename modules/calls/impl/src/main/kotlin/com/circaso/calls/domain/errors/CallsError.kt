@@ -26,6 +26,12 @@ sealed class CallsError(override val code: String, override val message: String,
 
     data object NotInCall : CallsError("calls.not_in_call", "You're not in this call.", ErrorKind.CONFLICT)
 
+    data object NotAGroup : CallsError(
+        "calls.not_a_group",
+        "Only a group call can ring more people.",
+        ErrorKind.CONFLICT,
+    )
+
     data object SessionMismatch : CallsError(
         "calls.session_mismatch",
         "That isn't your current session in this call. Join again.",

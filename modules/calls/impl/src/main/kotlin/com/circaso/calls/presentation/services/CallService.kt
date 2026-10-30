@@ -30,6 +30,7 @@ class CallService(
     private val pullTracks: PullTracks,
     private val renegotiate: Renegotiate,
     private val declineCall: DeclineCall,
+    private val ringAgain: com.circaso.calls.domain.usecases.RingAgain,
     private val leaveCall: LeaveCall,
     private val setMedia: SetMedia,
 ) {
@@ -50,6 +51,12 @@ class CallService(
     suspend fun renegotiate(command: RenegotiateCommand): Resource<Unit> = renegotiate.invoke(command)
 
     suspend fun decline(userId: UserId, callId: CallId): Resource<CallView> = declineCall(userId, callId)
+
+    suspend fun ring(
+        userId: UserId,
+        callId: CallId,
+        userIds: Set<UserId>,
+    ): Resource<CallView> = ringAgain(userId, callId, userIds)
 
     suspend fun leave(userId: UserId, callId: CallId): Resource<CallView> = leaveCall(userId, callId)
 

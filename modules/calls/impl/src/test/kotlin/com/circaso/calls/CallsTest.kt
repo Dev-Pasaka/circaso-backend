@@ -248,6 +248,9 @@ private class Harness {
     val leave = LeaveCall(changes, views, clock)
     val setMedia = SetMedia(changes, clock)
     val expire = ExpireRings(calls, changes, clock)
+    val ringAgain =
+        com.circaso.calls.domain.usecases
+            .RingAgain(changes, views, people, frames, clock)
 
     val direct = ChatId.new()
     val group = ChatId.new()
@@ -648,5 +651,40 @@ class CallsTest {
             val h = Harness()
             val view: CallView = success(h.get(h.otieno, h.call().callId))
             assertEquals("Wanjiru", view.names[h.wanjiru])
+        }
+
+    @Test
+    fun `someone on a group call rings the people who missed it again, and each ring lasts its own 45 seconds`() =
+        runTest {
+            val h = Harness()
+            val c = h.call(chat = h.group)
+            h.joined(c, h.wanjiru)
+            h.joined(c, h.otieno)
+            h.now = h.now.plusSeconds(46)
+            h.expire()
+            assertEquals(ParticipantState.MISSED, h.state(c, h.achieng))
+
+            // Not on the call: can't ring anyone.
+            assertEquals(CallsError.NotInCall, failure(h.ringAgain(h.achieng, c.callId, emptySet())))
+            success(h.ringAgain(h.wanjiru, c.callId, emptySet()))
+            assertEquals(ParticipantState.INVITED, h.state(c, h.achieng))
+
+            // The call is older than 45 s, but Achieng's new ring isn't: the next sweep leaves it ringing.
+            h.now = h.now.plusSeconds(20)
+            h.expire()
+            assertEquals(ParticipantState.INVITED, h.state(c, h.achieng))
+            h.now = h.now.plusSeconds(30)
+            h.expire()
+            assertEquals(ParticipantState.MISSED, h.state(c, h.achieng))
+        }
+
+    @Test
+    fun `a direct call has nobody else to ring`() =
+        runTest {
+            val h = Harness()
+            val c = h.call()
+            h.joined(c, h.wanjiru)
+            h.joined(c, h.otieno)
+            assertEquals(CallsError.NotAGroup, failure(h.ringAgain(h.wanjiru, c.callId, emptySet())))
         }
 }

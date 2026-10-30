@@ -20,6 +20,7 @@ import com.circaso.calls.presentation.dto.PullRequest
 import com.circaso.calls.presentation.dto.PullResponse
 import com.circaso.calls.presentation.dto.PulledTrackDto
 import com.circaso.calls.presentation.dto.RenegotiateRequest
+import com.circaso.calls.presentation.dto.RingRequest
 import com.circaso.calls.presentation.dto.TrackDto
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
@@ -123,3 +124,11 @@ private fun sdpProblem(field: String, sdp: String): SharedError? =
         sdp.length > MAX_SDP -> SharedError.Malformed(field, "is too long")
         else -> null
     }
+
+fun RingRequest.toUserIds(): Resource<Set<UserId>> {
+    val ids =
+        userIds.mapIndexed { index, raw ->
+            UserId.parse(raw) ?: return Resource.error(SharedError.Malformed("userIds[$index]", "is not a user id"))
+        }
+    return Resource.success(ids.toSet())
+}

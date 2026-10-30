@@ -88,6 +88,10 @@ data class RenegotiateRequest(val sessionId: String, val answer: String)
 @Serializable
 data class MediaRequest(val audio: Boolean, val video: Boolean)
 
+/** `POST /calls/{callId}/ring`: who to ring again; empty or left out is everyone not on the call. */
+@Serializable
+data class RingRequest(val userIds: List<String> = emptyList())
+
 /** `{}`: done, nothing to add. */
 @Serializable
 data object EmptyResponse

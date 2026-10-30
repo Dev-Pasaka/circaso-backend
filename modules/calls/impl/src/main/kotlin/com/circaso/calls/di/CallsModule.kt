@@ -109,13 +109,17 @@ fun callsModule(config: Config): Module =
         single { PullTracks(get(), get(), get(), clock) }
         single { Renegotiate(get(), get(), get(), clock) }
         single { DeclineCall(get(), get(), clock) }
+        single {
+            com.circaso.calls.domain.usecases
+                .RingAgain(get(), get(), get(), get(), clock)
+        }
         single { LeaveCall(get(), get(), clock) }
         single { SetMedia(get(), clock) }
         single { ExpireRings(get(), get(), clock) }
         single { ReplayFrames(get()) }
 
         // presentation
-        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CallEventsService(get(), get(), get()) }
         single<RouteContributor>(named("calls.routes")) {
             val calls = get<CallService>()
