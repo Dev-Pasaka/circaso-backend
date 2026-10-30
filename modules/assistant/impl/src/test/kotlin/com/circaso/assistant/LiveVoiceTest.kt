@@ -472,6 +472,65 @@ class LiveVoiceTest {
         }
 
     @Test
+    fun `her own words heard back from the loudspeaker do not stop her, charge, or become a question`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .say("Your balance is four thousand two hundred shillings. Anything else?")
+                .say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("what is my balance", endOfTurn = true))
+                readUntil(got) { it.ofType("reply").size == 2 }
+                // the phone's loudspeaker reaches its microphone: the transcriber hears her, a little garbled
+                ears.push(
+                    TranscriptionEvent.SpeechStarted,
+                    TranscriptionEvent.Interim("your balance is", AudioSpan(2.0, 3.0)),
+                    TranscriptionEvent.Interim("your balance is four thousand two hundred", AudioSpan(2.0, 4.0)),
+                    TranscriptionEvent.Final(
+                        "your balance is four thousand two hundred shillings",
+                        endOfTurn = true,
+                        audio = AudioSpan(2.0, 5.0),
+                    ),
+                )
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                delay(300)
+                assertTrue(got.ofType("interrupted").isEmpty(), "her echo is not a barge-in")
+                assertEquals(
+                    listOf("what is my balance"),
+                    got.ofType("turn").map { it.text("text") },
+                    "her echo is not a question",
+                )
+                assertTrue(
+                    got.ofType("transcript").none { it.text("text").startsWith("your balance") },
+                    "her echo is not shown",
+                )
+                // the person really talking over her is heard as before
+                ears.push(TranscriptionEvent.Final("and is that all", endOfTurn = true, audio = AudioSpan(6.0, 7.0)))
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+            assertEquals(
+                true,
+                got
+                    .ofType("reply_done")
+                    .first()["spoken"]!!
+                    .jsonPrimitive.boolean,
+            )
+            assertEquals(listOf("what is my balance", "and is that all"), got.ofType("turn").map { it.text("text") })
+            assertEquals(
+                1,
+                voiceSeconds(live),
+                "only the person's own second is charged, not her echo (was ${voiceSeconds(live)})",
+            )
+        }
+
+    @Test
     fun `frames are at most 64 KB both ways`() =
         testApplication {
             // the scripted voice's audio is the sentence's bytes, so a ~90 KB sentence needs two frames
@@ -740,7 +799,14 @@ class LiveVoiceTest {
                 readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 160_000 }
                 delay(1_000)
                 assertTrue(got.ofType("reply_done").isEmpty(), "reply_done waits until the audio has played")
+                // while her voice plays, voice activity alone could be her echo: the person's words stop her
                 ears.push(TranscriptionEvent.SpeechStarted)
+                delay(300)
+                assertTrue(
+                    got.ofType("interrupted").isEmpty(),
+                    "voice activity alone does not stop her while she plays",
+                )
+                ears.push(TranscriptionEvent.Interim("wait stop", AudioSpan(1.0, 1.5)))
                 readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
                 hangUp(got)
             }
