@@ -191,6 +191,8 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                                 workersAi(config, secrets, get()),
                                 ai.string("model.text", WORKERS_AI_TEXT_MODEL),
                                 maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
+                                // live voice turns: a faster model with tool calling, unless set to the text model
+                                voiceModel = ai.string("model.voice-text", WORKERS_AI_VOICE_TEXT_MODEL),
                             )
                         },
                     ),
@@ -516,6 +518,11 @@ private fun cloudflareRealtime(
 
 // Asha's models on Workers AI, each overridable by its INTEGRATIONS_AI_MODEL_* setting. Ids from developers.cloudflare.com/workers-ai/models/.
 private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
+
+// Live voice turns (decision 2026-10-30): Llama 4 Scout, a mixture of experts with 17B active parameters, lists
+// function calling on its model page and answers tool calls in the OpenAI shape, and starts writing far sooner than a
+// reasoning model. Typed turns keep WORKERS_AI_TEXT_MODEL.
+private const val WORKERS_AI_VOICE_TEXT_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"

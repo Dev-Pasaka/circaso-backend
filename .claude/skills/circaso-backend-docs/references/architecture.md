@@ -787,6 +787,7 @@ Infrastructure owns the OpenTelemetry setup and gives modules a `Telemetry` hand
 | `circaso_outbox_unpublished` | gauge | module | Events the relay had to rescue |
 | `circaso_db_pool_connections` | gauge | pool, state (acquired, idle, allocated, pending, max) | r2dbc-pool's own counts: is a pool saturated, are requests waiting. Acquire timeouts are WARN log lines `kind=db.pool` |
 | `circaso_contacts_sync_matches_ratio` | histogram | — | Share of a phone book already on Circaso |
+| `circaso_assistant_live_first_audio_seconds` | histogram | — | Live voice: end of the user's speech to Asha's first audio sent, per turn |
 | `http_server_request_duration_seconds` | histogram (agent) | route, method, status | Rate, errors and latency per route |
 
 Attributes never include a user id, phone number or handle: they would leak personal data and explode the number of series. User ids belong on traces and logs only.

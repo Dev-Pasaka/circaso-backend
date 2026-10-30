@@ -175,9 +175,13 @@ class WorkersAiLiveTranscription(
     }
 
     companion object {
-        const val DEFAULT_ENDPOINTING_MILLIS = 400
+        /**
+         * The pause that ends a turn (decision 2026-10-30): 300 ms, down from 400, so Asha starts answering sooner. A
+         * user who pauses longer mid-sentence is still caught by the utterance end and by the final's own text.
+         */
+        const val DEFAULT_ENDPOINTING_MILLIS = 300
 
-        /** Deepgram's smallest allowed value. */
+        /** Deepgram's smallest allowed value, so it stays at 1000 ms while endpointing gets shorter. */
         const val DEFAULT_UTTERANCE_END_MILLIS = 1_000
 
         private const val KEEP_ALIVE_MILLIS = 5_000L

@@ -22,6 +22,9 @@ object Metrics {
     const val CONTACTS_SYNC_MATCHES_RATIO = "circaso_contacts_sync_matches_ratio"
     const val GATEWAY_SOCKET_FRAMES_DROPPED = "circaso_gateway_socket_frames_dropped_total" // reason
 
+    /** Live voice: from the end of the user's speech to the first of Asha's audio sent to the phone, per turn. */
+    const val ASSISTANT_LIVE_FIRST_AUDIO = "circaso_assistant_live_first_audio_seconds"
+
     /** Label keys that would leak personal data or explode the series count; the implementation rejects them. */
     val forbiddenLabels: Set<String> = setOf("userId", "user", "phone", "handle", "email", "ip", "token", "deviceId")
 }

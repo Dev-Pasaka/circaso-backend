@@ -13,6 +13,7 @@ import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import kotlinx.coroutines.test.runTest
@@ -337,6 +338,11 @@ class AssistantTest {
             )
             assertIs<TurnResult.Answer>(
                 h.resume(DeviceToolResult(me, paused.turnId, "c1", emptyList(), null, null)).data(),
+            )
+            assertEquals(
+                listOf(ModelPurpose.CHAT, ModelPurpose.CHAT),
+                h.model.requests.map { it.purpose },
+                "a typed turn, and its continuation, run on the chat model",
             )
             // answered once: the parked turn is gone
             assertEquals(

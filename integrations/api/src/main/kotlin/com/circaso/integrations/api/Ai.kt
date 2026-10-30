@@ -72,7 +72,25 @@ private class CompletedStream(response: ModelResponse) : ModelStream {
     override suspend fun close() = events.clear()
 }
 
-data class ModelRequest(val system: String, val messages: List<ModelMessage>, val tools: List<ToolSpec> = emptyList())
+/**
+ * One call to the model. [purpose] lets the provider pick a model for the moment: a spoken turn wants the first words
+ * fast, a typed turn can wait for a stronger model. Only the model may differ; the conversation and the tools don't.
+ */
+data class ModelRequest(
+    val system: String,
+    val messages: List<ModelMessage>,
+    val tools: List<ToolSpec> = emptyList(),
+    val purpose: ModelPurpose = ModelPurpose.CHAT,
+)
+
+/** What a model call is for; a provider with a single model ignores it. */
+enum class ModelPurpose {
+    /** A typed turn: the configured text model. */
+    CHAT,
+
+    /** A turn of a live voice conversation: a faster model with the same tools, if one is configured. */
+    VOICE,
+}
 
 sealed interface ModelMessage {
     data class User(val text: String) : ModelMessage

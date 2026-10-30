@@ -1,8 +1,11 @@
 package com.circaso.assistant
 
+import com.circaso.assistant.domain.models.LiveEvent
+import com.circaso.assistant.domain.ports.LiveTimings
 import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.RecordLiveTiming
 import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.presentation.controllers.liveVoiceController
 import com.circaso.assistant.presentation.services.LiveVoiceService
@@ -198,6 +201,9 @@ class LiveHarness(val h: Harness) {
     val verifier = h.verifier
     private val clock = Clock.systemUTC()
 
+    /** Each turn's timing as recorded for the log line and the latency histogram. */
+    val timings = CopyOnWriteArrayList<LiveEvent.Timing>()
+
     val service =
         LiveVoiceService(
             OpenLiveVoice(verifier, ears, voice, h.plans, h.quota, h.config, clock),
@@ -206,6 +212,7 @@ class LiveHarness(val h: Harness) {
             h.resume,
             CheckLiveSession(verifier),
             SaveLiveVoiceUsage(h.dailyUsage),
+            RecordLiveTiming(LiveTimings { timings += it }),
         )
 
     fun serve(builder: ApplicationTestBuilder) =

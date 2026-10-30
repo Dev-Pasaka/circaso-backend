@@ -64,7 +64,16 @@ class StartTurn(
         val history = context + ModelMessage.User(asked + text)
 
         val outcome =
-            when (val r = agent.run(history, command.agentToken, command.chatReading, listener = listener)) {
+            when (
+                val r =
+                    agent.run(
+                        history,
+                        command.agentToken,
+                        command.chatReading,
+                        listener = listener,
+                        purpose = command.purpose,
+                    )
+            ) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }

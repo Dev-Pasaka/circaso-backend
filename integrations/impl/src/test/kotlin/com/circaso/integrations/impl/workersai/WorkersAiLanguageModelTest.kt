@@ -2,6 +2,7 @@ package com.circaso.integrations.impl.workersai
 
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
 import com.circaso.integrations.api.ModelUsage
@@ -70,6 +71,52 @@ class WorkersAiLanguageModelTest {
             assertEquals("You are Asha.", messages[0]["content"]!!.jsonPrimitive.content)
             assertEquals("Hello", messages[1]["content"]!!.jsonPrimitive.content)
             assertNull(body["tools"], "no tools, no tools field")
+        }
+
+    @Test
+    fun `a voice turn runs on the voice model with the same tools, a typed turn on the text model`() =
+        runBlocking<Unit> {
+            val voiced =
+                WorkersAiLanguageModel(
+                    WorkersAiKit.gateway(clients),
+                    "@cf/moonshotai/kimi-k2.6",
+                    maxOutputTokens = 4096,
+                    voiceModel = "@cf/meta/llama-4-scout-17b-16e-instruct",
+                )
+            val messages = listOf(ModelMessage.User("Send Mum 200"))
+            replies += completion("""{"role":"assistant","content":"Sure."}""") to 200
+            replies += completion("""{"role":"assistant","content":"Sure."}""") to 200
+
+            voiced.complete(ModelRequest("You are Asha.", messages, listOf(searchContacts), ModelPurpose.VOICE))
+            val voice = clients.last.json()
+            voiced.complete(ModelRequest("You are Asha.", messages, listOf(searchContacts)))
+            val typed = clients.last.json()
+
+            assertEquals("@cf/meta/llama-4-scout-17b-16e-instruct", voice["model"]!!.jsonPrimitive.content)
+            assertEquals("@cf/moonshotai/kimi-k2.6", typed["model"]!!.jsonPrimitive.content)
+            assertEquals(typed - "model", voice - "model", "only the model id differs")
+            assertEquals(
+                "searchContacts",
+                voice["tools"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject["function"]!!
+                    .jsonObject["name"]!!
+                    .jsonPrimitive.content,
+            )
+        }
+
+    @Test
+    fun `without a voice model a voice turn runs on the text model`() =
+        runBlocking<Unit> {
+            replies += completion("""{"role":"assistant","content":"Hi"}""") to 200
+            model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
+            assertEquals(
+                "@cf/moonshotai/kimi-k2.6",
+                clients.last
+                    .json()["model"]!!
+                    .jsonPrimitive.content,
+            )
         }
 
     @Test

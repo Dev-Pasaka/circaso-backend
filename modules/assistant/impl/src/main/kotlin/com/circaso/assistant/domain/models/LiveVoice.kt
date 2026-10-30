@@ -58,6 +58,19 @@ sealed interface LiveEvent {
 
     /** One turn failed (the model was down); the conversation goes on. */
     data class TurnFailed(val error: DomainError) : LiveEvent
+
+    /**
+     * How long turn [turn] took to be heard, once per turn, in milliseconds from the end of the user's speech (the
+     * transcriber's end of turn) to the model's first words ([modelFirstTextMs]), the first sentence going to the voice
+     * ([firstSentenceMs]) and the first of its audio going to the phone ([firstAudioMs]). A stamp that never happened
+     * (the user talked over Asha first, the turn failed) is null. Durations only: never the words.
+     */
+    data class Timing(
+        val turn: Int,
+        val modelFirstTextMs: Long?,
+        val firstSentenceMs: Long?,
+        val firstAudioMs: Long?,
+    ) : LiveEvent
 }
 
 /** Why a live conversation ended. */
