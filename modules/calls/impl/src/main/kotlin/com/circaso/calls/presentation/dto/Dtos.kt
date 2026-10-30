@@ -36,6 +36,8 @@ data class ParticipantDto(
     val video: Boolean,
     val tracks: List<TrackDto>,
     val joinedAt: String? = null,
+    /** Changes every time this person (re)joins: pull their tracks again when it does. Null until they join. */
+    val connection: String? = null,
 )
 
 @Serializable

@@ -63,6 +63,8 @@ data class CallParticipantSnapshot(
     /** What the participant publishes while `JOINED`; pull them by name (CL4). */
     val tracks: List<CallTrackSnapshot>,
     val joinedAt: String? = null,
+    /** Changes every time this person (re)joins: pull their tracks again when it does. */
+    val connection: String? = null,
 )
 
 @Serializable
