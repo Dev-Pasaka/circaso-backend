@@ -23,7 +23,8 @@ interface StablecoinCustody {
     suspend fun createUser(circleUserId: String): Resource<Unit>
 
     /**
-     * The challenge that sets the user's PIN and creates their wallet on the default chain. A user who has already
+     * The challenge that sets the user's PIN and creates their wallet on the default chain, and on every other
+     * receiving chain that can share that challenge ([creationGroup]; decision 2026-10-30). A user who has already
      * done it gets success with a [Challenge] that has nothing to sign ([Challenge.needsSignature] false): read
      * [wallets] instead.
      */
@@ -39,6 +40,24 @@ interface StablecoinCustody {
         blockchain: String,
         idempotencyKey: UUID,
     ): Resource<Challenge>
+
+    /**
+     * Chains in one group can be created in one challenge (one PIN entry). Circle can't mix account types in one
+     * request, so its groups are the account types (SCA for the EVM chains, EOA for Solana).
+     */
+    fun creationGroup(blockchain: String): String = blockchain
+
+    /** One challenge that adds wallets on all [blockchains], which must share a [creationGroup]. */
+    suspend fun addWallets(
+        circleUserId: String,
+        blockchains: List<String>,
+        idempotencyKey: UUID,
+    ): Resource<Challenge> =
+        if (blockchains.size == 1) {
+            addWallet(circleUserId, blockchains.single(), idempotencyKey)
+        } else {
+            Resource.error(IntegrationError.Rejected("These chains can't be added in one step."))
+        }
 
     /** What the phone's SDK needs to run a challenge; reused until 5 minutes before it expires. */
     suspend fun sdkSession(circleUserId: String): Resource<SdkSession>

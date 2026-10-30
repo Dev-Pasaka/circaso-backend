@@ -101,6 +101,20 @@ class FakeCustody(
             Resource.success(challenge(circleUserId))
         }
 
+    /** Every chain at once, as Circle does for one account type. */
+    override suspend fun addWallets(
+        circleUserId: String,
+        blockchains: List<String>,
+        idempotencyKey: UUID,
+    ): Resource<Challenge> {
+        var last: Resource<Challenge> = Resource.error(IntegrationError.Rejected("No chains to add."))
+        for (blockchain in blockchains) {
+            last = addWallet(circleUserId, blockchain, idempotencyKey)
+            if (last is Resource.Error) return last
+        }
+        return last
+    }
+
     override suspend fun sdkSession(circleUserId: String): Resource<SdkSession> =
         guarded { Resource.success(session(circleUserId)) }
 
@@ -206,6 +220,15 @@ class LogCustody(private val fake: FakeCustody = FakeCustody(autoCompleteSetup =
     ): Resource<Challenge> =
         fake.addWallet(circleUserId, blockchain, idempotencyKey).also {
             log.info("custody add a {} wallet for {}", blockchain, circleUserId)
+        }
+
+    override suspend fun addWallets(
+        circleUserId: String,
+        blockchains: List<String>,
+        idempotencyKey: UUID,
+    ): Resource<Challenge> =
+        fake.addWallets(circleUserId, blockchains, idempotencyKey).also {
+            log.info("custody add {} wallets for {}", blockchains, circleUserId)
         }
 
     override suspend fun sdkSession(circleUserId: String): Resource<SdkSession> =

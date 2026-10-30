@@ -53,6 +53,7 @@ import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
+import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
@@ -166,6 +167,7 @@ fun walletModule(config: Config): Module =
         single { OpenSession(get(), get()) }
         single { ListChains(get(), get(), get(), get()) }
         single { AddChain(get(), get(), get(), get(), clock) }
+        single { AddMissingChains(get(), get(), get(), get(), clock) }
         single { CheckFundsBeforeDeletion(get(), get(), get()) }
         single { HasWallet(get()) }
         single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
@@ -178,7 +180,7 @@ fun walletModule(config: Config): Module =
         single { LookupTransfer(get()) }
 
         // presentation
-        single { WalletService(get(), get(), get(), get(), get()) }
+        single { WalletService(get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get()) }
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get()) }

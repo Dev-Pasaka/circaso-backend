@@ -4,6 +4,7 @@ import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.wallet.presentation.dto.AddChainRequest
 import com.circaso.wallet.presentation.dto.AddChainResponse
+import com.circaso.wallet.presentation.dto.AddMissingChainsResponse
 import com.circaso.wallet.presentation.dto.ChainsResponse
 import com.circaso.wallet.presentation.dto.CreateWalletResponse
 import com.circaso.wallet.presentation.dto.SdkDto
@@ -110,6 +111,23 @@ fun Route.walletController(wallets: WalletService) {
                             "the same challenge, so a chain is never made twice. A chain retired from receiving " +
                             "can't be added (`wallet.chain_unsupported`). The new chain shows in W1 once Circle has " +
                             "made it.",
+                )
+
+                post("missing") {
+                    val result = wallets.addMissingChains(call.principal().userId)
+                    call.respondDefault(
+                        result.toDefaultResponse { list -> AddMissingChainsResponse(list.map { it.toResponse() }) },
+                    )
+                }.docs<NoBody, AddMissingChainsResponse>(
+                    "W13 · Add every supported chain the wallet isn't on",
+                    TAG,
+                    listOf("wallet.not_found", "wallet.not_ready", CUSTODY),
+                    notes =
+                        "$SCOPE One entry per chain added, each `ADDING` with the challenge to run in the " +
+                            "Circle SDK. " +
+                            "Chains that share a challenge (Circle: the same account type) carry the same " +
+                            "`challengeId`: run each distinct challenge once, so the PIN is asked once per group. " +
+                            "An empty list means the wallet is already on every supported chain.",
                 )
             }
         }

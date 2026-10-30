@@ -91,6 +91,9 @@ class Harness(
     val openSession = OpenSession(wallets, custody)
     val listChains = ListChains(wallets, sync, adding, custody)
     val addChain = AddChain(wallets, sync, adding, custody, clock)
+    val addMissingChains =
+        com.circaso.wallet.domain.usecases
+            .AddMissingChains(wallets, sync, adding, custody, clock)
     val checkFunds = CheckFundsBeforeDeletion(wallets, sync, holdings)
     val hasWallet = HasWallet(wallets)
     val prepareTransfer =
