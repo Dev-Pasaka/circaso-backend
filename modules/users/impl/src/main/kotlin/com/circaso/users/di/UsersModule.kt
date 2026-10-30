@@ -177,7 +177,7 @@ fun usersModule(config: Config): Module =
         single { SetAvatar(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { RemoveAvatar(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CheckHandle(get(), get()) }
-        single { ClaimHandle(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ClaimHandle(get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { SyncContacts(get<AccountDirectory>(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { ListContacts(get(), get(), get()) }
         single { LookupHandle(get(), get(), get(), get(), get()) }

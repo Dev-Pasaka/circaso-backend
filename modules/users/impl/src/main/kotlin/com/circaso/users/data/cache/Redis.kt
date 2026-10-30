@@ -56,6 +56,16 @@ class RedisUsersCache(private val redis: RedisScope) : UsersCache {
 
     override suspend fun handleLookupRetryAfter(userId: UserId): Duration? = redis.ttl("handle-lookup:$userId")
 
+    override suspend fun countHandleCheck(userId: UserId): Long =
+        redis.increment("handle-check:$userId", Duration.ofHours(1))
+
+    override suspend fun handleCheckRetryAfter(userId: UserId): Duration? = redis.ttl("handle-check:$userId")
+
+    override suspend fun countHandleChange(userId: UserId): Long =
+        redis.increment("handle-change:$userId", Duration.ofDays(1))
+
+    override suspend fun handleChangeRetryAfter(userId: UserId): Duration? = redis.ttl("handle-change:$userId")
+
     override suspend fun recordSyncBatch(
         userId: UserId,
         syncId: UUID,

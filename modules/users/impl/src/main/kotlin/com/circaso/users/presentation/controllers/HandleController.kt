@@ -57,7 +57,7 @@ fun Route.handleController(handles: HandleService) {
                         },
                 )
             }.docs<ClaimHandleRequest, MyProfileResponse>(
-                "U6 · Claim or change your @handle, once every 30 days",
+                "U6 · Claim or change your @handle whenever the new one is free",
                 TAG,
                 listOf("users.handle_invalid", "users.handle_taken", "users.handle_cooldown"),
                 notes = SCOPE,

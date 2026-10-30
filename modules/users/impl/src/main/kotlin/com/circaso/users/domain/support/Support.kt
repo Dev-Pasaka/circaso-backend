@@ -22,7 +22,14 @@ import java.util.Base64
 
 const val DEFAULT_DISPLAY_NAME = "Circaso user"
 
-val HANDLE_COOLDOWN: Duration = Duration.ofDays(30)
+/**
+ * No wait between handle changes (decision 2026-10-30): a person may change their @handle whenever the new one is free.
+ * The old one is still held for them for 30 days, so nobody can take it and be paid in their place; a day's changes
+ * are capped by [MAX_HANDLE_CHANGES_PER_DAY] so holds can't be used to squat many handles.
+ */
+val HANDLE_COOLDOWN: Duration = Duration.ZERO
+
+const val MAX_HANDLE_CHANGES_PER_DAY = 10
 
 data class UsersConfig(
     val inviteBaseUrl: String = "https://circaso.com/i/",

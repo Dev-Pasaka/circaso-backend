@@ -116,7 +116,7 @@ class UsersTest {
     // ---- handles ----
 
     @Test
-    fun `handle rules, claims, hold and the 30 day cooldown`() =
+    fun `handle rules, claims, and changing whenever the new one is free`() =
         runTest {
             val h = Harness()
             val amina = h.person("Amina")
@@ -139,8 +139,25 @@ class UsersTest {
             assertNotNull(check.suggestion)
             assertEquals(HandleAvailability.INVALID, h.checkHandle(brian, "!!").data().availability)
 
-            // a second change inside 30 days is refused
-            assertEquals("users.handle_cooldown", h.claimHandle(amina, "amina_o").errorCode())
+            // changing again straight away is fine (decision 2026-10-30), and the old one is held for Amina
+            assertEquals(
+                "amina_o",
+                h
+                    .claimHandle(amina, "amina_o")
+                    .data()
+                    .profile.handle,
+            )
+            assertEquals("users.handle_taken", h.claimHandle(brian, "amina").errorCode())
+        }
+
+    @Test
+    fun `at most ten handle changes a day`() =
+        runTest {
+            val h = Harness()
+            val amina = h.person("Amina")
+            h.claimHandle(amina, "amina").data()
+            repeat(10) { i -> h.claimHandle(amina, "amina_$i").data() }
+            assertEquals("request.rate_limited", h.claimHandle(amina, "amina_next").errorCode())
         }
 
     @Test
@@ -383,14 +400,18 @@ class UsersTest {
         }
 
     @Test
-    fun `the availability check counts against the same 30 handle lookups an hour`() =
+    fun `availability checks have their own 120 an hour, apart from looking people up`() =
         runTest {
             val h = Harness()
             val checker = h.person("Checker")
-            repeat(30) { assertTrue(h.checkHandle(checker, "free_$it") is Resource.Success, "call ${it + 1}") }
+            repeat(120) { assertTrue(h.checkHandle(checker, "free_$it") is Resource.Success, "call ${it + 1}") }
 
             assertEquals("request.rate_limited", h.checkHandle(checker, "one_more").errorCode())
-            assertEquals("request.rate_limited", h.lookupHandle(checker, "nobody").errorCode(), "the count is shared")
+            assertEquals(
+                "users.handle_not_found",
+                h.lookupHandle(checker, "nobody").errorCode(),
+                "looking people up isn't used up",
+            )
         }
 
     // ---- what each viewer sees ----

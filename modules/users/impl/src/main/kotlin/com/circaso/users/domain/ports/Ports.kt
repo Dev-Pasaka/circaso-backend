@@ -31,6 +31,16 @@ interface UsersCache {
 
     suspend fun handleLookupRetryAfter(userId: UserId): Duration?
 
+    /** Counts a U5 availability check; its own hourly budget, apart from looking people up. */
+    suspend fun countHandleCheck(userId: UserId): Long
+
+    suspend fun handleCheckRetryAfter(userId: UserId): Duration?
+
+    /** Counts a handle change; returns the count in the current day. */
+    suspend fun countHandleChange(userId: UserId): Long
+
+    suspend fun handleChangeRetryAfter(userId: UserId): Duration?
+
     suspend fun recordSyncBatch(
         userId: UserId,
         syncId: UUID,
