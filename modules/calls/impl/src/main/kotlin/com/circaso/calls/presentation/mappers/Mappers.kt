@@ -104,6 +104,9 @@ fun CallView.toResponse(): CallResponse =
                     video = participant.video,
                     tracks = participant.tracks.map { TrackDto(it.trackName, it.kind) },
                     joinedAt = participant.joinedAt?.toString(),
+                    connection =
+                        com.circaso.calls.domain.support.Connection
+                            .tag(participant.sessionId),
                 )
             },
         iceServers = iceServers.map { IceServerDto(it.urls, it.username, it.credential) },

@@ -154,6 +154,9 @@ internal fun CallView.toSnapshot(): CallSnapshot =
                     video = participant.video,
                     tracks = participant.tracks.map { CallTrackSnapshot(it.trackName, it.kind) },
                     joinedAt = participant.joinedAt?.toString(),
+                    connection =
+                        com.circaso.calls.domain.support.Connection
+                            .tag(participant.sessionId),
                 )
             },
         iceServers = iceServers.map { IceServerSnapshot(it.urls, it.username, it.credential) },
