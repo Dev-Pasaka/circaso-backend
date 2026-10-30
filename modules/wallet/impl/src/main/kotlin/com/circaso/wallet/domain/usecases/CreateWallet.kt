@@ -12,6 +12,7 @@ import com.circaso.wallet.domain.models.WalletSetup
 import com.circaso.wallet.domain.models.WalletStatus
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
 import java.time.Clock
@@ -23,6 +24,8 @@ import java.util.UUID
  * 2026-10-28). Asking again while it is `SETTING_UP` gives a fresh challenge for the same Circle user; once the wallet
  * is `ACTIVE` the answer is `wallet.already_exists`.
  *
+ * A support account never gets a Circle user at all (decision 2026-10-31): `wallet.support_account_has_no_wallet`.
+ *
  * The Circle user's id is random and claimed by the `circle_users` primary key, so two taps at once share one id.
  */
 class CreateWallet(
@@ -30,9 +33,11 @@ class CreateWallet(
     private val transactor: Transactor,
     private val custody: StablecoinCustody,
     private val sync: WalletSync,
+    private val support: SupportAccountRule,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(command: CreateWalletCommand): Resource<WalletSetup> {
+        support.refusal(command.userId)?.let { return it }
         val user = wallets.circleUser(command.userId) ?: claim(command.userId)
         if (hasOpenWallet(command.userId)) return Resource.error(WalletError.AlreadyExists)
 

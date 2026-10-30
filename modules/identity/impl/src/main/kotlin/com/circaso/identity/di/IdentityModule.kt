@@ -45,6 +45,8 @@ import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.CompleteDeletions
+import com.circaso.identity.domain.usecases.CreateSupportAccount
+import com.circaso.identity.domain.usecases.GetAccountKind
 import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
@@ -53,6 +55,7 @@ import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
 import com.circaso.identity.domain.usecases.ListSecurityEvents
+import com.circaso.identity.domain.usecases.ListSupportAccounts
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
 import com.circaso.identity.domain.usecases.RemoveDevice
@@ -79,6 +82,7 @@ import com.circaso.identity.presentation.controllers.authController
 import com.circaso.identity.presentation.controllers.deviceController
 import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
+import com.circaso.identity.presentation.controllers.supportAccountController
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
@@ -86,6 +90,7 @@ import com.circaso.identity.presentation.services.DirectoryService
 import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
+import com.circaso.identity.presentation.services.SupportAccountService
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.DatabaseModuleSpec
@@ -221,6 +226,10 @@ fun identityModule(config: Config): Module =
         single { GetPublicKeys(get()) }
         single { VerifyAccessToken(get(), get()) }
         single { GetAccountStatus(get()) }
+        single { GetAccountKind(get()) }
+        // SupportProfiles is users' (bound in its module, wired by `app`): identity never depends on users.
+        single { CreateSupportAccount(get(), get(), get(), get(), get(), clock) }
+        single { ListSupportAccounts(get(), get()) }
         single { ResolvePhones(get()) }
         single { VerifyDeviceSignature(get(), get()) }
         single { GetPushTarget(get(), get()) }
@@ -233,7 +242,8 @@ fun identityModule(config: Config): Module =
         single { DeviceService(get(), get(), get()) }
         single { AccountService(get(), get(), get(), get(), get()) }
         single { RecoveryService(get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get()) }
+        single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
@@ -241,12 +251,14 @@ fun identityModule(config: Config): Module =
             val devices = get<DeviceService>()
             val account = get<AccountService>()
             val recovery = get<RecoveryService>()
+            val support = get<SupportAccountService>()
             RouteContributor { route ->
                 route.authController(auth)
                 route.phoneController(phone)
                 route.deviceController(devices)
                 route.accountController(account)
                 route.recoveryController(recovery)
+                route.supportAccountController(support)
             }
         }
 

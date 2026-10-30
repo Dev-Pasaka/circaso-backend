@@ -1,8 +1,10 @@
 package com.circaso.identity.presentation.services
 
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.PushRegistration
+import com.circaso.identity.domain.usecases.GetAccountKind
 import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.ResolvePhones
@@ -20,10 +22,13 @@ class DirectoryService(
     private val resolvePhones: ResolvePhones,
     private val verifyDeviceSignature: VerifyDeviceSignature,
     private val getPushTarget: GetPushTarget,
+    private val getAccountKind: GetAccountKind,
 ) {
     suspend fun verifyToken(token: String): Resource<Principal> = verifyAccessToken(token)
 
     suspend fun status(userId: UserId): Resource<AccountStatus?> = getAccountStatus(userId)
+
+    suspend fun kind(userId: UserId): Resource<AccountKind?> = getAccountKind(userId)
 
     suspend fun resolve(phones: Set<PhoneNumber>): Resource<Map<PhoneNumber, UserId>> = resolvePhones(phones)
 

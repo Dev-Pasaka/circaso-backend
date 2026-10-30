@@ -29,6 +29,8 @@ data class Profile(
     val version: Long = 0,
     /** The account isn't active (deleted in its grace period, suspended, blocked): others see no such user. */
     val hidden: Boolean = false,
+    /** Circaso's own support account (decision 2026-10-31): set when the profile is made, never changed. */
+    val support: Boolean = false,
 )
 
 enum class ContactSource { PHONEBOOK, QR, INVITE, HANDLE }

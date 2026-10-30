@@ -1,5 +1,7 @@
 package com.circaso.users.presentation.api
 
+import com.circaso.identity.api.SupportProfile
+import com.circaso.identity.api.SupportProfiles
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeReplay
@@ -41,6 +43,18 @@ class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {
     override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
         directory.getProfiles(ids).getOrNull().orEmpty()
+}
+
+/** Identity's `SupportProfiles`: what its ops routes need to know of a support account's profile and handle. */
+class SupportProfilesImpl(private val directory: DirectoryService) : SupportProfiles {
+    override suspend fun checkHandle(handle: String): Resource<String> = directory.checkSupportHandle(handle)
+
+    override suspend fun describe(ids: Set<UserId>): Map<UserId, SupportProfile> =
+        directory
+            .getProfiles(ids)
+            .getOrNull()
+            .orEmpty()
+            .mapValues { (_, profile) -> SupportProfile(profile.displayName, profile.handle) }
 }
 
 /**

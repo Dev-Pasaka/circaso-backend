@@ -6,7 +6,7 @@ Identity answers "is this really the person behind this account, and is this req
 
 ### Owns
 
-- **Accounts** — `userId`, status (pending phone, active, recovery-pending, suspended, blocked, deleted).
+- **Accounts** — `userId`, status (pending phone, active, recovery-pending, suspended, blocked, deleted), and kind: a person's (`PERSON`, every account people make) or Circaso's own support account (`SUPPORT`, made only by ops; decision 2026-10-31).
 - **Sign-in providers** — Google and Apple, keyed on the provider's `sub`; one or both per account. The Google/Apple sign-in *is* the account.
 - **Phone number** — exactly one verified number per account, one account per number.
 - **Devices** — one active phone per account (model ready for several), each with a hardware-backed public key.
@@ -23,6 +23,7 @@ interface TokenVerifier {            // the gateway, on every request
 
 interface AccountDirectory {         // users (contact matching) and later modules
     suspend fun status(userId: UserId): AccountStatus?
+    suspend fun kind(userId: UserId): AccountKind?          // PERSON | SUPPORT; wallet refuses SUPPORT (2026-10-31)
     suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId>
 }
 
@@ -35,6 +36,13 @@ interface DeviceSignatures {         // device-bound actions; wallet transaction
 // Identity asks every guard before scheduling a deletion and never depends on those modules.
 interface DeletionGuard {
     suspend fun canDelete(userId: UserId): Resource<Unit>   // Error carries the guard's own code, e.g. wallet.funds_remaining
+}
+
+// Implemented by users, wired in app (decision 2026-10-31). The ops routes create support accounts, but the profile
+// and the @handle are users'; identity asks through this instead of depending on users.
+interface SupportProfiles {
+    suspend fun checkHandle(handle: String): Resource<String>       // stored form, or users.handle_invalid / handle_taken
+    suspend fun describe(ids: Set<UserId>): Map<UserId, SupportProfile>   // name and handle, for the ops list
 }
 ```
 
@@ -65,7 +73,7 @@ Identity owns everything around these calls: generating and hashing codes, expir
 
 ## Endpoints
 
-Seventeen routes: seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery. Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
+Seventeen app routes and two ops routes: seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery; OPS1–OPS2 manage Circaso's support accounts. Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
 
 | # | Route | Scope | Use case (domain) | Does |
 | --- | --- | --- | --- | --- |
@@ -86,8 +94,21 @@ Seventeen routes: seven take a person from Google/Apple sign-in to an active ses
 | I15 | `POST /recovery/requests` | onboarding | `RequestSupportRecovery` | Opens a support case for a lost Google/Apple login |
 | I16 | `POST /auth/phone/release` | onboarding | `RequestPhoneRelease` | Frees a number held by a lost, unverified account, after a 7-day notice |
 | I17 | `GET /recovery/requests/{requestId}` | onboarding | `GetRecoveryRequest` | Status of the caller's own support case: received, verifying, notice sent (with relink time), relinked, rejected or cancelled |
+| OPS1 | `POST /ops/support-accounts` | ops | `CreateSupportAccount` | Creates a Circaso support account (display name, handle); see Support accounts below |
+| OPS2 | `GET /ops/support-accounts` | ops | `ListSupportAccounts` | Every support account, oldest first, with its name and handle from users; `cursor`, `limit` |
 
-Plus `GET /.well-known/jwks.json` (public keys for access tokens) and ops-only routes under `/ops/recoveries` for support agents.
+Plus `GET /.well-known/jwks.json` (public keys for access tokens) and ops-only routes under `/ops/recoveries` for support agents (designed, not built).
+
+### Support accounts (OPS1–OPS2)
+
+Decision 2026-10-31. Circaso support is its own kind of account (`kind = SUPPORT`), never a person's own account.
+
+- **Made only by ops.** OPS1 takes `{ "displayName": "Circaso Support", "handle": "circaso" }` (name 1–40 characters). Identity first asks users, through `SupportProfiles.checkHandle`, whether the handle may be taken: reserved names (`circaso`, `support`, `help`, …) are allowed for a support account and for nobody else. It then writes the account (`ACTIVE`, no phone, no device, no Google/Apple login), a `SUPPORT_ACCOUNT_CREATED` line in its security log naming the operator, and `identity.SupportAccountCreated` in one transaction. Users makes the profile, marked `support`, and claims the handle from the event. The handle is checked, not held: if two creates race for one handle, the second account's profile has none, and OPS2 shows it.
+- **Never on the app.** Every way into an `app` session refuses a support account with `identity.support_account_not_on_mobile` (403): I2 (with or without a device proof), I3, I4, I5, I6 and I7. `SessionOpener` itself throws the same error if a support account ever reaches it, so a path added later can't forget. A support account has no login to sign in with in the first place; these refusals are the second line.
+- **No wallet.** Wallet asks `AccountDirectory.kind` and refuses (wallet → Support accounts).
+- **The kind never changes.** It is written when the account is created and never updated, so a person's account can't be turned into support (or the reverse) by any route.
+- **How ops reaches these routes.** They sit behind the gateway's `ops` scope, like the API reference outside local runs. No route issues an `ops` token to a person yet: the support dashboard (a later phase) adds ops sign-in. Until then these routes answer `auth.scope_insufficient` to every token the app can hold. `TODO(decision: ops sign-in for the support dashboard)`.
+- **Later phases.** A server-side support service will hold the support account's Signal keys (`org.signal:libsignal-client`) and answer its chats; the support dashboard (Next.js) calls it and these routes with an `ops` token. Neither is built; reach to and from a support account is decided with them.
 
 ### I1 Nonce and I2 social sign-in
 
@@ -207,6 +228,7 @@ After verifying the Google/Apple token, `SignInWithProvider` looks up the provid
 | Yes | `SUSPENDED` | any | error `identity.account_suspended` (403) | none | Suspended screen |
 | Yes | `BLOCKED` | any | error `identity.account_blocked` (403) | none | Blocked screen |
 | Yes | `DELETED` (in grace period) | any | error `identity.account_deleted` (404) | none | "This account was deleted" |
+| Yes | any, `kind = SUPPORT` | any | error `identity.support_account_not_on_mobile` (403) | none | Not reachable from the app: a support account has no login (decision 2026-10-31) |
 
 **Rules the use case enforces**
 
@@ -235,9 +257,12 @@ CREATE TABLE identity.accounts (
     delete_after     timestamptz,                       -- DELETED: when the grace period ends and deletion completes
     created_at       timestamptz NOT NULL,
     updated_at       timestamptz NOT NULL,
-    version          bigint      NOT NULL DEFAULT 0     -- optimistic lock
+    version          bigint      NOT NULL DEFAULT 0,    -- optimistic lock
+    kind             text        NOT NULL DEFAULT 'PERSON' -- PERSON | SUPPORT (V2__account_kind, 2026-10-31); set once
 );
 CREATE UNIQUE INDEX accounts_phone_key ON identity.accounts (phone);   -- one account per number
+CREATE INDEX accounts_support_idx ON identity.accounts (user_id) WHERE kind = 'SUPPORT';
+                                                        -- OPS2's list of support accounts (V2)
 CREATE INDEX accounts_pending_idx ON identity.accounts (created_at) WHERE status = 'PENDING_PHONE';
                                                         -- the 30-day sweep of pending accounts
 CREATE INDEX accounts_deleted_idx ON identity.accounts (delete_after) WHERE status = 'DELETED';
@@ -349,6 +374,7 @@ All on stream `events:identity`, in the envelope described on the Architecture t
 | `identity.SignedOut` v1 | A session signed out (I8), only when it goes from active to revoked | `userId`, `sessionId` | gateway: send `system.session.revoked` to that session's socket and close it (no push) |
 | `identity.AccountStatusChanged` v1 | Suspended, reinstated, blocked | `userId`, `status` | users: hide or restore the profile, clear cached reach decisions; gateway: close sockets when not active |
 | `identity.AccountRelinked` v1 | Support recovery completed after the 48-hour notice | `userId`, `provider` | gateway: close old sockets; the user id is unchanged, so the Circle user and wallets carry over |
+| `identity.SupportAccountCreated` v1 | Ops created a support account (OPS1; decision 2026-10-31) | `userId`, `displayName`, `handle` (no `phoneHmac`: it has no phone) | users: make the profile marked `support` and claim the handle |
 | `identity.AccountDeleted` v1 | Deletion completed, 30 days after I14 (written in the transaction that deletes the rows) | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |
 
 No raw phone number goes on a stream: `AccountActivated` and `PhoneChanged` carry the number's HMAC only, so neither Redis nor its backups hold phone numbers.
@@ -396,3 +422,4 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `identity.provider_in_use` | CONFLICT → 409 | That Google/Apple login belongs to another account |
 | `identity.recovery_not_eligible` | FORBIDDEN → 403 | Support recovery for an unverified account |
 | `identity.release_not_allowed` | FORBIDDEN → 403 | Phone release for a verified account (recovery applies instead) |
+| `identity.support_account_not_on_mobile` | FORBIDDEN → 403 | A support account on any way into an `app` session: I2, I3, I4, I5, I6, I7 (decision 2026-10-31) |

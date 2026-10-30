@@ -85,6 +85,7 @@ class VerifyPhoneCode(
 
         val phone = sealedPhone
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
+        if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
 
         val result = ownership.confirm(account, phone, command.principal.deviceId)
         if (result is Resource.Error && result.error == IdentityError.PhoneTaken) {

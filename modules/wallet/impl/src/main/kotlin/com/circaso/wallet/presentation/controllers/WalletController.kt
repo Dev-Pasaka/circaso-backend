@@ -58,7 +58,7 @@ fun Route.walletController(wallets: WalletService) {
             }.docs<NoBody, CreateWalletResponse>(
                 "W2 · Create your wallet: the challenge that sets the PIN and creates it on the default chain",
                 TAG,
-                listOf("wallet.already_exists", CUSTODY),
+                listOf("wallet.already_exists", "wallet.support_account_has_no_wallet", CUSTODY),
                 notes =
                     "$SCOPE Run `challengeId` in the Circle SDK with `sdk`. Calling again while `SETTING_UP` gives " +
                         "a fresh challenge; `challengeId` is null when the PIN is already set and the wallet is on " +
@@ -101,6 +101,7 @@ fun Route.walletController(wallets: WalletService) {
                         "wallet.chain_unsupported",
                         "wallet.not_found",
                         "wallet.not_ready",
+                        "wallet.support_account_has_no_wallet",
                         CUSTODY,
                         "request.malformed",
                     ),
@@ -121,7 +122,7 @@ fun Route.walletController(wallets: WalletService) {
                 }.docs<NoBody, AddMissingChainsResponse>(
                     "W13 · Add every supported chain the wallet isn't on",
                     TAG,
-                    listOf("wallet.not_found", "wallet.not_ready", CUSTODY),
+                    listOf("wallet.not_found", "wallet.not_ready", "wallet.support_account_has_no_wallet", CUSTODY),
                     notes =
                         "$SCOPE One entry per chain added, each `ADDING` with the challenge to run in the " +
                             "Circle SDK. " +

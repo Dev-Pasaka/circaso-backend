@@ -60,6 +60,7 @@ class RegisterDevice(
             return Resource.error(SharedError.Malformed("publicKey", "not a valid key"))
         }
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
+        if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
         val phone = account.phone
         if (phone == null ||
             !cache.isPhoneVerified(userId, command.deviceId)

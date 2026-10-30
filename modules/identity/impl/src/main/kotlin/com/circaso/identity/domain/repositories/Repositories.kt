@@ -29,8 +29,11 @@ interface AccountRepository {
     /** The account that holds [phone], if any. */
     suspend fun findByPhone(phone: PhoneNumber): Account?
 
-    /** A new account, written in the transaction that claims its Google/Apple login. */
+    /** A new account, written in the transaction that claims its Google/Apple login (or, for support, by ops). */
     suspend fun create(account: Account)
+
+    /** Support accounts in user-id order (oldest first), [after] being the last id of the previous page. */
+    suspend fun supportAccounts(after: UserId?, limit: Int): List<Account>
 
     /**
      * Claims [phone] for [account] (read under its lock, at its version) through the unique index on the number. True

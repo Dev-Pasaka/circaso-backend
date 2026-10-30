@@ -27,7 +27,8 @@ class LookupHandle(
         if (usersCache.countHandleLookup(viewer) > MAX_PER_HOUR) {
             return Resource.error(SharedError.RateLimited(usersCache.handleLookupRetryAfter(viewer)?.seconds ?: 3_600))
         }
-        val handle = HandleRules.normalise(raw) ?: return Resource.error(UsersError.HandleNotFound)
+        val handle =
+            HandleRules.normalise(raw, allowReserved = true) ?: return Resource.error(UsersError.HandleNotFound)
         val claim =
             handles.find(handle)?.takeIf { it.releasedAt == null } ?: return Resource.error(UsersError.HandleNotFound)
         val profile =

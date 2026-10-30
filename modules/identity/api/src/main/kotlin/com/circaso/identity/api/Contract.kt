@@ -40,9 +40,19 @@ interface TokenVerifier {
 
 enum class AccountStatus { PENDING_PHONE, ACTIVE, RECOVERY_PENDING, SUSPENDED, BLOCKED, DELETED }
 
+/**
+ * Whose account it is (decision 2026-10-31). Every account is a [PERSON]'s unless ops made it as Circaso's own
+ * [SUPPORT] account, which never signs in on the app and never holds a wallet. The kind is set when the account is
+ * created and never changes.
+ */
+enum class AccountKind { PERSON, SUPPORT }
+
 /** Users (contact matching) and later modules. Never hands out a phone number. */
 interface AccountDirectory {
     suspend fun status(userId: UserId): AccountStatus?
+
+    /** Null if there is no such account. Wallet asks it before anything that would give a support account money. */
+    suspend fun kind(userId: UserId): AccountKind?
 
     /** Of the numbers given, those that belong to active accounts. */
     suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId>
@@ -75,3 +85,22 @@ interface PushRegistrations {
 
 /** [platform] is `android` or `ios`; [token] is the FCM or APNs token. */
 data class PushRegistration(val platform: String, val token: String)
+
+/**
+ * Implemented by users, wired in `app`. Identity's ops routes create support accounts (decision 2026-10-31), but the
+ * profile and the @handle are users', and users sits above identity, so identity asks through this instead of
+ * depending on users. Users makes the profile itself from [SupportAccountCreated].
+ */
+interface SupportProfiles {
+    /**
+     * The handle in its stored form if a new support account may take it: well-formed and free. Reserved names
+     * (`circaso`, `support`, `help`) are allowed here and nowhere else. An error carries users' own code
+     * (`users.handle_invalid`, `users.handle_taken`).
+     */
+    suspend fun checkHandle(handle: String): Resource<String>
+
+    /** The display name and handle of each account given that has a profile, for the ops list. */
+    suspend fun describe(ids: Set<UserId>): Map<UserId, SupportProfile>
+}
+
+data class SupportProfile(val displayName: String, val handle: String?)

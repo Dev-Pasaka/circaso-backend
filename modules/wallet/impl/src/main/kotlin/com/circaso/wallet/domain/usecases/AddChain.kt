@@ -10,6 +10,7 @@ import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
 import java.time.Clock
@@ -36,9 +37,11 @@ class AddChain(
     private val sync: WalletSync,
     private val adding: AddingChains,
     private val custody: StablecoinCustody,
+    private val support: SupportAccountRule,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(command: AddChainCommand): Resource<ChainAddition> {
+        support.refusal(command.userId)?.let { return it }
         val chain = custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(command.userId) ?: return Resource.error(WalletError.NotFound)
 

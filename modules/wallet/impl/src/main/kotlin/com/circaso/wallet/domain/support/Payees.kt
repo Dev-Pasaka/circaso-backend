@@ -21,13 +21,14 @@ data class Destination(val recipientId: UserId?, val address: String) {
  * Who can be paid, on which chain (Wallet → Paying a person; decision 2026-10-28: a transfer names its chain). A
  * person must be reachable, or share the chat the payment is made from, and hold a wallet on that chain; an outside
  * address must be valid on that chain. A chain retired from receiving (decision 2026-10-28) pays nobody inside
- * Circaso, while its wallets can still send out.
+ * Circaso, while its wallets can still send out. A support account is never paid (decision 2026-10-31).
  */
 class Payees(
     private val wallets: WalletRepository,
     private val reach: ReachPolicy,
     private val chats: ChatDirectory,
     private val custody: StablecoinCustody,
+    private val support: SupportAccountRule,
 ) {
     /**
      * The reach rule, or both people in the chat the payment is made from. A shared chat never overrides a block
@@ -73,6 +74,7 @@ class Payees(
         chatId: ChatId?,
     ): Resource<Destination> {
         if (recipient == sender) return Resource.error(WalletError.SelfTransfer)
+        support.refusal(recipient)?.let { return it }
         if (!canReach(sender, recipient, chatId)) return Resource.error(WalletError.NotReachable)
         val receiving = receiving(recipient)
         if (receiving.active.isEmpty()) return Resource.error(WalletError.RecipientNoWallet)

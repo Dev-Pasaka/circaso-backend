@@ -27,4 +27,6 @@ data class PublicProfile(
     val handle: String?,
     val avatarUrl: String?,
     val about: String?,
+    /** Circaso's own support account (decision 2026-10-31), which the app shows as verified support. */
+    val support: Boolean = false,
 )

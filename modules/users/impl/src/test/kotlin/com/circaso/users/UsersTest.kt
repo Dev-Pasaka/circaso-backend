@@ -22,6 +22,7 @@ import com.circaso.users.domain.repositories.UsersChanges
 import com.circaso.users.domain.support.ProfileViews
 import com.circaso.users.domain.usecases.CanReach
 import com.circaso.users.domain.usecases.CheckBlockedEitherWay
+import com.circaso.users.domain.usecases.CheckSupportHandle
 import com.circaso.users.domain.usecases.FilterReachable
 import com.circaso.users.domain.usecases.GetProfiles
 import com.circaso.users.presentation.api.ReachPolicyImpl
@@ -308,6 +309,7 @@ class UsersTest {
                     GetProfiles(h.users, ProfileViews(FakeAvatars(), h.users)),
                     h.replay,
                     CheckBlockedEitherWay(down),
+                    CheckSupportHandle(h.users),
                 )
 
             assertTrue(ReachPolicyImpl(directory).blockedEitherWay(UserId.new(), UserId.new()))

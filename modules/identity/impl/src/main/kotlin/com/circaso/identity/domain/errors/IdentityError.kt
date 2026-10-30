@@ -139,4 +139,11 @@ sealed class IdentityError(
         "This number can't be released. Ask support to recover the account.",
         ErrorKind.FORBIDDEN,
     )
+
+    /** Any way into an `app` session for a support account (decision 2026-10-31): sign-in, phone, device, refresh. */
+    data object SupportAccountNotOnMobile : IdentityError(
+        "identity.support_account_not_on_mobile",
+        "This is a Circaso support account. It can't be used in the Circaso app.",
+        ErrorKind.FORBIDDEN,
+    )
 }

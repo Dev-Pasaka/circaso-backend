@@ -4,9 +4,11 @@ import com.circaso.identity.api.AccountActivated
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.identity.api.AccountStatusChanged
 import com.circaso.identity.api.PhoneChanged
+import com.circaso.identity.api.SupportAccountCreated
 import com.circaso.shared.Resource
 import com.circaso.users.domain.usecases.ApplyAccountStatus
 import com.circaso.users.domain.usecases.CreateProfileOnActivation
+import com.circaso.users.domain.usecases.CreateSupportProfile
 import com.circaso.users.domain.usecases.DeleteUserData
 import com.circaso.users.domain.usecases.RecheckWaitingContacts
 import java.time.Instant
@@ -17,6 +19,7 @@ class IdentityEventsService(
     private val recheckWaitingContacts: RecheckWaitingContacts,
     private val applyAccountStatus: ApplyAccountStatus,
     private val deleteUserData: DeleteUserData,
+    private val createSupportProfile: CreateSupportProfile,
 ) {
     suspend fun accountActivated(event: AccountActivated): Resource<Unit> = createProfileOnActivation(event)
 
@@ -26,4 +29,6 @@ class IdentityEventsService(
         applyAccountStatus(event, occurredAt)
 
     suspend fun accountDeleted(event: AccountDeleted): Resource<Unit> = deleteUserData(event)
+
+    suspend fun supportAccountCreated(event: SupportAccountCreated): Resource<Unit> = createSupportProfile(event)
 }

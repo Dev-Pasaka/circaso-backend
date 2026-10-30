@@ -26,6 +26,9 @@ object ProfilesTable : Table("users.profiles") {
 
     /** When that status changed (the event's `occurredAt`), so a late, older event never overwrites a newer one. */
     val statusChangedAt = timestamp("status_changed_at").nullable()
+
+    /** Circaso's own support account, from `identity.SupportAccountCreated`; every change copies it as it was. */
+    val support = bool("support").default(false)
     override val primaryKey = PrimaryKey(userId)
 
     init {

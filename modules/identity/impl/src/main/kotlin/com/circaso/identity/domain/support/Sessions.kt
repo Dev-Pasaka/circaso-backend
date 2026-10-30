@@ -11,6 +11,7 @@ import com.circaso.identity.domain.ports.IssuedToken
 import com.circaso.identity.domain.ports.TokenIssuer
 import com.circaso.identity.domain.repositories.SessionRepository
 import com.circaso.shared.DeviceId
+import com.circaso.shared.DomainException
 import com.circaso.shared.Scope
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -102,8 +103,11 @@ class SessionOpener(
         account: Account,
         session: Session,
         refresh: String,
-    ): IssuedSession =
-        IssuedSession(
+    ): IssuedSession {
+        // Every use case refuses a support account before it gets here; this is the last line, so a path added
+        // later that forgets can't hand one an app token (decision 2026-10-31).
+        if (account.isSupport) throw DomainException(IdentityError.SupportAccountNotOnMobile)
+        return IssuedSession(
             session = session,
             refreshToken = refresh,
             app = tokens.issue(account.userId, session.deviceId, session.sessionId, Scope.APP, account.sessionVersion),
@@ -116,6 +120,7 @@ class SessionOpener(
                     account.sessionVersion,
                 ),
         )
+    }
 
     companion object {
         fun refreshString(id: SessionId, secret: String) = "rt_$id.$secret"

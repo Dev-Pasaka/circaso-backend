@@ -53,6 +53,7 @@ fun Route.transferController(transfers: TransferService) {
                         "wallet.amount_invalid",
                         "wallet.limit_exceeded",
                         "wallet.self_transfer",
+                        "wallet.support_account_has_no_wallet",
                         "users.not_reachable",
                         "wallet.recipient_no_wallet",
                         "wallet.recipient_not_on_chain",

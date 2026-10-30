@@ -39,7 +39,13 @@ fun Route.recipientController(recipients: RecipientService) {
             }.docs<NoBody, RecipientResponse>(
                 "W9 · Whether a person can be paid, and on which chains",
                 TAG,
-                listOf("users.not_reachable", "wallet.self_transfer", "wallet.chain_unsupported", MALFORMED),
+                listOf(
+                    "users.not_reachable",
+                    "wallet.self_transfer",
+                    "wallet.chain_unsupported",
+                    "wallet.support_account_has_no_wallet",
+                    MALFORMED,
+                ),
                 notes =
                     "$SCOPE Query `blockchain` (optional): the chain you mean to pay on; `chatId` (optional): " +
                         "the chat you pay from, where sharing it stands in for reach. `status` is `CAN_RECEIVE`, " +
@@ -54,7 +60,12 @@ fun Route.recipientController(recipients: RecipientService) {
             }.docs<NoBody, RemindResponse>(
                 "W10 · Remind a contact to set up a wallet",
                 TAG,
-                listOf("users.not_reachable", "wallet.self_transfer", MALFORMED),
+                listOf(
+                    "users.not_reachable",
+                    "wallet.self_transfer",
+                    "wallet.support_account_has_no_wallet",
+                    MALFORMED,
+                ),
                 notes =
                     "$SCOPE Sends them a `wallet/setup.requested` frame and a push (\"Amina wants to send you " +
                         "money\"), once per pair per 24 hours: `SENT`, `ALREADY_SENT`, or `HAS_WALLET` when they " +

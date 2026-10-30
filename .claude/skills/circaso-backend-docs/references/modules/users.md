@@ -12,6 +12,7 @@ Users answers "who is this person to me, and may I reach them": it owns profiles
 - **Waiting contacts** — numbers in a user's phone book that aren't on Circaso yet, kept as keyed hashes, so the user hears when they join.
 - **Blocks** — a block overrides every other way of reaching someone.
 - **Invite links and QR codes** — signed, revocable tokens that stand in for giving out a number.
+- **The support flag** — which profile is Circaso's own support account (decision 2026-10-31), so the app shows "Verified Circaso support" from data, not a pinned user id.
 
 ### The reach rule
 
@@ -37,9 +38,11 @@ interface ReachPolicy {              // messaging, wallet, calls check this
 }
 
 interface Profiles {                 // display data for other modules
-    suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile>   // name, avatar url, handle
+    suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile>   // name, avatar url, handle, support
 }
 ```
+
+Users also implements identity's `SupportProfiles` (wired in `app`; decision 2026-10-31): `checkHandle` (`CheckSupportHandle`: well formed, reserved names allowed, and free) and `describe` (names and handles for identity's ops list, through `GetProfiles`).
 
 ### Contact sync
 
@@ -83,7 +86,8 @@ Sixteen routes, all with the `app` scope; reads that return another person's dat
 
 ```json
 // PublicProfile — the only shape other people ever see
-{ "userId": "0193…", "displayName": "Amina Otieno", "handle": "amina", "avatarUrl": "https://cdn.circaso.com/a/0193….jpg", "about": "Chama treasurer" }
+{ "userId": "0193…", "displayName": "Amina Otieno", "handle": "amina", "avatarUrl": "https://cdn.circaso.com/a/0193….jpg", "about": "Chama treasurer", "support": false }
+// "support": true only on Circaso's own support account (decision 2026-10-31; additive, defaults to false)
 
 // MyProfile — U1, and the response of U2, U4, U6
 {
@@ -117,6 +121,8 @@ JPEG, PNG or WebP up to 5 MB. The backend checks the object exists and its size 
 ### U5–U6 Handles
 
 Rules: 3–20 characters, lowercase letters, digits and underscore, starting with a letter; reserved words (`circaso`, `support`, `admin`, `asha`, …) refused. One change per 30 days.
+
+A reserved word can be held only by a support account, set by ops through identity's OPS1 (decision 2026-10-31). Since no person can hold one, U9 lookup and a U11 handle connect accept reserved words too: `@circaso` finds the support account, whose profile says `support: true`.
 
 ```json
 // GET /handles/amina/availability → data { "handle": "amina", "available": false, "suggestion": "amina_o" }
@@ -178,7 +184,8 @@ CREATE TABLE users.profiles (
     updated_at        timestamptz NOT NULL,
     version           bigint      NOT NULL DEFAULT 0,   -- optimistic lock (U2's version)
     account_status    text        NOT NULL DEFAULT 'ACTIVE',  -- V2: identity's last status; not ACTIVE hides the profile
-    status_changed_at timestamptz                       -- V2: that event's occurredAt; an older event changes nothing
+    status_changed_at timestamptz,                      -- V2: that event's occurredAt; an older event changes nothing
+    support           boolean     NOT NULL DEFAULT false -- V3 (2026-10-31): Circaso's support account; copied on every change
 );
 CREATE UNIQUE INDEX profiles_handle_key ON users.profiles (handle);
 
@@ -274,6 +281,7 @@ Every read of a table with `expires_at` filters `expires_at > :now` (the app's c
 | `identity.AccountActivated` | Create the profile, prefilled from the name and photo hints; look up `waiting_contacts` by the event's `phoneHmac`; turn waiting rows into contacts; send `contact.joined` to those users |
 | `identity.PhoneChanged` | Re-check waiting contacts by `newPhoneHmac`; existing contacts stay |
 | `identity.AccountStatusChanged` | Record the status on the profile (`account_status`, ordered by the event's `occurredAt`, so a late older event changes nothing); clear cached reach decisions. While the account isn't `ACTIVE` (deleted in its 30-day grace, suspended, blocked) the profile is hidden: U9 and a handle connect answer `users.handle_not_found`, an invite or QR connect `users.invite_invalid`, it drops out of contact lists (U8, the agent's contacts and search) and block lists (U13), U10 answers `users.not_reachable`, and `Profiles.get` gives other modules the plain fallback (no name, handle or avatar). Its handle stays reserved (U5 says taken). Back to `ACTIVE`, all of it returns |
+| `identity.SupportAccountCreated` | Make the support account's profile (`support = true`, the given name) and claim the handle in one transaction, reserved names allowed (`CreateSupportProfile`). A handle taken since ops checked it is left off rather than failing the event; a profile already marked `support` is left alone; one made early by a first read is marked and named |
 | `identity.AccountDeleted` | Delete profile, contacts, blocks and the user's invites in one transaction; release the handle into its 30-day hold |
 
 If a profile is ever missing when it's read (the event is still in flight, or failed into the dead-letter stream), users creates an empty one on the spot, so nobody is stuck without a profile.
