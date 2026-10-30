@@ -104,6 +104,39 @@ class TransferDataTest {
         )
 
     @Test
+    fun `the jobs find open transfers by state and age, newest first, and the parties of recent history`() =
+        runBlocking<Unit> {
+            val old = transfer().copy(createdAt = now.minusSeconds(3_600))
+            val recent = transfer().copy(createdAt = now.minusSeconds(60))
+            val fresh = transfer().copy(createdAt = now)
+            listOf(old, recent, fresh).forEach { transfers.insert(it) }
+            transfers.move(recent.transferId, TransferState.SUBMITTED, TransferChange(at = now))
+
+            val awaiting =
+                transfers.inState(TransferState.AWAITING_SIGNATURE, Instant.EPOCH, now, limit = 10)
+            assertEquals(listOf(old.transferId), awaiting.map { it.transferId }, "created before, not at, the cut")
+            val submitted =
+                transfers.inState(TransferState.SUBMITTED, now.minusSeconds(120), now.minusSeconds(30), limit = 10)
+            assertEquals(listOf(recent.transferId), submitted.map { it.transferId })
+            assertEquals(1, transfers.inState(TransferState.AWAITING_SIGNATURE, Instant.EPOCH, now, 1).size)
+
+            val h = harness()
+            val amina = UserId.new()
+            val bob = UserId.new()
+            h.fund(amina, 100_000_000)
+            h.walletOn(bob)
+            h.reach.connect(amina, bob)
+            h.pay(amina, Payee.Person(bob), 10_000_000).data()
+
+            val parties = TransactionRepositoryImpl(database).parties(h.clock.instant().minusSeconds(60), limit = 10)
+            assertEquals(setOf(amina, bob), parties.toSet(), "the sender's OUT row names the recipient too")
+            assertEquals(
+                emptyList(),
+                TransactionRepositoryImpl(database).parties(h.clock.instant().plusSeconds(60), limit = 10),
+            )
+        }
+
+    @Test
     fun `a transfer is claimed once per sender and key, read back as written, and moved only by the guard`() =
         runBlocking<Unit> {
             val first = transfer()

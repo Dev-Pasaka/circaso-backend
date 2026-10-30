@@ -94,6 +94,9 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
     /** Addresses Circle says aren't valid, on top of the shape check. */
     val invalidAddresses: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** Circle's transactions by id, as the jobs read them ([record]). */
+    val ledger = ConcurrentHashMap<String, CustodyTransaction>()
+
     /** When set, Circle refuses the next transfers with it. */
     @Volatile
     var refuseTransfers: IntegrationError? = null
@@ -182,7 +185,29 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         }
 
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
-        error("not used in WS3")
+        call("transaction") {
+            ledger[circleTxId]?.let { Resource.success(it) }
+                ?: Resource.error(IntegrationError.Rejected("Unknown transaction."))
+        }
+
+    override suspend fun transactions(
+        circleUserId: String,
+        since: Instant,
+        limit: Int,
+    ): Resource<List<CustodyTransaction>> =
+        call("transactions") {
+            Resource.success(
+                ledger.values
+                    .filter { it.circleUserId == circleUserId && !it.updatedAt.isBefore(since) }
+                    .sortedByDescending { it.updatedAt }
+                    .take(limit),
+            )
+        }
+
+    /** What Circle now says about a transaction: what [transaction] and [transactions] answer. */
+    fun record(transaction: CustodyTransaction) {
+        ledger[transaction.circleTxId] = transaction
+    }
 
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         call("validateAddress") {
@@ -324,6 +349,18 @@ class RecordingWarnings : WalletWarnings {
 
     override fun unknownWallet(blockchain: String, circleWalletId: String) {
         unknownWallets += blockchain to circleWalletId
+    }
+
+    val stuck: MutableList<String> = CopyOnWriteArrayList()
+
+    override fun transferStuck(transferId: String, blockchain: String) {
+        stuck += transferId
+    }
+
+    val backoffs: MutableList<Pair<String, Int>> = CopyOnWriteArrayList()
+
+    override fun jobBackingOff(job: String, skipRuns: Int) {
+        backoffs += job to skipRuns
     }
 }
 

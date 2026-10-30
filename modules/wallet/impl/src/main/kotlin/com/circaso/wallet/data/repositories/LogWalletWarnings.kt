@@ -23,6 +23,18 @@ class LogWalletWarnings : WalletWarnings {
         )
     }
 
+    override fun transferStuck(transferId: String, blockchain: String) {
+        log.warn(
+            "transfer still submitted an hour after it was prepared: transferId={} blockchain={}",
+            transferId,
+            blockchain,
+        )
+    }
+
+    override fun jobBackingOff(job: String, skipRuns: Int) {
+        log.warn("circle unreachable from a wallet job, backing off: job={} skipRuns={}", job, skipRuns)
+    }
+
     override fun unknownWallet(blockchain: String, circleWalletId: String) {
         log.warn(
             "circle notified a transaction of a wallet we don't know, ignored: blockchain={} circleWalletId={}",
