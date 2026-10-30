@@ -136,6 +136,33 @@ class FcmPushTest {
         }
 
     @Test
+    fun `an incoming call carries the call ids and lives only as long as the ring`() =
+        runBlocking<Unit> {
+            val ring =
+                PushMessage(
+                    "Incoming call",
+                    "Wanjiru is calling",
+                    PushPayload(chatId = "c1", callId = "k1", kind = "call.ringing", callerName = "Wanjiru"),
+                    dataOnly = true,
+                    ttlSeconds = 45,
+                )
+
+            push.send(PushTarget(PushPlatform.ANDROID, "device-token"), ring)
+
+            val body = Json.parseToJsonElement(sends().single().text()).jsonObject["message"]!!.jsonObject
+            val data = body["data"]!!.jsonObject
+            assertEquals("k1", data["callId"]!!.jsonPrimitive.content)
+            assertEquals("call.ringing", data["kind"]!!.jsonPrimitive.content)
+            assertEquals("Wanjiru", data["callerName"]!!.jsonPrimitive.content)
+            assertTrue("messageId" !in data, "a field left null is not sent")
+            val android = body["android"]!!.jsonObject
+            assertEquals("HIGH", android["priority"]!!.jsonPrimitive.content)
+            assertEquals("45s", android["ttl"]!!.jsonPrimitive.content)
+            val headers = body["apns"]!!.jsonObject["headers"]!!.jsonObject
+            assertEquals((now.epochSecond + 45).toString(), headers["apns-expiration"]!!.jsonPrimitive.content)
+        }
+
+    @Test
     fun `the access token request is a signed assertion that Google can verify`() =
         runBlocking<Unit> {
             push.send(target, message)

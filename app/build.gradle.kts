@@ -44,6 +44,8 @@ dependencies {
     implementation(project(":modules:wallet:impl"))
     implementation(project(":modules:chama:api"))
     implementation(project(":modules:chama:impl"))
+    implementation(project(":modules:calls:api"))
+    implementation(project(":modules:calls:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
 

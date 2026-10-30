@@ -32,4 +32,7 @@ interface ChatDirectory {
 
     /** The owner and admins of a group, for the modules whose actions need an admin (chama approvals). */
     suspend fun admins(chatId: ChatId): Set<UserId>
+
+    /** Whether the chat is a group (false for a direct chat, and for one that doesn't exist), for calls. */
+    suspend fun isGroup(chatId: ChatId): Boolean
 }

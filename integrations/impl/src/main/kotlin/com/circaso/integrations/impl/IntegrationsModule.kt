@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioEncoding
+import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.EmailGateway
@@ -29,6 +30,9 @@ import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.circle.CircleSettings
 import com.circaso.integrations.impl.circle.CircleWebhook
+import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
+import com.circaso.integrations.impl.cloudflare.TurnKey
+import com.circaso.integrations.impl.dev.FakeCallMedia
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
@@ -42,6 +46,7 @@ import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeSpeechToText
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
+import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
@@ -75,7 +80,8 @@ import java.time.Duration
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
- * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`).
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), and for calls
+ * `calls` (`cloudflare`, the Realtime SFU).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
@@ -292,6 +298,18 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Calls' SFU (decision 2026-10-29): `log` and `fake` make up sessions and SDP, so calls work without media.
+        single<CallMedia> {
+            pick(
+                "calls",
+                providers =
+                    mapOf(
+                        "log" to ::LogCallMedia,
+                        "fake" to ::FakeCallMedia,
+                        "cloudflare" to { cloudflareRealtime(config, secrets, get()) },
+                    ),
+            )
+        }
         single<LiveSpeech> {
             pick(
                 "live-tts",
@@ -450,6 +468,27 @@ private fun fcmPush(
     http = clients.named("fcm") { baseUrl = push.string("base-url", "https://fcm.googleapis.com") },
     oauth = clients.named("google-oauth"),
 )
+
+/**
+ * Cloudflare Realtime needs `CLOUDFLARE_REALTIME_APP_ID` and the secret `CLOUDFLARE_REALTIME_APP_TOKEN` (dashboard >
+ * Realtime > SFU > Create application: its App ID and App Secret). TURN is optional: `CLOUDFLARE_TURN_KEY_ID` and the
+ * secret `CLOUDFLARE_TURN_KEY_TOKEN` (Realtime > TURN Server > Create: its Turn Token ID and API token); without them
+ * phones get Cloudflare's STUN only.
+ */
+private fun cloudflareRealtime(
+    config: Config,
+    secrets: Secrets,
+    clients: HttpClients,
+): CloudflareRealtime {
+    val turnKeyId = config.string("cloudflare.turn-key-id")?.takeIf { it.isNotBlank() }
+    val turn = turnKeyId?.let { TurnKey(it, secrets.require("cloudflare.turn-key-token")) }
+    return CloudflareRealtime(
+        appId = config.requireString("cloudflare.realtime-app-id"),
+        appToken = secrets.require("cloudflare.realtime-app-token"),
+        http = clients.named("cloudflare-realtime") { baseUrl = "https://rtc.live.cloudflare.com" },
+        turn = turn,
+    )
+}
 
 // Asha's models on Workers AI, each overridable by its INTEGRATIONS_AI_MODEL_* setting. Ids from developers.cloudflare.com/workers-ai/models/.
 private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
