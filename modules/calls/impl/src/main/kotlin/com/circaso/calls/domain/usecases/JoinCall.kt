@@ -2,6 +2,7 @@ package com.circaso.calls.domain.usecases
 
 import com.circaso.calls.domain.errors.CallsError
 import com.circaso.calls.domain.models.Call
+import com.circaso.calls.domain.models.CallKind
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallTrack
 import com.circaso.calls.domain.models.JoinCommand
@@ -77,7 +78,9 @@ class JoinCall(
                     sessionId = sessionId,
                     tracks = tracks,
                     audio = tracks.any { it.kind == AUDIO },
-                    video = tracks.any { it.kind == VIDEO },
+                    // A published video track isn't a camera that's on: phones push one in every call so voice can
+                    // turn into video without renegotiating. The camera starts on only in a video call; CL8 changes it.
+                    video = call.kind == CallKind.VIDEO && tracks.any { it.kind == VIDEO },
                     joinedAt = participant.joinedAt ?: now,
                 )
             }
