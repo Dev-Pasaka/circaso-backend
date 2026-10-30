@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.models
 
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.UserId
 import java.time.Instant
 import java.util.UUID
@@ -51,6 +52,8 @@ data class TurnCommand(
     /** The user's read-only agent token, which Asha's tools use against the other modules' `/v1/agent/` routes. */
     val agentToken: String?,
     val requestId: String?,
+    /** A live voice turn runs on the faster voice model; tools, limits and audit are the same as a typed turn's. */
+    val purpose: ModelPurpose = ModelPurpose.CHAT,
 )
 
 /** What a turn comes to: an answer, or a question for the phone (a device tool) that the phone answers through A9. */

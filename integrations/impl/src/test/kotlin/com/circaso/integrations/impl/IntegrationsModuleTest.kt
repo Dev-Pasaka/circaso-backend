@@ -16,6 +16,7 @@ import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
 import com.circaso.integrations.api.LiveTranscriptionOptions
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.api.PushGateway
@@ -161,6 +162,13 @@ class IntegrationsModuleTest {
             koin.get<LanguageModel>().complete(ModelRequest("s", listOf(ModelMessage.User("u"))))
             assertTrue(clients.names.all { it == "workers-ai" })
             assertTrue("glm-5.2" in clients.last.text(), "a model id setting replaces the default")
+            koin
+                .get<LanguageModel>()
+                .complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
+            assertTrue(
+                "@cf/meta/llama-4-scout-17b-16e-instruct" in clients.last.text(),
+                "voice turns default to the fast model",
+            )
         }
 
     @Test

@@ -3,6 +3,7 @@ package com.circaso.integrations.impl.workersai
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
 import com.circaso.integrations.api.ModelStream
@@ -21,11 +22,16 @@ import org.slf4j.LoggerFactory
  * [maxOutputTokens] caps the answer, reasoning included, as `max_completion_tokens` (Kimi K2.6 documents `max_tokens`
  * as its deprecated alias). The call is never retried: one turn waits at most the client's 60 s. Asha's turns use
  * [stream], so her reply reaches the user as it is written.
+ *
+ * A live voice turn ([ModelPurpose.VOICE]) runs on [voiceModel] instead, a faster model that also calls tools
+ * (`@cf/meta/llama-4-scout-17b-16e-instruct` by default), so the first spoken words come sooner; without one it uses
+ * [model] too. The request is otherwise the same: same messages, same tools, same cap.
  */
 class WorkersAiLanguageModel(
     private val gateway: WorkersAiGateway,
     private val model: String,
     private val maxOutputTokens: Int,
+    private val voiceModel: String = model,
 ) : LanguageModel {
     private val log = LoggerFactory.getLogger(WorkersAiLanguageModel::class.java)
 
@@ -66,7 +72,7 @@ class WorkersAiLanguageModel(
         }
         val body =
             ChatRequest(
-                model = model,
+                model = modelFor(request.purpose),
                 maxCompletionTokens = maxOutputTokens,
                 messages = messages(request),
                 tools = request.tools.map(::tool).ifEmpty { null },
@@ -75,6 +81,12 @@ class WorkersAiLanguageModel(
             )
         return Resource.success(WorkersAiJson.encodeToString(ChatRequest.serializer(), body))
     }
+
+    private fun modelFor(purpose: ModelPurpose): String =
+        when (purpose) {
+            ModelPurpose.CHAT -> model
+            ModelPurpose.VOICE -> voiceModel
+        }
 
     /** An answer with neither text nor a tool call (the budget spent on reasoning, say) is no answer at all. */
     private fun read(reply: GatewayReply): Resource<ModelResponse> {

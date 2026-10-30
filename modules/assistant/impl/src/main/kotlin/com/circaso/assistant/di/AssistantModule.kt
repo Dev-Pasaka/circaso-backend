@@ -3,6 +3,7 @@ package com.circaso.assistant.di
 import com.circaso.assistant.data.cache.AesTextVault
 import com.circaso.assistant.data.cache.RedisPendingTurns
 import com.circaso.assistant.data.cache.RedisQuotaCounters
+import com.circaso.assistant.data.metrics.TelemetryLiveTimings
 import com.circaso.assistant.data.repositories.AssistantExpiry
 import com.circaso.assistant.data.repositories.AssistantStoreImpl
 import com.circaso.assistant.data.repositories.ChatRepositoryImpl
@@ -14,6 +15,7 @@ import com.circaso.assistant.data.tables.EntitlementsTable
 import com.circaso.assistant.data.tables.UsageDailyTable
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.domain.ports.AgentTools
+import com.circaso.assistant.domain.ports.LiveTimings
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.ports.TextVault
@@ -35,6 +37,7 @@ import com.circaso.assistant.domain.usecases.GetUsage
 import com.circaso.assistant.domain.usecases.ListChat
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.RecordLiveTiming
 import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
@@ -54,6 +57,7 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.observability.api.Telemetry
 import com.circaso.shared.EventSubscription
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
@@ -94,6 +98,7 @@ fun assistantModule(config: Config): Module =
         single<TextVault> { AesTextVault(get<Secrets>(), local) }
         single<QuotaCounters> { RedisQuotaCounters(get<RedisScopes>().scope("ast")) }
         single<PendingTurns> { RedisPendingTurns(get<RedisScopes>().scope("ast")) }
+        single<LiveTimings> { TelemetryLiveTimings(get<Telemetry>()) }
         single<ChatRepository> { ChatRepositoryImpl(get(named("assistant.database")), get()) }
         single<EntitlementRepository> { EntitlementRepositoryImpl(get(named("assistant.database")), clock) }
         single<AssistantStore> { AssistantStoreImpl(get(named("assistant.database")), get(), clock) }
@@ -130,12 +135,13 @@ fun assistantModule(config: Config): Module =
         single { MeterLiveVoice(get(), clock) }
         single { SaveLiveVoiceUsage(get()) }
         single { CheckLiveSession(get()) }
+        single { RecordLiveTiming(get()) }
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
         single { VoiceService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
-        single { LiveVoiceService(get(), get(), get(), get(), get(), get()) }
+        single { LiveVoiceService(get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
             val voice = get<VoiceService>()

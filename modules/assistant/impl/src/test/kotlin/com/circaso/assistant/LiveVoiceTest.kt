@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.LiveEnd
+import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.models.Role
@@ -14,6 +15,7 @@ import com.circaso.assistant.domain.support.LiveConversation
 import com.circaso.assistant.domain.support.today
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelResponse
 import com.circaso.integrations.api.ModelStreamEvent
 import com.circaso.integrations.api.ModelUsage
@@ -42,8 +44,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
@@ -192,12 +196,13 @@ class LiveVoiceTest {
 
             // The first sentence's text comes as its audio starts; the second when the audio reaches it (here, the end of
             // a reply far shorter than it reads), all before reply_done. One Flush for the whole reply.
+            // (The turn's `timing` frame goes out among them, once its first audio has.)
             val afterTurn = got.frames.dropWhile { !(it is JsonObject && it.type() == "turn") }.drop(1)
             val replies = afterTurn.takeWhile { !(it is JsonObject && it.type() == "reply_done") }
             assertEquals("You sent Mum 2,000 shillings yesterday.", (replies.first() as JsonObject).text("text"))
             assertEquals(
                 listOf("You sent Mum 2,000 shillings yesterday.", "Anything else?"),
-                replies.filterIsInstance<JsonObject>().map { it.text("text") },
+                replies.filterIsInstance<JsonObject>().filter { it.type() == "reply" }.map { it.text("text") },
             )
             assertEquals(
                 listOf("You sent Mum 2,000 shillings yesterday.", "Anything else?"),
@@ -218,6 +223,12 @@ class LiveVoiceTest {
                 done["message"]!!.jsonObject.text("text"),
             )
 
+            assertEquals(
+                listOf(ModelPurpose.VOICE, ModelPurpose.VOICE),
+                live.h.model.requests
+                    .map { it.purpose },
+                "every step of a spoken turn runs on the voice model",
+            )
             // Exactly A2: the agent token reached the tools, the turn counted, the exchange and its audit were saved.
             assertEquals(
                 "agent-tok",
@@ -469,6 +480,61 @@ class LiveVoiceTest {
             assertEquals(true, heard["spoken"]!!.jsonPrimitive.boolean)
             assertEquals(false, stale["spoken"]!!.jsonPrimitive.boolean, "the reply talked over is not spoken")
             assertEquals(4, live.h.memory.messages.size, "both turns are still in the Asha chat")
+
+            // Each turn is timed once. The one talked over while Asha was thinking reached none of its stamps.
+            val (cut, answered) = got.ofType("timing")
+            assertEquals(1, cut["turn"]!!.jsonPrimitive.int)
+            assertEquals(JsonNull, cut["modelFirstTextMs"])
+            assertEquals(JsonNull, cut["firstSentenceMs"])
+            assertEquals(JsonNull, cut["firstAudioMs"])
+            assertTrue(
+                got.json.indexOf(cut) > got.json.indexOfFirst { it.type() == "interrupted" },
+                "timed as it is cut off",
+            )
+            assertEquals(3, answered["turn"]!!.jsonPrimitive.int, "the barge-in took a generation")
+            assertTrue(answered["firstAudioMs"] !is JsonNull)
+            assertEquals(LiveEvent.Timing(1, null, null, null), live.timings.first())
+            assertEquals(2, live.timings.size)
+        }
+
+    @Test
+    fun `each turn is timed once, from the end of speech to the model's first words, sentence and audio`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val gate = CompletableDeferred<Unit>()
+            live.h.model.streamed("Your balance is 4,200 shillings. Any", "thing else?", gate = gate)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("what is my balance", endOfTurn = true))
+                // the first sentence is queued while the model still writes; its audio comes with the one Flush
+                eventually {
+                    live.voice.sessions
+                        .singleOrNull()
+                        ?.spoken
+                        ?.isNotEmpty() == true
+                }
+                delay(30)
+                gate.complete(Unit)
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+
+            val timing = got.ofType("timing").single()
+            assertEquals(1, timing["turn"]!!.jsonPrimitive.int)
+            val firstText = timing["modelFirstTextMs"]!!.jsonPrimitive.long
+            val firstSentence = timing["firstSentenceMs"]!!.jsonPrimitive.long
+            val firstAudio = timing["firstAudioMs"]!!.jsonPrimitive.long
+            assertTrue(firstText in 0..firstSentence, "the model writes before a sentence is whole")
+            assertTrue(firstAudio >= firstSentence + 30, "the audio came only after the rest was written")
+            assertTrue(
+                got.frames.indexOf(timing) > got.frames.indexOfFirst { it is ByteArray },
+                "timed once the first audio has gone to the phone",
+            )
+            assertEquals(listOf(LiveEvent.Timing(1, firstText, firstSentence, firstAudio)), live.timings)
         }
 
     @Test
@@ -1016,6 +1082,11 @@ class LiveVoiceTest {
                     .last()
                     .messages
                     .any { "500 each in December" in it.toString() },
+            )
+            assertTrue(
+                live.h.model.requests
+                    .all { it.purpose == ModelPurpose.VOICE },
+                "the turn carries on after the phone's answer on the voice model too",
             )
         }
 

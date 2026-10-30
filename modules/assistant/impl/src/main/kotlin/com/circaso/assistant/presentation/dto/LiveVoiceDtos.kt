@@ -70,6 +70,20 @@ data class LiveToolRequestFrame(
 @Serializable
 data class LiveInterruptedFrame(val type: String = "interrupted")
 
+/**
+ * Once per turn (decision 2026-10-30): milliseconds from the end of the user's speech to the model's first words, the
+ * first sentence sent to the voice, and the first of Asha's audio sent; null for a step the turn never reached (talked
+ * over, failed). For latency dashboards and debugging; the phone may ignore it, as it ignores any unknown `type`.
+ */
+@Serializable
+data class LiveTimingFrame(
+    val turn: Int,
+    val modelFirstTextMs: Long?,
+    val firstSentenceMs: Long?,
+    val firstAudioMs: Long?,
+    val type: String = "timing",
+)
+
 @Serializable
 data class LiveErrorFrame(val code: String, val message: String, val type: String = "error")
 

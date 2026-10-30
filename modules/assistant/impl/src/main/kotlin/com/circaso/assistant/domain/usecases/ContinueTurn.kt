@@ -14,6 +14,7 @@ import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.toModel
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 
@@ -31,6 +32,8 @@ class ContinueTurn(
     suspend operator fun invoke(
         result: DeviceToolResult,
         listener: ReplyListener = ReplyListener.None,
+        /** [ModelPurpose.VOICE] when the turn belongs to a live voice conversation, as its start did. */
+        purpose: ModelPurpose = ModelPurpose.CHAT,
     ): Resource<TurnResult> {
         // checked before the pending turn is taken, so a wrong token doesn't use it up
         if (!isOwnAgentToken(verifier, result.userId, result.agentToken)) {
@@ -60,7 +63,7 @@ class ContinueTurn(
                 ModelMessage.ToolResult(turn.callId, turn.toolName, AshaAgent.snippetsAsText(snippets))
 
         val outcome =
-            when (val r = carryOn(turn, conversation, result.agentToken, listener)) {
+            when (val r = carryOn(turn, conversation, result.agentToken, listener, purpose)) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }
@@ -81,6 +84,7 @@ class ContinueTurn(
         conversation: List<ModelMessage>,
         agentToken: String?,
         listener: ReplyListener,
+        purpose: ModelPurpose,
     ) = agent.run(
         conversation,
         agentToken,
@@ -88,5 +92,6 @@ class ContinueTurn(
         startSteps = turn.steps,
         shownBefore = AshaAgent.shownSoFar(turn.conversation),
         listener = listener,
+        purpose = purpose,
     )
 }

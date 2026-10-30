@@ -11,6 +11,7 @@ import com.circaso.assistant.domain.ports.PendingReadNote
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelMessage
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
 import com.circaso.integrations.api.ModelResponse
 import com.circaso.integrations.api.ModelStreamEvent
@@ -60,6 +61,8 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
         /** Text of this turn the user was shown before it paused for the phone (A9 carries on after it). */
         shownBefore: String = "",
         listener: ReplyListener = ReplyListener.None,
+        /** Which model runs the turn: a spoken turn's answers on the faster voice model, every step of it. */
+        purpose: ModelPurpose = ModelPurpose.CHAT,
     ): Resource<AgentOutcome> {
         val messages = history.toMutableList()
         val specs = specs(agentToken != null, deviceTools)
@@ -73,7 +76,7 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
             steps++
             reply.newStep()
             val response =
-                when (val r = step(ModelRequest(AshaPrompt.system, messages, specs), reply)) {
+                when (val r = step(ModelRequest(AshaPrompt.system, messages, specs, purpose), reply)) {
                     is Resource.Success -> r.data
                     is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
                 }

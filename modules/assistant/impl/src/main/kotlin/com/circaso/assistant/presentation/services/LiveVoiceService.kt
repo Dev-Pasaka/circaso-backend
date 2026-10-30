@@ -8,8 +8,10 @@ import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.RecordLiveTiming
 import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
+import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
 
 /**
@@ -23,6 +25,7 @@ class LiveVoiceService(
     private val continueTurn: ContinueTurn,
     private val checkLiveSession: CheckLiveSession,
     private val saveLiveVoiceUsage: SaveLiveVoiceUsage,
+    private val recordLiveTiming: RecordLiveTiming,
 ) {
     suspend fun open(start: LiveVoiceStart): Resource<LiveConversation> =
         when (val opened = openLiveVoice(start)) {
@@ -34,10 +37,11 @@ class LiveVoiceService(
         LiveConversation(
             line,
             ask = { text, agentToken, reply -> startTurn(turn(line, text, agentToken), reply) },
-            answerDevice = { result, reply -> continueTurn(result, reply) },
+            answerDevice = { result, reply -> continueTurn(result, reply, ModelPurpose.VOICE) },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
             checkSession = { access, agent -> checkLiveSession(line.userId, access, agent) is Resource.Success },
             saveUsage = { saveLiveVoiceUsage(line.userId) },
+            timed = { recordLiveTiming(it) },
         )
 
     private fun turn(
@@ -51,5 +55,6 @@ class LiveVoiceService(
         chatReading = line.start.chatReading,
         agentToken = agentToken,
         requestId = line.start.requestId,
+        purpose = ModelPurpose.VOICE,
     )
 }

@@ -13,6 +13,7 @@ import com.circaso.assistant.presentation.dto.LivePhoneFrame
 import com.circaso.assistant.presentation.dto.LiveReadyFrame
 import com.circaso.assistant.presentation.dto.LiveReplyDoneFrame
 import com.circaso.assistant.presentation.dto.LiveReplyFrame
+import com.circaso.assistant.presentation.dto.LiveTimingFrame
 import com.circaso.assistant.presentation.dto.LiveToolRequestFrame
 import com.circaso.assistant.presentation.dto.LiveTranscriptFrame
 import com.circaso.assistant.presentation.dto.LiveTurnFrame
@@ -76,6 +77,13 @@ fun LiveEvent.toJson(): String? =
 
         is LiveEvent.TurnFailed -> {
             CircasoJson.encodeToString(LiveErrorFrame.serializer(), LiveErrorFrame(error.code, error.message))
+        }
+
+        is LiveEvent.Timing -> {
+            CircasoJson.encodeToString(
+                LiveTimingFrame.serializer(),
+                LiveTimingFrame(turn, modelFirstTextMs, firstSentenceMs, firstAudioMs),
+            )
         }
     }
 

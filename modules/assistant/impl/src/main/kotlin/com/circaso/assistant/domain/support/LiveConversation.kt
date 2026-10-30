@@ -63,6 +63,10 @@ fun interface LiveOutput {
  *   phone doesn't answer within [LiveVoiceLine.deviceToolTimeout] ends that turn with an error.
  * - **Nothing kept, nothing leaked.** Audio passes through and is dropped. Both provider sessions are closed however
  *   the conversation ends ([release]).
+ * - **Each turn is timed** (decision 2026-10-30) on [nowMillis]'s clock, from the transcriber's end of turn to the
+ *   model's first words, the first sentence queued with the voice and the first of its audio sent to the phone. The
+ *   [LiveEvent.Timing] goes to the phone and to [timed] once per turn: at its first audio, or as soon as the turn can
+ *   no longer have any (talked over, failed, nothing to say, the next turn, the end), with what never happened null.
  */
 class LiveConversation(
     val line: LiveVoiceLine,
@@ -74,6 +78,8 @@ class LiveConversation(
     private val checkSession: suspend (String, String?) -> Boolean,
     /** Stores the day's usage totals, once, after the conversation's last seconds are metered. */
     private val saveUsage: suspend () -> Unit = {},
+    /** Records each turn's [LiveEvent.Timing] (the log line and the latency metric), sent to the phone or not. */
+    private val timed: suspend (LiveEvent.Timing) -> Unit = {},
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val ended = CompletableDeferred<LiveEnd>()
@@ -107,6 +113,7 @@ class LiveConversation(
         private val unfinished = StringBuilder()
 
         override suspend fun text(delta: String) {
+            clockOf(asked)?.firstText?.compareAndSet(-1, nowMillis())
             unfinished.append(delta)
             val parts = unfinished.split(sentenceEnd)
             if (parts.size < 2) return
@@ -132,6 +139,33 @@ class LiveConversation(
     }
 
     private class Caption(val text: String, val atSeconds: Double)
+
+    /** One turn's stamps on [nowMillis]'s clock, from [endedAt], the end of the user's speech; -1 until they happen. */
+    private class TurnClock(val turn: Int, val endedAt: Long) {
+        val firstText = AtomicLong(-1)
+
+        /** Written with [state] held, like [firstAudio]. */
+        var firstSentence = -1L
+        var firstAudio = -1L
+        val isReported = AtomicBoolean(false)
+
+        fun timing() = LiveEvent.Timing(turn, since(firstText.get()), since(firstSentence), since(firstAudio))
+
+        private fun since(at: Long) = if (at < 0) null else at - endedAt
+    }
+
+    /** The latest turn's clock; an earlier turn's has been reported by the time it is replaced. */
+    @Volatile private var clock: TurnClock? = null
+
+    private fun clockOf(turn: Int): TurnClock? = clock?.takeIf { it.turn == turn }
+
+    /** Sends turn [of]'s timing, once. */
+    private suspend fun report(of: TurnClock?) {
+        if (of == null || !of.isReported.compareAndSet(false, true)) return
+        val timing = of.timing()
+        emit(timing)
+        timed(timing)
+    }
 
     private var speaking: Speaking? = null
 
@@ -275,6 +309,8 @@ class LiveConversation(
         state.withLock {
             closeSpeech()
             settlePlayback(dropUnplayed = true)
+            // a turn still unheard is logged with what it reached; the phone has gone
+            report(clock)
         }
         // the last part second counts, unless the allowance or a revoked session ended it
         if (end !is LiveEnd.OutOfAllowance && end !is LiveEnd.SessionRevoked) settle(final = true)
@@ -472,16 +508,21 @@ class LiveConversation(
         playingUntil = 0
         line.speech.clear()
         emit(LiveEvent.Interrupted)
+        // the turn talked over is timed as far as it got
+        report(clock)
     }
 
     /** Called with [state] held. */
     private suspend fun endTurn() {
+        val endedAt = nowMillis()
         closeSpeech()
         val text = utterance.trim().toString()
         utterance.clear()
         if (text.isEmpty()) return
 
+        report(clock)
         val asked = generation.incrementAndGet()
+        clock = TurnClock(asked, endedAt)
         turnsAsked.incrementAndGet()
         lastActivity = nowMillis()
         emit(LiveEvent.TurnStarted(text))
@@ -522,6 +563,13 @@ class LiveConversation(
             is Resource.Success -> answered(asked, result.data, reply)
         }
         lastActivity = nowMillis()
+        // a turn that ended with nothing for the voice will never have audio: timed now. One waiting for the phone
+        // carries on later, and one with sentences queued is timed at its first audio.
+        state.withLock {
+            val ofTurn = clockOf(asked)
+            val isWaiting = result is Resource.Success && result.data is TurnResult.NeedsDevice
+            if (ofTurn != null && ofTurn.firstSentence < 0 && !isWaiting) report(ofTurn)
+        }
     }
 
     private suspend fun failed(result: Resource.Error, reply: SpokenReply) {
@@ -573,6 +621,7 @@ class LiveConversation(
             reply.captions.add(Caption(sentence, reply.chars / SPOKEN_CHARS_PER_SECOND))
             reply.chars += sentence.length + 1
             remember(sentence)
+            clockOf(asked)?.takeIf { it.firstSentence < 0 }?.firstSentence = nowMillis()
             line.speech.speak(sentence)
         }
 
@@ -646,6 +695,8 @@ class LiveConversation(
     private suspend fun letOut(reply: Speaking) {
         generateSequence { reply.captions.removeFirstOrNull() }.forEach { emit(LiveEvent.ReplyText(it.text)) }
         reply.done?.let { playingReplies.add(it) }
+        // the turn's whole reply is out: if none of it was ever heard (a voice with no audio), it is timed without
+        if (reply.done != null) report(clockOf(reply.generation))
         if (speaking === reply) speaking = null
     }
 
@@ -666,7 +717,16 @@ class LiveConversation(
             unplayedMicros.addAndGet(micros)
             playingUntil = max(playingUntil, nowMillis()) + micros / 1_000
             emit(LiveEvent.ReplyAudio(bytes))
+            firstAudio(speaking?.generation)
         }
+    }
+
+    /** The first audio of turn [turn]'s reply has gone to the phone: the turn is timed. Called with [state] held. */
+    private suspend fun firstAudio(turn: Int?) {
+        val ofTurn = turn?.let(::clockOf) ?: return
+        if (ofTurn.firstSentence < 0 || ofTurn.firstAudio >= 0) return
+        ofTurn.firstAudio = nowMillis()
+        report(ofTurn)
     }
 
     // ---- the clock: metering, silence, session and device waits --------------------------------------------
@@ -720,6 +780,7 @@ class LiveConversation(
                 waiting && late
             }
         if (!expired) return
+        state.withLock { report(clock) }
         lastActivity = nowMillis()
         emit(LiveEvent.TurnFailed(AssistantError.TurnNotFound))
     }

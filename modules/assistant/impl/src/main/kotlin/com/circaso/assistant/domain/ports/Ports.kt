@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.ports
 
+import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -124,3 +125,11 @@ interface TextVault {
 
 @Suppress("unused")
 private val keep = Duration.ZERO
+
+/**
+ * Where each live voice turn's timing goes (decision 2026-10-30): one log line of its durations and the first-audio
+ * latency histogram. Durations only, never what was said.
+ */
+fun interface LiveTimings {
+    fun record(timing: LiveEvent.Timing)
+}
