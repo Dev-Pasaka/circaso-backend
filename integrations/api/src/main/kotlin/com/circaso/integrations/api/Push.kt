@@ -28,6 +28,12 @@ data class PushMessage(
      * worthless after its ring, so it is given about as long as the ring lasts.
      */
     val ttlSeconds: Long? = null,
+    /**
+     * A sound the app ships for this kind of push (`money_received.wav`, the coins for money received), played on iOS
+     * from the app's own sounds; null is the phone's usual sound. Android picks the sound itself from a data-only
+     * push, by its [PushPayload.kind] and the person's setting.
+     */
+    val sound: String? = null,
 )
 
 /**
