@@ -101,6 +101,20 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
+    /** MAP1: a point off the globe, a zoom or size out of range, or a colour that isn't `RRGGBB`. */
+    data object MapInvalid : MessagingError(
+        "messaging.map_invalid",
+        "That map can't be drawn. Check the point, size and colours.",
+        ErrorKind.INVALID,
+    )
+
+    /** MAP1: the map provider is down or not set up; the app shows its own placeholder. */
+    data object MapUnavailable : MessagingError(
+        "messaging.map_unavailable",
+        "The map isn't available right now.",
+        ErrorKind.UPSTREAM,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

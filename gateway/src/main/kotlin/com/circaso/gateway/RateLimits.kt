@@ -55,6 +55,11 @@ object RateLimitTable {
                 Limit("sync", 5, Duration.ofHours(1), LimitBy.USER)
             }
 
+            // Each picture costs us at the map provider; a thread scrolls past a few, the phone keeps them a day.
+            method == "GET" && path == "/v1/maps/static" -> {
+                Limit("maps", 60, Duration.ofHours(1), LimitBy.USER)
+            }
+
             signedIn -> {
                 Limit("user", 120, minute, LimitBy.USER)
             }

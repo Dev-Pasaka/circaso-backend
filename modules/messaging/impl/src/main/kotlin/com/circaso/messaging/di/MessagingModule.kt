@@ -67,6 +67,7 @@ import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
+import com.circaso.messaging.domain.usecases.GetStaticMap
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
@@ -87,11 +88,13 @@ import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
 import com.circaso.messaging.presentation.controllers.chatController
 import com.circaso.messaging.presentation.controllers.keyController
+import com.circaso.messaging.presentation.controllers.mapController
 import com.circaso.messaging.presentation.controllers.messageController
 import com.circaso.messaging.presentation.events.IdentityEventHandler
 import com.circaso.messaging.presentation.services.ChatService
 import com.circaso.messaging.presentation.services.IdentityEventsService
 import com.circaso.messaging.presentation.services.KeyService
+import com.circaso.messaging.presentation.services.MapService
 import com.circaso.messaging.presentation.services.MessageService
 import com.circaso.messaging.presentation.services.PhoneFrameService
 import com.circaso.messaging.presentation.services.RealtimeService
@@ -249,14 +252,18 @@ fun messagingModule(config: Config): Module =
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
+        single { GetStaticMap(get()) }
+        single { MapService(get()) }
         single<RouteContributor>(named("messaging.routes")) {
             val keys = get<KeyService>()
             val chats = get<ChatService>()
             val messages = get<MessageService>()
+            val maps = get<MapService>()
             RouteContributor { route ->
                 route.keyController(keys)
                 route.chatController(chats)
                 route.messageController(messages, messaging.inboxPageMax)
+                route.mapController(maps)
             }
         }
         single<EventSubscription>(named("messaging.identity-events")) { IdentityEventHandler(get()).subscription() }

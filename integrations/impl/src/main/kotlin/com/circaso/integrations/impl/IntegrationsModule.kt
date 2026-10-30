@@ -21,6 +21,7 @@ import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.StablecoinCustody
+import com.circaso.integrations.api.StaticMaps
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.WebhookVendor
@@ -44,6 +45,7 @@ import com.circaso.integrations.impl.dev.FakePush
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeSpeechToText
+import com.circaso.integrations.impl.dev.FakeStaticMaps
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.LogCallMedia
@@ -53,9 +55,11 @@ import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
+import com.circaso.integrations.impl.dev.LogStaticMaps
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
+import com.circaso.integrations.impl.googlemaps.GoogleStaticMaps
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
 import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.social.AppleRevocation
@@ -80,8 +84,8 @@ import java.time.Duration
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
- * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), and for calls
- * `calls` (`cloudflare`, the Realtime SFU).
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), for calls
+ * `calls` (`cloudflare`, the Realtime SFU), and for location previews `maps` (`google`).
  * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
@@ -293,6 +297,26 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                             OpenErApiRates(
                                 http = get<HttpClients>().named("exchangerate") { baseUrl = OpenErApiRates.BASE_URL },
                                 redis = get<RedisScopes>().scope("fx"),
+                            )
+                        },
+                    ),
+            )
+        }
+        // Location previews (decision 2026-10-30): `google` needs the secret `GOOGLE_MAPS_API_KEY` (a key allowed only
+        // the Maps Static API) and, recommended, `GOOGLE_MAPS_SIGNING_SECRET` (Cloud console > Maps > URL signing
+        // secret). `log` answers unavailable and the app keeps its drawn tile.
+        single<StaticMaps> {
+            pick(
+                "maps",
+                providers =
+                    mapOf(
+                        "log" to { LogStaticMaps() },
+                        "fake" to { FakeStaticMaps() },
+                        "google" to {
+                            GoogleStaticMaps(
+                                http = get<HttpClients>().named("google-maps"),
+                                key = secrets.require("google-maps.api-key"),
+                                signingSecret = secrets.get("google-maps.signing-secret"),
                             )
                         },
                     ),
