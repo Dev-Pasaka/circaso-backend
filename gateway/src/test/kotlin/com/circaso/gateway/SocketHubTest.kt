@@ -1,5 +1,10 @@
 package com.circaso.gateway
 
+import com.circaso.calls.api.CallFrames
+import com.circaso.calls.api.CallId
+import com.circaso.calls.api.CallParticipantSnapshot
+import com.circaso.calls.api.CallRingingFrame
+import com.circaso.calls.api.CallSnapshot
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
 import com.circaso.gateway.realtime.SessionRevokedFrame
@@ -853,6 +858,65 @@ class SocketHubTest {
                 assertTrue(hub.deliver(user, frame(7)))
                 assertEquals(7, nextFrame().seq)
             }
+        }
+
+    @Test
+    fun `an incoming call wakes the phone data-only for the ring, and a missed call is an alert`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val (caller, callee) = List(2) { UserId.new() }
+            val callId = CallId.new()
+
+            realtime.deliver(
+                callee,
+                RealtimeEnvelope.of(
+                    CallFrames.MODULE,
+                    CallFrames.RINGING,
+                    1,
+                    CallRingingFrame(callId, chat, "VIDEO", caller, "Wanjiru"),
+                    CallRingingFrame.serializer(),
+                ),
+            )
+
+            fun ended(reason: String, calleeState: String) =
+                RealtimeEnvelope.of(
+                    CallFrames.MODULE,
+                    CallFrames.ENDED,
+                    2,
+                    CallSnapshot(
+                        callId = callId,
+                        chatId = chat,
+                        kind = "VOICE",
+                        state = "ENDED",
+                        startedBy = caller,
+                        createdAt = "2026-10-29T10:00:00Z",
+                        endReason = reason,
+                        participants =
+                            listOf(
+                                CallParticipantSnapshot(caller, "Wanjiru", "LEFT", true, false, emptyList()),
+                                CallParticipantSnapshot(callee, "Otieno", calleeState, true, false, emptyList()),
+                            ),
+                    ),
+                    CallSnapshot.serializer(),
+                )
+            realtime.deliver(callee, ended("MISSED", "MISSED"))
+            realtime.deliver(caller, ended("MISSED", "MISSED"))
+            realtime.deliver(callee, ended("CANCELLED", "MISSED"))
+            realtime.deliver(callee, ended("COMPLETED", "LEFT"))
+
+            val (ring, missed, cancelled) = push.sent.map { it.second }
+            assertEquals(3, push.sent.size, "the caller and a finished call push nothing")
+            assertTrue(ring.dataOnly)
+            assertEquals(45L, ring.ttlSeconds)
+            assertEquals("Incoming video call", ring.title)
+            assertEquals(callId.toString(), ring.data.callId)
+            assertEquals("call.ringing", ring.data.kind)
+            assertEquals("Wanjiru", ring.data.callerName)
+            assertEquals(false, missed.dataOnly)
+            assertEquals("Missed call from Wanjiru", missed.body)
+            assertEquals("call.missed", missed.data.kind)
+            assertTrue(cancelled.dataOnly, "the phone stops ringing and words it itself")
         }
 
     @Test

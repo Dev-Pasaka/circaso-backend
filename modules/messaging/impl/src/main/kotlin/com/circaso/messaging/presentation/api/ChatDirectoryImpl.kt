@@ -14,4 +14,8 @@ class ChatDirectoryImpl(private val chats: ChatService) : ChatDirectory {
     override suspend fun isMember(chatId: ChatId, userId: UserId): Boolean = userId in members(chatId)
 
     override suspend fun members(chatId: ChatId): Set<UserId> = chats.members(chatId).getOrNull().orEmpty()
+
+    override suspend fun admins(chatId: ChatId): Set<UserId> = chats.admins(chatId).getOrNull().orEmpty()
+
+    override suspend fun isGroup(chatId: ChatId): Boolean = chats.isGroup(chatId).getOrNull() ?: false
 }

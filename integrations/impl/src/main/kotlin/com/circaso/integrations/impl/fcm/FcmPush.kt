@@ -127,16 +127,24 @@ class FcmPush(
      */
     private fun request(target: PushTarget, message: PushMessage): FcmRequest {
         val text = FcmNotification(message.title, message.body)
-        val data = FcmData(message.data.chatId, message.data.messageId).takeIf { it != FcmData() }
+        val ids = message.data
+        val data =
+            FcmData(ids.chatId, ids.messageId, ids.callId, ids.kind, ids.callerName, ids.callKind)
+                .takeIf { it != FcmData() }
         val aps =
             if (message.dataOnly) {
                 FcmAps(alert = text, mutableContent = 1)
             } else {
                 FcmAps()
             }
+        val ttl = message.ttlSeconds
         val apns =
             FcmApns(
-                headers = FcmApnsHeaders(pushType = if (message.dataOnly) "alert" else null),
+                headers =
+                    FcmApnsHeaders(
+                        pushType = if (message.dataOnly) "alert" else null,
+                        expiration = ttl?.let { (clock.instant().epochSecond + it).toString() },
+                    ),
                 payload = FcmApnsPayload(aps),
             )
         return FcmRequest(
@@ -144,7 +152,7 @@ class FcmPush(
                 token = target.token,
                 notification = text.takeUnless { message.dataOnly },
                 data = data,
-                android = FcmAndroid(),
+                android = FcmAndroid(ttl = ttl?.let { "${it}s" }),
                 apns = apns,
             ),
         )
@@ -215,10 +223,17 @@ private data class FcmNotification(val title: String, val body: String)
 
 /** FCM's `data` must be a map of strings: these fields, the ones that are set. */
 @Serializable
-private data class FcmData(val chatId: String? = null, val messageId: String? = null)
+private data class FcmData(
+    val chatId: String? = null,
+    val messageId: String? = null,
+    val callId: String? = null,
+    val kind: String? = null,
+    val callerName: String? = null,
+    val callKind: String? = null,
+)
 
 @Serializable
-private data class FcmAndroid(val priority: String = "HIGH")
+private data class FcmAndroid(val priority: String = "HIGH", val ttl: String? = null)
 
 @Serializable
 private data class FcmApns(val headers: FcmApnsHeaders, val payload: FcmApnsPayload)
@@ -227,6 +242,7 @@ private data class FcmApns(val headers: FcmApnsHeaders, val payload: FcmApnsPayl
 private data class FcmApnsHeaders(
     @SerialName("apns-priority") val priority: String = "10",
     @SerialName("apns-push-type") val pushType: String? = null,
+    @SerialName("apns-expiration") val expiration: String? = null,
 )
 
 @Serializable

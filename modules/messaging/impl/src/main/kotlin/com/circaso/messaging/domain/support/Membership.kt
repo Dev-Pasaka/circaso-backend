@@ -1,6 +1,7 @@
 package com.circaso.messaging.domain.support
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.MembersCache
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.shared.UserId
@@ -23,6 +24,14 @@ class Membership(private val chats: ChatRepository, private val cache: MembersCa
     }
 
     suspend fun isMember(chatId: ChatId, userId: UserId): Boolean = userId in members(chatId)
+
+    /** The owner and admins, read from the rows each time (roles change rarely and the readers are few). */
+    suspend fun admins(chatId: ChatId): Set<UserId> =
+        chats
+            .members(chatId)
+            .filter { it.role == Role.OWNER || it.role == Role.ADMIN }
+            .map { it.userId }
+            .toSet()
 
     suspend fun changed(chatId: ChatId) = cache.markChanged(chatId)
 }

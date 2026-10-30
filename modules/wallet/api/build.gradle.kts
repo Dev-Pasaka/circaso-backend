@@ -6,4 +6,5 @@ plugins {
 // DeletionGuard, so the contract it answers comes with it.
 dependencies {
     api(project(":modules:identity:api"))
+    api(project(":modules:messaging:api")) // a transfer names the chat it was paid from
 }

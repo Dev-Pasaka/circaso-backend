@@ -9,6 +9,8 @@ import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.Wallets
 import com.circaso.wallet.presentation.services.WalletDirectoryService
@@ -16,6 +18,8 @@ import com.circaso.wallet.presentation.services.WalletDirectoryService
 /** wallet:api for the assistant later. Every call goes through a service, like any other way in. */
 class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
     override suspend fun hasWallet(userId: UserId): Boolean = directory.hasWallet(userId)
+
+    override suspend fun transfer(transferId: TransferId): TransferSummary? = directory.transfer(transferId)
 }
 
 /**

@@ -1,5 +1,11 @@
 package com.circaso.gateway.realtime
 
+import com.circaso.calls.api.CallFrames
+import com.circaso.calls.api.CallRingingFrame
+import com.circaso.calls.api.CallSnapshot
+import com.circaso.chama.api.ChamaFrames
+import com.circaso.chama.api.ContributionAddedFrame
+import com.circaso.chama.api.RequestUpdatedFrame
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
@@ -33,6 +39,9 @@ private const val PUSH_BATCH = 100
 
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
+
+/** An incoming call is worth nothing after its 45-second ring, so the vendor may not hold it for longer. */
+private const val RING_TTL_SECONDS = 45L
 
 /**
  * What modules call to tell a user something now: to the socket when the user has one open, otherwise to push
@@ -102,6 +111,25 @@ class GatewayRealtime(
                 decode(MemberAddedFrame.serializer(), frame)?.let { addedToGroupPush(it, recipient) }
             }
 
+            "${ChamaFrames.MODULE}.${ChamaFrames.CONTRIBUTION_ADDED}" -> {
+                // to the other members; the contributor already knows
+                decode(ContributionAddedFrame.serializer(), frame)?.takeIf { it.userId != recipient }?.let {
+                    PushMessage(it.goalName, "${it.displayName} added to ${it.goalName}")
+                }
+            }
+
+            "${ChamaFrames.MODULE}.${ChamaFrames.REQUEST_UPDATED}" -> {
+                decode(RequestUpdatedFrame.serializer(), frame)?.let { requestPush(it, recipient) }
+            }
+
+            "${CallFrames.MODULE}.${CallFrames.RINGING}" -> {
+                decode(CallRingingFrame.serializer(), frame)?.let(::ringingPush)
+            }
+
+            "${CallFrames.MODULE}.${CallFrames.ENDED}" -> {
+                decode(CallSnapshot.serializer(), frame)?.let { endedCallPush(it, recipient) }
+            }
+
             "${WalletFrames.MODULE}.${WalletFrames.TRANSFER_UPDATED}" -> {
                 decode(TransferUpdatedFrame.serializer(), frame)?.let(::transferPush)
             }
@@ -147,6 +175,93 @@ class GatewayRealtime(
      * The sender hears only about the end of a payment (Wallet → Realtime frames); a push never shows an amount on
      * the lock screen.
      */
+    // The admins still to decide hear of a pending request; the requester hears the outcome. Never an amount.
+    private fun requestPush(frame: RequestUpdatedFrame, recipient: UserId): PushMessage? =
+        when (frame.state) {
+            "PENDING" -> {
+                if (recipient in
+                    frame.waitingOn
+                ) {
+                    PushMessage(
+                        frame.goalName,
+                        "${frame.requesterName} needs your approval to pay from ${frame.goalName}",
+                    )
+                } else {
+                    null
+                }
+            }
+
+            "APPROVED" -> {
+                if (recipient ==
+                    frame.requestedBy
+                ) {
+                    PushMessage(frame.goalName, "Your request was approved")
+                } else {
+                    null
+                }
+            }
+
+            "DECLINED" -> {
+                if (recipient ==
+                    frame.requestedBy
+                ) {
+                    PushMessage(frame.goalName, "Your request was declined")
+                } else {
+                    null
+                }
+            }
+
+            "PAID" -> {
+                if (recipient == frame.requestedBy) PushMessage(frame.goalName, "Your request was paid") else null
+            }
+
+            else -> {
+                null
+            }
+        }
+
+    /**
+     * Data-only and high priority with a short life, so the app wakes and shows its incoming-call screen (Android's
+     * full-screen intent, CallKit on iOS); the text shows only if it can't.
+     */
+    private fun ringingPush(frame: CallRingingFrame): PushMessage {
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                callId = frame.callId.toString(),
+                kind = "call.ringing",
+                callerName = frame.callerName,
+                callKind = frame.kind,
+            )
+        val what = if (frame.kind == "VIDEO") "video call" else "call"
+        return PushMessage(
+            "Incoming $what",
+            "${frame.callerName} is calling",
+            ids,
+            dataOnly = true,
+            ttlSeconds = RING_TTL_SECONDS,
+        )
+    }
+
+    /**
+     * A call that ended while still ringing someone: nobody answered (`MISSED`, an alert "Missed call from …"), or
+     * the caller hung up first (`CANCELLED`, data-only, so the phone stops ringing and words the missed call itself).
+     * Nobody else is pushed when a call ends; whoever was in it had a socket.
+     */
+    private fun endedCallPush(frame: CallSnapshot, recipient: UserId): PushMessage? {
+        if (recipient == frame.startedBy) return null
+        val me = frame.participants.firstOrNull { it.userId == recipient } ?: return null
+        if (me.state != "MISSED") return null
+        val caller = frame.participants.firstOrNull { it.userId == frame.startedBy }?.displayName ?: "Someone"
+        val text = "Missed call from $caller"
+        val ids = PushPayload(chatId = frame.chatId.toString(), callId = frame.callId.toString())
+        return when (frame.endReason) {
+            "MISSED" -> PushMessage("Missed call", text, ids.copy(kind = "call.missed"))
+            "CANCELLED" -> PushMessage("Missed call", text, ids.copy(kind = "call.ended"), dataOnly = true)
+            else -> null
+        }
+    }
+
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {
             "CONFIRMED" -> PushMessage("Circaso", "Payment sent")

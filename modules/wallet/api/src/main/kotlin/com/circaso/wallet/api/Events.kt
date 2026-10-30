@@ -1,5 +1,6 @@
 package com.circaso.wallet.api
 
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.UserId
 import kotlinx.serialization.Serializable
@@ -33,6 +34,8 @@ data class TransferConfirmed(
     /** `APP` or `ASHA`. */
     val origin: String,
     val proposalId: String? = null,
+    /** The chat it was paid from, when it was (added 2026-10-29 for chama contributions). */
+    val chatId: ChatId? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 

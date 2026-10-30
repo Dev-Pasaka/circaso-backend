@@ -3,10 +3,13 @@ package com.circaso.wallet.presentation.services
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.domain.ports.LoggedFrame
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.HasWallet
+import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.ReplayFrames
 
 /**
@@ -18,8 +21,11 @@ class WalletDirectoryService(
     private val checkFundsBeforeDeletion: CheckFundsBeforeDeletion,
     private val applyCustodyUpdate: ApplyCustodyUpdate,
     private val replayFrames: ReplayFrames,
+    private val lookupTransfer: LookupTransfer,
 ) {
     suspend fun hasWallet(userId: UserId): Boolean = hasWallet.invoke(userId)
+
+    suspend fun transfer(transferId: TransferId): TransferSummary? = lookupTransfer(transferId)
 
     suspend fun canDelete(userId: UserId): Resource<Unit> = checkFundsBeforeDeletion(userId)
 

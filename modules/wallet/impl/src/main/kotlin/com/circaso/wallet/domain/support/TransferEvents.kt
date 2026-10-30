@@ -23,6 +23,7 @@ class TransferEvents(private val bus: EventBus) {
                 amount = Amounts.of(transfer.amount),
                 origin = transfer.origin.name,
                 proposalId = transfer.proposalId?.toString(),
+                chatId = transfer.chatId,
             ),
         )
 

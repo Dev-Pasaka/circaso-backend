@@ -38,6 +38,7 @@ import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
 import com.circaso.wallet.domain.usecases.ReplayFrames
@@ -122,7 +123,14 @@ class Harness(
             clock,
         )
 
-    val directory = WalletDirectoryService(hasWallet, checkFunds, applyUpdate, ReplayFrames(NoFramesKept))
+    val directory =
+        WalletDirectoryService(
+            hasWallet,
+            checkFunds,
+            applyUpdate,
+            ReplayFrames(NoFramesKept),
+            LookupTransfer(transfers),
+        )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))
 
