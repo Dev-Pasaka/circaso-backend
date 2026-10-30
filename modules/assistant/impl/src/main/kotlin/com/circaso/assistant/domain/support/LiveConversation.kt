@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /** Where the conversation's events go: the socket, in production. */
@@ -301,17 +302,19 @@ class LiveConversation(
         when (event) {
             is TranscriptionEvent.SpeechStarted -> {
                 // voice activity, not words: it resets the silence timer and can stop Asha, but is never charged
-                // (noise trips it too, and an open mic is free)
-                userSpoke(isWord = false)
+                // (noise trips it too, and an open mic is free). While her voice plays it may be her own voice back
+                // from the loudspeaker, so then only words decide (decision 2026-10-29).
+                if (voiceMayEcho()) lastActivity = nowMillis() else userSpoke(isWord = false)
             }
 
             is TranscriptionEvent.Interim -> {
+                if (isEcho(event.text)) return
                 userSpoke(audio = event.audio)
                 emit(LiveEvent.Transcript(joined(event.text), isFinal = false))
             }
 
             is TranscriptionEvent.Final -> {
-                if (event.text.isNotBlank()) {
+                if (event.text.isNotBlank() && !isEcho(event.text)) {
                     // a final settles words already heard as interims, after the pause that ended them: it starts
                     // speech only when nothing was heard before it, and never stretches it over that pause
                     userSpoke(isWord = speechStart < 0, audio = event.audio)
@@ -404,6 +407,48 @@ class LiveConversation(
             unmeteredMicros.addAndGet((lastSpeechAt - speechStart) * 1_000)
             speechStart = lastSpeechAt
         }
+
+    /**
+     * Her voice is playing on the phone, or just stopped: what the transcriber hears now may be her own words back
+     * from the loudspeaker, however good the phone's echo canceller. Voice activity alone is then not a barge-in.
+     */
+    private fun voiceMayEcho(): Boolean = speaking != null || nowMillis() < playingUntil + ECHO_TAIL_MILLIS
+
+    /**
+     * Words that are hers, heard back: a run of the transcript's words appears, in order, in what she has just said.
+     * Only while [voiceMayEcho]; otherwise anything heard is the person. An echo is not the person speaking: it is
+     * not a barge-in, not charged, not shown and never becomes a question.
+     */
+    private fun isEcho(text: String): Boolean {
+        if (!voiceMayEcho()) return false
+        val heard = words(text)
+        if (heard.isEmpty()) return false
+        val hers = recentWords.toList()
+        if (hers.isEmpty()) return false
+        // the longest run of heard words found in order inside her recent words
+        var best = 0
+        for (start in hers.indices) {
+            var h = start
+            var run = 0
+            for (w in heard) {
+                val at = hers.subList(h, hers.size).indexOf(w)
+                if (at < 0) break
+                run++
+                h += at + 1
+            }
+            if (run > best) best = run
+            if (best == heard.size) break
+        }
+        return best >= maxOf(1, (heard.size * ECHO_MATCH).roundToInt())
+    }
+
+    /** Her last sentences, as words, for [isEcho]; appended as each sentence goes to the voice. */
+    private val recentWords = ArrayDeque<String>()
+
+    private fun remember(sentence: String) {
+        recentWords.addAll(words(sentence))
+        while (recentWords.size > RECENT_WORDS) recentWords.removeFirst()
+    }
 
     /** Asha is thinking, waiting for the phone, about to speak, or her audio is still playing on the phone. */
     private fun isAshaBusy(): Boolean =
@@ -527,6 +572,7 @@ class LiveConversation(
             val reply = speakingFor(asked)
             reply.captions.add(Caption(sentence, reply.chars / SPOKEN_CHARS_PER_SECOND))
             reply.chars += sentence.length + 1
+            remember(sentence)
             line.speech.speak(sentence)
         }
 
@@ -717,5 +763,17 @@ class LiveConversation(
 
         /** The space after a sentence's last mark: a sentence is whole once the model has written past it. */
         private val sentenceEnd = Regex("(?<=[.!?])\\s+")
+
+        /** After her audio has played out, the room and the transcriber can still be returning it for this long. */
+        const val ECHO_TAIL_MILLIS = 1_500L
+
+        /** The share of a transcript's words that must be hers, in order, for it to be her echo. */
+        const val ECHO_MATCH = 0.7
+
+        const val RECENT_WORDS = 120
+
+        private val wordChars = Regex("[^\\p{L}\\p{N}']+")
+
+        private fun words(text: String): List<String> = text.lowercase().split(wordChars).filter { it.isNotEmpty() }
     }
 }
