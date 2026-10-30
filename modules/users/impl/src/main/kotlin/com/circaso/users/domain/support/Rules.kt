@@ -47,11 +47,15 @@ object HandleRules {
             "everyone",
         )
 
-    /** The handle in its stored (lowercase) form, or null if it breaks the rules or is reserved. */
-    fun normalise(raw: String): String? =
+    /**
+     * The handle in its stored (lowercase) form, or null if it breaks the rules or is reserved. [allowReserved] is for
+     * a support account's handle, which only ops sets (decision 2026-10-31), and for finding one: a reserved handle can
+     * only ever be held by a support account, so looking it up or connecting to it is safe.
+     */
+    fun normalise(raw: String, allowReserved: Boolean = false): String? =
         raw.trim().removePrefix("@").lowercase().takeIf {
             shape.matches(it) &&
-                it !in reserved
+                (allowReserved || it !in reserved)
         }
 
     /** Some alternatives to try when [handle] is taken. */
@@ -118,6 +122,7 @@ class ProfileViews(private val avatars: AvatarStorage, private val contacts: Con
             handle = profile.handle,
             avatarUrl = profile.avatarKey?.takeIf { avatarShown }?.let { avatars.urlOf(it) },
             about = profile.about.takeIf { aboutShown },
+            support = profile.support,
         )
     }
 
@@ -132,6 +137,7 @@ class ProfileViews(private val avatars: AvatarStorage, private val contacts: Con
                     profile.privacy.avatar == AvatarVisibility.EVERYONE_WHO_CAN_REACH
                 }?.let { avatars.urlOf(it) },
             null,
+            profile.support,
         )
 
     suspend fun avatarUrl(profile: Profile) = profile.avatarKey?.let { avatars.urlOf(it) }

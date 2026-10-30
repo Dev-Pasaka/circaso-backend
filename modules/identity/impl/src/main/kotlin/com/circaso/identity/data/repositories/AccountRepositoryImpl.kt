@@ -1,5 +1,6 @@
 package com.circaso.identity.data.repositories
 
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.data.tables.AccountsTable
 import com.circaso.identity.data.tables.DevicesTable
@@ -27,6 +28,7 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
@@ -77,10 +79,24 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
                 it[userId] = account.userId.value
                 it[createdAt] = account.createdAt
                 it[version] = account.version
+                it[kind] = account.kind.name
                 write(it, account, clock.instant())
             }
         }
     }
+
+    override suspend fun supportAccounts(after: UserId?, limit: Int): List<Account> =
+        database.tx("accounts.support-accounts") {
+            // Served by the partial index accounts_support_idx (user_id WHERE kind = 'SUPPORT').
+            val support = AccountsTable.kind eq AccountKind.SUPPORT.name
+            AccountsTable
+                .selectAll()
+                .where { if (after == null) support else support and (AccountsTable.userId greater after.value) }
+                .orderBy(AccountsTable.userId to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toAccount() }
+                .toList()
+        }
 
     override suspend fun deleteAbandoned(createdBefore: Instant, limit: Int): Int =
         database.tx("accounts.delete-abandoned") {
@@ -219,4 +235,5 @@ private fun ResultRow.toAccount() =
         createdAt = this[AccountsTable.createdAt],
         deleteAfter = this[AccountsTable.deleteAfter],
         version = this[AccountsTable.version],
+        kind = AccountKind.valueOf(this[AccountsTable.kind]),
     )

@@ -101,7 +101,7 @@ class Connect(
         when (via) {
             ConnectVia.HANDLE -> {
                 HandleRules
-                    .normalise(value)
+                    .normalise(value, allowReserved = true)
                     ?.let { handles.find(it) }
                     ?.takeIf { it.releasedAt == null }
                     ?.let { ConnectTarget(it.userId, ContactSource.HANDLE, false) }

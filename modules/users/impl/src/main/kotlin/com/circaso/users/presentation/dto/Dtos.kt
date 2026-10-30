@@ -11,6 +11,8 @@ data class PublicProfileDto(
     val handle: String? = null,
     val avatarUrl: String? = null,
     val about: String? = null,
+    /** True only for Circaso's own support account: the app shows it as verified support (decision 2026-10-31). */
+    val support: Boolean = false,
 )
 
 @Serializable

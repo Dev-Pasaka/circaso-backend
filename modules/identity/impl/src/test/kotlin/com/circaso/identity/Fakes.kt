@@ -80,6 +80,12 @@ class MemoryStore :
         accounts[account.userId] = account
     }
 
+    override suspend fun supportAccounts(after: UserId?, limit: Int): List<Account> =
+        accounts.values
+            .filter { it.isSupport && (after == null || it.userId.value > after.value) }
+            .sortedBy { it.userId.value }
+            .take(limit)
+
     override suspend fun claimPhone(account: Account, phone: PhoneNumber): Boolean {
         val holder = findByPhone(phone)
         if (holder != null && holder.userId != account.userId) return false

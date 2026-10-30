@@ -85,6 +85,7 @@ private fun MemberView.toDto() =
                 handle = profile.handle,
                 avatarUrl = profile.avatarUrl,
                 about = profile.about,
+                support = profile.support,
             ),
         role = role.name,
         joinedAt = joinedAt,

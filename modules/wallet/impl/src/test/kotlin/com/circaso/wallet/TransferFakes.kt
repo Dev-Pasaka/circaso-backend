@@ -1,6 +1,7 @@
 package com.circaso.wallet
 
 import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
@@ -256,11 +257,14 @@ class MemoryHolds : PaymentHolds {
     override suspend fun active(userId: UserId): PaymentHold? = holds[userId]
 }
 
-/** Every account is `ACTIVE` unless the test says otherwise. */
+/** Every account is a person's and `ACTIVE` unless the test says otherwise. */
 class FakeAccounts : AccountDirectory {
     val statuses = ConcurrentHashMap<UserId, AccountStatus>()
+    val kinds = ConcurrentHashMap<UserId, AccountKind>()
 
     override suspend fun status(userId: UserId): AccountStatus? = statuses[userId] ?: AccountStatus.ACTIVE
+
+    override suspend fun kind(userId: UserId): AccountKind? = kinds[userId] ?: AccountKind.PERSON
 
     override suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId> = emptyMap()
 }

@@ -74,6 +74,7 @@ class RefreshSession(
         }
         val account = accounts.find(session.userId)
         val device = devices.find(session.userId, session.deviceId)
+        if (account?.isSupport == true) return RefreshOutcome.Refused(IdentityError.SupportAccountNotOnMobile)
         if (account == null || account.status != AccountStatus.ACTIVE || account.activeDeviceId != session.deviceId) {
             return RefreshOutcome.Refused(IdentityError.SessionRevoked)
         }

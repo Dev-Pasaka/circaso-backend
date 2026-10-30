@@ -4,6 +4,7 @@ import com.circaso.identity.api.AccountActivated
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.identity.api.AccountStatusChanged
 import com.circaso.identity.api.PhoneChanged
+import com.circaso.identity.api.SupportAccountCreated
 import com.circaso.shared.DomainException
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventHandler
@@ -29,6 +30,8 @@ class IdentityEventHandler(private val events: IdentityEventsService) {
                     AccountStatusChanged.TYPE to
                         EventHandler { orThrow(events.statusChanged(it.decode(), it.occurredAt)) },
                     AccountDeleted.TYPE to EventHandler { orThrow(events.accountDeleted(it.decode())) },
+                    SupportAccountCreated.TYPE to
+                        EventHandler { orThrow(events.supportAccountCreated(it.decode())) },
                 ),
         )
 

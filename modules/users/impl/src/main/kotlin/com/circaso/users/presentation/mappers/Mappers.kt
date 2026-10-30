@@ -78,7 +78,7 @@ fun parseUserId(raw: String?): UserId? = raw?.let(UserId::parse)
 
 // ---- result → response ----
 
-fun PublicProfile.toDto() = PublicProfileDto(userId.toString(), displayName, handle, avatarUrl, about)
+fun PublicProfile.toDto() = PublicProfileDto(userId.toString(), displayName, handle, avatarUrl, about, support)
 
 fun MyProfile.toResponse() =
     MyProfileResponse(

@@ -1,6 +1,7 @@
 package com.circaso.identity.data
 
 import com.circaso.identity.api.AccountActivated
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.data.PostgresIdentity.Companion.count
@@ -16,6 +17,7 @@ import com.circaso.identity.domain.models.SessionStatus
 import com.circaso.identity.domain.models.SupportRecovery
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.Changes
+import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
 import com.circaso.shared.EventEnvelope
@@ -466,5 +468,33 @@ class DataLayerTest {
             assertEquals(0, swept, "the row its claim holds is skipped, not waited for")
             assertTrue(claim.await() is Resource.Success)
             assertEquals(number, pg.accounts.find(late.userId)!!.phone)
+        }
+
+    @Test
+    fun `an account written without a kind is a person's, and only support accounts are listed as support`() =
+        runBlocking<Unit> {
+            // As every row written before V2__account_kind: the insert names no kind, the column's default fills it.
+            val older = UserId.new()
+            TestPostgres.superuser { connection ->
+                connection.createStatement().use {
+                    it.execute(
+                        "INSERT INTO identity.accounts (user_id, status, created_at, updated_at) " +
+                            "VALUES ('$older', 'ACTIVE', now(), now())",
+                    )
+                }
+            }
+            assertEquals(AccountKind.PERSON, pg.accounts.find(older)?.kind)
+
+            val person = created()
+            val first = created(pending().copy(status = AccountStatus.ACTIVE, kind = AccountKind.SUPPORT))
+            val second = created(pending().copy(status = AccountStatus.ACTIVE, kind = AccountKind.SUPPORT))
+
+            assertEquals(AccountKind.PERSON, pg.accounts.find(person.userId)?.kind)
+            assertEquals(AccountKind.SUPPORT, pg.accounts.find(first.userId)?.kind)
+            // Ids made in the same millisecond can come out in either order; the list is in id order.
+            val (lower, higher) = listOf(first.userId, second.userId).sortedBy { it.toString() }
+            assertEquals(listOf(lower, higher), pg.accounts.supportAccounts(null, 10).map { it.userId })
+            assertEquals(listOf(lower), pg.accounts.supportAccounts(null, 1).map { it.userId })
+            assertEquals(listOf(higher), pg.accounts.supportAccounts(lower, 10).map { it.userId })
         }
 }

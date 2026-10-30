@@ -48,7 +48,7 @@ Every token is a JWT that lives 15 minutes. What a token can reach depends on it
 | `onboarding` | Step 2, before the phone and device are verified | Phone verification, device registration and the account-recovery request. Nothing else. |
 | `app` | Step 4 and every refresh | Everything for your own account. |
 | `agent` | Issued together with the `app` token, shares its session, rotates with it | Only `GET` routes under `/v1/agent/`, for your own data. It is how Asha reads without ever being able to change anything. |
-| `ops` | Never issued to the app | Internal support tools, and this documentation outside local runs. |
+| `ops` | Never issued to the app | Internal support tools (support accounts, `/v1/ops/…`), and this documentation outside local runs. |
 
 A route that needs a scope your token does not have answers `403` with `auth.scope_insufficient`. A missing or bad token answers `401` with `auth.token_missing` or `auth.token_invalid`. An ended session answers `401` with `identity.session_revoked`: sign in again.
 
@@ -143,6 +143,7 @@ The shared ones, then each area's own. Codes are stable.
 | `identity.provider_in_use` | 409 | That Google or Apple login belongs to another account |
 | `identity.recovery_not_eligible` | 403 | Support can only restore accounts that completed identity verification |
 | `identity.release_not_allowed` | 403 | A verified account's number cannot be released |
+| `identity.support_account_not_on_mobile` | 403 | A Circaso support account tried to get an app session (sign-in, phone, device or refresh); support uses its own dashboard |
 | `users.profile_invalid` | 400 | Name empty or over 40 characters, about over 140 |
 | `users.version_conflict` | 409 | The profile changed since you read it; reload and retry |
 | `users.avatar_invalid` | 400 | Wrong type, over 5 MB or not uploaded |
@@ -190,6 +191,7 @@ The shared ones, then each area's own. Codes are stable.
 | `wallet.transfer_not_found` | 404 | No such payment, or not yours |
 | `wallet.funds_remaining` | 409 | Deleting the account while the wallet's US dollar stablecoins (USDC), added up over every chain, come to 0.01 or more, or it holds any amount of any other asset: send it out first |
 | `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer configured; try again |
+| `wallet.support_account_has_no_wallet` | 403 | Circaso support has no wallet: it can't set one up or add a chain, pay, be paid, or be reminded to set one up |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |

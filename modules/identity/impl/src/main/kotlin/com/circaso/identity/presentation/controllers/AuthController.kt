@@ -52,6 +52,7 @@ fun Route.authController(auth: AuthService) {
                 "identity.account_suspended",
                 "identity.account_blocked",
                 "identity.account_deleted",
+                "identity.support_account_not_on_mobile",
             ),
             notes =
                 "No token needed. `next` is `VERIFY_PHONE`, `REVERIFY_PHONE`, `REGISTER_DEVICE` or `DONE`; the " +
@@ -64,7 +65,11 @@ fun Route.authController(auth: AuthService) {
         }.docs<RefreshRequest, RefreshResponse>(
             "I7 · New token pair for a signed refresh request; the old refresh token dies",
             TAG,
-            listOf("identity.session_revoked", "identity.device_proof_invalid"),
+            listOf(
+                "identity.session_revoked",
+                "identity.device_proof_invalid",
+                "identity.support_account_not_on_mobile",
+            ),
             notes = "No bearer token; the phone proves itself by signing `refreshToken|timestamp` with its device key.",
         )
 

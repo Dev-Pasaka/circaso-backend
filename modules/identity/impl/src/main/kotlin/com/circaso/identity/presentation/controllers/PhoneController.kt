@@ -41,6 +41,7 @@ fun Route.phoneController(phones: PhoneService) {
                     "identity.code_locked",
                     "identity.sms_unavailable",
                     "request.rate_limited",
+                    "identity.support_account_not_on_mobile",
                 ),
                 notes = "Scope: `onboarding`. 3 codes per number per 10 minutes, 10 per phone per day.",
             )
@@ -57,6 +58,7 @@ fun Route.phoneController(phones: PhoneService) {
                     "identity.code_locked",
                     "identity.phone_taken",
                     "identity.phone_mismatch",
+                    "identity.support_account_not_on_mobile",
                 ),
                 notes = "Scope: `onboarding`. Five wrong codes lock the account for 10 minutes.",
             )
@@ -67,7 +69,12 @@ fun Route.phoneController(phones: PhoneService) {
             }.docs<CarrierRequest, PhoneVerifiedResponse>(
                 "I5 · Same as I4 from a carrier token, with no SMS",
                 TAG,
-                listOf("identity.carrier_unsupported", "identity.phone_taken", "identity.phone_mismatch"),
+                listOf(
+                    "identity.carrier_unsupported",
+                    "identity.phone_taken",
+                    "identity.phone_mismatch",
+                    "identity.support_account_not_on_mobile",
+                ),
                 notes = "Scope: `onboarding`.",
             )
 

@@ -9,6 +9,7 @@ import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.Reminders
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.SupportAccountRule
 
 /**
  * W10 `POST /wallet/recipients/{userId}/remind`: tells a contact without a wallet that someone wants to pay them, as
@@ -20,9 +21,11 @@ class RequestSetup(
     private val reminders: Reminders,
     private val profiles: Profiles,
     private val frames: FrameSender,
+    private val support: SupportAccountRule,
 ) {
     suspend operator fun invoke(from: UserId, to: UserId): Resource<ReminderOutcome> {
         if (from == to) return Resource.error(WalletError.SelfTransfer)
+        support.refusal(to)?.let { return it }
         if (!payees.canReach(from, to, chatId = null)) return Resource.error(WalletError.NotReachable)
         if (payees.receiving(to).active.isNotEmpty()) return Resource.success(ReminderOutcome.HAS_WALLET)
         if (!reminders.claim(from, to)) return Resource.success(ReminderOutcome.ALREADY_SENT)

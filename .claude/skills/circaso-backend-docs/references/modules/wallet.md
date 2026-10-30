@@ -52,6 +52,15 @@ Circle splits each wallet key between Circle and the user (2-of-2 MPC). Every ac
 - **Pay in a chat:** the payment card is an end-to-end encrypted chat message that carries the `transferId`; the wallet only records the `chatId` (which the server already knows). A note written with the payment travels in the encrypted message and is never stored by the wallet.
 - **From Asha** (Phase B): the app calls W4 with the user token and the `proposalId`; the transfer records `origin: ASHA`. The PIN is still required. Until Phase B is built, W4 refuses a non-null `proposalId` with `request.malformed` (field `proposalId`), since nothing can check it against the assistant's proposal yet.
 
+### Support accounts
+
+**Decided 2026-10-31 (Pasaka): Circaso's support accounts never hold a wallet.** Wallet asks identity (`AccountDirectory.kind`) through `SupportAccountRule` and answers `wallet.support_account_has_no_wallet` (403):
+
+- **W2, W12, W13** for a support account: no Circle user is ever claimed for it and Circle is never called.
+- **W4** with a support account on either side: it can't pay (checked first among the sender rules, before the account status) and can't be paid (checked right after `wallet.self_transfer`, before reach).
+- **W9** for a support account: it can't receive, whichever chain is asked (an error, not a new `status` value, so older apps that only know the three statuses show the message).
+- **W10**: nobody is reminded to set one up.
+
 ### Contract (`wallet:api`)
 
 ```kotlin
@@ -439,6 +448,7 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 | `wallet.transfer_not_found` | NOT_FOUND → 404 | No such transfer, or not this user's |
 | `wallet.chain_unsupported` | INVALID → 400 | A blockchain that isn't in the supported list (W4, W9, W11, W12), or W12 adding a chain retired from receiving |
 | `wallet.funds_remaining` | CONFLICT → 409 | `DeletionGuard`: the US dollar stablecoins (USDC) the wallet holds, added up over every chain, come to 0.01 or more, or it holds any amount of another asset. Reaches the app as is (decision 2026-10-28) |
+| `wallet.support_account_has_no_wallet` | FORBIDDEN → 403 | W2, W12, W13 for a Circaso support account, and W4, W9, W10 with one on either side (decision 2026-10-31) |
 | `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open; also the `DeletionGuard` when a wallet sits on a chain that is unconfigured (never done while funds are on it; its balance can't be read, so deletion is refused; a WARN names the chain and Circle's wallet id) |
 
 ## Not in v1

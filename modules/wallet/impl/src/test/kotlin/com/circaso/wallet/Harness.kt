@@ -30,6 +30,7 @@ import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
@@ -92,18 +93,19 @@ class Harness(
     val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, frames, clock)
     val warnings = RecordingWarnings()
     private val holdings = HoldingsReader(custody, cache, warnings)
-    private val payees = Payees(wallets, reach, chats, custody)
+    private val support = SupportAccountRule(accounts)
+    private val payees = Payees(wallets, reach, chats, custody, support)
     private val events = TransferEvents(bus)
-    val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, clock)
+    val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, support, clock)
 
     val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active)
-    val createWallet = CreateWallet(wallets, transactor, custody, sync, clock)
+    val createWallet = CreateWallet(wallets, transactor, custody, sync, support, clock)
     val openSession = OpenSession(wallets, custody, active)
     val listChains = ListChains(wallets, sync, adding, custody)
-    val addChain = AddChain(wallets, sync, adding, custody, clock)
+    val addChain = AddChain(wallets, sync, adding, custody, support, clock)
     val addMissingChains =
         com.circaso.wallet.domain.usecases
-            .AddMissingChains(wallets, sync, adding, custody, clock)
+            .AddMissingChains(wallets, sync, adding, custody, support, clock)
     val checkFunds = CheckFundsBeforeDeletion(wallets, sync, holdings)
     val hasWallet = HasWallet(wallets)
     val prepareTransfer =
@@ -123,8 +125,8 @@ class Harness(
         )
     val getTransfer = GetTransfer(transfers)
     val listTransactions = ListTransactions(transactions, profiles)
-    val checkRecipient = CheckRecipient(payees, custody)
-    val requestSetup = RequestSetup(payees, reminders, profiles, frames)
+    val checkRecipient = CheckRecipient(payees, custody, support)
+    val requestSetup = RequestSetup(payees, reminders, profiles, frames, support)
     val validateAddress = ValidateAddress(custody)
     val outgoing =
         OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, frames, rules, warnings, ids)

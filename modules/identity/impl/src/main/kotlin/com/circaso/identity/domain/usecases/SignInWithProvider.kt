@@ -70,6 +70,7 @@ class SignInWithProvider(
             }
 
         val account = findOrCreate(command, identity)
+        if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
         return when (account.status) {
             AccountStatus.RECOVERY_PENDING -> Resource.error(IdentityError.RecoveryPending)
             AccountStatus.SUSPENDED -> Resource.error(IdentityError.AccountSuspended)

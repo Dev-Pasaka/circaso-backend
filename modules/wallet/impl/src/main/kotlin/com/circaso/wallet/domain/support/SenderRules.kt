@@ -23,7 +23,7 @@ import java.time.LocalDate
 data class Sender(val user: CircleUser, val wallet: ChainWallet)
 
 /**
- * The rules about the person sending (Wallet → W4, in order): the account is `ACTIVE`, the wallet is active on the
+ * The rules about the person sending (Wallet → W4, in order): not a support account, the account is `ACTIVE`, the wallet is active on the
  * transfer's chain, no payment hold, the amount within limits, and enough on that chain. The daily limit is a
  * reservation in `wal:sent`: a prepared transfer takes its amount, a failed one gives it back.
  */
@@ -35,10 +35,12 @@ class SenderRules(
     private val spend: DailySpend,
     private val custody: StablecoinCustody,
     private val limits: TransferLimits,
+    private val support: SupportAccountRule,
     private val clock: Clock,
 ) {
     /** The account may pay, and its wallet is active on [blockchain], with no hold on it. */
     suspend fun sender(userId: UserId, blockchain: String): Resource<Sender> {
+        support.refusal(userId)?.let { return it }
         if (accounts.status(userId) != AccountStatus.ACTIVE) return Resource.error(WalletError.AccountRestricted)
         custody.supported.find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(userId) ?: return Resource.error(WalletError.NotFound)

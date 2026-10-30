@@ -1,6 +1,7 @@
 package com.circaso.identity.presentation.api
 
 import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.DeviceSignatures
 import com.circaso.identity.api.Principal
@@ -21,6 +22,8 @@ class TokenVerifierImpl(private val directory: DirectoryService) : TokenVerifier
 
 class AccountDirectoryImpl(private val directory: DirectoryService) : AccountDirectory {
     override suspend fun status(userId: UserId): AccountStatus? = directory.status(userId).getOrNull()
+
+    override suspend fun kind(userId: UserId): AccountKind? = directory.kind(userId).getOrNull()
 
     override suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId> =
         directory.resolve(phones).getOrNull().orEmpty()

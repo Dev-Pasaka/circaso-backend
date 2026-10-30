@@ -111,6 +111,7 @@ class ProfileRepositoryImpl(private val database: Database, private val clock: C
         this[ProfilesTable.handleChangedAt] = profile.handleChangedAt
         this[ProfilesTable.avatarKey] = profile.avatarKey
         this[ProfilesTable.privacy] = profile.privacy.toJson()
+        this[ProfilesTable.support] = profile.support
         this[ProfilesTable.updatedAt] = clock.instant()
     }
 }
@@ -145,4 +146,5 @@ private fun ResultRow.toProfile() =
         createdAt = this[ProfilesTable.createdAt],
         version = this[ProfilesTable.version],
         hidden = this[ProfilesTable.accountStatus] != AccountStatus.ACTIVE.name,
+        support = this[ProfilesTable.support],
     )

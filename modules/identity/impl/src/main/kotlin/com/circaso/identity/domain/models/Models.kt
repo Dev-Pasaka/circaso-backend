@@ -1,5 +1,6 @@
 package com.circaso.identity.domain.models
 
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.SessionId
 import com.circaso.integrations.api.SocialProvider
@@ -24,7 +25,12 @@ data class Account(
     val deleteAfter: Instant? = null,
     /** The row's version when it was read; a write checks it, so a stale copy never overwrites a newer one. */
     val version: Long = 0,
-)
+    /** Set at creation and never changed: a support account can't become a person's, or the other way round. */
+    val kind: AccountKind = AccountKind.PERSON,
+) {
+    /** A support account never gets an `app` session (decision 2026-10-31); ops reaches it instead. */
+    val isSupport: Boolean get() = kind == AccountKind.SUPPORT
+}
 
 data class ProviderLink(
     val userId: UserId,
@@ -76,6 +82,7 @@ enum class SecurityEventType {
     RECOVERY_REQUESTED,
     PHONE_RELEASE_REQUESTED,
     SESSION_REUSE,
+    SUPPORT_ACCOUNT_CREATED,
 }
 
 data class SecurityEvent(

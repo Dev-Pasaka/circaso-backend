@@ -7,16 +7,23 @@ import com.circaso.wallet.domain.models.RecipientCheck
 import com.circaso.wallet.domain.models.RecipientQuery
 import com.circaso.wallet.domain.models.RecipientStatus
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.SupportAccountRule
 
 /**
  * W9 `GET /wallet/recipients/{userId}`: whether this person can be paid, and on which chains (decision 2026-10-28: a
  * transfer names its chain). `NO_WALLET` when they have none at all (the app offers W10), `NO_WALLET_ON_CHAIN` when
  * they can't receive on the chain asked for, or on any chain if none was asked. A person the caller can't reach
- * answers `users.not_reachable`, never saying why.
+ * answers `users.not_reachable`, never saying why. Circaso support, which the app shows as such, can't be paid at all:
+ * `wallet.support_account_has_no_wallet` (decision 2026-10-31).
  */
-class CheckRecipient(private val payees: Payees, private val custody: StablecoinCustody) {
+class CheckRecipient(
+    private val payees: Payees,
+    private val custody: StablecoinCustody,
+    private val support: SupportAccountRule,
+) {
     suspend operator fun invoke(query: RecipientQuery): Resource<RecipientCheck> {
         if (query.recipientId == query.senderId) return Resource.error(WalletError.SelfTransfer)
+        support.refusal(query.recipientId)?.let { return it }
         if (query.blockchain != null && custody.supported.find(query.blockchain) == null) {
             return Resource.error(WalletError.ChainUnsupported)
         }

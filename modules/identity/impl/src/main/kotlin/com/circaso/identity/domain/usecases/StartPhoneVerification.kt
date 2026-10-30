@@ -39,6 +39,7 @@ class StartPhoneVerification(
     suspend operator fun invoke(command: StartPhoneCommand): Resource<StartPhoneResult> {
         val userId = command.principal.userId
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
+        if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
         if (account.status == AccountStatus.ACTIVE &&
             account.phone != command.phone
         ) {

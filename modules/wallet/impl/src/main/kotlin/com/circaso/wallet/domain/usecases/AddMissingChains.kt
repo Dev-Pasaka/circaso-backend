@@ -9,6 +9,7 @@ import com.circaso.wallet.domain.models.ChainStatus
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
 import java.time.Clock
@@ -27,9 +28,11 @@ class AddMissingChains(
     private val sync: WalletSync,
     private val adding: AddingChains,
     private val custody: StablecoinCustody,
+    private val support: SupportAccountRule,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(userId: UserId): Resource<List<ChainAddition>> {
+        support.refusal(userId)?.let { return it }
         val user = wallets.circleUser(userId) ?: return Resource.error(WalletError.NotFound)
         val known =
             when (val synced = sync.sync(user)) {

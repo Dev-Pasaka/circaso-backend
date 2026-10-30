@@ -394,6 +394,21 @@ internal object ApiDocsCatalog {
                 ),
             ),
             DocGroup(
+                "Operations",
+                listOf(
+                    DocTag(
+                        "Support accounts",
+                        "Circaso's own support accounts, behind the `ops` scope. The app never calls these; the " +
+                            "support dashboard will.\n\n" +
+                            "A support account is its own kind of account, never a person's: it can't sign in on " +
+                            "the app (every sign-in path answers `identity.support_account_not_on_mobile`), it " +
+                            "never holds a wallet (`wallet.support_account_has_no_wallet`), and its profile " +
+                            "carries `support: true`, which the app shows as verified Circaso support. Only a " +
+                            "support account can hold a reserved handle such as `@circaso`.",
+                    ),
+                ),
+            ),
+            DocGroup(
                 "Assistant tools",
                 listOf(
                     DocTag(

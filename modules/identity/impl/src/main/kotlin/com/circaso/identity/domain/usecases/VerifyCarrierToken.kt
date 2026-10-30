@@ -34,6 +34,7 @@ class VerifyCarrierToken(
                 }
             }
         val account = accounts.find(command.principal.userId) ?: return Resource.error(SharedError.TokenInvalid)
+        if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
         return ownership.confirm(account, phone, command.principal.deviceId)
     }
 }

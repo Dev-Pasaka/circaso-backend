@@ -1,6 +1,7 @@
 package com.circaso.users
 
 import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.EventBus
@@ -45,10 +46,12 @@ import com.circaso.users.domain.support.WaitingContactMatcher
 import com.circaso.users.domain.usecases.BlockUser
 import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckHandle
+import com.circaso.users.domain.usecases.CheckSupportHandle
 import com.circaso.users.domain.usecases.ClaimHandle
 import com.circaso.users.domain.usecases.Connect
 import com.circaso.users.domain.usecases.CreateInvite
 import com.circaso.users.domain.usecases.CreateProfileOnActivation
+import com.circaso.users.domain.usecases.CreateSupportProfile
 import com.circaso.users.domain.usecases.DeleteUserData
 import com.circaso.users.domain.usecases.GetMyProfile
 import com.circaso.users.domain.usecases.GetPublicProfile
@@ -301,6 +304,8 @@ class FakeDirectory : AccountDirectory {
 
     override suspend fun status(userId: UserId) = statuses[userId]
 
+    override suspend fun kind(userId: UserId) = statuses[userId]?.let { AccountKind.PERSON }
+
     override suspend fun resolvePhones(phones: Set<PhoneNumber>) =
         phones
             .mapNotNull { p ->
@@ -422,6 +427,8 @@ class Harness {
     val deleteData = DeleteUserData(users, avatars, users, users, reachCache, clock)
     val replay = ReplayFrames(frames)
     val blockedEitherWay = CheckBlockedEitherWay(users)
+    val checkSupportHandle = CheckSupportHandle(users)
+    val onSupportCreated = CreateSupportProfile(users, users, users, clock)
 
     /** An active account with a profile named [name] and the number [phone]. */
     suspend fun person(name: String, phone: String? = null): UserId {

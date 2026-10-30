@@ -124,6 +124,16 @@ sealed class WalletError(
         ErrorKind.INVALID,
     )
 
+    /**
+     * W2, W12, W13 for a support account, and W4, W9, W10 with one on either side (decision 2026-10-31): Circaso's
+     * support accounts never hold a wallet, so they can't pay or be paid.
+     */
+    data object SupportAccountHasNoWallet : WalletError(
+        "wallet.support_account_has_no_wallet",
+        "Circaso support doesn't have a wallet, so it can't send or receive money.",
+        ErrorKind.FORBIDDEN,
+    )
+
     /** Users' code, returned as is when reach fails (Wallet → Paying a person); it never says why. */
     data object NotReachable : WalletError(
         "users.not_reachable",

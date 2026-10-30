@@ -1,6 +1,7 @@
 package com.circaso.users.di
 
 import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.SupportProfiles
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
@@ -59,10 +60,12 @@ import com.circaso.users.domain.usecases.CanReach
 import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckHandle
 import com.circaso.users.domain.usecases.CheckReach
+import com.circaso.users.domain.usecases.CheckSupportHandle
 import com.circaso.users.domain.usecases.ClaimHandle
 import com.circaso.users.domain.usecases.Connect
 import com.circaso.users.domain.usecases.CreateInvite
 import com.circaso.users.domain.usecases.CreateProfileOnActivation
+import com.circaso.users.domain.usecases.CreateSupportProfile
 import com.circaso.users.domain.usecases.DeleteUserData
 import com.circaso.users.domain.usecases.FilterReachable
 import com.circaso.users.domain.usecases.GetMyProfile
@@ -85,6 +88,7 @@ import com.circaso.users.domain.usecases.UpdateProfile
 import com.circaso.users.presentation.agent.agentController
 import com.circaso.users.presentation.api.ProfilesImpl
 import com.circaso.users.presentation.api.ReachPolicyImpl
+import com.circaso.users.presentation.api.SupportProfilesImpl
 import com.circaso.users.presentation.api.UsersRealtimeReplay
 import com.circaso.users.presentation.controllers.blockController
 import com.circaso.users.presentation.controllers.contactController
@@ -200,14 +204,16 @@ fun usersModule(config: Config): Module =
         single { RecheckWaitingContacts(get(), get(), get()) }
         single { ApplyAccountStatus(get(), get(), get()) }
         single { DeleteUserData(get(), get(), get(), get(), get(), clock) }
+        single { CheckSupportHandle(get()) }
+        single { CreateSupportProfile(get(), get(), get(), clock) }
 
         // presentation
         single { ProfileService(get(), get(), get(), get(), get(), get()) }
         single { HandleService(get(), get(), get()) }
         single { ContactService(get(), get(), get(), get(), get(), get(), get()) }
         single { BlockService(get(), get(), get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get()) }
-        single { IdentityEventsService(get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get()) }
+        single { IdentityEventsService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
             val profiles = get<ProfileService>()
             val handles = get<HandleService>()
@@ -226,5 +232,8 @@ fun usersModule(config: Config): Module =
         // users:api, for messaging, wallet and calls, and the replay the gateway asks for
         single<ReachPolicy> { ReachPolicyImpl(get()) }
         single<Profiles> { ProfilesImpl(get()) }
+
+        // identity:api's SupportProfiles, which identity's ops routes ask (decision 2026-10-31)
+        single<SupportProfiles> { SupportProfilesImpl(get()) }
         single(named("users.replay")) { RealtimeModule("users", UsersRealtimeReplay(get())) }
     }

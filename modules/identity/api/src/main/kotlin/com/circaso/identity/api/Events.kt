@@ -73,3 +73,16 @@ data class AccountDeleted(val userId: UserId) : DomainEvent {
         const val TYPE = "identity.AccountDeleted"
     }
 }
+
+/**
+ * Ops created a support account (decision 2026-10-31). It is `ACTIVE` from the start, with no phone, device or
+ * login, so it carries no `phoneHmac`; users makes its profile from [displayName] and claims [handle] for it.
+ */
+@Serializable
+data class SupportAccountCreated(val userId: UserId, val displayName: String, val handle: String) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "identity.SupportAccountCreated"
+    }
+}

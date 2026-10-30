@@ -58,6 +58,7 @@ import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
@@ -227,26 +228,27 @@ fun walletModule(config: Config): Module =
         single { OrderedIds(clock) }
         single { WalletSync(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { HoldingsReader(get(), get(), get()) }
-        single { Payees(get(), get(), get(), get()) }
-        single { SenderRules(get(), get(), get(), get(), get(), get(), limits, clock) }
+        single { SupportAccountRule(get()) }
+        single { Payees(get(), get(), get(), get(), get()) }
+        single { SenderRules(get(), get(), get(), get(), get(), get(), limits, get(), clock) }
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock) }
         single { Reconciler(get(), get(), get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get(), get()) }
-        single { CreateWallet(get(), get(), get(), get(), clock) }
+        single { CreateWallet(get(), get(), get(), get(), get(), clock) }
         single { OpenSession(get(), get(), get()) }
         single { ListChains(get(), get(), get(), get()) }
-        single { AddChain(get(), get(), get(), get(), clock) }
-        single { AddMissingChains(get(), get(), get(), get(), clock) }
+        single { AddChain(get(), get(), get(), get(), get(), clock) }
+        single { AddMissingChains(get(), get(), get(), get(), get(), clock) }
         single { CheckFundsBeforeDeletion(get(), get(), get()) }
         single { HasWallet(get()) }
         single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetTransfer(get()) }
         single { ListTransactions(get(), get()) }
-        single { CheckRecipient(get(), get()) }
-        single { RequestSetup(get(), get(), get(), get()) }
+        single { CheckRecipient(get(), get(), get()) }
+        single { RequestSetup(get(), get(), get(), get(), get()) }
         single { ValidateAddress(get()) }
         single { ApplyCustodyUpdate(get()) }
         single { ExpireUnsignedTransfers(get(), get(), jobs, clock) }
