@@ -100,6 +100,21 @@ class CloudflareRealtimeTest {
         }
 
     @Test
+    fun `a pulled track without a session id in the answer is matched to the one asked for by name`() =
+        runBlocking<Unit> {
+            reply =
+                """{"requiresImmediateRenegotiation":true,""" +
+                """"sessionDescription":{"type":"offer","sdp":"v=0 sfu offer"},""" +
+                """"tracks":[{"trackName":"audio-u2","mid":"2"},{"trackName":"video-u2","mid":"3"}]}"""
+            val pulled =
+                assertIs<Resource.Success<PulledTracks>>(
+                    media.pullTracks("s1", listOf(RemoteTrack("s2", "audio-u2"), RemoteTrack("s2", "video-u2"))),
+                ).data
+            assertEquals(listOf("s2", "s2"), pulled.tracks.map { it.sessionId })
+            assertEquals("3", pulled.tracks.first { it.trackName == "video-u2" }.mid)
+        }
+
+    @Test
     fun `renegotiate puts the answer and close forces the tracks shut`() =
         runBlocking<Unit> {
             reply = "{}"

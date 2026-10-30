@@ -119,10 +119,12 @@ class CloudflareRealtime(
             TracksAnswer.serializer(),
             { prepare -> send(HttpMethod.Post, "$app/sessions/$sessionId/tracks/new", tracksJson(body), prepare) },
         ) { answer ->
+            // Cloudflare may leave a pulled track's sessionId out of its answer; the name we asked for identifies it.
+            val askedFrom = tracks.associate { it.trackName to it.sessionId }
             val pulled =
                 answer.tracks.mapNotNull { track ->
                     val name = track.trackName ?: return@mapNotNull null
-                    val from = track.sessionId ?: return@mapNotNull null
+                    val from = track.sessionId ?: askedFrom[name] ?: return@mapNotNull null
                     PulledTrack(name, from, track.mid.takeIf { track.errorCode == null })
                 }
             Resource.success(
