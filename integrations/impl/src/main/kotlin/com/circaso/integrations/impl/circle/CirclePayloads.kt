@@ -101,9 +101,18 @@ internal data class BalancesData(val tokenBalances: List<TokenBalanceData> = emp
 @Serializable
 internal data class TokenBalanceData(val token: TokenData = TokenData(), val amount: String = "")
 
-/** A token; a native coin (ETH) has no contract address. */
+/**
+ * A token; a native coin (ETH) has no contract address. [symbol] and [decimals] describe a token we don't offer, so
+ * the wallet can still show it (Circle names a testnet's native coin `ETH-SEPOLIA`).
+ */
 @Serializable
-internal data class TokenData(val id: String = "", val blockchain: String = "", val tokenAddress: String = "")
+internal data class TokenData(
+    val id: String = "",
+    val blockchain: String = "",
+    val tokenAddress: String = "",
+    val symbol: String = "",
+    val decimals: Int? = null,
+)
 
 @Serializable
 internal data class TokenLookupData(val token: TokenData? = null)

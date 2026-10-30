@@ -68,7 +68,7 @@ class CircleMultiChainTest {
         }
 
     @Test
-    fun `balances lists every offered asset on the chain, zero for one not held, and skips other tokens`() =
+    fun `balances lists every offered asset on the chain, zero for one not held, and skips undescribed tokens`() =
         runBlocking<Unit> {
             val weth = "0x00000000000000000000000000000000000000ee"
             val settings =
@@ -115,6 +115,37 @@ class CircleMultiChainTest {
                 circle.tokenOf(1),
                 circle.requests("GET /v1/w3s/wallets/w-1/balances").single().headers["X-User-Token"],
             )
+        }
+
+    @Test
+    fun `a token the wallet holds that we don't offer is shown after the offered ones, unpriced, only while held`() =
+        runBlocking<Unit> {
+            val custody = CircleCustody(circle.client, CircleSettings(appId = "app-1"), circle.clock)
+            val cirBtc = "0x3a3fe695F684Bf9b9e43CF43C2b895Ea5e392bB3"
+
+            fun line(
+                token: String,
+                symbol: String,
+                decimals: Int,
+                amount: String,
+            ) = """{"token":{"blockchain":"ETH-SEPOLIA","tokenAddress":"$token","symbol":"$symbol",""" +
+                """"decimals":$decimals},"amount":"$amount"}"""
+            circle.reply(
+                "GET /v1/w3s/wallets/w-1/balances",
+                """{"data":{"tokenBalances":[""" +
+                    line(cirBtc, "cirBTC", 8, "0.5") + "," +
+                    line("", "ETH-SEPOLIA", 18, "0.01") + "," +
+                    line("0x0000000000000000000000000000000000000bad", "SPENT", 18, "0") + "]}}",
+            )
+
+            val balances = custody.balances(user, "w-1", "ETH-SEPOLIA").data()
+
+            assertEquals(listOf("USDC", "CIRBTC", "ETH"), balances.map { it.asset.symbol }, "offered first, then held")
+            assertEquals(BigInteger.ZERO, balances[0].amountMinor, "USDC, offered and not held")
+            assertEquals(BigInteger.valueOf(50_000_000), balances[1].amountMinor)
+            assertEquals(cirBtc, balances[1].asset.tokenAddress)
+            assertEquals(false, balances[1].asset.usdPegged, "never priced as a dollar")
+            assertEquals(BigInteger("10000000000000000"), balances[2].amountMinor, "the testnet's native coin")
         }
 
     @Test
