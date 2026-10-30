@@ -101,6 +101,30 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
+    /** AT1: an attachment is 1 byte to 32 MiB of ciphertext (decision 2026-10-30). */
+    data object AttachmentTooLarge : MessagingError(
+        "messaging.attachment_too_large",
+        "An attachment can be at most 32 MB.",
+        ErrorKind.INVALID,
+    )
+
+    /**
+     * No such attachment, not ready yet, expired, or the caller may not see it (not the uploader for AT2, not in the
+     * chat for AT3): all look the same, so nobody learns which attachments exist.
+     */
+    data object AttachmentNotFound : MessagingError(
+        "messaging.attachment_not_found",
+        "That attachment doesn't exist or is no longer available.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** AT2: nothing in storage yet, or not the size AT1 promised. Upload again, then complete. */
+    data object AttachmentIncomplete : MessagingError(
+        "messaging.attachment_incomplete",
+        "The upload isn't complete. Upload the file again, then retry.",
+        ErrorKind.INVALID,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

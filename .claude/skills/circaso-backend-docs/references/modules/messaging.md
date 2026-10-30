@@ -13,7 +13,7 @@ Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the de
 - **Chats** — `DIRECT` (exactly two people, one chat per pair) and `GROUP` (up to 1,000 members, with an owner, admins and members). A group's name and avatar are encrypted on the phone; the server stores them sealed.
 - **Key directory** — each account's public identity key, signed prekey, signed Kyber prekey and one-time prekeys, so anyone who can reach a person can start an encrypted session with them (PQXDH: libsignal 0.106 refuses a bundle without the Kyber prekey; decision 2026-10-28). One phone per account, so one key set per account.
 - **Delivery** — encrypted messages held per recipient until their phone acknowledges them, then deleted; 30 days at the latest.
-- **Media** — encrypted blobs in R2, deleted once every recipient has downloaded them; 30 days at the latest.
+- **Attachments** — encrypted blobs in object storage (R2), uploaded and downloaded through pre-signed URLs, deleted 30 days after the upload started (AT1–AT3, decision 2026-10-30; built).
 - **Receipts and typing** — delivered and read receipts, and typing signals, over the gateway WebSocket.
 - **History** — each user's own copy of their chats, sealed on the phone under their history key, so a new phone can restore it. The server stores only ciphertext.
 - **History-key backup** — the history key sealed under a passkey (or a generated recovery key), for when the old phone is gone.
@@ -27,7 +27,7 @@ Signal-style, done entirely on the phone with libsignal (or an equivalent implem
 | Starting a 1:1 session | PQXDH (X3DH plus a Kyber prekey): the sender fetches the recipient's key bundle (M3) | Public keys only |
 | 1:1 messages | Double ratchet | Ciphertext, sender, recipient, time, size |
 | Group messages | Sender keys: each member sends their sender key to every other member once, over 1:1 sessions, then encrypts each group message once | One ciphertext per message, fanned out to members |
-| Media | A random AES-256 key per file; the key and hash travel inside the encrypted message | An encrypted blob and its size |
+| Attachments | A fresh AES-256-GCM key per file; the key and digest travel inside the encrypted message | An encrypted blob, its size, its chat, its uploader and a coarse kind |
 | Group name and avatar | AES-256-GCM under a group metadata key, which phones share with the sender keys | A sealed blob and its version |
 | History | AES-256-GCM under the user's history key (below) | Ciphertext per message, filed by chat |
 
@@ -62,7 +62,7 @@ The double ratchet throws away each message key once it's used, so the delivered
   - **Recovery key (the fallback).** A random 256-bit key shown once as 64 characters, for phones without passkey PRF support (older Android, phones without Google services) and for moves between Android and iPhone, where passkeys don't sync unless the user has a cross-platform password manager. The user writes it down or saves it to a password manager.
   - A backup can hold both wraps of the same HK, so a user can set up a passkey and a recovery key. Losing every wrap and the old phone means losing history; new messages still arrive.
 
-Media is not part of history: files are deleted from R2 after delivery, so a restored chat shows earlier media as "No longer available". Messages that arrive after the new phone is registered are delivered normally.
+Attachments are not part of history: files are deleted from R2 30 days after upload, so a restored chat shows earlier media as "No longer available". Messages that arrive after the new phone is registered are delivered normally.
 
 ### Contract (`messaging:api`)
 
@@ -81,7 +81,7 @@ Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below)
 
 ### Integrations used
 
-- **R2** through the existing presigned upload and download (private bucket, prefix `chat-media/`).
+- **R2** through infrastructure's `ObjectStore` (private bucket), scoped to messaging's prefix: attachments at `attachments/{chatId}/{attachmentId}`.
 - **Push** through `PushGateway`, data-only: the push holds `chatId` and `messageId` and wakes the app, which fetches (M13), decrypts and shows the notification locally. On iOS this runs in a Notification Service Extension. If decryption can't run, the phone shows "New message" with the sender's name.
 
 ### New in `shared` and the gateway
@@ -112,9 +112,10 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 | M12 | `POST /chats/{chatId}/messages` | `SendMessage` | Sends one encrypted message; returns its server id |
 | M13 | `GET /inbox` / `POST /inbox/ack` | `ReadInbox` / `AckDelivered` | Waiting messages, oldest first, paged; acknowledges delivery when the socket isn't open (push wake) |
 | M14 | `DELETE /chats/{chatId}/messages/{messageId}` | `DeleteForEveryone` | Sender only, within 48 hours: undelivered copies are dropped and members get `message.deleted` |
-| M15 | `POST /media/upload-url` / `POST /media/{mediaId}/complete` | `PrepareMediaUpload` / `CompleteMediaUpload` | Presigned R2 upload for one encrypted file (multipart over 50 MB), with its recipients fixed at this point; completes a multipart upload |
-| M16 | `GET /media/{mediaId}/download-url` | `PrepareMediaDownload` | Presigned download for a recipient who hasn't acknowledged it yet |
-| M17 | `POST /media/{mediaId}/downloaded` | `AckMediaDownloaded` | The recipient has the file; the last acknowledgement deletes it |
+| M15–M17 | — | — | Superseded by AT1–AT3 below (decision 2026-10-30) |
+| AT1 | `POST /chats/{chatId}/attachments` | `PrepareAttachmentUpload` | Pre-signed PUT for one encrypted file and its `PENDING` row; members only |
+| AT2 | `POST /attachments/{attachmentId}/complete` | `CompleteAttachmentUpload` | The uploader confirms the PUT; the object's size is checked and the row is `READY` |
+| AT3 | `GET /attachments/{attachmentId}` | `GetAttachmentDownload` | Pre-signed GET for any current member of the chat |
 | M18 | `POST /history` | `AppendHistory` | Up to 200 sealed history entries |
 | M19 | `GET /history/{chatId}` / `DELETE /history/{chatId}` | `ReadHistory` / `ClearHistory` | Pages one chat's history, newest first; "clear chat" for this user only |
 | M20 | `DELETE /history/{chatId}/{messageId}` | `DeleteFromHistory` | "Delete for me" of one message |
@@ -187,7 +188,7 @@ A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP
   "kind": "MESSAGE",                             // MESSAGE | SENDER_KEY | CONTROL
   "ciphertext": "MwohB…",                        // group: one ciphertext for every member
   "recipients": [ { "userId": "0193…", "ciphertext": "MwohB…" } ],   // direct, or SENDER_KEY to some members: one per recipient
-  "mediaIds": ["0193…"],                         // files this message refers to, from M15
+  "mediaIds": ["0193…"],                         // stored as given; attachments (AT1) travel inside the ciphertext
   "pushable": true                               // false for SENDER_KEY and CONTROL: nobody is woken for them
 }
 // → data { "messageId": "0193…", "sentAt": "2026-10-25T09:01:02Z" }
@@ -196,7 +197,7 @@ A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP
 - `messageId` comes from `OrderedIds`, so a chat lists in order.
 - A direct send checks reach both ways; a block answers `users.not_reachable`. A group send checks the sender is a member.
 - `SENDER_KEY` messages carry a member's new sender key to chosen members over their 1:1 sessions, filed under the group so the phone knows where they belong. `CONTROL` carries encrypted chat events phones agree on among themselves (reactions, edits later).
-- Ciphertext is capped at 64 KB; media goes through M15.
+- Ciphertext is capped at 64 KB; files go through AT1–AT3 as attachments, their key and digest inside the ciphertext.
 
 ### M13 Inbox
 
@@ -209,20 +210,26 @@ A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP
 
 When the socket is open, delivery arrives as `messaging.message.new` frames and acknowledgements go back over the socket; the inbox is for catching up and for push wakes.
 
-### M15–M17 Media
+### AT1–AT3 Attachments (built; replaces the M15–M17 draft)
+
+Signal's model (decision 2026-10-30): the phone encrypts each file with a fresh AES-256-GCM key and uploads the opaque blob straight to object storage through a pre-signed URL. The key and the digest travel only inside the E2EE message that refers to the attachment (an ordinary M12 message), so the server never sees content, keys or the real file type. No socket frames or events: the message is the notification.
 
 ```json
-// POST /media/upload-url ← { "chatId": "0193…", "sizeBytes": 2400000, "purpose": "MESSAGE" }   // MESSAGE | GROUP_AVATAR
-// → data { "mediaId": "0193…", "uploadUrl": "https://…r2…", "expiresInSeconds": 300 }
+// AT1 POST /chats/{chatId}/attachments ← { "sizeBytes": 123456, "kind": "image" }   // image | voice | video | file
+// → data { "attachmentId": "0193…", "uploadUrl": "https://…r2…", "uploadHeaders": { "Content-Type": "application/octet-stream" }, "expiresAt": "2026-10-30T10:15:00Z" }
 
-// over 50 MB → data { "mediaId": "0193…", "partSizeBytes": 16777216, "parts": [ { "number": 1, "uploadUrl": "https://…r2…" } ], "expiresInSeconds": 3600 }
-// POST /media/{mediaId}/complete ← { "parts": [ { "number": 1, "etag": "…" } ] }   → data { "complete": true }
+// AT2 POST /attachments/{attachmentId}/complete   → data { "attachmentId": "0193…", "sizeBytes": 123456 }
 
-// GET /media/{mediaId}/download-url → data { "downloadUrl": "https://…r2…", "expiresInSeconds": 300 }
-// POST /media/{mediaId}/downloaded ← {}   → data { "deleted": false }
+// AT3 GET /attachments/{attachmentId}   → data { "downloadUrl": "https://…r2…", "expiresAt": "2026-10-30T10:15:00Z", "sizeBytes": 123456 }
 ```
 
-Files are up to 500 MB, always `application/octet-stream` because they're encrypted (the real type is inside the message). Files over 50 MB upload in 16 MB parts (R2 multipart), so a dropped mobile connection resumes from the last part instead of starting again; downloads resume with HTTP range requests. Recipients are fixed at upload: the chat's members at that moment, less the sender. The file is deleted from R2 when the last recipient acknowledges it, or after 30 days. Someone who joins a group later can't download older files.
+- **AT1** — members of the chat only (`Membership`, the cached member set; anyone else gets `messaging.chat_not_found`). `sizeBytes` is the exact ciphertext size, 1 byte to 32 MiB (`messaging.attachment_too_large`). The PUT URL works 15 minutes and is signed for `Content-Type: application/octet-stream`, which the phone must send exactly (`uploadHeaders`). The URL is signed before the row is written, so a storage outage leaves nothing; the row is `PENDING` with `expires_at = created_at + 30 days`. `attachmentId` is a server-made UUIDv7.
+- **AT2** — the uploader only (anyone else, an unknown id or an expired row: `messaging.attachment_not_found`). The object must exist (`ObjectStore.describe`) at exactly `sizeBytes`, else `messaging.attachment_incomplete` and the row stays `PENDING` (upload again within the URL's 15 minutes, or start over with AT1). `PENDING` → `READY` is one conditional update; completing a ready attachment again answers the same.
+- **AT3** — any **current** member of the attachment's chat (someone who left or was removed no longer can), `READY` and not expired. Everything else, non-members included, is `messaging.attachment_not_found` (404), so nobody learns an attachment exists. The GET URL works 15 minutes and is never stored.
+- **Retention** — 30 days from AT1, downloaded or not; there are no download acknowledgements. `messaging.purge-attachments` runs hourly on the scheduler's leader (Redis leader lock): it reads expired rows and `PENDING` rows over a day old in batches of 500, oldest first, deletes each storage object and then its row. An object storage fails to delete keeps its row for the next run, so no blob is ever orphaned by a lost row.
+- **Local runs** — with `STORAGE_PROVIDER=local` the store is in memory: AT1 returns a placeholder `http://localhost/local-upload/…` URL that accepts nothing, so AT2 answers `messaging.attachment_incomplete` (the same limit as avatars). Use `r2` (the sandbox) to try attachments end to end; domain tests use an in-memory `AttachmentStorage`.
+
+Not in v1: multipart or resumable uploads over 32 MiB, per-recipient download tracking, attachments in history (a restored chat shows earlier attachments as "No longer available" once they expire), group avatars as attachments.
 
 ### M18–M19 History
 
@@ -394,24 +401,19 @@ CREATE TABLE messaging.client_messages (                -- idempotent send
 );
 CREATE INDEX client_messages_expires_at_idx ON messaging.client_messages (expires_at);
 
-CREATE TABLE messaging.media (
-    media_id            uuid        PRIMARY KEY,
-    chat_id             uuid        NOT NULL,
-    uploader_id         uuid        NOT NULL,
-    purpose             text        NOT NULL,           -- MESSAGE | GROUP_AVATAR
-    object_key          text        NOT NULL,
-    size_bytes          bigint      NOT NULL,
-    multipart_upload_id text,                           -- set while a multipart upload is open
-    created_at          timestamptz NOT NULL,
-    expires_at          timestamptz                     -- created_at + 30 days for MESSAGE; NULL for GROUP_AVATAR
+-- V3__attachments.sql (AT1-AT3, decision 2026-10-30); replaces the draft media and media_pending tables
+CREATE TABLE messaging.attachments (
+    attachment_id uuid        PRIMARY KEY,                -- UUIDv7, made on the server
+    chat_id       uuid        NOT NULL,
+    uploader_id   uuid        NOT NULL,
+    kind          text        NOT NULL CHECK (kind IN ('IMAGE', 'VOICE', 'VIDEO', 'FILE')),
+    size_bytes    bigint      NOT NULL CHECK (size_bytes > 0),
+    state         text        NOT NULL CHECK (state IN ('PENDING', 'READY')),
+    created_at    timestamptz NOT NULL,
+    expires_at    timestamptz NOT NULL                    -- created_at + 30 days
 );
-CREATE INDEX media_expires_at_idx ON messaging.media (expires_at) WHERE expires_at IS NOT NULL;
-
-CREATE TABLE messaging.media_pending (                  -- recipients still to download; none left → delete the object
-    media_id uuid NOT NULL REFERENCES messaging.media ON DELETE CASCADE,
-    user_id  uuid NOT NULL,
-    PRIMARY KEY (media_id, user_id)
-);
+CREATE INDEX attachments_expires_at_idx ON messaging.attachments (expires_at);
+CREATE INDEX attachments_pending_created_at_idx ON messaging.attachments (created_at) WHERE state = 'PENDING';
 
 CREATE TABLE messaging.history (
     user_id    uuid NOT NULL,
@@ -449,8 +451,7 @@ CREATE TABLE messaging.outbox (…);                      -- the shared outbox D
 | `group_messages` | Daily partitions, 30 days | Deleted on the last ack (`msg:pending:{messageId}` counts down) |
 | `message_records` | Daily partitions, 30 days | — |
 | `client_messages` | `expires_at`, 1 day | M12 inserts with `insertIgnore` in the sending transaction; `insertedCount = 0` means a retry, which returns the first result. An expired row the purge hasn't reached yet is taken over (`ON CONFLICT … DO UPDATE … WHERE expires_at <= :now`), so it never answers a send a day later |
-| `media` | `expires_at`, 30 days (none for group avatars) | **Lock order:** every path that touches both tables (complete, M17, purge) locks the `media` row (`FOR UPDATE`) first, then `media_pending`, so exactly one ack sees that none are left |
-| `media_pending` | Deleted with its `media` row | M17 takes the caller's row with `deleteReturning` |
+| `attachments` (V3) | `expires_at`, 30 days from AT1; `PENDING` rows after 1 day | AT2's `PENDING` → `READY` is a conditional `UPDATE … WHERE state = 'PENDING'`; `messaging.purge-attachments` deletes the storage object, then the row |
 | `history` | — (until cleared or the account is deleted) | — |
 | `history_key_backups` | — | — |
 | `settings` | — | — |
@@ -462,7 +463,7 @@ Every read of a table with `expires_at` filters `expires_at > now()`; `messaging
 
 - Direct messages: `messaging.ack` deletes the recipient's `inbox` row; nothing else holds the ciphertext.
 - Group messages: each member's `inbox` row is deleted on ack. The shared `group_messages` row is deleted when the last member acks (`msg:pending:{messageId}` in Redis counts down), and dropping the day's partition after 30 days catches anything Redis loses.
-- Media: each recipient's `media_pending` row is deleted on M17; when none are left, the `media` row is deleted and the R2 object after the commit. A daily job (`MediaSweep`) deletes R2 objects under `chat-media/` whose `media` row is gone or expired, because R2 objects have no TTL of their own (decision 2026-10-25). It walks the bucket listing, so it needs no table scan, and it never touches a `GROUP_AVATAR` object that still has a row.
+- Attachments: not deleted on download; `messaging.purge-attachments` (hourly) deletes the object and then the row 30 days after AT1, or a day after it while still `PENDING` (AT1–AT3).
 
 **Fan-out:** a group message to 1,000 members writes one `group_messages` row, one `message_records` row and 999 small `inbox` rows (no ciphertext in them) with one `batchInsert` in the sending transaction, together with the `client_messages` row, then sends the frames after the commit. Sending answers once the transaction has committed; frames and pushes go out after.
 
@@ -520,8 +521,9 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 | `messaging.prekey_id_exists` | CONFLICT → 409 | A top-up resends a one-time prekey id that is already stored |
 | `messaging.too_many_prekeys` | INVALID → 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
 | `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without valid `X-Device-Timestamp` / `X-Device-Signature` headers |
-| `messaging.media_invalid` | INVALID → 400 | Over 500 MB, upload missing, or a multipart upload with missing parts |
-| `messaging.media_gone` | NOT_FOUND → 404 | Already downloaded by everyone, expired, or not for this user |
+| `messaging.attachment_too_large` | INVALID → 400 | AT1 `sizeBytes` under 1 byte or over 32 MiB |
+| `messaging.attachment_not_found` | NOT_FOUND → 404 | No such attachment, expired, not `READY` (AT3), not the uploader (AT2), or not a current member of its chat (AT3): all look the same |
+| `messaging.attachment_incomplete` | INVALID → 400 | AT2 when the object isn't in storage or isn't the promised size |
 | `messaging.history_too_large` | INVALID → 400 | Over 200 entries, or an entry over 64 KB |
 | `messaging.backup_not_found` | NOT_FOUND → 404 | No history-key backup |
 | `messaging.rate_limited` | RATE_LIMITED → 429 | Key-bundle or backup-fetch limit reached |
