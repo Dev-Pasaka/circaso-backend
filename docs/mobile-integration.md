@@ -290,8 +290,8 @@ Every route the phone calls, in the order a person meets them. **Scope** is the 
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `GET /v1/handles/{handle}/availability`<br>**U5** Whether a @handle is free, taken or invalid, with a suggestion | `app` | — → HandleAvailabilityResponse | **READY** | 30 per hour, one count shared with U9 and connecting by @handle. Errors: `request.rate_limited`. |
-| `PUT /v1/me/handle`<br>**U6** Claim or change your @handle, once every 30 days | `app` | ClaimHandleRequest → MyProfileResponse | **READY** | Once every 30 days. Errors: `users.handle_invalid`, `users.handle_taken`, `users.handle_cooldown`. |
+| `GET /v1/handles/{handle}/availability`<br>**U5** Whether a @handle is free, taken or invalid, with a suggestion | `app` | — → HandleAvailabilityResponse | **READY** | 120 per hour, its own count (checking as you type). Errors: `request.rate_limited`. |
+| `PUT /v1/me/handle`<br>**U6** Claim or change your @handle whenever the new one is free | `app` | ClaimHandleRequest → MyProfileResponse | **READY** | Whenever the new handle is free; at most 10 changes a day (`request.rate_limited`). The old handle stays held for you for 30 days. Errors: `users.handle_invalid`, `users.handle_taken`, `request.rate_limited`. |
 | `GET /v1/users/by-handle/{handle}`<br>**U9** Exact-match @handle lookup | `app` | — → PublicProfileDto | **READY** | 30 lookups per user per hour. Exact match; an owner who turned lookup off, or whose account is deleted or suspended, looks like not found. Errors: `users.handle_not_found`, `request.rate_limited`. |
 
 ### Contacts

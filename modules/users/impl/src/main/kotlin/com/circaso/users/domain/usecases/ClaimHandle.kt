@@ -2,6 +2,7 @@ package com.circaso.users.domain.usecases
 
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ProfileUpdated
@@ -9,19 +10,21 @@ import com.circaso.users.domain.errors.UsersError
 import com.circaso.users.domain.models.HandleClaim
 import com.circaso.users.domain.models.MyProfile
 import com.circaso.users.domain.ports.Transactor
+import com.circaso.users.domain.ports.UsersCache
 import com.circaso.users.domain.repositories.HandleRepository
 import com.circaso.users.domain.repositories.ProfileRepository
 import com.circaso.users.domain.repositories.UsersChanges
 import com.circaso.users.domain.repositories.UsersStore
 import com.circaso.users.domain.support.HANDLE_COOLDOWN
 import com.circaso.users.domain.support.HandleRules
+import com.circaso.users.domain.support.MAX_HANDLE_CHANGES_PER_DAY
 import com.circaso.users.domain.support.ProfileProvisioner
 import com.circaso.users.domain.support.ProfileViews
 import com.circaso.users.domain.support.UserNotifier
 import java.time.Clock
 
 /**
- * U6: claims or changes the @handle, once every 30 days. The claim, the profile's version-checked update, the old
+ * U6: claims or changes the @handle, whenever the new one is free (at most [MAX_HANDLE_CHANGES_PER_DAY] a day). The claim, the profile's version-checked update, the old
  * handle's 30-day hold and the outbox row are one transaction: a claim that loses either race leaves nothing behind.
  */
 class ClaimHandle(
@@ -34,6 +37,7 @@ class ClaimHandle(
     private val notifier: UserNotifier,
     private val views: ProfileViews,
     private val clock: Clock,
+    private val usersCache: UsersCache,
 ) {
     suspend operator fun invoke(userId: UserId, raw: String): Resource<MyProfile> {
         val handle = HandleRules.normalise(raw) ?: return Resource.error(UsersError.HandleInvalid)
@@ -42,6 +46,9 @@ class ClaimHandle(
         if (old.handle == handle) return Resource.success(MyProfile(old, views.avatarUrl(old), changeable))
         val now = clock.instant()
         if (changeable != null && now.isBefore(changeable)) return Resource.error(UsersError.HandleCooldown)
+        if (old.handle != null && usersCache.countHandleChange(userId) > MAX_HANDLE_CHANGES_PER_DAY) {
+            return Resource.error(SharedError.RateLimited(usersCache.handleChangeRetryAfter(userId)?.seconds ?: 86_400))
+        }
 
         val released = old.handle?.let { HandleClaim(it, userId, old.handleChangedAt ?: old.createdAt, now) }
         val event = bus.envelope(ProfileUpdated(userId, old.version + 1, listOf(ProfileUpdated.HANDLE)))

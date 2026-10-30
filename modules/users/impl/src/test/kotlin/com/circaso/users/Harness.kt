@@ -277,6 +277,17 @@ class MemoryUsersCache : UsersCache {
 
     override suspend fun handleLookupRetryAfter(userId: UserId): Duration? = Duration.ofMinutes(30)
 
+    private val checks = ConcurrentHashMap<UserId, Long>()
+    private val changes = ConcurrentHashMap<UserId, Long>()
+
+    override suspend fun countHandleCheck(userId: UserId) = checks.merge(userId, 1L, Long::plus)!!
+
+    override suspend fun handleCheckRetryAfter(userId: UserId): Duration? = Duration.ofMinutes(30)
+
+    override suspend fun countHandleChange(userId: UserId) = changes.merge(userId, 1L, Long::plus)!!
+
+    override suspend fun handleChangeRetryAfter(userId: UserId): Duration? = Duration.ofHours(12)
+
     override suspend fun recordSyncBatch(
         userId: UserId,
         syncId: UUID,
@@ -379,7 +390,7 @@ class Harness {
     val prepareAvatar = PrepareAvatarUpload(avatars, config)
     val setAvatar = SetAvatar(provisioner, users, avatars, users, users, bus, notifier, views, config)
     val checkHandle = CheckHandle(users, usersCache)
-    val claimHandle = ClaimHandle(provisioner, users, users, users, users, bus, notifier, views, clock)
+    val claimHandle = ClaimHandle(provisioner, users, users, users, users, bus, notifier, views, clock, usersCache)
     val syncContacts = SyncContacts(directory, users, users, views, hasher, users, users, reachCache, usersCache, clock)
     val listContacts = ListContacts(users, users, views)
     val lookupHandle = LookupHandle(users, users, users, views, usersCache)

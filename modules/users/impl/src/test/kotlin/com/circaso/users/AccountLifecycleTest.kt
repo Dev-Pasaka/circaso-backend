@@ -75,7 +75,7 @@ class AccountLifecycleTest {
 
     private val applyStatus = ApplyAccountStatus(provisioner, profiles, reachCache)
     private val claimHandle =
-        ClaimHandle(provisioner, profiles, handles, transactor, store, bus, notifier, views, clock)
+        ClaimHandle(provisioner, profiles, handles, transactor, store, bus, notifier, views, clock, usersCache)
     private val lookupHandle = LookupHandle(handles, profiles, blocks, views, usersCache)
     private val listContacts = ListContacts(contacts, profiles, views)
     private val searchContacts = SearchContacts(contacts, profiles, views)

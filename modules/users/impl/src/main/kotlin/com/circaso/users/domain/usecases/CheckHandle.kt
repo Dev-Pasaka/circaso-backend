@@ -11,13 +11,13 @@ import com.circaso.users.domain.support.HandleRules
 
 /**
  * U5: free, taken or invalid, with a suggestion when taken. A handle on hold for its old owner is taken for everyone
- * else. Counts against the same 30 handle lookups an hour as U9 and connecting by handle, so it can't be used to
- * walk the handle space.
+ * else. It says only free or taken, never whose, and has its own 120 an hour (decision 2026-10-30) so the profile can
+ * check as the person types without using up the 30 lookups of people by handle.
  */
 class CheckHandle(private val handles: HandleRepository, private val usersCache: UsersCache) {
     suspend operator fun invoke(userId: UserId, raw: String): Resource<HandleCheck> {
-        if (usersCache.countHandleLookup(userId) > MAX_PER_HOUR) {
-            return Resource.error(SharedError.RateLimited(usersCache.handleLookupRetryAfter(userId)?.seconds ?: 3_600))
+        if (usersCache.countHandleCheck(userId) > MAX_PER_HOUR) {
+            return Resource.error(SharedError.RateLimited(usersCache.handleCheckRetryAfter(userId)?.seconds ?: 3_600))
         }
         val handle =
             HandleRules.normalise(raw)
@@ -33,7 +33,7 @@ class CheckHandle(private val handles: HandleRepository, private val usersCache:
     }
 
     private companion object {
-        const val MAX_PER_HOUR = 30
+        const val MAX_PER_HOUR = 120
         const val SUGGESTIONS_TRIED = 8
     }
 }
