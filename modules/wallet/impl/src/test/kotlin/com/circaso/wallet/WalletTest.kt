@@ -243,6 +243,27 @@ class WalletTest {
         }
 
     @Test
+    fun `W13 adds every supported chain the wallet isn't on, and nothing once it is on all of them`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+
+            val added = h.addMissingChains(amina).data()
+
+            // MATIC-AMOY is retired from receiving in these chains, so it is never added.
+            assertEquals(listOf("SOL-DEVNET"), added.map { it.blockchain })
+            assertEquals(true, added.all { it.status == ChainStatus.ADDING && it.challengeId != null })
+            h.custody.sign(circleUserId, "SOL-DEVNET", address = "So1AbC")
+            h.wallet(amina).data()
+            assertEquals(emptyList(), h.addMissingChains(amina).data(), "already on every chain")
+        }
+
+    @Test
+    fun `W13 needs a wallet that is set up`() =
+        runBlocking<Unit> {
+            assertEquals("wallet.not_found", h.addMissingChains(amina).code())
+        }
+
+    @Test
     fun `W12 on a chain already on the wallet answers ENABLED with nothing to sign`() =
         runBlocking<Unit> {
             h.activeWallet(amina)

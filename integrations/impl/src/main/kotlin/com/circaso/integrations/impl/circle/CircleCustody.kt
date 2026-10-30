@@ -63,8 +63,17 @@ class CircleCustody internal constructor(
     }
 
     override suspend fun createWallet(circleUserId: String, idempotencyKey: UUID): Resource<Challenge> {
+        // Every receiving chain that shares the default's account type is created in the same PIN setup.
         val chain = settings.supported.default
-        val body = InitializeBody(idempotencyKey.toString(), settings.accountType(chain), listOf(chain))
+        val group = settings.accountType(chain)
+        val chains =
+            listOf(chain) +
+                settings.supported.chains
+                    .filter {
+                        it.receiveEnabled && it.blockchain != chain &&
+                            settings.accountType(it.blockchain) == group
+                    }.map { it.blockchain }
+        val body = InitializeBody(idempotencyKey.toString(), group, chains)
         return asUser(circleUserId) { token ->
             client.write<InitializeBody, ChallengeData>(
                 HttpMethod.Post,
@@ -89,6 +98,32 @@ class CircleCustody internal constructor(
     ): Resource<Challenge> {
         if (settings.supported.find(blockchain) == null) return notSupported(blockchain)
         val body = AddWalletsBody(idempotencyKey.toString(), settings.accountType(blockchain), listOf(blockchain))
+        return asUser(circleUserId) { token ->
+            client.write<AddWalletsBody, ChallengeData>(
+                HttpMethod.Post,
+                "/v1/w3s/user/wallets",
+                "create_wallet",
+                body,
+                token,
+            )
+        }.flatMapReply { token, reply -> challengeOf(token, reply, "create_wallet") }
+    }
+
+    override fun creationGroup(blockchain: String): String = settings.accountType(blockchain)
+
+    override suspend fun addWallets(
+        circleUserId: String,
+        blockchains: List<String>,
+        idempotencyKey: UUID,
+    ): Resource<Challenge> {
+        blockchains.firstOrNull { settings.supported.find(it) == null }?.let { return notSupported(it) }
+        val groups = blockchains.map { settings.accountType(it) }.distinct()
+        if (groups.size !=
+            1
+        ) {
+            return Resource.error(IntegrationError.Rejected("These chains can't be added in one step."))
+        }
+        val body = AddWalletsBody(idempotencyKey.toString(), groups.single(), blockchains)
         return asUser(circleUserId) { token ->
             client.write<AddWalletsBody, ChallengeData>(
                 HttpMethod.Post,

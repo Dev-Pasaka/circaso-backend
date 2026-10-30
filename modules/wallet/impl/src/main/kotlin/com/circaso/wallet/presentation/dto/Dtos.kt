@@ -115,6 +115,9 @@ data class ChainOptionDto(
 data class AddChainRequest(val blockchain: String)
 
 @Serializable
+data class AddMissingChainsResponse(val chains: List<AddChainResponse>)
+
+@Serializable
 data class AddChainResponse(
     val blockchain: String,
     /** `ADDING` with a challenge to run, or `ENABLED` when the wallet is already on this chain. */

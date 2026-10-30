@@ -64,7 +64,7 @@ class CircleCustodyTest {
         }
 
     @Test
-    fun `createWallet asks for the initialize challenge on the configured chain as the user`() =
+    fun `createWallet asks for the initialize challenge on every SCA chain as the user`() =
         runBlocking<Unit> {
             circle.reply("POST /v1/w3s/user/initialize", """{"data":{"challengeId":"challenge-1"}}""")
             val key = UUID.randomUUID()
@@ -86,8 +86,9 @@ class CircleCustodyTest {
             val body = request.sent<InitializeBody>()
             assertEquals(key.toString(), body.idempotencyKey)
             assertEquals("SCA", body.accountType)
+            // Every receiving SCA chain in the same PIN setup (decision 2026-10-30); Solana (EOA) can't share it.
             assertEquals(
-                listOf("BASE-SEPOLIA"),
+                listOf("BASE-SEPOLIA", "MATIC-AMOY", "ETH-SEPOLIA"),
                 body.blockchains,
             )
         }

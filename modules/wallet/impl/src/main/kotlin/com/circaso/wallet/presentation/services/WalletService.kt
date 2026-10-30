@@ -11,6 +11,7 @@ import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.models.WalletSetup
 import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.domain.usecases.AddChain
+import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.ListChains
@@ -23,6 +24,7 @@ class WalletService(
     private val openSession: OpenSession,
     private val listChains: ListChains,
     private val addChain: AddChain,
+    private val addMissingChains: AddMissingChains,
 ) {
     suspend fun wallet(query: WalletQuery): Resource<WalletView> = getWallet(query)
 
@@ -33,4 +35,6 @@ class WalletService(
     suspend fun chains(userId: UserId): Resource<List<ChainOption>> = listChains(userId)
 
     suspend fun addChain(command: AddChainCommand): Resource<ChainAddition> = addChain.invoke(command)
+
+    suspend fun addMissingChains(userId: UserId): Resource<List<ChainAddition>> = addMissingChains.invoke(userId)
 }
