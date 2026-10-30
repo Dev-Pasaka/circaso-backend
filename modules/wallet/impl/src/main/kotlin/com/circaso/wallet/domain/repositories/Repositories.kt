@@ -9,6 +9,7 @@ import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletTransaction
+import java.time.Instant
 import java.util.UUID
 
 /** `circle_users` and `wallets`: the wallet and the chains it is on. */
@@ -57,6 +58,17 @@ interface TransferRepository {
         change: TransferChange,
         from: Set<TransferState> = to.from,
     ): Transfer?
+
+    /**
+     * Transfers in [state] prepared in [createdAfter, createdBefore), newest first, at most [limit]: the open ones the
+     * jobs look after (`transfers_open_idx`).
+     */
+    suspend fun inState(
+        state: TransferState,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer>
 }
 
 /** `transactions`: the history rows, the sender's `OUT` and the recipient's `IN`. */
@@ -81,6 +93,12 @@ interface TransactionRepository {
         to: TransferState,
         change: TransferChange,
     ): WalletTransaction?
+
+    /**
+     * The users with a history row since [since], on either side (the row's user and its counterparty), at most
+     * [limit]: whom `wallet.reconcile-daily` (and the light pass) compare with Circle (`transactions_occurred_idx`).
+     */
+    suspend fun parties(since: Instant, limit: Int): List<UserId>
 }
 
 /** Wallet's outbox rows, written inside the transaction that makes the change. */

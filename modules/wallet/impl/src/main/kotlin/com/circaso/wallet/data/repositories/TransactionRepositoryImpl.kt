@@ -14,16 +14,21 @@ import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
+import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
+import java.time.Instant
 
 /**
  * `transactions`. An inbound row is inserted with `ON CONFLICT DO NOTHING` (`transactions_circle_key`), so a repeated
@@ -73,6 +78,28 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
             move(to, change) {
                 (TransactionsTable.circleTxId eq circleTxId) and (TransactionsTable.userId eq userId.value)
             }.singleOrNull()
+        }
+
+    override suspend fun parties(since: Instant, limit: Int): List<UserId> =
+        database.tx("transactions.parties") {
+            val owners =
+                TransactionsTable
+                    .select(TransactionsTable.userId)
+                    .where { TransactionsTable.occurredAt greaterEq since }
+                    .withDistinct()
+                    .limit(limit)
+                    .map { UserId(it[TransactionsTable.userId]) }
+                    .toList()
+            val counterparties =
+                TransactionsTable
+                    .select(TransactionsTable.counterpartyId)
+                    .where {
+                        (TransactionsTable.occurredAt greaterEq since) and TransactionsTable.counterpartyId.isNotNull()
+                    }.withDistinct()
+                    .limit(limit)
+                    .mapNotNull { row -> row[TransactionsTable.counterpartyId]?.let(::UserId) }
+                    .toList()
+            (owners + counterparties).distinct().take(limit)
         }
 
     /**

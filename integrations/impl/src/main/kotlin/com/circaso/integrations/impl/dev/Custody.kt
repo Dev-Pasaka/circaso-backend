@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory
 import java.math.BigInteger
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -152,6 +153,20 @@ class FakeCustody(
                 ?: Resource.error(IntegrationError.Rejected("Unknown transaction."))
         }
 
+    override suspend fun transactions(
+        circleUserId: String,
+        since: Instant,
+        limit: Int,
+    ): Resource<List<CustodyTransaction>> =
+        guarded {
+            Resource.success(
+                transactions.values
+                    .filter { it.circleUserId == circleUserId && !it.updatedAt.isBefore(since) }
+                    .sortedByDescending { it.updatedAt }
+                    .take(limit),
+            )
+        }
+
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         guarded {
             val format = if (blockchain.startsWith("SOL")) SOLANA_ADDRESS else ADDRESS
@@ -258,6 +273,13 @@ class LogCustody(private val fake: FakeCustody = FakeCustody(autoCompleteSetup =
 
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
         fake.transaction(circleUserId, circleTxId).also { log.info("custody transaction {}", circleTxId) }
+
+    override suspend fun transactions(
+        circleUserId: String,
+        since: Instant,
+        limit: Int,
+    ): Resource<List<CustodyTransaction>> =
+        fake.transactions(circleUserId, since, limit).also { log.info("custody transactions of {}", circleUserId) }
 
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         fake.validateAddress(blockchain, address).also { log.info("custody validate an address on {}", blockchain) }

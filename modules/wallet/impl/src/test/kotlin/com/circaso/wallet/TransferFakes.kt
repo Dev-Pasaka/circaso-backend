@@ -15,12 +15,14 @@ import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletTransaction
+import com.circaso.wallet.domain.ports.ActiveWallets
 import com.circaso.wallet.domain.ports.DailySpend
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.LoggedFrame
 import com.circaso.wallet.domain.ports.PaymentHolds
 import com.circaso.wallet.domain.ports.RealtimeLog
 import com.circaso.wallet.domain.ports.Reminders
+import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
@@ -88,6 +90,21 @@ class MemoryTransferRepository : TransferRepository {
             rows[transferId] = moved
             moved
         }
+
+    override suspend fun inState(
+        state: TransferState,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        rows.values
+            .filter {
+                it.state == state &&
+                    !it.createdAt.isBefore(
+                        createdAfter,
+                    ) && it.createdAt.isBefore(createdBefore)
+            }.sortedByDescending { it.createdAt }
+            .take(limit)
 }
 
 /** `transactions` in memory, unique per (Circle transaction, user) and per transfer. */
@@ -122,6 +139,13 @@ class MemoryTransactionRepository : TransactionRepository {
         to: TransferState,
         change: TransferChange,
     ): WalletTransaction? = move(to, change) { it.circleTxId == circleTxId && it.userId == userId }
+
+    override suspend fun parties(since: Instant, limit: Int): List<UserId> =
+        rows
+            .filter { !it.occurredAt.isBefore(since) }
+            .flatMap { listOfNotNull(it.userId, it.counterpartyId) }
+            .distinct()
+            .take(limit)
 
     private fun move(
         to: TransferState,
@@ -176,6 +200,27 @@ class MemoryDailySpend : DailySpend {
         day: LocalDate,
         amountMinor: Long,
     ): Long = totals.merge(userId to day, amountMinor, Long::plus)!!
+}
+
+/** `wal:active` in memory: the last time each user was seen. */
+class MemoryActiveWallets(private val clock: Clock) : ActiveWallets {
+    val seen = ConcurrentHashMap<UserId, Instant>()
+
+    override suspend fun touch(userId: UserId) {
+        seen[userId] = clock.instant()
+    }
+
+    override suspend fun since(cutoff: Instant): List<UserId> =
+        seen.entries
+            .filter { !it.value.isBefore(cutoff) }
+            .sortedByDescending { it.value }
+            .map { it.key }
+}
+
+class MemoryStuckNotices : StuckNotices {
+    val claimed: MutableSet<TransferId> = ConcurrentHashMap.newKeySet()
+
+    override suspend fun claim(transferId: TransferId): Boolean = claimed.add(transferId)
 }
 
 class MemoryReminders : Reminders {

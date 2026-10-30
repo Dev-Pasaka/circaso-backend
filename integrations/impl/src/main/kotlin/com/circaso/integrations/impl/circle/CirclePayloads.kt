@@ -126,6 +126,9 @@ internal data class ValidateAddressData(val isValid: Boolean = false)
 internal data class TransactionData(val transaction: TransactionPayload? = null)
 
 @Serializable
+internal data class TransactionsData(val transactions: List<TransactionPayload> = emptyList())
+
+@Serializable
 internal data class TransactionPayload(
     val id: String = "",
     val userId: String = "",

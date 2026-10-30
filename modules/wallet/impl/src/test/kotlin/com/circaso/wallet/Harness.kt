@@ -12,6 +12,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.domain.models.AddChainCommand
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.CreateWalletCommand
+import com.circaso.wallet.domain.models.JobSettings
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.models.TransferLimits
@@ -21,11 +22,13 @@ import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletSync
@@ -33,7 +36,9 @@ import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
+import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CreateWallet
+import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
@@ -41,6 +46,7 @@ import com.circaso.wallet.domain.usecases.ListChains
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
+import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
 import com.circaso.wallet.domain.usecases.ValidateAddress
@@ -78,17 +84,20 @@ class Harness(
     val chats = FakeChats()
     val profiles = FakeProfiles()
     val ids = OrderedIds(clock)
+    val active = MemoryActiveWallets(clock)
+    val notices = MemoryStuckNotices()
+    val jobs = JobSettings()
 
     val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, frames, clock)
     val warnings = RecordingWarnings()
     private val holdings = HoldingsReader(custody, cache, warnings)
     private val payees = Payees(wallets, reach, chats, custody)
     private val events = TransferEvents(bus)
-    private val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, clock)
+    val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, clock)
 
-    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody)
+    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active)
     val createWallet = CreateWallet(wallets, transactor, custody, sync, clock)
-    val openSession = OpenSession(wallets, custody)
+    val openSession = OpenSession(wallets, custody, active)
     val listChains = ListChains(wallets, sync, adding, custody)
     val addChain = AddChain(wallets, sync, adding, custody, clock)
     val addMissingChains =
@@ -115,16 +124,24 @@ class Harness(
     val checkRecipient = CheckRecipient(payees, custody)
     val requestSetup = RequestSetup(payees, reminders, profiles, frames)
     val validateAddress = ValidateAddress(custody)
-    val applyUpdate =
-        ApplyCustodyUpdate(
+    val outgoing =
+        OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, frames, rules, warnings, ids)
+    val updates =
+        CustodyUpdates(
             wallets,
             sync,
-            OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, frames, rules, warnings, ids),
+            outgoing,
             IncomingUpdates(wallets, transactions, transactor, frames, profiles, ids),
             cache,
             warnings,
             clock,
         )
+    val applyUpdate = ApplyCustodyUpdate(updates)
+    val expireUnsigned = ExpireUnsignedTransfers(transfers, outgoing, jobs, clock)
+    val checkStuck =
+        CheckStuckTransfers(transfers, wallets, custody, updates, notices, warnings, jobs, clock)
+    val reconcileWallets =
+        ReconcileWallets(active, transactions, Reconciler(wallets, custody, updates, warnings), jobs, clock)
 
     val directory =
         WalletDirectoryService(

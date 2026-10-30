@@ -1,7 +1,9 @@
 package com.circaso.wallet.domain.ports
 
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.Holding
+import java.time.Instant
 
 /**
  * `wal:balance:{circleWalletId}`: what one chain's wallet holds, for 15 seconds, so opening the wallet screen doesn't
@@ -28,6 +30,31 @@ interface WalletWarnings {
 
     /** An update carries a transfer's `refId` but comes from another wallet than the transfer's; it isn't applied. */
     fun refIdOfAnotherWallet(transferId: String, circleWalletId: String)
+
+    /** A transfer is still `SUBMITTED` an hour after it was prepared (`wallet.stuck-transfers`); said once. */
+    fun transferStuck(transferId: String, blockchain: String)
+
+    /** A reconciliation job couldn't read Circle and backs off; [skipRuns] runs are skipped before the next try. */
+    fun jobBackingOff(job: String, skipRuns: Int)
+}
+
+/**
+ * `wal:active`: a hash of the users who opened the wallet (W1) or a Circle session (W3) lately, field the user id,
+ * value when (epoch ms); the key expires one active window after the last write. The light reconciliation pass reads
+ * it, so money that came in while a webhook was lost shows within minutes for anyone looking. Recording never fails
+ * the request that records it.
+ */
+interface ActiveWallets {
+    suspend fun touch(userId: UserId)
+
+    /** The users active since [cutoff], most recent first; older entries are dropped. */
+    suspend fun since(cutoff: Instant): List<UserId>
+}
+
+/** `wal:stuck:{transferId}`: a stuck transfer is reported once (`SET NX`, 2 days). */
+interface StuckNotices {
+    /** True if this call took the notice for [transferId]. */
+    suspend fun claim(transferId: TransferId): Boolean
 }
 
 /**

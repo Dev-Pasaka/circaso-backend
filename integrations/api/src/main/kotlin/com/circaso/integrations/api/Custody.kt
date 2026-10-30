@@ -87,6 +87,17 @@ interface StablecoinCustody {
 
     suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
 
+    /**
+     * The user's transactions on every wallet they hold, in and out, created at or after [since], newest first and at
+     * most [limit] of them. Only offered assets are listed, as [transaction] gives them. For the wallet's
+     * reconciliation jobs, which catch what a lost webhook never told us.
+     */
+    suspend fun transactions(
+        circleUserId: String,
+        since: Instant,
+        limit: Int,
+    ): Resource<List<CustodyTransaction>>
+
     /** Whether [address] is a valid address on [blockchain]. */
     suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean>
 

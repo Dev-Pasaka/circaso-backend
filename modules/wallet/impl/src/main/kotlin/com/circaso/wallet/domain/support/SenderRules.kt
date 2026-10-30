@@ -107,6 +107,18 @@ class SenderRules(
         spend.add(userId, dayOf(preparedAt), -amount.amountMinor)
     }
 
+    /**
+     * Takes a transfer's amount again after it had been given back on `EXPIRED`: Circle says it was signed after all,
+     * so the money left. Never refused: it is already gone.
+     */
+    suspend fun retake(
+        userId: UserId,
+        preparedAt: Instant,
+        amount: Money,
+    ) {
+        spend.add(userId, dayOf(preparedAt), amount.amountMinor)
+    }
+
     private fun today(): LocalDate = LocalDate.now(clock)
 
     private fun dayOf(instant: Instant): LocalDate = LocalDate.ofInstant(instant, clock.zone)

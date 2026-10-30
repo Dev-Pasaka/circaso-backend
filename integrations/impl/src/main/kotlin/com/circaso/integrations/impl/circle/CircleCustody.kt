@@ -20,7 +20,9 @@ import io.ktor.http.HttpMethod
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
+import java.net.URLEncoder
 import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -213,6 +215,50 @@ class CircleCustody internal constructor(
             offeredOnly(transactions.translate(transaction))
         }
 
+    override suspend fun transactions(
+        circleUserId: String,
+        since: Instant,
+        limit: Int,
+    ): Resource<List<CustodyTransaction>> {
+        val listed = mutableListOf<CustodyTransaction>()
+        var after: String? = null
+        while (listed.size < limit) {
+            val size = minOf(PAGE_SIZE, limit - listed.size)
+            val path =
+                "/v1/w3s/transactions?from=${encode(since.toString())}&pageSize=$size" +
+                    (after?.let { "&pageAfter=${encode(it)}" } ?: "")
+            val page =
+                asUser(circleUserId) { token ->
+                    client.get<TransactionsData>(path, "list_transactions", token)
+                }.flatMapReply { _, reply ->
+                    if (reply !is CircleReply.Ok) return@flatMapReply CircleErrors.failure(reply, "list_transactions")
+                    Resource.success(reply.data.transactions)
+                }
+            val payloads =
+                when (page) {
+                    is Resource.Success -> page.data
+                    is Resource.Error -> return page
+                }
+            for (payload in payloads) {
+                when (val translated = transactions.translate(payload)) {
+                    is Resource.Success -> translated.data?.let { listed += it.withUser(circleUserId) }
+
+                    // One transaction we can't read (logged by the translation) doesn't hide the others.
+                    is Resource.Error -> if (translated.error is IntegrationError.Unavailable) return translated
+                }
+            }
+            if (payloads.size < size) break
+            after = payloads.last().id
+        }
+        return Resource.success(listed.take(limit))
+    }
+
+    /** Circle's list may leave out the user on each transaction; it is the user we asked about. */
+    private fun CustodyTransaction.withUser(circleUserId: String) =
+        if (this.circleUserId.isEmpty()) copy(circleUserId = circleUserId) else this
+
+    private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8)
+
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> {
         if (settings.supported.find(blockchain) == null) return notSupported(blockchain)
         val reply =
@@ -370,5 +416,8 @@ class CircleCustody internal constructor(
     private companion object {
         /** Gas is sponsored through Gas Station on SCA wallets; the level only sets how fast Circle bids. */
         const val FEE_LEVEL = "MEDIUM"
+
+        /** The most Circle lists in one page. */
+        const val PAGE_SIZE = 50
     }
 }

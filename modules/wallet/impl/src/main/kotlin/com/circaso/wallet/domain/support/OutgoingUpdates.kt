@@ -52,22 +52,53 @@ class OutgoingUpdates(
             return true
         }
         val moved = move(transfer, next, change) ?: return true
-
-        moved.event?.let { bus.publish(it) }
-        if (moved.givesBack) rules.release(moved.transfer.senderId, moved.transfer.createdAt, moved.transfer.amount)
-        // TODO(WS4): an EXPIRED transfer moved to SUBMITTED or CONFIRMED takes its amount again (wal:sent), once
-        //  ExpireUnsignedTransfers gives it back.
-        frames.send(moved.transfer.senderId, moved.transfer.toFrame())
+        announce(moved)
         return true
     }
 
-    /** What one update did to a transfer: the transfer now, its event, and whether its amount goes back. */
-    private class Moved(val transfer: Transfer, val event: EventEnvelope?, val givesBack: Boolean)
+    /**
+     * `ExpireUnsignedTransfers`: a transfer still awaiting its signature when the signing window closed is `EXPIRED`,
+     * with its `OUT` row, through the same guard; its amount goes back to the daily limit and the sender is told, as
+     * for any other move. False if it had moved on already (Circle's update came first). No event: only a final state
+     * from Circle has one.
+     */
+    suspend fun expire(transfer: Transfer, change: TransferChange): Boolean {
+        val id = transfer.transferId
+        val moved =
+            transactor.run("transfers.expire") {
+                transfers.move(id, TransferState.EXPIRED, change)?.also {
+                    transactions.moveByTransfer(id, TransferState.EXPIRED, change)
+                }
+            } ?: return false
+        announce(Moved(moved, event = null, givesBack = true))
+        return true
+    }
+
+    /** After the commit: the event, the daily limit, then `transfer.updated` to the sender. */
+    private suspend fun announce(moved: Moved) {
+        moved.event?.let { bus.publish(it) }
+        val transfer = moved.transfer
+        if (moved.givesBack) rules.release(transfer.senderId, transfer.createdAt, transfer.amount)
+        if (moved.retakes) rules.retake(transfer.senderId, transfer.createdAt, transfer.amount)
+        frames.send(transfer.senderId, transfer.toFrame())
+    }
+
+    /**
+     * What one update did to a transfer: the transfer now, its event, and whether its amount goes back to the daily
+     * limit or is taken again (an `EXPIRED` transfer the chain says was signed after all).
+     */
+    private class Moved(
+        val transfer: Transfer,
+        val event: EventEnvelope?,
+        val givesBack: Boolean,
+        val retakes: Boolean = false,
+    )
 
     /**
      * The transfer, its `OUT` row and the event for a final state, in one transaction. `FAILED` is tried first from an
      * open state, whose amount still sits in the daily limit and goes back, then from `EXPIRED`, whose amount was given
-     * back when it expired: so it is given back exactly once.
+     * back when it expired: so it is given back exactly once. `SUBMITTED` and `CONFIRMED` likewise try the open states
+     * first; from `EXPIRED` they take the amount again, since the money did leave.
      */
     private suspend fun move(
         transfer: Transfer,
@@ -82,7 +113,10 @@ class OutgoingUpdates(
                     transfers.move(id, next, change, OPEN)?.let { Moved(it, event, givesBack = true) }
                         ?: transfers.move(id, next, change, EXPIRED)?.let { Moved(it, event, givesBack = false) }
                 } else {
-                    transfers.move(id, next, change)?.let { Moved(it, event, givesBack = false) }
+                    transfers.move(id, next, change, next.from - EXPIRED)?.let { Moved(it, event, givesBack = false) }
+                        ?: transfers.move(id, next, change, EXPIRED)?.let {
+                            Moved(it, event, givesBack = false, retakes = true)
+                        }
                 }
             moved?.also {
                 transactions.moveByTransfer(id, next, change)
@@ -141,7 +175,7 @@ class OutgoingUpdates(
         /** States whose amount still sits in the daily limit. */
         val OPEN = setOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED)
 
-        /** Its amount was given back when it expired (WS4). */
+        /** Its amount was given back when it expired (`ExpireUnsignedTransfers`). */
         val EXPIRED = setOf(TransferState.EXPIRED)
     }
 }

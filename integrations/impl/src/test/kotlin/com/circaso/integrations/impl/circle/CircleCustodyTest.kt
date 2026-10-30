@@ -320,6 +320,36 @@ class CircleCustodyTest {
         }
 
     @Test
+    fun `transactions lists the user's transactions since a time, as the user, in our words`() =
+        runBlocking<Unit> {
+            circle.reply("GET /v1/w3s/tokens/${FakeCircle.USDC_TOKEN_ID}", FakeCircle.USDC_TOKEN_REPLY)
+            val inbound =
+                CircleWebhookTest
+                    .transaction(
+                        "INBOUND",
+                        "COMPLETE",
+                    ).replace("\"id\":\"tx-1\"", "\"id\":\"tx-2\"")
+            val outbound = CircleWebhookTest.transaction("OUTBOUND", "SENT", refId = "ref-1")
+            circle.reply("GET /v1/w3s/transactions", """{"data":{"transactions":[$inbound,$outbound]}}""")
+            val since = Instant.parse("2026-10-27T07:00:00Z")
+
+            val listed = custody.transactions(user, since, limit = 10).data()
+
+            assertEquals(listOf("tx-2", "tx-1"), listed.map { it.circleTxId })
+            assertEquals(listOf(CustodyDirection.IN, CustodyDirection.OUT), listed.map { it.direction })
+            assertEquals(CustodyTransactionState.CONFIRMED, listed[0].state)
+            assertEquals(CustodyTransactionState.SUBMITTED, listed[1].state)
+            assertEquals("ref-1", listed[1].refId)
+            val request = circle.requests("GET /v1/w3s/transactions").single()
+            assertEquals(since.toString(), request.url.parameters["from"])
+            assertEquals("10", request.url.parameters["pageSize"])
+            assertEquals(circle.tokenOf(1), request.headers["X-User-Token"])
+
+            circle.down = true
+            assertIs<IntegrationError.Unavailable>((custody.transactions(user, since, 10) as Resource.Error).error)
+        }
+
+    @Test
     fun `validateAddress checks on the chain it is given`() =
         runBlocking<Unit> {
             circle.reply("POST /v1/w3s/transactions/validateAddress", """{"data":{"isValid":true}}""")

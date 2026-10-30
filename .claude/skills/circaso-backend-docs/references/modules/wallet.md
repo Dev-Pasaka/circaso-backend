@@ -95,6 +95,7 @@ interface StablecoinCustody {
     suspend fun balances(circleUserId: String, walletId: String, blockchain: String): Resource<List<AssetBalance>> // every offered asset
     suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> // blockchain, idempotencyKey, refId
     suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
+    suspend fun transactions(circleUserId: String, since: Instant, limit: Int): Resource<List<CustodyTransaction>>  // the jobs: GET /v1/w3s/transactions?from=&pageSize= as the user
     suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean>
     suspend fun pinChallenge(circleUserId: String, kind: PinChallenge, idempotencyKey: UUID): Resource<Challenge>
 }
@@ -366,14 +367,19 @@ A payment between two Circaso users writes two `transactions` rows: the sender's
 | `wal:sent:{userId}:{date}` | USDC minor units prepared today (UTC) | 2 days | Daily limit: W4 reserves a transfer's amount (`INCRBY`, given back at once if it passes the limit). A transfer's amount is given back **exactly once**: on `FAILED` from an open state (`AWAITING_SIGNATURE`, `SUBMITTED`: a refusal at prepare or Circle's update), or on `EXPIRED` by WS4's job; `FAILED` from `EXPIRED` gives nothing back. An `EXPIRED` → `SUBMITTED`/`CONFIRMED` move takes the amount again (WS4) |
 | `wal:remind:{from}:{to}` | `1` | 24 h | W10 once a day per pair (`SET NX`) |
 | `wal:seq:{userId}` | counter | 8 days, renewed on use | Next realtime seq for wallet frames |
+| `wal:active` | hash: field per user id, value the epoch ms of their last W1 read or W3 session | the active window (30 min) from the last write; stale fields dropped by the job | Who `wallet.reconcile-active` checks at Circle; recording it never fails W1 or W3 |
+| `wal:stuck:{transferId}` | `1` | 2 days | `wallet.stuck-transfers` reports a transfer stuck after an hour once (`SET NX`) |
 
 **Scheduled jobs** (Architecture → Scheduled jobs)
 
-| Job | Every | Does |
+| Job (scheduler name) | Every | Does |
 | --- | --- | --- |
-| `ExpireUnsignedTransfers` | 1 min | `AWAITING_SIGNATURE` older than 15 min → `EXPIRED` |
-| `StuckTransfers` | 5 min | `SUBMITTED` older than 15 min: read the transaction from Circle and apply its state; still stuck after an hour → alert and tell the sender it's taking longer |
-| `ReconcileWallets` | daily | For wallets with activity that day, compare Circle's transaction list with ours and fill or correct missing rows (a lost webhook) |
+| `ExpireUnsignedTransfers` (`wallet.expire-unsigned`) | 1 min | `AWAITING_SIGNATURE` older than 15 min → `EXPIRED` through the transition guard, with its `OUT` row; the amount goes back to `wal:sent` and the sender gets `transfer.updated`. No event. Circle's later `SUBMITTED`/`CONFIRMED` still applies and takes the amount again |
+| `StuckTransfers` (`wallet.stuck-transfers`) | 1 min (`WALLET_JOBS_STUCK_INTERVAL_SECONDS`; 5 min is enough in production) | `SUBMITTED` older than 30 s (`WALLET_JOBS_STUCK_AFTER_SECONDS`) and younger than 24 h: read the transaction from Circle (`StablecoinCustody.transaction`) and apply it through the webhook's own path; still stuck an hour after it was prepared → WARN once (`wal:stuck`). Telling the sender it's taking longer waits for a frame (Open questions) |
+| `ReconcileWallets`, light pass (`wallet.reconcile-active`) | 2 min (`WALLET_JOBS_RECONCILE_INTERVAL_SECONDS`) | Users active in the last 30 min (a W1 read or W3 session in `wal:active`, or a `transactions` row on either side): list their Circle transactions of the last hour (`StablecoinCustody.transactions`) and apply each through the webhook's own path, so a lost inbound inserts the `IN` row and sends `payment.received` within minutes |
+| `ReconcileWallets`, daily pass (`wallet.reconcile-daily`) | daily | For users with a `transactions` row that day, compare Circle's transaction list (last 26 h) with ours the same way and fill or correct missing rows (a lost webhook) |
+
+Every job applies what Circle says through the one path the webhook takes (`CustodyUpdates`: `OutgoingUpdates` by `refId`, `IncomingUpdates` by wallet), so the transfer, its rows, its event, the frames, the push and the chat's payment card end the same whichever came first; the transition guard and the unique keys make the second one change nothing. Each run is bounded (`WALLET_JOBS_TRANSFER_BATCH`, `_ACTIVE_BATCH`, `_DAILY_BATCH`, `_TRANSACTIONS_PER_USER`); the first time Circle can't be reached a run stops and the job skips its next 1, 2, 4 … 16 runs.
 
 ## Events
 
@@ -445,6 +451,7 @@ As built (WS2): `ExchangeRates.usdRate(currency)` returns the rate or null, neve
 
 Decided 2026-10-28 (see decisions.md): a transfer names its chain; amounts are strings across the wallet; the deletion threshold is summed over every chain; a chain is retired with its receive switch, never removed while funded; W12's Circle key comes from user, chain and hour; `wallet.funds_remaining` is the deletion code the app sees; balances can be shown in the person's fiat currency (by country of origin, passed by the app) from an open exchange-rate source; the 48-hour payment hold after a support restore stays; a wallet can be on several chains (Base, Polygon, Ethereum and Solana at launch, USDC on each), starting on Base, the user adding others (W12).
 
+- **Telling the sender a payment is taking longer** (`StuckTransfers`, after an hour): no frame or push for it exists yet; until one is decided the job only warns operators and the app keeps showing `SUBMITTED` (`TODO(decision: …)` in `CheckStuckTransfers`).
 
 These also go into `decisions.md`.
 

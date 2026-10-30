@@ -14,13 +14,18 @@ import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.repositories.TransferRepository
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -95,6 +100,25 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                 .singleOrNull()
         }
     }
+
+    override suspend fun inState(
+        state: TransferState,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        database.tx("transfers.in-state") {
+            TransfersTable
+                .selectAll()
+                .where {
+                    (TransfersTable.state eq state.name) and
+                        (TransfersTable.createdAt greaterEq createdAfter) and
+                        (TransfersTable.createdAt less createdBefore)
+                }.orderBy(TransfersTable.createdAt to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toTransfer() }
+                .toList()
+        }
 
     private fun ResultRow.toTransfer() =
         Transfer(
