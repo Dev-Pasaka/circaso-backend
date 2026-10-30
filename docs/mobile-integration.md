@@ -1,6 +1,6 @@
 # Circaso mobile integration guide
 
-For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-28 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
+For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-30 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
 
 ## 1. How to use this file
 
@@ -8,6 +8,10 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real vendors: Google and Apple sign-in, SMS (Twilio Verify), email (Resend), push (FCM), file storage (R2) and Asha's model, speech-to-text and voice (Cloudflare Workers AI). Only the Android carrier check and device attestation are faked there (marked **DEV STUB** below).
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
+
+> **Changed on 2026-10-30, encrypted chat attachments (new routes):**
+> 1. **Attachments are in** (section 7, Attachments): AT1 `POST /v1/chats/{chatId}/attachments`, AT2 `POST /v1/attachments/{attachmentId}/complete`, AT3 `GET /v1/attachments/{attachmentId}`. Signal-style: encrypt each file on the phone with a fresh AES-256-GCM key, PUT the ciphertext to the pre-signed URL, complete it, then send an ordinary M12 message whose ciphertext carries the `attachmentId`, key, digest and real type. Up to 32 MiB; kept 30 days. No new frames.
+> 2. This replaces the M15–M17 media design (500 MB multipart, `/v1/media/…`), which will not be built.
 
 > **Changed on 2026-10-29, chamas (new routes and frames):**
 > 1. **A group's shared goal is in** (section 7, Chama): CH1–CH6 under `/v1/chama`, with `chama` / `goal.updated`, `contribution.added`, `request.updated` frames (section 8). Send `{"module":"chama","seq":…}` in `last`. The money sits in the treasurer's wallet: contributions are W4 payments to the treasurer with `chatId`.
@@ -48,7 +52,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **83** routes the phone calls: **56 READY**, **26 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **86** routes the phone calls: **59 READY**, **26 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -70,7 +74,8 @@ Of the **83** routes the phone calls: **56 READY**, **26 PARTIAL**, **1 DEV STUB
 | Encryption keys (publish, top up, status, fetch a bundle) | **READY** | Uploads are signed with the device key in `X-Device-Timestamp` / `X-Device-Signature` headers over the raw, uncompressed body (section 5). A bundle can be fetched by someone who can reach the person or shares a group with them. |
 | Chats and members (direct chats, groups, roles) | **READY** | |
 | Messages between people (sending, inbox, receipts, typing, delete for everyone) | **READY** | End-to-end encrypted on the phone; the server stores ciphertext until it is acknowledged. |
-| Chat media, chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
+| Chat attachments (photos, voice notes, video, files) | **READY** | AT1–AT3: encrypted on the phone, ciphertext up to 32 MiB straight to R2 through pre-signed URLs, kept 30 days. On a local server (`STORAGE_PROVIDER=local`) the upload URL is a placeholder, so test against the sandbox. |
+| Chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
 | Wallet (create, PIN session, balance per chain, fiat balance, add a chain) | **PARTIAL** | W1–W3 and W12 work. On dev the custody provider is Circle on testnet (Base Sepolia, Polygon Amoy, Ethereum Sepolia, Solana Devnet): the challenges are real, so run them in the Circle SDK, where the user sets the PIN and the wallet appears on Circle's testnet. Test USDC comes from Circle's testnet faucet (faucet.circle.com), sent to the chain's address from W1. |
 | Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work against Circle's testnet: complete the payment's challenge in the Circle SDK with the PIN, and `transfer.updated` and `payment.received` arrive as Circle's webhooks report the transaction (testnet USDC from Circle's faucet). Limits are placeholders (500 USDC a payment, 1 000 a day). |
 | Transaction history, statements, PIN change and restore, chamas | **MISSING** | Designed (wallet W6–W8); being built in slices. |
@@ -445,6 +450,16 @@ Every message is encrypted on the phone (libsignal); the server holds the cipher
 
 **A replaced phone.** When someone moves to a new phone, their old keys are deleted, everyone who shares a chat with them gets `keys.changed` ("Amina's security code changed": fetch their new bundle), and messages still waiting for the old phone are dropped: each sender gets `message.undeliverable` and should resend from its own copy once the new keys are there.
 
+### Attachments
+
+Photos, voice notes, video and files travel Signal-style. The phone makes a fresh random AES-256-GCM key for each file, encrypts it, and uploads only the ciphertext, straight to storage (R2) through a pre-signed URL; the server never streams file bytes and never sees the key. The **key, the digest (SHA-256 of the ciphertext) and the real content type go inside the E2EE message** that refers to the attachment: send it with M12 like any other message (put the `attachmentId` in the encrypted payload; `mediaIds` is stored as given and not checked). Recipients decrypt the message, call AT3, download, check the digest, then decrypt the file. Order: **AT1 → PUT → AT2 → M12**. No socket frames: the message is the notification. Every `POST` sends an `Idempotency-Key`.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/chats/{chatId}/attachments`<br>**AT1** Start an encrypted upload | `app` | `{ "sizeBytes": 123456, "kind": "image" }` → `{ "attachmentId", "uploadUrl", "uploadHeaders": { "Content-Type": "application/octet-stream" }, "expiresAt" }` | **READY** | Members of the chat only. `kind` is `image`, `voice`, `video` or `file` (lowercase). `sizeBytes` is the exact size of the **ciphertext** (with the GCM tag), 1 byte to 32 MiB. Then `PUT` the ciphertext bytes to `uploadUrl` with exactly the `uploadHeaders` (no auth header, no envelope) before `expiresAt` (15 minutes); on expiry start again with AT1. The file is deleted 30 days after this call, or after a day if never completed. Errors: `messaging.chat_not_found` (no such chat, or you're not in it), `messaging.attachment_too_large`, `request.malformed`. |
+| `POST /v1/attachments/{attachmentId}/complete`<br>**AT2** Complete the upload | `app` | — → `{ "attachmentId", "sizeBytes" }` | **READY** | The uploader only, after the PUT returned 2xx. The server checks the object is there at exactly AT1's `sizeBytes`. Completing twice answers the same, so retry freely. Then send the M12 message. Errors: `messaging.attachment_incomplete` (nothing uploaded, or a different size: PUT again while the URL works, or start over), `messaging.attachment_not_found` (not yours, unknown or expired), `request.malformed`. |
+| `GET /v1/attachments/{attachmentId}`<br>**AT3** Download link | `app` | — → `{ "downloadUrl", "expiresAt", "sizeBytes" }` | **READY** | Anyone **currently** in the attachment's chat, once it is complete. `GET` `downloadUrl` (no auth header) before `expiresAt` (15 minutes); don't store the link, ask again. Verify the digest from the message before decrypting. After 30 days, or after you leave the chat, show "No longer available". Errors: `messaging.attachment_not_found` (also for a pending attachment or a chat you aren't in: the server doesn't say which), `request.malformed`. |
+
 ## 8. Realtime socket
 
 While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSockets` plugin; the server pings every 25 seconds). The **first frame** must authenticate within a few seconds or the server closes it:
@@ -542,7 +557,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 ## 10. Not built yet, and a suggested order
 
 **Backend MISSING (do not call, do not invent endpoints; stub the UI behind a feature flag):**
-1. Chat media, chat history and the history-key backup (chats, sending, the inbox and receipts exist).
+1. Chat history and the history-key backup (chats, sending, the inbox, receipts and attachments exist).
 2. Transaction history and statements (W6, W7), PIN change and restore (W8), the payment hold after a support restore, chamas. The wallet (W1–W3, W12) and payments (W4, W5, W9–W11, wallet frames and pushes) are in.
 3. Calls: a call log message in the chat, CallKit VoIP pushes on iOS (PushKit), screen sharing. Calls themselves (CL1–CL8) are in.
 4. Push for anything other than new messages, group adds, wallet payments and calls.
@@ -567,7 +582,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 8. Asha chat with streaming and tool requests, then voice (section 9).
 9. Account security screens, linked logins, recovery request.
 10. Push: register the FCM token (I9) and handle the data-only message push (section 8).
-11. Encrypted chats: keys (M1–M3), chats and groups (M4–M11), sending, inbox and receipts (M12–M14, section 8).
+11. Encrypted chats: keys (M1–M3), chats and groups (M4–M11), sending, inbox and receipts (M12–M14, section 8), then attachments (AT1–AT3).
 
 **Definition of done for each screen:** every error `code` in the catalogue's *Errors* column has a message in the app; every `POST`/`PUT`/`PATCH`/`DELETE` sends an `Idempotency-Key`; no token, code, key or phone number is ever logged; retries reuse the same `Idempotency-Key`.
 
@@ -591,6 +606,9 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **AskedFromDto** — `chatId`: string; `chatName`?: string|null
 - **AssetDto** — `symbol`: string; `tokenAddress`: string (empty for a chain's own coin); `decimals`: integer; `amountMinor`: string; `amount`: string; `fiatAmount`?: string|null
 - **AssetTotalDto** — `symbol`: string; `decimals`: integer; `amountMinor`: string; `amount`: string
+- **AttachmentCompletedResponse** — `attachmentId`: string; `sizeBytes`: integer
+- **AttachmentDownloadResponse** — `downloadUrl`: string; `expiresAt`: string; `sizeBytes`: integer
+- **AttachmentUploadResponse** — `attachmentId`: string; `uploadUrl`: string; `uploadHeaders`: UploadHeadersDto; `expiresAt`: string
 - **BlocksResponse** — `blocks`: [PublicProfileDto2]
 - **CarrierRequest** — `carrierToken`: string
 - **ChainDto** — `blockchain`: string; `address`: string; `state`: string (`ACTIVE` | `FROZEN`); `assets`: [AssetDto]; `receiveEnabled`: boolean
@@ -641,6 +659,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **PayeeDto** — `userId`?: string|null; `address`: string
 - **PayeeRequest** — `userId`?: string; `address`?: string (exactly one)
 - **PhoneVerifiedResponse** — `phoneVerified`: boolean; `maskedPhone`: string; `next`: string
+- **PrepareAttachmentRequest** — `sizeBytes`: integer (1 to 33554432); `kind`: string (`image` | `voice` | `video` | `file`)
 - **PrepareTransferRequest** — `blockchain`: string; `to`: PayeeRequest; `amount`: AmountRequest; `chatId`?: string; `proposalId`?: string (refused until Asha's proposals exist)
 - **PrepareTransferResponse** — `transferId`: string; `state`: string; `blockchain`: string; `amount`: AmountDto; `challengeId`?: string|null; `sdk`?: SdkDto|null; `fee`: AmountDto; `expiresAt`: string
 - **PrivacyChangeDto** — `avatar`?: string|null; `about`?: string|null; `handleLookup`?: boolean|null
@@ -691,6 +710,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **TransferResponse** — `transferId`: string; `direction`: string (`OUT` | `IN`); `state`: string (`AWAITING_SIGNATURE` | `SUBMITTED` | `CONFIRMED` | `FAILED` | `EXPIRED`); `blockchain`: string; `from`: string; `to`: PayeeDto; `amount`: AmountDto; `fee`: AmountDto; `chatId`?: string|null; `origin`?: string|null (`APP` | `ASHA`; sender only); `proposalId`?: string|null (sender only); `txHash`?: string|null; `failureReason`?: string|null; `createdAt`: string; `updatedAt`: string; `expiresAt`: string
 - **UpdateGroupRequest** — `sealedMeta`?: string|null; `settings`?: ChatSettingsDto|null; `version`: integer
 - **UpdateProfileRequest** — `displayName`?: string|null; `about`?: string|null; `privacy`?: PrivacyChangeDto; `version`: integer
+- **UploadHeadersDto** — `Content-Type`: string (always `application/octet-stream`)
 - **UploadUrlRequest** — `contentType`: string; `sizeBytes`: integer
 - **UploadUrlResponse** — `uploadUrl`: string; `objectKey`: string; `expiresInSeconds`: integer
 - **UsageResponse** — `plan`: string; `textTurnsUsed`: integer; `textTurnsLeft`: integer; `voiceSecondsUsed`: integer; `voiceSecondsLeft`: integer; `resetsAt`: string

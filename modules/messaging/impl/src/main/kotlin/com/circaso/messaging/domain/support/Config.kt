@@ -32,4 +32,14 @@ data class MessagingConfig(
      * `MESSAGING_FRAME_CIPHERTEXT_MAX_CHARS`.
      */
     val frameCiphertextMaxChars: Int = 16 * 1_024,
+    /** Decision 2026-10-30: an attachment is at most 32 MiB of ciphertext. */
+    val maxAttachmentBytes: Long = 32L * 1_024 * 1_024,
+    /** How long AT1's upload URL and AT3's download URL work. */
+    val attachmentUrlTtl: Duration = Duration.ofMinutes(15),
+    /** Decision 2026-10-30: an attachment is deleted 30 days after AT1, downloaded or not. */
+    val attachmentRetention: Duration = Duration.ofDays(30),
+    /** An attachment never completed (AT2) is deleted this long after AT1. */
+    val pendingAttachmentTtl: Duration = Duration.ofDays(1),
+    /** `messaging.purge-attachments`: rows read per round. */
+    val attachmentPurgeBatch: Int = 500,
 )

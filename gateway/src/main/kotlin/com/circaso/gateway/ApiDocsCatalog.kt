@@ -254,12 +254,15 @@ internal object ApiDocsCatalog {
                     ),
                     DocTag(
                         "Chat media",
-                        "Photos, video and files, encrypted on the phone with a key that travels inside the " +
-                            "message, and uploaded straight to storage through pre-signed URLs.\n\n" +
-                            "- Up to 500 MB per file; over 50 MB the upload goes in 16 MB parts, so a dropped " +
-                            "connection resumes from the last part.\n" +
-                            "- Recipients are fixed at upload. Each one confirms the download, and the file is " +
-                            "deleted when the last one has it, or after 30 days.",
+                        "Photos, voice notes, video and files, Signal-style: the phone encrypts each file with " +
+                            "its own AES-256-GCM key and uploads the ciphertext straight to storage through a " +
+                            "pre-signed URL. The key and digest travel only inside the end-to-end encrypted " +
+                            "message, so the server never sees what a file holds.\n\n" +
+                            "- **Start** an upload (up to 32 MiB of ciphertext), PUT it, then **complete** it; " +
+                            "the server checks the size.\n" +
+                            "- Anyone currently in the chat can **download** it through a 15-minute link.\n" +
+                            "- Files are deleted 30 days after the upload started, or after a day if never " +
+                            "completed.",
                     ),
                     DocTag(
                         "Chat history",

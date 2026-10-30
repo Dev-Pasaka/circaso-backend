@@ -4,6 +4,7 @@ import com.circaso.identity.api.DeviceSignatures
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
+import com.circaso.infrastructure.api.ObjectStores
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.messaging.api.ChatDirectory
@@ -15,6 +16,7 @@ import com.circaso.messaging.data.cache.RedisMembersCache
 import com.circaso.messaging.data.cache.RedisPendingCounts
 import com.circaso.messaging.data.cache.RedisReceiptBuffer
 import com.circaso.messaging.data.cache.RedisTypingMarks
+import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
@@ -22,6 +24,8 @@ import com.circaso.messaging.data.repositories.KeyRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
+import com.circaso.messaging.data.storage.ObjectStoreAttachments
+import com.circaso.messaging.data.tables.AttachmentsTable
 import com.circaso.messaging.data.tables.ChatsTable
 import com.circaso.messaging.data.tables.ClientMessagesTable
 import com.circaso.messaging.data.tables.GroupMessagesTable
@@ -32,6 +36,7 @@ import com.circaso.messaging.data.tables.MessageRecordsTable
 import com.circaso.messaging.data.tables.OneTimePreKeysTable
 import com.circaso.messaging.data.tables.RealtimeTable
 import com.circaso.messaging.data.tables.SettingsTable
+import com.circaso.messaging.domain.ports.AttachmentStorage
 import com.circaso.messaging.domain.ports.BundleRateLimit
 import com.circaso.messaging.domain.ports.LiveFrames
 import com.circaso.messaging.domain.ports.MembersCache
@@ -41,6 +46,7 @@ import com.circaso.messaging.domain.ports.RealtimeLog
 import com.circaso.messaging.domain.ports.ReceiptBuffer
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.ports.TypingMarks
+import com.circaso.messaging.domain.repositories.AttachmentRepository
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.DeliveryRepository
 import com.circaso.messaging.domain.repositories.KeyRepository
@@ -60,10 +66,12 @@ import com.circaso.messaging.domain.support.ReceiptBatcher
 import com.circaso.messaging.domain.usecases.AckDelivered
 import com.circaso.messaging.domain.usecases.AddMembers
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
+import com.circaso.messaging.domain.usecases.CompleteAttachmentUpload
 import com.circaso.messaging.domain.usecases.CreateGroup
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetAdmins
+import com.circaso.messaging.domain.usecases.GetAttachmentDownload
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
@@ -73,7 +81,9 @@ import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.MarkRead
 import com.circaso.messaging.domain.usecases.OpenDirectChat
+import com.circaso.messaging.domain.usecases.PrepareAttachmentUpload
 import com.circaso.messaging.domain.usecases.PublishKeys
+import com.circaso.messaging.domain.usecases.PurgeAttachments
 import com.circaso.messaging.domain.usecases.ReadInbox
 import com.circaso.messaging.domain.usecases.RelayTyping
 import com.circaso.messaging.domain.usecases.RemoveMember
@@ -86,11 +96,13 @@ import com.circaso.messaging.domain.usecases.UpdateSettings
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
+import com.circaso.messaging.presentation.controllers.attachmentController
 import com.circaso.messaging.presentation.controllers.chatController
 import com.circaso.messaging.presentation.controllers.keyController
 import com.circaso.messaging.presentation.controllers.mapController
 import com.circaso.messaging.presentation.controllers.messageController
 import com.circaso.messaging.presentation.events.IdentityEventHandler
+import com.circaso.messaging.presentation.services.AttachmentService
 import com.circaso.messaging.presentation.services.ChatService
 import com.circaso.messaging.presentation.services.IdentityEventsService
 import com.circaso.messaging.presentation.services.KeyService
@@ -132,6 +144,7 @@ internal val messagingDatabaseSpec =
                 ClientMessagesTable,
                 SettingsTable,
                 RealtimeTable,
+                AttachmentsTable,
             ),
         migrationsLocation = "classpath:db/messaging",
         outbox = true,
@@ -140,10 +153,14 @@ internal val messagingDatabaseSpec =
 /** How often `messaging.purge-expired` runs. */
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 
+/** How often `messaging.purge-attachments` runs: attachments live 30 days, so an hour late costs nothing. */
+private val ATTACHMENT_PURGE_INTERVAL: Duration = Duration.ofHours(1)
+
 /**
- * Messaging's Koin bindings: its database spec (with the outbox) and purge job, the key directory (MS2), chats and
+ * Messaging's Koin bindings: its database spec (with the outbox) and purge jobs, the key directory (MS2), chats and
  * membership (MS3), sending and delivery (MS4) with the phone-frame handler (`RealtimeInboundModule`) and its
- * `events:identity` subscription, its replay (`RealtimeModule`) and its `messaging:api`.
+ * `events:identity` subscription, encrypted attachments (AT1-AT3), its replay (`RealtimeModule`) and its
+ * `messaging:api`.
  */
 fun messagingModule(config: Config): Module =
     module {
@@ -172,6 +189,12 @@ fun messagingModule(config: Config): Module =
         single(named("messaging.purge-expired")) {
             val expiry = MessagingExpiry(get(named("messaging.database")))
             ScheduledJob("messaging.purge-expired", PURGE_INTERVAL) { expiry.run() }
+        }
+        single<AttachmentRepository> { AttachmentRepositoryImpl(get(named("messaging.database"))) }
+        single<AttachmentStorage> { ObjectStoreAttachments(get<ObjectStores>().scope("messaging")) }
+        single(named("messaging.purge-attachments")) {
+            val attachments = get<AttachmentService>()
+            ScheduledJob("messaging.purge-attachments", ATTACHMENT_PURGE_INTERVAL) { attachments.purge() }
         }
         single<BundleRateLimit> { RedisBundleRateLimit(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<MembersCache> { RedisMembersCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -243,6 +266,10 @@ fun messagingModule(config: Config): Module =
         single { RelayTyping(get(), get(), get(), get(), messaging) }
         single { DeleteForEveryone(get(), get(), get(), get(), get(), get(), get(), messaging, clock) }
         single { UpdateSettings(get()) }
+        single { PrepareAttachmentUpload(get(), get(), get(), get(), messaging, clock) }
+        single { CompleteAttachmentUpload(get(), get(), get(), clock) }
+        single { GetAttachmentDownload(get(), get(), get(), messaging, clock) }
+        single { PurgeAttachments(get(), get(), get(), messaging, clock) }
         single { RetireReplacedPhone(get(), get(), get(), get(), get(), get(), get()) }
 
         // presentation
@@ -252,17 +279,20 @@ fun messagingModule(config: Config): Module =
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }
         single { IdentityEventsService(get()) }
+        single { AttachmentService(get(), get(), get(), get()) }
         single { GetStaticMap(get()) }
         single { MapService(get()) }
         single<RouteContributor>(named("messaging.routes")) {
             val keys = get<KeyService>()
             val chats = get<ChatService>()
             val messages = get<MessageService>()
+            val attachments = get<AttachmentService>()
             val maps = get<MapService>()
             RouteContributor { route ->
                 route.keyController(keys)
                 route.chatController(chats)
                 route.messageController(messages, messaging.inboxPageMax)
+                route.attachmentController(attachments)
                 route.mapController(maps)
             }
         }

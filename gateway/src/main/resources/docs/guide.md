@@ -168,6 +168,9 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.message_too_large` | 400 | A ciphertext over 64 KB once decoded; send files as chat media |
 | `messaging.recipients_mismatch` | 400 | A direct message whose `recipients` isn't exactly the other person, or a `SENDER_KEY` message to someone who isn't another member |
 | `messaging.delete_window_passed` | 409 | Delete for everyone after 48 hours, or by someone other than the sender |
+| `messaging.attachment_too_large` | 400 | An attachment's `sizeBytes` is under 1 byte or over 32 MiB |
+| `messaging.attachment_not_found` | 404 | No such attachment, not complete yet, expired, or not yours to see (completing someone else's upload, or a chat you aren't in): all look the same |
+| `messaging.attachment_incomplete` | 400 | Completing an upload that isn't in storage, or not at the size you said: upload again, then complete |
 | `wallet.not_found` | 404 | You have no wallet yet: create one first (`POST /v1/wallet`) |
 | `wallet.already_exists` | 409 | `POST /v1/wallet` when the wallet is already set up |
 | `wallet.not_ready` | 409 | The wallet is still being set up (the PIN isn't set yet), so a chain can't be added or a payment sent |
