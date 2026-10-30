@@ -361,8 +361,11 @@ class CircleCustody internal constructor(
     }
 
     /**
-     * One line per asset offered on the chain, in the configured order. Circle lists only the tokens a wallet has
-     * held, so an offered asset missing from its answer is zero; a token we don't offer is left out.
+     * One line per asset offered on the chain, in the configured order, then any other token the wallet holds on it
+     * (decision 2026-10-30: whatever is in the wallet on that network is shown). Circle lists only the tokens a wallet
+     * has held, so an offered asset missing from its answer is zero. A held token we don't offer is shown only while
+     * its balance is above zero, with Circle's symbol and decimals, never priced and never sendable (sending checks the
+     * offered assets).
      */
     private fun balancesOf(
         data: BalancesData,
@@ -380,7 +383,25 @@ class CircleCustody internal constructor(
                         ?: return CircleErrors.failure(CircleReply.Failed(200, null), "get_balances")
                 AssetBalance(asset, minor)
             }
-        return Resource.success(lines)
+        val others =
+            held
+                .filter { line -> settings.offered(line.token.tokenAddress, blockchain) == null }
+                .mapNotNull { line -> heldOnly(line) }
+        return Resource.success(lines + others)
+    }
+
+    /** A held token outside the offered list, or null when Circle didn't describe it or it holds nothing. */
+    private fun heldOnly(line: TokenBalanceData): AssetBalance? {
+        val decimals = line.token.decimals ?: return null
+        val symbol =
+            line.token.symbol
+                .substringBefore('-')
+                .trim()
+                .uppercase()
+        if (symbol.isEmpty() || decimals !in 0..36) return null
+        val minor = minorUnits(line.amount, decimals) ?: return null
+        if (minor.signum() <= 0) return null
+        return AssetBalance(CustodyAsset(symbol, line.token.tokenAddress, decimals, usdPegged = false), minor)
     }
 
     /** "20.5" of a 6-decimal token as 20 500 000; null if it isn't a number or has more decimals than the asset. */
