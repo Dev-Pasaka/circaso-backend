@@ -112,3 +112,46 @@ data class ValidateAddressResponse(
     val address: String,
     val valid: Boolean,
 )
+
+/**
+ * The other side of a W6 row: [userId], [displayName], [handle] and [avatarUrl] when they are a Circaso user (the name
+ * is missing when their account is gone), and the on-chain [address] whenever it is known.
+ */
+@Serializable
+data class CounterpartyDto(
+    val userId: UserId? = null,
+    val displayName: String? = null,
+    val handle: String? = null,
+    val avatarUrl: String? = null,
+    val address: String? = null,
+)
+
+/** One row of W6. The fields it shares with W5's [TransferResponse] mean the same and have the same type. */
+@Serializable
+data class TransactionDto(
+    /** The history row's id; stable, use it as the list key. */
+    val id: String,
+    /** Set on payments you sent through Circaso: open them with W5. Null on money received. */
+    val transferId: TransferId? = null,
+    /** `OUT` when you sent it, `IN` when it paid you. */
+    val direction: String,
+    /** `SUBMITTED`, `CONFIRMED` or `FAILED`. */
+    val state: String,
+    val blockchain: String,
+    val amount: AmountDto,
+    val counterparty: CounterpartyDto,
+    val chatId: String? = null,
+    /** `APP` or `ASHA`; only on `OUT`. */
+    val origin: String? = null,
+    val txHash: String? = null,
+    @Serializable(with = InstantSerializer::class) val occurredAt: Instant,
+)
+
+/** W6 `GET /wallet/transactions`. */
+@Serializable
+data class TransactionsResponse(
+    /** Newest first. */
+    val transactions: List<TransactionDto>,
+    /** Pass back as `cursor` (with the same `month`, if any) for the next page; null on the last. */
+    val nextCursor: String? = null,
+)

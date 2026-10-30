@@ -479,6 +479,7 @@ The gateway is the only door into the backend: every request is authenticated, l
 | Nonce and social sign-in (I1, I2), before any token exists | 20 per IP per minute |
 | Support recovery requests (I15) | 3 per number per day, 5 per IP per day |
 | Phone release (I16) | 1 per number per 7 days |
+| Payment history (W6 `GET /v1/wallet/transactions`) | 60 per user per minute, its own bucket (decision 2026-10-31) |
 | Everything else | 120 per user per minute |
 
 The gateway also hosts the WebSocket hub (see Realtime and push), because the socket is an edge concern: it authenticates the same way and only delivers what modules hand it.

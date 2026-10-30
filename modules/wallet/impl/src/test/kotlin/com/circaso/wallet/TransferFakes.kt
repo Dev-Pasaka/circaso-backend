@@ -10,6 +10,7 @@ import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.PaymentHold
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
@@ -145,6 +146,26 @@ class MemoryTransactionRepository : TransactionRepository {
             .filter { !it.occurredAt.isBefore(since) }
             .flatMap { listOfNotNull(it.userId, it.counterpartyId) }
             .distinct()
+            .take(limit)
+
+    /** Ordered as PostgreSQL orders the index: time, then the id's bytes (its hex text), both descending. */
+    override suspend fun history(
+        userId: UserId,
+        states: Set<TransferState>,
+        from: Instant?,
+        until: Instant?,
+        after: HistoryPosition?,
+        limit: Int,
+    ): List<WalletTransaction> =
+        rows
+            .filter { it.userId == userId && it.state in states }
+            .filter { from == null || !it.occurredAt.isBefore(from) }
+            .filter { until == null || it.occurredAt.isBefore(until) }
+            .filter { row ->
+                after == null ||
+                    row.occurredAt.isBefore(after.occurredAt) ||
+                    (row.occurredAt == after.occurredAt && row.id.toString() < after.id.toString())
+            }.sortedWith(compareByDescending<WalletTransaction> { it.occurredAt }.thenByDescending { it.id.toString() })
             .take(limit)
 
     private fun move(

@@ -1,6 +1,6 @@
 # Circaso mobile integration guide
 
-For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-30 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
+For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-31 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
 
 ## 1. How to use this file
 
@@ -9,6 +9,9 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-31, payment history (new route):**
+> 1. **W6 `GET /v1/wallet/transactions` is in** (section 7, Wallet): your payments, newest first, as `TransactionsResponse { transactions: [TransactionDto], nextCursor }`. Without `month` it pages back through every month (the wallet tab's "Recent"); with `month=YYYY-MM` only that UTC month. Each row carries `counterparty { userId?, displayName?, handle?, avatarUrl?, address? }` so a row needs no further call. Its own rate limit: 60 per user per minute.
+>
 > **Changed on 2026-10-30, encrypted chat attachments (new routes):**
 > 1. **Attachments are in** (section 7, Attachments): AT1 `POST /v1/chats/{chatId}/attachments`, AT2 `POST /v1/attachments/{attachmentId}/complete`, AT3 `GET /v1/attachments/{attachmentId}`. Signal-style: encrypt each file on the phone with a fresh AES-256-GCM key, PUT the ciphertext to the pre-signed URL, complete it, then send an ordinary M12 message whose ciphertext carries the `attachmentId`, key, digest and real type. Up to 32 MiB; kept 30 days. No new frames.
 > 2. This replaces the M15–M17 media design (500 MB multipart, `/v1/media/…`), which will not be built.
@@ -52,7 +55,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **86** routes the phone calls: **59 READY**, **26 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **87** routes the phone calls: **59 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -78,7 +81,8 @@ Of the **86** routes the phone calls: **59 READY**, **26 PARTIAL**, **1 DEV STUB
 | Chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
 | Wallet (create, PIN session, balance per chain, fiat balance, add a chain) | **PARTIAL** | W1–W3 and W12 work. On dev the custody provider is Circle on testnet (Base Sepolia, Polygon Amoy, Ethereum Sepolia, Solana Devnet): the challenges are real, so run them in the Circle SDK, where the user sets the PIN and the wallet appears on Circle's testnet. Test USDC comes from Circle's testnet faucet (faucet.circle.com), sent to the chain's address from W1. |
 | Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work against Circle's testnet: complete the payment's challenge in the Circle SDK with the PIN, and `transfer.updated` and `payment.received` arrive as Circle's webhooks report the transaction (testnet USDC from Circle's faucet). Limits are placeholders (500 USDC a payment, 1 000 a day). |
-| Transaction history, statements, PIN change and restore, chamas | **MISSING** | Designed (wallet W6–W8); being built in slices. |
+| Transaction history (W6) | **PARTIAL** | Your payments, newest first, paged; recent across months or one month. Lists what Circaso recorded: inbound payments appear once Circle reports them (webhook, or the reconcile job within minutes). |
+| Statements, PIN change and restore | **MISSING** | Designed (wallet W7, W8); being built in slices. |
 | Calls (voice and video, up to 8 people) | **PARTIAL** | CL1–CL9 and the `calls` frames work. On dev the SFU is Cloudflare Realtime once `INTEGRATIONS_CALLS_PROVIDER=cloudflare` is set on the sandbox; with the `log` provider the routes answer with made-up SDP, so no media flows. Show "Secure call", never "end-to-end encrypted" (decision 2026-10-29). |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
 
@@ -376,6 +380,7 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 | `POST /v1/wallet/chains`<br>**W12** Add a supported chain | `app` | AddChainRequest → AddChainResponse | **PARTIAL** | `{ "blockchain": "SOL-DEVNET" }` (a name from the list above). Answers `ADDING` with a challenge to run in the SDK (the PIN creates the wallet there), or `ENABLED` with no challenge when the wallet is already on it, so a repeat is harmless. The chain shows in W1 once Circle has made it. Adds of the same chain within the hour (two taps, two phones) get the same challenge. A retired chain can't be added (`wallet.chain_unsupported`). Removing a chain isn't possible. Errors: `wallet.chain_unsupported`, `wallet.not_found`, `wallet.not_ready`, `wallet.custody_unavailable`, `request.malformed`. |
 | `POST /v1/wallet/transfers`<br>**W4** Prepare a payment | `app` | PrepareTransferRequest → PrepareTransferResponse | **PARTIAL** | `{ "blockchain": "BASE-SEPOLIA", "to": { "userId": "…" } \| { "address": "0x…" }, "amount": { "asset": "USDC", "amountMinor": "20000000" } }` (or `"amount": "20"`; both only if they agree), optional `chatId` (paying from that chat: sharing it stands in for reach). The payment leaves from your wallet on that chain. Checks, in this order: account active, your wallet on the chain, hold, amount and limits, the payee, your balance there. Run `challengeId` in the Circle SDK with `sdk` before `expiresAt` (15 minutes); follow it with `transfer.updated` frames or W5. Always the same `Idempotency-Key` for one payment: a retry returns the same transfer (and the same challenge while it can be signed). `fee` is always zero (Circaso pays gas). Show a warning before paying an address: payments on chain can't be reversed. On dev Circle runs on testnet: sign the challenge in the SDK, and the frames follow from Circle's webhooks. `proposalId` is refused (`request.malformed`) until Asha's payment proposals exist. Errors: `wallet.account_restricted`, `wallet.chain_unsupported`, `wallet.not_found`, `wallet.not_ready`, `wallet.not_on_chain`, `wallet.on_hold`, `wallet.amount_invalid`, `wallet.limit_exceeded`, `wallet.self_transfer`, `users.not_reachable`, `wallet.recipient_no_wallet`, `wallet.recipient_not_on_chain`, `wallet.address_invalid`, `wallet.insufficient_funds`, `wallet.pin_locked`, `wallet.custody_unavailable`, `request.malformed`. |
 | `GET /v1/wallet/transfers/{transferId}`<br>**W5** One payment and its state | `app` | — → TransferResponse | **PARTIAL** | For the sender (`direction: OUT`) and the person paid (`IN`), so the chat's payment card works on both sides. `origin` and `proposalId` are only shown to the sender (null for the person paid). `state`: `AWAITING_SIGNATURE`, `SUBMITTED`, `CONFIRMED`, `FAILED` (see `failureReason`) or `EXPIRED`. Errors: `wallet.transfer_not_found`, `request.malformed`. |
+| `GET /v1/wallet/transactions`<br>**W6** Your payments, newest first | `app` | — → TransactionsResponse | **PARTIAL** | Query: `month` (optional, `YYYY-MM`, a calendar month in UTC), `cursor`, `limit` (default 50, at most 200). **Without `month`** the list runs back through every month: use it for the wallet tab's "Recent" and its infinite scroll. **With `month`** only that month; pass the same `month` with each `cursor`. `nextCursor` is null on the last page. Only payments that were signed appear (`SUBMITTED`, `CONFIRMED`, `FAILED`): an abandoned PIN sheet (`AWAITING_SIGNATURE`, `EXPIRED`) is not a payment. `direction` is `OUT` (you sent it; `transferId` set, open it with W5) or `IN` (it paid you; `transferId` null). `counterparty` has `userId`, `displayName`, `handle`, `avatarUrl` when the other side is on Circaso (no name when their account is gone) and the on-chain `address` whenever known: show the name, else a shortened address. `origin` only on `OUT`. Use `id` as the list key. Refresh the first page on `wallet` / `transfer.updated` and `payment.received` frames. 60 requests per user per minute. Errors: `request.malformed` (`month`, `cursor` or `limit`), `request.rate_limited`. |
 | `GET /v1/wallet/recipients/{userId}`<br>**W9** Can this person be paid, and where | `app` | — → RecipientResponse | **PARTIAL** | Query `blockchain` (optional, the chain you mean to pay on) and `chatId` (optional). `status`: `CAN_RECEIVE`, `NO_WALLET` (offer W10: "Amina hasn't set up her wallet yet") or `NO_WALLET_ON_CHAIN` (pick one of `blockchains`, where they can be paid now). Errors: `users.not_reachable`, `wallet.self_transfer`, `wallet.chain_unsupported`, `request.malformed`. |
 | `POST /v1/wallet/recipients/{userId}/remind`<br>**W10** Remind a contact to set up a wallet | `app` | — → RemindResponse | **PARTIAL** | They get a `wallet` / `setup.requested` frame and a push. `status`: `SENT`, `ALREADY_SENT` (once per person per 24 hours) or `HAS_WALLET` (pay them instead). Errors: `users.not_reachable`, `wallet.self_transfer`, `request.malformed`. |
 | `POST /v1/wallet/addresses/validate`<br>**W11** Check an outside address on a chain | `app` | ValidateAddressRequest → ValidateAddressResponse | **PARTIAL** | `{ "blockchain", "address" }` → `valid` (an answer, not an error) and `address` as it will be paid (EVM lowercase). Check before W4 to an address. Errors: `wallet.chain_unsupported`, `wallet.custody_unavailable`, `request.malformed`. |
@@ -561,7 +566,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 **Backend MISSING (do not call, do not invent endpoints; stub the UI behind a feature flag):**
 1. Chat history and the history-key backup (chats, sending, the inbox, receipts and attachments exist).
-2. Transaction history and statements (W6, W7), PIN change and restore (W8), the payment hold after a support restore, chamas. The wallet (W1–W3, W12) and payments (W4, W5, W9–W11, wallet frames and pushes) are in.
+2. Statements (W7), PIN change and restore (W8), the payment hold after a support restore, chamas. The wallet (W1–W3, W12) and payments (W4, W5, W9–W11, wallet frames and pushes) and the payment history (W6) are in.
 3. Calls: a call log message in the chat, CallKit VoIP pushes on iOS (PushKit), screen sharing. Calls themselves (CL1–CL8) are in.
 4. Push for anything other than new messages, group adds, wallet payments and calls.
 5. Notification inbox, identity verification (KYC).
@@ -629,6 +634,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ConnectResponse** — `user`: PublicProfileDto2; `created`: boolean
 - **ContactDto** — `user`: PublicProfileDto2; `source`: string; `addedAt`: string
 - **ContactsResponse** — `contacts`: [ContactDto]; `nextCursor`?: string|null
+- **CounterpartyDto** — `userId`?: string|null; `displayName`?: string|null; `handle`?: string|null; `avatarUrl`?: string|null; `address`?: string|null
 - **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
 - **CreateWalletResponse** — `status`: string (`SETTING_UP`); `challengeId`?: string|null; `sdk`: SdkDto
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
@@ -709,6 +715,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SyncRequest** — `syncId`: string; `batch`?: integer; `final`?: boolean; `phones`: [string]
 - **SyncResponse** — `matches`: [SyncMatchDto]
 - **ToolResultsRequest** — `callId`: string; `snippets`?: [SnippetDto]
+- **TransactionDto** — `id`: string; `transferId`?: string|null (`OUT` only); `direction`: string (`OUT` | `IN`); `state`: string (`SUBMITTED` | `CONFIRMED` | `FAILED`); `blockchain`: string; `amount`: AmountDto; `counterparty`: CounterpartyDto; `chatId`?: string|null; `origin`?: string|null (`APP` | `ASHA`; `OUT` only); `txHash`?: string|null; `occurredAt`: string
+- **TransactionsResponse** — `transactions`: [TransactionDto]; `nextCursor`?: string|null
 - **TranscriptResponse** — `text`: string; `seconds`: integer
 - **TransferResponse** — `transferId`: string; `direction`: string (`OUT` | `IN`); `state`: string (`AWAITING_SIGNATURE` | `SUBMITTED` | `CONFIRMED` | `FAILED` | `EXPIRED`); `blockchain`: string; `from`: string; `to`: PayeeDto; `amount`: AmountDto; `fee`: AmountDto; `chatId`?: string|null; `origin`?: string|null (`APP` | `ASHA`; sender only); `proposalId`?: string|null (sender only); `txHash`?: string|null; `failureReason`?: string|null; `createdAt`: string; `updatedAt`: string; `expiresAt`: string
 - **UpdateGroupRequest** — `sealedMeta`?: string|null; `settings`?: ChatSettingsDto|null; `version`: integer

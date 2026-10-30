@@ -101,6 +101,7 @@ When a limit is hit the answer is `429` with `request.rate_limited`, `details.re
 | Support recovery requests | 3 per number per day, 5 per IP per day |
 | Phone release | 1 per number per 7 days |
 | Asha's agent token (all `/v1/agent/` routes) | 60 per user per minute, in its own bucket |
+| Payment history (`GET /v1/wallet/transactions`) | 60 per user per minute, in its own bucket |
 | Everything else | 120 per user per minute |
 
 ## Lists and pages

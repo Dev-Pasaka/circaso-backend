@@ -5,6 +5,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.CircleUser
+import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
@@ -99,6 +100,20 @@ interface TransactionRepository {
      * [limit]: whom `wallet.reconcile-daily` (and the light pass) compare with Circle (`transactions_occurred_idx`).
      */
     suspend fun parties(since: Instant, limit: Int): List<UserId>
+
+    /**
+     * [userId]'s rows in one of [states] with `occurred_at` in [from, until) (either end open when null), strictly
+     * after [after] in the order `occurred_at DESC, id DESC`, at most [limit]: W6's keyset page
+     * (`transactions_user_idx`).
+     */
+    suspend fun history(
+        userId: UserId,
+        states: Set<TransferState>,
+        from: Instant?,
+        until: Instant?,
+        after: HistoryPosition?,
+        limit: Int,
+    ): List<WalletTransaction>
 }
 
 /** Wallet's outbox rows, written inside the transaction that makes the change. */
