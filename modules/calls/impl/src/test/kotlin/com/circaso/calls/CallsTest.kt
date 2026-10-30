@@ -354,7 +354,7 @@ class CallsTest {
             val me = theirs.view.call.participant(h.otieno)!!
             assertEquals(ParticipantState.JOINED, me.state)
             assertEquals(listOf("audio-${h.otieno}", "video-${h.otieno}"), me.tracks.map { it.trackName })
-            assertTrue(me.audio && me.video)
+            assertTrue(me.audio && !me.video, "a voice call: the video track is there, the camera is not on")
             val updates = h.frames.ofType<CallFrame.Updated>()
             assertEquals(2, updates.size)
             assertEquals(setOf(h.wanjiru, h.otieno), updates.last().first)
@@ -686,5 +686,18 @@ class CallsTest {
             h.joined(c, h.wanjiru)
             h.joined(c, h.otieno)
             assertEquals(CallsError.NotAGroup, failure(h.ringAgain(h.wanjiru, c.callId, emptySet())))
+        }
+
+    @Test
+    fun `a voice call's video track doesn't mean the camera is on`() =
+        runTest {
+            val h = Harness()
+            val voice = h.call()
+            h.joined(voice, h.wanjiru)
+            assertEquals(false, h.stored(voice).participant(h.wanjiru)?.video)
+            val h2 = Harness()
+            val video = h2.call(video = true)
+            h2.joined(video, h2.wanjiru)
+            assertEquals(true, h2.stored(video).participant(h2.wanjiru)?.video)
         }
 }
