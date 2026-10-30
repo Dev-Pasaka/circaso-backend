@@ -136,7 +136,15 @@ class GatewayRealtime(
 
             "${WalletFrames.MODULE}.${WalletFrames.PAYMENT_RECEIVED}" -> {
                 val name = decode(PaymentReceivedFrame.serializer(), frame)?.fromName
-                PushMessage("Circaso", if (name != null) "$name sent you money" else "You received money")
+                // The coins sound (decision 2026-10-31): iOS plays it from the app; Android gets the push as data and
+                // plays it itself, or the usual sound when the person turned it off. No amount in a push, ever.
+                PushMessage(
+                    "Circaso",
+                    if (name != null) "$name sent you money" else "You received money",
+                    PushPayload(kind = PAYMENT_RECEIVED_KIND),
+                    dataOnly = true,
+                    sound = MONEY_SOUND,
+                )
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.SETUP_REQUESTED}" -> {
@@ -273,3 +281,7 @@ class GatewayRealtime(
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
 }
+
+/** What wakes the app for money received, and the sound it ships for it. */
+private const val PAYMENT_RECEIVED_KIND = "payment.received"
+private const val MONEY_SOUND = "money_received.wav"

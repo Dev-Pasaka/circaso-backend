@@ -128,14 +128,25 @@ class FcmPush(
     private fun request(target: PushTarget, message: PushMessage): FcmRequest {
         val text = FcmNotification(message.title, message.body)
         val ids = message.data
+        // A data-only push carries its words too, for an app that shows it as it is (money received) rather than
+        // working them out (a chat message, which it decrypts).
         val data =
-            FcmData(ids.chatId, ids.messageId, ids.callId, ids.kind, ids.callerName, ids.callKind)
-                .takeIf { it != FcmData() }
+            FcmData(
+                ids.chatId,
+                ids.messageId,
+                ids.callId,
+                ids.kind,
+                ids.callerName,
+                ids.callKind,
+                title = message.title.takeIf { message.dataOnly && ids.kind != null },
+                body = message.body.takeIf { message.dataOnly && ids.kind != null },
+            ).takeIf { it != FcmData() }
+        val sound = message.sound ?: "default"
         val aps =
             if (message.dataOnly) {
-                FcmAps(alert = text, mutableContent = 1)
+                FcmAps(sound = sound, alert = text, mutableContent = 1)
             } else {
-                FcmAps()
+                FcmAps(sound = sound)
             }
         val ttl = message.ttlSeconds
         val apns =
@@ -230,6 +241,8 @@ private data class FcmData(
     val kind: String? = null,
     val callerName: String? = null,
     val callKind: String? = null,
+    val title: String? = null,
+    val body: String? = null,
 )
 
 @Serializable

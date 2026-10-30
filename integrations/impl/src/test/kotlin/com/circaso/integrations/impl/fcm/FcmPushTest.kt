@@ -136,6 +136,28 @@ class FcmPushTest {
         }
 
     @Test
+    fun `money received carries its words for Android and its own sound for iOS`() =
+        runBlocking<Unit> {
+            val money =
+                PushMessage(
+                    "Circaso",
+                    "Bob sent you money",
+                    PushPayload(kind = "payment.received"),
+                    dataOnly = true,
+                    sound = "money_received.wav",
+                )
+
+            push.send(PushTarget(PushPlatform.IOS, "device-token"), money)
+
+            val body = Json.parseToJsonElement(sends().single().text()).jsonObject["message"]!!.jsonObject
+            val data = body["data"]!!.jsonObject
+            assertEquals("payment.received", data["kind"]!!.jsonPrimitive.content)
+            assertEquals("Bob sent you money", data["body"]!!.jsonPrimitive.content, "Android shows it as it is")
+            val aps = body["apns"]!!.jsonObject["payload"]!!.jsonObject["aps"]!!.jsonObject
+            assertEquals("money_received.wav", aps["sound"]!!.jsonPrimitive.content)
+        }
+
+    @Test
     fun `an incoming call carries the call ids and lives only as long as the ring`() =
         runBlocking<Unit> {
             val ring =
