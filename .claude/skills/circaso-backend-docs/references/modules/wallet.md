@@ -141,7 +141,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 | W3 | `POST /wallet/session` | `OpenSession` | The SDK values (`appId`, `userToken`, `encryptionKey`) from `StablecoinCustody.sdkSession` |
 | W4 | `POST /wallet/transfers` | `PrepareTransfer` | Checks the rules and creates a transfer challenge, on the chain the request names, for the user to sign |
 | W5 | `GET /wallet/transfers/{transferId}` | `GetTransfer` | One transfer and its state |
-| W6 | `GET /wallet/transactions?month=2026-10` | `ListTransactions` | The user's transactions for a month, newest first, paged |
+| W6 | `GET /wallet/transactions?month=2026-10&cursor=&limit=` | `ListTransactions` | The user's payments, newest first, paged: one UTC month with `month`, every month without it (decision 2026-10-31) |
 | W7 | `GET /wallet/statements/{month}` | `GetStatement` | Totals in and out for a month, with the transactions; the app renders or exports it |
 | W8 | `POST /wallet/pin/change` / `POST /wallet/pin/restore` | `ChangePin` / `RestorePin` | PIN challenges: change with the current PIN, or set a new one through the security questions |
 | W9 | `GET /wallet/recipients/{userId}?blockchain=BASE&chatId=…` | `CheckRecipient` | Whether this person can be paid: `CAN_RECEIVE`, `NO_WALLET` or `NO_WALLET_ON_CHAIN`, with the chains they can be paid on (reach failures answer `users.not_reachable`) |
@@ -241,20 +241,24 @@ Limits are settings until they are decided (`WALLET_TRANSFER_LIMIT_PER_PAYMENT`,
 ### W6 Transactions
 
 ```json
-// GET /wallet/transactions?month=2026-10 → data
+// GET /wallet/transactions?month=2026-10&limit=50   (month optional; cursor = the previous page's nextCursor)
+// → data
 {
   "transactions": [
     {
-      "id": "0193…", "direction": "OUT", "state": "CONFIRMED", "blockchain": "BASE",
+      "id": "0193…", "transferId": "0193…", "direction": "OUT", "state": "CONFIRMED", "blockchain": "BASE",
       "amount": { "asset": "USDC", "amountMinor": "20000000", "amount": "20" },
-      "counterparty": { "user": PublicProfile },   // or { "address": "0x…" }
+      "counterparty": { "userId": "0193…", "displayName": "Bob", "handle": "bob", "avatarUrl": "https://…",
+                        "address": "0x5a3c…" },          // an outside address: { "address": "0x…" } only
       "chatId": "0193…", "origin": "APP", "txHash": "0x…",
       "occurredAt": "2026-10-25T09:02:11Z"
     }
   ],
-  "next": "…"
+  "nextCursor": "MjAyNi0xMC0yNVQwOTowMjoxMVp8MDE5My4uLg"
 }
 ```
+
+Only the caller's own rows (`user_id`), in `SUBMITTED`, `CONFIRMED` or `FAILED`: an unsigned or never-signed transfer moved no money and stays out. Newest first by `(occurred_at, id)`, paged by keyset over `transactions_user_idx`; the cursor is the last row's position, so it works with and without `month`. Without `month` the list runs back through every month (the wallet tab's recent list); with it, only `[first of month, first of next month)` in UTC. `limit` defaults to 50, at most 200 (more is read as 200). `transferId` is set on `OUT` rows (open it with W5) and null on `IN`; `origin` only on `OUT`, as in W5. `counterparty` names the other person from one batched `Profiles.get` per page (no name when their account is gone) and always carries the on-chain address when known. Its own rate-limit bucket: 60 per user per minute. Errors: `request.malformed` (`month`, `cursor`, `limit`).
 
 ### Agent routes (read-only, for Asha)
 

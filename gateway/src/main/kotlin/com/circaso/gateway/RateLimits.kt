@@ -60,6 +60,12 @@ object RateLimitTable {
                 Limit("maps", 60, Duration.ofHours(1), LimitBy.USER)
             }
 
+            // W6 reads a page of history and names everyone on it: its own bucket, like the agent's, so scrolling the
+            // history can't use up the rest of the app's budget.
+            method == "GET" && path == "/v1/wallet/transactions" -> {
+                Limit("wallet-history", 60, minute, LimitBy.USER)
+            }
+
             signedIn -> {
                 Limit("user", 120, minute, LimitBy.USER)
             }

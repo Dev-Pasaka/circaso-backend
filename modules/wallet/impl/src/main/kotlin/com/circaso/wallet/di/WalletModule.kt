@@ -72,6 +72,7 @@ import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
@@ -83,9 +84,11 @@ import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
 import com.circaso.wallet.presentation.api.WalletsImpl
+import com.circaso.wallet.presentation.controllers.historyController
 import com.circaso.wallet.presentation.controllers.recipientController
 import com.circaso.wallet.presentation.controllers.transferController
 import com.circaso.wallet.presentation.controllers.walletController
+import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.TransferService
 import com.circaso.wallet.presentation.services.WalletDirectoryService
@@ -241,6 +244,7 @@ fun walletModule(config: Config): Module =
         single { HasWallet(get()) }
         single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetTransfer(get()) }
+        single { ListTransactions(get(), get()) }
         single { CheckRecipient(get(), get()) }
         single { RequestSetup(get(), get(), get(), get()) }
         single { ValidateAddress(get()) }
@@ -254,6 +258,7 @@ fun walletModule(config: Config): Module =
         // presentation
         single { WalletService(get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get()) }
+        single { HistoryService(get()) }
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get()) }
         single { WalletJobsService(get(), get(), get()) }
@@ -261,10 +266,12 @@ fun walletModule(config: Config): Module =
             val wallets = get<WalletService>()
             val transfers = get<TransferService>()
             val recipients = get<RecipientService>()
+            val history = get<HistoryService>()
             RouteContributor { route ->
                 route.walletController(wallets)
                 route.transferController(transfers)
                 route.recipientController(recipients)
+                route.historyController(history)
             }
         }
 

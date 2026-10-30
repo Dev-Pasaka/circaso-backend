@@ -8,6 +8,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.domain.models.Direction
+import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
@@ -19,14 +20,18 @@ import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.select
+import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
 import java.time.Instant
 
@@ -101,6 +106,46 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                     .toList()
             (owners + counterparties).distinct().take(limit)
         }
+
+    /**
+     * `WHERE user_id = ? AND state IN (…) [AND occurred_at >= ? AND occurred_at < ?]
+     * [AND (occurred_at < ? OR (occurred_at = ? AND id < ?))] ORDER BY occurred_at DESC, id DESC LIMIT ?`, walking
+     * `transactions_user_idx` backwards from the cursor.
+     */
+    override suspend fun history(
+        userId: UserId,
+        states: Set<TransferState>,
+        from: Instant?,
+        until: Instant?,
+        after: HistoryPosition?,
+        limit: Int,
+    ): List<WalletTransaction> {
+        if (states.isEmpty()) return emptyList()
+        return database.tx("transactions.history") {
+            TransactionsTable
+                .selectAll()
+                .where {
+                    var where =
+                        (TransactionsTable.userId eq userId.value) and
+                            (TransactionsTable.state inList states.map { it.name })
+                    from?.let { where = where and (TransactionsTable.occurredAt greaterEq it) }
+                    until?.let { where = where and (TransactionsTable.occurredAt less it) }
+                    after?.let { where = where and before(it) }
+                    where
+                }.orderBy(TransactionsTable.occurredAt to SortOrder.DESC, TransactionsTable.id to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toTransaction() }
+                .toList()
+        }
+    }
+
+    /** Rows that come after [position] newest first: older, or as old with a smaller id. */
+    private fun before(position: HistoryPosition): Op<Boolean> =
+        (TransactionsTable.occurredAt less position.occurredAt) or
+            (
+                (TransactionsTable.occurredAt eq position.occurredAt) and
+                    (TransactionsTable.id less position.id)
+            )
 
     /**
      * The transition guard, inside the caller's transaction: rows matching [where] in one of `to.from`, moved to [to];
