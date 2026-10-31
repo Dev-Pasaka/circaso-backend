@@ -83,6 +83,16 @@ sealed interface PhoneFrame {
     @SerialName("typing")
     data class Typing(val chatId: String, val on: Boolean) : PhoneFrame
 
+    /** `messaging.presence`: `active` in the foreground (every 30 seconds), `away` 15 seconds after leaving it. */
+    @Serializable
+    @SerialName("presence")
+    data class Presence(val state: String) : PhoneFrame
+
+    /** `messaging.presence.watch`: hear the chat's other members' presence for the next 60 seconds. */
+    @Serializable
+    @SerialName("presence.watch")
+    data class PresenceWatch(val chatId: String) : PhoneFrame
+
     companion object {
         /** The class of a frame of [type], or null for a type messaging does not take. */
         fun serializerFor(type: String): KSerializer<out PhoneFrame>? =
@@ -90,6 +100,8 @@ sealed interface PhoneFrame {
                 "ack" -> Ack.serializer()
                 "read" -> Read.serializer()
                 "typing" -> Typing.serializer()
+                "presence" -> Presence.serializer()
+                "presence.watch" -> PresenceWatch.serializer()
                 else -> null
             }
     }

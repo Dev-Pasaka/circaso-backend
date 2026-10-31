@@ -2,9 +2,12 @@ package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.data.cache.RedisPresenceStore
+import com.circaso.messaging.data.cache.RedisPresenceWatchers
 import com.circaso.messaging.domain.models.RecipientCopy
 import com.circaso.messaging.domain.models.SendMessageCommand
 import com.circaso.messaging.domain.models.SentMessage
+import com.circaso.messaging.domain.support.ChatPresence
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
 import com.circaso.messaging.domain.support.MessageSenders
@@ -13,14 +16,19 @@ import com.circaso.messaging.domain.support.OrderedIds
 import com.circaso.messaging.domain.support.ReceiptBatcher
 import com.circaso.messaging.domain.usecases.AckDelivered
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
+import com.circaso.messaging.domain.usecases.GetPresence
 import com.circaso.messaging.domain.usecases.MarkRead
 import com.circaso.messaging.domain.usecases.ReadInbox
 import com.circaso.messaging.domain.usecases.RelayTyping
 import com.circaso.messaging.domain.usecases.RetireReplacedPhone
 import com.circaso.messaging.domain.usecases.SendMessage
+import com.circaso.messaging.domain.usecases.SweepPresence
+import com.circaso.messaging.domain.usecases.UpdatePresence
 import com.circaso.messaging.domain.usecases.UpdateSettings
+import com.circaso.messaging.domain.usecases.WatchPresence
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.services.PhoneFrameService
+import com.circaso.messaging.presentation.services.PresenceService
 import com.circaso.shared.UserId
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -92,8 +100,24 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
             chats.membership,
             notifier,
         )
+
+    /** Presence over messaging's real Redis adapters on [MemoryRedis]: online is worked out from the clock. */
+    val presenceRedis = MemoryRedis()
+    private val presenceStore = RedisPresenceStore(presenceRedis)
+    private val presenceWatchers = RedisPresenceWatchers(presenceRedis, config.presenceWatch)
+    private val chatPresence = ChatPresence(chats.membership, chats.reach, presenceStore, config)
+    val updatePresence = UpdatePresence(presenceStore, presenceWatchers, notifier, config, chats.clock)
+    val watchPresence = WatchPresence(chatPresence, presenceWatchers, notifier, config, chats.clock)
+    val getPresence = GetPresence(chatPresence, chats.clock)
+    val sweepPresence = SweepPresence(presenceStore, presenceWatchers, notifier, config, chats.clock)
+    val presence = PresenceService(updatePresence, watchPresence, getPresence, sweepPresence)
+
     val inbound =
-        MessagingRealtimeInbound(PhoneFrameService(ackDelivered, markRead, relayTyping), config.inboxPageMax)
+        MessagingRealtimeInbound(
+            PhoneFrameService(ackDelivered, markRead, relayTyping),
+            presence,
+            config.inboxPageMax,
+        )
 
     /** Runs what is due in the background now (frames after a send, a receipt batch whose window has passed). */
     fun settle() = background.runCurrent()

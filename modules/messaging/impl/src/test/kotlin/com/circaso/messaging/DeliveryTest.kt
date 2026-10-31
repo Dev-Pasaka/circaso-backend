@@ -431,7 +431,7 @@ class DeliveryTest {
     fun `a frame of an unknown type or with unreadable data is refused, not thrown`() =
         runBlocking<Unit> {
             val device = DeviceId.new()
-            val unknown = ClientFrame("messaging", "presence")
+            val unknown = ClientFrame("messaging", "status")
             val unreadable = ClientFrame("messaging", "read")
 
             assertEquals("request.malformed", h.inbound.receive(amina, device, unknown).errorCode())

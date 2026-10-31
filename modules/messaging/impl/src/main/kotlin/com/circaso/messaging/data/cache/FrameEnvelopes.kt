@@ -8,6 +8,7 @@ import com.circaso.messaging.api.MessageDeletedFrame
 import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.messaging.api.MessageUndeliverableFrame
 import com.circaso.messaging.api.MessagingFrame
+import com.circaso.messaging.api.PresenceChangedFrame
 import com.circaso.messaging.api.ReceiptFrame
 import com.circaso.messaging.api.TypingFrame
 import com.circaso.shared.RealtimeEnvelope
@@ -57,5 +58,9 @@ internal fun MessagingFrame.envelope(seq: Long, ts: Instant): RealtimeEnvelope =
 
         is ChatUpdatedFrame -> {
             RealtimeEnvelope.of(MODULE, type, seq, this, ChatUpdatedFrame.serializer(), ts)
+        }
+
+        is PresenceChangedFrame -> {
+            RealtimeEnvelope.of(MODULE, type, seq, this, PresenceChangedFrame.serializer(), ts)
         }
     }
