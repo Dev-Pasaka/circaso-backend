@@ -108,6 +108,7 @@ private data class PendingJson(
     val messageCount: Int,
     val steps: Int,
     val currency: String? = null,
+    val conversationId: String? = null,
 )
 
 @Serializable
@@ -167,6 +168,7 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
                 turn.readNote.messageCount,
                 turn.steps,
                 turn.currency,
+                turn.conversationId?.toString(),
             )
         redis.set("turn:${turn.userId}:${turn.turnId}", CircasoJson.encodeToString(PendingJson.serializer(), json), TTL)
         // The user's parked turn ids, so a deleted account's turns can be found without scanning keys.
@@ -220,6 +222,7 @@ class RedisPendingTurns(private val redis: RedisScope) : PendingTurns {
             PendingReadNote(j.chatIds, j.chatNames, j.messageCount),
             j.steps,
             j.currency,
+            j.conversationId?.let { runCatching { UUID.fromString(it) }.getOrNull() },
         )
     }
 

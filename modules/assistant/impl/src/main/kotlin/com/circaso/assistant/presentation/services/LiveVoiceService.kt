@@ -13,6 +13,8 @@ import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Live voice (A11). Opening checks the user and the allowance and opens the providers; each turn of the conversation
@@ -33,21 +35,32 @@ class LiveVoiceService(
             is Resource.Error -> opened
         }
 
-    private fun conversation(line: LiveVoiceLine) =
-        LiveConversation(
+    /**
+     * Every turn of one call goes to one conversation: the one the `auth` frame named, or else the one its first turn
+     * went to (the most recent, or a new one), even if the user starts another meanwhile.
+     */
+    private fun conversation(line: LiveVoiceLine): LiveConversation {
+        val conversationId = AtomicReference(line.start.conversationId)
+        return LiveConversation(
             line,
-            ask = { text, agentToken, reply -> startTurn(turn(line, text, agentToken), reply) },
+            ask = { text, agentToken, reply ->
+                startTurn(turn(line, text, agentToken, conversationId.get()), reply).also { asked ->
+                    if (asked is Resource.Success) conversationId.compareAndSet(null, asked.data.conversationId)
+                }
+            },
             answerDevice = { result, reply -> continueTurn(result, reply, ModelPurpose.VOICE) },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
             checkSession = { access, agent -> checkLiveSession(line.userId, access, agent) is Resource.Success },
             saveUsage = { saveLiveVoiceUsage(line.userId) },
             timed = { recordLiveTiming(it) },
         )
+    }
 
     private fun turn(
         line: LiveVoiceLine,
         text: String,
         agentToken: String?,
+        conversationId: UUID?,
     ) = TurnCommand(
         line.userId,
         text,
@@ -57,5 +70,6 @@ class LiveVoiceService(
         requestId = line.start.requestId,
         purpose = ModelPurpose.VOICE,
         currency = line.start.currency,
+        conversationId = conversationId,
     )
 }

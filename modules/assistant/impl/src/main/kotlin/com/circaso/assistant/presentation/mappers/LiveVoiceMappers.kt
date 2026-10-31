@@ -21,6 +21,7 @@ import com.circaso.assistant.presentation.dto.LiveTranscriptFrame
 import com.circaso.assistant.presentation.dto.LiveTurnFrame
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
+import java.util.UUID
 
 fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
     LiveVoiceStart(
@@ -30,8 +31,12 @@ fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
         chatReading,
         requestId,
         displayCurrencyOf(currency),
-        voice,
+        voice = voice,
+        conversationId = conversationId?.let { parseUuid(it) ?: UNKNOWN_CONVERSATION },
     )
+
+/** What an `auth` frame's conversation id that isn't a UUID becomes: an id no conversation has, so turns are refused. */
+private val UNKNOWN_CONVERSATION = UUID(0, 0)
 
 fun LiveVoiceLine.toReadyJson(): String =
     CircasoJson.encodeToString(

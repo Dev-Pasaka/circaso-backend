@@ -10,8 +10,10 @@ import com.circaso.assistant.data.metrics.TelemetryLiveTimings
 import com.circaso.assistant.data.repositories.AssistantExpiry
 import com.circaso.assistant.data.repositories.AssistantStoreImpl
 import com.circaso.assistant.data.repositories.ChatRepositoryImpl
+import com.circaso.assistant.data.repositories.ConversationRepositoryImpl
 import com.circaso.assistant.data.repositories.DatabaseTransactor
 import com.circaso.assistant.data.repositories.EntitlementRepositoryImpl
+import com.circaso.assistant.data.tables.AshaConversationsTable
 import com.circaso.assistant.data.tables.AshaMessagesTable
 import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
@@ -33,35 +35,45 @@ import com.circaso.assistant.domain.ports.VoiceFallbacks
 import com.circaso.assistant.domain.ports.VoiceSamples
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.ChatRepository
+import com.circaso.assistant.domain.repositories.ConversationRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AshaVoices
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.ConversationResolver
+import com.circaso.assistant.domain.support.ConversationTitler
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
+import com.circaso.assistant.domain.usecases.CreateConversation
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
+import com.circaso.assistant.domain.usecases.DeleteConversation
 import com.circaso.assistant.domain.usecases.DeleteExchange
 import com.circaso.assistant.domain.usecases.GetUsage
 import com.circaso.assistant.domain.usecases.GetVoiceSample
 import com.circaso.assistant.domain.usecases.ListChat
+import com.circaso.assistant.domain.usecases.ListConversationMessages
+import com.circaso.assistant.domain.usecases.ListConversations
 import com.circaso.assistant.domain.usecases.ListVoices
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
 import com.circaso.assistant.domain.usecases.RecordLiveTiming
+import com.circaso.assistant.domain.usecases.RenameConversation
 import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
 import com.circaso.assistant.domain.usecases.TranscribeVoice
 import com.circaso.assistant.presentation.controllers.chatController
+import com.circaso.assistant.presentation.controllers.conversationController
 import com.circaso.assistant.presentation.controllers.liveVoiceController
 import com.circaso.assistant.presentation.controllers.voiceController
 import com.circaso.assistant.presentation.events.IdentityEventHandler
 import com.circaso.assistant.presentation.services.ChatService
+import com.circaso.assistant.presentation.services.ConversationService
 import com.circaso.assistant.presentation.services.IdentityEventsService
 import com.circaso.assistant.presentation.services.LiveVoiceService
 import com.circaso.assistant.presentation.services.VoiceService
@@ -86,7 +98,7 @@ import java.time.Duration
 internal val assistantDatabaseSpec =
     DatabaseModuleSpec(
         schema = "assistant",
-        tables = listOf(AshaMessagesTable, UsageDailyTable, EntitlementsTable, AuditTable),
+        tables = listOf(AshaConversationsTable, AshaMessagesTable, UsageDailyTable, EntitlementsTable, AuditTable),
         migrationsLocation = "classpath:db/assistant",
         outbox = true,
     )
@@ -166,6 +178,7 @@ fun assistantModule(config: Config): Module =
         single<VoiceFallbacks> { LoggedVoiceFallbacks() }
         single<VoiceSamples> { RedisVoiceSamples(get<RedisScopes>().scope("ast")) }
         single<ChatRepository> { ChatRepositoryImpl(get(named("assistant.database")), get()) }
+        single<ConversationRepository> { ConversationRepositoryImpl(get(named("assistant.database")), get()) }
         single<EntitlementRepository> { EntitlementRepositoryImpl(get(named("assistant.database")), clock) }
         single<AssistantStore> { AssistantStoreImpl(get(named("assistant.database")), get(), clock) }
         single(named("assistant.purge-expired")) {
@@ -191,10 +204,17 @@ fun assistantModule(config: Config): Module =
         single { UsageReader(get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DailyUsage(get(), get(), get(), clock) }
-        single { TurnRecorder(get(), get(), get(), get(), get(), get(), clock) }
-        single { StartTurn(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { ContinueTurn(get(), get(), get(), get(), get(), clock) }
+        single { ConversationResolver(get(), get(), clock) }
+        single { ConversationTitler(get(), get()) }
+        single { TurnRecorder(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { StartTurn(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ContinueTurn(get(), get(), get(), get(), get(), get(), clock) }
         single { ListChat(get()) }
+        single { ListConversations(get(), get()) }
+        single { CreateConversation(get()) }
+        single { RenameConversation(get(), clock) }
+        single { DeleteConversation(get(), get(), get()) }
+        single { ListConversationMessages(get(), get()) }
         single { DeleteChat(get(), get()) }
         single { DeleteExchange(get(), get(), get()) }
         single { GetUsage(get()) }
@@ -211,15 +231,18 @@ fun assistantModule(config: Config): Module =
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
+        single { ConversationService(get(), get(), get(), get(), get()) }
         single { VoiceService(get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single { LiveVoiceService(get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
+            val conversations = get<ConversationService>()
             val voice = get<VoiceService>()
             val live = get<LiveVoiceService>()
             RouteContributor { route ->
                 route.chatController(chat)
+                route.conversationController(conversations)
                 route.voiceController(voice)
                 route.liveVoiceController(live)
             }

@@ -68,6 +68,8 @@ data class PendingTurn(
     val steps: Int,
     /** The user's display currency for this turn, so the tools after the pause answer in it too. */
     val currency: String? = null,
+    /** The conversation the turn is in; null only for a turn parked before conversations (it goes to the latest). */
+    val conversationId: UUID? = null,
 )
 
 sealed interface PendingMessage {

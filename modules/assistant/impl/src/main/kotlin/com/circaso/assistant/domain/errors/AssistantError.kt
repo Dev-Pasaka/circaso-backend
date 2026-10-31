@@ -59,4 +59,11 @@ sealed class AssistantError(
         "That question is no longer waiting.",
         ErrorKind.NOT_FOUND,
     )
+
+    /** No conversation of this user has that id: never theirs, or deleted. */
+    data object ConversationNotFound : AssistantError(
+        "assistant.conversation_not_found",
+        "That conversation doesn't exist.",
+        ErrorKind.NOT_FOUND,
+    )
 }

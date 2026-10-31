@@ -24,6 +24,11 @@ sealed interface LivePhoneFrame {
         val currency: String? = null,
         /** A voice id from A12; missing or unknown, Asha's default voice speaks. */
         val voice: String? = null,
+        /**
+         * The conversation the call's turns go to (first frame only); without it the user's most recent one, or a new
+         * one, as on A2. One that isn't the user's fails each turn with `assistant.conversation_not_found`.
+         */
+        val conversationId: String? = null,
     ) : LivePhoneFrame
 
     /** The answer to a `tool_request`. */

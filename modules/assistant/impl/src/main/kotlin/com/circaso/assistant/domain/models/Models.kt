@@ -10,7 +10,7 @@ enum class Role { USER, ASHA }
 /** What Asha read from the user's chats to answer one question: kept as a count and chat ids, never the snippets. */
 data class ReadNote(val chatIds: List<String>, val messageCount: Int, val chatNames: List<String> = emptyList())
 
-/** One line of the Asha chat. A reply carries the id of the message it answers. */
+/** One line of the Asha chat, in one of the user's conversations. A reply carries the id of the message it answers. */
 data class ChatMessage(
     val userId: UserId,
     val messageId: UUID,
@@ -22,7 +22,28 @@ data class ChatMessage(
     val askedFrom: String?,
     val readNote: ReadNote?,
     val createdAt: Instant,
+    val conversationId: UUID,
 )
+
+/**
+ * One conversation with Asha (decision 2026-10-31): the user can start a new one at any time, and Asha reads only the
+ * one she is in. [title] is null until it is titled, from its first question or by the user.
+ */
+data class Conversation(
+    val userId: UserId,
+    val conversationId: UUID,
+    val title: String?,
+    val createdAt: Instant,
+    /** The last change of any kind: a message, a rename. */
+    val updatedAt: Instant,
+    /** The last message, or the creation of a conversation that has none yet; the list is newest first by it. */
+    val lastMessageAt: Instant,
+)
+
+/** Where the next page of conversations starts: after this one, in the list's order. */
+data class ConversationCursor(val lastMessageAt: Instant, val conversationId: UUID)
+
+data class ConversationPage(val conversations: List<Conversation>, val nextCursor: String?)
 
 enum class Plan { FREE, PLUS }
 
@@ -56,6 +77,8 @@ data class TurnCommand(
     val purpose: ModelPurpose = ModelPurpose.CHAT,
     /** The user's display currency (ISO 4217), for amounts in their own money; null when the app sent none. */
     val currency: String? = null,
+    /** The conversation to ask in; null for the user's most recent one, or a new one if they have none. */
+    val conversationId: UUID? = null,
 )
 
 /**
@@ -71,13 +94,20 @@ data class ToolStatus(
 
 /** What a turn comes to: an answer, or a question for the phone (a device tool) that the phone answers through A9. */
 sealed interface TurnResult {
-    data class Answer(val message: ChatMessage) : TurnResult
+    /** The conversation the turn is in. */
+    val conversationId: UUID
+
+    /** [conversation] is as saved with the answer: null when it was deleted while Asha answered (nothing saved). */
+    data class Answer(val message: ChatMessage, val conversation: Conversation? = null) : TurnResult {
+        override val conversationId: UUID get() = message.conversationId
+    }
 
     data class NeedsDevice(
         val turnId: UUID,
         val callId: String,
         val toolName: String,
         val argumentsJson: String,
+        override val conversationId: UUID,
     ) : TurnResult
 }
 

@@ -196,6 +196,7 @@ The shared ones, then each area's own. Codes are stable.
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
 | `assistant.model_unavailable` | 502 | Asha's model is down; try again |
+| `assistant.conversation_not_found` | 404 | No conversation of yours has that id (never yours, or deleted): on C3 to C5, on A2 with a `conversationId`, and as an `error` frame on a live voice turn |
 | `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself. On the live voice socket it is the close reason instead |
 
 ## Talking to Asha: streaming and the phone's help
@@ -206,8 +207,10 @@ The shared ones, then each area's own. Codes are stable.
 | --- | --- | --- |
 | `message` | `{"delta": "…"}` | The next piece of the reply, as the model wrote it. Append the pieces. |
 | `tool_request` | `{"turnId", "callId", "name", "arguments"}` | Asha needs something only the phone can do: search or read your chats, which stay end-to-end encrypted on the server. Run the tool locally and answer with `POST …/messages/{turnId}/tool-results`; its response is a new event stream that carries on the same reply. |
-| `done` | `{"message": {…}}` | The reply is complete and saved. Its text is everything shown, including what Asha said before a tool request, with a blank line between the parts. |
+| `done` | `{"message": {…}, "conversationId", "conversation": {…}}` | The reply is complete and saved in that conversation. Its text is everything shown, including what Asha said before a tool request, with a blank line between the parts. `conversation` is the conversation as saved (titled after its first exchange); null if it was deleted while Asha answered, and then nothing was saved. |
 | `error` | `{"code", "message"}` | The model failed after some text had gone out (the `200` was already sent); nothing is saved. Ask again. |
+
+**Conversations.** Each message belongs to one conversation, and Asha reads only the conversation she is asked in. Start a new one with `POST /v1/assistant/conversations`, list them with `GET /v1/assistant/conversations` (newest first), rename with `PATCH …/{conversationId}`, delete with `DELETE …/{conversationId}` and read one with `GET …/{conversationId}/messages`. Send `conversationId` on `POST /v1/assistant/chat/messages` (and on the live socket's `auth` frame); without it the message goes to your most recent conversation, or a new one.
 
 The phone sends back at most 30 short snippets. They are used for that answer and never stored; Asha keeps only a note of which chats and how many messages she read, and the answer says so ("Asha read 4 messages from Family").
 

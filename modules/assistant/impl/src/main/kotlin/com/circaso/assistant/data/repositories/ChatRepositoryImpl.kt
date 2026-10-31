@@ -22,8 +22,8 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import java.util.UUID
 
 /**
- * The Asha chat, read through its primary key `(user_id, message_id)`: ids are UUIDv7, so a page is a keyset on
- * `message_id DESC`. The text is opened from its sealed form only here, inside the transaction that read it.
+ * The Asha chat, read through its primary key `(user_id, message_id)` (the whole history) or
+ * `asha_messages_conversation_idx` (one conversation): ids are UUIDv7, so a page is a keyset on `message_id DESC`. The text is opened from its sealed form only here, inside the transaction that read it.
  */
 class ChatRepositoryImpl(private val database: Database, private val vault: TextVault) : ChatRepository {
     override suspend fun find(userId: UserId, messageId: UUID): ChatMessage? =
@@ -53,6 +53,40 @@ class ChatRepositoryImpl(private val database: Database, private val vault: Text
                 .map { it.toMessage() }
         }
 
+    override suspend fun listIn(
+        userId: UserId,
+        conversationId: UUID,
+        before: UUID?,
+        limit: Int,
+    ): List<ChatMessage> =
+        database.tx("chat.list-conversation") {
+            AshaMessagesTable
+                .selectAll()
+                .where {
+                    var condition: Op<Boolean> =
+                        (AshaMessagesTable.userId eq userId.value) and
+                            (AshaMessagesTable.conversationId eq conversationId)
+                    if (before != null) condition = condition and (AshaMessagesTable.messageId less before)
+                    condition
+                }.orderBy(AshaMessagesTable.messageId to SortOrder.DESC)
+                .limit(limit)
+                .toList()
+                .map { it.toMessage() }
+        }
+
+    override suspend fun oldestIn(userId: UserId, conversationId: UUID): ChatMessage? =
+        database.tx("chat.oldest-in-conversation") {
+            AshaMessagesTable
+                .selectAll()
+                .where {
+                    (AshaMessagesTable.userId eq userId.value) and
+                        (AshaMessagesTable.conversationId eq conversationId)
+                }.orderBy(AshaMessagesTable.messageId to SortOrder.ASC)
+                .limit(1)
+                .singleOrNull()
+                ?.toMessage()
+        }
+
     override suspend fun delete(userId: UserId, messageIds: Collection<UUID>): Int {
         if (messageIds.isEmpty()) return 0
         return database.tx("chat.delete-messages") {
@@ -71,5 +105,6 @@ class ChatRepositoryImpl(private val database: Database, private val vault: Text
             this[AshaMessagesTable.askedFrom],
             readNoteOf(this[AshaMessagesTable.readNote]),
             this[AshaMessagesTable.createdAt],
+            this[AshaMessagesTable.conversationId],
         )
 }

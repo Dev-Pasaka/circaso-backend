@@ -9,6 +9,15 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-10-31, Asha conversations (additive; old apps keep working):**
+> 1. **Separate conversations with Asha**, like a chat list (section 7, Asha chat; section 9): C1 `GET /v1/assistant/conversations`, C2 `POST /v1/assistant/conversations`, C3 `PATCH /v1/assistant/conversations/{conversationId}`, C4 `DELETE /v1/assistant/conversations/{conversationId}`, C5 `GET /v1/assistant/conversations/{conversationId}/messages`. **Asha now reads only the conversation she is asked in**, so a new conversation starts with a clean context.
+> 2. **A2 takes `conversationId`** (optional). Without it the message goes to the user's most recent conversation, or a new one if they have none, so an app that doesn't send it keeps one thread. The `done` event gains `conversationId` and `conversation` (the conversation as saved, with its title); `tool_request` gains `conversationId`.
+> 3. **Live voice:** the `auth` frame takes `conversationId` (optional, first frame only), with the same fallback; every turn of the call is saved in that one conversation.
+> 4. **Every `ChatMessageDto` carries `conversationId`** (A1, C5, `done`, `reply_done`). A1 still returns every message of every conversation; A5 deletes every conversation too.
+> 5. **Titles:** a conversation is `"New chat"` until its first exchange, then titled from the first question (at most six words, greetings dropped), unless the user named it (C2's `title`, or C3). Existing history became one conversation, titled from its first question (`"Earlier chat"` if Asha spoke first).
+> 6. **New error code** `assistant.conversation_not_found` (404) on C3–C5, on A2 with a `conversationId` that isn't the user's, and as a live voice `error` frame.
+> 7. **No realtime frames** for conversations: the app pulls C1 (on opening the Asha list, and after a `done`, which already carries the conversation).
+>
 > **Changed on 2026-10-31, Asha's voices (additive):**
 > 1. **The user can choose Asha's voice.** A12 `GET /v1/assistant/voices` → `VoicesResponse { voices: [VoiceDto { id, name, character, gender, default }] }`: six voices, `default: true` on one (Luna, the voice so far). Keep the user's choice on the phone and send its `id` as **`voice`** on A4 (`SpeechRequest.voice`) and on A11's first `auth` frame. Missing or unknown is the default voice, never an error, so an app that sends nothing keeps working. A11's `ready` frame now says which `voice` the conversation uses.
 > 2. **Preview before choosing:** A13 `GET /v1/assistant/voices/{voiceId}/sample` → MP3 bytes of a fixed line in that voice. Free (not counted against the voice allowance). Recipe in section 9 (Voice picker).
@@ -65,7 +74,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **87** routes the phone calls: **59 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **94** routes the phone calls: **66 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -78,7 +87,7 @@ Of the **87** routes the phone calls: **59 READY**, **27 PARTIAL**, **1 DEV STUB
 | Profile, @handle, avatar | **READY** | |
 | Contacts sync, connections, invites, blocks, reach | **READY** | |
 | Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
-| Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). The free allowance numbers and the paid plan are not decided: show what the server returns. |
+| Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). Separate conversations (C1–C5), each its own context. The free allowance numbers and the paid plan are not decided: show what the server returns. |
 | Asha live voice (socket) | **READY** | Section 9. Real speech-to-text (Opus in) and voice (mulaw 8 kHz out) on dev; English only. |
 | Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`), for being added to a group, for wallet payments (sent, failed, received) and wallet reminders, and for calls (an incoming call, data-only and high priority; a missed call). iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
 | Account security, linked logins, security log | **READY** | |
@@ -363,9 +372,14 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **READY** | (the user token). Send the user's agent token in `X-Agent-Token` so Asha's tools can read the user's own data, and `currency` (the display currency, ISO 4217) so amounts come in the user's money. Replies are markdown with ```chart, ```statement and ```diagram blocks (section 9, Rich replies); `tool_status` and `tool_done` events bracket each tool call. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
-| `DELETE /v1/assistant/chat`<br>**A5** Delete the whole history with Asha | `app` | — → NoBody | **READY** | (the user token). |
-| `GET /v1/assistant/chat`<br>**A1** The Asha chat, newest first | `app` | — → ChatResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100). |
+| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **READY** | (the user token). `conversationId` (C1, C2) picks the conversation; without it the message goes to the most recent one, or a new one, and Asha reads only that conversation as context. Send the user's agent token in `X-Agent-Token` so Asha's tools can read the user's own data, and `currency` (the display currency, ISO 4217) so amounts come in the user's money. Replies are markdown with ```chart, ```statement and ```diagram blocks (section 9, Rich replies); `tool_status` and `tool_done` events bracket each tool call. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply with `conversationId` and `conversation`; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `assistant.conversation_not_found`, `auth.token_invalid`, `request.malformed`. |
+| `DELETE /v1/assistant/chat`<br>**A5** Delete the whole history with Asha | `app` | — → NoBody | **READY** | (the user token). Every conversation and every message. |
+| `GET /v1/assistant/chat`<br>**A1** The Asha chat, newest first | `app` | — → ChatResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100). Every conversation's messages, each with its `conversationId`; for one conversation use C5. |
+| `GET /v1/assistant/conversations`<br>**C1** Your conversations with Asha, newest first | `app` | — → ConversationsResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100). Newest first by `lastMessageAt` (an empty conversation counts from its creation). Errors: `request.malformed` (a bad cursor). |
+| `POST /v1/assistant/conversations`<br>**C2** Start a new conversation | `app` | CreateConversationRequest (optional) → ConversationDto | **READY** | (the user token). Body `{}` or empty, or `{ "title": "Budget" }` (1 to 80 characters). Without a title it is `"New chat"` until its first question titles it. It becomes the most recent conversation. Errors: `request.malformed`. |
+| `PATCH /v1/assistant/conversations/{conversationId}`<br>**C3** Rename a conversation | `app` | RenameConversationRequest → ConversationDto | **READY** | (the user token). `{ "title": "December budget" }`, 1 to 80 characters after trimming; a title the user chose is never replaced. Errors: `assistant.conversation_not_found`, `request.malformed`. |
+| `DELETE /v1/assistant/conversations/{conversationId}`<br>**C4** Delete a conversation | `app` | — → NoBody | **READY** | (the user token). Deletes the conversation and every message in it; Asha keeps no copy. Errors: `assistant.conversation_not_found` (also on a repeat), `request.malformed`. |
+| `GET /v1/assistant/conversations/{conversationId}/messages`<br>**C5** One conversation's messages, newest first | `app` | — → ChatResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100), as A1. Errors: `assistant.conversation_not_found`, `request.malformed`. |
 | `DELETE /v1/assistant/chat/messages/{messageId}`<br>**A6** Delete one exchange | `app` | — → NoBody | **READY** | (the user token). |
 | `POST /v1/assistant/chat/messages/{messageId}/tool-results`<br>**A9** The phone's answer to a device tool; the reply then continues as server-sent events | `app` | ToolResultsRequest → NoBody | **READY** | (the user token). `messageId` is the `turnId` from the `tool_request` event. At most 30 short snippets; they are used for this turn and never stored. Answer a `tool_request` within 10 minutes. The response is a new `text/event-stream` carrying on the same reply (errors before any text are the envelope): `message` events `{delta}` as the model writes (append them to what was shown before the pause), another `tool_request` if Asha needs the phone again, `done` with the saved reply (it includes what was said before the pause), or an `error` event `{code, message}` if the model fails after text has gone out (nothing is saved). Errors: `assistant.turn_not_found`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
 
@@ -538,16 +552,28 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 **Status: READY.** The routes and event format below are final, and the dev server runs the real model, speech-to-text and voice.
 
-- **History:** `GET /v1/assistant/chat` (newest first, paged); delete one exchange or everything.
-- **Ask:** `POST /v1/assistant/chat/messages` `{ "text", "chatReading": true|false, "askedFrom"?, "currency"? }`. Send `X-Agent-Token: <agentSession.accessToken>` so her tools can read the user's own data (without it she has no lookups), and `currency`, the user's display currency (`"KES"`, ISO 4217; anything else is `request.malformed`), so she gives amounts in it. Asha reads only, and only this user's data: profile, contacts, blocked people, account security (no secrets), chat list and members (never messages; those are read on the phone through the device tools), wallet balances and addresses, payments with totals, chamas, her own allowance, and the public web. The answer is **`text/event-stream`**, not the envelope. Read the response body as a stream and parse `event:` and `data:` lines yourself (works on every Ktor engine). Errors before any text (a used-up allowance, a bad request) arrive as the normal envelope with a non-200 status.
+- **Conversations (decision 2026-10-31):** the Asha section is a list of conversations, like a chat list, and each one is its own context: Asha reads only the conversation she is asked in (its last few exchanges on the free plan, many more on Asha Plus). The app pulls; there are no realtime frames for conversations.
+  - List: `GET /v1/assistant/conversations?cursor=&limit=` →
+    ```json
+    { "conversations": [ { "conversationId": "0193a…", "title": "How much did I send Mum", "createdAt": "2026-10-31T08:00:00Z", "updatedAt": "2026-10-31T08:02:10Z", "lastMessageAt": "2026-10-31T08:02:10Z" } ], "nextCursor": "2026-10-31T08:02:10Z_0193a…" }
+    ```
+    Newest first by `lastMessageAt`. `nextCursor` is opaque: pass it back as `cursor`; null means the end.
+  - New chat: `POST /v1/assistant/conversations` with `{}` (or `{ "title": "Budget" }`) and an `Idempotency-Key` → a `ConversationDto` with `title: "New chat"`. Open it at once; it is empty.
+  - Rename: `PATCH /v1/assistant/conversations/{conversationId}` `{ "title": "December budget" }` → the `ConversationDto`.
+  - Delete: `DELETE /v1/assistant/conversations/{conversationId}` → `data: null`. Its messages go with it.
+  - Read one: `GET /v1/assistant/conversations/{conversationId}/messages?cursor=&limit=` → `ChatResponse`, newest first, exactly as A1.
+  - **Titles** are made by the server from the conversation's first question when its first exchange is saved (at most six words, greetings like "Hi Asha" dropped): `"How much did I send Mum"`. Until then the title is `"New chat"`. A title the user set (C2, C3) is never replaced. The `done` event carries the conversation with its new title, so update the list row from it. The history from before conversations is one conversation, titled from its first question, or `"Earlier chat"`.
+  - An id that isn't one of the user's conversations (another user's, or deleted) is `assistant.conversation_not_found` (404) everywhere.
+- **History:** `GET /v1/assistant/chat` (newest first, paged) is every message of every conversation, each with its `conversationId`; delete one exchange (A6) or everything (A5, every conversation too).
+- **Ask:** `POST /v1/assistant/chat/messages` `{ "text", "conversationId"?, "chatReading": true|false, "askedFrom"?, "currency"? }`. Send `conversationId` for the conversation on screen; without it the message goes to the user's most recent conversation, or a new one if they have none (what an older app gets). Send `X-Agent-Token: <agentSession.accessToken>` so her tools can read the user's own data (without it she has no lookups), and `currency`, the user's display currency (`"KES"`, ISO 4217; anything else is `request.malformed`), so she gives amounts in it. Asha reads only, and only this user's data: profile, contacts, blocked people, account security (no secrets), chat list and members (never messages; those are read on the phone through the device tools), wallet balances and addresses, payments with totals, chamas, her own allowance, and the public web. The answer is **`text/event-stream`**, not the envelope. Read the response body as a stream and parse `event:` and `data:` lines yourself (works on every Ktor engine). Errors before any text (a used-up allowance, a bad request) arrive as the normal envelope with a non-200 status.
 
 | Event | `data` | Do |
 | --- | --- | --- |
 | `message` | `{"delta": "…"}` | Append the piece to the reply on screen. Pieces arrive as the model writes them (the first within a second or two), so show them at once. A piece may start with a blank line (`"\n\n…"`): Asha said something, looked something up, and carries on. |
 | `tool_status` | `{"turnId","callId","tool","label"}` | Asha is about to look something up. Show `label` (the server's own short line, such as "Checking your payments for 2026-10…" or "Searching the web for “M-Pesa fees”…") as a status chip under the reply, with a spinner. Several can come in one turn, one at a time. Device tools get one too, just before their `tool_request`. |
 | `tool_done` | `{"turnId","callId","tool","ok"}` | That lookup finished (`ok: false`: it failed, and Asha will say so). Clear or tick the chip with the same `callId`. A device tool's `tool_done` comes first on the A9 stream. Both events are additive: an app that doesn't know them can ignore them. |
-| `tool_request` | `{"turnId","callId","name","arguments"}` | Asha needs something only the phone can do (search or read chats, which stay end-to-end encrypted). Run it locally, then `POST /v1/assistant/chat/messages/{turnId}/tool-results` `{ "callId", "snippets": [...] }` (at most 30 short snippets; answer within 10 minutes or get `assistant.turn_not_found`). That request's response is a new event stream that carries on the same reply: keep the text shown so far (what Asha said before asking, such as "Let me look in your chats.") and append to it. |
-| `done` | `{"message": {…}}` | The reply is complete and saved. `message.text` is the whole reply as shown, including any text before a `tool_request`: replace what you built from the pieces with it. |
+| `tool_request` | `{"turnId","callId","name","arguments","conversationId"}` | Asha needs something only the phone can do (search or read chats, which stay end-to-end encrypted). Run it locally, then `POST /v1/assistant/chat/messages/{turnId}/tool-results` `{ "callId", "snippets": [...] }` (at most 30 short snippets; answer within 10 minutes or get `assistant.turn_not_found`). That request's response is a new event stream that carries on the same reply: keep the text shown so far (what Asha said before asking, such as "Let me look in your chats.") and append to it. |
+| `done` | `{"message": {…}, "conversationId": "…", "conversation": {…}}` | The reply is complete and saved in `conversationId`. `message.text` is the whole reply as shown, including any text before a `tool_request`: replace what you built from the pieces with it. `conversation` is the conversation as saved (a `ConversationDto`, with the title its first exchange gave it): update that row of the list. It is null only when the conversation was deleted while Asha answered; then nothing was saved. Example: `{"message":{"messageId":"0193b…","role":"ASHA","text":"You sent Mum KES 2,000.","replyTo":"0193a…","at":"2026-10-31T08:02:10Z","conversationId":"0193c…"},"conversationId":"0193c…","conversation":{"conversationId":"0193c…","title":"How much did I send Mum","createdAt":"2026-10-31T08:00:00Z","updatedAt":"2026-10-31T08:02:10Z","lastMessageAt":"2026-10-31T08:02:10Z"}}` |
 | `error` | `{"code","message"}` | The model failed after some text had gone out (`assistant.model_unavailable`); nothing was saved. Show the failure on the half-written reply and let the user ask again. |
 
 - **Rich replies (text turns).** Asha writes markdown (prompt `asha-2026-10-31-v2`). Render the reply as markdown as it streams: headings (`###`), **bold**, lists, tables and links (web sources are cited as `[title](url)`). Plain chit-chat comes as plain text. On top of markdown there are three fenced blocks, each holding exactly one JSON object; the app draws them natively (no images, no image URLs, no HTML ever come):
@@ -615,7 +641,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (the clip's length in seconds; a decimal such as `5.5` is fine; up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
 - **Live voice (hands-free):** open `wss://<host>/v1/assistant/voice/live` for the length of the conversation and close it when the user leaves the voice screen. Not when the language is Swahili: then record clips (Voice in) and speak replies with the phone's own text-to-speech.
-  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true, "currency": "KES", "voice": "harmonia" }` (`currency` optional, the display currency; one that isn't ISO 4217 is ignored. `voice` optional, the user's choice from A12; missing or unknown is the default voice, and the conversation keeps this voice to the end: a `voice` on a later `auth` frame is ignored). An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
+  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true, "currency": "KES", "voice": "harmonia", "conversationId": "0193c…" }` (`currency` optional, the display currency; one that isn't ISO 4217 is ignored. `voice` optional, the user's choice from A12; missing or unknown is the default voice, and the conversation keeps this voice to the end: a `voice` on a later `auth` frame is ignored. `conversationId` optional, the conversation the call is saved in: without it, the most recent one or a new one, as on A2, and every turn of the call stays in the conversation the first went to. Only the first `auth` frame's counts; one that isn't the user's makes each turn fail with an `error` frame `assistant.conversation_not_found`). An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
   2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "mulaw", "sampleRate": 8000 }, "voice": "harmonia" }` (`voice`: the voice Asha speaks in for this conversation). Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame.
   3. Server text frames (JSON, routed on `type`):
 
@@ -624,12 +650,12 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `transcript` | `text`, `final` | Show the live caption; `final: false` may still change. |
 | `turn` | `text` | The question Asha is answering (also saved in the Asha chat). |
 | `reply` | `text` | One sentence of the answer, sent about when the audio reaches it (show it as a caption; the timing is approximate). Each sentence goes to the voice as soon as the model has written it, so the first is heard while the rest is still being written. The audio comes as **binary** frames: mulaw (G.711 µ-law), mono, at `audio.sampleRate` (8 kHz), as `audio.encoding` says. Queue the audio and play it in order. |
-| `reply_done` | `message` (as in A1), `spoken` | The answer as saved, sent once its audio has finished playing; `spoken: false` means the user talked over it (show it, don't play it). |
+| `reply_done` | `message` (as in A1, with its `conversationId`), `spoken` | The answer as saved, sent once its audio has finished playing; `spoken: false` means the user talked over it (show it, don't play it). |
 | `tool_request` | `turnId`, `callId`, `name`, `arguments` | As on A2 (`arguments` is a JSON **string**): run the device tool, answer on this socket within 30 s with `{ "type": "tool_results", "turnId", "callId", "snippets": [...] }`. A frame that doesn't decode, or the wrong `callId`, gets `error` `request.malformed` and the turn keeps waiting: send it again. Later than that the turn ends with an `error` frame `assistant.turn_not_found`. |
 | `tool_status` | `turnId`, `callId`, `tool`, `label` | As on A2: Asha is looking something up; show `label` while she does (she may also say a few words first). |
 | `tool_done` | `turnId`, `callId`, `tool`, `ok` | As on A2: that lookup finished. |
 | `interrupted` | — | The user talked over Asha: drop the audio queued and stop playing at once. While her audio plays it takes words, not just voice activity, and her own words heard back from the loudspeaker are ignored (so keep the mic open; the phone's echo canceller still matters for the words she says to be heard clearly). |
-| `error` | `code`, `message` | That answer failed (`assistant.model_unavailable`, `assistant.turn_not_found`, or `request.malformed` for a bad `tool_results`); the conversation goes on. |
+| `error` | `code`, `message` | That answer failed (`assistant.model_unavailable`, `assistant.turn_not_found`, `assistant.conversation_not_found`, or `request.malformed` for a bad `tool_results`); the conversation goes on. |
 | `timing` | `turn`, `modelFirstTextMs`, `firstSentenceMs`, `firstAudioMs` | Once per turn: milliseconds from the end of the user's speech to Asha's first words from the model, her first sentence sent to the voice, and the first of her audio sent to the phone. A step the turn never reached (talked over, failed) is `null`. For latency logs and debug overlays; nothing to show the user, and safe to ignore. |
 | `closing` | `reason`, `message`?, `retryAfterSeconds`? | The server is closing; `reason` is also the WebSocket close reason. |
 
@@ -708,18 +734,22 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ChainsResponse** — `defaultChain`: string; `chains`: [ChainOptionDto]
 - **ChatDto** — `chatId`: string; `kind`: string (`DIRECT` | `GROUP`); `sealedMeta`?: string|null; `metaVersion`: integer; `members`: [ChatMemberDto]; `settings`: ChatSettingsDto; `lastMessageId`?: string|null; `version`: integer; `created`?: boolean|null (M4 only); `notAdded`?: [string]|null (M5, M9 only)
 - **ChatMemberDto** — `user`: ChatProfileDto; `role`: string (`OWNER` | `ADMIN` | `MEMBER`); `joinedAt`: string
-- **ChatMessageDto** — `messageId`: string; `role`: string; `text`: string; `replyTo`?: string|null; `askedFrom`?: string|null; `readNote`?: ReadNoteDto; `at`: string
+- **ChatMessageDto** — `messageId`: string; `role`: string; `text`: string; `replyTo`?: string|null; `askedFrom`?: string|null; `readNote`?: ReadNoteDto; `at`: string; `conversationId`: string
 - **ChatProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false)
 - **ChatResponse** — `messages`: [ChatMessageDto]; `nextCursor`?: string|null
 - **ChatSettingsDto** — `membersCanAdd`?: boolean
 - **ChatsResponse** — `chats`: [ChatDto]
 - **ClaimHandleRequest** — `handle`: string
 - **ConnectRequest** — `via`: string; `value`: string
+- **ConversationDto** — `conversationId`: string; `title`: string (`"New chat"` until titled); `createdAt`: string; `updatedAt`: string; `lastMessageAt`: string
+- **ConversationsResponse** — `conversations`: [ConversationDto]; `nextCursor`?: string|null
 - **ConnectResponse** — `user`: PublicProfileDto2; `created`: boolean
 - **ContactDto** — `user`: PublicProfileDto2; `source`: string; `addedAt`: string
 - **ContactsResponse** — `contacts`: [ContactDto]; `nextCursor`?: string|null
 - **CounterpartyDto** — `userId`?: string|null; `displayName`?: string|null; `handle`?: string|null; `avatarUrl`?: string|null; `address`?: string|null
+- **CreateConversationRequest** (C2; the body may be empty) — `title`?: string|null (1 to 80 characters)
 - **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
+- **DoneEvent** (SSE `done`, A2 and A9) — `message`: ChatMessageDto; `conversationId`: string; `conversation`?: ConversationDto|null
 - **CreateWalletResponse** — `status`: string (`SETTING_UP`); `challengeId`?: string|null; `sdk`: SdkDto
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
 - **DeviceProofDto** — `timestamp`: string; `signature`: string
@@ -770,6 +800,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **RecoveryResponse** — `requestId`: string; `status`: string; `noticeSentAt`?: string|null; `relinkAfter`?: string|null
 - **RefreshRequest** — `refreshToken`: string; `deviceId`: string; `timestamp`: string; `signature`: string
 - **RefreshResponse** — `session`: SessionDto; `agentSession`: SessionDto
+- **RenameConversationRequest** (C3) — `title`: string (1 to 80 characters)
 - **RegisterDeviceRequest** — `deviceId`: string; `publicKey`: string; `keyAlgorithm`: string; `pushToken`?: string|null; `attestation`?: string|null; `model`?: string|null
 - **RegisterDeviceResponse** — `user`: UserStateDto; `session`: SessionDto; `agentSession`: SessionDto; `replacedDevice`?: ReplacedDeviceDto
 - **ReleaseRequest** — `verificationId`: string; `confirmAbandon`: boolean
@@ -782,8 +813,9 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SecurityLogResponse** — `events`: [SecurityEventDto]; `nextCursor`?: string|null
 - **SecurityOverviewResponse** — `maskedPhone`?: string|null; `providers`: [ProviderDto]; `device`?: ActiveDeviceDto; `verification`: string
 - **SendChatMessageRequest** — `clientMessageId`: string; `kind`: string (`MESSAGE` | `SENDER_KEY` | `CONTROL`); `ciphertext`?: string|null (a group's one ciphertext); `recipients`?: [RecipientDto] (direct, and `SENDER_KEY`); `mediaIds`?: [string]; `pushable`?: boolean (default false)
-- **SendMessageRequest** — `text`: string; `askedFrom`?: AskedFromDto; `chatReading`?: boolean; `currency`?: string (ISO 4217, the user's display currency)
+- **SendMessageRequest** — `text`: string; `conversationId`?: string; `askedFrom`?: AskedFromDto; `chatReading`?: boolean; `currency`?: string (ISO 4217, the user's display currency)
 - **SentMessageResponse** — `messageId`: string; `sentAt`: string
+- **ToolRequestEvent** (SSE `tool_request`, A2 and A9) — `turnId`: string; `callId`: string; `name`: string; `arguments`: string (JSON); `conversationId`?: string
 - **ToolStatusEvent** (SSE `tool_status`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `label`: string
 - **ToolDoneEvent** (SSE `tool_done`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `ok`: boolean
 - **SessionDto** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string

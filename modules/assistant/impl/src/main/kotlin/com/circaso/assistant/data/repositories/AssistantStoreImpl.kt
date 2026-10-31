@@ -1,6 +1,7 @@
 package com.circaso.assistant.data.repositories
 
 import com.circaso.assistant.data.mappers.toColumn
+import com.circaso.assistant.data.tables.AshaConversationsTable
 import com.circaso.assistant.data.tables.AshaMessagesTable
 import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
@@ -44,6 +45,7 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
         AshaMessagesTable.batchInsert(messages, shouldReturnGeneratedValues = false) {
             this[AshaMessagesTable.userId] = it.userId.value
             this[AshaMessagesTable.messageId] = it.messageId
+            this[AshaMessagesTable.conversationId] = it.conversationId
             this[AshaMessagesTable.role] = it.role.name
             this[AshaMessagesTable.body] = vault.seal(it.text)
             this[AshaMessagesTable.replyTo] = it.replyTo
@@ -66,13 +68,16 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
         }
     }
 
+    /** The conversations first, then their messages: the lock order every path keeps (a turn being saved waits). */
     override suspend fun deleteChat(userId: UserId): Int =
         database.tx("chat.delete-all") {
-            AshaMessagesTable.deleteWhere { this.userId eq userId.value }
+            AshaConversationsTable.deleteWhere { this.userId eq userId.value } +
+                AshaMessagesTable.deleteWhere { this.userId eq userId.value }
         }
 
     override suspend fun erase(userId: UserId) {
         database.tx("assistant.erase-user") {
+            AshaConversationsTable.deleteWhere { this.userId eq userId.value }
             AshaMessagesTable.deleteWhere { this.userId eq userId.value }
             EntitlementsTable.deleteWhere { this.userId eq userId.value }
         }

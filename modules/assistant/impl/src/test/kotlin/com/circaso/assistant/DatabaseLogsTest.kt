@@ -25,6 +25,7 @@ import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -74,7 +75,20 @@ class DatabaseLogsTest {
             val now = Instant.now()
             val questionId = Uuid7.generate(now)
             val answerId = Uuid7.generate(now.plusMillis(1))
-            val question = ChatMessage(me, questionId, Role.USER, "Call $marker", null, answerId, marker, null, now)
+            val conversationId = UUID.randomUUID()
+            val question =
+                ChatMessage(
+                    me,
+                    questionId,
+                    Role.USER,
+                    "Call $marker",
+                    null,
+                    answerId,
+                    marker,
+                    null,
+                    now,
+                    conversationId,
+                )
             val answer =
                 ChatMessage(
                     me,
@@ -86,6 +100,7 @@ class DatabaseLogsTest {
                     null,
                     ReadNote(listOf("chat_$marker"), 1, listOf("Mum $marker")),
                     now,
+                    conversationId,
                 )
 
             transactor.run("chat.record-turn") {

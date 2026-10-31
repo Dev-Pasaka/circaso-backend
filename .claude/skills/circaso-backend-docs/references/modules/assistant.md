@@ -19,11 +19,11 @@ Asha answers "what do I want to know or do, said in my own words": she is Circas
 
 ### Asha in the chat list
 
-- **A chat like any other.** Asha appears as a pinned chat at the top of the chat list and in contacts, with her own avatar and a "Circaso assistant" badge. Her chat is one continuous thread per user: text, voice notes (kept as transcripts), proposal cards, and the questions asked from other chats, marked "asked from Family".
+- **A chat like any other.** Asha appears as a pinned chat at the top of the chat list and in contacts, with her own avatar and a "Circaso assistant" badge. Her chat is a list of **conversations** per user (decision 2026-10-31), like a chat list: the user can start a brand new one at any time. Each holds text, voice notes (kept as transcripts), proposal cards, and the questions asked from other chats, marked "asked from Family".
 - **Stored by this module.** The thread lives in the `assistant` schema, encrypted at rest. It is not end-to-end encrypted, because Asha has to read what you write to answer; the top of her chat says so in one line.
 - **Not a person.** Asha has a fixed system id, no account in identity and no profile in users. She can't be blocked, paid, called, added to a group or found by handle, and she never appears in anyone else's contacts. The app opens her chat through the assistant routes, so the reach rule doesn't apply.
-- **Memory of the thread.** She uses the recent part of the thread as context: the last few exchanges on the free plan, much more on Asha Plus.
-- **Deleting.** The user can delete one exchange (A6) or the whole history (A5) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Deleting the account deletes the chat and the entitlement in one transaction and, once it has committed, the user's `ast:` Redis keys (turns parked for the phone, which hold the conversation, and the day's counters), so nothing of the conversation stays in caches. All audit records (what was done, never what was said; in Phase B what was proposed, to whom, the amount and the user's decision, which back money movements) and usage counts for billing remain.
+- **Memory of the conversation.** She uses the recent part of the conversation she is asked in as context, never another conversation: the last few exchanges on the free plan, much more on Asha Plus. A new conversation starts with a clean context, which also keeps turns cheap.
+- **Deleting.** The user can delete one exchange (A6), one conversation (C4) or the whole history (A5, every conversation) at any time, and deleting the account deletes it too. After that Asha has no copy: not in the thread, caches or the model provider. Deleting the account deletes the chat and the entitlement in one transaction and, once it has committed, the user's `ast:` Redis keys (turns parked for the phone, which hold the conversation, and the day's counters), so nothing of the conversation stays in caches. All audit records (what was done, never what was said; in Phase B what was proposed, to whom, the amount and the user's decision, which back money movements) and usage counts for billing remain.
 
 ### Reading encrypted chats
 
@@ -46,7 +46,7 @@ The server never holds the keys, so Asha's chat tools are **device tools**: the 
 
 ### Owns
 
-- **Conversations** with Asha: one continuous chat per user, stored like any chat and deletable by the user; device tool results are never stored.
+- **Conversations** with Asha: each user's list of conversations and their messages, stored like any chat and deletable by the user; device tool results are never stored.
 - **Proposals** (Phase B): drafted messages and payments waiting for the user's confirmation.
 - **Usage and entitlements:** what each user has used today, and whether they have Asha Plus.
 - **Audit trail:** every turn, tool call, proposal and the user's decision on it.
@@ -73,6 +73,19 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 ### Depends on
 
 `shared`, `infrastructure:api`, `integrations:api` (`LanguageModel`, the speech contracts, `WebSearch`), and the `api` of identity, users, messaging, wallet and chama, only for the types their agent routes answer (decision 2026-10-31). Nothing depends on the assistant.
+
+### Conversations (decision 2026-10-31)
+
+Pasaka (2026-10-31): "to save on context we can have chat history where the user can create a brand new chat conversation", like Claude's chat list.
+
+- **Model.** A conversation has an id (UUIDv7), a title, `createdAt`, `updatedAt` (any change: a message, a rename) and `lastMessageAt` (the last message, or its creation while empty), and belongs to one user. Every message belongs to one conversation of its user.
+- **Which conversation a turn goes to** (`ConversationResolver`): the one named (A2's `conversationId`, A11's `auth.conversationId`); with none named, the user's most recent (by `lastMessageAt`), or a new one when they have none, so an app that doesn't know about conversations keeps one thread. A named id that isn't the user's is `assistant.conversation_not_found`, checked before the allowance is counted. A live call keeps every turn in the conversation its first turn went to. A turn parked for the phone (A9) carries its conversation in `ast:turn:…`; one parked before conversations existed goes to the most recent.
+- **Context.** `StartTurn` gives the model only that conversation's messages, capped by the plan's `contextMessages` (`ASSISTANT_LIMITS_UNLIMITED` still lifts it to 200).
+- **Saving.** `TurnRecorder` updates the conversation first (`UPDATE … RETURNING`, which locks the row; lock order: the conversation, then its messages), then writes the exchange, its audit record and the usage in the same transaction. A conversation deleted while Asha answered keeps nothing of the exchange (the audit record and usage stay); `done` then carries `conversation: null`.
+- **Titles** (`ConversationTitles`, `ConversationTitler`). A rule, not a model: greetings dropped ("Hi Asha, …"), markdown marks removed, the first six words kept (at most 60 characters), closing punctuation trimmed, first letter capitalised. Free, instant, never fails, never counts against the allowance, and the question goes to no other provider. Set with the conversation's first exchange, inside the transaction that saves it (the reply has already streamed, so it never delays it), only while the title is empty (`WHERE title IS NULL`): a title the user set (C2, C3) is never replaced. Shown as "New chat" while empty. Titles are sealed like message bodies.
+- **Conversation 1.** `V2__asha_conversations` moves each user's existing messages into one conversation, created at their first message and last active at their last. Bodies are sealed with the app's key, which SQL doesn't have, so the script leaves the title empty and the app titles it the first time it is listed (C1) or asked in: from its first message when that is a question, otherwise "Earlier chat".
+- **Deleting** a conversation (C4) deletes it and every message in it, with a `CONVERSATION_DELETED` audit record, in one transaction, as A5 and A6 do. A5 deletes every conversation too; account deletion erases them with the chat.
+- **Realtime.** The assistant sends no realtime frames; the app pulls C1 (and updates the row from A2's `done`, which carries the conversation).
 
 ### Asha's tools (Phase A, decision 2026-10-31)
 
@@ -145,7 +158,7 @@ All six are Deepgram Aura 2 speakers listed for `@cf/deepgram/aura-2-en` on Work
 
 | Direction | `type` | Fields | Meaning |
 | --- | --- | --- | --- |
-| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true), `currency`?, `voice`? | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting; `voice` an id from A12 (missing or unknown: the default voice), taken from the first frame only. Sent again later with fresh tokens (`accessToken`, `agentToken`) before the 15-minute access token expires |
+| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true), `currency`?, `voice`?, `conversationId`? | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting; `voice` an id from A12 (missing or unknown: the default voice), taken from the first frame only; `conversationId` (first frame only) is the conversation the call's turns are saved in, with A2's fallback; one that isn't the user's fails each turn with an `error` frame `assistant.conversation_not_found`. Sent again later with fresh tokens (`accessToken`, `agentToken`) before the 15-minute access token expires |
 | phone → server | `tool_results` | `turnId`, `callId`, `snippets` | The answer to a `tool_request` (as A9). A frame that doesn't decode, or a `callId` the turn isn't waiting on, gets an `error` frame `request.malformed` and the turn keeps waiting (on A9 too) |
 | phone → server | `end` | | Hang up |
 | server → phone | `ready` | `voiceSecondsLeft`, `audio: {encoding, sampleRate}`, `voice` | Accepted; start streaming. `voice` is the id Asha speaks in for this conversation |
@@ -155,7 +168,7 @@ All six are Deepgram Aura 2 speakers listed for `@cf/deepgram/aura-2-en` on Work
 | server → phone | `reply_done` | `message` (as A1), `spoken` | Sent once the reply's audio has finished playing on the phone (or at once when it is talked over). The reply as saved in the Asha chat; `spoken` false if the user talked over it |
 | server → phone | `tool_request` | `turnId`, `callId`, `name`, `arguments` (a JSON string, as on A2) | A device tool; unanswered after 30 s, the turn ends with an `error` frame `assistant.turn_not_found` |
 | server → phone | `interrupted` | | Barge-in: stop playing what is buffered |
-| server → phone | `error` | `code`, `message` | One turn failed (`assistant.model_unavailable`, `assistant.turn_not_found`, `request.malformed` for a bad `tool_results`); the conversation goes on |
+| server → phone | `error` | `code`, `message` | One turn failed (`assistant.model_unavailable`, `assistant.turn_not_found`, `assistant.conversation_not_found`, `request.malformed` for a bad `tool_results`); the conversation goes on |
 | server → phone | `timing` | `turn`, `modelFirstTextMs`, `firstSentenceMs`, `firstAudioMs` | Once per turn (decision 2026-10-30): milliseconds from the transcriber's end of turn to the model's first text, the first sentence queued with the voice and the first audio sent; `null` for a step never reached (barge-in, failure). Also one log line of the durations and the `circaso_assistant_live_first_audio_seconds` histogram. The phone ignores unknown types |
 | server → phone | `closing` | `reason`, `message`?, `retryAfterSeconds`? | Sent before the server closes; `reason` is also the close reason |
 
@@ -210,11 +223,11 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 
 | # | Route | Scope | Does |
 | --- | --- | --- | --- |
-| A1 | `GET /v1/assistant/chat` | app | The Asha chat, newest first, paged |
-| A2 | `POST /v1/assistant/chat/messages` | app | Send Asha a message: typed, spoken, or asked from another chat (with that chat's id); reply streamed as server-sent events |
+| A1 | `GET /v1/assistant/chat` | app | The Asha chat, newest first, paged: every conversation's messages, each with its `conversationId` |
+| A2 | `POST /v1/assistant/chat/messages` | app | Send Asha a message: typed, spoken, or asked from another chat (with that chat's id); reply streamed as server-sent events. Optional `conversationId` (else the most recent conversation, or a new one); `done` carries `conversationId` and `conversation` |
 | A3 | `POST /v1/assistant/voice` | app | Transcribe a voice clip |
 | A4 | `POST /v1/assistant/speech` | app | Turn a reply into audio, in the chosen `voice` |
-| A5 | `DELETE /v1/assistant/chat` | app | Delete the whole history with Asha (one `CHAT_DELETED` audit record, only when there was something to delete) |
+| A5 | `DELETE /v1/assistant/chat` | app | Delete the whole history with Asha, every conversation included (one `CHAT_DELETED` audit record, only when there was something to delete) |
 | A6 | `DELETE /v1/assistant/chat/messages/{messageId}` | app | Delete one exchange |
 | A7 | `GET /v1/assistant/usage` | app | Today's allowance used and left, and the plan |
 | A8 | `GET /v1/assistant/proposals/{id}` / `POST …/decline` | app | Read or decline a proposal (Phase B) |
@@ -223,6 +236,11 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A11 | `GET /v1/assistant/voice/live` (WebSocket) | app | Live voice conversation (Phase 1) |
 | A12 | `GET /v1/assistant/voices` | app | The voices Asha can speak in, the default marked |
 | A13 | `GET /v1/assistant/voices/{voiceId}/sample` | app | A voice's preview clip (MP3), not counted against the allowance |
+| C1 | `GET /v1/assistant/conversations` | app | The user's conversations, newest first by last message, paged (`cursor`, `limit` ≤ 100) |
+| C2 | `POST /v1/assistant/conversations` | app | Start an empty conversation (optional `title`, 1 to 80 characters); it becomes the most recent |
+| C3 | `PATCH /v1/assistant/conversations/{conversationId}` | app | Rename (`title`, 1 to 80 characters) |
+| C4 | `DELETE /v1/assistant/conversations/{conversationId}` | app | Delete a conversation and its messages (one `CONVERSATION_DELETED` audit record) |
+| C5 | `GET /v1/assistant/conversations/{conversationId}/messages` | app | One conversation's messages, newest first, paged as A1 |
 
 The user talks to Asha with the **user** token; Asha's tools call other modules with the **agent** token.
 
@@ -273,11 +291,26 @@ CREATE TABLE assistant.audit (                          -- append-only; what hap
 );
 
 CREATE TABLE assistant.outbox (…);                      -- the shared outbox DDL (architecture.md → Durable events): daily partitions, 7 days
+
+-- V2__asha_conversations.sql (decision 2026-10-31)
+CREATE TABLE assistant.asha_conversations (
+    user_id         uuid        NOT NULL,
+    conversation_id uuid        NOT NULL,                   -- UUIDv7
+    title           text,                                   -- sealed (AES-GCM); NULL until titled
+    created_at      timestamptz NOT NULL,
+    updated_at      timestamptz NOT NULL,
+    last_message_at timestamptz NOT NULL,                   -- the last message, or the creation of an empty one
+    PRIMARY KEY (user_id, conversation_id)
+);
+CREATE INDEX asha_conversations_recent_idx ON assistant.asha_conversations (user_id, last_message_at, conversation_id);
+ALTER TABLE assistant.asha_messages ADD COLUMN conversation_id uuid NOT NULL;   -- backfilled: one conversation 1 per user
+CREATE INDEX asha_messages_conversation_idx ON assistant.asha_messages (user_id, conversation_id, message_id);
 ```
 
 | Table | Expiry |
 | --- | --- |
-| `asha_messages` | — (until the user deletes the Asha chat) |
+| `asha_messages` | — (until the user deletes the exchange, its conversation or the Asha chat) |
+| `asha_conversations` | — (until the user deletes it or the Asha chat) |
 | `usage_daily` | — |
 | `entitlements` | — |
 | `audit` | — |
@@ -305,5 +338,6 @@ All three are deleted for a user on `identity.AccountDeleted`, after its transac
 | `assistant.voice_too_long` | INVALID → 400 | Clip over 60 s |
 | `assistant.proposal_expired` | CONFLICT → 409 | Confirming after 10 minutes |
 | `assistant.model_unavailable` | UPSTREAM → 502 | The model provider is down |
+| `assistant.conversation_not_found` | NOT_FOUND → 404 | No conversation of this user has that id (C3–C5, A2 with `conversationId`, an A11 turn) |
 | `assistant.language_not_supported` | INVALID → 400 | A4 asked for speech in a language the server voice doesn't speak (Swahili: the phone speaks it) |
 | `assistant.voice_not_found` | NOT_FOUND → 404 | A13 asked for a voice not on Asha's list (fetch A12 again) |

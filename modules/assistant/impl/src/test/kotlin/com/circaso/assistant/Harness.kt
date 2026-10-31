@@ -3,6 +3,8 @@ package com.circaso.assistant
 import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.ChatMessage
+import com.circaso.assistant.domain.models.Conversation
+import com.circaso.assistant.domain.models.ConversationCursor
 import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.Plan
 import com.circaso.assistant.domain.ports.AgentTools
@@ -17,22 +19,30 @@ import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.AuditEntry
 import com.circaso.assistant.domain.repositories.ChatRepository
+import com.circaso.assistant.domain.repositories.ConversationRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.ConversationResolver
+import com.circaso.assistant.domain.support.ConversationTitler
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.usecases.ContinueTurn
+import com.circaso.assistant.domain.usecases.CreateConversation
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
+import com.circaso.assistant.domain.usecases.DeleteConversation
 import com.circaso.assistant.domain.usecases.DeleteExchange
 import com.circaso.assistant.domain.usecases.GetUsage
 import com.circaso.assistant.domain.usecases.GetVoiceSample
 import com.circaso.assistant.domain.usecases.ListChat
+import com.circaso.assistant.domain.usecases.ListConversationMessages
+import com.circaso.assistant.domain.usecases.ListConversations
 import com.circaso.assistant.domain.usecases.ListVoices
+import com.circaso.assistant.domain.usecases.RenameConversation
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
 import com.circaso.assistant.domain.usecases.TranscribeVoice
@@ -65,21 +75,26 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 class MemoryAssistant :
     ChatRepository,
+    ConversationRepository,
     AssistantStore,
     Transactor {
     val messages = CopyOnWriteArrayList<ChatMessage>()
+    val conversations = CopyOnWriteArrayList<Conversation>()
     val audit = CopyOnWriteArrayList<AuditEntry>()
     val usage = ConcurrentHashMap<String, List<Number>>()
     val erased = CopyOnWriteArrayList<UserId>()
 
     override suspend fun <T> run(operation: String, block: suspend () -> T): T {
         val savedMessages = messages.toList()
+        val savedConversations = conversations.toList()
         val savedAudit = audit.toList()
         try {
             return block()
         } catch (e: Exception) {
             messages.clear()
             messages += savedMessages
+            conversations.clear()
+            conversations += savedConversations
             audit.clear()
             audit += savedAudit
             throw e
@@ -127,6 +142,88 @@ class MemoryAssistant :
         }.sortedByDescending { it.messageId }
         .take(limit)
 
+    override suspend fun listIn(
+        userId: UserId,
+        conversationId: UUID,
+        before: UUID?,
+        limit: Int,
+    ) = list(userId, before, Int.MAX_VALUE).filter { it.conversationId == conversationId }.take(limit)
+
+    override suspend fun oldestIn(userId: UserId, conversationId: UUID) =
+        messages
+            .filter { it.userId == userId && it.conversationId == conversationId }
+            .minByOrNull { it.messageId }
+
+    override suspend fun conversation(userId: UserId, conversationId: UUID) =
+        conversations.firstOrNull { it.userId == userId && it.conversationId == conversationId }
+
+    override suspend fun latestConversation(userId: UserId) = conversations(userId, null, 1).firstOrNull()
+
+    override suspend fun conversations(
+        userId: UserId,
+        after: ConversationCursor?,
+        limit: Int,
+    ) = conversations
+        .filter { it.userId == userId }
+        .sortedWith(compareByDescending<Conversation> { it.lastMessageAt }.thenByDescending { it.conversationId })
+        .filter {
+            after == null ||
+                it.lastMessageAt < after.lastMessageAt ||
+                (it.lastMessageAt == after.lastMessageAt && it.conversationId < after.conversationId)
+        }.take(limit)
+
+    override suspend fun addConversation(conversation: Conversation) {
+        conversations += conversation
+    }
+
+    private fun replace(
+        userId: UserId,
+        conversationId: UUID,
+        change: (Conversation) -> Conversation,
+    ): Conversation? =
+        synchronized(conversations) {
+            val i = conversations.indexOfFirst { it.userId == userId && it.conversationId == conversationId }
+            if (i < 0) return null
+            change(conversations[i]).also { conversations[i] = it }
+        }
+
+    override suspend fun renameConversation(
+        userId: UserId,
+        conversationId: UUID,
+        title: String,
+        at: Instant,
+    ) = replace(userId, conversationId) { it.copy(title = title, updatedAt = at) }
+
+    override suspend fun touchConversation(
+        userId: UserId,
+        conversationId: UUID,
+        at: Instant,
+    ) = replace(userId, conversationId) { it.copy(updatedAt = at, lastMessageAt = at) }
+
+    override suspend fun titleConversation(
+        userId: UserId,
+        conversationId: UUID,
+        title: String,
+    ): Boolean {
+        var titled = false
+        replace(userId, conversationId) {
+            if (it.title == null) {
+                titled = true
+                it.copy(title = title)
+            } else {
+                it
+            }
+        }
+        return titled
+    }
+
+    override suspend fun deleteConversation(userId: UserId, conversationId: UUID): Int {
+        val gone = conversations.filter { it.userId == userId && it.conversationId == conversationId }
+        conversations.removeAll(gone.toSet())
+        if (gone.isNotEmpty()) messages.removeAll { it.userId == userId && it.conversationId == conversationId }
+        return gone.size
+    }
+
     override suspend fun commit(changes: AssistantChanges) {
         messages += changes.messages
         audit += changes.audit
@@ -134,8 +231,10 @@ class MemoryAssistant :
 
     override suspend fun deleteChat(userId: UserId): Int {
         val gone = messages.filter { it.userId == userId }
+        val goneConversations = conversations.filter { it.userId == userId }
         messages.removeAll(gone.toSet())
-        return gone.size
+        conversations.removeAll(goneConversations.toSet())
+        return gone.size + goneConversations.size
     }
 
     override suspend fun saveUsage(
@@ -426,16 +525,23 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
 
     private val agent = AshaAgent(model, tools, config, JsonReplyBlocks())
     private val ids = OrderedIds(clock)
-    private val recorder = TurnRecorder(memory, pending, quota, config, ids, memory, clock)
+    val resolver = ConversationResolver(memory, ids, clock)
+    private val titler = ConversationTitler(memory, memory)
+    private val recorder = TurnRecorder(memory, memory, titler, pending, quota, config, ids, memory, clock)
     val dailyUsage = DailyUsage(quota, memory, memory, clock)
 
-    val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
-    val resume = ContinueTurn(verifier, pending, agent, recorder, config, clock)
+    val start = StartTurn(verifier, memory, resolver, plans, quota, agent, recorder, config, ids, clock)
+    val resume = ContinueTurn(verifier, pending, resolver, agent, recorder, config, clock)
 
     /** A9 over another store of waiting turns, for races. */
-    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, agent, recorder, config, clock)
+    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, resolver, agent, recorder, config, clock)
 
     val list = ListChat(memory)
+    val listConversations = ListConversations(memory, titler)
+    val createConversation = CreateConversation(resolver)
+    val renameConversation = RenameConversation(memory, clock)
+    val deleteConversation = DeleteConversation(memory, memory, memory)
+    val conversationMessages = ListConversationMessages(memory, memory)
     val deleteAll = DeleteChat(memory, memory)
     val deleteOne = DeleteExchange(memory, memory, memory)
     val usage = GetUsage(UsageReader(plans, quota, config, clock))
