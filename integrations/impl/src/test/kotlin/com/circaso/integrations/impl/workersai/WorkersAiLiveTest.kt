@@ -126,7 +126,7 @@ class WorkersAiLiveTest {
             assertEquals("16000", query["sample_rate"])
             assertEquals("en-KE", query["language"])
             assertEquals("true", query["interim_results"])
-            assertEquals("300", query["endpointing"])
+            assertEquals("600", query["endpointing"])
             assertEquals("1000", query["utterance_end_ms"])
             assertEquals("true", query["vad_events"])
             assertEquals("true", query["mip_opt_out"])
