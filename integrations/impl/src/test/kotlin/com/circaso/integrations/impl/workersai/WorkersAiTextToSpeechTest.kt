@@ -17,6 +17,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 class WorkersAiTextToSpeechTest {
     private val mp3 = byteArrayOf(0x49, 0x44, 0x33, 4, 0, 0, 1, 2, 3)
@@ -48,6 +49,21 @@ class WorkersAiTextToSpeechTest {
             val body = request.json()
             assertEquals("You sent KES 200 to Mum.", body["text"]!!.jsonPrimitive.content)
             assertEquals(true, body["mip_opt_out"]!!.jsonPrimitive.boolean)
+        }
+
+    @Test
+    fun `a voice goes as Aura's speaker, and no voice leaves the field out so Aura uses its default`() =
+        runBlocking<Unit> {
+            tts.speak("Hello", "en", "zeus")
+            assertEquals(
+                "zeus",
+                clients.last
+                    .json()["speaker"]!!
+                    .jsonPrimitive.content,
+            )
+
+            tts.speak("Hello", "en")
+            assertNull(clients.last.json()["speaker"], "no voice, no speaker field")
         }
 
     @Test

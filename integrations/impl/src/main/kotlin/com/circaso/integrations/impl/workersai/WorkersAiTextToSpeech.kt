@@ -18,13 +18,24 @@ import java.util.Base64
  * a privacy guarantee, so there is no switch (decision 2026-10-25). Workers AI's published input schema for Aura 2
  * doesn't list the field (Nova-3 and Flux do): Workers AI accepts it for Aura 2, here and on the live socket, but
  * likely ignores it, which is accepted, relying on Cloudflare's terms for the models it hosts (decision 2026-10-27).
+ *
+ * The voice is Aura 2's `speaker` (its Workers AI page lists the 40 English ones, default `luna`). Which voices are
+ * offered is the assistant's list, not this class's (decision 2026-10-31): the id is passed through as given.
  */
 class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val model: String) : TextToSpeech {
     private val log = LoggerFactory.getLogger(WorkersAiTextToSpeech::class.java)
 
-    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
+    override suspend fun speak(
+        text: String,
+        language: String?,
+        voice: String?,
+    ): Resource<SpokenAudio> {
         if (!speaksEnglish(language)) return Resource.error(IntegrationError.UnsupportedLanguage(language.orEmpty()))
-        val body = WorkersAiJson.encodeToString(AuraClipRequest.serializer(), AuraClipRequest(text, mipOptOut = true))
+        val body =
+            WorkersAiJson.encodeToString(
+                AuraClipRequest.serializer(),
+                AuraClipRequest(text, mipOptOut = true, speaker = voice),
+            )
 
         return when (val reply = gateway.post("run/$model", "speak", body)) {
             is Resource.Success -> read(reply.data)
@@ -72,6 +83,8 @@ class WorkersAiTextToSpeech(private val gateway: WorkersAiGateway, private val m
 private class AuraClipRequest(
     val text: String,
     @SerialName("mip_opt_out") val mipOptOut: Boolean,
+    /** Aura 2's voice (`luna`, `zeus`, …); left out when null, so Aura uses its default (`luna`). */
+    val speaker: String? = null,
 )
 
 /** The JSON shape of a clip, base64 audio, when the route wraps it rather than answering with the bytes. */

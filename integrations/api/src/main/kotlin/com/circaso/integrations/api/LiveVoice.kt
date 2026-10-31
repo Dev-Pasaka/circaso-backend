@@ -75,8 +75,12 @@ data class AudioSpan(val startSeconds: Double, val endSeconds: Double) {
  * user hears the first sentence while the rest is still being written.
  */
 interface LiveSpeech {
-    /** A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage] before any vendor call. */
-    suspend fun open(language: String?): Resource<LiveSpeechSession>
+    /**
+     * A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage] before any vendor call.
+     * [voice] is an opaque voice id (as on [TextToSpeech.speak]), used for everything the session speaks; null is the
+     * provider's default voice.
+     */
+    suspend fun open(language: String?, voice: String? = null): Resource<LiveSpeechSession>
 }
 
 /** What the audio frames of a [LiveSpeechSession] hold, so the phone can play them and the assistant can meter them. */

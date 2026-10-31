@@ -112,6 +112,25 @@ Each server tool call is announced with `tool_status` (the server's label) and c
 2. **Reply.** Text first, streamed from the model as it is written, so the user sees Asha answer at once. Text the model writes before calling a tool is shown too, and the saved reply is everything shown, a blank line between the parts; a failure after text has gone out is an `error` event `{code, message}` on A2 and A9, and nothing is saved (decision 2026-10-27).
 3. **Voice out.** On request, or when the user spoke, `TextToSpeech` turns the reply into audio streamed back to the app. Short replies can be cached by text hash for a day.
 
+### Asha's voices (decision 2026-10-31)
+
+The user chooses the voice Asha speaks in. The list is the assistant's config (`AssistantConfig.voices`, `AshaVoices`), not the integration's: each voice is an opaque `id` (the provider's speaker name, passed through `TextToSpeech.speak(…, voice)` and `LiveSpeech.open(…, voice)`), a display `name`, a one-word `character` and a `gender` hint. `ASSISTANT_VOICES` (`id:Name:Character:gender`, comma-separated) replaces the list and `ASSISTANT_DEFAULT_VOICE` picks the default; a malformed list fails at start.
+
+| id | Name | Character | Gender |
+| --- | --- | --- | --- |
+| `luna` (default) | Luna | Friendly | female |
+| `harmonia` | Harmonia | Calm | female |
+| `thalia` | Thalia | Bright | female |
+| `arcas` | Arcas | Warm | male |
+| `orion` | Orion | Gentle | male |
+| `zeus` | Zeus | Steady | male |
+
+All six are Deepgram Aura 2 speakers listed for `@cf/deepgram/aura-2-en` on Workers AI (American English, chosen from Deepgram's descriptions for clear, calm, trustworthy delivery). Luna is Aura's default and was Asha's only voice, so it stays the default.
+
+- **A12** lists them with `default: true` on one. The phone keeps the user's choice and sends its id as `voice` on A4 and on A11's first `auth` frame.
+- **The choice is checked, never refused:** a missing voice, or one not on the list (an old app, a voice since dropped), is the default, with a debug log line (`VoiceFallbacks`) and no error. A live conversation keeps the voice of its first `auth` frame for every sentence, including after Aura's socket is reopened; a later `auth` frame changes tokens only.
+- **A13 previews a voice:** the fixed line "Hi, I'm Asha. I can help you understand your money and payments." in that voice, as MP3. Not counted against the voice allowance, because the text is fixed and the clip is kept in Redis for a day (`ast:voice-sample:…`), so previews cost a handful of provider calls a day in all; `Cache-Control: private, max-age=86400` lets the phone keep it too. An id not on the list is `assistant.voice_not_found` (404).
+
 ### Live voice (decision 2026-10-25)
 
 **Phase 1, WebSocket:** while the user talks to Asha, the phone opens a dedicated socket `wss://api.circaso.com/v1/assistant/voice/live` (an exception to one socket per phone: audio is a heavy binary stream and lives only for the conversation), authenticated like the main socket with the user token.
@@ -126,10 +145,10 @@ Each server tool call is announced with `tool_status` (the server's label) and c
 
 | Direction | `type` | Fields | Meaning |
 | --- | --- | --- | --- |
-| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true) | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting. Sent again later with fresh tokens (`accessToken`, `agentToken`) before the 15-minute access token expires |
+| phone → server | `auth` | `accessToken`, `agentToken`?, `language`?, `chatReading` (default true), `currency`?, `voice`? | First frame, within 10 s. The user (`app`) token only; `agentToken` is the user's agent token for Asha's tools (as `X-Agent-Token` on A2); `language` is the user's language setting; `voice` an id from A12 (missing or unknown: the default voice), taken from the first frame only. Sent again later with fresh tokens (`accessToken`, `agentToken`) before the 15-minute access token expires |
 | phone → server | `tool_results` | `turnId`, `callId`, `snippets` | The answer to a `tool_request` (as A9). A frame that doesn't decode, or a `callId` the turn isn't waiting on, gets an `error` frame `request.malformed` and the turn keeps waiting (on A9 too) |
 | phone → server | `end` | | Hang up |
-| server → phone | `ready` | `voiceSecondsLeft`, `audio: {encoding, sampleRate}` | Accepted; start streaming |
+| server → phone | `ready` | `voiceSecondsLeft`, `audio: {encoding, sampleRate}`, `voice` | Accepted; start streaming. `voice` is the id Asha speaks in for this conversation |
 | server → phone | `transcript` | `text`, `final` | The words of the turn so far; `final` false while they may change |
 | server → phone | `turn` | `text` | The user finished; this question now goes through A2 |
 | server → phone | `reply` | `text` | One sentence of the reply, sent when the audio reaches it (timed at about 15 characters a second, as the voice says no more; the last ones at the latest when all the audio is sent); the audio is in binary frames. Each sentence goes to the voice as soon as the model has written it, with one `Flush` per reply, or two when the turn pauses for a device tool (what was said before the pause is flushed so it is heard while the phone searches; decision 2026-10-27) |
@@ -194,7 +213,7 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A1 | `GET /v1/assistant/chat` | app | The Asha chat, newest first, paged |
 | A2 | `POST /v1/assistant/chat/messages` | app | Send Asha a message: typed, spoken, or asked from another chat (with that chat's id); reply streamed as server-sent events |
 | A3 | `POST /v1/assistant/voice` | app | Transcribe a voice clip |
-| A4 | `POST /v1/assistant/speech` | app | Turn a reply into audio |
+| A4 | `POST /v1/assistant/speech` | app | Turn a reply into audio, in the chosen `voice` |
 | A5 | `DELETE /v1/assistant/chat` | app | Delete the whole history with Asha (one `CHAT_DELETED` audit record, only when there was something to delete) |
 | A6 | `DELETE /v1/assistant/chat/messages/{messageId}` | app | Delete one exchange |
 | A7 | `GET /v1/assistant/usage` | app | Today's allowance used and left, and the plan |
@@ -202,12 +221,14 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A9 | `POST /v1/assistant/chat/messages/{messageId}/tool-results` | app | The phone's answer to a device tool (decrypted chat snippets); the reply then continues |
 | A10 | `POST /v1/assistant/images/upload-url` | app | Presigned R2 upload for one photo; A2 then carries its `imageKey` |
 | A11 | `GET /v1/assistant/voice/live` (WebSocket) | app | Live voice conversation (Phase 1) |
+| A12 | `GET /v1/assistant/voices` | app | The voices Asha can speak in, the default marked |
+| A13 | `GET /v1/assistant/voices/{voiceId}/sample` | app | A voice's preview clip (MP3), not counted against the allowance |
 
 The user talks to Asha with the **user** token; Asha's tools call other modules with the **agent** token.
 
 ## Data
 
-PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), and three Redis key families.
+PostgreSQL tables in schema `assistant` (role `assistant`, Flyway location `db/assistant`), and four Redis key families.
 
 ```sql
 -- V1__assistant.sql (shape; the script is modules/assistant/impl/src/main/resources/db/assistant/V1__assistant.sql)
@@ -269,6 +290,7 @@ CREATE TABLE assistant.outbox (…);                      -- the shared outbox D
 | `ast:quota:{kind}:{userId}:{day}` | counter; `kind` is `text`, `voice`, `in` or `out` | 2 days | The day's live allowance counters (text turns, voice seconds, input and output tokens) |
 | `ast:turn:{userId}:{turnId}` | JSON: the turn parked for the phone, with the conversation so far | 10 min | A turn waiting on a device tool (A9, A11); taken once |
 | `ast:turns:{userId}` | hash: the user's parked turn ids | 10 min, renewed on each save | Lets account deletion find and delete the parked turns without scanning keys; an id leaves it when its turn is taken |
+| `ast:voice-sample:{voiceId}:{textHash}` | JSON: `contentType` and base64 audio | 1 day | A13's preview clip per voice (no user data); `textHash` is the first 8 bytes of the sample line's SHA-256 in hex |
 
 All three are deleted for a user on `identity.AccountDeleted`, after its transaction commits.
 
@@ -284,3 +306,4 @@ All three are deleted for a user on `identity.AccountDeleted`, after its transac
 | `assistant.proposal_expired` | CONFLICT → 409 | Confirming after 10 minutes |
 | `assistant.model_unavailable` | UPSTREAM → 502 | The model provider is down |
 | `assistant.language_not_supported` | INVALID → 400 | A4 asked for speech in a language the server voice doesn't speak (Swahili: the phone speaks it) |
+| `assistant.voice_not_found` | NOT_FOUND → 404 | A13 asked for a voice not on Asha's list (fetch A12 again) |

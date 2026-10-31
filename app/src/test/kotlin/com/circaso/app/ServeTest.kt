@@ -380,6 +380,8 @@ class ServeTest {
                 "/v1/blocks/{userId}",
                 "/v1/assistant/chat/messages",
                 "/v1/assistant/usage",
+                "/v1/assistant/voices",
+                "/v1/assistant/voices/{voiceId}/sample",
                 "/v1/account/security",
                 "/v1/recovery/requests",
                 "/v1/agent/users/contacts",

@@ -121,8 +121,16 @@ interface SpeechToText {
 data class Transcript(val text: String, val seconds: Int)
 
 interface TextToSpeech {
-    /** A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage], before any vendor call. */
-    suspend fun speak(text: String, language: String? = null): Resource<SpokenAudio>
+    /**
+     * A [language] the voice can't speak fails with [IntegrationError.UnsupportedLanguage], before any vendor call.
+     * [voice] is an opaque voice id the caller has already checked against its own list (the provider's speaker
+     * name); null is the provider's default voice.
+     */
+    suspend fun speak(
+        text: String,
+        language: String? = null,
+        voice: String? = null,
+    ): Resource<SpokenAudio>
 }
 
 class SpokenAudio(val bytes: ByteArray, val contentType: String)

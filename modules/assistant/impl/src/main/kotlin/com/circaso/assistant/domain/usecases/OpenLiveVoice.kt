@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.VoiceFallbacks
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.isOwnAgentToken
@@ -27,7 +28,8 @@ import java.time.Clock
  * closes the socket as `unauthorized`. Then the voice allowance, then the language: the
  * live path only exists where both the live transcription and the live voice speak the user's language, so Swahili is
  * refused and the phone records clips for A3 and speaks the reply itself (Assistant → Live voice, step 5). Only then
- * are the provider sessions opened.
+ * are the provider sessions opened. The voice is the one the `auth` frame chose, or the default when it chose none or
+ * one not on Asha's list (decision 2026-10-31); it speaks the whole conversation.
  */
 class OpenLiveVoice(
     private val verifier: TokenVerifier,
@@ -36,6 +38,7 @@ class OpenLiveVoice(
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
     private val config: AssistantConfig,
+    private val fallbacks: VoiceFallbacks,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(start: LiveVoiceStart): Resource<LiveVoiceLine> {
@@ -45,6 +48,7 @@ class OpenLiveVoice(
         val left = limit - quota.voiceSeconds(userId, clock.today())
         if (left <= 0) return Resource.error(AssistantError.QuotaExceeded(clock.secondsUntilReset()))
 
+        val voice = config.voices.pick(start.voice, fallbacks)
         val listening =
             when (
                 val opened =
@@ -54,7 +58,7 @@ class OpenLiveVoice(
                 is Resource.Error -> return Resource.error(refusal(opened.error), opened.cause)
             }
         val speaking =
-            when (val opened = speech.open(start.language)) {
+            when (val opened = speech.open(start.language, voice.id)) {
                 is Resource.Success -> {
                     opened.data
                 }
@@ -75,6 +79,7 @@ class OpenLiveVoice(
                 config.liveSilence,
                 config.liveSessionRecheck,
                 config.liveDeviceToolTimeout,
+                voice.id,
             ),
         )
     }
