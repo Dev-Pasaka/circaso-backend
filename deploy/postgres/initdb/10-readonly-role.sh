@@ -7,5 +7,5 @@ CREATE ROLE circaso_readonly LOGIN PASSWORD :'pw';
 GRANT pg_read_all_data TO circaso_readonly;
 ALTER ROLE circaso_readonly SET default_transaction_read_only = on;
 ALTER ROLE circaso_readonly SET statement_timeout = '30s';
-ALTER ROLE circaso_readonly CONNECTION LIMIT 5;
+ALTER ROLE circaso_readonly CONNECTION LIMIT 20;  -- pgAdmin opens one connection per database and query tab
 SQL
