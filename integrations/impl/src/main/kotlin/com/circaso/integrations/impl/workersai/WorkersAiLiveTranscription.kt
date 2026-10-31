@@ -176,10 +176,10 @@ class WorkersAiLiveTranscription(
 
     companion object {
         /**
-         * The pause that ends a turn (decision 2026-10-30): 300 ms, down from 400, so Asha starts answering sooner. A
-         * user who pauses longer mid-sentence is still caught by the utterance end and by the final's own text.
+         * The pause that ends a turn (decision 2026-10-31): 600 ms. At 300 ms (2026-10-30) a natural pause mid-sentence
+         * ended the turn, and carrying on counted as talking over Asha, so the first half of the question was dropped.
          */
-        const val DEFAULT_ENDPOINTING_MILLIS = 300
+        const val DEFAULT_ENDPOINTING_MILLIS = 600
 
         /** Deepgram's smallest allowed value, so it stays at 1000 ms while endpointing gets shorter. */
         const val DEFAULT_UTTERANCE_END_MILLIS = 1_000
