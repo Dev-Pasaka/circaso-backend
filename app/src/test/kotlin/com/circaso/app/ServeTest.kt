@@ -401,6 +401,7 @@ class ServeTest {
                 "/v1/chats/{chatId}/members/{userId}/role",
                 "/v1/chats/{chatId}/messages",
                 "/v1/chats/{chatId}/messages/{messageId}",
+                "/v1/chats/{chatId}/presence",
                 "/v1/inbox",
                 "/v1/inbox/ack",
                 "/v1/messaging/settings",

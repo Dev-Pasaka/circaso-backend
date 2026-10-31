@@ -5,10 +5,12 @@ import com.circaso.messaging.api.KeysChangedFrame
 import com.circaso.messaging.api.MessageDeletedFrame
 import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.messaging.api.MessageUndeliverableFrame
+import com.circaso.messaging.api.PresenceChangedFrame
 import com.circaso.messaging.api.ReceiptFrame
 import com.circaso.messaging.api.ReceiptItem
 import com.circaso.messaging.api.TypingFrame
 import com.circaso.messaging.domain.models.InboxMessage
+import com.circaso.messaging.domain.models.Presence
 import com.circaso.messaging.domain.models.Receipt
 import com.circaso.messaging.domain.ports.LiveFrames
 import com.circaso.messaging.domain.ports.RealtimeFrames
@@ -16,10 +18,10 @@ import com.circaso.shared.UserId
 import java.util.UUID
 
 /**
- * The delivery frames (Messaging → Socket frames). `message.new` and `typing` are not replayed and go through
- * [LiveFrames] (`deliverMany`, one publish); `message.deleted`, `message.undeliverable`, `receipt` and `keys.changed`
- * are replayed, so each recipient gets their own `seq` through [RealtimeFrames]. No frame carries text from a chat:
- * only ids and, when it fits, the ciphertext the recipient alone can open.
+ * The delivery frames (Messaging → Socket frames). `message.new`, `typing` and `presence.changed` are not replayed
+ * and go through [LiveFrames] (`deliverMany`, one publish); `message.deleted`, `message.undeliverable`, `receipt`
+ * and `keys.changed` are replayed, so each recipient gets their own `seq` through [RealtimeFrames]. No frame carries
+ * text from a chat: only ids and, when it fits, the ciphertext the recipient alone can open.
  */
 class DeliveryNotifier(
     private val live: LiveFrames,
@@ -57,6 +59,10 @@ class DeliveryNotifier(
         userId: UserId,
         on: Boolean,
     ) = live.send(recipients, TypingFrame(chatId, userId, on))
+
+    /** `presence.changed`, live like `typing`: a missed one is read again on the next watch. */
+    suspend fun presence(recipients: Collection<UserId>, presence: Presence) =
+        live.send(recipients, PresenceChangedFrame(presence.userId, presence.online, presence.lastSeenAt))
 
     /** Receipts go to the sender only (decision 2026-10-25), several of one chat in one frame. */
     suspend fun receipts(

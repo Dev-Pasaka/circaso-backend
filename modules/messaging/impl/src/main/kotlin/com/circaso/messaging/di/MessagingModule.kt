@@ -14,6 +14,8 @@ import com.circaso.messaging.data.cache.RealtimeFramesImpl
 import com.circaso.messaging.data.cache.RedisBundleRateLimit
 import com.circaso.messaging.data.cache.RedisMembersCache
 import com.circaso.messaging.data.cache.RedisPendingCounts
+import com.circaso.messaging.data.cache.RedisPresenceStore
+import com.circaso.messaging.data.cache.RedisPresenceWatchers
 import com.circaso.messaging.data.cache.RedisReceiptBuffer
 import com.circaso.messaging.data.cache.RedisTypingMarks
 import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
@@ -41,6 +43,8 @@ import com.circaso.messaging.domain.ports.BundleRateLimit
 import com.circaso.messaging.domain.ports.LiveFrames
 import com.circaso.messaging.domain.ports.MembersCache
 import com.circaso.messaging.domain.ports.PendingCounts
+import com.circaso.messaging.domain.ports.PresenceStore
+import com.circaso.messaging.domain.ports.PresenceWatchers
 import com.circaso.messaging.domain.ports.RealtimeFrames
 import com.circaso.messaging.domain.ports.RealtimeLog
 import com.circaso.messaging.domain.ports.ReceiptBuffer
@@ -53,6 +57,7 @@ import com.circaso.messaging.domain.repositories.KeyRepository
 import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.messaging.domain.repositories.SettingsRepository
 import com.circaso.messaging.domain.support.ChatNotifier
+import com.circaso.messaging.domain.support.ChatPresence
 import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
@@ -75,6 +80,7 @@ import com.circaso.messaging.domain.usecases.GetAttachmentDownload
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
+import com.circaso.messaging.domain.usecases.GetPresence
 import com.circaso.messaging.domain.usecases.GetStaticMap
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
@@ -92,8 +98,11 @@ import com.circaso.messaging.domain.usecases.ReplayFrames
 import com.circaso.messaging.domain.usecases.RetireReplacedPhone
 import com.circaso.messaging.domain.usecases.SendMessage
 import com.circaso.messaging.domain.usecases.SetRole
+import com.circaso.messaging.domain.usecases.SweepPresence
 import com.circaso.messaging.domain.usecases.UpdateGroup
+import com.circaso.messaging.domain.usecases.UpdatePresence
 import com.circaso.messaging.domain.usecases.UpdateSettings
+import com.circaso.messaging.domain.usecases.WatchPresence
 import com.circaso.messaging.presentation.agent.agentController
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
@@ -103,6 +112,7 @@ import com.circaso.messaging.presentation.controllers.chatController
 import com.circaso.messaging.presentation.controllers.keyController
 import com.circaso.messaging.presentation.controllers.mapController
 import com.circaso.messaging.presentation.controllers.messageController
+import com.circaso.messaging.presentation.controllers.presenceController
 import com.circaso.messaging.presentation.events.IdentityEventHandler
 import com.circaso.messaging.presentation.services.AttachmentService
 import com.circaso.messaging.presentation.services.ChatService
@@ -112,6 +122,7 @@ import com.circaso.messaging.presentation.services.MapService
 import com.circaso.messaging.presentation.services.MessageService
 import com.circaso.messaging.presentation.services.MessagingAgentService
 import com.circaso.messaging.presentation.services.PhoneFrameService
+import com.circaso.messaging.presentation.services.PresenceService
 import com.circaso.messaging.presentation.services.RealtimeService
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
@@ -155,6 +166,9 @@ internal val messagingDatabaseSpec =
 
 /** How often `messaging.purge-expired` runs. */
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
+
+/** How often `messaging.presence-sweep` looks for phones that went quiet: offline at most this long after 75 s. */
+private val PRESENCE_SWEEP_INTERVAL: Duration = Duration.ofSeconds(5)
 
 /** How often `messaging.purge-attachments` runs: attachments live 30 days, so an hour late costs nothing. */
 private val ATTACHMENT_PURGE_INTERVAL: Duration = Duration.ofHours(1)
@@ -215,6 +229,14 @@ fun messagingModule(config: Config): Module =
         single<PendingCounts> { RedisPendingCounts(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<ReceiptBuffer> { RedisReceiptBuffer(get<RedisScopes>().scope(REDIS_PREFIX), messaging.receiptBatch) }
         single<TypingMarks> { RedisTypingMarks(get<RedisScopes>().scope(REDIS_PREFIX), messaging.typingDedupe) }
+        single<PresenceStore> { RedisPresenceStore(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<PresenceWatchers> {
+            RedisPresenceWatchers(get<RedisScopes>().scope(REDIS_PREFIX), messaging.presenceWatch)
+        }
+        single(named("messaging.presence-sweep")) {
+            val presence = get<PresenceService>()
+            ScheduledJob("messaging.presence-sweep", PRESENCE_SWEEP_INTERVAL) { presence.sweep() }
+        }
 
         // domain: helpers
         single { KeyProofs(get<DeviceSignatures>(), clock, messaging.proofWindow) }
@@ -227,6 +249,7 @@ fun messagingModule(config: Config): Module =
         single { ReceiptBatcher(get(), get(), background, clock, messaging) }
         single { InboxRemoval(get(), get()) }
         single { MessageSenders(get()) }
+        single { ChatPresence(get(), get<ReachPolicy>(), get(), messaging) }
 
         // domain: use cases
         single { PublishKeys(get(), get(), get(), clock) }
@@ -268,6 +291,10 @@ fun messagingModule(config: Config): Module =
         single { AckDelivered(get(), get(), get(), clock) }
         single { MarkRead(get(), get(), get(), get(), clock) }
         single { RelayTyping(get(), get(), get(), get(), messaging) }
+        single { UpdatePresence(get(), get(), get(), messaging, clock) }
+        single { WatchPresence(get(), get(), get(), messaging, clock) }
+        single { GetPresence(get(), clock) }
+        single { SweepPresence(get(), get(), get(), messaging, clock) }
         single { DeleteForEveryone(get(), get(), get(), get(), get(), get(), get(), messaging, clock) }
         single { UpdateSettings(get()) }
         single { PrepareAttachmentUpload(get(), get(), get(), get(), messaging, clock) }
@@ -298,6 +325,7 @@ fun messagingModule(config: Config): Module =
         single { RealtimeService(get()) }
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }
+        single { PresenceService(get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single { AttachmentService(get(), get(), get(), get()) }
         single { GetStaticMap(get()) }
@@ -310,10 +338,12 @@ fun messagingModule(config: Config): Module =
             val attachments = get<AttachmentService>()
             val maps = get<MapService>()
             val agent = get<MessagingAgentService>()
+            val presence = get<PresenceService>()
             RouteContributor { route ->
                 route.keyController(keys)
                 route.chatController(chats)
                 route.messageController(messages, messaging.inboxPageMax)
+                route.presenceController(presence)
                 route.attachmentController(attachments)
                 route.mapController(maps)
                 route.agentController(agent)
@@ -325,7 +355,7 @@ fun messagingModule(config: Config): Module =
         single<ChatDirectory> { ChatDirectoryImpl(get()) }
         single(named("messaging.replay")) { RealtimeModule("messaging", MessagingRealtimeReplay(get())) }
         single(named("messaging.inbound")) {
-            RealtimeInboundModule("messaging", MessagingRealtimeInbound(get(), messaging.inboxPageMax))
+            RealtimeInboundModule("messaging", MessagingRealtimeInbound(get(), get(), messaging.inboxPageMax))
         }
     }
 

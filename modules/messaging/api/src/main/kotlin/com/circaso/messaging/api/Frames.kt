@@ -135,6 +135,21 @@ data class ChatUpdatedFrame(val chatId: ChatId, val metaVersion: Int, val versio
     }
 }
 
+/**
+ * Whether [userId] is in the app right now, to the people watching them (`messaging.presence.watch`), never
+ * replayed. [online] is true while their phone sent `presence` `active` within the last 75 seconds and hasn't said
+ * `away` since. [lastSeenAt] is the last moment they were active (while online, their latest heartbeat), kept 30
+ * days; null when the server has never seen them, or not in that long.
+ */
+@Serializable
+data class PresenceChangedFrame(val userId: UserId, val online: Boolean, val lastSeenAt: Instant?) : MessagingFrame {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "presence.changed"
+    }
+}
+
 /** A message id on the wire: its canonical text. */
 object UuidSerializer : KSerializer<UUID> {
     override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("MessageUuid", PrimitiveKind.STRING)

@@ -18,6 +18,15 @@ data class MessagingConfig(
     val clientMessageTtl: Duration = Duration.ofDays(1),
     /** Decision 2026-10-25: typing is relayed only in chats of this many people or fewer. */
     val maxTypingMembers: Int = 50,
+    /**
+     * Presence: a person is online while their phone's last `active` is younger than this. The phone repeats it every
+     * 30 seconds in the foreground, so a killed app goes offline by itself.
+     */
+    val presenceTtl: Duration = Duration.ofSeconds(75),
+    /** How long one `presence.watch` subscribes; the phone repeats it every 45 seconds while the chat is open. */
+    val presenceWatch: Duration = Duration.ofSeconds(60),
+    /** Presence is shared only in chats of this many people or fewer, like typing. */
+    val maxPresenceMembers: Int = 50,
     /** `msg:typing:{chatId}:{userId}`: a repeated "typing" within this long is dropped. */
     val typingDedupe: Duration = Duration.ofSeconds(6),
     /** Decision 2026-10-25: group receipts go to the sender batched this often. */
