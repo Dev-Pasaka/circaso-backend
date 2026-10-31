@@ -108,7 +108,7 @@ class FakeLiveTranscriptionSession : LiveTranscriptionSession {
 class FakeLiveSpeech(private val sampleRate: Int = 8_000) : LiveSpeech {
     val sessions = CopyOnWriteArrayList<FakeLiveSpeechSession>()
 
-    override suspend fun open(language: String?): Resource<LiveSpeechSession> {
+    override suspend fun open(language: String?, voice: String?): Resource<LiveSpeechSession> {
         if (!isEnglish(language)) return Resource.error(IntegrationError.UnsupportedLanguage(language!!))
         return Resource.success(
             FakeLiveSpeechSession(LiveAudioFormat(AudioEncoding.MULAW, sampleRate)).also { sessions += it },

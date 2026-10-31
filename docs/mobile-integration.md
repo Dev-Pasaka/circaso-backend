@@ -18,6 +18,10 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 > 6. **New error code** `assistant.conversation_not_found` (404) on C3–C5, on A2 with a `conversationId` that isn't the user's, and as a live voice `error` frame.
 > 7. **No realtime frames** for conversations: the app pulls C1 (on opening the Asha list, and after a `done`, which already carries the conversation).
 >
+> **Changed on 2026-10-31, Asha's voices (additive):**
+> 1. **The user can choose Asha's voice.** A12 `GET /v1/assistant/voices` → `VoicesResponse { voices: [VoiceDto { id, name, character, gender, default }] }`: six voices, `default: true` on one (Luna, the voice so far). Keep the user's choice on the phone and send its `id` as **`voice`** on A4 (`SpeechRequest.voice`) and on A11's first `auth` frame. Missing or unknown is the default voice, never an error, so an app that sends nothing keeps working. A11's `ready` frame now says which `voice` the conversation uses.
+> 2. **Preview before choosing:** A13 `GET /v1/assistant/voices/{voiceId}/sample` → MP3 bytes of a fixed line in that voice. Free (not counted against the voice allowance). Recipe in section 9 (Voice picker).
+>
 > **Changed on 2026-10-31, Circaso support accounts (additive):**
 > 1. **Profiles say who is Circaso support.** `PublicProfileDto` (U9, U10, contacts, connections, blocks, sync matches) and `ChatProfileDto` (chat members) gain **`support: boolean`**, `true` only on Circaso's own support account and `false` (or absent, from an older server) for everyone else. Show "Verified Circaso support" from this flag instead of comparing the user id with a pinned one; a person can't set it, and only a support account can hold a reserved handle such as `@circaso`.
 > 2. **`@circaso` can be looked up.** U9 `GET /v1/users/by-handle/circaso` and a U11 handle connect now accept reserved names, which only support accounts hold, so the app can find the support account by its handle.
@@ -70,7 +74,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **92** routes the phone calls: **64 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **94** routes the phone calls: **66 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -384,8 +388,10 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
 | `POST /v1/assistant/voice`<br>**A3** Transcribe a voice clip | `app` | — → TranscriptResponse | **READY** | (the user token). The clip is the raw body (up to 60 s, under 3 MB); send `Content-Type` of the audio and `X-Duration-Seconds`, the clip's length in seconds as the recorder reports it (a decimal such as `5.5` is fine; it is rounded up, so `60.2` is over the limit). A missing or non-positive length and a clip over 3 MB are `request.malformed`, each named on its own in `details.fields` (`X-Duration-Seconds`, `audio`). Errors: `assistant.voice_too_long`, `assistant.quota_exceeded`, `request.malformed`. |
-| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **READY** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. The server voice (Workers AI Aura) speaks English only: speak a Swahili reply with the phone's own text-to-speech instead of calling this route (with `"language": "sw"` the server answers `assistant.language_not_supported`, 400, and nothing is counted against the allowance). That refusal already works on dev, exactly as in production, so the Swahili path can be tested now. Errors: `assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`. |
+| `POST /v1/assistant/speech`<br>**A4** Turn a reply into audio | `app` | SpeechRequest → NoBody | **READY** | (the user token). The response is the audio itself; an error is the envelope. Returns audio, not the envelope. Send the user's chosen `voice` (an id from A12); missing or unknown is the default voice, never an error. The server voice (Workers AI Aura) speaks English only: speak a Swahili reply with the phone's own text-to-speech instead of calling this route (with `"language": "sw"` the server answers `assistant.language_not_supported`, 400, and nothing is counted against the allowance). That refusal already works on dev, exactly as in production, so the Swahili path can be tested now. Errors: `assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`. |
 | `GET /v1/assistant/usage`<br>**A7** Today's allowance used and left, and the plan | `app` | — → UsageResponse | **PARTIAL** | (the user token). Works; the free allowance numbers and the paid plan are not decided yet, so show what the server returns and nothing hard-coded. |
+| `GET /v1/assistant/voices`<br>**A12** The voices Asha can speak in | `app` | — → VoicesResponse | **READY** | (the user token). Six voices; `default: true` marks the one used when the app sends no `voice`. `gender` is `female` or `male`, a hint for the picker. Show the list the server returns (it is config, and may change): don't hard-code it. |
+| `GET /v1/assistant/voices/{voiceId}/sample`<br>**A13** Hear a voice before choosing it | `app` | — → NoBody | **READY** | (the user token). The response is MP3 bytes, not the envelope; an error is the envelope. The same short line ("Hi, I'm Asha. I can help you understand your money and payments.") in that voice. Not counted against the voice allowance; `Cache-Control: private, max-age=86400`, so cache it. Errors: `assistant.voice_not_found` (404: refresh A12), `assistant.model_unavailable`. |
 
 ### Wallet
 
@@ -635,8 +641,8 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (the clip's length in seconds; a decimal such as `5.5` is fine; up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
 - **Live voice (hands-free):** open `wss://<host>/v1/assistant/voice/live` for the length of the conversation and close it when the user leaves the voice screen. Not when the language is Swahili: then record clips (Voice in) and speak replies with the phone's own text-to-speech.
-  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true, "currency": "KES", "conversationId": "0193c…" }` (`currency` optional, the display currency; one that isn't ISO 4217 is ignored; `conversationId` optional, the conversation the call is saved in: without it, the most recent one or a new one, as on A2, and every turn of the call stays in the conversation the first went to. Only the first `auth` frame's counts; one that isn't the user's makes each turn fail with an `error` frame `assistant.conversation_not_found`). An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
-  2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "mulaw", "sampleRate": 8000 } }`. Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame.
+  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true, "currency": "KES", "voice": "harmonia", "conversationId": "0193c…" }` (`currency` optional, the display currency; one that isn't ISO 4217 is ignored. `voice` optional, the user's choice from A12; missing or unknown is the default voice, and the conversation keeps this voice to the end: a `voice` on a later `auth` frame is ignored. `conversationId` optional, the conversation the call is saved in: without it, the most recent one or a new one, as on A2, and every turn of the call stays in the conversation the first went to. Only the first `auth` frame's counts; one that isn't the user's makes each turn fail with an `error` frame `assistant.conversation_not_found`). An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
+  2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "mulaw", "sampleRate": 8000 }, "voice": "harmonia" }` (`voice`: the voice Asha speaks in for this conversation). Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame.
   3. Server text frames (JSON, routed on `type`):
 
 | `type` | Fields | Do |
@@ -657,7 +663,11 @@ Any other close (network drop, server restart) means reconnect with backoff.
 
   4. Access tokens last 15 minutes: before yours expires, refresh it over HTTP and send `{ "type": "auth", "accessToken": "<new app token>", "agentToken": "<new agent token>" }` on this socket. The server re-checks the session at each turn and every minute, and closes with 1008 `unauthorized` (no frame) once it is signed out, replaced or expired.
   5. To hang up send `{ "type": "end" }` (the server answers `closing` `ended`) or just close the socket. The server closes on its own after 30 s with nobody speaking (`silence`, 1000), when the voice allowance runs out (`assistant.quota_exceeded`, 1008, with `retryAfterSeconds`: show the Asha Plus offer), or when a speech provider fails (`assistant.model_unavailable`, 1011: fall back to clips). Voice seconds count only speech: yours, timed by the transcriber from your first word to your last, and Asha's audio as it plays (what you talk over is free); an open mic and silence are free. The agent token is checked at every turn and every `auth` frame: it must be this user's own, or the socket closes with 1008 `unauthorized` (on A2 and A9 the error is `auth.token_invalid`). Audio is never stored.
-- **Voice out:** `POST /v1/assistant/speech` `{ "text", "language"? }` → audio bytes (not the envelope). English only; Swahili replies are spoken by the phone's own voice (asking the server gives `assistant.language_not_supported`).
+- **Voice out:** `POST /v1/assistant/speech` `{ "text", "language"?, "voice"? }` → audio bytes (not the envelope). English only; Swahili replies are spoken by the phone's own voice (asking the server gives `assistant.language_not_supported`).
+- **Voice picker (Asha's voice):**
+  1. `GET /v1/assistant/voices` → `{ "voices": [ { "id": "luna", "name": "Luna", "character": "Friendly", "gender": "female", "default": true }, … ] }`. Show `name` and `character`; preselect the user's saved choice, else the one with `default: true`.
+  2. Tapping a voice plays `GET /v1/assistant/voices/{id}/sample` (MP3 bytes, free, the same line in each voice). Cache each clip on the phone for a day (the response says `max-age=86400`); stop the one playing when another is tapped.
+  3. Save the chosen `id` on the phone (it is a device setting; there is no server-side preference) and send it as `voice` on every A4 call and on the first `auth` frame of A11. A saved id the server no longer lists simply gets the default voice; refresh the list when the picker opens.
 - **Allowance:** `GET /v1/assistant/usage` → used, left and plan. Show what the server says; the free allowance is not decided yet, so hard-code nothing. `assistant.quota_exceeded` carries `retryAfterSeconds` for the reset.
 - The **agent** token only works on `GET /v1/agent/...` routes and exists for Asha's own tools; the app never calls those directly.
 
@@ -816,7 +826,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SignedPreKeyDto** — `keyId`: integer; `publicKey`: string; `signature`: string
 - **SnippetDto** — `chatId`: string; `chatName`?: string|null; `sender`: string; `at`: string; `text`: string
 - **SocialSignInRequest** — `provider`: string; `idToken`: string; `nonce`: string; `appleName`?: AppleNameDto; `device`: DeviceDto; `deviceProof`?: DeviceProofDto
-- **SpeechRequest** — `text`: string; `language`?: string|null
+- **SpeechRequest** — `text`: string; `language`?: string|null; `voice`?: string|null
 - **StartPhoneRequest** — `phone`: string
 - **StartPhoneResponse** — `verificationId`: string; `codeLength`: integer; `expiresInSeconds`: integer; `resendAfterSeconds`: integer
 - **SyncMatchDto** — `phone`: string; `user`: PublicProfileDto2
@@ -837,4 +847,6 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ValidateAddressRequest** — `blockchain`: string; `address`: string
 - **ValidateAddressResponse** — `blockchain`: string; `address`: string; `valid`: boolean
 - **VerifyCodeRequest** — `verificationId`: string; `code`: string
+- **VoiceDto** — `id`: string; `name`: string; `character`: string; `gender`: string (`female` | `male`); `default`: boolean
+- **VoicesResponse** — `voices`: [VoiceDto]
 - **WalletResponse** — `status`: string (`NONE` | `SETTING_UP` | `ACTIVE`); `chains`: [ChainDto]; `totals`: [AssetTotalDto]; `fiat`?: FiatDto|null; `hold`?: HoldDto|null

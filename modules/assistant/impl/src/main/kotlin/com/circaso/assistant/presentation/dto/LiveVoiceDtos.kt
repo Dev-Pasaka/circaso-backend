@@ -10,7 +10,8 @@ import kotlinx.serialization.Serializable
 sealed interface LivePhoneFrame {
     /**
      * The first frame (`{"type":"auth","accessToken":…,"agentToken":…,"language":"en","chatReading":true}`), and
-     * later fresh tokens before the access token's 15 minutes are up.
+     * later fresh tokens before the access token's 15 minutes are up. [voice] counts on the first frame only: the
+     * conversation keeps one voice.
      */
     @Serializable
     @SerialName("auth")
@@ -21,6 +22,8 @@ sealed interface LivePhoneFrame {
         val chatReading: Boolean = true,
         /** The user's display currency (ISO 4217); one that isn't is ignored. */
         val currency: String? = null,
+        /** A voice id from A12; missing or unknown, Asha's default voice speaks. */
+        val voice: String? = null,
         /**
          * The conversation the call's turns go to (first frame only); without it the user's most recent one, or a new
          * one, as on A2. One that isn't the user's fails each turn with `assistant.conversation_not_found`.
@@ -51,7 +54,13 @@ data class LivePhoneFrameType(val type: String? = null)
 data class LiveAudioDto(val encoding: String, val sampleRate: Int)
 
 @Serializable
-data class LiveReadyFrame(val voiceSecondsLeft: Long, val audio: LiveAudioDto, val type: String = "ready")
+data class LiveReadyFrame(
+    val voiceSecondsLeft: Long,
+    val audio: LiveAudioDto,
+    /** The voice Asha speaks in for this conversation: the one asked for, or the default. */
+    val voice: String,
+    val type: String = "ready",
+)
 
 @Serializable
 data class LiveTranscriptFrame(val text: String, val final: Boolean, val type: String = "transcript")

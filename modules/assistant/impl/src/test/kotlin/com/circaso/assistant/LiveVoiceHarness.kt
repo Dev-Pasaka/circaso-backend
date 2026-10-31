@@ -131,7 +131,11 @@ class RecordingVoice(private val sampleRate: Int = 8_000) : LiveSpeech {
         }
     }
 
-    override suspend fun open(language: String?): Resource<LiveSpeechSession> {
+    /** The voice each session was opened in, in order. */
+    val voices = CopyOnWriteArrayList<String?>()
+
+    override suspend fun open(language: String?, voice: String?): Resource<LiveSpeechSession> {
+        voices += voice
         if (language != null && !language.startsWith("en")) {
             return Resource.error(IntegrationError.UnsupportedLanguage(language))
         }
@@ -206,7 +210,7 @@ class LiveHarness(val h: Harness) {
 
     val service =
         LiveVoiceService(
-            OpenLiveVoice(verifier, ears, voice, h.plans, h.quota, h.config, clock),
+            OpenLiveVoice(verifier, ears, voice, h.plans, h.quota, h.config, h.fallbacks, clock),
             MeterLiveVoice(h.quota, clock),
             h.start,
             h.resume,

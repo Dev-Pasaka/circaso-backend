@@ -65,7 +65,25 @@ data class UsageResponse(
 data class TranscriptResponse(val text: String, val seconds: Int)
 
 @Serializable
-data class SpeechRequest(val text: String, val language: String? = null)
+data class SpeechRequest(
+    val text: String,
+    val language: String? = null,
+    /** A voice id from A12; missing or unknown, Asha's default voice speaks. */
+    val voice: String? = null,
+)
+
+/** One voice in A12's list; [gender] is `female` or `male`, a hint for the picker. */
+@Serializable
+data class VoiceDto(
+    val id: String,
+    val name: String,
+    val character: String,
+    val gender: String,
+    val default: Boolean,
+)
+
+@Serializable
+data class VoicesResponse(val voices: List<VoiceDto>)
 
 /** What the SSE events carry (`message`, `tool_request`, `done`, `error`). */
 @Serializable

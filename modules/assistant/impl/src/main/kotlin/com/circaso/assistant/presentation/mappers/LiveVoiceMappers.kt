@@ -31,7 +31,8 @@ fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
         chatReading,
         requestId,
         displayCurrencyOf(currency),
-        conversationId?.let { parseUuid(it) ?: UNKNOWN_CONVERSATION },
+        voice = voice,
+        conversationId = conversationId?.let { parseUuid(it) ?: UNKNOWN_CONVERSATION },
     )
 
 /** What an `auth` frame's conversation id that isn't a UUID becomes: an id no conversation has, so turns are refused. */
@@ -47,6 +48,7 @@ fun LiveVoiceLine.toReadyJson(): String =
                     .lowercase(),
                 speech.format.sampleRate,
             ),
+            voice,
         ),
     )
 

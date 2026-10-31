@@ -63,16 +63,21 @@ class WorkersAiLiveSpeech(
         require(encoding != AudioEncoding.OPUS) { "Aura's live socket makes linear16 or mulaw, not Opus" }
     }
 
-    override suspend fun open(language: String?): Resource<LiveSpeechSession> {
+    /**
+     * [voice] goes as the socket's `speaker` option, like the clip route's field, and with it every socket the session
+     * reopens, so one voice speaks the whole conversation.
+     */
+    override suspend fun open(language: String?, voice: String?): Resource<LiveSpeechSession> {
         if (language != null && !language.lowercase().startsWith("en")) {
             return Resource.error(IntegrationError.UnsupportedLanguage(language))
         }
         val query =
-            mapOf(
-                "encoding" to encoding.name.lowercase(),
-                "sample_rate" to sampleRate.toString(),
-                "mip_opt_out" to "true",
-            )
+            buildMap {
+                put("encoding", encoding.name.lowercase())
+                put("sample_rate", sampleRate.toString())
+                put("mip_opt_out", "true")
+                voice?.let { put("speaker", it) }
+            }
         val opener = suspend { socket.open(model, "live_speak", query, throughGateway = false) }
         return when (val opened = opener()) {
             is Resource.Success -> {

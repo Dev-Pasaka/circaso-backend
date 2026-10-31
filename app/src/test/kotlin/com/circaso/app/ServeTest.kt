@@ -383,6 +383,8 @@ class ServeTest {
                 "/v1/assistant/conversations",
                 "/v1/assistant/conversations/{conversationId}",
                 "/v1/assistant/conversations/{conversationId}/messages",
+                "/v1/assistant/voices",
+                "/v1/assistant/voices/{voiceId}/sample",
                 "/v1/account/security",
                 "/v1/recovery/requests",
                 "/v1/agent/users/contacts",

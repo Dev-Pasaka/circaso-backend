@@ -270,6 +270,71 @@ class LiveVoiceTest {
         }
 
     @Test
+    fun `the voice chosen on the auth frame speaks the whole conversation, and the ready frame names it`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("You sent Mum 2,000 shillings.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                send(
+                    Frame.Text(
+                        """{"type":"auth","accessToken":"user-token","agentToken":"agent-tok","voice":"orion"}""",
+                    ),
+                )
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                assertEquals("orion", got.ofType("ready").single().text("voice"))
+
+                // a later auth frame refreshes tokens only: the conversation keeps its voice
+                send(
+                    Frame.Text(
+                        """{"type":"auth","accessToken":"fresh-token","agentToken":"agent-tok","voice":"zeus"}""",
+                    ),
+                )
+                live.ears.session().push(TranscriptionEvent.Final("how much did I send Mum", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+
+            assertEquals(listOf<String?>("orion"), live.voice.voices, "one voice session, opened in Orion")
+            assertEquals(
+                listOf("You sent Mum 2,000 shillings."),
+                live.voice.sessions
+                    .single()
+                    .spoken,
+            )
+            assertTrue(
+                live.h.fallbacks.seen
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun `an unknown or missing voice on the auth frame is the default, with no error`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+
+            for (frame in listOf(
+                """{"type":"auth","accessToken":"user-token","agentToken":"agent-tok","voice":"robot"}""",
+                """{"type":"auth","accessToken":"user-token","agentToken":"agent-tok"}""",
+            )) {
+                val got = Received()
+                phone().webSocket("/v1/assistant/voice/live") {
+                    send(Frame.Text(frame))
+                    readUntil(got) { it.ofType("ready").isNotEmpty() }
+                    assertEquals("luna", got.ofType("ready").single().text("voice"))
+                    hangUp(got)
+                }
+                assertTrue(got.ofType("error").isEmpty())
+            }
+
+            assertEquals(listOf<String?>("luna", "luna"), live.voice.voices)
+            assertEquals(listOf<Pair<String?, String>>("robot" to "luna", null to "luna"), live.h.fallbacks.seen)
+        }
+
+    @Test
     fun `each sentence goes to the voice as soon as the model has written it, with one Flush at the end`() =
         testApplication {
             val live = LiveHarness(Harness())
@@ -1341,6 +1406,7 @@ class LiveVoiceTest {
                         Duration.ofSeconds(30),
                         Duration.ofSeconds(60),
                         Duration.ofSeconds(30),
+                        "luna",
                     )
                 return LiveConversation(
                     line,

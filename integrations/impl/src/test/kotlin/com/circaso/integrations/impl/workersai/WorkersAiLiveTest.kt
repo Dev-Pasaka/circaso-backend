@@ -256,6 +256,7 @@ class WorkersAiLiveTest {
             assertEquals("mulaw", query["encoding"])
             assertEquals("8000", query["sample_rate"])
             assertEquals("true", query["mip_opt_out"])
+            assertNull(query["speaker"], "no voice asked, so Aura's default")
             assertEquals("Bearer cf-token", headers["Authorization"])
             assertTrue(
                 headers.names().none { it.lowercase().startsWith("cf-aig-") },
@@ -351,8 +352,9 @@ class WorkersAiLiveTest {
                     send(Frame.Binary(true, byteArrayOf(4, 2)))
                 }
             }
-            val session = (WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en").open("en") as Resource.Success).data
-            vendor.opened.next()
+            val speech = WorkersAiLiveSpeech(socket(), "@cf/deepgram/aura-2-en")
+            val session = (speech.open("en", "harmonia") as Resource.Success).data
+            assertEquals("harmonia", vendor.opened.next().second["speaker"], "the voice is the socket's speaker")
             coroutineScope {
                 val reading = async(Dispatchers.Default) { session.next() }
                 // real time, not the test's: the first socket is closed by now, and next() waits rather than failing
@@ -362,6 +364,7 @@ class WorkersAiLiveTest {
 
                 val (_, query, headers) = vendor.opened.next()
                 assertEquals("true", query["mip_opt_out"], "the new socket is opened like the first")
+                assertEquals("harmonia", query["speaker"], "in the same voice")
                 assertTrue(headers.names().none { it.lowercase().startsWith("cf-aig-") })
                 val audio = assertIs<SpeechEvent.Audio>(withTimeout(3_000) { reading.await() })
                 assertContentEquals(byteArrayOf(4, 2), audio.bytes)

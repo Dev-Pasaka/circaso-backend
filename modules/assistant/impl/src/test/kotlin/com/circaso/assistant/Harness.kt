@@ -1,6 +1,7 @@
 package com.circaso.assistant
 
 import com.circaso.assistant.data.blocks.JsonReplyBlocks
+import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Conversation
 import com.circaso.assistant.domain.models.ConversationCursor
@@ -12,6 +13,8 @@ import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.assistant.domain.ports.Transactor
+import com.circaso.assistant.domain.ports.VoiceFallbacks
+import com.circaso.assistant.domain.ports.VoiceSamples
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.AuditEntry
@@ -34,9 +37,11 @@ import com.circaso.assistant.domain.usecases.DeleteChat
 import com.circaso.assistant.domain.usecases.DeleteConversation
 import com.circaso.assistant.domain.usecases.DeleteExchange
 import com.circaso.assistant.domain.usecases.GetUsage
+import com.circaso.assistant.domain.usecases.GetVoiceSample
 import com.circaso.assistant.domain.usecases.ListChat
 import com.circaso.assistant.domain.usecases.ListConversationMessages
 import com.circaso.assistant.domain.usecases.ListConversations
+import com.circaso.assistant.domain.usecases.ListVoices
 import com.circaso.assistant.domain.usecases.RenameConversation
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
@@ -461,9 +466,45 @@ class RecordingSpeech :
     /** Languages this voice refuses, like Aura refusing Swahili. */
     var unspoken: Set<String> = emptySet()
 
-    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
+    /** The voice of every clip asked for, in order. */
+    val voices = CopyOnWriteArrayList<String?>()
+
+    /** When false, every clip fails as the provider being down. */
+    @Volatile var isUp = true
+
+    override suspend fun speak(
+        text: String,
+        language: String?,
+        voice: String?,
+    ): Resource<SpokenAudio> {
+        voices += voice
+        if (!isUp) return Resource.error(IntegrationError.Unavailable("voice"))
         if (language in unspoken) return Resource.error(IntegrationError.UnsupportedLanguage(language.orEmpty()))
         return Resource.success(SpokenAudio(text.toByteArray(), "audio/mpeg"))
+    }
+}
+
+/** Voice previews kept in memory, as Redis keeps them for a day. */
+class MemorySamples : VoiceSamples {
+    val kept = ConcurrentHashMap<String, SpokenAudio>()
+
+    override suspend fun find(voiceId: String, text: String): SpokenAudio? = kept["$voiceId:$text"]
+
+    override suspend fun save(
+        voiceId: String,
+        text: String,
+        audio: SpokenAudio,
+    ) {
+        kept["$voiceId:$text"] = audio
+    }
+}
+
+/** The fallbacks reported, as (asked for, used). */
+class RecordingFallbacks : VoiceFallbacks {
+    val seen = CopyOnWriteArrayList<Pair<String?, String>>()
+
+    override fun fellBack(requested: String?, used: AshaVoice) {
+        seen += requested to used.id
     }
 }
 
@@ -477,6 +518,8 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val tools = FakeTools()
     val model = ScriptedModel()
     val speech = RecordingSpeech()
+    val samples = MemorySamples()
+    val fallbacks = RecordingFallbacks()
     private val clock = Clock.systemUTC()
     val config = config
 
@@ -503,7 +546,9 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val deleteOne = DeleteExchange(memory, memory, memory)
     val usage = GetUsage(UsageReader(plans, quota, config, clock))
     val transcribe = TranscribeVoice(speech, plans, quota, dailyUsage, config, clock)
-    val speak = SynthesizeSpeech(speech, plans, quota, dailyUsage, config, clock)
+    val speak = SynthesizeSpeech(speech, plans, quota, dailyUsage, config, fallbacks, clock)
+    val listVoices = ListVoices(config)
+    val voiceSample = GetVoiceSample(speech, samples, config)
     val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)
 }
 

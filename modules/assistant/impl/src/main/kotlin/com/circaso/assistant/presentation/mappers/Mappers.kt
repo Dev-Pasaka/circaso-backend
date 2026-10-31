@@ -1,5 +1,6 @@
 package com.circaso.assistant.presentation.mappers
 
+import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.AskedFrom
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.ChatPage
@@ -11,6 +12,7 @@ import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.Usage
 import com.circaso.assistant.domain.models.VoiceClip
+import com.circaso.assistant.domain.support.AshaVoices
 import com.circaso.assistant.domain.support.ConversationTitles
 import com.circaso.assistant.presentation.dto.ChatMessageDto
 import com.circaso.assistant.presentation.dto.ChatResponse
@@ -21,6 +23,8 @@ import com.circaso.assistant.presentation.dto.ReadNoteDto
 import com.circaso.assistant.presentation.dto.SendMessageRequest
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
 import com.circaso.assistant.presentation.dto.UsageResponse
+import com.circaso.assistant.presentation.dto.VoiceDto
+import com.circaso.assistant.presentation.dto.VoicesResponse
 import com.circaso.shared.FieldError
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -127,6 +131,10 @@ fun Usage.toResponse() =
         voiceSecondsLeft,
         resetsAt,
     )
+
+fun AshaVoices.toResponse() = VoicesResponse(all.map { it.toDto(isDefault = it.id == default.id) })
+
+fun AshaVoice.toDto(isDefault: Boolean) = VoiceDto(id, name, character, gender.name.lowercase(), isDefault)
 
 fun parseUuid(raw: String?): UUID? = raw?.let { runCatching { UUID.fromString(it) }.getOrNull() }
 

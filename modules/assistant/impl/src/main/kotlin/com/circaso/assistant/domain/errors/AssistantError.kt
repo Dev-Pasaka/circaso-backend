@@ -46,6 +46,13 @@ sealed class AssistantError(
         ErrorKind.INVALID,
     )
 
+    /** A13 asked for the preview of a voice that isn't on Asha's list (the app's list is stale: fetch A12 again). */
+    data object VoiceNotFound : AssistantError(
+        "assistant.voice_not_found",
+        "That voice isn't available.",
+        ErrorKind.NOT_FOUND,
+    )
+
     /** The question to the phone was already answered or went stale; the app asks again. */
     data object TurnNotFound : AssistantError(
         "assistant.turn_not_found",

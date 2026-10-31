@@ -18,6 +18,8 @@ data class LiveVoiceStart(
     val requestId: String?,
     /** The user's display currency (ISO 4217), for amounts in their own money; null when unknown. */
     val currency: String? = null,
+    /** The voice the user chose for Asha (an id from A12); null, or one not on the list, is the default voice. */
+    val voice: String? = null,
     /** The conversation the call's turns are saved in; null for the most recent one (or a new one), as on A2. */
     val conversationId: UUID? = null,
 )
@@ -36,6 +38,8 @@ class LiveVoiceLine(
     val sessionRecheck: Duration,
     /** How long a device tool may wait for the phone before its turn ends with an error. */
     val deviceToolTimeout: Duration,
+    /** The id of the voice Asha speaks in, for the whole conversation (as checked against her list). */
+    val voice: String,
 )
 
 /** What the conversation tells the phone; the controller turns each into a frame. */
