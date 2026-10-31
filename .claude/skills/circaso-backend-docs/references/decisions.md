@@ -162,3 +162,7 @@ Not decided yet. Where code depends on one of these, build behind an interface o
 - [ ] **How Asha Plus is paid.** Apple and Google require their in-app billing for digital subscriptions sold in the app; paying from the wallet in USDC may not be allowed there.
 - [ ] **Summoning Asha in a chat.** The trigger (a composer button, `/asha`, or both), and whether chat reading is on by default with a per-chat opt-out, or off until the user turns it on.
 - [ ] **Limits on Asha's payment proposals.** A per-proposal or daily amount cap for payments that start from Asha, on top of the PIN.
+
+## 2026-10-31: Asha voice runs on PhoneLLM Mini; turns end after 600 ms of silence
+
+Measured from the sandbox with Asha-style questions and 8 tools: `@cf/daily-co/phonellm-mini-alpha-2` chose the right tool 3/3 in 0.3–0.5 s and answered 0.26–0.38 s after the result; Kimi K2.6 took 13.3 s to choose a tool; Nemotron 3 and DeepSeek V4.1 Flash returned empty answers after tools or skipped web search. Typed chat stays on Kimi. Endpointing goes from 300 to 600 ms because 300 cut people off mid-sentence.

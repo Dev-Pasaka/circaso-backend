@@ -196,9 +196,10 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                                 workersAi(config, secrets, get()),
                                 textModel,
                                 maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
-                                // Live voice turns use the text model unless a faster one is set and proven with tools
-                                // (decision 2026-10-31: Llama 4 Scout answered empty when tools were offered).
-                                voiceModel = ai.string("model.voice-text", textModel),
+                                // Live voice turns: PhoneLLM Mini (decision 2026-10-31), measured from the sandbox
+                                // on real Asha questions with 8 tools: right tool 3/3 in 0.3–0.5 s and a spoken answer
+                                // 0.3 s after the result, where Kimi took 13 s to pick a tool.
+                                voiceModel = ai.string("model.voice-text", WORKERS_AI_VOICE_TEXT_MODEL),
                             )
                         },
                     ),
@@ -544,6 +545,8 @@ private fun cloudflareRealtime(
 // Asha's models on Workers AI, each overridable by its INTEGRATIONS_AI_MODEL_* setting. Ids from developers.cloudflare.com/workers-ai/models/.
 private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 
+// Built by Pipecat/Daily for voice agents: replies quickly and calls tools mid-conversation (Workers AI, 2026-10-15).
+private const val WORKERS_AI_VOICE_TEXT_MODEL = "@cf/daily-co/phonellm-mini-alpha-2"
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"

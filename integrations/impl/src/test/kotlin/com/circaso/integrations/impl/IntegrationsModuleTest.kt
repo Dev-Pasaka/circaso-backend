@@ -168,8 +168,8 @@ class IntegrationsModuleTest {
                 .get<LanguageModel>()
                 .complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
             assertTrue(
-                "glm-5.2" in clients.last.text(),
-                "voice turns default to the text model, so tools work (Scout answered empty with tools)",
+                "@cf/daily-co/phonellm-mini-alpha-2" in clients.last.text(),
+                "voice turns default to the fast voice model, whatever the text model is",
             )
         }
 
