@@ -8,6 +8,8 @@ import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.domain.models.ChainWallet
+import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.Direction
 import com.circaso.wallet.domain.models.HistoryPage
 import com.circaso.wallet.domain.models.HistoryQuery
@@ -166,6 +168,39 @@ class HistoryTest {
             val toGone = entries.single { it.transaction.counterpartyId == gone }.counterparty
             assertEquals(gone, toGone.userId)
             assertNull(toGone.displayName, "a deleted account keeps its id, not a name")
+        }
+
+    @Test
+    fun `a payment known only by address is named when that address is a Circaso wallet`() =
+        runBlocking<Unit> {
+            val wallets = MemoryWalletRepository()
+            wallets.insertWallet(
+                ChainWallet("w-bob", bob, "BASE-SEPOLIA", "SCA", "0xb0b", ChainWalletState.ACTIVE, Instant.EPOCH),
+            )
+            wallets.insertWallet(
+                ChainWallet("w-own", amina, "BASE-SEPOLIA", "SCA", "0xown", ChainWalletState.ACTIVE, Instant.EPOCH),
+            )
+            profiles.known[bob] = PublicProfile(bob, "Bob", "bob", null, null)
+            val named = ListTransactions(transactions, Counterparties(profiles, wallets), FakeRates())
+            add(
+                row("2026-10-20T10:00:00Z", counterpartyId = null, address = "0xb0b"),
+                row("2026-10-21T10:00:00Z", counterpartyId = null, address = "0xoutside"),
+                row("2026-10-22T10:00:00Z", counterpartyId = null, address = "0xown"),
+            )
+
+            val entries =
+                named(
+                    HistoryQuery(amina, null, null, 50),
+                ).data().entries.associateBy { it.counterparty.address }
+
+            assertEquals(bob, entries.getValue("0xb0b").counterparty.userId)
+            assertEquals("Bob", entries.getValue("0xb0b").counterparty.displayName)
+            assertEquals("bob", entries.getValue("0xb0b").counterparty.handle)
+            assertNull(entries.getValue("0xoutside").counterparty.userId)
+            assertNull(
+                entries.getValue("0xown").counterparty.userId,
+                "moving money between your own wallets names nobody",
+            )
         }
 
     @Test

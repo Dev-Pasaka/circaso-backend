@@ -251,7 +251,7 @@ fun walletModule(config: Config): Module =
         single { HasWallet(get()) }
         single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetTransfer(get()) }
-        single { Counterparties(get()) }
+        single { Counterparties(get(), get()) }
         single { ListTransactions(get(), get(), get()) }
         single { GetTransaction(get(), get(), get()) }
         single { SummariseTransactions(get(), get(), get()) }
