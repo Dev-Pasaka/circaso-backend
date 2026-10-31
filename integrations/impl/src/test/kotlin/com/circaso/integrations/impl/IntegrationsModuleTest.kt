@@ -168,8 +168,8 @@ class IntegrationsModuleTest {
                 .get<LanguageModel>()
                 .complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
             assertTrue(
-                "@cf/meta/llama-4-scout-17b-16e-instruct" in clients.last.text(),
-                "voice turns default to the fast model",
+                "glm-5.2" in clients.last.text(),
+                "voice turns default to the text model, so tools work (Scout answered empty with tools)",
             )
         }
 
