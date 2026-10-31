@@ -30,6 +30,7 @@ fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
         chatReading,
         requestId,
         displayCurrencyOf(currency),
+        voice,
     )
 
 fun LiveVoiceLine.toReadyJson(): String =
@@ -42,6 +43,7 @@ fun LiveVoiceLine.toReadyJson(): String =
                     .lowercase(),
                 speech.format.sampleRate,
             ),
+            voice,
         ),
     )
 

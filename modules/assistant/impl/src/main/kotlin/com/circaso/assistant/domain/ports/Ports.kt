@@ -1,6 +1,8 @@
 package com.circaso.assistant.domain.ports
 
+import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.LiveEvent
+import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -155,4 +157,26 @@ private val keep = Duration.ZERO
  */
 fun interface LiveTimings {
     fun record(timing: LiveEvent.Timing)
+}
+
+/**
+ * Told when a request asked for no voice, or one not on Asha's list, and [used] the default instead (decision
+ * 2026-10-31). Not an error: a debug line, so an old app or a stale choice can be spotted without noise.
+ */
+fun interface VoiceFallbacks {
+    fun fellBack(requested: String?, used: AshaVoice)
+}
+
+/**
+ * Each voice's preview clip, kept a while so trying voices doesn't call the voice provider each time. A miss or a
+ * failure to keep one is never an error: the clip is made again.
+ */
+interface VoiceSamples {
+    suspend fun find(voiceId: String, text: String): SpokenAudio?
+
+    suspend fun save(
+        voiceId: String,
+        text: String,
+        audio: SpokenAudio,
+    )
 }

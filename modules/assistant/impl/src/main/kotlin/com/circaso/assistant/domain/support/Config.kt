@@ -31,6 +31,10 @@ data class AssistantConfig(
     val liveSessionRecheck: Duration = Duration.ofSeconds(60),
     /** A device tool asked on the live socket ends its turn with an error if the phone hasn't answered by then. */
     val liveDeviceToolTimeout: Duration = Duration.ofSeconds(30),
+    /** The voices a user can choose and the default (decision 2026-10-31); `ASSISTANT_VOICES` replaces the list. */
+    val voices: AshaVoices = AshaVoices.DEFAULT,
+    /** What each voice says in its preview (A13). */
+    val voiceSampleText: String = AshaVoices.SAMPLE_TEXT,
 ) {
     fun limitsOf(plan: Plan): Limits =
         when {

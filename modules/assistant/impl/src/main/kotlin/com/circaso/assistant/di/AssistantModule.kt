@@ -4,6 +4,8 @@ import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.data.cache.AesTextVault
 import com.circaso.assistant.data.cache.RedisPendingTurns
 import com.circaso.assistant.data.cache.RedisQuotaCounters
+import com.circaso.assistant.data.cache.RedisVoiceSamples
+import com.circaso.assistant.data.metrics.LoggedVoiceFallbacks
 import com.circaso.assistant.data.metrics.TelemetryLiveTimings
 import com.circaso.assistant.data.repositories.AssistantExpiry
 import com.circaso.assistant.data.repositories.AssistantStoreImpl
@@ -17,7 +19,9 @@ import com.circaso.assistant.data.tables.UsageDailyTable
 import com.circaso.assistant.data.tools.AllAgentTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.Limits
+import com.circaso.assistant.domain.models.VoiceGender
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.LiveTimings
 import com.circaso.assistant.domain.ports.PendingTurns
@@ -25,10 +29,13 @@ import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.ports.ReplyBlocks
 import com.circaso.assistant.domain.ports.TextVault
 import com.circaso.assistant.domain.ports.Transactor
+import com.circaso.assistant.domain.ports.VoiceFallbacks
+import com.circaso.assistant.domain.ports.VoiceSamples
 import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
+import com.circaso.assistant.domain.support.AshaVoices
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
@@ -40,7 +47,9 @@ import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
 import com.circaso.assistant.domain.usecases.DeleteExchange
 import com.circaso.assistant.domain.usecases.GetUsage
+import com.circaso.assistant.domain.usecases.GetVoiceSample
 import com.circaso.assistant.domain.usecases.ListChat
+import com.circaso.assistant.domain.usecases.ListVoices
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
 import com.circaso.assistant.domain.usecases.RecordLiveTiming
@@ -100,8 +109,35 @@ internal fun assistantConfig(assistant: Config): AssistantConfig {
         plus = limits("plus", defaults.plus),
         isUnlimited = assistant.boolean("limits-unlimited", false),
         maxToolSteps = assistant.int("max-tool-steps", defaults.maxToolSteps),
+        voices = assistantVoices(assistant, defaults.voices),
     )
 }
+
+/**
+ * Asha's voices from the environment (decision 2026-10-31). `ASSISTANT_VOICES` replaces the whole list, as
+ * `id:Name:Character:gender` entries separated by commas (`luna:Luna:Friendly:female,zeus:Zeus:Steady:male`); the id is
+ * the voice provider's speaker name. `ASSISTANT_DEFAULT_VOICE` picks the default, else the list's first voice when the
+ * list is set, else Luna. A malformed list fails at start, not on a user's request.
+ */
+internal fun assistantVoices(assistant: Config, defaults: AshaVoices): AshaVoices {
+    val listed = assistant.string("voices")?.takeIf { it.isNotBlank() }
+    val voices = listed?.split(',')?.map { voiceOf(it.trim()) } ?: defaults.all
+    val defaultId = assistant.string("default-voice")?.trim()?.takeIf { it.isNotEmpty() }
+    return AshaVoices(voices, defaultId ?: if (listed != null) voices.first().id else defaults.default.id)
+}
+
+private fun voiceOf(entry: String): AshaVoice {
+    val parts = entry.split(':').map { it.trim() }
+    check(parts.size == VOICE_FIELDS && parts.none { it.isEmpty() }) {
+        "ASSISTANT_VOICES entry '$entry' must be id:Name:Character:gender"
+    }
+    val gender =
+        VoiceGender.entries.firstOrNull { it.name.equals(parts[3], ignoreCase = true) }
+            ?: error("ASSISTANT_VOICES entry '$entry' has gender '${parts[3]}' (female or male)")
+    return AshaVoice(parts[0].lowercase(), parts[1], parts[2], gender)
+}
+
+private const val VOICE_FIELDS = 4
 
 /** How often `assistant.purge-expired` runs: it only keeps the outbox partitions a day ahead, so this is plenty. */
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
@@ -127,6 +163,8 @@ fun assistantModule(config: Config): Module =
         single<QuotaCounters> { RedisQuotaCounters(get<RedisScopes>().scope("ast")) }
         single<PendingTurns> { RedisPendingTurns(get<RedisScopes>().scope("ast")) }
         single<LiveTimings> { TelemetryLiveTimings(get<Telemetry>()) }
+        single<VoiceFallbacks> { LoggedVoiceFallbacks() }
+        single<VoiceSamples> { RedisVoiceSamples(get<RedisScopes>().scope("ast")) }
         single<ChatRepository> { ChatRepositoryImpl(get(named("assistant.database")), get()) }
         single<EntitlementRepository> { EntitlementRepositoryImpl(get(named("assistant.database")), clock) }
         single<AssistantStore> { AssistantStoreImpl(get(named("assistant.database")), get(), clock) }
@@ -161,9 +199,11 @@ fun assistantModule(config: Config): Module =
         single { DeleteExchange(get(), get(), get()) }
         single { GetUsage(get()) }
         single { TranscribeVoice(get(), get(), get(), get(), get(), clock) }
-        single { SynthesizeSpeech(get(), get(), get(), get(), get(), clock) }
+        single { SynthesizeSpeech(get(), get(), get(), get(), get(), get(), clock) }
+        single { ListVoices(get()) }
+        single { GetVoiceSample(get(), get(), get()) }
         single { DeleteAssistantData(get(), get(), get(), get(), clock) }
-        single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), clock) }
+        single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { MeterLiveVoice(get(), clock) }
         single { SaveLiveVoiceUsage(get()) }
         single { CheckLiveSession(get()) }
@@ -171,7 +211,7 @@ fun assistantModule(config: Config): Module =
 
         // presentation
         single { ChatService(get(), get(), get(), get(), get()) }
-        single { VoiceService(get(), get(), get()) }
+        single { VoiceService(get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single { LiveVoiceService(get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("assistant.routes")) {

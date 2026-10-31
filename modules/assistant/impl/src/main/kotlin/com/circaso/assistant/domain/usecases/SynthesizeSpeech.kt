@@ -2,6 +2,7 @@ package com.circaso.assistant.domain.usecases
 
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.VoiceFallbacks
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.DailyUsage
@@ -16,6 +17,7 @@ import java.time.Clock
 
 /**
  * A4: Asha's reply as audio. Metered with voice, at about 15 characters a second, and the day's totals stored at once.
+ * Spoken in the user's chosen voice; a voice not on Asha's list, or none, is the default (decision 2026-10-31).
  *
  * TODO(decision: short replies could be cached by text hash for a day, as the design suggests)
  */
@@ -25,12 +27,14 @@ class SynthesizeSpeech(
     private val quota: QuotaCounters,
     private val usage: DailyUsage,
     private val config: AssistantConfig,
+    private val fallbacks: VoiceFallbacks,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(
         userId: UserId,
         text: String,
         language: String?,
+        voice: String? = null,
     ): Resource<SpokenAudio> {
         val spoken = text.trim()
         if (spoken.isEmpty() || spoken.length > config.maxSpeechChars) {
@@ -47,7 +51,8 @@ class SynthesizeSpeech(
             return Resource.error(AssistantError.QuotaExceeded(RESET_HINT_SECONDS))
         }
 
-        return when (val r = speech.speak(spoken, language)) {
+        val speaker = config.voices.pick(voice, fallbacks)
+        return when (val r = speech.speak(spoken, language, speaker.id)) {
             is Resource.Success -> {
                 quota.addVoiceSecondsUpTo(userId, day, seconds, limit)
                 usage.save(userId, day)

@@ -112,7 +112,11 @@ class FakeSpeechToText : SpeechToText {
  * Swahili path (`assistant.language_not_supported`, then the phone's own voice) can be tried without a provider.
  */
 class FakeTextToSpeech : TextToSpeech {
-    override suspend fun speak(text: String, language: String?): Resource<SpokenAudio> {
+    override suspend fun speak(
+        text: String,
+        language: String?,
+        voice: String?,
+    ): Resource<SpokenAudio> {
         if (language != null && !language.lowercase().startsWith("en")) {
             return Resource.error(IntegrationError.UnsupportedLanguage(language))
         }
