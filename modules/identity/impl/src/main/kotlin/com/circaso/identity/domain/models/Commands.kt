@@ -107,3 +107,15 @@ data class RecoveryCommand(
 )
 
 data class ReleaseCommand(val principal: Principal, val verificationId: String, val confirmAbandon: Boolean)
+
+/**
+ * The account and security overview Asha reads (decision 2026-10-31): I11's facts, the account's status and age,
+ * the phone the account is on now and the latest lines of the security log.
+ */
+data class SecuritySummary(
+    val account: Account,
+    val maskedPhone: String?,
+    val providers: List<ProviderLink>,
+    val device: Device?,
+    val recent: List<SecurityEvent>,
+)

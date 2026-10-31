@@ -14,6 +14,7 @@ import com.circaso.wallet.domain.models.HistoryQuery
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletTransaction
+import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.presentation.mappers.historyQuery
 import com.circaso.wallet.presentation.mappers.toResponse
@@ -31,7 +32,7 @@ import kotlin.test.assertTrue
 class HistoryTest {
     private val transactions = MemoryTransactionRepository()
     private val profiles = CountingProfiles()
-    private val list = ListTransactions(transactions, profiles)
+    private val list = ListTransactions(transactions, Counterparties(profiles), FakeRates())
     private val amina = UserId.new()
     private val bob = UserId.new()
 

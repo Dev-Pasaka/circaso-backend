@@ -1,14 +1,13 @@
 package com.circaso.wallet.domain.usecases
 
+import com.circaso.integrations.api.ExchangeRates
 import com.circaso.shared.Resource
-import com.circaso.users.api.Profiles
-import com.circaso.wallet.domain.models.Counterparty
 import com.circaso.wallet.domain.models.HISTORY_STATES
-import com.circaso.wallet.domain.models.HistoryEntry
 import com.circaso.wallet.domain.models.HistoryPage
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.HistoryQuery
 import com.circaso.wallet.domain.repositories.TransactionRepository
+import com.circaso.wallet.domain.support.Counterparties
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneOffset
@@ -17,35 +16,35 @@ import java.time.ZoneOffset
 private const val MAX_LIMIT = 200
 
 /**
- * W6 `GET /wallet/transactions`: the caller's own history rows, newest first, paged by keyset. The other side of each
- * row is named from users' `Profiles`, asked once per page for every person on it; someone whose profile is gone
- * (a deleted account) keeps their id and address but no name.
+ * W6 `GET /wallet/transactions`, and Asha's narrower read of it: the caller's own history rows, newest first, paged
+ * by keyset. The other side of each row is named from users' `Profiles` ([Counterparties]). With a currency (Asha's
+ * route), today's rate comes along so each row can be shown in it; no rate known is never an error.
  */
-class ListTransactions(private val transactions: TransactionRepository, private val profiles: Profiles) {
+class ListTransactions(
+    private val transactions: TransactionRepository,
+    private val counterparties: Counterparties,
+    private val rates: ExchangeRates,
+) {
     suspend operator fun invoke(query: HistoryQuery): Resource<HistoryPage> {
         val page = query.limit.coerceIn(1, MAX_LIMIT)
-        val from = query.month?.let(::startOf)
-        val until = query.month?.plusMonths(1)?.let(::startOf)
-        val rows = transactions.history(query.userId, HISTORY_STATES, from, until, query.after, page + 1)
+        val from = latest(query.month?.let(::startOf), query.from)
+        val until = earliest(query.month?.plusMonths(1)?.let(::startOf), query.until)
+        if (from != null && until != null && !from.isBefore(until)) {
+            return Resource.success(HistoryPage(emptyList(), null))
+        }
+
+        val rows =
+            transactions.history(query.userId, HISTORY_STATES, from, until, query.after, page + 1, query.filter)
         val shown = rows.take(page)
-        val people = shown.mapNotNullTo(mutableSetOf()) { it.counterpartyId }
-        val named = if (people.isEmpty()) emptyMap() else profiles.get(people)
-        val entries =
-            shown.map { row ->
-                val profile = row.counterpartyId?.let { named[it] }
-                val counterparty =
-                    Counterparty(
-                        userId = row.counterpartyId,
-                        displayName = profile?.displayName,
-                        handle = profile?.handle,
-                        avatarUrl = profile?.avatarUrl,
-                        address = row.counterpartyAddress,
-                    )
-                HistoryEntry(row, counterparty)
-            }
+        val entries = counterparties.entries(shown)
         val next = if (rows.size > page) shown.last().let { HistoryPosition(it.occurredAt, it.id) } else null
-        return Resource.success(HistoryPage(entries, next))
+        val rate = query.currency?.let { rates.usdRate(it) }
+        return Resource.success(HistoryPage(entries, next, rate))
     }
 
     private fun startOf(month: YearMonth): Instant = month.atDay(1).atStartOfDay().toInstant(ZoneOffset.UTC)
+
+    private fun latest(a: Instant?, b: Instant?): Instant? = if (a == null || (b != null && b.isAfter(a))) b else a
+
+    private fun earliest(a: Instant?, b: Instant?): Instant? = if (a == null || (b != null && b.isBefore(a))) b else a
 }

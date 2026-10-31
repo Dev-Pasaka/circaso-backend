@@ -3,11 +3,14 @@ package com.circaso.assistant.domain.support
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.ReadNote
+import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.DeviceTools
 import com.circaso.assistant.domain.ports.PendingCall
 import com.circaso.assistant.domain.ports.PendingMessage
 import com.circaso.assistant.domain.ports.PendingReadNote
+import com.circaso.assistant.domain.ports.ReplyBlocks
+import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.ModelMessage
@@ -18,6 +21,8 @@ import com.circaso.integrations.api.ModelStreamEvent
 import com.circaso.integrations.api.ToolCall
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
+import com.circaso.shared.UserId
+import java.util.UUID
 
 /** Where the model's loop stopped: with an answer, or waiting for the phone. */
 sealed interface AgentOutcome {
@@ -42,32 +47,54 @@ sealed interface AgentOutcome {
     ) : AgentOutcome
 }
 
+/** Who and what one turn is for: the tool context, whether the phone's chat tools are on, which model, which day. */
+data class AgentTurn(
+    val turnId: UUID,
+    val userId: UserId,
+    val agentToken: String?,
+    val currency: String?,
+    val deviceTools: Boolean,
+    val purpose: ModelPurpose,
+    val today: String,
+) {
+    val isVoice: Boolean get() = purpose == ModelPurpose.VOICE
+
+    override fun toString(): String = "AgentTurn($turnId, $userId, $purpose)"
+}
+
 /**
  * The loop around the model. The model asks for a tool, the tool answers, the model continues, until it speaks or
- * asks the phone. Asha's own tools only read, and they run with the user's agent token, so the other modules'
- * routes refuse anything else; whatever the model says, it cannot write.
+ * asks the phone. Asha's own tools only read, and the token-bound ones run with the user's agent token, so the other
+ * modules' routes refuse anything else; whatever the model says, it cannot write.
  *
  * Every step streams (decision 2026-10-27): its text goes to the [ReplyListener] as the model writes it, including
  * text the model writes before calling a tool ("Let me look that up."), because the user has already seen or heard
  * it. The answer saved is all of that text, a blank line between steps, so the chat keeps what the user was shown.
+ * On its way out the text passes a [BlockFilter] (decision 2026-10-31): rich blocks reach the app checked and whole,
+ * or not at all, and a spoken turn carries none. Each tool call is announced to the listener with the server's own
+ * label before it runs, and again when it has answered.
  */
-class AshaAgent(private val model: LanguageModel, private val tools: AgentTools, private val config: AssistantConfig) {
+class AshaAgent(
+    private val model: LanguageModel,
+    private val tools: AgentTools,
+    private val config: AssistantConfig,
+    private val blocks: ReplyBlocks,
+) {
     suspend fun run(
         history: List<ModelMessage>,
-        agentToken: String?,
-        deviceTools: Boolean,
+        turn: AgentTurn,
         startSteps: Int = 0,
         usedBefore: List<String> = emptyList(),
         /** Text of this turn the user was shown before it paused for the phone (A9 carries on after it). */
         shownBefore: String = "",
         listener: ReplyListener = ReplyListener.None,
-        /** Which model runs the turn: a spoken turn's answers on the faster voice model, every step of it. */
-        purpose: ModelPurpose = ModelPurpose.CHAT,
     ): Resource<AgentOutcome> {
         val messages = history.toMutableList()
-        val specs = specs(agentToken != null, deviceTools)
+        val specs = specs(turn)
+        val system = AshaPrompt.of(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
+        val context = ToolContext(turn.userId, turn.agentToken, turn.currency)
         val used = usedBefore.toMutableList()
-        val reply = ShownReply(shownBefore, listener)
+        val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice))
         var input = 0
         var output = 0
 
@@ -76,7 +103,7 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
             steps++
             reply.newStep()
             val response =
-                when (val r = step(ModelRequest(AshaPrompt.system, messages, specs, purpose), reply)) {
+                when (val r = step(ModelRequest(system, messages, specs, turn.purpose), reply)) {
                     is Resource.Success -> r.data
                     is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
                 }
@@ -93,21 +120,28 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
             messages += ModelMessage.Assistant(response.text, listOf(call) + skipped)
             used += call.name
 
-            if (call.name in DeviceTools.names) {
+            if (call.name in DeviceTools.names && specs.any { it.name == call.name }) {
                 skipped.forEach {
                     messages +=
                         ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.")
                 }
+                listener.toolStarted(ToolStatus(turn.turnId, call.id, call.name, DeviceTools.label(call.name)))
                 return Resource.success(
                     AgentOutcome.WaitingForDevice(call, messages.toPending(), steps, input, output, used),
                 )
             }
 
-            messages += ModelMessage.ToolResult(call.id, call.name, runServerTool(call, agentToken))
+            val answer =
+                if (specs.none { it.name == call.name }) {
+                    NOT_AVAILABLE
+                } else {
+                    runServerTool(call, turn, context, listener)
+                }
+            messages += ModelMessage.ToolResult(call.id, call.name, answer)
             skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }
         }
         reply.newStep()
-        reply.add(GAVE_UP)
+        reply.show(GAVE_UP)
         return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
     }
 
@@ -123,7 +157,7 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
                 when (val event = stream.next() ?: return Resource.error(IntegrationError.Unavailable("model"))) {
                     is ModelStreamEvent.Text -> reply.add(event.delta)
                     is ModelStreamEvent.ToolCallDelta -> Unit
-                    is ModelStreamEvent.Done -> return Resource.success(event.response.also { reply.settle(it.text) })
+                    is ModelStreamEvent.Done -> return Resource.success(event.response.also { reply.endStep(it.text) })
                     is ModelStreamEvent.Failed -> return Resource.error(event.error)
                 }
             }
@@ -132,18 +166,34 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
         }
     }
 
-    /** The reply as the user has been shown it: each step's text, a blank line between steps. */
-    private class ShownReply(before: String, private val listener: ReplyListener) {
+    /**
+     * The reply as the user has been shown it: each step's text, a blank line between steps, after the [filter].
+     * [hasModelText] is whether the model wrote anything in this step, held back by the filter or not.
+     */
+    private class ShownReply(before: String, private val listener: ReplyListener, private val filter: BlockFilter) {
         private val shown = StringBuilder(before.trim())
         private var hasStepText = false
+        private var hasModelText = false
 
         val text: String get() = shown.toString().trim()
 
         fun newStep() {
             hasStepText = false
+            hasModelText = false
         }
 
         suspend fun add(delta: String) {
+            hasModelText = true
+            show(filter.feed(delta))
+        }
+
+        /** The step is over: what the filter held goes out (a provider that sent its text only at the end too). */
+        suspend fun endStep(stepText: String?) {
+            if (!hasModelText && stepText != null) show(filter.feed(stepText))
+            show(filter.finish())
+        }
+
+        suspend fun show(delta: String) {
             var piece = if (hasStepText) delta else delta.trimStart()
             if (piece.isEmpty()) return
             if (!hasStepText && shown.isNotEmpty()) piece = STEP_BREAK + piece
@@ -151,26 +201,31 @@ class AshaAgent(private val model: LanguageModel, private val tools: AgentTools,
             shown.append(piece)
             listener.text(piece)
         }
-
-        /** A provider that reported the step's text only in its final answer still shows it. */
-        suspend fun settle(stepText: String?) {
-            if (!hasStepText && stepText != null) add(stepText)
-        }
     }
 
-    private fun specs(serverTools: Boolean, deviceTools: Boolean): List<ToolSpec> =
-        (if (serverTools) tools.specs() else emptyList()) +
-            (if (deviceTools) listOf(AshaPrompt.searchChats, AshaPrompt.readChat) else emptyList())
+    private fun specs(turn: AgentTurn): List<ToolSpec> =
+        tools.specs(turn.agentToken != null) +
+            (if (turn.deviceTools) listOf(AshaPrompt.searchChats, AshaPrompt.readChat) else emptyList())
 
-    private suspend fun runServerTool(call: ToolCall, agentToken: String?): String {
-        if (agentToken == null || !tools.handles(call.name)) return "That tool is not available."
-        return when (val result = tools.call(call.name, call.argumentsJson, agentToken)) {
+    private suspend fun runServerTool(
+        call: ToolCall,
+        turn: AgentTurn,
+        context: ToolContext,
+        listener: ReplyListener,
+    ): String {
+        if (!tools.handles(call.name)) return NOT_AVAILABLE
+        val status = ToolStatus(turn.turnId, call.id, call.name, tools.label(call.name, call.argumentsJson))
+        listener.toolStarted(status)
+        val result = tools.call(call.name, call.argumentsJson, context)
+        listener.toolFinished(status, result is Resource.Success)
+        return when (result) {
             is Resource.Success -> "<untrusted>${result.data}</untrusted>"
-            is Resource.Error -> "The lookup failed (${result.error.code})."
+            is Resource.Error -> "The lookup failed (${result.error.message}). Tell the user if it matters."
         }
     }
 
     companion object {
+        private const val NOT_AVAILABLE = "That tool is not available."
         private const val GAVE_UP = "I couldn't finish looking that up. Please try asking in a simpler way."
         private const val STEP_BREAK = "\n\n"
 

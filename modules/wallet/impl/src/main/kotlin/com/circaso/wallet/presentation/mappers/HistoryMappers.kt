@@ -59,13 +59,13 @@ fun historyQuery(
 }
 
 /** The cursor is opaque to the app: the last row's time and id, base64url so it sits in a query string as is. */
-private fun encodeCursor(position: HistoryPosition): String =
+internal fun encodeCursor(position: HistoryPosition): String =
     Base64
         .getUrlEncoder()
         .withoutPadding()
         .encodeToString("${position.occurredAt}$CURSOR_SEPARATOR${position.id}".toByteArray())
 
-private fun decodeCursor(raw: String): HistoryPosition? =
+internal fun decodeCursor(raw: String): HistoryPosition? =
     runCatching {
         val text = String(Base64.getUrlDecoder().decode(raw.trim()))
         val at = text.substringBefore(CURSOR_SEPARATOR)

@@ -1,5 +1,6 @@
 package com.circaso.assistant
 
+import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.Plan
@@ -7,6 +8,7 @@ import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
@@ -19,6 +21,7 @@ import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
+import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
@@ -224,23 +227,32 @@ class Plans(var plan: Plan = Plan.FREE) : EntitlementRepository {
 }
 
 class FakeTools : AgentTools {
-    data class Called(val name: String, val arguments: String, val token: String)
+    data class Called(
+        val name: String,
+        val arguments: String,
+        val token: String?,
+        val currency: String? = null,
+    )
 
     val calls = CopyOnWriteArrayList<Called>()
     var answer: (
         String,
     ) -> Resource<String> = { Resource.success("""{"contacts":[{"userId":"u1","displayName":"Mum Wanjiku"}]}""") }
 
-    override fun specs(): List<ToolSpec> = listOf(AshaPrompt.searchContacts, AshaPrompt.listContacts)
+    override fun specs(hasAgentToken: Boolean): List<ToolSpec> =
+        if (hasAgentToken) listOf(AshaPrompt.searchContacts, AshaPrompt.listContacts) else emptyList()
 
     override fun handles(toolName: String) = toolName in setOf("searchContacts", "listContacts")
+
+    override fun label(toolName: String, argumentsJson: String) = "Looking at your contacts…"
 
     override suspend fun call(
         toolName: String,
         argumentsJson: String,
-        agentToken: String,
+        context: ToolContext,
     ): Resource<String> {
-        calls += Called(toolName, argumentsJson, agentToken)
+        if (context.agentToken == null) return Resource.error(IntegrationError.Rejected("no agent token"))
+        calls += Called(toolName, argumentsJson, context.agentToken, context.currency)
         return answer(toolName)
     }
 }
@@ -369,21 +381,21 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     private val clock = Clock.systemUTC()
     val config = config
 
-    private val agent = AshaAgent(model, tools, config)
+    private val agent = AshaAgent(model, tools, config, JsonReplyBlocks())
     private val ids = OrderedIds(clock)
     private val recorder = TurnRecorder(memory, pending, quota, config, ids, memory, clock)
     val dailyUsage = DailyUsage(quota, memory, memory, clock)
 
     val start = StartTurn(verifier, memory, plans, quota, agent, recorder, config, ids, clock)
-    val resume = ContinueTurn(verifier, pending, agent, recorder, config)
+    val resume = ContinueTurn(verifier, pending, agent, recorder, config, clock)
 
     /** A9 over another store of waiting turns, for races. */
-    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, agent, recorder, config)
+    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, agent, recorder, config, clock)
 
     val list = ListChat(memory)
     val deleteAll = DeleteChat(memory, memory)
     val deleteOne = DeleteExchange(memory, memory, memory)
-    val usage = GetUsage(plans, quota, config, clock)
+    val usage = GetUsage(UsageReader(plans, quota, config, clock))
     val transcribe = TranscribeVoice(speech, plans, quota, dailyUsage, config, clock)
     val speak = SynthesizeSpeech(speech, plans, quota, dailyUsage, config, clock)
     val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)

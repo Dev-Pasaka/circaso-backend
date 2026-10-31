@@ -54,6 +54,19 @@ data class TurnCommand(
     val requestId: String?,
     /** A live voice turn runs on the faster voice model; tools, limits and audit are the same as a typed turn's. */
     val purpose: ModelPurpose = ModelPurpose.CHAT,
+    /** The user's display currency (ISO 4217), for amounts in their own money; null when the app sent none. */
+    val currency: String? = null,
+)
+
+/**
+ * One tool call as the app is told about it (decision 2026-10-31): `tool_status` before it runs, `tool_done` after.
+ * [label] is the server's own line for it, never the model's.
+ */
+data class ToolStatus(
+    val turnId: UUID,
+    val callId: String,
+    val tool: String,
+    val label: String,
 )
 
 /** What a turn comes to: an answer, or a question for the phone (a device tool) that the phone answers through A9. */

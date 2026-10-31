@@ -9,6 +9,7 @@ import com.circaso.assistant.domain.ports.PendingReadNote
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
+import com.circaso.assistant.domain.support.AgentTurn
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.OrderedIds
@@ -62,29 +63,33 @@ class StartTurn(
         val context = chat.list(userId, null, limits.contextMessages).asReversed().map(::toModel)
         val asked = command.askedFrom?.let { "[Asked from the chat \"${it.chatName ?: it.chatId}\"] " }.orEmpty()
         val history = context + ModelMessage.User(asked + text)
+        // The turn's id comes first, so the app can be told about each tool call as it happens.
+        val turnId = ids.next()
+        val turn =
+            AgentTurn(
+                turnId = turnId,
+                userId = userId,
+                agentToken = command.agentToken,
+                currency = command.currency,
+                deviceTools = command.chatReading,
+                purpose = command.purpose,
+                today = clock.today(),
+            )
 
         val outcome =
-            when (
-                val r =
-                    agent.run(
-                        history,
-                        command.agentToken,
-                        command.chatReading,
-                        listener = listener,
-                        purpose = command.purpose,
-                    )
-            ) {
+            when (val r = agent.run(history, turn, listener = listener)) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }
         return recorder.conclude(
             userId,
-            ids.next(),
+            turnId,
             text,
             command.askedFrom?.let { it.chatName ?: it.chatId },
             command.requestId,
             outcome,
             PendingReadNote(emptyList(), emptyList(), 0),
+            command.currency,
         )
     }
 

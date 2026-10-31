@@ -19,6 +19,7 @@ import com.circaso.messaging.domain.usecases.GetMembers
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
+import com.circaso.messaging.domain.usecases.ListGroupIds
 import com.circaso.messaging.domain.usecases.OpenDirectChat
 import com.circaso.messaging.domain.usecases.RemoveMember
 import com.circaso.messaging.domain.usecases.ReplayFrames
@@ -90,6 +91,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
             GetMembers(membership),
             GetAdmins(membership),
             IsGroup(chats),
+            ListGroupIds(chats),
         )
     val directory = ChatDirectoryImpl(service)
 

@@ -6,8 +6,13 @@ plugins {
 // nothing from the libraries below; data reaches PostgreSQL through Exposed and `Database` (both from
 // infrastructure:api) and Redis through RedisScope.
 dependencies {
-    // the answers of users' agent routes, which Asha's tools read over HTTP (decision 2026-10-27)
+    // the answers of the other modules' agent routes, which Asha's tools read over HTTP (decisions 2026-10-27 and
+    // 2026-10-31): users, identity, messaging, wallet and chama
     implementation(project(":modules:users:api"))
+    implementation(project(":modules:identity:api"))
+    implementation(project(":modules:messaging:api"))
+    implementation(project(":modules:wallet:api"))
+    implementation(project(":modules:chama:api"))
     // the live voice latency histogram (decision 2026-10-30), through the Telemetry handle
     implementation(project(":observability:api"))
 

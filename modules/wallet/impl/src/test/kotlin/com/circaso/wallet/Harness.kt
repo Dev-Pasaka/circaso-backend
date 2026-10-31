@@ -22,6 +22,7 @@ import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
@@ -124,7 +125,7 @@ class Harness(
             clock,
         )
     val getTransfer = GetTransfer(transfers)
-    val listTransactions = ListTransactions(transactions, profiles)
+    val listTransactions = ListTransactions(transactions, Counterparties(profiles), rates)
     val checkRecipient = CheckRecipient(payees, custody, support)
     val requestSetup = RequestSetup(payees, reminders, profiles, frames, support)
     val validateAddress = ValidateAddress(custody)

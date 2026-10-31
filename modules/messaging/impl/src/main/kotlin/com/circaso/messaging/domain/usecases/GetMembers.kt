@@ -22,3 +22,9 @@ class IsGroup(private val chats: ChatRepository) {
 class GetAdmins(private val membership: Membership) {
     suspend operator fun invoke(chatId: ChatId): Resource<Set<UserId>> = Resource.success(membership.admins(chatId))
 }
+
+/** `ChatDirectory.groupsOf`, for chama: the groups the user is in, read through `members_user_idx`. */
+class ListGroupIds(private val chats: ChatRepository) {
+    suspend operator fun invoke(userId: UserId): Resource<List<ChatId>> =
+        Resource.success(chats.chatList(userId).filter { it.chat.kind == ChatKind.GROUP }.map { it.chat.chatId })
+}

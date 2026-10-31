@@ -79,6 +79,7 @@ import com.circaso.messaging.domain.usecases.GetStaticMap
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
+import com.circaso.messaging.domain.usecases.ListGroupIds
 import com.circaso.messaging.domain.usecases.MarkRead
 import com.circaso.messaging.domain.usecases.OpenDirectChat
 import com.circaso.messaging.domain.usecases.PrepareAttachmentUpload
@@ -93,6 +94,7 @@ import com.circaso.messaging.domain.usecases.SendMessage
 import com.circaso.messaging.domain.usecases.SetRole
 import com.circaso.messaging.domain.usecases.UpdateGroup
 import com.circaso.messaging.domain.usecases.UpdateSettings
+import com.circaso.messaging.presentation.agent.agentController
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
@@ -108,6 +110,7 @@ import com.circaso.messaging.presentation.services.IdentityEventsService
 import com.circaso.messaging.presentation.services.KeyService
 import com.circaso.messaging.presentation.services.MapService
 import com.circaso.messaging.presentation.services.MessageService
+import com.circaso.messaging.presentation.services.MessagingAgentService
 import com.circaso.messaging.presentation.services.PhoneFrameService
 import com.circaso.messaging.presentation.services.RealtimeService
 import com.circaso.shared.EventSubscription
@@ -244,6 +247,7 @@ fun messagingModule(config: Config): Module =
         single { GetMembers(get()) }
         single { GetAdmins(get()) }
         single { IsGroup(get()) }
+        single { ListGroupIds(get()) }
         single { ReplayFrames(get()) }
         single {
             SendMessage(
@@ -274,7 +278,23 @@ fun messagingModule(config: Config): Module =
 
         // presentation
         single { KeyService(get(), get(), get(), get()) }
-        single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            ChatService(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
         single { RealtimeService(get()) }
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }
@@ -282,18 +302,21 @@ fun messagingModule(config: Config): Module =
         single { AttachmentService(get(), get(), get(), get()) }
         single { GetStaticMap(get()) }
         single { MapService(get()) }
+        single { MessagingAgentService(get()) }
         single<RouteContributor>(named("messaging.routes")) {
             val keys = get<KeyService>()
             val chats = get<ChatService>()
             val messages = get<MessageService>()
             val attachments = get<AttachmentService>()
             val maps = get<MapService>()
+            val agent = get<MessagingAgentService>()
             RouteContributor { route ->
                 route.keyController(keys)
                 route.chatController(chats)
                 route.messageController(messages, messaging.inboxPageMax)
                 route.attachmentController(attachments)
                 route.mapController(maps)
+                route.agentController(agent)
             }
         }
         single<EventSubscription>(named("messaging.identity-events")) { IdentityEventHandler(get()).subscription() }

@@ -271,7 +271,16 @@ Only the caller's own rows (`user_id`), in `SUBMITTED`, `CONFIRMED` or `FAILED`:
 
 ### Agent routes (read-only, for Asha)
 
-`GET /v1/agent/wallet` (status and balance) and `GET /v1/agent/wallet/transactions` (same shape as W6), so Asha can answer "How much did I send Mum yesterday?". No route under `/v1/agent/` can prepare a transfer or open a Circle session.
+Built 2026-10-31. Scope `agent`, `GET` only, the caller's own wallet only; answers are `wallet:api` types (`AgentRoutes.kt`) in a smaller shape than the app's, amounts in whole units as exact strings, `fiat` at today's rate when `currency` (ISO 4217) is given. Service `WalletAgentService` (reads only).
+
+| Route | Use case | Answers |
+| --- | --- | --- |
+| `GET /v1/agent/wallet?currency=` | `GetWallet` (W1's) | `AgentWalletResponse`: status, balances per chain and asset, totals, chains with their receiving addresses, `fiatTotal`, `rate` |
+| `GET /v1/agent/wallet/transactions` | `ListTransactions` (W6's, with filters) | `AgentTransactionsResponse`: newest first, `limit` default 20, at most 50, `cursor` |
+| `GET /v1/agent/wallet/transactions/summary` | `SummariseTransactions` | `AgentSummaryResponse`: in, out and net per asset, the `top` counterparties (default 5, at most 20), month by month; `SUBMITTED` and `CONFIRMED` only; reads at most 5,000 matching rows and says `truncated` past that |
+| `GET /v1/agent/wallet/transactions/{transactionId}` | `GetTransaction` | `AgentTransactionResponse`; someone else's row or one W6 doesn't show is `wallet.transfer_not_found` |
+
+Filters on the history routes: `from`, `to` (dates, UTC, both inclusive), `month` (`YYYY-MM`; with dates, the overlap), `direction` (`IN`, `OUT`), `counterparty` (a user id, or an address, normalised), `asset`, `blockchain`, `currency`; a value that doesn't read is `request.malformed` on its field. They are pushed into the `transactions` query (`HistoryFilter`), walking `transactions_user_idx`. No route under `/v1/agent/` can prepare a transfer or open a Circle session.
 
 ## Data
 

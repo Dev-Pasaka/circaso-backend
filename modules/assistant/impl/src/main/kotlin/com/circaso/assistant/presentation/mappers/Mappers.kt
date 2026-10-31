@@ -20,6 +20,7 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.util.Currency
 import java.util.UUID
 
 fun SendMessageRequest.toCommand(
@@ -28,6 +29,11 @@ fun SendMessageRequest.toCommand(
     requestId: String?,
 ): Resource<TurnCommand> {
     if (text.isBlank()) return Resource.error(SharedError.Malformed("text", "is required"))
+    val code =
+        currency?.let {
+            displayCurrencyOf(it)
+                ?: return Resource.error(SharedError.Malformed("currency", "is not an ISO 4217 currency code"))
+        }
     return Resource.success(
         TurnCommand(
             userId,
@@ -38,9 +44,16 @@ fun SendMessageRequest.toCommand(
             chatReading,
             agentToken,
             requestId,
+            currency = code,
         ),
     )
 }
+
+/** The ISO 4217 codes the JDK knows. */
+private val CURRENCIES: Set<String> = Currency.getAvailableCurrencies().map { it.currencyCode }.toSet()
+
+/** A display currency from the app, in capitals, or null when it isn't an ISO 4217 code. */
+fun displayCurrencyOf(raw: String?): String? = raw?.trim()?.uppercase()?.takeIf { it in CURRENCIES }
 
 fun ToolResultsRequest.toCommand(
     userId: UserId,

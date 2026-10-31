@@ -359,7 +359,7 @@ A direct chat is exactly two people, one chat per pair. A group holds up to 1,00
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **READY** | (the user token). Send the user's agent token in `X-Agent-Token` so Asha's tools can read contacts. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
+| `POST /v1/assistant/chat/messages`<br>**A2** Ask Asha; the reply streams as server-sent events | `app` | SendMessageRequest → NoBody | **READY** | (the user token). Send the user's agent token in `X-Agent-Token` so Asha's tools can read the user's own data, and `currency` (the display currency, ISO 4217) so amounts come in the user's money. Replies are markdown with ```chart, ```statement and ```diagram blocks (section 9, Rich replies); `tool_status` and `tool_done` events bracket each tool call. The response is `text/event-stream`, not the envelope (errors before any text are the envelope): `message` events carry `{delta}`, each piece as the model writes it; a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a device tool and answer with A9; `done` carries the saved reply; an `error` event `{code, message}` means the model failed after text had already gone out (nothing is saved). Errors: `assistant.quota_exceeded`, `assistant.model_unavailable`, `auth.token_invalid`, `request.malformed`. |
 | `DELETE /v1/assistant/chat`<br>**A5** Delete the whole history with Asha | `app` | — → NoBody | **READY** | (the user token). |
 | `GET /v1/assistant/chat`<br>**A1** The Asha chat, newest first | `app` | — → ChatResponse | **READY** | (the user token). Query: `cursor`, `limit` (default 50, at most 100). |
 | `DELETE /v1/assistant/chat/messages/{messageId}`<br>**A6** Delete one exchange | `app` | — → NoBody | **READY** | (the user token). |
@@ -533,18 +533,83 @@ Any other close (network drop, server restart) means reconnect with backoff.
 **Status: READY.** The routes and event format below are final, and the dev server runs the real model, speech-to-text and voice.
 
 - **History:** `GET /v1/assistant/chat` (newest first, paged); delete one exchange or everything.
-- **Ask:** `POST /v1/assistant/chat/messages` `{ "text", "chatReading": true|false, "askedFrom"? }`. Send `X-Agent-Token: <agentSession.accessToken>` so her tools can read your contacts. The answer is **`text/event-stream`**, not the envelope. Read the response body as a stream and parse `event:` and `data:` lines yourself (works on every Ktor engine). Errors before any text (a used-up allowance, a bad request) arrive as the normal envelope with a non-200 status.
+- **Ask:** `POST /v1/assistant/chat/messages` `{ "text", "chatReading": true|false, "askedFrom"?, "currency"? }`. Send `X-Agent-Token: <agentSession.accessToken>` so her tools can read the user's own data (without it she has no lookups), and `currency`, the user's display currency (`"KES"`, ISO 4217; anything else is `request.malformed`), so she gives amounts in it. Asha reads only, and only this user's data: profile, contacts, blocked people, account security (no secrets), chat list and members (never messages; those are read on the phone through the device tools), wallet balances and addresses, payments with totals, chamas, her own allowance, and the public web. The answer is **`text/event-stream`**, not the envelope. Read the response body as a stream and parse `event:` and `data:` lines yourself (works on every Ktor engine). Errors before any text (a used-up allowance, a bad request) arrive as the normal envelope with a non-200 status.
 
 | Event | `data` | Do |
 | --- | --- | --- |
 | `message` | `{"delta": "…"}` | Append the piece to the reply on screen. Pieces arrive as the model writes them (the first within a second or two), so show them at once. A piece may start with a blank line (`"\n\n…"`): Asha said something, looked something up, and carries on. |
+| `tool_status` | `{"turnId","callId","tool","label"}` | Asha is about to look something up. Show `label` (the server's own short line, such as "Checking your payments for 2026-10…" or "Searching the web for “M-Pesa fees”…") as a status chip under the reply, with a spinner. Several can come in one turn, one at a time. Device tools get one too, just before their `tool_request`. |
+| `tool_done` | `{"turnId","callId","tool","ok"}` | That lookup finished (`ok: false`: it failed, and Asha will say so). Clear or tick the chip with the same `callId`. A device tool's `tool_done` comes first on the A9 stream. Both events are additive: an app that doesn't know them can ignore them. |
 | `tool_request` | `{"turnId","callId","name","arguments"}` | Asha needs something only the phone can do (search or read chats, which stay end-to-end encrypted). Run it locally, then `POST /v1/assistant/chat/messages/{turnId}/tool-results` `{ "callId", "snippets": [...] }` (at most 30 short snippets; answer within 10 minutes or get `assistant.turn_not_found`). That request's response is a new event stream that carries on the same reply: keep the text shown so far (what Asha said before asking, such as "Let me look in your chats.") and append to it. |
 | `done` | `{"message": {…}}` | The reply is complete and saved. `message.text` is the whole reply as shown, including any text before a `tool_request`: replace what you built from the pieces with it. |
 | `error` | `{"code","message"}` | The model failed after some text had gone out (`assistant.model_unavailable`); nothing was saved. Show the failure on the half-written reply and let the user ask again. |
 
+- **Rich replies (text turns).** Asha writes markdown (prompt `asha-2026-10-31-v2`). Render the reply as markdown as it streams: headings (`###`), **bold**, lists, tables and links (web sources are cited as `[title](url)`). Plain chit-chat comes as plain text. On top of markdown there are three fenced blocks, each holding exactly one JSON object; the app draws them natively (no images, no image URLs, no HTML ever come):
+
+  | Fence | What to draw |
+  | --- | --- |
+  | ```` ```chart ```` | A bar, line or pie chart |
+  | ```` ```statement ```` | A statement or report card with a **Share as PDF** action (render the PDF on the phone) |
+  | ```` ```diagram ```` | A small explanation drawn as simple hand-drawn (pencil-style) boxes and arrows, top to bottom |
+
+  **The server checks every block before sending it** (decision 2026-10-31): a block is held back while the model writes it and goes out whole, in one `message` event, already in the exact shape below (canonical JSON, one line); a block the model wrote wrong is repaired when that is safe (case, trimming, caps, dropping points, rows, nodes or edges that don't read) or dropped entirely. So a block that arrives always parses and always matches these schemas, and you never see half a block mid-stream. Still be defensive: if a block fails to parse, show nothing for it. A fence with any other name (` ```kotlin `) is an ordinary code block. At most two blocks per reply, each introduced by a sentence. The `done` event's `message.text` contains the same blocks; that is also what A1 returns for history, so render history the same way. Fields marked `?` may be absent (never `null`).
+
+  **chart**
+  ```
+  { "type": "bar" | "line" | "pie",
+    "title": string,                  // may be ""
+    "unit"?: string,                  // what the values are in: "KES", "USDC" (at most 12 chars)
+    "series": [ { "name": string,     // may be ""
+                  "points": [ { "label": string, "value": number } ] } ] }
+  ```
+  1 to 6 series (a pie has exactly 1), 1 to 60 points each, labels at most 40 characters, values finite numbers (a pie's are never negative). Example:
+  ````
+  ```chart
+  {"type":"bar","title":"Money out by month","unit":"KES","series":[{"name":"Sent","points":[{"label":"Sep","value":4200.0},{"label":"Oct","value":3100.5}]}]}
+  ```
+  ````
+
+  **statement**
+  ```
+  { "title": string,
+    "period"?: { "from"?: "YYYY-MM-DD", "to"?: "YYYY-MM-DD" },
+    "currency"?: string,              // ISO 4217, the currency of the "fiat" fields
+    "rows": [ { "date": "YYYY-MM-DD",
+                "description": string,             // may be "", at most 120 chars
+                "direction"?: "IN" | "OUT",
+                "amount": string,                  // plain decimal, exact: "20.5"
+                "asset": string,                   // "USDC"
+                "fiat"?: string,                   // plain decimal in "currency", at today's rate
+                "status"?: "SUBMITTED" | "CONFIRMED" | "FAILED" | "PENDING",
+                "reference"?: string } ],          // the payment id, at most 64 chars
+    "totals": [ { "label": string, "amount": string, "asset"?: string, "fiat"?: string } ] }
+  ```
+  At most 200 rows and 10 totals; at least one of the two is non-empty. Amounts are strings so nothing is lost to floating point: format them for display yourself (thousands separators, the currency symbol). Example:
+  ````
+  ```statement
+  {"title":"October 2026","period":{"from":"2026-10-01","to":"2026-10-31"},"currency":"KES","rows":[{"date":"2026-10-02","description":"Sent to Bob Otieno","direction":"OUT","amount":"20","asset":"USDC","fiat":"2590","status":"CONFIRMED","reference":"0192e3a4-…"}],"totals":[{"label":"Money out","amount":"20","asset":"USDC","fiat":"2590"}]}
+  ```
+  ````
+  **Share as PDF:** lay the statement out as a page (title, period, the rows as a table, the totals, "Generated by Asha on <date>"; amounts as shown) and hand it to the share sheet. Asha only reads, so the PDF holds what the block holds.
+
+  **diagram**
+  ```
+  { "title": string,                  // may be ""
+    "nodes": [ { "id": string, "label": string } ],              // 2 to 8 nodes, unique ids, labels at most 40 chars
+    "edges": [ { "from": string, "to": string, "label"?: string } ] }   // 1 to 12, between existing nodes, never a self-loop
+  ```
+  Lay it out top to bottom in node order, hand-drawn style (slightly wobbly boxes and arrows, the app's pencil look), edge labels beside their arrows. Asha uses it to explain how something works (how a payment travels, how a chama collects and pays out, what a network or a fee is), never for numbers. Example:
+  ````
+  ```diagram
+  {"title":"How your payment to Mum travels","nodes":[{"id":"a","label":"You"},{"id":"b","label":"Your wallet"},{"id":"c","label":"Mum"}],"edges":[{"from":"a","to":"b","label":"PIN"},{"from":"b","to":"c","label":"20 USDC"}]}
+  ```
+  ````
+
+  **Voice turns** (A11, and anything spoken) carry no blocks and no markdown: the server drops blocks and strips `*`, `` ` `` and heading marks from what is spoken. If the user asks for a statement by voice, Asha gives the headline and offers to show it in the chat.
+
 - **Voice in:** `POST /v1/assistant/voice` with the raw audio as the body, `Content-Type` of the audio and `X-Duration-Seconds` (the clip's length in seconds; a decimal such as `5.5` is fine; up to 60 s, 3 MB) → `{ text }`; send that text through the chat route.
 - **Live voice (hands-free):** open `wss://<host>/v1/assistant/voice/live` for the length of the conversation and close it when the user leaves the voice screen. Not when the language is Swahili: then record clips (Voice in) and speak replies with the phone's own text-to-speech.
-  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true }`. An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
+  1. First frame within 10 s: `{ "type": "auth", "accessToken": "<app token>", "agentToken": "<agentSession.accessToken>", "language": "en", "chatReading": true, "currency": "KES" }` (`currency` optional, the display currency; one that isn't ISO 4217 is ignored). An agent token, a bad, expired or revoked token, or no auth frame closes the socket with 1008 `unauthorized` / `auth required` and no frame.
   2. The server answers `{ "type": "ready", "voiceSecondsLeft": 118, "audio": { "encoding": "mulaw", "sampleRate": 8000 } }`. Then stream the microphone as **binary** frames of Opus (16 kHz mono, one packet per frame, about 24 kbit/s), continuously, including while Asha speaks (that is how barge-in works). Every frame is at most 64 KB both ways; a bigger one closes the socket with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame.
   3. Server text frames (JSON, routed on `type`):
 
@@ -555,6 +620,8 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `reply` | `text` | One sentence of the answer, sent about when the audio reaches it (show it as a caption; the timing is approximate). Each sentence goes to the voice as soon as the model has written it, so the first is heard while the rest is still being written. The audio comes as **binary** frames: mulaw (G.711 µ-law), mono, at `audio.sampleRate` (8 kHz), as `audio.encoding` says. Queue the audio and play it in order. |
 | `reply_done` | `message` (as in A1), `spoken` | The answer as saved, sent once its audio has finished playing; `spoken: false` means the user talked over it (show it, don't play it). |
 | `tool_request` | `turnId`, `callId`, `name`, `arguments` | As on A2 (`arguments` is a JSON **string**): run the device tool, answer on this socket within 30 s with `{ "type": "tool_results", "turnId", "callId", "snippets": [...] }`. A frame that doesn't decode, or the wrong `callId`, gets `error` `request.malformed` and the turn keeps waiting: send it again. Later than that the turn ends with an `error` frame `assistant.turn_not_found`. |
+| `tool_status` | `turnId`, `callId`, `tool`, `label` | As on A2: Asha is looking something up; show `label` while she does (she may also say a few words first). |
+| `tool_done` | `turnId`, `callId`, `tool`, `ok` | As on A2: that lookup finished. |
 | `interrupted` | — | The user talked over Asha: drop the audio queued and stop playing at once. While her audio plays it takes words, not just voice activity, and her own words heard back from the loudspeaker are ignored (so keep the mic open; the phone's echo canceller still matters for the words she says to be heard clearly). |
 | `error` | `code`, `message` | That answer failed (`assistant.model_unavailable`, `assistant.turn_not_found`, or `request.malformed` for a bad `tool_results`); the conversation goes on. |
 | `timing` | `turn`, `modelFirstTextMs`, `firstSentenceMs`, `firstAudioMs` | Once per turn: milliseconds from the end of the user's speech to Asha's first words from the model, her first sentence sent to the voice, and the first of her audio sent to the phone. A step the turn never reached (talked over, failed) is `null`. For latency logs and debug overlays; nothing to show the user, and safe to ignore. |
@@ -705,8 +772,10 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SecurityLogResponse** — `events`: [SecurityEventDto]; `nextCursor`?: string|null
 - **SecurityOverviewResponse** — `maskedPhone`?: string|null; `providers`: [ProviderDto]; `device`?: ActiveDeviceDto; `verification`: string
 - **SendChatMessageRequest** — `clientMessageId`: string; `kind`: string (`MESSAGE` | `SENDER_KEY` | `CONTROL`); `ciphertext`?: string|null (a group's one ciphertext); `recipients`?: [RecipientDto] (direct, and `SENDER_KEY`); `mediaIds`?: [string]; `pushable`?: boolean (default false)
-- **SendMessageRequest** — `text`: string; `askedFrom`?: AskedFromDto; `chatReading`?: boolean
+- **SendMessageRequest** — `text`: string; `askedFrom`?: AskedFromDto; `chatReading`?: boolean; `currency`?: string (ISO 4217, the user's display currency)
 - **SentMessageResponse** — `messageId`: string; `sentAt`: string
+- **ToolStatusEvent** (SSE `tool_status`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `label`: string
+- **ToolDoneEvent** (SSE `tool_done`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `ok`: boolean
 - **SessionDto** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string
 - **SessionDto2** — `accessToken`: string; `refreshToken`?: string|null; `expiresInSeconds`: integer; `scope`: string
 - **SetAvatarRequest** — `objectKey`: string

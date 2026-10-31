@@ -1,51 +1,33 @@
 package com.circaso.assistant.presentation.controllers
 
-import com.circaso.assistant.domain.models.TurnResult
-import com.circaso.assistant.domain.support.ReplyListener
+import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.presentation.dto.ChatResponse
-import com.circaso.assistant.presentation.dto.DeltaEvent
 import com.circaso.assistant.presentation.dto.DoneEvent
-import com.circaso.assistant.presentation.dto.ErrorEvent
 import com.circaso.assistant.presentation.dto.SendMessageRequest
-import com.circaso.assistant.presentation.dto.ToolRequestEvent
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
 import com.circaso.assistant.presentation.mappers.parseUuid
 import com.circaso.assistant.presentation.mappers.toCommand
-import com.circaso.assistant.presentation.mappers.toDto
 import com.circaso.assistant.presentation.mappers.toResponse
 import com.circaso.assistant.presentation.services.ChatService
-import com.circaso.shared.CircasoJson
+import com.circaso.assistant.presentation.sse.streamReply
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.flatMap
-import com.circaso.web.EnvelopeSent
 import com.circaso.web.NoBody
 import com.circaso.web.authenticate
 import com.circaso.web.docs
 import com.circaso.web.respondDefault
-import com.circaso.web.respondError
 import com.circaso.web.toDefaultResponse
 import com.circaso.web.userId
-import io.ktor.http.CacheControl
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
-import io.ktor.server.response.cacheControl
-import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
 import java.io.Writer
 
 private const val TAG = "Asha chat"
@@ -86,7 +68,7 @@ fun Route.chatController(chat: ChatService) {
                             call.request.header(AGENT_TOKEN_HEADER),
                             call.callId,
                         )
-                    call.stream { listener -> command.flatMap { chat.ask(it, listener) } }
+                    call.streamReply { listener -> command.flatMap { chat.ask(it, listener) } }
                 }.docs<SendMessageRequest, NoBody>(
                     "A2 · Ask Asha; the reply streams as server-sent events",
                     TAG,
@@ -98,8 +80,10 @@ fun Route.chatController(chat: ChatService) {
                     ),
                     notes =
                         "$SCOPE Send the user's own agent token in `X-Agent-Token` (another user's is refused) " +
-                            "so Asha's tools can read " +
-                            "contacts. " +
+                            "so Asha's tools can read the user's own data, and `currency` (ISO 4217) for amounts " +
+                            "in the user's money. `tool_status` `{turnId, callId, tool, label}` and `tool_done` " +
+                            "`{turnId, callId, tool, ok}` events bracket each tool call. Replies are markdown with " +
+                            "```chart, ```statement and ```diagram blocks (docs: Asha → Rich replies). " +
                             "The response is `text/event-stream`, not the envelope (errors before any text are " +
                             "the envelope): `message` events carry `{delta}`, each piece as the model writes it; " +
                             "a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a " +
@@ -131,7 +115,7 @@ fun Route.chatController(chat: ChatService) {
                                     call.request.header(AGENT_TOKEN_HEADER),
                                     call.callId,
                                 )
-                        call.stream { listener -> command.flatMap { chat.answerDevice(it, listener) } }
+                        call.streamReply { listener -> command.flatMap { chat.answerDevice(it, listener) } }
                     }.docs<ToolResultsRequest, NoBody>(
                         "A9 · The phone's answer to a device tool; the reply then continues as server-sent events",
                         TAG,
@@ -152,67 +136,6 @@ fun Route.chatController(chat: ChatService) {
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * Runs the turn and streams its reply as the model writes it (decision 2026-10-27): a `message` event per piece of
- * text, then `done` (or `tool_request`). A refusal before any text answers with the envelope and its status; a
- * failure after text has gone out can only be an `error` event, since the `200` is already sent.
- *
- * The turn runs to its end even if the phone goes away, as a spoken turn does: once the model is asked, the exchange
- * is saved.
- */
-private suspend fun ApplicationCall.stream(turn: suspend (ReplyListener) -> Resource<TurnResult>) =
-    coroutineScope {
-        val deltas = Channel<String>(Channel.UNLIMITED)
-        val result =
-            async {
-                withContext(NonCancellable) { turn(ReplyListener { deltas.send(it) }) }.also { deltas.close() }
-            }
-
-        val first = deltas.receiveCatching().getOrNull()
-        val refused = (if (first == null) result.await() else null) as? Resource.Error
-        if (refused != null) return@coroutineScope respondError(refused.error)
-
-        attributes.put(EnvelopeSent, true)
-        response.cacheControl(CacheControl.NoCache(null))
-        respondTextWriter(ContentType.Text.EventStream, HttpStatusCode.OK) {
-            first?.let { message(it) }
-            for (delta in deltas) message(delta)
-            finished(result.await())
-        }
-    }
-
-private fun Writer.event(name: String, json: String) {
-    write("event: $name\ndata: $json\n\n")
-    flush()
-}
-
-private fun Writer.message(delta: String) =
-    event("message", CircasoJson.encodeToString(DeltaEvent.serializer(), DeltaEvent(delta)))
-
-private fun Writer.finished(result: Resource<TurnResult>) {
-    val turn =
-        when (result) {
-            is Resource.Error -> {
-                val error = ErrorEvent(result.error.code, result.error.message)
-                return event("error", CircasoJson.encodeToString(ErrorEvent.serializer(), error))
-            }
-
-            is Resource.Success -> {
-                result.data
-            }
-        }
-    when (turn) {
-        is TurnResult.Answer -> {
-            event("done", CircasoJson.encodeToString(DoneEvent.serializer(), DoneEvent(turn.message.toDto())))
-        }
-
-        is TurnResult.NeedsDevice -> {
-            val request = ToolRequestEvent(turn.turnId.toString(), turn.callId, turn.toolName, turn.argumentsJson)
-            event("tool_request", CircasoJson.encodeToString(ToolRequestEvent.serializer(), request))
         }
     }
 }

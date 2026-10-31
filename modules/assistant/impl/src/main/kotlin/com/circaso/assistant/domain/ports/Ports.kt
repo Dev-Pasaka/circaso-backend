@@ -7,19 +7,36 @@ import com.circaso.shared.UserId
 import java.time.Duration
 import java.util.UUID
 
-/** Asha's read-only tools on the other modules, called with the user's agent token. */
+/**
+ * Asha's server-side tools: the other modules' read-only `/v1/agent/` routes, called with the user's agent token, and
+ * the few that need no token (web search, her own allowance). All of them only read (decision 2026-10-31).
+ */
 interface AgentTools {
-    /** The tools available to this turn, for the model. */
-    fun specs(): List<ToolSpec>
+    /** The tools available to this turn, for the model; the token-bound ones only when [hasAgentToken]. */
+    fun specs(hasAgentToken: Boolean): List<ToolSpec>
 
     fun handles(toolName: String): Boolean
 
-    /** The tool's answer as text for the model, or an error. Content is untrusted: it may come from other people. */
+    /**
+     * What the app shows while the tool runs ("Checking your payments for October…"): written by the server from the
+     * tool and its arguments, never by the model.
+     */
+    fun label(toolName: String, argumentsJson: String): String
+
+    /**
+     * The tool's answer as JSON for the model, at most a few thousand characters, or an error. Content is untrusted:
+     * it may come from other people or the web.
+     */
     suspend fun call(
         toolName: String,
         argumentsJson: String,
-        agentToken: String,
+        context: ToolContext,
     ): Resource<String>
+}
+
+/** Who a tool acts for: the user, their agent token (null when the app sent none), and their display currency. */
+data class ToolContext(val userId: UserId, val agentToken: String?, val currency: String?) {
+    override fun toString(): String = "ToolContext($userId, currency=$currency)"
 }
 
 /** The questions Asha asks the phone, which holds the keys to the encrypted chats. */
@@ -27,6 +44,10 @@ object DeviceTools {
     const val SEARCH_CHATS = "searchChats"
     const val READ_CHAT = "readChat"
     val names = setOf(SEARCH_CHATS, READ_CHAT)
+
+    /** What the app shows while the phone looks (the phone may show its own instead). */
+    fun label(toolName: String): String =
+        if (toolName == READ_CHAT) "Reading the chat on your phone…" else "Searching your chats on your phone…"
 }
 
 /** A turn paused while the phone answers a device tool (A9). Kept for 10 minutes. */
@@ -43,6 +64,8 @@ data class PendingTurn(
     val conversation: List<PendingMessage>,
     val readNote: PendingReadNote,
     val steps: Int,
+    /** The user's display currency for this turn, so the tools after the pause answer in it too. */
+    val currency: String? = null,
 )
 
 sealed interface PendingMessage {

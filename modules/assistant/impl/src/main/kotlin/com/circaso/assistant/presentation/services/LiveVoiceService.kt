@@ -56,5 +56,6 @@ class LiveVoiceService(
         agentToken = agentToken,
         requestId = line.start.requestId,
         purpose = ModelPurpose.VOICE,
+        currency = line.start.currency,
     )
 }

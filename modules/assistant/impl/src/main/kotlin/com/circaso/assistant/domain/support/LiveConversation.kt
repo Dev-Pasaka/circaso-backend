@@ -6,6 +6,7 @@ import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.LiveVoiceLine
+import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.SpeechEvent
@@ -124,6 +125,15 @@ class LiveConversation(
                 .forEach { queueSentence(asked, it) }
             unfinished.setLength(0)
             unfinished.append(parts.last())
+        }
+
+        /** The phone shows what Asha is doing while she looks something up, unless the user has moved on. */
+        override suspend fun toolStarted(status: ToolStatus) {
+            if (generation.get() == asked) emit(LiveEvent.ToolStarted(status))
+        }
+
+        override suspend fun toolFinished(status: ToolStatus, isOk: Boolean) {
+            if (generation.get() == asked) emit(LiveEvent.ToolFinished(status, isOk))
         }
 
         /**

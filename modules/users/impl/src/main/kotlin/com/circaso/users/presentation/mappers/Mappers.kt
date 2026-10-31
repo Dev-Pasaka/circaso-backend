@@ -4,8 +4,10 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.users.api.AgentBlocksResponse
 import com.circaso.users.api.AgentContactDto
 import com.circaso.users.api.AgentContactsResponse
+import com.circaso.users.api.AgentProfileResponse
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.domain.models.AboutVisibility
 import com.circaso.users.domain.models.AvatarVisibility
@@ -122,6 +124,23 @@ fun List<PublicProfile>.toAgentContacts() =
             AgentContactDto(it.userId.toString(), it.displayName, it.handle)
         },
     )
+
+/** At most this many blocked people go to the assistant. */
+private const val AGENT_MAX_BLOCKS = 50
+
+fun MyProfile.toAgentResponse() =
+    AgentProfileResponse(
+        userId = profile.userId.toString(),
+        displayName = profile.displayName,
+        handle = profile.handle,
+        about = profile.about,
+        avatarUrl = avatarUrl,
+        support = profile.support,
+        memberSince = profile.createdAt.toString(),
+    )
+
+fun List<PublicProfile>.toAgentBlocks() =
+    AgentBlocksResponse(take(AGENT_MAX_BLOCKS).map { AgentContactDto(it.userId.toString(), it.displayName, it.handle) })
 
 fun Connection.toResponse() = ConnectResponse(user.toDto(), created)
 

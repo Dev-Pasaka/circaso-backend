@@ -14,6 +14,8 @@ data class SendMessageRequest(
     val askedFrom: AskedFromDto? = null,
     /** Whether the user lets Asha read chats on the phone. Off removes the chat tools from the turn. */
     val chatReading: Boolean = true,
+    /** The user's display currency (ISO 4217, `KES`): Asha shows amounts in it, at today's rate. */
+    val currency: String? = null,
 )
 
 @Serializable
@@ -76,6 +78,24 @@ data class ToolRequestEvent(
 
 @Serializable
 data class DoneEvent(val message: ChatMessageDto)
+
+/** Asha is about to use a tool: [label] is the server's line for it ("Checking your payments…"). */
+@Serializable
+data class ToolStatusEvent(
+    val turnId: String,
+    val callId: String,
+    val tool: String,
+    val label: String,
+)
+
+/** That tool has answered; [ok] false when the lookup failed. */
+@Serializable
+data class ToolDoneEvent(
+    val turnId: String,
+    val callId: String,
+    val tool: String,
+    val ok: Boolean,
+)
 
 /** The turn failed after its reply had started streaming, so the status line was already sent: nothing is saved. */
 @Serializable

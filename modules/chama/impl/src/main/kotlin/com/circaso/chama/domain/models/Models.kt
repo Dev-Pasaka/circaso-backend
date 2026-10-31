@@ -124,3 +124,14 @@ data class AskPayoutCommand(
     val amountMinor: Long,
     val note: String?,
 )
+
+/**
+ * A chama for Asha (decision 2026-10-31): the member's view, the names of the people it mentions, and, for one chama
+ * ([isDetailed]), its latest ledger lines and everyone's contributions.
+ */
+data class ChamaDigest(
+    val view: ChamaView,
+    val names: Map<UserId, String>,
+    val recent: List<LedgerEntry>,
+    val isDetailed: Boolean,
+)

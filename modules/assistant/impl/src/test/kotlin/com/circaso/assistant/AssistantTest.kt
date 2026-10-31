@@ -5,11 +5,14 @@ import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.Plan
 import com.circaso.assistant.domain.models.Role
+import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.models.TurnCommand
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.VoiceClip
 import com.circaso.assistant.domain.ports.PendingTurns
+import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.integrations.api.ModelMessage
@@ -683,5 +686,84 @@ class AssistantTest {
             val answer = DeviceToolResult(me, waiting.turnId, "c1", emptyList(), "agent-token", "req-2")
             assertEquals("assistant.turn_not_found", h.resumeWith(racing).invoke(answer).errorCode())
             assertEquals("c2", h.pending.callIdOf(me, waiting.turnId), "the new call is still waiting")
+        }
+
+    @Test
+    fun `each tool call is announced with the server's label before it runs and closed after, with the turn's id`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.call("searchContacts", """{"query":"mum"}""").say("Found her.")
+            val events = mutableListOf<String>()
+            val listener =
+                object : ReplyListener {
+                    override suspend fun text(delta: String) {
+                        events += "text"
+                    }
+
+                    override suspend fun toolStarted(status: ToolStatus) {
+                        events += "start:${status.tool}:${status.label}:${status.callId}:${status.turnId}"
+                    }
+
+                    override suspend fun toolFinished(status: ToolStatus, isOk: Boolean) {
+                        events += "done:${status.tool}:$isOk:${status.turnId}"
+                    }
+                }
+
+            val reply = answer(h.start(ask("who is mum?").copy(currency = "KES"), listener))
+
+            val turnId = reply.replyTo.toString()
+            assertEquals(
+                listOf(
+                    "start:searchContacts:Looking at your contacts…:call-searchContacts:$turnId",
+                    "done:searchContacts:true:$turnId",
+                    "text",
+                ),
+                events,
+            )
+            assertEquals(
+                "KES",
+                h.tools.calls
+                    .single()
+                    .currency,
+                "the tools answer in the user's currency",
+            )
+        }
+
+    @Test
+    fun `the prompt is the versioned one, told the mode, the day and the display currency`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.say("Sawa.")
+
+            answer(h.start(ask("hi").copy(currency = "UGX", purpose = ModelPurpose.VOICE)))
+
+            val system =
+                h.model.requests
+                    .single()
+                    .system
+            assertTrue("You are Asha" in system)
+            assertTrue("never ask for, accept or repeat a PIN" in system)
+            assertTrue("- Mode: voice." in system)
+            assertTrue("- Display currency: UGX." in system)
+            assertEquals("asha-2026-10-31-v2", AshaPrompt.VERSION)
+            assertTrue(
+                "prompt=asha-2026-10-31-v2" in
+                    h.memory.audit
+                        .single()
+                        .detail,
+            )
+        }
+
+    @Test
+    fun `a broken chart never reaches the user or the saved reply`() =
+        runTest {
+            val h = Harness(owner = me)
+            h.model.streamed("Your month:\n```chart\n{\"series\":[{\"points\":[{\"lab", "\n```\nDone.")
+            val shown = StringBuilder()
+
+            val reply = answer(h.start(ask("chart please"), ReplyListener { shown.append(it) }))
+
+            assertEquals("Your month:\nDone.", reply.text)
+            assertEquals(reply.text, shown.toString())
         }
 }

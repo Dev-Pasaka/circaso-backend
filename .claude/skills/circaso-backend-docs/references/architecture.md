@@ -55,7 +55,8 @@ circaso-backend/
 ├─ integrations/                 ONE module for every third party
 │  ├─ api/                       the only thing exposed: contracts such as SmsGateway,
 │  │                             EmailGateway, SocialSignIn, CarrierPhoneVerification,
-│  │                             PushGateway, StablecoinCustody, ExchangeRates, CallMedia
+│  │                             PushGateway, StablecoinCustody, ExchangeRates, CallMedia,
+│  │                             WebSearch
 │  └─ impl/                      vendor code, one package per vendor, never visible outside
 │     ├─ sms/africastalking/
 │     ├─ sms/twilio/             (later, same SmsGateway contract)
@@ -66,6 +67,7 @@ circaso-backend/
 │     ├─ push/apns/
 │     ├─ circle/
 │     ├─ exchangerate/           open.er-api.com (ExchangeRates)
+│     ├─ tavily/                 Tavily search API (WebSearch, Asha)
 │     └─ dev/                    log and fake implementations of every contract
 │
 ├─ gateway/                      Ktor edge: auth, scopes, rate limits, idempotency,
@@ -990,6 +992,7 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | `PushGateway` | Push a notification to a device | gateway only (when a user has no open socket) | FCM (Firebase Admin SDK), APNs (HTTP/2) | — |
 | `StablecoinCustody` | Create wallets on the supported chains, move funds, read balances | wallet | Circle (REST) | — |
 | `ExchangeRates` | What one US dollar is worth in a currency, for fiat balances (no rate is null, never an error) | wallet | open.er-api.com (REST, no key; the table kept in Redis under `fx:`), chosen by `INTEGRATIONS_RATES_PROVIDER` | Another rates source |
+| `WebSearch` | Search the public web for Asha's answers about public facts (fees, how USDC or M-Pesa work); only the query is sent | assistant | Tavily (`POST https://api.tavily.com/search`, Bearer key, secret `TAVILY_API_KEY`), chosen by `INTEGRATIONS_SEARCH_PROVIDER` (`tavily`, `log`, `fake`; default `fake`) | Brave Search API |
 | `CallMedia` | Create call sessions and join tokens | calls (later) | Cloudflare Realtime (REST) | LiveKit |
 | Later: `MobileMoney`, `KycProvider` | Cash-out to M-PESA; identity checks | cash-out, compliance | Daraja; a KYC vendor | — |
 

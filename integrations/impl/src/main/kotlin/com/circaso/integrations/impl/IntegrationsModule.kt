@@ -24,6 +24,7 @@ import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.StaticMaps
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
@@ -48,6 +49,7 @@ import com.circaso.integrations.impl.dev.FakeSpeechToText
 import com.circaso.integrations.impl.dev.FakeStaticMaps
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
+import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
@@ -56,6 +58,7 @@ import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
+import com.circaso.integrations.impl.dev.LogWebSearch
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
@@ -65,6 +68,7 @@ import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.social.AppleRevocation
 import com.circaso.integrations.impl.social.GoogleAppleSignIn
 import com.circaso.integrations.impl.social.ProviderSpec
+import com.circaso.integrations.impl.tavily.TavilyWebSearch
 import com.circaso.integrations.impl.twilio.TwilioVerify
 import com.circaso.integrations.impl.workersai.WorkersAiGateway
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
@@ -85,8 +89,8 @@ import java.time.Duration
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
  * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), for calls
- * `calls` (`cloudflare`, the Realtime SFU), and for location previews `maps` (`google`).
- * Every one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
+ * `calls` (`cloudflare`, the Realtime SFU), for location previews `maps` (`google`), and Asha's web `search`
+ * (`tavily`, which defaults to `fake`). Every other one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
 fun integrationsModule(config: Config, secrets: Secrets) =
@@ -324,6 +328,25 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Asha's web search (decision 2026-10-31): `tavily` needs the secret `TAVILY_API_KEY`; `fake` (the default,
+        // so nothing breaks without a key) answers two made-up results, `log` none.
+        single<WebSearch> {
+            pick(
+                "search",
+                default = "fake",
+                providers =
+                    mapOf(
+                        "log" to { LogWebSearch() },
+                        "fake" to { FakeWebSearch() },
+                        "tavily" to {
+                            TavilyWebSearch(
+                                http = get<HttpClients>().named("tavily"),
+                                key = secrets.require("tavily.api-key"),
+                            )
+                        },
+                    ),
+            )
+        }
         // Calls' SFU (decision 2026-10-29): `log` and `fake` make up sessions and SDP, so calls work without media.
         single<CallMedia> {
             pick(
@@ -529,7 +552,7 @@ private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
 private const val WORKERS_AI_LIVE_STT_MODEL = "@cf/deepgram/nova-3"
 
 // A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
-private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 4096
+private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 8192
 
 /**
  * Every Workers AI model needs `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY` (the AI Gateway's name) and the secret
