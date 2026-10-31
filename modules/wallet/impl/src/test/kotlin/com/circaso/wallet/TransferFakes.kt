@@ -11,6 +11,7 @@ import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.PaymentHold
 import com.circaso.wallet.domain.models.Transfer
@@ -157,9 +158,15 @@ class MemoryTransactionRepository : TransactionRepository {
         until: Instant?,
         after: HistoryPosition?,
         limit: Int,
+        filter: HistoryFilter,
     ): List<WalletTransaction> =
         rows
             .filter { it.userId == userId && it.state in states }
+            .filter { filter.direction == null || it.direction == filter.direction }
+            .filter { filter.counterpartyId == null || it.counterpartyId == filter.counterpartyId }
+            .filter { filter.counterpartyAddress == null || it.counterpartyAddress == filter.counterpartyAddress }
+            .filter { filter.asset == null || it.amount.asset == filter.asset }
+            .filter { filter.blockchain == null || it.blockchain == filter.blockchain }
             .filter { from == null || !it.occurredAt.isBefore(from) }
             .filter { until == null || it.occurredAt.isBefore(until) }
             .filter { row ->
@@ -168,6 +175,9 @@ class MemoryTransactionRepository : TransactionRepository {
                     (row.occurredAt == after.occurredAt && row.id.toString() < after.id.toString())
             }.sortedWith(compareByDescending<WalletTransaction> { it.occurredAt }.thenByDescending { it.id.toString() })
             .take(limit)
+
+    override suspend fun find(userId: UserId, id: UUID): WalletTransaction? =
+        rows.firstOrNull { it.id == id && it.userId == userId }
 
     private fun move(
         to: TransferState,
@@ -297,6 +307,9 @@ class FakeChats : ChatDirectory {
     override suspend fun admins(chatId: ChatId): Set<UserId> = members[chatId].orEmpty()
 
     override suspend fun isGroup(chatId: ChatId): Boolean = members[chatId].orEmpty().size > 2
+
+    override suspend fun groupsOf(userId: UserId): List<ChatId> =
+        members.filter { (chat, people) -> userId in people && isGroup(chat) }.keys.toList()
 }
 
 class FakeProfiles : Profiles {

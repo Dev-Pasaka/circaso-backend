@@ -1,5 +1,6 @@
 package com.circaso.assistant.di
 
+import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.data.cache.AesTextVault
 import com.circaso.assistant.data.cache.RedisPendingTurns
 import com.circaso.assistant.data.cache.RedisQuotaCounters
@@ -13,11 +14,15 @@ import com.circaso.assistant.data.tables.AshaMessagesTable
 import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
 import com.circaso.assistant.data.tables.UsageDailyTable
+import com.circaso.assistant.data.tools.AllAgentTools
 import com.circaso.assistant.data.tools.HttpAgentTools
+import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.LiveTimings
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.ReplyBlocks
 import com.circaso.assistant.domain.ports.TextVault
 import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.repositories.AssistantStore
@@ -28,6 +33,7 @@ import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
+import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
@@ -57,6 +63,7 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.WebSearch
 import com.circaso.observability.api.Telemetry
 import com.circaso.shared.EventSubscription
 import com.circaso.web.RouteContributor
@@ -75,6 +82,27 @@ internal val assistantDatabaseSpec =
         outbox = true,
     )
 
+/**
+ * Asha's limits from the environment (decision 2026-10-31): `ASSISTANT_LIMITS_UNLIMITED` lifts them all (testing; off
+ * by default), and each plan's numbers can be set on their own. Unset, the defaults in [AssistantConfig] hold.
+ */
+internal fun assistantConfig(assistant: Config): AssistantConfig {
+    val defaults = AssistantConfig()
+
+    fun limits(plan: String, base: Limits) =
+        Limits(
+            textTurnsPerDay = assistant.int("$plan.text-turns-per-day", base.textTurnsPerDay),
+            voiceSecondsPerDay = assistant.int("$plan.voice-seconds-per-day", base.voiceSecondsPerDay),
+            contextMessages = assistant.int("$plan.context-messages", base.contextMessages),
+        )
+    return defaults.copy(
+        free = limits("free", defaults.free),
+        plus = limits("plus", defaults.plus),
+        isUnlimited = assistant.boolean("limits-unlimited", false),
+        maxToolSteps = assistant.int("max-tool-steps", defaults.maxToolSteps),
+    )
+}
+
 /** How often `assistant.purge-expired` runs: it only keeps the outbox partitions a day ahead, so this is plenty. */
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 
@@ -87,7 +115,7 @@ fun assistantModule(config: Config): Module =
         val clock = Clock.systemUTC()
         val assistant = config.section("assistant")
         val local = config.environment.isLocal
-        val assistantConfig = AssistantConfig()
+        val assistantConfig = assistantConfig(assistant)
 
         single { assistantConfig }
 
@@ -106,28 +134,32 @@ fun assistantModule(config: Config): Module =
             val expiry = AssistantExpiry(get(named("assistant.database")))
             ScheduledJob("assistant.purge-expired", PURGE_INTERVAL) { expiry.run() }
         }
+        single<ReplyBlocks> { JsonReplyBlocks() }
         single<AgentTools> {
-            HttpAgentTools(
-                get<HttpClients>().named("agent"),
-                assistant
-                    .string(
-                        "agent-base-url",
-                        "http://localhost:" + config.string("port", "8080"),
-                    ).trimEnd('/'),
-            )
+            val routes =
+                HttpAgentTools(
+                    get<HttpClients>().named("agent"),
+                    assistant
+                        .string(
+                            "agent-base-url",
+                            "http://localhost:" + config.string("port", "8080"),
+                        ).trimEnd('/'),
+                )
+            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get())))
         }
 
         // domain
-        single { AshaAgent(get(), get(), get()) }
+        single { AshaAgent(get(), get(), get(), get()) }
+        single { UsageReader(get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DailyUsage(get(), get(), get(), clock) }
         single { TurnRecorder(get(), get(), get(), get(), get(), get(), clock) }
         single { StartTurn(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { ContinueTurn(get(), get(), get(), get(), get()) }
+        single { ContinueTurn(get(), get(), get(), get(), get(), clock) }
         single { ListChat(get()) }
         single { DeleteChat(get(), get()) }
         single { DeleteExchange(get(), get(), get()) }
-        single { GetUsage(get(), get(), get(), clock) }
+        single { GetUsage(get()) }
         single { TranscribeVoice(get(), get(), get(), get(), get(), clock) }
         single { SynthesizeSpeech(get(), get(), get(), get(), get(), clock) }
         single { DeleteAssistantData(get(), get(), get(), get(), clock) }

@@ -2,21 +2,26 @@ package com.circaso.assistant.domain.usecases
 
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.DeviceToolResult
+import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.models.TurnResult
+import com.circaso.assistant.domain.ports.DeviceTools
 import com.circaso.assistant.domain.ports.PendingReadNote
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
+import com.circaso.assistant.domain.support.AgentTurn
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.toModel
+import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
+import java.time.Clock
 
 /**
  * A9: the phone's answer to a device tool, and the turn carries on. The snippets are capped (30, each short), shown
@@ -28,6 +33,7 @@ class ContinueTurn(
     private val agent: AshaAgent,
     private val recorder: TurnRecorder,
     private val config: AssistantConfig,
+    private val clock: Clock,
 ) {
     suspend operator fun invoke(
         result: DeviceToolResult,
@@ -52,6 +58,9 @@ class ContinueTurn(
             return Resource.error(AssistantError.TurnNotFound)
         }
 
+        val device = ToolStatus(turn.turnId, turn.callId, turn.toolName, DeviceTools.label(turn.toolName))
+        listener.toolFinished(device, isOk = true)
+
         val snippets =
             result.snippets
                 .take(
@@ -75,6 +84,7 @@ class ContinueTurn(
             result.requestId,
             outcome,
             PendingReadNote(note.chatIds, note.chatNames, note.messageCount),
+            turn.currency,
         )
     }
 
@@ -87,11 +97,17 @@ class ContinueTurn(
         purpose: ModelPurpose,
     ) = agent.run(
         conversation,
-        agentToken,
-        deviceTools = true,
+        AgentTurn(
+            turnId = turn.turnId,
+            userId = turn.userId,
+            agentToken = agentToken,
+            currency = turn.currency,
+            deviceTools = true,
+            purpose = purpose,
+            today = clock.today(),
+        ),
         startSteps = turn.steps,
         shownBefore = AshaAgent.shownSoFar(turn.conversation),
         listener = listener,
-        purpose = purpose,
     )
 }

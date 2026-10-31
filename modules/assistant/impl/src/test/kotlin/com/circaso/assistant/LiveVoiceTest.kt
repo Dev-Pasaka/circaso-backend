@@ -198,7 +198,15 @@ class LiveVoiceTest {
             // a reply far shorter than it reads), all before reply_done. One Flush for the whole reply.
             // (The turn's `timing` frame goes out among them, once its first audio has.)
             val afterTurn = got.frames.dropWhile { !(it is JsonObject && it.type() == "turn") }.drop(1)
-            val replies = afterTurn.takeWhile { !(it is JsonObject && it.type() == "reply_done") }
+            val untilDone = afterTurn.takeWhile { !(it is JsonObject && it.type() == "reply_done") }
+            // Asha says what she is doing while the tool runs (decision 2026-10-31), before any of the reply.
+            val status = (untilDone.first() as JsonObject)
+            assertEquals("tool_status", status.type())
+            assertEquals("searchContacts", status.text("tool"))
+            assertEquals("Looking at your contacts…", status.text("label"))
+            assertEquals("tool_done", (untilDone[1] as JsonObject).type())
+            assertEquals(true, (untilDone[1] as JsonObject)["ok"]!!.jsonPrimitive.boolean)
+            val replies = untilDone.drop(2)
             assertEquals("You sent Mum 2,000 shillings yesterday.", (replies.first() as JsonObject).text("text"))
             assertEquals(
                 listOf("You sent Mum 2,000 shillings yesterday.", "Anything else?"),

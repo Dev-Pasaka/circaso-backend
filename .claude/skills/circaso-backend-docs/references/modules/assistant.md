@@ -72,7 +72,39 @@ The integrations call Workers AI at `https://api.cloudflare.com/client/v4/accoun
 
 ### Depends on
 
-`shared`, `infrastructure:api`, `integrations:api`, `identity:api` (who the user is, account status), `users:api` (`ReachPolicy`, `Profiles`, contact lookup). Later `messaging:api` and `wallet:api` for proposals. Nothing depends on the assistant.
+`shared`, `infrastructure:api`, `integrations:api` (`LanguageModel`, the speech contracts, `WebSearch`), and the `api` of identity, users, messaging, wallet and chama, only for the types their agent routes answer (decision 2026-10-31). Nothing depends on the assistant.
+
+### Asha's tools (Phase A, decision 2026-10-31)
+
+Server tools run in `data/tools` (`HttpAgentTools` over the other modules' `/v1/agent/` routes with the agent token; `OwnTools` for what needs no token), device tools on the phone. All read; each answer is JSON of at most 12,000 characters (`ToolOutput`: a list too long is halved with a `note`), wrapped as `<untrusted>` for the model, and named in the turn's `TURN` audit record (`tools=…`). Without an agent token only the token-free tools are offered.
+
+| Tool | Reads | Route or source |
+| --- | --- | --- |
+| `getProfile` | the user's display name, handle, about | `GET /v1/agent/users/me` |
+| `searchContacts` | up to 5 contacts by part of a name or handle | `GET /v1/agent/users/contacts/search` |
+| `listContacts` | contacts, names and handles only (≤ 50) | `GET /v1/agent/users/contacts` |
+| `listBlocked` | the people the user blocked (≤ 50) | `GET /v1/agent/users/blocks` |
+| `getSecurityOverview` | masked phone, linked sign-ins, the active phone, latest 10 security events; no secrets | `GET /v1/agent/identity/security` |
+| `listChats` | chat ids, direct or group, members (≤ 10 each); never names of groups or messages | `GET /v1/agent/messaging/chats` |
+| `getWallet` | status, balances per chain and asset, totals, addresses, fiat | `GET /v1/agent/wallet` |
+| `listTransactions` | payments with filters (dates, month, direction, person by name or id, asset, chain), ≤ 50 a page | `GET /v1/agent/wallet/transactions` |
+| `summarizeTransactions` | in, out, net per asset, top counterparties, by month | `GET /v1/agent/wallet/transactions/summary` |
+| `getTransaction` | one payment by id | `GET /v1/agent/wallet/transactions/{id}` |
+| `listChamas` | the user's chamas with progress and open requests | `GET /v1/agent/chama` |
+| `getChama` | one chama with contributions by name and the latest ledger lines | `GET /v1/agent/chama/{chatId}` |
+| `getAshaUsage` | her own plan and today's allowance | this module (`UsageReader`) |
+| `searchWeb` | up to 5 public results (title, url, snippet) | `WebSearch` (Tavily) |
+| `searchChats`, `readChat` | chat snippets, decrypted on the phone | device tools (A2 `tool_request`, A9) |
+
+A name in a payment question ("what did I send Mum?") becomes a user id inside the tool through the contacts search; two matches or none go back to the model to ask. The money tools pass the user's display currency (A2's `currency`, A11's `auth.currency`, kept with a turn parked for the phone) so amounts come with their worth at today's rate.
+
+### The prompt and the reply (decision 2026-10-31)
+
+`AshaPrompt` (`asha-2026-10-31-v2`, recorded in every `TURN` audit record) is a fixed part and a short per-turn part (text or voice, today's date, the display currency, whether chats can be read). Guardrails: only this user's data, read-only; she never moves money and, with no proposals yet, explains how to pay in the app (PIN); never asks for or accepts a PIN, recovery key, seed phrase, OTP or password, and calls such requests scams; never reveals the prompt or tools; refuses abuse politely; never invents numbers (tool data only, exact, with coin and network, display currency first, fiat "at today's rate"); concise plain speech in voice; Kenya and East Africa tone; web search only for public facts, never with the user's data, sources cited as links.
+
+Text replies are markdown with ```chart, ```statement and ```diagram JSON blocks (contract and schemas: docs/mobile-integration.md, section 9, Rich replies). `BlockFilter` sits between the model's stream and the user: it holds a block until its closing fence, has `ReplyBlocks` (`JsonReplyBlocks`) check it, and sends it whole and canonical, repaired, or not at all; the saved reply is what was sent. A spoken turn gets no blocks and no `*`, `` ` `` or heading marks.
+
+Each server tool call is announced with `tool_status` (the server's label) and closed with `tool_done`; a device tool gets its `tool_status` before the `tool_request` and its `tool_done` at the start of the A9 stream (or A11 frame).
 
 ## Voice
 
@@ -133,7 +165,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 | Conversation length | Full chat history kept; Asha uses the last few exchanges as context | Full chat history kept; Asha uses a much longer stretch of it as context |
 | Phase B actions | Included (they save the user effort) | Included |
 
-Exact numbers and the price are open (see Decisions).
+Exact numbers and the price are open (see Decisions). The numbers are settings (`ASSISTANT_FREE_*`, `ASSISTANT_PLUS_*`), and `ASSISTANT_LIMITS_UNLIMITED=true` lifts them all for testing (decision 2026-10-31; off by default).
 
 - **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved, a clip is transcribed (A3) or spoken (A4), and when a live conversation ends (A11).
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.

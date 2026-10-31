@@ -167,6 +167,41 @@ class StreamingTest {
         }
 
     @Test
+    fun `A2 brackets each tool call with tool_status and tool_done, and checks the currency's shape`() =
+        testApplication {
+            serve()
+            h.model.call("searchContacts", """{"query":"mum"}""").say("Found her.")
+
+            val response =
+                client.post("/v1/assistant/chat/messages") {
+                    contentType(ContentType.Application.Json)
+                    header("X-Agent-Token", "agent-tok")
+                    setBody("""{"text":"who is mum?","currency":"kes"}""")
+                }
+
+            val lines = response.bodyAsText().lines()
+            val events = lines.filter { it.startsWith("event: ") }.map { it.removePrefix("event: ") }
+            assertEquals(listOf("tool_status", "tool_done", "message", "done"), events)
+            val status = lines.first { it.startsWith("data: {\"turnId\"") }
+            assertTrue("\"tool\":\"searchContacts\"" in status && "\"label\":\"Looking at your contacts…\"" in status)
+            assertTrue(lines.any { "\"ok\":true" in it })
+            assertEquals(
+                "KES",
+                h.tools.calls
+                    .single()
+                    .currency,
+            )
+
+            val bad =
+                client.post("/v1/assistant/chat/messages") {
+                    contentType(ContentType.Application.Json)
+                    header("X-Agent-Token", "agent-tok")
+                    setBody("""{"text":"hi","currency":"shillings"}""")
+                }
+            assertEquals(HttpStatusCode.BadRequest, bad.status)
+        }
+
+    @Test
     fun `A2 refused before any text answers with the envelope, and a failure after text is an error event`() =
         testApplication {
             serve()

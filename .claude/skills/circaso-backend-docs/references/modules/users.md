@@ -165,6 +165,15 @@ The contact row is kept with status `REMOVED`, in one transaction with its outbo
 
 Users exposes read-only routes for the assistant under `presentation/agent/` (`GET /v1/agent/users/…`, `agent` scope only): for example the user's contacts with public profiles and contact search by name, so Asha can resolve "Mum" to a contact. Exact routes are designed with the assistant module.
 
+| Route | Answers |
+| --- | --- |
+| `GET /v1/agent/users/contacts` | The user's contacts (`cursor`, `limit`): id, name, @handle |
+| `GET /v1/agent/users/contacts/search` | Contacts whose name or @handle contains `q` |
+| `GET /v1/agent/users/me` | `AgentProfileResponse`: the user's own id, name, @handle, about, avatar URL, support flag, `memberSince`; never a phone number (decision 2026-10-31) |
+| `GET /v1/agent/users/blocks` | `AgentBlocksResponse`: the people the user has blocked (id, name, @handle), at most 50 (decision 2026-10-31) |
+
+The answers' types live in `users:api` (`AgentRoutes.kt`), because the assistant reads them over HTTP.
+
 ## Data
 
 Eight PostgreSQL tables in schema `users` (role `users`, Flyway location `db/users`) and four Redis key families. Contacts and blocks are each one table, read from both sides through a second index.

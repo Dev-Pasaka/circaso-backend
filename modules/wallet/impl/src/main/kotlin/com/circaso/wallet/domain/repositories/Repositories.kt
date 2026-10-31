@@ -5,6 +5,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.CircleUser
+import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
@@ -102,8 +103,8 @@ interface TransactionRepository {
     suspend fun parties(since: Instant, limit: Int): List<UserId>
 
     /**
-     * [userId]'s rows in one of [states] with `occurred_at` in [from, until) (either end open when null), strictly
-     * after [after] in the order `occurred_at DESC, id DESC`, at most [limit]: W6's keyset page
+     * [userId]'s rows in one of [states] with `occurred_at` in [from, until) (either end open when null), matching
+     * [filter], strictly after [after] in the order `occurred_at DESC, id DESC`, at most [limit]: W6's keyset page
      * (`transactions_user_idx`).
      */
     suspend fun history(
@@ -113,7 +114,11 @@ interface TransactionRepository {
         until: Instant?,
         after: HistoryPosition?,
         limit: Int,
+        filter: HistoryFilter = HistoryFilter.ANY,
     ): List<WalletTransaction>
+
+    /** [userId]'s own row [id], or null when there is none or it is someone else's. */
+    suspend fun find(userId: UserId, id: UUID): WalletTransaction?
 }
 
 /** Wallet's outbox rows, written inside the transaction that makes the change. */

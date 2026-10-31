@@ -8,6 +8,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.domain.models.Direction
+import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferOrigin
@@ -34,6 +35,7 @@ import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
 import java.time.Instant
+import java.util.UUID
 
 /**
  * `transactions`. An inbound row is inserted with `ON CONFLICT DO NOTHING` (`transactions_circle_key`), so a repeated
@@ -119,6 +121,7 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
         until: Instant?,
         after: HistoryPosition?,
         limit: Int,
+        filter: HistoryFilter,
     ): List<WalletTransaction> {
         if (states.isEmpty()) return emptyList()
         return database.tx("transactions.history") {
@@ -131,12 +134,35 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                     from?.let { where = where and (TransactionsTable.occurredAt greaterEq it) }
                     until?.let { where = where and (TransactionsTable.occurredAt less it) }
                     after?.let { where = where and before(it) }
+                    matching(filter)?.let { where = where and it }
                     where
                 }.orderBy(TransactionsTable.occurredAt to SortOrder.DESC, TransactionsTable.id to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toTransaction() }
                 .toList()
         }
+    }
+
+    override suspend fun find(userId: UserId, id: UUID): WalletTransaction? =
+        database.tx("transactions.find") {
+            TransactionsTable
+                .selectAll()
+                .where { (TransactionsTable.id eq id) and (TransactionsTable.userId eq userId.value) }
+                .map { it.toTransaction() }
+                .singleOrNull()
+        }
+
+    /** The filter's parts as one condition, or null when it has none. */
+    private fun matching(filter: HistoryFilter): Op<Boolean>? {
+        val parts =
+            listOfNotNull(
+                filter.direction?.let { TransactionsTable.direction eq it.name },
+                filter.counterpartyId?.let { TransactionsTable.counterpartyId eq it.value },
+                filter.counterpartyAddress?.let { TransactionsTable.counterpartyAddress eq it },
+                filter.asset?.let { TransactionsTable.asset eq it.name },
+                filter.blockchain?.let { TransactionsTable.blockchain eq it },
+            )
+        return parts.reduceOrNull { all, part -> all and part }
     }
 
     /** Rows that come after [position] newest first: older, or as old with a smaller id. */

@@ -50,6 +50,7 @@ import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
@@ -69,6 +70,7 @@ import com.circaso.wallet.domain.usecases.CheckRecipient
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
+import com.circaso.wallet.domain.usecases.GetTransaction
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
@@ -80,7 +82,9 @@ import com.circaso.wallet.domain.usecases.PrepareTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
+import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.ValidateAddress
+import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
@@ -92,6 +96,7 @@ import com.circaso.wallet.presentation.controllers.walletController
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.TransferService
+import com.circaso.wallet.presentation.services.WalletAgentService
 import com.circaso.wallet.presentation.services.WalletDirectoryService
 import com.circaso.wallet.presentation.services.WalletJobsService
 import com.circaso.wallet.presentation.services.WalletService
@@ -246,7 +251,10 @@ fun walletModule(config: Config): Module =
         single { HasWallet(get()) }
         single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetTransfer(get()) }
-        single { ListTransactions(get(), get()) }
+        single { Counterparties(get()) }
+        single { ListTransactions(get(), get(), get()) }
+        single { GetTransaction(get(), get(), get()) }
+        single { SummariseTransactions(get(), get(), get()) }
         single { CheckRecipient(get(), get(), get()) }
         single { RequestSetup(get(), get(), get(), get(), get()) }
         single { ValidateAddress(get()) }
@@ -261,6 +269,7 @@ fun walletModule(config: Config): Module =
         single { WalletService(get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get()) }
         single { HistoryService(get()) }
+        single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get()) }
         single { WalletJobsService(get(), get(), get()) }
@@ -269,11 +278,13 @@ fun walletModule(config: Config): Module =
             val transfers = get<TransferService>()
             val recipients = get<RecipientService>()
             val history = get<HistoryService>()
+            val agent = get<WalletAgentService>()
             RouteContributor { route ->
                 route.walletController(wallets)
                 route.transferController(transfers)
                 route.recipientController(recipients)
                 route.historyController(history)
+                route.agentController(agent)
             }
         }
 

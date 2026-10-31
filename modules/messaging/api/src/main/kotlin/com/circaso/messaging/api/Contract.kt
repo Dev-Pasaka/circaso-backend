@@ -35,4 +35,7 @@ interface ChatDirectory {
 
     /** Whether the chat is a group (false for a direct chat, and for one that doesn't exist), for calls. */
     suspend fun isGroup(chatId: ChatId): Boolean
+
+    /** The groups [userId] is in, for chama's list of the user's chamas (Asha, decision 2026-10-31). */
+    suspend fun groupsOf(userId: UserId): List<ChatId>
 }

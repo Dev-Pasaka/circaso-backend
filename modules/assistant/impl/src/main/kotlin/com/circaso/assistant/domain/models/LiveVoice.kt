@@ -15,6 +15,8 @@ data class LiveVoiceStart(
     val language: String?,
     val chatReading: Boolean,
     val requestId: String?,
+    /** The user's display currency (ISO 4217), for amounts in their own money; null when unknown. */
+    val currency: String? = null,
 )
 
 /** An accepted live session: who is talking, the vendor sessions, and the allowance it runs against. */
@@ -52,6 +54,12 @@ sealed interface LiveEvent {
 
     /** Asha needs the phone to read its chats (a device tool); the phone answers on the socket. */
     data class DeviceToolAsked(val request: TurnResult.NeedsDevice) : LiveEvent
+
+    /** Asha is about to use a tool (decision 2026-10-31); the phone may show [status]'s label. */
+    data class ToolStarted(val status: ToolStatus) : LiveEvent
+
+    /** That tool has answered. */
+    data class ToolFinished(val status: ToolStatus, val isOk: Boolean) : LiveEvent
 
     /** The user talked over Asha: the phone stops playing what it has. */
     data object Interrupted : LiveEvent

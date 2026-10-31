@@ -19,6 +19,8 @@ import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.chama.domain.repositories.ContributionRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
+import com.circaso.chama.domain.support.ChamaNames
+import com.circaso.chama.domain.support.ChamaViews
 import com.circaso.chama.domain.support.Members
 import com.circaso.chama.domain.support.RequestFrames
 import com.circaso.chama.domain.usecases.AskPayout
@@ -26,15 +28,19 @@ import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
 import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.GetChama
+import com.circaso.chama.domain.usecases.GetChamaDigest
 import com.circaso.chama.domain.usecases.HasGoal
 import com.circaso.chama.domain.usecases.ListLedger
+import com.circaso.chama.domain.usecases.ListMyChamas
 import com.circaso.chama.domain.usecases.RecordTransfer
 import com.circaso.chama.domain.usecases.ReplayFrames
 import com.circaso.chama.domain.usecases.SetGoal
+import com.circaso.chama.presentation.agent.agentController
 import com.circaso.chama.presentation.api.ChamaRealtimeReplay
 import com.circaso.chama.presentation.api.ChamasImpl
 import com.circaso.chama.presentation.controllers.chamaController
 import com.circaso.chama.presentation.events.WalletEventHandler
+import com.circaso.chama.presentation.services.ChamaAgentService
 import com.circaso.chama.presentation.services.ChamaEventsService
 import com.circaso.chama.presentation.services.ChamaService
 import com.circaso.infrastructure.api.Config
@@ -100,8 +106,12 @@ fun chamaModule(config: Config): Module =
         single { Members(get(), get()) }
         single { RequestFrames(get(), get(), get()) }
         single { SetGoal(get(), get(), get(), get(), clock) }
-        single { GetChama(get(), get(), get(), get()) }
-        single { ListLedger(get(), get(), get(), get()) }
+        single { ChamaViews(get(), get(), get(), get()) }
+        single { ChamaNames(get()) }
+        single { GetChama(get()) }
+        single { ListLedger(get(), get(), get()) }
+        single { ListMyChamas(get(), get(), get()) }
+        single { GetChamaDigest(get(), get()) }
         single { AskPayout(get(), get(), get(), get(), clock) }
         single { DecidePayout(get(), get(), get(), clock) }
         single { AttachPayment(get(), get(), get(), get(), get(), clock) }
@@ -113,9 +123,14 @@ fun chamaModule(config: Config): Module =
         // presentation
         single { ChamaService(get(), get(), get(), get(), get(), get()) }
         single { ChamaEventsService(get(), get(), get(), get()) }
+        single { ChamaAgentService(get(), get()) }
         single<RouteContributor>(named("chama.routes")) {
             val chamas = get<ChamaService>()
-            RouteContributor { route -> route.chamaController(chamas) }
+            val agent = get<ChamaAgentService>()
+            RouteContributor { route ->
+                route.chamaController(chamas)
+                route.agentController(agent)
+            }
         }
         single<EventSubscription>(named("chama.wallet-events")) { WalletEventHandler(get()).subscription() }
         single<Chamas> { ChamasImpl(get()) }

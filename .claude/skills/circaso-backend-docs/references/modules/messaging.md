@@ -4,7 +4,7 @@ Messaging answers "get this message to these people, so that only they can read 
 
 Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the decision log; points still to settle are under Open questions at the end.
 
-> **Not built yet: MS6.** The `identity.AccountDeleted` and `identity.AccountStatusChanged` consumers (Events → Consumed) and the agent route `GET /v1/agent/messaging/chats` arrive with MS6, together with history (M18–M21). Until MS6 ships, a deleted user's messaging rows (key bundle and prekeys, chat memberships, inbox, settings) stay in the `messaging` schema, a suspended account can still send, and Asha has no messaging route to call.
+> **Not built yet: MS6.** The `identity.AccountDeleted` and `identity.AccountStatusChanged` consumers (Events → Consumed) arrive with MS6, together with history (M18–M21). Until MS6 ships, a deleted user's messaging rows (key bundle and prekeys, chat memberships, inbox, settings) stay in the `messaging` schema, a suspended account can still send (the agent chat list, below, is built: decision 2026-10-31).
 
 ## Overview
 
@@ -124,7 +124,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 
 ### Agent routes (read-only, for Asha)
 
-`GET /v1/agent/messaging/chats`: the user's chats with ids, kind and member profiles. Group names are sealed, so turning "the chama chat" into a `chatId` is a device tool (`findChat(name)`, answered by the phone like `searchChats`). Messaging has no plaintext to give her; content and group names only come through the phone (Assistant → Reading encrypted chats).
+`GET /v1/agent/messaging/chats` (built 2026-10-31): the user's chats, most recently active first (`limit`, default 30, at most 100), as `AgentChatsResponse` in `messaging:api`: each chat's id, kind, member count, the other members (at most 10: id, name, @handle, role), whether the user is an admin, and `lastMessageAt` (from the newest message id the server still knows, null after 30 days). Never `sealedMeta` or a message. Group names are sealed, so turning "the chama chat" into a `chatId` is a device tool (`findChat(name)`, answered by the phone like `searchChats`). Messaging has no plaintext to give her; content and group names only come through the phone (Assistant → Reading encrypted chats).
 
 ### M1 Publish keys
 

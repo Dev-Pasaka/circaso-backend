@@ -33,10 +33,12 @@ import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
+import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
@@ -258,6 +260,16 @@ class IntegrationsModuleTest {
         val e = assertFailsWith<Exception> { koin("integrations.push.provider" to "fcm").get<PushGateway>() }
         assertTrue(
             "fcm.service-account" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
+        )
+    }
+
+    @Test
+    fun `web search defaults to the fake and tavily refuses to start without its key`() {
+        assertIs<FakeWebSearch>(koin().get<WebSearch>())
+        stopKoin()
+        val e = assertFailsWith<Exception> { koin("integrations.search.provider" to "tavily").get<WebSearch>() }
+        assertTrue(
+            "tavily.api-key" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
     }
 

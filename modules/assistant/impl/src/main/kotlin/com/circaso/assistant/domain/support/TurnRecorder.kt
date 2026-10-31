@@ -44,6 +44,7 @@ class TurnRecorder(
         requestId: String?,
         outcome: AgentOutcome,
         readNote: PendingReadNote,
+        currency: String? = null,
     ): Resource<TurnResult> {
         val day = clock.today()
         quota.addTokens(userId, day, outcome.inputTokens, outcome.outputTokens)
@@ -62,6 +63,7 @@ class TurnRecorder(
                         outcome.conversation,
                         readNote,
                         outcome.steps,
+                        currency,
                     ),
                 )
                 Resource.success(

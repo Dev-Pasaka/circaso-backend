@@ -101,6 +101,7 @@ import com.circaso.users.presentation.services.DirectoryService
 import com.circaso.users.presentation.services.HandleService
 import com.circaso.users.presentation.services.IdentityEventsService
 import com.circaso.users.presentation.services.ProfileService
+import com.circaso.users.presentation.services.UsersAgentService
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -212,6 +213,7 @@ fun usersModule(config: Config): Module =
         single { HandleService(get(), get(), get()) }
         single { ContactService(get(), get(), get(), get(), get(), get(), get()) }
         single { BlockService(get(), get(), get(), get()) }
+        single { UsersAgentService(get(), get()) }
         single { DirectoryService(get(), get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
@@ -219,12 +221,13 @@ fun usersModule(config: Config): Module =
             val handles = get<HandleService>()
             val contacts = get<ContactService>()
             val blocks = get<BlockService>()
+            val agent = get<UsersAgentService>()
             RouteContributor { route ->
                 route.profileController(profiles)
                 route.handleController(handles)
                 route.contactController(contacts)
                 route.blockController(blocks)
-                route.agentController(contacts)
+                route.agentController(contacts, agent)
             }
         }
         single<EventSubscription>(named("users.identity-events")) { IdentityEventHandler(get()).subscription() }

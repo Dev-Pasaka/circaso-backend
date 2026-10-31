@@ -52,6 +52,7 @@ import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetRecoveryCase
 import com.circaso.identity.domain.usecases.GetSecurityOverview
+import com.circaso.identity.domain.usecases.GetSecuritySummary
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
 import com.circaso.identity.domain.usecases.ListSecurityEvents
@@ -73,6 +74,7 @@ import com.circaso.identity.domain.usecases.VerifyAccessToken
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyDeviceSignature
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
+import com.circaso.identity.presentation.agent.agentController
 import com.circaso.identity.presentation.api.AccountDirectoryImpl
 import com.circaso.identity.presentation.api.DeviceSignaturesImpl
 import com.circaso.identity.presentation.api.PushRegistrationsImpl
@@ -87,6 +89,7 @@ import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
 import com.circaso.identity.presentation.services.DirectoryService
+import com.circaso.identity.presentation.services.IdentityAgentService
 import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
@@ -217,6 +220,7 @@ fun identityModule(config: Config): Module =
         single { LinkProvider(get(), get(), get(), get(), get(), get(), clock) }
         single { UnlinkProvider(get(), get(), get(), get()) }
         single { ListSecurityEvents(get()) }
+        single { GetSecuritySummary(get(), get(), get(), get()) }
         single {
             RequestAccountDeletion(get(), get(), get(), getAll<DeletionGuard>(), get(), get(), get(), identity, clock)
         }
@@ -241,6 +245,7 @@ fun identityModule(config: Config): Module =
         single { PhoneService(get(), get(), get(), get()) }
         single { DeviceService(get(), get(), get()) }
         single { AccountService(get(), get(), get(), get(), get()) }
+        single { IdentityAgentService(get()) }
         single { RecoveryService(get(), get()) }
         single { DirectoryService(get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
@@ -252,6 +257,7 @@ fun identityModule(config: Config): Module =
             val account = get<AccountService>()
             val recovery = get<RecoveryService>()
             val support = get<SupportAccountService>()
+            val agent = get<IdentityAgentService>()
             RouteContributor { route ->
                 route.authController(auth)
                 route.phoneController(phone)
@@ -259,6 +265,7 @@ fun identityModule(config: Config): Module =
                 route.accountController(account)
                 route.recoveryController(recovery)
                 route.supportAccountController(support)
+                route.agentController(agent)
             }
         }
 

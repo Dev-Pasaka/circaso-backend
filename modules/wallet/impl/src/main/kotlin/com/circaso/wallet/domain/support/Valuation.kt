@@ -1,6 +1,8 @@
 package com.circaso.wallet.domain.support
 
 import com.circaso.integrations.api.UsdRate
+import com.circaso.shared.Asset
+import com.circaso.shared.Money
 import com.circaso.wallet.domain.models.AssetTotal
 import com.circaso.wallet.domain.models.ChainHoldings
 import com.circaso.wallet.domain.models.FiatValue
@@ -41,6 +43,13 @@ object Valuation {
     /** What one holding is worth in the rate's currency, or null when it has no price. */
     fun fiatOf(holding: Holding, rate: UsdRate): BigDecimal? =
         if (holding.usdPegged) inCurrency(holding.whole(), rate) else null
+
+    /**
+     * What an amount of a history asset is worth in the rate's currency. Every [Asset] the history records is a US
+     * dollar stablecoin, so each is priced at one dollar.
+     */
+    fun fiatOf(amount: Money, rate: UsdRate): BigDecimal =
+        inCurrency(BigDecimal(BigInteger.valueOf(amount.amountMinor), amount.asset.decimals), rate)
 
     /** Rounded half up, as a person rounds: the value is shown, never paid, so there is nothing to balance. */
     private fun inCurrency(dollars: BigDecimal, rate: UsdRate): BigDecimal =

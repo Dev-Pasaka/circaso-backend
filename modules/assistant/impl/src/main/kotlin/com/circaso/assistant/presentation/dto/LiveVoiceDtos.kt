@@ -19,6 +19,8 @@ sealed interface LivePhoneFrame {
         val agentToken: String? = null,
         val language: String? = null,
         val chatReading: Boolean = true,
+        /** The user's display currency (ISO 4217); one that isn't is ignored. */
+        val currency: String? = null,
     ) : LivePhoneFrame
 
     /** The answer to a `tool_request`. */
@@ -65,6 +67,26 @@ data class LiveToolRequestFrame(
     val name: String,
     val arguments: String,
     val type: String = "tool_request",
+)
+
+/** Asha is about to use a tool (decision 2026-10-31); as A2's `tool_status` event. */
+@Serializable
+data class LiveToolStatusFrame(
+    val turnId: String,
+    val callId: String,
+    val tool: String,
+    val label: String,
+    val type: String = "tool_status",
+)
+
+/** That tool has answered; as A2's `tool_done` event. */
+@Serializable
+data class LiveToolDoneFrame(
+    val turnId: String,
+    val callId: String,
+    val tool: String,
+    val ok: Boolean,
+    val type: String = "tool_done",
 )
 
 @Serializable

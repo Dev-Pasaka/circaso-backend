@@ -1,5 +1,9 @@
 package com.circaso.identity.presentation.mappers
 
+import com.circaso.identity.api.AgentDeviceDto
+import com.circaso.identity.api.AgentSecurityEventDto
+import com.circaso.identity.api.AgentSecurityResponse
+import com.circaso.identity.api.AgentSignInDto
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.errors.IdentityError
@@ -15,6 +19,7 @@ import com.circaso.identity.domain.models.RegisteredDevice
 import com.circaso.identity.domain.models.ReleaseCommand
 import com.circaso.identity.domain.models.SecurityOverview
 import com.circaso.identity.domain.models.SecurityPage
+import com.circaso.identity.domain.models.SecuritySummary
 import com.circaso.identity.domain.models.SessionTokens
 import com.circaso.identity.domain.models.SignInCommand
 import com.circaso.identity.domain.models.SignInResult
@@ -192,6 +197,36 @@ fun SecurityOverview.toResponse() =
         providers.map { ProviderDto(it.provider.name.lowercase(), it.email?.let(::maskEmail), it.linkedAt) },
         device?.let { ActiveDeviceDto(it.model, it.registeredAt) },
         verification.name,
+    )
+
+fun SecuritySummary.toAgentResponse() =
+    AgentSecurityResponse(
+        maskedPhone = maskedPhone,
+        status = account.status.name,
+        verification = account.verification.name,
+        memberSince = account.createdAt.toString(),
+        signIns =
+            providers.map {
+                AgentSignInDto(it.provider.name.lowercase(), it.email?.let(::maskEmail), it.linkedAt.toString())
+            },
+        device =
+            device?.let {
+                AgentDeviceDto(
+                    platform = it.platform,
+                    model = it.model,
+                    appVersion = it.appVersion,
+                    registeredAt = it.registeredAt.toString(),
+                    lastSeenAt = it.lastSeenAt.toString(),
+                )
+            },
+        recentEvents =
+            recent.map {
+                AgentSecurityEventDto(
+                    type = it.type.name,
+                    at = (it.eventId?.let(Uuid7::timestampOf) ?: Instant.EPOCH).toString(),
+                    deviceModel = it.deviceModel,
+                )
+            },
     )
 
 fun SecurityPage.toResponse() =

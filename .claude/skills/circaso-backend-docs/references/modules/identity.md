@@ -96,6 +96,7 @@ Seventeen app routes and two ops routes: seven take a person from Google/Apple s
 | I17 | `GET /recovery/requests/{requestId}` | onboarding | `GetRecoveryRequest` | Status of the caller's own support case: received, verifying, notice sent (with relink time), relinked, rejected or cancelled |
 | OPS1 | `POST /ops/support-accounts` | ops | `CreateSupportAccount` | Creates a Circaso support account (display name, handle); see Support accounts below |
 | OPS2 | `GET /ops/support-accounts` | ops | `ListSupportAccounts` | Every support account, oldest first, with its name and handle from users; `cursor`, `limit` |
+| AG1 | `GET /agent/identity/security` | agent | `GetSecuritySummary` | Asha's read of account and security (decision 2026-10-31), `AgentSecurityResponse` in `identity:api`: masked phone, account status, verification, `memberSince`, linked sign-ins (provider, masked email, when), the phone the account is on (platform, model, app version, registered, last seen) and the latest 10 security log lines (type, time, device model). No ids, keys, push tokens or log details |
 
 Plus `GET /.well-known/jwks.json` (public keys for access tokens) and ops-only routes under `/ops/recoveries` for support agents (designed, not built).
 

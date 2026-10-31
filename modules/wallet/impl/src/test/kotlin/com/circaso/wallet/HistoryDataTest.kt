@@ -16,6 +16,7 @@ import com.circaso.wallet.domain.models.HistoryQuery
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletTransaction
+import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.usecases.ListTransactions
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
@@ -105,7 +106,8 @@ class HistoryDataTest {
     fun `the use case over the real table ends on the last page with no cursor`() =
         runBlocking<Unit> {
             transactions.insert(row("2026-10-20T10:00:00Z"))
-            val list = ListTransactions(transactions, FakeProfiles().apply { names[bob] = "Bob" })
+            val profiles = FakeProfiles().apply { names[bob] = "Bob" }
+            val list = ListTransactions(transactions, Counterparties(profiles), FakeRates())
 
             val page = list(HistoryQuery(amina, null, null, 50)).data()
 

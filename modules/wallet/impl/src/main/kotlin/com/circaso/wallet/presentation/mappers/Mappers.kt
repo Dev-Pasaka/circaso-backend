@@ -4,6 +4,7 @@ import com.circaso.integrations.api.SdkSession
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.map
 import com.circaso.wallet.domain.models.AddChainCommand
 import com.circaso.wallet.domain.models.AssetTotal
 import com.circaso.wallet.domain.models.ChainAddition
@@ -47,11 +48,15 @@ private val CURRENCIES: Set<String> = Currency.getAvailableCurrencies().map { it
 internal fun malformed(field: String, why: String) = Resource.error(SharedError.Malformed(field, why))
 
 /** W1's `?currency=`: absent, or an ISO 4217 code (any case; answered in capitals). */
-fun walletQuery(userId: UserId, currency: String?): Resource<WalletQuery> {
-    if (currency == null) return Resource.success(WalletQuery(userId, null))
+fun walletQuery(userId: UserId, currency: String?): Resource<WalletQuery> =
+    currencyCodeOf(currency).map { WalletQuery(userId, it) }
+
+/** A `currency` query value: null when absent, the ISO 4217 code in capitals, or `request.malformed`. */
+internal fun currencyCodeOf(currency: String?): Resource<String?> {
+    if (currency == null) return Resource.success(null)
     val code = currency.trim().uppercase()
     if (code !in CURRENCIES) return malformed("currency", "is not an ISO 4217 currency code")
-    return Resource.success(WalletQuery(userId, code))
+    return Resource.success(code)
 }
 
 fun createWalletCommand(userId: UserId, requestKey: String): CreateWalletCommand =

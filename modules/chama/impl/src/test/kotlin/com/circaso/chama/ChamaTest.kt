@@ -18,6 +18,8 @@ import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.repositories.ContributionRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
+import com.circaso.chama.domain.support.ChamaNames
+import com.circaso.chama.domain.support.ChamaViews
 import com.circaso.chama.domain.support.Members
 import com.circaso.chama.domain.support.RequestFrames
 import com.circaso.chama.domain.usecases.AskPayout
@@ -25,9 +27,12 @@ import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
 import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.GetChama
+import com.circaso.chama.domain.usecases.GetChamaDigest
 import com.circaso.chama.domain.usecases.ListLedger
+import com.circaso.chama.domain.usecases.ListMyChamas
 import com.circaso.chama.domain.usecases.RecordTransfer
 import com.circaso.chama.domain.usecases.SetGoal
+import com.circaso.chama.presentation.mappers.toAgentResponse
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.DomainEvent
@@ -151,6 +156,8 @@ private class FakeChats : ChatDirectory {
     override suspend fun admins(chatId: ChatId) = admins[chatId].orEmpty()
 
     override suspend fun isGroup(chatId: ChatId) = true
+
+    override suspend fun groupsOf(userId: UserId) = members.filterValues { userId in it }.keys.toList()
 }
 
 private class FakeProfiles : Profiles {
@@ -235,8 +242,11 @@ private class Harness {
     val members = Members(chats, profiles)
     val requestFrames = RequestFrames(goals, members, frames)
     val setGoal = SetGoal(members, goals, contributions, frames, clock)
-    val getChama = GetChama(members, goals, contributions, requests)
-    val listLedger = ListLedger(members, goals, contributions, requests)
+    val views = ChamaViews(members, goals, contributions, requests)
+    val getChama = GetChama(views)
+    val listLedger = ListLedger(members, goals, views)
+    val listMyChamas = ListMyChamas(chats, views, ChamaNames(profiles))
+    val getChamaDigest = GetChamaDigest(views, ChamaNames(profiles))
     val createRequest = AskPayout(members, goals, requests, requestFrames, clock)
     val decideRequest = DecidePayout(members, requests, requestFrames, clock)
     val attachPayment = AttachPayment(members, goals, requests, wallets, requestFrames, clock)
@@ -499,4 +509,45 @@ class ChamaTest {
             )
             assertNull(h.requests.open(h.chat).firstOrNull())
         }
+
+    @Test
+    fun `Asha lists only the chamas the user is in, and one chama by name with its ledger`() =
+        runTest {
+            val h = Harness()
+            h.goal()
+            val stranger = UserId.new()
+            val otherChat = ChatId.new()
+            h.chats.members[otherChat] = setOf(stranger, h.juma)
+            h.goals.save(
+                h.goals.find(h.chat)!!.copy(chatId = otherChat, name = "Not theirs", treasurerId = stranger),
+            )
+            h.chats.members[ChatId.new()] = setOf(h.wanjiru, h.otieno) // a group without a goal is no chama
+            h.recordTransfer(TransferId.new(), h.wanjiru, h.otieno, 2_500_000_000, h.chat)
+
+            val mine =
+                h
+                    .listMyChamas(h.wanjiru)
+                    .data()
+                    .toAgentResponse()
+                    .chamas
+            assertEquals(listOf("Holiday Fund"), mine.map { it.name })
+            val fund = mine.single()
+            assertEquals("2500", fund.contributed)
+            assertEquals("2500", fund.myContribution)
+            assertEquals(5, fund.progressPercent)
+            assertEquals("Otieno", fund.treasurer.displayName)
+            assertTrue(fund.contributors.isEmpty(), "the list stays small")
+
+            val one =
+                h
+                    .getChamaDigest(h.wanjiru, h.chat)
+                    .data()
+                    .toAgentResponse()
+                    .chama
+            assertEquals(listOf("Wanjiru"), one.contributors.map { it.person.displayName })
+            assertEquals(listOf("IN"), one.recent.map { it.kind })
+            assertEquals("chama.not_a_member", (h.getChamaDigest(h.wanjiru, otherChat) as Resource.Error).error.code)
+        }
 }
+
+private fun <T> Resource<T>.data(): T = (this as Resource.Success).data

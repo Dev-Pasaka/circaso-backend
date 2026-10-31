@@ -14,14 +14,23 @@ import com.circaso.assistant.presentation.dto.LiveReadyFrame
 import com.circaso.assistant.presentation.dto.LiveReplyDoneFrame
 import com.circaso.assistant.presentation.dto.LiveReplyFrame
 import com.circaso.assistant.presentation.dto.LiveTimingFrame
+import com.circaso.assistant.presentation.dto.LiveToolDoneFrame
 import com.circaso.assistant.presentation.dto.LiveToolRequestFrame
+import com.circaso.assistant.presentation.dto.LiveToolStatusFrame
 import com.circaso.assistant.presentation.dto.LiveTranscriptFrame
 import com.circaso.assistant.presentation.dto.LiveTurnFrame
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
 
 fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
-    LiveVoiceStart(accessToken, agentToken?.takeIf { it.isNotBlank() }, language, chatReading, requestId)
+    LiveVoiceStart(
+        accessToken,
+        agentToken?.takeIf { it.isNotBlank() },
+        language,
+        chatReading,
+        requestId,
+        displayCurrencyOf(currency),
+    )
 
 fun LiveVoiceLine.toReadyJson(): String =
     CircasoJson.encodeToString(
@@ -68,6 +77,20 @@ fun LiveEvent.toJson(): String? =
                     request.toolName,
                     request.argumentsJson,
                 ),
+            )
+        }
+
+        is LiveEvent.ToolStarted -> {
+            CircasoJson.encodeToString(
+                LiveToolStatusFrame.serializer(),
+                LiveToolStatusFrame(status.turnId.toString(), status.callId, status.tool, status.label),
+            )
+        }
+
+        is LiveEvent.ToolFinished -> {
+            CircasoJson.encodeToString(
+                LiveToolDoneFrame.serializer(),
+                LiveToolDoneFrame(status.turnId.toString(), status.callId, status.tool, isOk),
             )
         }
 

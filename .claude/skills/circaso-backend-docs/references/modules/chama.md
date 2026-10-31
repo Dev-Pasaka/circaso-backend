@@ -31,6 +31,15 @@ Built 2026-10-29 (first slice). A **chama** is a group chat with a shared goal. 
 | CH5 | `POST /chama/requests/{id}/approve` and `/decline` | app | `DecideRequest` | admins, once each; one decline closes |
 | CH6 | `POST /chama/requests/{id}/payment` | app | `AttachPayment` | treasurer links their W4 transfer (same payee, amount, chat); `PAID` on confirmation |
 
+Agent routes (read-only, for Asha; built 2026-10-31; scope `agent`, `GET` only; answers in `chama:api` `AgentRoutes.kt`, USDC in whole units as exact strings; service `ChamaAgentService`):
+
+| Route | Use case | Answers |
+| --- | --- | --- |
+| `GET /v1/agent/chama` | `ListMyChamas` | `AgentChamasResponse`: every group the caller is in that has a goal (`ChatDirectory.groupsOf`, new in `messaging:api`), at most 20: target, contributed, paid out, held, the caller's contribution, progress, deadline, treasurer, open requests (at most 10) |
+| `GET /v1/agent/chama/{chatId}` | `GetChamaDigest` | `AgentChamaResponse`: the same plus everyone's contributions by name (at most 30) and the latest 10 ledger lines; members only (`chama.not_a_member`, `chama.no_goal`) |
+
+`GetChama`, `ListLedger` and both agent use cases read through the same `ChamaViews` helper, so they add up the same way.
+
 Contributing has no route of its own: the phone pays the treasurer with W4 (`to.userId` = treasurer, `chatId` = the group) and sends the payment card into the chat; the wallet's `TransferConfirmed` makes it a contribution.
 
 ## Data
