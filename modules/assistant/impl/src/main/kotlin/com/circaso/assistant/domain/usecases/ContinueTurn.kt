@@ -11,6 +11,7 @@ import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.support.AgentTurn
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AssistantConfig
+import com.circaso.assistant.domain.support.ConversationResolver
 import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.isOwnAgentToken
@@ -30,6 +31,7 @@ import java.time.Clock
 class ContinueTurn(
     private val verifier: TokenVerifier,
     private val pending: PendingTurns,
+    private val conversations: ConversationResolver,
     private val agent: AshaAgent,
     private val recorder: TurnRecorder,
     private val config: AssistantConfig,
@@ -76,8 +78,16 @@ class ContinueTurn(
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }
+        // a turn parked before conversations existed goes where an A2 without one would
+        val conversationId =
+            turn.conversationId
+                ?: when (val r = conversations.resolve(turn.userId, null)) {
+                    is Resource.Success -> r.data.conversationId
+                    is Resource.Error -> return r
+                }
         return recorder.conclude(
             turn.userId,
+            conversationId,
             turn.userMessageId,
             turn.userText,
             turn.askedFrom,

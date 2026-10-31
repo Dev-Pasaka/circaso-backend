@@ -34,7 +34,10 @@ private const val TAG = "Asha chat"
 private const val SCOPE = "Scope: `app` (the user token)."
 private const val AGENT_TOKEN_HEADER = "X-Agent-Token"
 
-/** The Asha chat: asking, the phone's answers to device tools, reading and deleting the history. A1, A2, A5, A6 and A9. */
+/**
+ * The Asha chat: asking, the phone's answers to device tools, reading and deleting the history. A1, A2, A5, A6 and A9.
+ * A1 and A5 cover every conversation; one conversation is C1 to C5 (ConversationController).
+ */
 fun Route.chatController(chat: ChatService) {
     authenticate(Scope.APP) {
         route("/assistant/chat") {
@@ -53,12 +56,18 @@ fun Route.chatController(chat: ChatService) {
             }.docs<NoBody, ChatResponse>(
                 "A1 · The Asha chat, newest first",
                 TAG,
-                notes = "$SCOPE Query: `cursor`, `limit` (default 50, at most 100).",
+                notes =
+                    "$SCOPE Query: `cursor`, `limit` (default 50, at most 100). Every conversation's messages, " +
+                        "each with its `conversationId`; one conversation's are C5.",
             )
 
             delete {
                 call.respondDefault(chat.deleteAll(call.userId(), call.callId).toDefaultResponse { it })
-            }.docs<NoBody, NoBody>("A5 · Delete the whole history with Asha", TAG, notes = SCOPE)
+            }.docs<NoBody, NoBody>(
+                "A5 · Delete the whole history with Asha",
+                TAG,
+                notes = "$SCOPE Every conversation and every message.",
+            )
 
             route("/messages") {
                 post {
@@ -75,11 +84,16 @@ fun Route.chatController(chat: ChatService) {
                     listOf(
                         "assistant.quota_exceeded",
                         "assistant.model_unavailable",
+                        "assistant.conversation_not_found",
                         "auth.token_invalid",
                         "request.malformed",
                     ),
                     notes =
-                        "$SCOPE Send the user's own agent token in `X-Agent-Token` (another user's is refused) " +
+                        "$SCOPE `conversationId` (C1, C2) picks the conversation; without it the turn goes to the " +
+                            "user's most recent one, or a new one, and Asha reads only that conversation as " +
+                            "context. `done` carries `conversationId` and the `conversation` (titled after its " +
+                            "first exchange). " +
+                            "Send the user's own agent token in `X-Agent-Token` (another user's is refused) " +
                             "so Asha's tools can read the user's own data, and `currency` (ISO 4217) for amounts " +
                             "in the user's money. `tool_status` `{turnId, callId, tool, label}` and `tool_done` " +
                             "`{turnId, callId, tool, ok}` events bracket each tool call. Replies are markdown with " +

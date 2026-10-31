@@ -9,7 +9,7 @@ import com.circaso.assistant.presentation.dto.ErrorEvent
 import com.circaso.assistant.presentation.dto.ToolDoneEvent
 import com.circaso.assistant.presentation.dto.ToolRequestEvent
 import com.circaso.assistant.presentation.dto.ToolStatusEvent
-import com.circaso.assistant.presentation.mappers.toDto
+import com.circaso.assistant.presentation.mappers.toDoneEvent
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
 import com.circaso.web.EnvelopeSent
@@ -114,11 +114,18 @@ private fun Writer.finished(result: Resource<TurnResult>) {
         }
     when (turn) {
         is TurnResult.Answer -> {
-            event("done", CircasoJson.encodeToString(DoneEvent.serializer(), DoneEvent(turn.message.toDto())))
+            event("done", CircasoJson.encodeToString(DoneEvent.serializer(), turn.toDoneEvent()))
         }
 
         is TurnResult.NeedsDevice -> {
-            val request = ToolRequestEvent(turn.turnId.toString(), turn.callId, turn.toolName, turn.argumentsJson)
+            val request =
+                ToolRequestEvent(
+                    turn.turnId.toString(),
+                    turn.callId,
+                    turn.toolName,
+                    turn.argumentsJson,
+                    turn.conversationId.toString(),
+                )
             event("tool_request", CircasoJson.encodeToString(ToolRequestEvent.serializer(), request))
         }
     }

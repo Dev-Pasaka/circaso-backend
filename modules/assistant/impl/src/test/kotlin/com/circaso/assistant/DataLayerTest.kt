@@ -66,6 +66,9 @@ class DataLayerTest {
             local = true,
         )
     private val transactor = DatabaseTransactor(database)
+
+    /** The conversation the tests' messages are in, unless a test names another. */
+    private val conversation: UUID = Uuid7.generate(now)
     private val chat = ChatRepositoryImpl(database, vault)
     private val store = AssistantStoreImpl(database, vault, clock)
     private val deleteExchange = DeleteExchange(chat, transactor, store)
@@ -119,6 +122,7 @@ class DataLayerTest {
         replyTo: UUID? = null,
         answeredBy: UUID? = null,
         note: ReadNote? = null,
+        conversationId: UUID = conversation,
     ) = ChatMessage(
         user,
         Uuid7.generate(at),
@@ -129,14 +133,15 @@ class DataLayerTest {
         if (role == Role.USER) "Family" else null,
         note,
         at,
+        conversationId,
     )
 
     /** A question and Asha's answer to it, linked both ways, as a turn saves them. */
     private fun exchange(user: UserId, at: Instant = now): Pair<ChatMessage, ChatMessage> {
         val questionId = Uuid7.generate(at)
         val answerId = Uuid7.generate(at.plusMillis(1))
-        val question = ChatMessage(user, questionId, Role.USER, "q", null, answerId, null, null, at)
-        val answer = ChatMessage(user, answerId, Role.ASHA, "a", questionId, null, null, null, at)
+        val question = ChatMessage(user, questionId, Role.USER, "q", null, answerId, null, null, at, conversation)
+        val answer = ChatMessage(user, answerId, Role.ASHA, "a", questionId, null, null, null, at, conversation)
         return question to answer
     }
 

@@ -5,6 +5,7 @@ import com.circaso.integrations.api.LiveTranscriptionSession
 import com.circaso.shared.DomainError
 import com.circaso.shared.UserId
 import java.time.Duration
+import java.util.UUID
 
 /** What the phone's first frame on the live voice socket (A11) says. */
 data class LiveVoiceStart(
@@ -17,6 +18,8 @@ data class LiveVoiceStart(
     val requestId: String?,
     /** The user's display currency (ISO 4217), for amounts in their own money; null when unknown. */
     val currency: String? = null,
+    /** The conversation the call's turns are saved in; null for the most recent one (or a new one), as on A2. */
+    val conversationId: UUID? = null,
 )
 
 /** An accepted live session: who is talking, the vendor sessions, and the allowance it runs against. */

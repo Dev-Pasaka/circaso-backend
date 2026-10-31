@@ -16,6 +16,8 @@ data class SendMessageRequest(
     val chatReading: Boolean = true,
     /** The user's display currency (ISO 4217, `KES`): Asha shows amounts in it, at today's rate. */
     val currency: String? = null,
+    /** The conversation to ask in (C1, C2); without it, the user's most recent one, or a new one if they have none. */
+    val conversationId: String? = null,
 )
 
 @Serializable
@@ -30,6 +32,7 @@ data class ChatMessageDto(
     val askedFrom: String? = null,
     val readNote: ReadNoteDto? = null,
     @Serializable(with = InstantSerializer::class) val at: Instant,
+    val conversationId: String,
 )
 
 @Serializable
@@ -74,10 +77,40 @@ data class ToolRequestEvent(
     val callId: String,
     val name: String,
     val arguments: String,
+    val conversationId: String? = null,
+)
+
+/**
+ * The saved reply, and the conversation it was saved in (C1's shape, with its title after the first exchange);
+ * [conversation] is null when the conversation was deleted while Asha answered, and nothing was saved.
+ */
+@Serializable
+data class DoneEvent(
+    val message: ChatMessageDto,
+    val conversationId: String,
+    val conversation: ConversationDto? = null,
+)
+
+/** One conversation with Asha (C1 to C3). [title] is "New chat" until its first question titles it. */
+@Serializable
+data class ConversationDto(
+    val conversationId: String,
+    val title: String,
+    @Serializable(with = InstantSerializer::class) val createdAt: Instant,
+    @Serializable(with = InstantSerializer::class) val updatedAt: Instant,
+    @Serializable(with = InstantSerializer::class) val lastMessageAt: Instant,
 )
 
 @Serializable
-data class DoneEvent(val message: ChatMessageDto)
+data class ConversationsResponse(val conversations: List<ConversationDto>, val nextCursor: String? = null)
+
+/** C2: a new, empty conversation; [title] is optional (without one, the first question titles it). */
+@Serializable
+data class CreateConversationRequest(val title: String? = null)
+
+/** C3: the user's own title, 1 to 80 characters. */
+@Serializable
+data class RenameConversationRequest(val title: String)
 
 /** Asha is about to use a tool: [label] is the server's line for it ("Checking your payments…"). */
 @Serializable

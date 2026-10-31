@@ -4,12 +4,19 @@ import com.circaso.assistant.domain.models.AskedFrom
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.ChatPage
 import com.circaso.assistant.domain.models.ChatSnippet
+import com.circaso.assistant.domain.models.Conversation
+import com.circaso.assistant.domain.models.ConversationPage
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.TurnCommand
+import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.Usage
 import com.circaso.assistant.domain.models.VoiceClip
+import com.circaso.assistant.domain.support.ConversationTitles
 import com.circaso.assistant.presentation.dto.ChatMessageDto
 import com.circaso.assistant.presentation.dto.ChatResponse
+import com.circaso.assistant.presentation.dto.ConversationDto
+import com.circaso.assistant.presentation.dto.ConversationsResponse
+import com.circaso.assistant.presentation.dto.DoneEvent
 import com.circaso.assistant.presentation.dto.ReadNoteDto
 import com.circaso.assistant.presentation.dto.SendMessageRequest
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
@@ -34,6 +41,10 @@ fun SendMessageRequest.toCommand(
             displayCurrencyOf(it)
                 ?: return Resource.error(SharedError.Malformed("currency", "is not an ISO 4217 currency code"))
         }
+    val conversation =
+        conversationId?.let {
+            parseUuid(it) ?: return Resource.error(SharedError.Malformed("conversationId", "is not valid"))
+        }
     return Resource.success(
         TurnCommand(
             userId,
@@ -45,6 +56,7 @@ fun SendMessageRequest.toCommand(
             agentToken,
             requestId,
             currency = code,
+            conversationId = conversation,
         ),
     )
 }
@@ -88,9 +100,23 @@ fun ChatMessage.toDto() =
         askedFrom,
         readNote?.let { ReadNoteDto(it.chatIds, it.chatNames, it.messageCount) },
         createdAt,
+        conversationId.toString(),
     )
 
 fun ChatPage.toResponse() = ChatResponse(messages.map { it.toDto() }, nextCursor)
+
+fun Conversation.toDto() =
+    ConversationDto(
+        conversationId.toString(),
+        ConversationTitles.shownFor(this),
+        createdAt,
+        updatedAt,
+        lastMessageAt,
+    )
+
+fun ConversationPage.toResponse() = ConversationsResponse(conversations.map { it.toDto() }, nextCursor)
+
+fun TurnResult.Answer.toDoneEvent() = DoneEvent(message.toDto(), conversationId.toString(), conversation?.toDto())
 
 fun Usage.toResponse() =
     UsageResponse(
