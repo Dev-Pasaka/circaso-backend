@@ -21,6 +21,8 @@ import com.circaso.status.domain.usecases.PostMoment
 import com.circaso.status.domain.usecases.PrepareMomentMedia
 import com.circaso.status.domain.usecases.PurgeMomentMedia
 import com.circaso.status.domain.usecases.RemoveAccountMoments
+import com.circaso.status.domain.usecases.RequestMomentKeys
+import com.circaso.status.domain.usecases.ShareMomentKeyCopies
 import com.circaso.status.domain.usecases.ViewMoment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +58,9 @@ class StatusHarness(val config: StatusConfig = StatusConfig()) {
     val views = ListViews(moments, clock)
     val delete = DeleteMoment(moments, removal, clock)
     val removeAccount = RemoveAccountMoments(moments, media, removal)
+    val throttle = MemoryThrottle(clock)
+    val requestKeys = RequestMomentKeys(moments, momentReach, throttle, frames, config, clock)
+    val shareKeyCopies = ShareMomentKeyCopies(moments, transactor, momentReach, frames, config, clock)
 
     val body: String = base64(48)
 

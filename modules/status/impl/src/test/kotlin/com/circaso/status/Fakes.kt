@@ -12,6 +12,7 @@ import com.circaso.status.domain.models.ReactionChange
 import com.circaso.status.domain.models.ViewCounts
 import com.circaso.status.domain.models.ViewRecord
 import com.circaso.status.domain.ports.FrameSender
+import com.circaso.status.domain.ports.KeyRequestThrottle
 import com.circaso.status.domain.ports.MediaStorage
 import com.circaso.status.domain.ports.Transactor
 import com.circaso.status.domain.repositories.MediaRepository
@@ -115,6 +116,26 @@ class MemoryMoments : MomentRepository {
     }
 
     override suspend fun allPostedBy(posterId: UserId) = moments.values.filter { it.posterId == posterId }
+
+    override suspend fun postersShowing(
+        viewer: UserId,
+        posters: Collection<UserId>,
+        now: Instant,
+    ) = moments.values
+        .filter { it.expiresAt > now && it.posterId in posters && audience[it.momentId]?.containsKey(viewer) == true }
+        .map { it.posterId }
+        .toSet()
+
+    override suspend fun replaceKeyCopy(
+        momentId: MomentId,
+        userId: UserId,
+        keyCopy: String,
+    ): Boolean {
+        val rows = audience[momentId] ?: return false
+        val row = rows[userId] ?: return false
+        rows[userId] = row.copy(keyCopy = keyCopy)
+        return true
+    }
 
     override suspend fun leaveAudiences(userId: UserId) = audience.values.count { it.remove(userId) != null }
 
@@ -226,6 +247,23 @@ class MemoryStorage : MediaStorage {
     override suspend fun delete(posterId: UserId, mediaId: UUID): Boolean {
         if (failing) return false
         objects.remove(key(posterId, mediaId))
+        return true
+    }
+}
+
+/** The Redis claim with the harness clock: a pair's claim lasts its window. */
+class MemoryThrottle(private val clock: Clock) : KeyRequestThrottle {
+    private val until = mutableMapOf<Pair<UserId, UserId>, Instant>()
+
+    override suspend fun claim(
+        requester: UserId,
+        poster: UserId,
+        window: Duration,
+    ): Boolean {
+        val now = clock.instant()
+        val held = until[requester to poster]
+        if (held != null && held > now) return false
+        until[requester to poster] = now.plus(window)
         return true
     }
 }

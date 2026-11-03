@@ -58,6 +58,13 @@ sealed class StatusError(
         ErrorKind.INVALID,
     )
 
+    /** The key request's posters, or the key copies: none, too many, a repeat, yourself, or a copy too large. */
+    data object KeysInvalid : StatusError(
+        "status.keys_invalid",
+        "That key request can't be sent.",
+        ErrorKind.INVALID,
+    )
+
     class TooManyMoments(retryAfterSeconds: Long) :
         StatusError(
             "status.too_many_moments",

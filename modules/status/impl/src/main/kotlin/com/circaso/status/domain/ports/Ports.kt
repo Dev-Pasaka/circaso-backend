@@ -47,6 +47,18 @@ interface FrameSender {
     suspend fun send(userIds: Collection<UserId>, frame: StatusFrame)
 }
 
+/**
+ * One key request per (requester, poster) per window: the first [claim] in a window wins, later ones until it ends
+ * answer false. Lives in Redis (`sts:keyreq:{requester}:{poster}`), so nothing about it reaches the database.
+ */
+interface KeyRequestThrottle {
+    suspend fun claim(
+        requester: UserId,
+        poster: UserId,
+        window: Duration,
+    ): Boolean
+}
+
 /** The frames `status` has kept, so a phone that reconnects can catch up. */
 interface RealtimeLog {
     /** Frames after [seq], oldest first. */

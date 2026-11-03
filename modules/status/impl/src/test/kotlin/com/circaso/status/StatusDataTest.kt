@@ -93,6 +93,24 @@ class StatusDataTest {
         }
 
     @Test
+    fun `a key request finds the posters showing the viewer something live, and a fresh copy replaces the old one`() =
+        runBlocking<Unit> {
+            val posted = moment()
+            moments.insert(posted, listOf(AudienceMember(amina, "b2xk")))
+            val other = UserId.new()
+
+            assertEquals(setOf(poster), moments.postersShowing(amina, listOf(poster, other), now))
+            assertTrue(moments.postersShowing(baraka, listOf(poster), now).isEmpty())
+            assertTrue(moments.postersShowing(amina, listOf(poster), now.plus(Duration.ofHours(24))).isEmpty())
+            assertTrue(moments.postersShowing(amina, emptyList(), now).isEmpty())
+
+            assertTrue(moments.replaceKeyCopy(posted.momentId, amina, "bmV3"))
+            assertEquals("bmV3", moments.member(posted.momentId, amina)?.keyCopy)
+            assertFalse(moments.replaceKeyCopy(posted.momentId, baraka, "bmV3"))
+            assertNull(moments.member(posted.momentId, baraka))
+        }
+
+    @Test
     fun `the audience lists what was shown to them and the poster their own, by moment id after the cursor`() =
         runBlocking<Unit> {
             val ids = (1..3).map { moment().also { moments.insert(it, listOf(AudienceMember(amina, null))) }.momentId }

@@ -218,6 +218,38 @@ class MomentRepositoryImpl(private val database: Database) : MomentRepository {
                 .toList()
         }
 
+    override suspend fun postersShowing(
+        viewer: UserId,
+        posters: Collection<UserId>,
+        now: Instant,
+    ): Set<UserId> {
+        if (posters.isEmpty()) return emptySet()
+        return database.tx("moments.posters-showing") {
+            AudienceTable
+                .join(MomentsTable, JoinType.INNER, AudienceTable.momentId, MomentsTable.momentId)
+                .select(MomentsTable.posterId)
+                .withDistinct()
+                .where {
+                    (AudienceTable.userId eq viewer.value) and
+                        (MomentsTable.posterId inList posters.map { it.value }) and
+                        (MomentsTable.expiresAt greater now)
+                }.map { UserId(it[MomentsTable.posterId]) }
+                .toList()
+                .toSet()
+        }
+    }
+
+    override suspend fun replaceKeyCopy(
+        momentId: MomentId,
+        userId: UserId,
+        keyCopy: String,
+    ): Boolean =
+        database.tx("audience.replace-key-copy") {
+            AudienceTable.update(where = {
+                (AudienceTable.momentId eq momentId.value) and (AudienceTable.userId eq userId.value)
+            }) { it[AudienceTable.keyCopy] = keyCopy } > 0
+        }
+
     override suspend fun leaveAudiences(userId: UserId): Int =
         database.tx("audience.leave-all") {
             AudienceTable.deleteWhere { AudienceTable.userId eq userId.value }
