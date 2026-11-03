@@ -8,6 +8,7 @@ import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.HistoryQuery
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.support.Counterparties
+import com.circaso.wallet.domain.support.Holders
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneOffset
@@ -24,8 +25,15 @@ class ListTransactions(
     private val transactions: TransactionRepository,
     private val counterparties: Counterparties,
     private val rates: ExchangeRates,
+    private val holders: Holders,
 ) {
-    suspend operator fun invoke(query: HistoryQuery): Resource<HistoryPage> {
+    suspend operator fun invoke(asked: HistoryQuery): Resource<HistoryPage> {
+        // A group wallet's history is every member's to read (decision 2026-11-03: everyone sees every payment).
+        val query =
+            when (val access = holders.view(asked.userId, asked.walletId)) {
+                is Resource.Success -> asked.copy(userId = access.data.owner.holder)
+                is Resource.Error -> return access
+            }
         val page = query.limit.coerceIn(1, MAX_LIMIT)
         val from = latest(query.month?.let(::startOf), query.from)
         val until = earliest(query.month?.plusMonths(1)?.let(::startOf), query.until)

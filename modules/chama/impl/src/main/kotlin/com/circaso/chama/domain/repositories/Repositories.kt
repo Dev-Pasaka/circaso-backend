@@ -4,6 +4,7 @@ import com.circaso.chama.api.RequestId
 import com.circaso.chama.domain.models.Approval
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Goal
+import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.messaging.api.ChatId
@@ -16,6 +17,17 @@ interface GoalRepository {
 
     /** Inserts or replaces the chat's goal (one per chat). */
     suspend fun save(goal: Goal)
+
+    /** Removes the chat's target (CH8); true if there was one. Its contributions stay in the ledger. */
+    suspend fun delete(chatId: ChatId): Boolean
+}
+
+/** `group_settings`: who approves a group's payouts. */
+interface SettingsRepository {
+    /** The group's settings, or the default when it never chose. */
+    suspend fun find(chatId: ChatId): GroupSettings
+
+    suspend fun save(settings: GroupSettings)
 }
 
 interface ContributionRepository {
@@ -28,8 +40,11 @@ interface ContributionRepository {
         before: Instant?,
     ): List<Contribution>
 
-    /** Per member, the sum of what they put in. */
-    suspend fun totals(chatId: ChatId): Map<UserId, Long>
+    /**
+     * Per member, the sum of what they put into the group wallet, never counting legacy contributions (paid to a
+     * treasurer); only since [since] when given (a target counts from when it was set).
+     */
+    suspend fun totals(chatId: ChatId, since: Instant? = null): Map<UserId, Long>
 }
 
 interface RequestRepository {

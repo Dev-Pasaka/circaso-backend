@@ -13,7 +13,7 @@ data class SetGoalRequest(
     val target: AmountRequest,
     /** ISO-8601, optional. */
     val deadline: String? = null,
-    /** Whose wallet holds the money; the caller when left out. Must be a member. */
+    /** Retired with the treasurer model (decision 2026-11-03): ignored; the money goes to the group's wallet. */
     val treasurerUserId: String? = null,
 )
 
@@ -26,7 +26,8 @@ data class GoalDto(
     val name: String,
     val target: WalletAmount,
     val deadline: String? = null,
-    val treasurerUserId: String,
+    /** Who sends from the group wallet (its signer); the treasurer on goals from before group wallets. */
+    val treasurerUserId: String? = null,
     val createdBy: String,
     val updatedAt: String,
     val version: Long,
@@ -47,8 +48,55 @@ data class ChamaResponse(
     val contributors: List<ContributorDto>,
     val openRequests: List<RequestDto>,
     val isAdmin: Boolean,
+    /** Whether you send from the group wallet (its signer). */
     val isTreasurer: Boolean,
+    /** The group wallet's id (W1 `?walletId=`), null before it is set up (added 2026-11-03). */
+    val walletId: String? = null,
+    /** `TWO_ADMINS` or `ANY_ADMIN`. */
+    val approvalPolicy: String = "TWO_ADMINS",
 )
+
+/** CH7 `GET /chama/chats/{chatId}/money`: a group's money, target or not (added 2026-11-03). */
+@Serializable
+data class GroupMoneyResponse(
+    val chatId: String,
+    /** The group's wallet; null before the owner sets one up (no money actions in the group then). */
+    val wallet: GroupWalletDto? = null,
+    /** `TWO_ADMINS` (every admin when there are fewer) or `ANY_ADMIN`. */
+    val approvalPolicy: String,
+    /** The target; null when the group has none. */
+    val goal: GoalDto? = null,
+    val memberCount: Int,
+    /** Towards the target, since it was set; zero without one. */
+    val contributed: WalletAmount,
+    val myContribution: WalletAmount,
+    val contributors: List<ContributorDto>,
+    val paidOut: WalletAmount,
+    val openRequests: List<RequestDto>,
+    val isAdmin: Boolean,
+    /** The group's owner: chooses who approves payouts (CH9). */
+    val isOwner: Boolean,
+    /** You send from the group wallet: you pay approved requests (W4 with `walletId` and `payoutRequestId`). */
+    val isSigner: Boolean,
+)
+
+@Serializable
+data class GroupWalletDto(
+    val walletId: String,
+    /** `SETTING_UP` or `ACTIVE`. */
+    val status: String,
+    val signerUserId: String,
+)
+
+/** CH9 `PUT /chama/chats/{chatId}/settings`. */
+@Serializable
+data class GroupSettingsRequest(
+    /** `TWO_ADMINS` or `ANY_ADMIN`. */
+    val approvalPolicy: String,
+)
+
+@Serializable
+data class GroupSettingsDto(val chatId: String, val approvalPolicy: String, val updatedAt: String? = null)
 
 @Serializable
 data class LedgerEntryDto(

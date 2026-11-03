@@ -37,7 +37,7 @@ class WalletAgentTest {
     private val profiles = NamedProfiles()
     private val rates = FakeRates().apply { rates["KES"] = BigDecimal("129.50") }
     private val counterparties = Counterparties(profiles)
-    private val list = ListTransactions(transactions, counterparties, rates)
+    private val list = ListTransactions(transactions, counterparties, rates, personalHolders())
     private val summarise = SummariseTransactions(transactions, counterparties, rates)
     private val one = GetTransaction(transactions, counterparties, rates)
     private val amina = UserId.new()

@@ -140,4 +140,60 @@ sealed class WalletError(
         "You can't reach that person.",
         ErrorKind.FORBIDDEN,
     )
+
+    // ---- group wallets (Spaces phase 2, decision 2026-11-03) ----
+
+    data object GroupNotFound : WalletError(
+        "wallet.group_not_found",
+        "We couldn't find that group.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    data object NotGroupOwner : WalletError(
+        "wallet.not_group_owner",
+        "Only the group's owner can set up its wallet.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object NotSigner : WalletError(
+        "wallet.not_signer",
+        "Only the wallet's owner can send from it or change it.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object SignerLeft : WalletError(
+        "wallet.signer_left",
+        "The person who holds this wallet's PIN has left the group, so nothing can be sent from it for now.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object PayoutRequired : WalletError(
+        "wallet.payout_required",
+        "Money leaves a group wallet only for a payout the admins approved.",
+        ErrorKind.INVALID,
+    )
+
+    data object PayoutNotApproved : WalletError(
+        "wallet.payout_not_approved",
+        "This payout isn't approved, or it has already been paid.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object PayoutMismatch : WalletError(
+        "wallet.payout_mismatch",
+        "This payment doesn't match the approved payout (who it's to or the amount).",
+        ErrorKind.INVALID,
+    )
+
+    data object GroupFundsRemaining : WalletError(
+        "wallet.group_funds_remaining",
+        "A group wallet you hold the PIN for still holds money. Pay it out before deleting the account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object PayoutInProgress : WalletError(
+        "wallet.payout_in_progress",
+        "This payout is already being paid.",
+        ErrorKind.CONFLICT,
+    )
 }

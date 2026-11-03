@@ -8,7 +8,8 @@ import org.jetbrains.exposed.v1.javatime.timestamp
  * One row per transfer W4 prepared, unique per sender and `Idempotency-Key` for good. Its state moves only by the
  * transition guard (`UPDATE … WHERE state IN (<allowed predecessors>)`), so a late or repeated webhook changes
  * nothing.
- * The open-transfer index for the jobs (WS4) is a partial index in the migration.
+ * The open-transfer index for the jobs (WS4) and the payout lookup (`transfers_payout_idx`) are
+ * partial indexes in the migrations.
  */
 object TransfersTable : Table("wallet.transfers") {
     val transferId = javaUUID("transfer_id")
@@ -30,6 +31,10 @@ object TransfersTable : Table("wallet.transfers") {
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
     val version = long("version").default(0)
+    val signerId = javaUUID("signer_id").nullable()
+    val payoutRequestId = javaUUID("payout_request_id").nullable()
+    val fromGroupId = javaUUID("from_group_id").nullable()
+    val toGroupId = javaUUID("to_group_id").nullable()
     override val primaryKey = PrimaryKey(transferId)
 
     init {

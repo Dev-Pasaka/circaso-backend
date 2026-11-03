@@ -1,20 +1,29 @@
 package com.circaso.wallet.presentation.mappers
 
 import com.circaso.integrations.api.SdkSession
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.AddChainCommand
 import com.circaso.wallet.domain.models.AssetTotal
 import com.circaso.wallet.domain.models.ChainAddition
 import com.circaso.wallet.domain.models.ChainHoldings
 import com.circaso.wallet.domain.models.ChainOption
+import com.circaso.wallet.domain.models.CreateGroupWalletCommand
 import com.circaso.wallet.domain.models.CreateWalletCommand
 import com.circaso.wallet.domain.models.FiatValue
+import com.circaso.wallet.domain.models.GroupWalletSetup
+import com.circaso.wallet.domain.models.GroupWalletView
 import com.circaso.wallet.domain.models.Holding
+import com.circaso.wallet.domain.models.WalletListing
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.models.WalletSetup
+import com.circaso.wallet.domain.models.WalletStatus
 import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.domain.support.Amounts
 import com.circaso.wallet.presentation.dto.AddChainRequest
@@ -26,9 +35,14 @@ import com.circaso.wallet.presentation.dto.ChainOptionDto
 import com.circaso.wallet.presentation.dto.ChainsResponse
 import com.circaso.wallet.presentation.dto.CreateWalletResponse
 import com.circaso.wallet.presentation.dto.FiatDto
+import com.circaso.wallet.presentation.dto.GroupWalletResponse
+import com.circaso.wallet.presentation.dto.GroupWalletSetupResponse
 import com.circaso.wallet.presentation.dto.HoldDto
 import com.circaso.wallet.presentation.dto.SdkDto
+import com.circaso.wallet.presentation.dto.WalletListingDto
+import com.circaso.wallet.presentation.dto.WalletOwnerDto
 import com.circaso.wallet.presentation.dto.WalletResponse
+import com.circaso.wallet.presentation.dto.WalletsResponse
 import java.util.Currency
 import java.util.UUID
 
@@ -47,9 +61,33 @@ private val CURRENCIES: Set<String> = Currency.getAvailableCurrencies().map { it
 
 internal fun malformed(field: String, why: String) = Resource.error(SharedError.Malformed(field, why))
 
-/** W1's `?currency=`: absent, or an ISO 4217 code (any case; answered in capitals). */
-fun walletQuery(userId: UserId, currency: String?): Resource<WalletQuery> =
-    currencyCodeOf(currency).map { WalletQuery(userId, it) }
+/** W1's `?currency=`: absent, or an ISO 4217 code (any case; answered in capitals); `?walletId=` as [walletIdOf]. */
+fun walletQuery(
+    userId: UserId,
+    currency: String?,
+    walletId: String? = null,
+): Resource<WalletQuery> =
+    walletIdOf(walletId).flatMap { id -> currencyCodeOf(currency).map { WalletQuery(userId, it, id) } }
+
+/**
+ * `?walletId=` (decision 2026-11-03): absent for your own wallet, or a wallet's id (your user id, or a group wallet's
+ * id from W15 or W16).
+ */
+fun walletIdOf(raw: String?): Resource<WalletId?> {
+    if (raw == null) return Resource.success(null)
+    return WalletId.parse(raw.trim())?.let { Resource.success(it) } ?: malformed("walletId", "is not an id")
+}
+
+/** W14's and W15's `{chatId}`. */
+fun groupIdOf(raw: String?): Resource<ChatId> =
+    raw?.let { ChatId.parse(it) }?.let { Resource.success(it) } ?: malformed("chatId", "is not an id")
+
+fun createGroupWalletCommand(
+    userId: UserId,
+    chatId: ChatId,
+    requestKey: String,
+): CreateGroupWalletCommand =
+    CreateGroupWalletCommand(userId, chatId, circleKey(userId, "wallet.create-group:$chatId", requestKey))
 
 /** A `currency` query value: null when absent, the ISO 4217 code in capitals, or `request.malformed`. */
 internal fun currencyCodeOf(currency: String?): Resource<String?> {
@@ -63,9 +101,9 @@ fun createWalletCommand(userId: UserId, requestKey: String): CreateWalletCommand
     CreateWalletCommand(userId, circleKey(userId, "wallet.create", requestKey))
 
 /** W12's add; Circle's key comes from the user, the chain and the hour, not the request (decision 2026-10-28). */
-fun AddChainRequest.toCommand(userId: UserId): Resource<AddChainCommand> {
+fun AddChainRequest.toCommand(userId: UserId, walletId: WalletId? = null): Resource<AddChainCommand> {
     val chain = chainOf(blockchain) ?: return malformed("blockchain", "is not a blockchain name")
-    return Resource.success(AddChainCommand(userId, chain))
+    return Resource.success(AddChainCommand(userId, chain, walletId))
 }
 
 /**
@@ -88,9 +126,35 @@ fun WalletView.toResponse() =
         totals = totals.map { it.toDto() },
         fiat = fiat?.toDto(),
         hold = hold?.let { HoldDto(it.until) },
+        walletId = access?.owner?.walletId?.toString(),
+        owner = access?.owner?.toDto(),
+        canSign = access?.canSign ?: true,
     )
 
 fun WalletSetup.toResponse() = CreateWalletResponse(status.name, challengeId, sdk.toDto())
+
+fun WalletOwner.toDto() =
+    when (this) {
+        is WalletOwner.Person -> WalletOwnerDto(type.name, userId = userId.toString(), signerUserId = "$signerId")
+        is WalletOwner.Group -> WalletOwnerDto(type.name, chatId = chatId.toString(), signerUserId = "$signerId")
+    }
+
+fun GroupWalletSetup.toResponse() =
+    GroupWalletSetupResponse(
+        walletId = owner.walletId.toString(),
+        chatId = owner.chatId.toString(),
+        status = setup.status.name,
+        challengeId = setup.challengeId,
+        sdk = setup.sdk.toDto(),
+    )
+
+fun WalletListing.toDto() =
+    WalletListingDto(owner.walletId.toString(), owner.toDto(), status.name, canSign, blockchains)
+
+fun GroupWalletView.toResponse() =
+    GroupWalletResponse(chatId.toString(), listing?.status?.name ?: WalletStatus.NONE.name, listing?.toDto())
+
+fun List<WalletListing>.toResponse() = WalletsResponse(map { it.toDto() })
 
 fun List<ChainOption>.toResponse() =
     ChainsResponse(

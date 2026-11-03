@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.ports
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.PaymentHold
 import java.time.LocalDate
 import java.util.UUID
@@ -19,6 +20,7 @@ sealed interface WalletFrame {
         val amount: Money,
         val txHash: String?,
         val failureReason: String?,
+        val walletId: WalletId? = null,
     ) : WalletFrame
 
     data class PaymentReceived(
@@ -27,9 +29,10 @@ sealed interface WalletFrame {
         val amount: Money,
         val fromUserId: UserId?,
         val fromName: String?,
+        val walletId: WalletId? = null,
     ) : WalletFrame
 
-    data class WalletReady(val blockchain: String) : WalletFrame
+    data class WalletReady(val blockchain: String, val walletId: WalletId? = null) : WalletFrame
 
     data class SetupRequested(val fromUserId: UserId, val fromName: String) : WalletFrame
 }

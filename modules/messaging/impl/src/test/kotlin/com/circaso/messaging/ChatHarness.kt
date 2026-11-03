@@ -16,6 +16,7 @@ import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetMembers
+import com.circaso.messaging.domain.usecases.GetOwner
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
@@ -92,6 +93,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
             GetAdmins(membership),
             IsGroup(chats),
             ListGroupIds(chats),
+            GetOwner(chats),
         )
     val directory = ChatDirectoryImpl(service)
 

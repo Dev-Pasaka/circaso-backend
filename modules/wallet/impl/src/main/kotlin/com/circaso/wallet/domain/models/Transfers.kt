@@ -5,6 +5,7 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.WalletId
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -57,6 +58,9 @@ sealed interface Payee {
     data class Address(val address: String) : Payee {
         override fun toString(): String = "Address(***)"
     }
+
+    /** A group's wallet (decision 2026-11-03): a member pays into it, a contribution when the group has a target. */
+    data class Group(val chatId: ChatId) : Payee
 }
 
 /** A transfer prepared by W4, from one of the sender's chain wallets. Amounts and addresses are never logged. */
@@ -80,7 +84,18 @@ data class Transfer(
     val failureReason: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /** Who signed it; null on transfers written before group wallets, where it was always [senderId]. */
+    val signerId: UserId? = null,
+    /** The approved payout request it pays, when it leaves a group wallet. */
+    val payoutRequestId: UUID? = null,
+    /** The group whose wallet it leaves ([senderId] is then that wallet's holder id). */
+    val fromGroupId: ChatId? = null,
+    /** The group whose wallet it pays ([recipientId] is then that wallet's holder id). */
+    val toGroupId: ChatId? = null,
 ) {
+    /** The person who signed it. */
+    val signer: UserId get() = signerId ?: senderId
+
     /** Until when the user can sign it; then `ExpireUnsignedTransfers` (WS4) marks it `EXPIRED`. */
     val expiresAt: Instant get() = createdAt.plus(SIGNING_WINDOW)
 
@@ -89,6 +104,14 @@ data class Transfer(
     companion object {
         val SIGNING_WINDOW: Duration = Duration.ofMinutes(15)
     }
+}
+
+/**
+ * W5's answer: the transfer and the side it is seen from ([side]: the wallet holder whose payment it is to the caller,
+ * the sender's for `OUT`, the recipient's for `IN`).
+ */
+data class SeenTransfer(val transfer: Transfer, val side: UserId) {
+    val isOutgoing: Boolean get() = side == transfer.senderId
 }
 
 /** What an update brings besides the state; null leaves the stored value as it is. */
@@ -122,7 +145,11 @@ data class WalletTransaction(
     override fun toString(): String = "WalletTransaction($id, $direction, $state)"
 }
 
-/** W4's request in the domain's words. [idempotencyKey] is derived from the request's `Idempotency-Key`. */
+/**
+ * W4's request in the domain's words. [senderId] is the caller, who signs; [walletId] is the wallet it leaves (null:
+ * their own), and a group wallet needs the admins' approved [payoutRequestId]. [idempotencyKey] is derived from the
+ * request's `Idempotency-Key`.
+ */
 data class TransferCommand(
     val senderId: UserId,
     val blockchain: String,
@@ -131,6 +158,8 @@ data class TransferCommand(
     val chatId: ChatId?,
     val proposalId: UUID?,
     val idempotencyKey: UUID,
+    val walletId: WalletId? = null,
+    val payoutRequestId: UUID? = null,
 )
 
 /**

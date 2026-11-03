@@ -6,6 +6,7 @@ import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.Holding
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.WalletSync
@@ -27,9 +28,29 @@ class CheckFundsBeforeDeletion(
     private val wallets: WalletRepository,
     private val sync: WalletSync,
     private val holdings: HoldingsReader,
+    private val owners: WalletOwnerRepository,
 ) {
+    /**
+     * The person's own wallet, then every group wallet they sign for (decision 2026-11-03): only they can move a
+     * group's money, so deleting them would lock it; they empty it first (`wallet.group_funds_remaining`).
+     */
     suspend operator fun invoke(userId: UserId): Resource<Unit> {
-        val user = wallets.circleUser(userId) ?: return Resource.success(Unit)
+        when (val own = check(userId)) {
+            is Resource.Error -> return own
+            is Resource.Success -> if (own.data) return Resource.error(WalletError.FundsRemaining)
+        }
+        for (group in owners.bySigner(userId)) {
+            when (val held = check(group.holder)) {
+                is Resource.Error -> return held
+                is Resource.Success -> if (held.data) return Resource.error(WalletError.GroupFundsRemaining)
+            }
+        }
+        return Resource.success(Unit)
+    }
+
+    /** Whether the wallet filed under [holder] still holds money; an error when Circle can't say. */
+    private suspend fun check(holder: UserId): Resource<Boolean> {
+        val user = wallets.circleUser(holder) ?: return Resource.success(false)
         val synced =
             when (val read = sync.syncAll(user)) {
                 is Resource.Success -> read.data
@@ -42,9 +63,8 @@ class CheckFundsBeforeDeletion(
                 is Resource.Error -> return read
             }
         }
-        if (held.any { !it.usdPegged && it.amountMinor.signum() > 0 }) return Resource.error(WalletError.FundsRemaining)
-        if (dollars(held) >= CENT) return Resource.error(WalletError.FundsRemaining)
-        return Resource.success(Unit)
+        if (held.any { !it.usdPegged && it.amountMinor.signum() > 0 }) return Resource.success(true)
+        return Resource.success(dollars(held) >= CENT)
     }
 
     /** Circle's wallets, and any open row of ours Circle didn't list, each once. */

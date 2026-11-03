@@ -22,9 +22,12 @@ data class AmountDto(
 @Serializable
 data class AmountRequest(val asset: String, val amountMinor: String? = null, val amount: String? = null)
 
-/** Who to pay: a Circaso user, or an address on the transfer's chain. Exactly one. */
+/**
+ * Who to pay: a Circaso user, an address on the transfer's chain, or a group's wallet (`groupId`, the group chat; you
+ * must be a member). Exactly one.
+ */
 @Serializable
-data class PayeeRequest(val userId: String? = null, val address: String? = null)
+data class PayeeRequest(val userId: String? = null, val address: String? = null, val groupId: String? = null)
 
 /** W4 `POST /wallet/transfers`. */
 @Serializable
@@ -37,6 +40,10 @@ data class PrepareTransferRequest(
     val chatId: String? = null,
     /** For confirming an Asha proposal (Phase B); refused with `request.malformed` until then. */
     val proposalId: String? = null,
+    /** The wallet to pay from (added 2026-11-03): null for your own; a group wallet you sign for. */
+    val walletId: String? = null,
+    /** From a group wallet: the approved payout request this pays (same payee, same amount). */
+    val payoutRequestId: String? = null,
 )
 
 @Serializable
@@ -53,6 +60,8 @@ data class PrepareTransferResponse(
     val fee: AmountDto,
     /** Sign before this, or the transfer expires. */
     @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
+    /** The wallet it leaves: your user id for your own, the group wallet's id otherwise (added 2026-11-03). */
+    val walletId: String? = null,
 )
 
 /** Who a transfer pays: [userId] for a Circaso user (null for an outside address), and the address on chain. */
@@ -81,6 +90,14 @@ data class TransferResponse(
     @Serializable(with = InstantSerializer::class) val createdAt: Instant,
     @Serializable(with = InstantSerializer::class) val updatedAt: Instant,
     @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
+    /** Set when it left a group wallet (`from` is then that wallet's id; added 2026-11-03). */
+    val fromGroupId: String? = null,
+    /** Set when it paid a group wallet (`to.userId` is then that wallet's id): a contribution. */
+    val toGroupId: String? = null,
+    /** Who signed it. */
+    val signerUserId: String? = null,
+    /** The approved payout request it pays. */
+    val payoutRequestId: String? = null,
 )
 
 /** W9 `GET /wallet/recipients/{userId}`. */
@@ -124,6 +141,8 @@ data class CounterpartyDto(
     val handle: String? = null,
     val avatarUrl: String? = null,
     val address: String? = null,
+    /** Set when the other side is a group's wallet (added 2026-11-03); name it from the group on the phone. */
+    val groupId: String? = null,
 )
 
 /** One row of W6. The fields it shares with W5's [TransferResponse] mean the same and have the same type. */

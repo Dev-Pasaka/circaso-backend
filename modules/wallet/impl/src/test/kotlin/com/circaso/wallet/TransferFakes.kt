@@ -10,13 +10,17 @@ import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
+import com.circaso.wallet.api.ApprovedPayout
+import com.circaso.wallet.api.PayoutApprovals
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.PaymentHold
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.ActiveWallets
 import com.circaso.wallet.domain.ports.DailySpend
@@ -29,6 +33,7 @@ import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -73,6 +78,9 @@ class MemoryTransferRepository : TransferRepository {
         rows.values.firstOrNull { it.senderId == senderId && it.idempotencyKey == idempotencyKey }
 
     override suspend fun find(transferId: TransferId): Transfer? = rows[transferId]
+
+    override suspend fun forPayout(payoutRequestId: UUID): List<Transfer> =
+        rows.values.filter { it.payoutRequestId == payoutRequestId }
 
     override suspend fun move(
         transferId: TransferId,
@@ -299,6 +307,7 @@ class FakeReach : ReachPolicy {
 
 class FakeChats : ChatDirectory {
     val members = ConcurrentHashMap<ChatId, Set<UserId>>()
+    val owners = ConcurrentHashMap<ChatId, UserId>()
 
     override suspend fun isMember(chatId: ChatId, userId: UserId): Boolean = userId in members[chatId].orEmpty()
 
@@ -310,6 +319,46 @@ class FakeChats : ChatDirectory {
 
     override suspend fun groupsOf(userId: UserId): List<ChatId> =
         members.filter { (chat, people) -> userId in people && isGroup(chat) }.keys.toList()
+
+    override suspend fun owner(chatId: ChatId): UserId? = owners[chatId]
+
+    /** A group of [people] owned by the first. */
+    fun group(people: List<UserId>): ChatId {
+        val chatId = ChatId.new()
+        members[chatId] = people.toSet()
+        owners[chatId] = people.first()
+        return chatId
+    }
+}
+
+/** `wallet_owners` in memory, one wallet per group as `wallet_owners_chat_key`. */
+class MemoryWalletOwners : WalletOwnerRepository {
+    val rows = ConcurrentHashMap<WalletId, WalletOwner.Group>()
+
+    override suspend fun find(walletId: WalletId): WalletOwner.Group? = rows[walletId]
+
+    override suspend fun byChat(chatId: ChatId): WalletOwner.Group? = rows.values.firstOrNull { it.chatId == chatId }
+
+    override suspend fun byChats(chatIds: Collection<ChatId>): List<WalletOwner.Group> =
+        rows.values.filter { it.chatId in chatIds }
+
+    override suspend fun bySigner(signerId: UserId): List<WalletOwner.Group> =
+        rows.values.filter { it.signerId == signerId }
+
+    override suspend fun insert(owner: WalletOwner.Group): Boolean =
+        synchronized(rows) {
+            val taken = rows.containsKey(owner.walletId) || rows.values.any { it.chatId == owner.chatId }
+            if (!taken) rows[owner.walletId] = owner
+            !taken
+        }
+}
+
+/** Chama's side of option A: the payouts the admins approved, by request id. */
+class FakePayoutApprovals : PayoutApprovals {
+    val approved = ConcurrentHashMap<UUID, ApprovedPayout>()
+
+    override suspend fun approved(chatId: ChatId, requestId: UUID): ApprovedPayout? =
+        approved[requestId]?.takeIf { it.chatId == chatId }
 }
 
 class FakeProfiles : Profiles {

@@ -1,8 +1,10 @@
 package com.circaso.wallet.domain.models
 
 import com.circaso.integrations.api.UsdRate
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Asset
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.WalletId
 import java.time.Instant
 import java.time.YearMonth
 import java.util.UUID
@@ -15,6 +17,7 @@ import java.util.UUID
  * the overlap), [filter] the rows, and [currency] adds each row's worth at today's rate. W6 sets none of them.
  */
 data class HistoryQuery(
+    /** The caller; [walletId] the wallet whose history it is (null: their own; a group wallet's for its members). */
     val userId: UserId,
     val month: YearMonth?,
     val after: HistoryPosition?,
@@ -23,6 +26,7 @@ data class HistoryQuery(
     val until: Instant? = null,
     val filter: HistoryFilter = HistoryFilter.ANY,
     val currency: String? = null,
+    val walletId: WalletId? = null,
 )
 
 /**
@@ -51,6 +55,8 @@ data class Counterparty(
     val handle: String?,
     val avatarUrl: String?,
     val address: String?,
+    /** Set when the other side is a group's wallet ([userId] is then that wallet's id; added 2026-11-03). */
+    val groupId: ChatId? = null,
 )
 
 data class HistoryEntry(val transaction: WalletTransaction, val counterparty: Counterparty)

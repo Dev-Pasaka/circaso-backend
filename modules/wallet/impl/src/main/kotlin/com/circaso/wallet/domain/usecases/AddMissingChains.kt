@@ -3,12 +3,14 @@ package com.circaso.wallet.domain.usecases
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.ChainAddition
 import com.circaso.wallet.domain.models.ChainStatus
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
@@ -30,9 +32,16 @@ class AddMissingChains(
     private val custody: StablecoinCustody,
     private val support: SupportAccountRule,
     private val clock: Clock,
+    private val holders: Holders,
 ) {
-    suspend operator fun invoke(userId: UserId): Resource<List<ChainAddition>> {
-        support.refusal(userId)?.let { return it }
+    /** [walletId] null for the caller's own wallet; a group wallet by its signer, right after W14 (GW5). */
+    suspend operator fun invoke(caller: UserId, walletId: WalletId? = null): Resource<List<ChainAddition>> {
+        support.refusal(caller)?.let { return it }
+        val userId =
+            when (val access = holders.sign(caller, walletId)) {
+                is Resource.Success -> access.data.owner.holder
+                is Resource.Error -> return access
+            }
         val user = wallets.circleUser(userId) ?: return Resource.error(WalletError.NotFound)
         val known =
             when (val synced = sync.sync(user)) {

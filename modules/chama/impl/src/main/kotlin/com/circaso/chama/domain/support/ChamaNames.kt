@@ -17,7 +17,7 @@ class ChamaNames(private val profiles: Profiles) {
             withContributors: Boolean,
         ): Set<UserId> =
             buildSet {
-                add(view.goal.treasurerId)
+                (view.wallet?.signerId ?: view.goal.treasurerId)?.let(::add)
                 if (withContributors) addAll(view.contributorsMinor.keys)
                 view.openRequests.forEach { request ->
                     add(request.requestedBy)

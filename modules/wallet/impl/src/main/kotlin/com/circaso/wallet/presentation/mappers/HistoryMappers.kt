@@ -33,7 +33,13 @@ fun historyQuery(
     rawMonth: String?,
     rawCursor: String?,
     rawLimit: String?,
+    rawWalletId: String? = null,
 ): Resource<HistoryQuery> {
+    val walletId =
+        when (val read = walletIdOf(rawWalletId)) {
+            is Resource.Success -> read.data
+            is Resource.Error -> return read
+        }
     val month =
         rawMonth?.let { raw ->
             val parsed =
@@ -55,7 +61,7 @@ fun historyQuery(
             if (parsed == null || parsed < 1) return malformed("limit", "is not a number from 1 to $MAX_LIMIT")
             parsed.coerceAtMost(MAX_LIMIT)
         }
-    return Resource.success(HistoryQuery(userId, month, after, limit))
+    return Resource.success(HistoryQuery(userId, month, after, limit, walletId = walletId))
 }
 
 /** The cursor is opaque to the app: the last row's time and id, base64url so it sits in a query string as is. */
@@ -93,4 +99,4 @@ private fun HistoryEntry.toDto(): TransactionDto {
     )
 }
 
-private fun Counterparty.toDto() = CounterpartyDto(userId, displayName, handle, avatarUrl, address)
+private fun Counterparty.toDto() = CounterpartyDto(userId, displayName, handle, avatarUrl, address, groupId?.toString())

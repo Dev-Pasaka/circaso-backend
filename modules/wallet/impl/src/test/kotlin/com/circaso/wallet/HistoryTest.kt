@@ -34,7 +34,7 @@ import kotlin.test.assertTrue
 class HistoryTest {
     private val transactions = MemoryTransactionRepository()
     private val profiles = CountingProfiles()
-    private val list = ListTransactions(transactions, Counterparties(profiles), FakeRates())
+    private val list = ListTransactions(transactions, Counterparties(profiles), FakeRates(), personalHolders())
     private val amina = UserId.new()
     private val bob = UserId.new()
 
@@ -181,7 +181,8 @@ class HistoryTest {
                 ChainWallet("w-own", amina, "BASE-SEPOLIA", "SCA", "0xown", ChainWalletState.ACTIVE, Instant.EPOCH),
             )
             profiles.known[bob] = PublicProfile(bob, "Bob", "bob", null, null)
-            val named = ListTransactions(transactions, Counterparties(profiles, wallets), FakeRates())
+            val named =
+                ListTransactions(transactions, Counterparties(profiles, wallets), FakeRates(), personalHolders())
             add(
                 row("2026-10-20T10:00:00Z", counterpartyId = null, address = "0xb0b"),
                 row("2026-10-21T10:00:00Z", counterpartyId = null, address = "0xoutside"),

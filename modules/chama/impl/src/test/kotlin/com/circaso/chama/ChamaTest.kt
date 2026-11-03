@@ -5,19 +5,24 @@ import com.circaso.chama.api.RequestId
 import com.circaso.chama.api.RequestPaid
 import com.circaso.chama.domain.errors.ChamaError
 import com.circaso.chama.domain.models.Approval
+import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.AskPayoutCommand
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
 import com.circaso.chama.domain.models.Goal
+import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.models.SetGoalCommand
+import com.circaso.chama.domain.models.SetSettingsCommand
+import com.circaso.chama.domain.models.WalletTransfer
 import com.circaso.chama.domain.ports.ChamaFrame
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.repositories.ContributionRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
+import com.circaso.chama.domain.repositories.SettingsRepository
 import com.circaso.chama.domain.support.ChamaNames
 import com.circaso.chama.domain.support.ChamaViews
 import com.circaso.chama.domain.support.Members
@@ -26,12 +31,16 @@ import com.circaso.chama.domain.usecases.AskPayout
 import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
 import com.circaso.chama.domain.usecases.ExpireRequests
+import com.circaso.chama.domain.usecases.FindApprovedPayout
 import com.circaso.chama.domain.usecases.GetChama
 import com.circaso.chama.domain.usecases.GetChamaDigest
+import com.circaso.chama.domain.usecases.GetGroupMoney
 import com.circaso.chama.domain.usecases.ListLedger
 import com.circaso.chama.domain.usecases.ListMyChamas
 import com.circaso.chama.domain.usecases.RecordTransfer
+import com.circaso.chama.domain.usecases.RemoveGoal
 import com.circaso.chama.domain.usecases.SetGoal
+import com.circaso.chama.domain.usecases.SetSettings
 import com.circaso.chama.presentation.mappers.toAgentResponse
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
@@ -43,9 +52,11 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
+import com.circaso.wallet.api.GroupWalletSummary
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.api.WalletAmount
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.Wallets
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.KSerializer
@@ -57,7 +68,9 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -69,6 +82,8 @@ private class MemoryGoals : GoalRepository {
     override suspend fun save(goal: Goal) {
         rows[goal.chatId] = goal
     }
+
+    override suspend fun delete(chatId: ChatId) = rows.remove(chatId) != null
 }
 
 private class MemoryContributions : ContributionRepository {
@@ -86,11 +101,21 @@ private class MemoryContributions : ContributionRepository {
         .sortedByDescending { it.at }
         .take(limit)
 
-    override suspend fun totals(chatId: ChatId) =
+    override suspend fun totals(chatId: ChatId, since: Instant?) =
         rows.values
-            .filter { it.chatId == chatId }
+            .filter { it.chatId == chatId && !it.legacy && (since == null || it.at >= since) }
             .groupBy { it.userId }
             .mapValues { (_, c) -> c.sumOf { it.amountMinor } }
+}
+
+private class MemorySettings : SettingsRepository {
+    val rows = mutableMapOf<ChatId, GroupSettings>()
+
+    override suspend fun find(chatId: ChatId) = rows[chatId] ?: GroupSettings.default(chatId)
+
+    override suspend fun save(settings: GroupSettings) {
+        rows[settings.chatId] = settings
+    }
 }
 
 private class MemoryRequests : RequestRepository {
@@ -148,6 +173,7 @@ private class MemoryRequests : RequestRepository {
 private class FakeChats : ChatDirectory {
     val members = mutableMapOf<ChatId, Set<UserId>>()
     val admins = mutableMapOf<ChatId, Set<UserId>>()
+    val owners = mutableMapOf<ChatId, UserId>()
 
     override suspend fun isMember(chatId: ChatId, userId: UserId) = userId in members[chatId].orEmpty()
 
@@ -158,6 +184,8 @@ private class FakeChats : ChatDirectory {
     override suspend fun isGroup(chatId: ChatId) = true
 
     override suspend fun groupsOf(userId: UserId) = members.filterValues { userId in it }.keys.toList()
+
+    override suspend fun owner(chatId: ChatId) = owners[chatId]
 }
 
 private class FakeProfiles : Profiles {
@@ -185,10 +213,13 @@ private class RecordingFrames : FrameSender {
 
 private class FakeWallets : Wallets {
     val transfers = mutableMapOf<TransferId, TransferSummary>()
+    val groups = mutableMapOf<ChatId, GroupWalletSummary>()
 
     override suspend fun hasWallet(userId: UserId) = true
 
     override suspend fun transfer(transferId: TransferId) = transfers[transferId]
+
+    override suspend fun groupWallet(chatId: ChatId) = groups[chatId]
 }
 
 private class MemoryBus : EventBus {
@@ -224,13 +255,14 @@ private class Harness {
     val goals = MemoryGoals()
     val contributions = MemoryContributions()
     val requests = MemoryRequests()
+    val settings = MemorySettings()
     val chats = FakeChats()
     val profiles = FakeProfiles()
     val frames = RecordingFrames()
     val wallets = FakeWallets()
     val bus = MemoryBus()
     val outbox = RecordingOutbox()
-    var now: Instant = Instant.parse("2026-10-29T10:00:00Z")
+    var now: Instant = Instant.parse("2026-11-03T10:00:00Z")
     val clock =
         object : Clock() {
             override fun getZone() = ZoneOffset.UTC
@@ -240,96 +272,118 @@ private class Harness {
             override fun instant() = now
         }
     val members = Members(chats, profiles)
-    val requestFrames = RequestFrames(goals, members, frames)
-    val setGoal = SetGoal(members, goals, contributions, frames, clock)
-    val views = ChamaViews(members, goals, contributions, requests)
+    val requestFrames = RequestFrames(goals, members, frames, wallets)
+    val setGoal = SetGoal(members, goals, contributions, frames, clock, wallets)
+    val views = ChamaViews(members, goals, contributions, requests, wallets, settings)
     val getChama = GetChama(views)
-    val listLedger = ListLedger(members, goals, views)
+    val getMoney = GetGroupMoney(views)
+    val removeGoal = RemoveGoal(members, goals, frames)
+    val setSettings = SetSettings(members, settings, frames, clock)
+    val findApproved = FindApprovedPayout(requests)
+    val listLedger = ListLedger(members, views)
     val listMyChamas = ListMyChamas(chats, views, ChamaNames(profiles))
     val getChamaDigest = GetChamaDigest(views, ChamaNames(profiles))
-    val createRequest = AskPayout(members, goals, requests, requestFrames, clock)
+    val createRequest = AskPayout(members, requests, requestFrames, clock, wallets, settings)
     val decideRequest = DecidePayout(members, requests, requestFrames, clock)
-    val attachPayment = AttachPayment(members, goals, requests, wallets, requestFrames, clock)
+    val attachPayment = AttachPayment(members, requests, wallets, requestFrames, clock)
     val recordTransfer =
         RecordTransfer(members, goals, contributions, requests, frames, requestFrames, outbox, bus, clock)
     val expireRequests = ExpireRequests(requests, clock)
 
     val chat = ChatId.new()
-    val otieno = UserId.new()
+    val otieno = UserId.new() // the group's owner, who set its wallet's PIN
     val wanjiru = UserId.new()
     val achieng = UserId.new()
     val juma = UserId.new()
 
+    /** The group wallet's id: also the holder id its transfers name as sender or recipient. */
+    val walletId = WalletId.new()
+    val wallet = UserId(walletId.value)
+
     init {
         chats.members[chat] = setOf(otieno, wanjiru, achieng, juma)
         chats.admins[chat] = setOf(otieno, wanjiru)
+        chats.owners[chat] = otieno
         profiles.names[otieno] = "Otieno"
         profiles.names[wanjiru] = "Wanjiru"
         profiles.names[achieng] = "Achieng"
         profiles.names[juma] = "Juma"
     }
 
-    suspend fun goal(treasurer: UserId = otieno) =
-        setGoal(SetGoalCommand(otieno, chat, "Holiday Fund", 50_000_000_000, null, treasurer))
+    fun withWallet(status: String = "ACTIVE") {
+        wallets.groups[chat] = GroupWalletSummary(walletId, chat, status, otieno)
+    }
+
+    suspend fun goal() = setGoal(SetGoalCommand(otieno, chat, "Holiday Fund", 50_000_000_000, null))
+
+    /** A member's payment into the group wallet, as `wallet.TransferConfirmed` tells it. */
+    suspend fun contribute(
+        from: UserId,
+        amountMinor: Long,
+        transferId: TransferId = TransferId.new(),
+        to: ChatId? = chat,
+    ) = recordTransfer(WalletTransfer(transferId, from, amountMinor, chat, null, to, null))
+
+    suspend fun ask(
+        by: UserId,
+        payee: UserId? = achieng,
+        address: String? = null,
+        amountMinor: Long = 500_000_000,
+    ) = createRequest(AskPayoutCommand(by, chat, payee, address, address?.let { "Coast Bus" }, amountMinor, null))
 }
 
 class ChamaTest {
     @Test
-    fun `only an admin sets the goal, and the treasurer must be a member`() =
+    fun `a target needs the group's active wallet, and only an admin sets it`() =
         runTest {
             val h = Harness()
-            assertIs<Resource.Error>(h.setGoal(SetGoalCommand(h.juma, h.chat, "Holiday Fund", 10, null, null)))
+            assertEquals(ChamaError.NoWallet, assertIs<Resource.Error>(h.goal()).error)
+            h.withWallet(status = "SETTING_UP")
+            assertEquals(ChamaError.NoWallet, assertIs<Resource.Error>(h.goal()).error)
+            h.withWallet()
+            assertIs<Resource.Error>(h.setGoal(SetGoalCommand(h.juma, h.chat, "Holiday Fund", 10, null)))
                 .also { assertEquals(ChamaError.NotAdmin, it.error) }
-            assertIs<Resource.Error>(
-                h.setGoal(SetGoalCommand(h.otieno, h.chat, "Holiday Fund", 10, null, UserId.new())),
-            ).also { assertEquals(ChamaError.TreasurerNotMember, it.error) }
-            assertIs<Resource.Error>(h.setGoal(SetGoalCommand(h.otieno, h.chat, " ", 10, null, null)))
+            assertIs<Resource.Error>(h.setGoal(SetGoalCommand(h.otieno, h.chat, " ", 10, null)))
+
             val goal = assertIs<Resource.Success<Goal>>(h.goal()).data
-            assertEquals(h.otieno, goal.treasurerId)
+            assertNull(goal.treasurerId, "no treasurer: the money is in the group wallet")
             assertEquals(1, goal.version)
             assertEquals(1, h.frames.ofType<ChamaFrame.GoalUpdated>().size)
+            h.now = h.now.plusSeconds(60)
             val again =
                 assertIs<Resource.Success<Goal>>(
-                    h.setGoal(
-                        SetGoalCommand(
-                            h.wanjiru,
-                            h.chat,
-                            "Holiday Fund 2027",
-                            60_000_000_000,
-                            null,
-                            h.wanjiru,
-                        ),
-                    ),
+                    h.setGoal(SetGoalCommand(h.wanjiru, h.chat, "Holiday Fund 2027", 60_000_000_000, null)),
                 ).data
             assertEquals(2, again.version)
-            assertEquals(h.wanjiru, again.treasurerId)
+            assertEquals(goal.createdAt, again.createdAt, "changing a target keeps when it started counting")
         }
 
     @Test
-    fun `a member's confirmed payment to the treasurer from the chat is a contribution, once`() =
+    fun `a member's confirmed payment into the group wallet is a contribution, once`() =
         runTest {
             val h = Harness()
+            h.withWallet()
             h.goal()
             val t = TransferId.new()
-            h.recordTransfer(t, h.wanjiru, h.otieno, 1_000_000_000, h.chat)
-            h.recordTransfer(t, h.wanjiru, h.otieno, 1_000_000_000, h.chat) // the event arrives twice
+            h.contribute(h.wanjiru, 1_000_000_000, t)
+            h.contribute(h.wanjiru, 1_000_000_000, t) // the event arrives twice
             val view =
                 assertIs<Resource.Success<com.circaso.chama.domain.models.ChamaView>>(h.getChama(h.juma, h.chat)).data
             assertEquals(1_000_000_000, view.contributedMinor)
             assertEquals(1_000_000_000, view.heldMinor)
             assertEquals(mapOf(h.wanjiru to 1_000_000_000L), view.contributorsMinor)
             assertEquals(4, view.memberCount)
+            assertEquals(h.walletId, view.wallet?.walletId)
             val frame = h.frames.ofType<ChamaFrame.ContributionAdded>().single()
             assertEquals("Wanjiru", frame.displayName)
             assertEquals("1000", frame.amount.amount)
             assertEquals(1, h.bus.published.count { it.type == ContributionRecorded.TYPE })
             assertEquals(h.bus.published.size, h.outbox.written.size, "every event has its outbox row")
 
-            // not a contribution: to someone else, from the treasurer, from another chat, or from a stranger
-            h.recordTransfer(TransferId.new(), h.wanjiru, h.achieng, 5, h.chat)
-            h.recordTransfer(TransferId.new(), h.otieno, h.wanjiru, 5, h.chat)
-            h.recordTransfer(TransferId.new(), h.wanjiru, h.otieno, 5, ChatId.new())
-            h.recordTransfer(TransferId.new(), UserId.new(), h.otieno, 5, h.chat)
+            // not a contribution: to no group, from a stranger, or from another group's wallet
+            h.contribute(h.wanjiru, 5, to = null)
+            h.contribute(UserId.new(), 5)
+            h.recordTransfer(WalletTransfer(TransferId.new(), UserId.new(), 5, null, ChatId.new(), h.chat, null))
             assertEquals(1, h.contributions.rows.size)
             assertIs<Resource.Error>(h.getChama(UserId.new(), h.chat))
                 .also { assertEquals(ChamaError.NotAMember, it.error) }
@@ -337,48 +391,118 @@ class ChamaTest {
         }
 
     @Test
+    fun `contributions count towards a target from when it was set, and without one are recorded quietly`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.contribute(h.juma, 300_000_000)
+            assertEquals(1, h.contributions.rows.size, "recorded: the group wallet's ledger has it")
+            assertTrue(h.frames.ofType<ChamaFrame.ContributionAdded>().isEmpty(), "no target, no goal frame")
+
+            h.now = h.now.plusSeconds(60)
+            h.goal()
+            h.contribute(h.juma, 200_000_000)
+            val money =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.juma, h.chat),
+                ).data
+            assertEquals(200_000_000, money.contributedMinor)
+            assertEquals(2, assertIs<Resource.Success<List<*>>>(h.listLedger(h.juma, h.chat, 10, null)).data.size)
+        }
+
+    @Test
+    fun `legacy contributions to a treasurer stay in the ledger and count towards nothing`() =
+        runTest {
+            val h = Harness()
+            h.goals.save(
+                Goal(h.chat, "Old Fund", 10_000_000, null, h.otieno, h.otieno, h.now, h.now, 1),
+            )
+            h.contributions.insert(
+                Contribution(TransferId.new(), h.chat, h.juma, 5_000_000, h.now.plusSeconds(1), legacy = true),
+            )
+            val view =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.ChamaView>>(h.getChama(h.juma, h.chat)).data
+            assertEquals(0, view.contributedMinor)
+            assertEquals(1, assertIs<Resource.Success<List<*>>>(h.listLedger(h.juma, h.chat, 10, null)).data.size)
+
+            h.withWallet()
+            val fresh = assertIs<Resource.Success<Goal>>(h.goal()).data
+            assertEquals(1, fresh.version, "the old goal starts over as the group wallet's target")
+            assertNull(fresh.treasurerId)
+        }
+
+    @Test
+    fun `CH7 shows a group's money with or without a wallet or target`() =
+        runTest {
+            val h = Harness()
+            val bare =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.otieno, h.chat),
+                ).data
+            assertNull(bare.wallet)
+            assertNull(bare.goal)
+            assertEquals(ApprovalPolicy.TWO_ADMINS, bare.settings.approvalPolicy)
+            assertTrue(bare.isOwner)
+            assertFalse(bare.isSigner)
+
+            h.withWallet()
+            val money =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.otieno, h.chat),
+                ).data
+            assertTrue(money.isSigner)
+            assertFalse(
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.juma, h.chat),
+                ).data.isOwner,
+            )
+            assertEquals(ChamaError.NotAMember, assertIs<Resource.Error>(h.getMoney(UserId.new(), h.chat)).error)
+        }
+
+    @Test
+    fun `an admin removes the target, and the money and the ledger stay`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            h.contribute(h.juma, 100)
+            assertEquals(ChamaError.NotAdmin, assertIs<Resource.Error>(h.removeGoal(h.juma, h.chat)).error)
+
+            assertIs<Resource.Success<Unit>>(h.removeGoal(h.wanjiru, h.chat))
+            assertNull(h.goals.rows[h.chat])
+            assertEquals(1, h.contributions.rows.size)
+            assertEquals(1, h.frames.ofType<ChamaFrame.GroupUpdated>().size)
+            assertEquals(ChamaError.NoGoal, assertIs<Resource.Error>(h.removeGoal(h.wanjiru, h.chat)).error)
+            assertEquals(ChamaError.NoGoal, assertIs<Resource.Error>(h.getChama(h.juma, h.chat)).error)
+        }
+
+    @Test
+    fun `a payout needs the group's active wallet, not a target`() =
+        runTest {
+            val h = Harness()
+            assertEquals(ChamaError.NoWallet, assertIs<Resource.Error>(h.ask(h.juma)).error)
+            h.withWallet()
+            assertIs<Resource.Success<Payout>>(h.ask(h.juma))
+        }
+
+    @Test
     fun `a request needs two admins, an admin asking counts as one, and one decline closes it`() =
         runTest {
             val h = Harness()
-            h.goal()
-            val byMember =
-                assertIs<Resource.Success<Payout>>(
-                    h.createRequest(
-                        AskPayoutCommand(
-                            h.juma,
-                            h.chat,
-                            null,
-                            "0xbus",
-                            "Coast Bus",
-                            12_000_000_000,
-                            "bus deposit",
-                        ),
-                    ),
-                ).data
+            h.withWallet()
+            val byMember = assertIs<Resource.Success<Payout>>(h.ask(h.juma, payee = null, address = "0xbus")).data
             assertEquals(RequestState.PENDING, byMember.state)
             assertEquals(2, byMember.approvalsNeeded)
             assertEquals(0, byMember.approvals.size)
-            assertEquals(
-                setOf(h.otieno, h.wanjiru),
-                h.frames
-                    .ofType<ChamaFrame.RequestUpdated>()
-                    .last()
-                    .waitingOn
-                    .toSet(),
-            )
+            val pending = h.frames.ofType<ChamaFrame.RequestUpdated>().last()
+            assertEquals(setOf(h.otieno, h.wanjiru), pending.waitingOn.toSet())
+            assertEquals(h.otieno, pending.signerId, "the frame names who will pay it")
 
             assertIs<Resource.Error>(h.decideRequest(h.juma, byMember.requestId, Decision.APPROVE))
                 .also { assertEquals(ChamaError.NotAdmin, it.error) }
             val one =
                 assertIs<Resource.Success<Payout>>(h.decideRequest(h.otieno, byMember.requestId, Decision.APPROVE)).data
             assertEquals(RequestState.PENDING, one.state)
-            assertEquals(
-                listOf(h.wanjiru),
-                h.frames
-                    .ofType<ChamaFrame.RequestUpdated>()
-                    .last()
-                    .waitingOn,
-            )
             assertIs<Resource.Error>(h.decideRequest(h.otieno, byMember.requestId, Decision.APPROVE))
                 .also { assertEquals(ChamaError.AlreadyDecided, it.error) }
             val two =
@@ -389,114 +513,147 @@ class ChamaTest {
             assertIs<Resource.Error>(h.decideRequest(h.wanjiru, byMember.requestId, Decision.DECLINE))
                 .also { assertEquals(ChamaError.RequestClosed, it.error) }
 
-            val byAdmin =
-                assertIs<Resource.Success<Payout>>(
-                    h.createRequest(
-                        AskPayoutCommand(
-                            h.otieno,
-                            h.chat,
-                            h.achieng,
-                            null,
-                            null,
-                            500_000_000,
-                            null,
-                        ),
-                    ),
-                ).data
+            val byAdmin = assertIs<Resource.Success<Payout>>(h.ask(h.otieno)).data
             assertEquals(1, byAdmin.approvals.size)
             assertEquals(RequestState.PENDING, byAdmin.state)
             val declined =
                 assertIs<Resource.Success<Payout>>(h.decideRequest(h.wanjiru, byAdmin.requestId, Decision.DECLINE)).data
             assertEquals(RequestState.DECLINED, declined.state)
 
-            assertIs<Resource.Error>(
-                h.createRequest(AskPayoutCommand(h.juma, h.chat, h.achieng, "0xboth", null, 5, null)),
-            ).also { assertEquals(ChamaError.PayeeInvalid, it.error) }
-            assertIs<Resource.Error>(h.createRequest(AskPayoutCommand(h.juma, h.chat, h.achieng, null, null, 0, null)))
-                .also { assertEquals(ChamaError.AmountInvalid, it.error) }
+            assertEquals(ChamaError.PayeeInvalid, assertIs<Resource.Error>(h.ask(h.juma, address = "0xboth")).error)
+            assertEquals(ChamaError.AmountInvalid, assertIs<Resource.Error>(h.ask(h.juma, amountMinor = 0)).error)
         }
 
     @Test
-    fun `the treasurer links the matching transfer, and the wallet's confirmation pays the request`() =
+    fun `only the owner chooses any admin, and then an admin's own request is approved at once`() =
         runTest {
             val h = Harness()
-            h.goal()
-            val request =
+            h.withWallet()
+            assertEquals(
+                ChamaError.NotOwner,
+                assertIs<Resource.Error>(
+                    h.setSettings(SetSettingsCommand(h.wanjiru, h.chat, ApprovalPolicy.ANY_ADMIN)),
+                ).error,
+            )
+            assertIs<Resource.Success<GroupSettings>>(
+                h.setSettings(SetSettingsCommand(h.otieno, h.chat, ApprovalPolicy.ANY_ADMIN)),
+            )
+            assertEquals(1, h.frames.ofType<ChamaFrame.GroupUpdated>().size, "every member sees the rule change")
+
+            val byAdmin = assertIs<Resource.Success<Payout>>(h.ask(h.wanjiru)).data
+            assertEquals(1, byAdmin.approvalsNeeded)
+            assertEquals(RequestState.APPROVED, byAdmin.state)
+            val byMember = assertIs<Resource.Success<Payout>>(h.ask(h.juma)).data
+            assertEquals(RequestState.PENDING, byMember.state)
+            assertEquals(
+                RequestState.APPROVED,
                 assertIs<Resource.Success<Payout>>(
-                    h.createRequest(
-                        AskPayoutCommand(
-                            h.otieno,
-                            h.chat,
-                            h.achieng,
-                            null,
-                            null,
-                            500_000_000,
-                            "fare",
-                        ),
-                    ),
-                ).data
+                    h.decideRequest(h.otieno, byMember.requestId, Decision.APPROVE),
+                ).data.state,
+            )
+        }
+
+    @Test
+    fun `the wallet's guard sees only approved, unpaid payouts of that group`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            val request = assertIs<Resource.Success<Payout>>(h.ask(h.otieno)).data
+            assertNull(h.findApproved(h.chat, request.requestId.value), "pending")
+            h.decideRequest(h.wanjiru, request.requestId, Decision.APPROVE)
+
+            val approved = assertNotNull(h.findApproved(h.chat, request.requestId.value))
+            assertEquals(h.achieng, approved.payeeUserId)
+            assertEquals(500_000_000, approved.amountMinor)
+            assertNull(h.findApproved(ChatId.new(), request.requestId.value), "another group's request")
+        }
+
+    @Test
+    fun `a payment from the group wallet naming the request pays it, and is never a contribution`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            val request = assertIs<Resource.Success<Payout>>(h.ask(h.otieno)).data
             h.decideRequest(h.wanjiru, request.requestId, Decision.APPROVE)
             val t = TransferId.new()
-            h.wallets.transfers[t] =
-                TransferSummary(
-                    t,
-                    h.otieno,
-                    h.achieng,
-                    "0xachieng",
-                    WalletAmount("USDC", "500000000", "500"),
-                    "SUBMITTED",
-                    h.chat,
-                )
 
-            assertIs<Resource.Error>(h.attachPayment(h.wanjiru, request.requestId, t))
-                .also { assertEquals(ChamaError.NotTreasurer, it.error) }
-            val wrong = TransferId.new()
-            h.wallets.transfers[wrong] =
-                TransferSummary(
-                    wrong,
-                    h.otieno,
-                    h.achieng,
-                    "0xachieng",
-                    WalletAmount("USDC", "400000000", "400"),
-                    "SUBMITTED",
-                    h.chat,
-                )
-            assertIs<Resource.Error>(h.attachPayment(h.otieno, request.requestId, wrong))
-                .also { assertEquals(ChamaError.TransferMismatch, it.error) }
+            h.recordTransfer(WalletTransfer(t, h.wallet, 500_000_000, h.chat, h.chat, null, request.requestId.value))
+            h.recordTransfer(WalletTransfer(t, h.wallet, 500_000_000, h.chat, h.chat, null, request.requestId.value))
+            val paid = h.requests.rows.getValue(request.requestId)
+            assertEquals(RequestState.PAID, paid.state)
+            assertEquals(t, paid.transferId)
+            assertEquals(1, h.bus.published.count { it.type == RequestPaid.TYPE })
+            assertEquals(0, h.contributions.rows.size)
+            assertNull(h.findApproved(h.chat, request.requestId.value), "a paid request can't be paid again")
+            val view =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.otieno, h.chat),
+                ).data
+            assertEquals(500_000_000, view.paidOutMinor)
+        }
+
+    @Test
+    fun `CH6 links the group wallet's matching transfer, by its signer only`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            val request = assertIs<Resource.Success<Payout>>(h.ask(h.otieno)).data
+            h.decideRequest(h.wanjiru, request.requestId, Decision.APPROVE)
+
+            fun summary(
+                id: TransferId,
+                amount: String = "500000000",
+                from: ChatId? = h.chat,
+            ) = TransferSummary(
+                id,
+                h.wallet,
+                h.achieng,
+                "0xachieng",
+                WalletAmount("USDC", amount, "500"),
+                "SUBMITTED",
+                h.chat,
+                fromGroupId = from,
+                signerId = h.otieno,
+                payoutRequestId = request.requestId.value,
+            )
+            val t = TransferId.new().also { h.wallets.transfers[it] = summary(it) }
+            val wrong = TransferId.new().also { h.wallets.transfers[it] = summary(it, amount = "400000000") }
+            val personal = TransferId.new().also { h.wallets.transfers[it] = summary(it, from = null) }
+
+            assertEquals(
+                ChamaError.NotSigner,
+                assertIs<Resource.Error>(h.attachPayment(h.wanjiru, request.requestId, t)).error,
+            )
+            assertEquals(
+                ChamaError.TransferMismatch,
+                assertIs<Resource.Error>(h.attachPayment(h.otieno, request.requestId, wrong)).error,
+            )
+            assertEquals(
+                ChamaError.TransferMismatch,
+                assertIs<Resource.Error>(h.attachPayment(h.otieno, request.requestId, personal)).error,
+                "the signer's own money is not the group's",
+            )
 
             val linked = assertIs<Resource.Success<Payout>>(h.attachPayment(h.otieno, request.requestId, t)).data
             assertEquals(RequestState.APPROVED, linked.state)
             assertEquals(t, linked.transferId)
-            h.recordTransfer(t, h.otieno, h.achieng, 500_000_000, h.chat)
-            val paid = h.requests.rows.getValue(request.requestId)
-            assertEquals(RequestState.PAID, paid.state)
-            assertEquals(1, h.bus.published.count { it.type == RequestPaid.TYPE })
-            assertEquals(0, h.contributions.rows.size, "a payout is never a contribution")
-            val view =
-                assertIs<Resource.Success<com.circaso.chama.domain.models.ChamaView>>(h.getChama(h.otieno, h.chat)).data
-            assertEquals(500_000_000, view.paidOutMinor)
-            assertTrue(view.isTreasurer)
+            h.recordTransfer(WalletTransfer(t, h.wallet, 500_000_000, h.chat, h.chat, null, null))
+            assertEquals(
+                RequestState.PAID,
+                h.requests.rows
+                    .getValue(request.requestId)
+                    .state,
+            )
+            val again = assertIs<Resource.Success<Payout>>(h.attachPayment(h.otieno, request.requestId, t)).data
+            assertEquals(RequestState.PAID, again.state, "linking again after it is paid is harmless")
         }
 
     @Test
     fun `a request nobody decided within 48 hours expires`() =
         runTest {
             val h = Harness()
-            h.goal()
-            val request =
-                assertIs<Resource.Success<Payout>>(
-                    h.createRequest(
-                        AskPayoutCommand(
-                            h.juma,
-                            h.chat,
-                            h.achieng,
-                            null,
-                            null,
-                            5,
-                            null,
-                        ),
-                    ),
-                ).data
+            h.withWallet()
+            val request = assertIs<Resource.Success<Payout>>(h.ask(h.juma, amountMinor = 5)).data
             h.now = h.now.plus(Duration.ofHours(47))
             assertEquals(0, h.expireRequests())
             h.now = h.now.plus(Duration.ofHours(2))
@@ -514,15 +671,14 @@ class ChamaTest {
     fun `Asha lists only the chamas the user is in, and one chama by name with its ledger`() =
         runTest {
             val h = Harness()
+            h.withWallet()
             h.goal()
             val stranger = UserId.new()
             val otherChat = ChatId.new()
             h.chats.members[otherChat] = setOf(stranger, h.juma)
-            h.goals.save(
-                h.goals.find(h.chat)!!.copy(chatId = otherChat, name = "Not theirs", treasurerId = stranger),
-            )
+            h.goals.save(h.goals.find(h.chat)!!.copy(chatId = otherChat, name = "Not theirs"))
             h.chats.members[ChatId.new()] = setOf(h.wanjiru, h.otieno) // a group without a goal is no chama
-            h.recordTransfer(TransferId.new(), h.wanjiru, h.otieno, 2_500_000_000, h.chat)
+            h.contribute(h.wanjiru, 2_500_000_000)
 
             val mine =
                 h
@@ -535,7 +691,7 @@ class ChamaTest {
             assertEquals("2500", fund.contributed)
             assertEquals("2500", fund.myContribution)
             assertEquals(5, fund.progressPercent)
-            assertEquals("Otieno", fund.treasurer.displayName)
+            assertEquals("Otieno", fund.treasurer?.displayName, "the wallet's signer")
             assertTrue(fund.contributors.isEmpty(), "the list stays small")
 
             val one =

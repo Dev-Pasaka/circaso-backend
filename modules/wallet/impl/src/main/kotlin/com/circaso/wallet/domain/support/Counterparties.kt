@@ -2,9 +2,11 @@ package com.circaso.wallet.domain.support
 
 import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.Counterparty
 import com.circaso.wallet.domain.models.HistoryEntry
 import com.circaso.wallet.domain.models.WalletTransaction
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 
 /**
@@ -13,11 +15,15 @@ import com.circaso.wallet.domain.repositories.WalletRepository
  * (a payment made outside the app's send flow, or recorded before its sender was known) is matched to the Circaso
  * wallet at that address, so a payment between two Circaso people always names the other person.
  */
-class Counterparties(private val profiles: Profiles, private val wallets: WalletRepository? = null) {
+class Counterparties(
+    private val profiles: Profiles,
+    private val wallets: WalletRepository? = null,
+    private val groupWallets: WalletOwnerRepository? = null,
+) {
     suspend fun entries(rows: List<WalletTransaction>): List<HistoryEntry> {
         val owners = owners(rows)
         val people = rows.mapNotNullTo(mutableSetOf()) { it.counterpartyId ?: owners[it.chainAddress()] }
-        val named = names(people)
+        val named = names(people) + groups(people)
         return rows.map {
             val who = it.counterpartyId ?: owners[it.chainAddress()]
             HistoryEntry(it, counterparty(who, it.counterpartyAddress, named))
@@ -37,6 +43,17 @@ class Counterparties(private val profiles: Profiles, private val wallets: Wallet
 
     private fun WalletTransaction.chainAddress(): Pair<String, String>? = counterpartyAddress?.let { it to blockchain }
 
+    /**
+     * The group wallets among [ids] (decision 2026-11-03): no name (a group's name is sealed; the phone has it), the
+     * group's id instead.
+     */
+    private suspend fun groups(ids: Set<UserId>): Map<UserId, Counterparty> {
+        val repository = groupWallets ?: return emptyMap()
+        return ids
+            .mapNotNull { id -> repository.find(WalletId(id.value))?.let { id to it } }
+            .associate { (id, group) -> id to Counterparty(id, null, null, null, null, group.chatId) }
+    }
+
     suspend fun names(people: Set<UserId>): Map<UserId, Counterparty> =
         if (people.isEmpty()) {
             emptyMap()
@@ -52,6 +69,6 @@ class Counterparties(private val profiles: Profiles, private val wallets: Wallet
         named: Map<UserId, Counterparty>,
     ): Counterparty {
         val person = userId?.let { named[it] }
-        return Counterparty(userId, person?.displayName, person?.handle, person?.avatarUrl, address)
+        return Counterparty(userId, person?.displayName, person?.handle, person?.avatarUrl, address, person?.groupId)
     }
 }

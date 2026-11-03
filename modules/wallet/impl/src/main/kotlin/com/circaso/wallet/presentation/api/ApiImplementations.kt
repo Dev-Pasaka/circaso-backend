@@ -3,12 +3,14 @@ package com.circaso.wallet.presentation.api
 import com.circaso.identity.api.DeletionGuard
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
+import com.circaso.wallet.api.GroupWalletSummary
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.api.WalletFrames
@@ -20,6 +22,8 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
     override suspend fun hasWallet(userId: UserId): Boolean = directory.hasWallet(userId)
 
     override suspend fun transfer(transferId: TransferId): TransferSummary? = directory.transfer(transferId)
+
+    override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = directory.groupWallet(chatId)
 }
 
 /**

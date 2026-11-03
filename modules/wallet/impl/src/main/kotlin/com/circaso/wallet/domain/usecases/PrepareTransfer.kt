@@ -2,23 +2,31 @@ package com.circaso.wallet.domain.usecases
 
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TransferRequest
+import com.circaso.shared.Asset
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
+import com.circaso.shared.UserId
+import com.circaso.wallet.api.PayoutApprovals
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Direction
+import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.PreparedTransfer
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Addresses
 import com.circaso.wallet.domain.support.Destination
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.Sender
@@ -53,39 +61,90 @@ class PrepareTransfer(
     private val events: TransferEvents,
     private val ids: OrderedIds,
     private val clock: Clock,
+    private val holders: Holders,
+    private val approvals: PayoutApprovals,
 ) {
     suspend operator fun invoke(command: TransferCommand): Resource<PreparedTransfer> {
-        transfers.byKey(command.senderId, command.idempotencyKey)?.let { return resume(it) }
+        // The wallet it leaves (decision 2026-11-03): the caller's own, or a group wallet they sign for.
+        val owner =
+            when (val access = holders.sign(command.senderId, command.walletId)) {
+                is Resource.Success -> access.data.owner
+                is Resource.Error -> return access
+            }
+        val holder = owner.holder
+        transfers.byKey(holder, command.idempotencyKey)?.let { return resume(it) }
 
+        payout(owner, command).let { if (it is Resource.Error) return it }
         val sender =
-            when (val checked = check(command)) {
+            when (val checked = check(holder, command)) {
                 is Resource.Success -> checked.data
                 is Resource.Error -> return checked
             }
         val destination =
-            when (val resolved = payees.resolve(command.senderId, command.payee, command.blockchain, command.chatId)) {
+            when (
+                val resolved =
+                    payees.resolve(holder, command.payee, command.blockchain, command.chatId, actor = command.senderId)
+            ) {
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
         rules.checkBalance(sender, command.amount).let { if (it is Resource.Error) return it }
 
-        val transfer = transferOf(command, sender, destination)
-        rules.reserve(command.senderId, transfer.createdAt, command.amount).let { if (it is Resource.Error) return it }
+        val transfer = transferOf(command, owner, sender, destination)
+        rules.reserve(holder, transfer.createdAt, command.amount).let { if (it is Resource.Error) return it }
         if (!record(transfer)) {
-            rules.release(command.senderId, transfer.createdAt, command.amount)
-            return resume(checkNotNull(transfers.byKey(command.senderId, command.idempotencyKey)))
+            rules.release(holder, transfer.createdAt, command.amount)
+            return resume(checkNotNull(transfers.byKey(holder, command.idempotencyKey)))
         }
         return challenge(sender, transfer)
     }
 
+    /**
+     * Option A (decision 2026-11-03): money leaves a group wallet only for a payout the group's admins approved, to
+     * exactly its payee and for exactly its amount, and only once at a time; a personal wallet takes no payout.
+     */
+    private suspend fun payout(owner: WalletOwner, command: TransferCommand): Resource<Unit> {
+        val requestId = command.payoutRequestId
+        if (owner !is WalletOwner.Group) {
+            return if (requestId == null) Resource.success(Unit) else Resource.error(WalletError.PayoutMismatch)
+        }
+        requestId ?: return Resource.error(WalletError.PayoutRequired)
+        val approved =
+            approvals.approved(owner.chatId, requestId) ?: return Resource.error(WalletError.PayoutNotApproved)
+        val samePayee =
+            when (val payee = command.payee) {
+                is Payee.Person -> {
+                    approved.payeeUserId == payee.userId
+                }
+
+                is Payee.Address -> {
+                    approved.payeeAddress?.let { Addresses.normalise(it.trim()) } == Addresses.normalise(payee.address)
+                }
+
+                is Payee.Group -> {
+                    false
+                }
+            }
+        val sameAmount = command.amount.asset == Asset.USDC && command.amount.amountMinor == approved.amountMinor
+        if (!samePayee || !sameAmount) return Resource.error(WalletError.PayoutMismatch)
+        val now = clock.instant()
+        val live =
+            transfers.forPayout(requestId).any {
+                it.state == TransferState.SUBMITTED ||
+                    it.state == TransferState.CONFIRMED ||
+                    (it.state == TransferState.AWAITING_SIGNATURE && now < it.expiresAt)
+            }
+        return if (live) Resource.error(WalletError.PayoutInProgress) else Resource.success(Unit)
+    }
+
     /** The rules about the sender, before the payee is looked at (Wallet → W4's order). */
-    private suspend fun check(command: TransferCommand): Resource<Sender> {
+    private suspend fun check(holder: UserId, command: TransferCommand): Resource<Sender> {
         val sender =
-            when (val found = rules.sender(command.senderId, command.blockchain)) {
+            when (val found = rules.sender(holder, command.blockchain, signer = command.senderId)) {
                 is Resource.Success -> found.data
                 is Resource.Error -> return found
             }
-        return when (val amount = rules.checkAmount(command.senderId, command.blockchain, command.amount)) {
+        return when (val amount = rules.checkAmount(holder, command.blockchain, command.amount)) {
             is Resource.Success -> Resource.success(sender)
             is Resource.Error -> amount
         }
@@ -152,13 +211,14 @@ class PrepareTransfer(
 
     private fun transferOf(
         command: TransferCommand,
+        owner: WalletOwner,
         sender: Sender,
         destination: Destination,
     ): Transfer {
         val now = clock.instant()
         return Transfer(
             transferId = TransferId.new(),
-            senderId = command.senderId,
+            senderId = owner.holder,
             senderWalletId = sender.wallet.circleWalletId,
             blockchain = command.blockchain,
             idempotencyKey = command.idempotencyKey,
@@ -174,6 +234,10 @@ class PrepareTransfer(
             failureReason = null,
             createdAt = now,
             updatedAt = now,
+            signerId = command.senderId,
+            payoutRequestId = command.payoutRequestId,
+            fromGroupId = (owner as? WalletOwner.Group)?.chatId,
+            toGroupId = destination.toGroupId,
         )
     }
 

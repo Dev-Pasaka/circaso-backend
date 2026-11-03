@@ -131,6 +131,8 @@ private class FakeChats : ChatDirectory {
     override suspend fun isGroup(chatId: ChatId) = chatId in groups
 
     override suspend fun groupsOf(userId: UserId) = groups.filter { userId in members[it].orEmpty() }
+
+    override suspend fun owner(chatId: ChatId): UserId? = null
 }
 
 private class FakeProfiles : Profiles {

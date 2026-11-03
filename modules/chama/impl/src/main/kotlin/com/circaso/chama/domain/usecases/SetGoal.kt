@@ -10,11 +10,14 @@ import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.support.Amounts
 import com.circaso.chama.domain.support.Members
 import com.circaso.shared.Resource
+import com.circaso.wallet.api.Wallets
 import java.time.Clock
 
 /**
- * `PUT /chama/chats/{chatId}/goal`: an admin sets or changes the group's goal. The treasurer (an admin or any member
- * named; the caller by default) is whose wallet holds the money. Every member hears `goal.updated`.
+ * `PUT /chama/chats/{chatId}/goal` (CH2): an admin sets or changes the group's target. A target needs the group's
+ * wallet (decision 2026-11-03, GW7): its money goes there, so without an active wallet the answer is
+ * `chama.no_wallet` and the app walks the owner through setting one up first. Contributions count towards it from
+ * when it is first set; changing it keeps that. Every member hears `goal.updated`.
  */
 class SetGoal(
     private val members: Members,
@@ -22,6 +25,7 @@ class SetGoal(
     private val contributions: ContributionRepository,
     private val frames: FrameSender,
     private val clock: Clock,
+    private val wallets: Wallets,
 ) {
     suspend operator fun invoke(command: SetGoalCommand): Resource<Goal> {
         val everyone =
@@ -36,25 +40,26 @@ class SetGoal(
             return Resource.error(ChamaError.GoalInvalid("name", "must be 1 to $MAX_NAME characters"))
         }
         if (command.targetMinor <= 0) return Resource.error(ChamaError.GoalInvalid("target", "must be above zero"))
-        val treasurer = command.treasurerId ?: command.userId
-        if (treasurer !in everyone) return Resource.error(ChamaError.TreasurerNotMember)
+        if (wallets.groupWallet(command.chatId)?.isActive != true) return Resource.error(ChamaError.NoWallet)
 
         val now = clock.instant()
-        val existing = goals.find(command.chatId)
+        // A goal from the treasurer model starts over as the group wallet's target: what was paid to the treasurer
+        // isn't in the group wallet.
+        val existing = goals.find(command.chatId)?.takeIf { it.treasurerId == null }
         val goal =
             Goal(
                 chatId = command.chatId,
                 name = name,
                 targetMinor = command.targetMinor,
                 deadline = command.deadline,
-                treasurerId = treasurer,
+                treasurerId = null,
                 createdBy = existing?.createdBy ?: command.userId,
                 createdAt = existing?.createdAt ?: now,
                 updatedAt = now,
                 version = (existing?.version ?: 0) + 1,
             )
         goals.save(goal)
-        val contributed = contributions.totals(command.chatId).values.sum()
+        val contributed = contributions.totals(command.chatId, since = goal.createdAt).values.sum()
         frames.send(
             everyone,
             ChamaFrame.GoalUpdated(

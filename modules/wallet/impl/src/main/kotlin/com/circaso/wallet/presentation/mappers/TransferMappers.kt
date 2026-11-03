@@ -5,6 +5,7 @@ import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.AddressCheck
@@ -14,6 +15,7 @@ import com.circaso.wallet.domain.models.RecipientCheck
 import com.circaso.wallet.domain.models.RecipientQuery
 import com.circaso.wallet.domain.models.RecipientStatus
 import com.circaso.wallet.domain.models.ReminderOutcome
+import com.circaso.wallet.domain.models.SeenTransfer
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.support.Amounts
@@ -50,12 +52,26 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
     val chat = chatId?.let { ChatId.parse(it) ?: return malformed("chatId", "is not an id") }
     // TODO(Phase B: accept proposalId checked against the assistant's proposal)
     if (proposalId != null) return malformed("proposalId", "is not accepted until Asha's proposals exist")
+    val wallet =
+        when (val read = walletIdOf(walletId)) {
+            is Resource.Success -> read.data
+            is Resource.Error -> return read
+        }
+    val payout = payoutRequestId?.let { Uuid7.parse(it.trim()) ?: return malformed("payoutRequestId", "is not an id") }
     val key = circleKey(userId, "wallet.transfer", requestKey)
-    return Resource.success(TransferCommand(userId, chain, payee, money, chat, proposalId = null, key))
+    return Resource.success(
+        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout),
+    )
 }
 
 private fun PayeeRequest.toPayee(): Resource<Payee> {
-    if ((userId == null) == (address == null)) return malformed("to", "needs exactly one of userId and address")
+    if (listOfNotNull(userId, address, groupId).size != 1) {
+        return malformed("to", "needs exactly one of userId, address and groupId")
+    }
+    if (groupId != null) {
+        val id = ChatId.parse(groupId) ?: return malformed("to.groupId", "is not an id")
+        return Resource.success(Payee.Group(id))
+    }
     if (userId != null) {
         val id = UserId.parse(userId) ?: return malformed("to.userId", "is not an id")
         return Resource.success(Payee.Person(id))
@@ -116,11 +132,16 @@ fun PreparedTransfer.toResponse() =
         sdk = sdk?.toDto(),
         fee = Money.zero(transfer.amount.asset).toDto(),
         expiresAt = transfer.expiresAt,
+        walletId = transfer.senderId.toString(),
     )
 
+/** W5 from the side it is seen from ([SeenTransfer.side]). */
+fun SeenTransfer.toResponse(): TransferResponse = transfer.toResponse(side)
+
 /**
- * [viewer] is who asked: the sender sees `OUT` and how it was started (`origin`, `proposalId`); the person paid sees
- * `IN`, without them, since whether the sender used Asha is the sender's business.
+ * [viewer] is the side asked from: the sender sees `OUT` and how it was started (`origin`, `proposalId`); the person
+ * paid sees `IN`, without them, since whether the sender used Asha is the sender's business. A group wallet's
+ * members see its payments from the wallet's side.
  */
 fun Transfer.toResponse(viewer: UserId): TransferResponse {
     val isSender = viewer == senderId
@@ -141,6 +162,10 @@ fun Transfer.toResponse(viewer: UserId): TransferResponse {
         createdAt = createdAt,
         updatedAt = updatedAt,
         expiresAt = expiresAt,
+        fromGroupId = fromGroupId?.toString(),
+        toGroupId = toGroupId?.toString(),
+        signerUserId = signer.toString(),
+        payoutRequestId = payoutRequestId?.toString(),
     )
 }
 

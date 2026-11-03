@@ -6,9 +6,15 @@ import com.circaso.chama.domain.ports.ChamaFrame
 import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.Wallets
 
 /** Words a request's change for the members: who still has to decide, and what the gateway may push. */
-class RequestFrames(private val goals: GoalRepository, private val members: Members, private val frames: FrameSender) {
+class RequestFrames(
+    private val goals: GoalRepository,
+    private val members: Members,
+    private val frames: FrameSender,
+    private val wallets: Wallets,
+) {
     suspend fun changed(
         request: Payout,
         everyone: Set<UserId>,
@@ -30,6 +36,7 @@ class RequestFrames(private val goals: GoalRepository, private val members: Memb
                 approvals = request.approvedBy.size,
                 approvalsNeeded = request.approvalsNeeded,
                 waitingOn = waitingOn,
+                signerId = wallets.groupWallet(request.chatId)?.signerId,
             ),
         )
     }

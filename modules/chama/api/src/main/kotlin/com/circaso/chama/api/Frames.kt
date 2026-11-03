@@ -14,7 +14,15 @@ object ChamaFrames {
     const val GOAL_UPDATED = "goal.updated"
     const val CONTRIBUTION_ADDED = "contribution.added"
     const val REQUEST_UPDATED = "request.updated"
+    const val GROUP_UPDATED = "group.updated"
 }
+
+/**
+ * `chama/group.updated`, to every member (added 2026-11-03): who approves payouts changed, or the target was removed;
+ * reload the group's money (CH7). No push.
+ */
+@Serializable
+data class GroupUpdatedFrame(val chatId: ChatId, val byUserId: UserId)
 
 /** `chama/goal.updated`, to every member: the goal was set or changed; reload the chama. No push. */
 @Serializable
@@ -50,10 +58,13 @@ data class RequestUpdatedFrame(
     val state: String,
     val requestedBy: UserId,
     val requesterName: String,
+    /** The target's name; empty when the group has none (say "the group wallet"). */
     val goalName: String,
     val amount: WalletAmount,
     val approvals: Int,
     val approvalsNeeded: Int,
     /** The admins whose decision is still missing while `PENDING`. */
     val waitingOn: List<UserId> = emptyList(),
+    /** Who pays it once `APPROVED`: the group wallet's signer (added 2026-11-03), pushed then. */
+    val signerId: UserId? = null,
 )

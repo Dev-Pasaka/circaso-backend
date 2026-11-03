@@ -26,11 +26,13 @@ import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
 import com.circaso.wallet.data.repositories.TransferRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletExpiry
 import com.circaso.wallet.data.repositories.WalletOutboxImpl
+import com.circaso.wallet.data.repositories.WalletOwnerRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.RealtimeTable
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.data.tables.TransfersTable
+import com.circaso.wallet.data.tables.WalletOwnersTable
 import com.circaso.wallet.data.tables.WalletsTable
 import com.circaso.wallet.domain.models.JobSettings
 import com.circaso.wallet.domain.models.ReconcilePass
@@ -49,9 +51,12 @@ import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
+import com.circaso.wallet.domain.support.HolderFrames
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.OrderedIds
@@ -61,6 +66,8 @@ import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
+import com.circaso.wallet.domain.support.WalletCreation
+import com.circaso.wallet.domain.support.WalletListings
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.AddMissingChains
@@ -68,13 +75,17 @@ import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
+import com.circaso.wallet.domain.usecases.CreateGroupWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
+import com.circaso.wallet.domain.usecases.FindGroupWallet
+import com.circaso.wallet.domain.usecases.GetGroupWallet
 import com.circaso.wallet.domain.usecases.GetTransaction
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.ListMyWallets
 import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
@@ -113,7 +124,8 @@ import java.time.Duration
 internal val walletDatabaseSpec =
     DatabaseModuleSpec(
         schema = "wallet",
-        tables = listOf(CircleUsersTable, WalletsTable, TransfersTable, TransactionsTable, RealtimeTable),
+        tables =
+            listOf(CircleUsersTable, WalletsTable, TransfersTable, TransactionsTable, RealtimeTable, WalletOwnersTable),
         migrationsLocation = "classpath:db/wallet",
         outbox = true,
     )
@@ -195,6 +207,7 @@ fun walletModule(config: Config): Module =
         single<TransferRepository> { TransferRepositoryImpl(get(named("wallet.database"))) }
         single<TransactionRepository> { TransactionRepositoryImpl(get(named("wallet.database"))) }
         single<WalletOutbox> { WalletOutboxImpl(get(named("wallet.database"))) }
+        single<WalletOwnerRepository> { WalletOwnerRepositoryImpl(get(named("wallet.database"))) }
         single<BalanceCache> { RedisBalanceCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<AddingChains> { RedisAddingChains(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<DailySpend> { RedisDailySpend(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -206,7 +219,9 @@ fun walletModule(config: Config): Module =
         single {
             RealtimeFramesImpl(get<RedisScopes>().scope(REDIS_PREFIX), get(named("wallet.database")), get(), clock)
         }
-        single<FrameSender> { get<RealtimeFramesImpl>() }
+        // Frames name a wallet's holder; HolderFrames sends them on to the people behind it (a group wallet's signer
+        // or members, decision 2026-11-03).
+        single<FrameSender> { HolderFrames(get(), get(), get<RealtimeFramesImpl>()) }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single(named("wallet.purge-expired")) {
             val expiry = WalletExpiry(get(named("wallet.database")))
@@ -231,28 +246,53 @@ fun walletModule(config: Config): Module =
 
         // domain: helpers and use cases
         single { OrderedIds(clock) }
-        single { WalletSync(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { Holders(get(), get()) }
+        single { WalletSync(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
+        single { WalletCreation(get(), get(), get(), get(), clock) }
+        single { WalletListings(get(), get()) }
         single { HoldingsReader(get(), get(), get()) }
         single { SupportAccountRule(get()) }
-        single { Payees(get(), get(), get(), get(), get()) }
+        single { Payees(get(), get(), get(), get(), get(), get()) }
         single { SenderRules(get(), get(), get(), get(), get(), get(), limits, get(), clock) }
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock) }
         single { Reconciler(get(), get(), get(), get()) }
-        single { GetWallet(get(), get(), get(), get(), get(), get(), get()) }
-        single { CreateWallet(get(), get(), get(), get(), get(), clock) }
-        single { OpenSession(get(), get(), get()) }
-        single { ListChains(get(), get(), get(), get()) }
-        single { AddChain(get(), get(), get(), get(), get(), clock) }
-        single { AddMissingChains(get(), get(), get(), get(), get(), clock) }
-        single { CheckFundsBeforeDeletion(get(), get(), get()) }
+        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CreateWallet(get(), get()) }
+        single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
+        single { GetGroupWallet(get(), get(), get()) }
+        single { ListMyWallets(get(), get(), get()) }
+        single { FindGroupWallet(get(), get()) }
+        single { OpenSession(get(), get(), get(), get()) }
+        single { ListChains(get(), get(), get(), get(), get()) }
+        single { AddChain(get(), get(), get(), get(), get(), clock, get()) }
+        single { AddMissingChains(get(), get(), get(), get(), get(), clock, get()) }
+        single { CheckFundsBeforeDeletion(get(), get(), get(), get()) }
         single { HasWallet(get()) }
-        single { PrepareTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { GetTransfer(get()) }
-        single { Counterparties(get(), get()) }
-        single { ListTransactions(get(), get(), get()) }
+        // PayoutApprovals is chama's (it implements wallet:api's guard and binds it in its own Koin module).
+        single {
+            PrepareTransfer(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                clock,
+                get(),
+                get(),
+            )
+        }
+        single { GetTransfer(get(), get()) }
+        single { Counterparties(get(), get(), get()) }
+        single { ListTransactions(get(), get(), get(), get()) }
         single { GetTransaction(get(), get(), get()) }
         single { SummariseTransactions(get(), get(), get()) }
         single { CheckRecipient(get(), get(), get()) }
@@ -266,12 +306,12 @@ fun walletModule(config: Config): Module =
         single { LookupTransfer(get()) }
 
         // presentation
-        single { WalletService(get(), get(), get(), get(), get(), get()) }
+        single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get()) }
         single { HistoryService(get()) }
         single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
-        single { WalletDirectoryService(get(), get(), get(), get(), get()) }
+        single { WalletDirectoryService(get(), get(), get(), get(), get(), get()) }
         single { WalletJobsService(get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()

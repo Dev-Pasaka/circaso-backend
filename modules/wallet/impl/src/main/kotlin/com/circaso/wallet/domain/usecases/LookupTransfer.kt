@@ -17,6 +17,10 @@ class LookupTransfer(private val transfers: TransferRepository) {
                 amount = Amounts.of(it.amount),
                 state = it.state.name,
                 chatId = it.chatId,
+                fromGroupId = it.fromGroupId,
+                toGroupId = it.toGroupId,
+                signerId = it.signer,
+                payoutRequestId = it.payoutRequestId,
             )
         }
 }

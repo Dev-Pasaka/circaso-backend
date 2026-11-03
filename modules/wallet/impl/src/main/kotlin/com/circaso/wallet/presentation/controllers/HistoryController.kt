@@ -28,6 +28,7 @@ fun Route.historyController(history: HistoryService) {
                         parameters["month"],
                         parameters["cursor"],
                         parameters["limit"],
+                        parameters["walletId"],
                     ).flatMap { history.transactions(it) }
                 call.respondDefault(result.toDefaultResponse { it.toResponse() })
             }.docs<NoBody, TransactionsResponse>(
@@ -42,6 +43,7 @@ fun Route.historyController(history: HistoryService) {
                         "payments that were signed: `SUBMITTED`, `CONFIRMED`, `FAILED`. `counterparty` names the " +
                         "other person (`userId`, `displayName`, `handle`, `avatarUrl`) when they are on Circaso, and " +
                         "carries the on-chain `address`; `transferId` (open it with W5) only on payments you sent. " +
+                        "`?walletId=` reads a group wallet's history instead (any member; added 2026-11-03). " +
                         "60 requests per user per minute.",
             )
         }

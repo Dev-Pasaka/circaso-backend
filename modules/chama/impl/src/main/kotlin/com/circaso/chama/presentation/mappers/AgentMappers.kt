@@ -35,7 +35,7 @@ private fun ChamaDigest.toAgentDto(): AgentChamaDto {
         myContribution = Amounts.whole(view.myContributedMinor),
         progressPercent = progress,
         deadline = goal.deadline?.toString(),
-        treasurer = person(goal.treasurerId),
+        treasurer = (view.wallet?.signerId ?: goal.treasurerId)?.let { person(it) },
         memberCount = view.memberCount,
         isAdmin = view.isAdmin,
         isTreasurer = view.isTreasurer,

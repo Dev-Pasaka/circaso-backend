@@ -54,7 +54,8 @@ data class AgentChamaDto(
     val myContribution: String,
     val progressPercent: Int,
     val deadline: String? = null,
-    val treasurer: AgentChamaPersonDto,
+    /** Who sends from the group's wallet (its signer, decision 2026-11-03); null before it has one. */
+    val treasurer: AgentChamaPersonDto? = null,
     val memberCount: Int,
     val isAdmin: Boolean,
     val isTreasurer: Boolean,

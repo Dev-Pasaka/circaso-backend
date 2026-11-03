@@ -28,3 +28,9 @@ class ListGroupIds(private val chats: ChatRepository) {
     suspend operator fun invoke(userId: UserId): Resource<List<ChatId>> =
         Resource.success(chats.chatList(userId).filter { it.chat.kind == ChatKind.GROUP }.map { it.chat.chatId })
 }
+
+/** `ChatDirectory.owner`, for wallet and chama: the group's owner as the chat names it ([Chat.ownerId]). */
+class GetOwner(private val chats: ChatRepository) {
+    suspend operator fun invoke(chatId: ChatId): Resource<UserId?> =
+        Resource.success(chats.chat(chatId)?.takeIf { it.kind == ChatKind.GROUP }?.ownerId)
+}

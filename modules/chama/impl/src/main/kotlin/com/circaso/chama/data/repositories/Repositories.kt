@@ -4,17 +4,21 @@ import com.circaso.chama.api.RequestId
 import com.circaso.chama.data.tables.ApprovalsTable
 import com.circaso.chama.data.tables.ContributionsTable
 import com.circaso.chama.data.tables.GoalsTable
+import com.circaso.chama.data.tables.GroupSettingsTable
 import com.circaso.chama.data.tables.RequestsTable
 import com.circaso.chama.domain.models.Approval
+import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
 import com.circaso.chama.domain.models.Goal
+import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.repositories.ContributionRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
+import com.circaso.chama.domain.repositories.SettingsRepository
 import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.EventEnvelope
@@ -27,8 +31,10 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
@@ -55,7 +61,7 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
                 it[targetMinor] = goal.targetMinor
                 it[asset] = USDC
                 it[deadline] = goal.deadline
-                it[treasurerId] = goal.treasurerId.value
+                it[treasurerId] = goal.treasurerId?.value
                 it[createdBy] = goal.createdBy.value
                 it[createdAt] = goal.createdAt
                 it[updatedAt] = goal.updatedAt
@@ -64,13 +70,16 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
         }
     }
 
+    override suspend fun delete(chatId: ChatId): Boolean =
+        database.tx("goals.delete") { GoalsTable.deleteWhere { GoalsTable.chatId eq chatId.value } > 0 }
+
     private fun ResultRow.toGoal() =
         Goal(
             chatId = ChatId(this[GoalsTable.chatId]),
             name = this[GoalsTable.name],
             targetMinor = this[GoalsTable.targetMinor],
             deadline = this[GoalsTable.deadline],
-            treasurerId = UserId(this[GoalsTable.treasurerId]),
+            treasurerId = this[GoalsTable.treasurerId]?.let(::UserId),
             createdBy = UserId(this[GoalsTable.createdBy]),
             createdAt = this[GoalsTable.createdAt],
             updatedAt = this[GoalsTable.updatedAt],
@@ -89,6 +98,7 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
                     it[amountMinor] = contribution.amountMinor
                     it[asset] = USDC
                     it[at] = contribution.at
+                    it[legacy] = contribution.legacy
                 }.insertedCount > 0
         }
 
@@ -116,12 +126,14 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
                 .toList()
         }
 
-    override suspend fun totals(chatId: ChatId): Map<UserId, Long> =
+    override suspend fun totals(chatId: ChatId, since: Instant?): Map<UserId, Long> =
         database.tx("contributions.totals") {
             ContributionsTable
                 .selectAll()
-                .where { ContributionsTable.chatId eq chatId.value }
-                .map { UserId(it[ContributionsTable.userId]) to it[ContributionsTable.amountMinor] }
+                .where {
+                    val counted = (ContributionsTable.chatId eq chatId.value) and (ContributionsTable.legacy eq false)
+                    if (since != null) counted and (ContributionsTable.at greaterEq since) else counted
+                }.map { UserId(it[ContributionsTable.userId]) to it[ContributionsTable.amountMinor] }
                 .toList()
                 .groupBy({ it.first }, { it.second })
                 .mapValues { (_, amounts) -> amounts.sum() }
@@ -134,7 +146,38 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
             userId = UserId(this[ContributionsTable.userId]),
             amountMinor = this[ContributionsTable.amountMinor],
             at = this[ContributionsTable.at],
+            legacy = this[ContributionsTable.legacy],
         )
+}
+
+class SettingsRepositoryImpl(private val database: Database) : SettingsRepository {
+    override suspend fun find(chatId: ChatId): GroupSettings =
+        database.tx("group-settings.find") {
+            GroupSettingsTable
+                .selectAll()
+                .where { GroupSettingsTable.chatId eq chatId.value }
+                .map {
+                    GroupSettings(
+                        chatId,
+                        ApprovalPolicy.valueOf(it[GroupSettingsTable.approvalPolicy]),
+                        UserId(it[GroupSettingsTable.updatedBy]),
+                        it[GroupSettingsTable.updatedAt],
+                    )
+                }.singleOrNull()
+        } ?: GroupSettings.default(chatId)
+
+    override suspend fun save(settings: GroupSettings) {
+        val by = checkNotNull(settings.updatedBy) { "settings are saved by someone" }
+        val at = checkNotNull(settings.updatedAt) { "settings are saved at a time" }
+        database.tx("group-settings.save") {
+            GroupSettingsTable.upsert {
+                it[chatId] = settings.chatId.value
+                it[approvalPolicy] = settings.approvalPolicy.name
+                it[updatedBy] = by.value
+                it[updatedAt] = at
+            }
+        }
+    }
 }
 
 class RequestRepositoryImpl(private val database: Database) : RequestRepository {

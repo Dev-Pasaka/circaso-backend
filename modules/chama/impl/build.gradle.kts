@@ -2,9 +2,10 @@ plugins {
     id("circaso.impl")
 }
 
-// Chamas: a group chat's shared goal, its contributions (ordinary USDC payments to the group's treasurer) and the
-// payment requests the admins approve before the treasurer pays them (decision 2026-10-29). Membership and roles
-// come from messaging's contract, transfers from wallet's, names from users'.
+// A group's money (decision 2026-11-03: chamas and groups are one thing): its optional target, the contributions into
+// the group's own wallet, who approves payouts, and the payout requests the admins approve before the wallet's signer
+// pays them. Membership and roles come from messaging's contract, the group wallet and transfers from wallet's, names
+// from users'.
 dependencies {
     implementation(project(":modules:users:api"))
     implementation(project(":modules:messaging:api"))
@@ -16,4 +17,6 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.logback.classic)
+    // PostgreSQL for data tests, as infrastructure:api types (the one test-only exception in DependencyRules)
+    testImplementation(testFixtures(project(":infrastructure:impl")))
 }

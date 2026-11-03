@@ -2,6 +2,7 @@ package com.circaso.wallet.domain.models
 
 import com.circaso.integrations.api.SdkSession
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.WalletId
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
@@ -70,13 +71,17 @@ data class FiatValue(
 /** Outgoing payments are held until [until] after a support restore (decision 2026-10-28; the hold arrives in WS4). */
 data class PaymentHold(val until: Instant)
 
-/** W1: the wallet as the wallet screen shows it. [fiat] is null when no rate was asked for or none is known. */
+/**
+ * W1: the wallet as the wallet screen shows it. [fiat] is null when no rate was asked for or none is known. [access]
+ * says whose wallet it is and whether the caller signs for it (null only where no caller asked: Asha's read).
+ */
 data class WalletView(
     val status: WalletStatus,
     val chains: List<ChainHoldings>,
     val totals: List<AssetTotal>,
     val fiat: FiatValue?,
     val hold: PaymentHold?,
+    val access: WalletAccess? = null,
 )
 
 /** W2's answer: the challenge for the SDK, or none when Circle had nothing left to sign. */
@@ -117,8 +122,14 @@ data class ChainAddition(
 /** A request that asks Circle for a challenge; [idempotencyKey] is derived from the request's `Idempotency-Key`. */
 data class CreateWalletCommand(val userId: UserId, val idempotencyKey: UUID)
 
-/** W12's add. Circle's key is derived in the use case from the user, the chain and the hour (decision 2026-10-28). */
-data class AddChainCommand(val userId: UserId, val blockchain: String)
+/**
+ * W12's add. Circle's key is derived in the use case from the wallet, the chain and the hour (decision 2026-10-28).
+ * [walletId] is the wallet to add it to (null: the caller's own; a group wallet only by its signer).
+ */
+data class AddChainCommand(val userId: UserId, val blockchain: String, val walletId: WalletId? = null)
 
-/** W1's query; [currency] is an ISO 4217 code already checked by the mapper. */
-data class WalletQuery(val userId: UserId, val currency: String?)
+/**
+ * W1's query; [currency] is an ISO 4217 code already checked by the mapper. [walletId] is the wallet to read (null:
+ * the caller's own; a group wallet by any of its members).
+ */
+data class WalletQuery(val userId: UserId, val currency: String?, val walletId: WalletId? = null)
