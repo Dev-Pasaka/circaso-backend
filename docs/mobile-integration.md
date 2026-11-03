@@ -1,6 +1,6 @@
 # Circaso mobile integration guide
 
-For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-10-31 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
+For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one shared module, Android and iOS targets). It says how to connect the app to the backend, route by route, **what is finished on the backend, and what is not**. Updated 2026-11-03 against the backend at `github.com/Dev-Pasaka/circaso-backend` (dev server `https://sandbox.circaso.com`).
 
 ## 1. How to use this file
 
@@ -8,6 +8,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real vendors: Google and Apple sign-in, SMS (Twilio Verify), email (Resend), push (FCM), file storage (R2) and Asha's model, speech-to-text and voice (Cloudflare Workers AI). Only the Android carrier check and device attestation are faked there (marked **DEV STUB** below).
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
+
+> **Changed on 2026-11-03, Moments (new routes and frames):**
+> 1. **Moments are in** (section 7, Moments): WhatsApp-style statuses that live 24 hours, end to end encrypted on the phone. ST1 `POST /v1/moments/media`, ST2 `POST /v1/moments/media/{mediaId}/complete`, ST3 `POST /v1/moments`, ST4 `GET /v1/moments`, ST5 `POST /v1/moments/{momentId}/view`, ST6 `GET /v1/moments/{momentId}/views`, ST7 `DELETE /v1/moments/{momentId}`, ST8 `GET /v1/moments/media/{mediaId}`. The server stores ciphertext, the audience, views and expiry; the phone chooses the audience from its own contacts and the server drops, without saying so, anyone who can't reach the poster or whom the poster can't reach.
+> 2. **New frames** (section 8): `status` / `status.posted`, `status.deleted`, `status.viewed`. Send `{"module":"status","seq":…}` in `last` like the others. **No pushes** for moments. A reply to a moment is an ordinary M12 chat message quoting it.
+> 3. **New error codes:** `status.audience_invalid` (400), `status.moment_too_large` (400), `status.media_invalid` (400), `status.media_not_found` (404), `status.moment_not_found` (404), `status.not_poster` (403), `status.too_many_moments` (429, with `Retry-After`).
+> 4. **Retention:** a sweep every 10 minutes hard-deletes moments past `expiresAt` with their views and files; a file not attached to a moment within an hour of ST1 is deleted. Deleting the account removes its moments at once.
 
 > **Changed on 2026-10-31, Asha conversations (additive; old apps keep working):**
 > 1. **Separate conversations with Asha**, like a chat list (section 7, Asha chat; section 9): C1 `GET /v1/assistant/conversations`, C2 `POST /v1/assistant/conversations`, C3 `PATCH /v1/assistant/conversations/{conversationId}`, C4 `DELETE /v1/assistant/conversations/{conversationId}`, C5 `GET /v1/assistant/conversations/{conversationId}/messages`. **Asha now reads only the conversation she is asked in**, so a new conversation starts with a clean context.
@@ -74,7 +80,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **94** routes the phone calls: **66 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **102** routes the phone calls: **74 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -97,6 +103,7 @@ Of the **94** routes the phone calls: **66 READY**, **27 PARTIAL**, **1 DEV STUB
 | Chats and members (direct chats, groups, roles) | **READY** | |
 | Messages between people (sending, inbox, receipts, typing, delete for everyone) | **READY** | End-to-end encrypted on the phone; the server stores ciphertext until it is acknowledged. |
 | Chat attachments (photos, voice notes, video, files) | **READY** | AT1–AT3: encrypted on the phone, ciphertext up to 32 MiB straight to R2 through pre-signed URLs, kept 30 days. On a local server (`STORAGE_PROVIDER=local`) the upload URL is a placeholder, so test against the sandbox. |
+| Moments (24-hour statuses: post, list, views, delete, encrypted media) | **READY** | ST1–ST8 and the `status` frames. Ciphertext only; the body is encrypted once under your moments sender key and new audience members get a key copy over their 1:1 session. Files go like chat attachments (up to 32 MiB of ciphertext to R2). No pushes. On a local server (`STORAGE_PROVIDER=local`) the upload URL is a placeholder, so test files against the sandbox. |
 | Chat history and its key backup | **MISSING** | Designed; being built in slices. `mediaIds` on a message are stored as given. When an account is deleted, its messaging data (keys, memberships, inbox) is not cleaned up until chat history ships. |
 | Wallet (create, PIN session, balance per chain, fiat balance, add a chain) | **PARTIAL** | W1–W3 and W12 work. On dev the custody provider is Circle on testnet (Base Sepolia, Polygon Amoy, Ethereum Sepolia, Solana Devnet): the challenges are real, so run them in the Circle SDK, where the user sets the PIN and the wallet appears on Circle's testnet. Test USDC comes from Circle's testnet faucet (faucet.circle.com), sent to the chain's address from W1. |
 | Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work against Circle's testnet: complete the payment's challenge in the Circle SDK with the PIN, and `transfer.updated` and `payment.received` arrive as Circle's webhooks report the transaction (testnet USDC from Circle's faucet). Limits are placeholders (500 USDC a payment, 1 000 a day). |
@@ -491,6 +498,29 @@ Photos, voice notes, video and files travel Signal-style. The phone makes a fres
 | `POST /v1/attachments/{attachmentId}/complete`<br>**AT2** Complete the upload | `app` | — → `{ "attachmentId", "sizeBytes" }` | **READY** | The uploader only, after the PUT returned 2xx. The server checks the object is there at exactly AT1's `sizeBytes`. Completing twice answers the same, so retry freely. Then send the M12 message. Errors: `messaging.attachment_incomplete` (nothing uploaded, or a different size: PUT again while the URL works, or start over), `messaging.attachment_not_found` (not yours, unknown or expired), `request.malformed`. |
 | `GET /v1/attachments/{attachmentId}`<br>**AT3** Download link | `app` | — → `{ "downloadUrl", "expiresAt", "sizeBytes" }` | **READY** | Anyone **currently** in the attachment's chat, once it is complete. `GET` `downloadUrl` (no auth header) before `expiresAt` (15 minutes); don't store the link, ask again. Verify the digest from the message before decrypting. After 30 days, or after you leave the chat, show "No longer available". Errors: `messaging.attachment_not_found` (also for a pending attachment or a chat you aren't in: the server doesn't say which), `request.malformed`. |
 
+### Moments
+
+Moments are statuses that live **24 hours** from `postedAt`, end to end encrypted the way WhatsApp's are (Moments API, decision 2026-11-03). Each poster has one **moments sender key** on the phone (a libsignal `SenderKeyDistributionMessage` under a fixed `distributionId` per poster); the body is encrypted **once** with `GroupCipher` and sent as `ciphertext`. Audience members who don't have the current distribution yet get a **key copy**: the distribution message encrypted over their ordinary Signal session, in `keyCopies`. When someone leaves the audience (a privacy change, a contact removed), rotate: a new distribution, and copies for everyone in the new audience with the next post. The phone chooses the audience from its own Circaso contacts and its privacy setting; the server never sees the address book and only checks that each person and the poster can reach each other both ways (`users.api.ReachPolicy`: no block either way, and each has the other saved). Show a moment only from people in your own contacts. Every state change sends an `Idempotency-Key`.
+
+**The encrypted body** (inside `ciphertext`, JSON, the app's own format): `{ "v": 1, "kind": "TEXT|IMAGE|VIDEO|VOICE", "text", "background": "INK|METAL|PAPER|GRAPHITE", "style": "BOLD|REGULAR", "caption", "media": { "mediaId", "key", "digest", "mime", "sizeBytes", "durationMs", "width", "height" }, "thumb" }`. A file is encrypted on the phone with a fresh AES-256-GCM key, exactly as chat attachments (AT1–AT3); its key, digest, real type, the caption and a tiny blurred thumbnail travel only inside the body.
+
+The flow for a photo: **ST1** (size of the ciphertext) → `PUT` the ciphertext to `uploadUrl` with exactly `uploadHeaders` → **ST2** → **ST3** with the `mediaId` in `mediaIds` and in the body, within an hour of ST1. Viewers get `status.posted`, read **ST4**, decrypt (with `keyCopy` first when there is one), call **ST8** for the file and **ST5** when they open it.
+
+**Moment** (ST4's items): `momentId`, `posterId`, `ciphertext`, `keyCopy` (your copy of the poster's sender key when one came with this moment, else null), `mediaIds` (0 or 1), `postedAt`, `expiresAt`, `mine`, `viewed`, `reacted`, `viewCount` (a number on your own moments only, null on others').
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/moments/media`<br>**ST1** Start an encrypted moment upload | `app` | `{ "sizeBytes": 123456, "kind": "image" }` → `{ "mediaId", "uploadUrl", "uploadHeaders": { "Content-Type": "application/octet-stream" }, "expiresAt" }` | **READY** | `kind` is `image`, `video` or `voice` (lowercase). `sizeBytes` is the exact size of the ciphertext (with the GCM tag), 1 byte to 32 MiB. `PUT` to `uploadUrl` (no auth header) before `expiresAt` (15 minutes). A file not posted with ST3 within an hour is deleted. Errors: `status.media_invalid` (size or kind), `request.malformed`. |
+| `POST /v1/moments/media/{mediaId}/complete`<br>**ST2** Complete the upload | `app` | — → `{ "mediaId", "sizeBytes" }` | **READY** | Yours only, after the PUT returned 2xx. The object must be there at exactly ST1's `sizeBytes`. Completing twice answers the same. Errors: `status.media_invalid` (nothing uploaded, or another size: PUT again while the link works, or start over), `status.media_not_found` (not yours, unknown or past its hour), `request.malformed`. |
+| `POST /v1/moments`<br>**ST3** Post a moment | `app` | `{ "clientMomentId", "ciphertext", "audience": [userId], "keyCopies": [{ "userId", "ciphertext" }], "mediaIds": [mediaId] }` → `{ "momentId", "postedAt", "expiresAt" }` | **READY** | Make `clientMomentId` (a UUID) on the phone: a retry with the same one returns the first answer and posts nothing. `ciphertext` and each key copy are standard base64; the body at most 64 KiB decoded. `audience` 1 to 1,024 people, never yourself; people who can't reach you are dropped silently (a block is never revealed), with their key copies. `keyCopies` only for people in `audience`, one each. At most one **completed** file of yours that no other moment carries. At most 50 moments in 24 hours. The audience gets `status.posted`. Errors: `status.audience_invalid`, `status.moment_too_large`, `status.media_invalid` (more than one file), `status.media_not_found` (a file not completed, not yours, already used or past its hour), `status.too_many_moments` (429, `Retry-After` in seconds), `request.malformed`. |
+| `GET /v1/moments`<br>**ST4** The moments you may see, and your own | `app` | — → `{ "moments": [Moment], "next" }` | **READY** | `?after=<momentId>&limit=50` (at most 200). Every live moment shown to you plus your own, by moment id, so oldest first within a poster: group them by `posterId` for the rings. Page with `next` until it is null. Call it on opening Moments and after `status.posted`. A poster you blocked (or who blocked you) since posting is left out. Errors: `request.malformed`. |
+| `POST /v1/moments/{momentId}/view`<br>**ST5** Record that you viewed it | `app` | `{ "reacted": true }` (optional; `{}` or no body) → `{ "viewed": true }` | **READY** | The audience only. The first call records the view; later ones change `reacted` when they carry it. The poster gets `status.viewed` when something changed. Errors: `status.moment_not_found` (missing, expired, deleted, not shown to you, or a block since), `request.malformed`. |
+| `GET /v1/moments/{momentId}/views`<br>**ST6** Who viewed your moment | `app` | — → `{ "views": [{ "userId", "viewedAt", "reacted" }] }` | **READY** | Yours only, in the order people viewed it. Errors: `status.not_poster` (403: you're in its audience but didn't post it), `status.moment_not_found`, `request.malformed`. |
+| `DELETE /v1/moments/{momentId}`<br>**ST7** Delete your moment | `app` | — → `{ "deleted": true }` | **READY** | Yours only. The moment, its views and its file go; the audience gets `status.deleted`. Errors: `status.not_poster`, `status.moment_not_found`, `request.malformed`. |
+| `GET /v1/moments/media/{mediaId}`<br>**ST8** Download link for a moment's file | `app` | — → `{ "downloadUrl", "expiresAt", "sizeBytes" }` | **READY** | The poster, or anyone in the audience of the live moment carrying it. `GET` `downloadUrl` (no auth header) before `expiresAt` (15 minutes); ask again rather than storing it. Verify the digest from the body before decrypting. Errors: `status.media_not_found` (also when you may not have it, or it is pending or expired: the server doesn't say which), `request.malformed`. |
+
+**Retention.** `status.purge-expired` runs every 10 minutes and hard-deletes moments past `expiresAt` with their views and files, so reads hide a moment the moment it expires and the rows go within 10 minutes. A deleted account's moments are removed at once (its audiences get `status.deleted`).
+
 ## 8. Realtime socket
 
 While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSockets` plugin; the server pings every 25 seconds). The **first frame** must authenticate within a few seconds or the server closes it:
@@ -539,6 +569,9 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `calls` / `call.ringing` | `callId`, `chatId`, `kind` (`VOICE` \| `VIDEO`), `callerId`, `callerName` | Someone is calling the chat: show the incoming-call screen (ring for 45 seconds at most). To each person rung, not the caller. Offline: a data-only, high-priority push (TTL 45 s) with `kind: "call.ringing"`, `chatId`, `callId`, `callerName`, `callKind`. |
 | `calls` / `call.updated` | CallResponse (with `iceServers` empty) | Someone joined, left, declined or muted, or the call turned `ACTIVE`: redraw the tiles, and pull (CL4) the tracks of anyone newly `JOINED`. To everyone the call rang. No push. |
 | `calls` / `call.ended` | CallResponse (with `iceServers` empty) | The call is over (`endReason`): close the peer connection and the call screen. Offline: `MISSED` → an alert "Missed call from {name}" (`kind: "call.missed"`); `CANCELLED` while it was still ringing you → data-only (`kind: "call.ended"`), so stop ringing and show the missed call yourself. |
+| `status` / `status.posted` | `momentId`, `posterId` | A moment was shown to you: read ST4 (from your last `after`) and show the poster's ring if they're in your contacts. No push. |
+| `status` / `status.deleted` | `momentId`, `posterId` | The poster deleted it (or their account went): drop it and its file. No push. |
+| `status` / `status.viewed` | `momentId`, `viewerId`, `viewedAt`, `reacted` | To the poster, the first time someone views your moment and whenever they change `reacted`: update the viewers list and count. No push. |
 
 **Frames the phone sends** (after the auth frame only; commands stay on HTTP): `{ "module": "messaging", "type": "ack", "data": { … } }`. The server hands each to the module it names and never answers it directly; a frame for a module that takes none is dropped. **Limits:** at most 100 frames per second per socket (frames over it are dropped silently, the socket stays open, so batch acks and throttle typing) and at most 64 KB per frame (a bigger frame closes the socket with 1009). Messaging takes three:
 
@@ -749,6 +782,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **CounterpartyDto** — `userId`?: string|null; `displayName`?: string|null; `handle`?: string|null; `avatarUrl`?: string|null; `address`?: string|null
 - **CreateConversationRequest** (C2; the body may be empty) — `title`?: string|null (1 to 80 characters)
 - **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
+- **DeletedResponse** — `deleted`: boolean
 - **DoneEvent** (SSE `done`, A2 and A9) — `message`: ChatMessageDto; `conversationId`: string; `conversation`?: ConversationDto|null
 - **CreateWalletResponse** — `status`: string (`SETTING_UP`); `challengeId`?: string|null; `sdk`: SdkDto
 - **DeviceDto** — `deviceId`: string; `platform`: string; `model`: string; `osVersion`?: string|null; `appVersion`: string
@@ -766,13 +800,19 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **JwkDto** — `kty`?: string; `crv`?: string; `use`?: string; `alg`?: string; `kid`: string; `x`: string
 - **JwksResponse** — `keys`: [JwkDto]
 - **KeyBundleResponse** — `userId`: string; `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `kyberPreKey`: KyberPreKeyDto; `oneTimePreKey`?: OneTimePreKeyDto|null
+- **KeyCopyDto** — `userId`: string; `ciphertext`: string (base64)
 - **KeyStatusResponse** — `oneTimePreKeysLeft`: integer; `signedPreKeyAt`: string
 - **KyberPreKeyDto** — `keyId`: integer; `publicKey`: string (ML-KEM 1024, up to 2,048 bytes decoded); `signature`: string
 - **LinkProviderRequest** — `provider`: string; `idToken`: string; `nonce`: string
+- **MediaCompletedResponse** — `mediaId`: string; `sizeBytes`: integer
+- **MediaDownloadResponse** — `downloadUrl`: string; `expiresAt`: string; `sizeBytes`: integer
+- **MediaUploadResponse** — `mediaId`: string; `uploadUrl`: string; `uploadHeaders`: UploadHeadersDto; `expiresAt`: string
 - **MemberRemovedResponse** — `removed`: boolean
 - **MessageDeletedResponse** — `deleted`: boolean
 - **MessagingSettingsRequest** — `readReceipts`?: boolean|null; `typing`?: boolean|null
 - **MessagingSettingsResponse** — `readReceipts`: boolean; `typing`: boolean
+- **MomentDto** — `momentId`: string; `posterId`: string; `ciphertext`: string; `keyCopy`: string|null; `mediaIds`: [string]; `postedAt`: string; `expiresAt`: string; `mine`: boolean; `viewed`: boolean; `reacted`: boolean; `viewCount`: integer|null
+- **MomentsResponse** — `moments`: [MomentDto]; `next`: string|null
 - **MyProfileResponse** — `userId`: string; `displayName`: string; `about`?: string|null; `handle`?: string|null; `handleChangeableAt`?: string|null; `avatarUrl`?: string|null; `privacy`: PrivacyDto; `version`: integer
 - **NoBody** — `unused`?: string|null
 - **NonceResponse** — `nonce`: string; `expiresInSeconds`: integer
@@ -782,7 +822,10 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **PayeeDto** — `userId`?: string|null; `address`: string
 - **PayeeRequest** — `userId`?: string; `address`?: string (exactly one)
 - **PhoneVerifiedResponse** — `phoneVerified`: boolean; `maskedPhone`: string; `next`: string
+- **PostMomentRequest** — `clientMomentId`: string (UUID); `ciphertext`: string (base64, at most 64 KiB decoded); `audience`: [string] (1 to 1024); `keyCopies`?: [KeyCopyDto]; `mediaIds`?: [string] (at most 1)
+- **PostedMomentResponse** — `momentId`: string; `postedAt`: string; `expiresAt`: string
 - **PrepareAttachmentRequest** — `sizeBytes`: integer (1 to 33554432); `kind`: string (`image` | `voice` | `video` | `file`)
+- **PrepareMediaRequest** — `sizeBytes`: integer (1 to 33554432); `kind`: string (`image` | `video` | `voice`)
 - **PrepareTransferRequest** — `blockchain`: string; `to`: PayeeRequest; `amount`: AmountRequest; `chatId`?: string; `proposalId`?: string (refused until Asha's proposals exist)
 - **PrepareTransferResponse** — `transferId`: string; `state`: string; `blockchain`: string; `amount`: AmountDto; `challengeId`?: string|null; `sdk`?: SdkDto|null; `fee`: AmountDto; `expiresAt`: string
 - **PrivacyChangeDto** — `avatar`?: string|null; `about`?: string|null; `handleLookup`?: boolean|null
@@ -847,6 +890,10 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ValidateAddressRequest** — `blockchain`: string; `address`: string
 - **ValidateAddressResponse** — `blockchain`: string; `address`: string; `valid`: boolean
 - **VerifyCodeRequest** — `verificationId`: string; `code`: string
+- **ViewDto** — `userId`: string; `viewedAt`: string; `reacted`: boolean
+- **ViewMomentRequest** — `reacted`?: boolean|null
+- **ViewedResponse** — `viewed`: boolean
+- **ViewsResponse** — `views`: [ViewDto]
 - **VoiceDto** — `id`: string; `name`: string; `character`: string; `gender`: string (`female` | `male`); `default`: boolean
 - **VoicesResponse** — `voices`: [VoiceDto]
 - **WalletResponse** — `status`: string (`NONE` | `SETTING_UP` | `ACTIVE`); `chains`: [ChainDto]; `totals`: [AssetTotalDto]; `fiat`?: FiatDto|null; `hold`?: HoldDto|null

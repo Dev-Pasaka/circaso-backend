@@ -12,6 +12,7 @@ One file per business module, each in the same shape, so a new module is a new f
 | wallet | Being built (WS2: W1–W3, W12) — [wallet.md](wallet.md) | `wallet` | `events:wallet` | Circle user-controlled wallets on several chains, transaction records, statements | identity, users, messaging |
 | chama | Built, first slice (CH1–CH6) — [chama.md](chama.md) | `chama` | `events:chama` | A group chat's shared goal held by its treasurer, contributions, payment requests and approvals | users, messaging, wallet |
 | calls | Built (CL1–CL8) — [calls.md](calls.md) | `calls` | `events:calls` | Voice and video calls in a chat (up to 8 people) on Cloudflare Realtime's SFU: sessions, ringing, who is in | users, messaging |
+| status (Moments) | Built (ST1–ST8) — [status.md](status.md) | `status` | none (publishes nothing; reads `events:identity`) | Moments: 24-hour end-to-end encrypted statuses, their audience, views and encrypted files | identity, users |
 | assistant (Asha) | Outlined — [assistant.md](assistant.md) | `assistant` | `events:assistant` | Asha conversations, voice, usage and Asha Plus, proposals, audit trail | identity, users; later messaging, wallet |
 
 ## Adding a module

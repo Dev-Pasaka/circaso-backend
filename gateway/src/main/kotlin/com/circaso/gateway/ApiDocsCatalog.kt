@@ -286,10 +286,10 @@ internal object ApiDocsCatalog {
                             "- **Files** go like chat media: start an upload, PUT the ciphertext, complete it, then " +
                             "post the moment carrying it; the audience downloads it through a 15-minute link.\n" +
                             "- **Views**: the audience records a view (and a reaction); only the poster sees who " +
-                            "viewed. `status` frames tell phones about new, deleted and viewed moments; there are " +
-                            "no pushes.\n" +
-                            "- A moment, its views and its file are deleted 24 hours after it was posted, or when the " +
-                            "poster deletes it.",
+                            "viewed. `status` frames tell phones about new, deleted and viewed moments; there " +
+                            "are no pushes.\n" +
+                            "- A moment, its views and its file are deleted 24 hours after it was posted, or " +
+                            "when the poster deletes it.",
                     ),
                     DocTag(
                         "Calls",
