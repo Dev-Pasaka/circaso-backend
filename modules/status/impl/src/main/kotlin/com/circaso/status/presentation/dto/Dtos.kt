@@ -1,8 +1,15 @@
 package com.circaso.status.presentation.dto
 
 import com.circaso.shared.InstantSerializer
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
 
 /** ST1. `kind` is `image`, `video` or `voice`; `sizeBytes` is the ciphertext's exact size, 1 B to 32 MiB. */
@@ -60,7 +67,8 @@ data class PostedMomentResponse(
 
 /**
  * One moment as the caller sees it. `keyCopy` is the caller's own copy of the poster's sender key, when one was
- * sent with this moment; `viewCount` is only on the caller's own (`mine`).
+ * sent with this moment. `reaction` is the caller's own emoji on someone else's moment (`reacted` is
+ * `reaction != null`); `viewCount` and `reactionCount` are only on the caller's own (`mine`).
  */
 @Serializable
 data class MomentDto(
@@ -74,16 +82,53 @@ data class MomentDto(
     val mine: Boolean,
     val viewed: Boolean,
     val reacted: Boolean,
+    val reaction: String?,
     val viewCount: Int?,
+    val reactionCount: Int?,
 )
 
 /** ST4. `next` is the `after` of the next page; null on the last. */
 @Serializable
 data class MomentsResponse(val moments: List<MomentDto>, val next: String?)
 
-/** ST5. Leave `reacted` out to record a view without changing it. */
+/**
+ * ST5. `reaction` sets the caller's emoji, `"reaction": null` clears it and no `reaction` leaves it, so the field is
+ * a [ReactionField] that tells the three apart. `reaction` wins over `reacted`; `reacted: true` alone is the heart,
+ * `false` clears. Leave both out to record a view without changing anything.
+ */
 @Serializable
-data class ViewMomentRequest(val reacted: Boolean? = null)
+data class ViewMomentRequest(val reacted: Boolean? = null, val reaction: ReactionField = ReactionField.Absent)
+
+/** ST5's `reaction` as sent: a string, an explicit `null`, or not there at all. */
+@Serializable(with = ReactionFieldSerializer::class)
+sealed interface ReactionField {
+    data object Absent : ReactionField
+
+    data object Null : ReactionField
+
+    data class Value(val text: String) : ReactionField
+}
+
+/** On the wire a string or null; an absent key never reaches it, so the property's default stands for that. */
+@OptIn(ExperimentalSerializationApi::class)
+object ReactionFieldSerializer : KSerializer<ReactionField> {
+    override val descriptor: SerialDescriptor = String.serializer().nullable.descriptor
+
+    override fun deserialize(decoder: Decoder): ReactionField =
+        if (decoder.decodeNotNullMark()) {
+            ReactionField.Value(decoder.decodeString())
+        } else {
+            decoder.decodeNull()
+            ReactionField.Null
+        }
+
+    override fun serialize(encoder: Encoder, value: ReactionField) {
+        when (value) {
+            is ReactionField.Value -> encoder.encodeString(value.text)
+            else -> encoder.encodeNull()
+        }
+    }
+}
 
 @Serializable
 data class ViewedResponse(val viewed: Boolean)
@@ -93,6 +138,7 @@ data class ViewDto(
     val userId: String,
     @Serializable(with = InstantSerializer::class) val viewedAt: Instant,
     val reacted: Boolean,
+    val reaction: String?,
 )
 
 @Serializable

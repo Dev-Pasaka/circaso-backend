@@ -39,7 +39,7 @@ private const val MALFORMED = "request.malformed"
 /**
  * Moments, WhatsApp-style statuses that live 24 hours, end to end encrypted on the poster's phone (Moments API):
  * ST3 post, ST4 list what the caller may see, ST5 record a view, ST6 who viewed, ST7 delete. Frames
- * `status/status.posted`, `status.deleted` and `status.viewed`; no pushes.
+ * `status/status.posted`, `status.deleted` and `status.viewed`; the gateway pushes a reaction (`moment.loved`).
  */
 fun Route.momentController(
     moments: MomentService,
@@ -102,9 +102,10 @@ private fun Route.collectionRoutes(
         listOf(MALFORMED),
         notes =
             "$SCOPE `?after=<momentId>&limit=$pageDefault` (at most $pageMax). Every live moment shown to you, plus " +
-                "your own (`mine`, with `viewCount`), by moment id, so oldest first within a poster. `keyCopy` is " +
-                "your copy of the poster's sender key when one came with that moment. `next` is the `after` of the " +
-                "next page, null on the last.",
+                "your own (`mine`, with `viewCount` and `reactionCount`), by moment id, so oldest first within a " +
+                "poster. `keyCopy` is your copy of the poster's sender key when one came with that moment; " +
+                "`reaction` is your own emoji on someone else's. `next` is the `after` of the next page, null on " +
+                "the last.",
     )
 }
 
@@ -114,17 +115,20 @@ private fun Route.momentRoutes(moments: MomentService) {
         val body = call.receiveText()
         val result =
             parseMomentId(call.parameters["momentId"]).flatMap { momentId ->
-                parseViewRequest(body).flatMap { moments.view(caller, momentId, it.reacted) }
+                parseViewRequest(body).flatMap { moments.view(caller, momentId, it) }
             }
         call.respondDefault(result.toDefaultResponse { ViewedResponse(viewed = true) })
     }.docs<ViewMomentRequest, ViewedResponse>(
         "ST5 · Record that you viewed a moment",
         TAG,
-        listOf(NOT_FOUND, MALFORMED),
+        listOf(NOT_FOUND, "status.reaction_invalid", MALFORMED),
         notes =
-            "$SCOPE $IDEMPOTENT The audience only. The first call records the view; later ones change `reacted` " +
-                "when they carry it (the body may be `{}`). The poster gets `status/status.viewed` whenever " +
-                "something changed.",
+            "$SCOPE $IDEMPOTENT The audience only. The first call records the view; later ones change your " +
+                "reaction when they carry it (the body may be `{}`). `reaction` is one emoji (1 to 16 UTF-8 bytes, " +
+                "no letters, digits or spaces; else `status.reaction_invalid`) and sets it, `\"reaction\": null` " +
+                "clears it, no `reaction` leaves it. Older apps: `reacted: true` alone is `\"❤️\"`, `false` clears. " +
+                "The poster gets `status/status.viewed` whenever something changed, and a push when you add or " +
+                "change a reaction while they're offline.",
     )
 
     get("views") {

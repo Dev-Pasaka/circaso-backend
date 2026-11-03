@@ -21,14 +21,25 @@ data class Moment(
 
 /**
  * One person a moment was shown to: their pairwise copy of the poster's sender key when one was sent with it, and,
- * once they opened it, when and whether they reacted.
+ * once they opened it, when and with which emoji they reacted ([reaction], null for none).
  */
 data class AudienceMember(
     val userId: UserId,
     val keyCopy: String?,
     val viewedAt: Instant? = null,
-    val reacted: Boolean = false,
-)
+    val reaction: String? = null,
+) {
+    val reacted: Boolean get() = reaction != null
+}
+
+/** What ST5 does to the caller's reaction: leave it, clear it, or set it to one emoji. */
+sealed interface ReactionChange {
+    data object Keep : ReactionChange
+
+    data object Clear : ReactionChange
+
+    data class Set(val emoji: String) : ReactionChange
+}
 
 /** A pairwise-encrypted copy of the poster's moments sender key for one audience member. */
 data class KeyCopy(val userId: UserId, val ciphertext: String)
@@ -45,23 +56,36 @@ data class PostMomentCommand(
 /** ST3's answer: the same one again for a repeat of the same `clientMomentId`. */
 data class PostedMoment(val momentId: MomentId, val postedAt: Instant, val expiresAt: Instant)
 
-/** A moment as one caller sees it in ST4. [viewCount] is only for the caller's own. */
+/**
+ * A moment as one caller sees it in ST4. [reaction] is the caller's own on someone else's; [viewCount] and
+ * [reactionCount] are only for the caller's own.
+ */
 data class MomentView(
     val moment: Moment,
     val keyCopy: String?,
     val mine: Boolean,
     val viewed: Boolean,
-    val reacted: Boolean,
+    val reaction: String?,
     val viewCount: Int?,
-)
+    val reactionCount: Int? = null,
+) {
+    val reacted: Boolean get() = reaction != null
+}
+
+/** How many people viewed one moment, and how many of them reacted. */
+data class ViewCounts(val views: Int, val reactions: Int)
 
 data class MomentPage(val moments: List<MomentView>, val next: MomentId?)
 
 /** One row of ST6. */
-data class ViewRecord(val userId: UserId, val viewedAt: Instant, val reacted: Boolean)
+data class ViewRecord(val userId: UserId, val viewedAt: Instant, val reaction: String?) {
+    val reacted: Boolean get() = reaction != null
+}
 
 /** What ST5 changed: [changed] is false for a repeat that set nothing new, which sends no frame. */
-data class ViewOutcome(val viewedAt: Instant, val reacted: Boolean, val changed: Boolean)
+data class ViewOutcome(val viewedAt: Instant, val reaction: String?, val changed: Boolean) {
+    val reacted: Boolean get() = reaction != null
+}
 
 /** The phone's word for what a moment's file is; the real type travels inside the encrypted body. */
 enum class MediaKind { IMAGE, VIDEO, VOICE }

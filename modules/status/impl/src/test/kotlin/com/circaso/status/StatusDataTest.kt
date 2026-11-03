@@ -16,6 +16,9 @@ import com.circaso.status.domain.models.MediaKind
 import com.circaso.status.domain.models.MediaState
 import com.circaso.status.domain.models.Moment
 import com.circaso.status.domain.models.MomentMedia
+import com.circaso.status.domain.models.ReactionChange
+import com.circaso.status.domain.models.ViewCounts
+import com.circaso.status.domain.support.HEART
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
 import java.time.Instant
@@ -107,15 +110,51 @@ class StatusDataTest {
             val posted = moment()
             moments.insert(posted, listOf(AudienceMember(amina, null), AudienceMember(baraka, null)))
 
-            val first = moments.recordView(posted.momentId, amina, now, null)
-            val later = moments.recordView(posted.momentId, amina, now.plusSeconds(60), true)
+            val first = moments.recordView(posted.momentId, amina, now, ReactionChange.Keep)
+            val later = moments.recordView(posted.momentId, amina, now.plusSeconds(60), ReactionChange.Set(HEART))
 
             assertEquals(now, first?.viewedAt)
+            assertNull(first?.reaction)
             assertEquals(now, later?.viewedAt)
-            assertEquals(true, later?.reacted)
-            assertNull(moments.recordView(posted.momentId, poster, now, null))
-            assertEquals(mapOf(posted.momentId to 1), moments.viewCounts(listOf(posted.momentId)))
+            assertEquals(HEART, later?.reaction)
+            assertNull(moments.recordView(posted.momentId, poster, now, ReactionChange.Keep))
+            assertEquals(mapOf(posted.momentId to ViewCounts(1, 1)), moments.viewCounts(listOf(posted.momentId)))
             assertEquals(listOf(amina), moments.views(posted.momentId).map { it.userId })
+        }
+
+    @Test
+    fun `a reaction is any emoji, kept by a plain view, changed, cleared, and counted with the views`() =
+        runBlocking<Unit> {
+            val posted = moment()
+            val chebet = UserId.new()
+            moments.insert(posted, listOf(amina, baraka, chebet).map { AudienceMember(it, null) })
+
+            moments.recordView(posted.momentId, amina, now, ReactionChange.Set("😂"))
+            assertEquals("😂", moments.recordView(posted.momentId, amina, now, ReactionChange.Keep)?.reaction)
+            val changed = moments.recordView(posted.momentId, amina, now, ReactionChange.Set("🇰🇪"))
+            assertEquals("🇰🇪", changed?.reaction)
+            assertTrue(changed!!.reacted)
+            moments.recordView(posted.momentId, baraka, now.plusSeconds(1), ReactionChange.Set("🔥"))
+            moments.recordView(posted.momentId, chebet, now.plusSeconds(2), ReactionChange.Keep)
+
+            assertEquals(mapOf(posted.momentId to ViewCounts(3, 2)), moments.viewCounts(listOf(posted.momentId)))
+            assertEquals(listOf("🇰🇪", "🔥", null), moments.views(posted.momentId).map { it.reaction })
+
+            val cleared = moments.recordView(posted.momentId, baraka, now, ReactionChange.Clear)
+            assertNull(cleared?.reaction)
+            assertFalse(cleared!!.reacted)
+            assertEquals(mapOf(posted.momentId to ViewCounts(3, 1)), moments.viewCounts(listOf(posted.momentId)))
+            assertEquals(
+                listOf(true, false, false),
+                moments.views(posted.momentId).map { it.reacted },
+            )
+            assertEquals(
+                "🇰🇪",
+                moments
+                    .visibleTo(amina, null, now, 10)
+                    .single()
+                    .second.reaction,
+            )
         }
 
     @Test

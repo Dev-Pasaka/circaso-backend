@@ -11,7 +11,7 @@ import java.time.Clock
 
 /**
  * ST4 `GET /moments`: every live moment shown to the caller, plus the caller's own, by moment id (so oldest first
- * within a poster) after [after]. The two lists are read a page each and merged; `next` is the last id of a full
+ * within a poster) after [after]. Each of the caller's own carries `viewCount` and `reactionCount`. The two lists are read a page each and merged; `next` is the last id of a full
  * page. A poster blocked either way since posting is left out without a word.
  */
 class ListMoments(private val moments: MomentRepository, private val reach: MomentReach, private val clock: Clock) {
@@ -28,13 +28,13 @@ class ListMoments(private val moments: MomentRepository, private val reach: Mome
                     keyCopy = member.keyCopy,
                     mine = false,
                     viewed = member.viewedAt != null,
-                    reacted = member.reacted,
+                    reaction = member.reaction,
                     viewCount = null,
                 )
             }
         val own =
             moments.postedBy(caller, after, now, limit + 1).map { moment ->
-                MomentView(moment, keyCopy = null, mine = true, viewed = false, reacted = false, viewCount = 0)
+                MomentView(moment, keyCopy = null, mine = true, viewed = false, reaction = null, viewCount = 0)
             }
         val merged = (shown + own).sortedBy { it.moment.momentId.value }.take(limit + 1)
         val page = merged.take(limit)
@@ -53,6 +53,13 @@ class ListMoments(private val moments: MomentRepository, private val reach: Mome
         val mine = page.filter { it.mine }.map { it.moment.momentId }
         if (mine.isEmpty()) return page
         val counts = moments.viewCounts(mine)
-        return page.map { if (it.mine) it.copy(viewCount = counts[it.moment.momentId] ?: 0) else it }
+        return page.map {
+            if (it.mine) {
+                val count = counts[it.moment.momentId]
+                it.copy(viewCount = count?.views ?: 0, reactionCount = count?.reactions ?: 0)
+            } else {
+                it
+            }
+        }
     }
 }

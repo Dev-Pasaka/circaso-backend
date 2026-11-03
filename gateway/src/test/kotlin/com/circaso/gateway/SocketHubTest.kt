@@ -45,6 +45,9 @@ import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
+import com.circaso.status.api.MomentId
+import com.circaso.status.api.MomentViewedFrame
+import com.circaso.status.api.StatusFrames
 import com.circaso.wallet.api.PaymentReceivedFrame
 import com.circaso.wallet.api.SetupRequestedFrame
 import com.circaso.wallet.api.TransferId
@@ -979,6 +982,39 @@ class SocketHubTest {
                 push.sent.map { it.second.body },
             )
             assertTrue(push.sent.none { "20" in it.second.body || "20" in it.second.title })
+        }
+
+    @Test
+    fun `a reaction on my moment pushes the emoji and the name, a plain view or a cleared reaction never`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val poster = UserId.new()
+            val momentId = MomentId.new()
+            val at = Instant.parse("2026-11-03T09:00:00Z")
+
+            fun viewed(
+                seq: Long,
+                reaction: String?,
+                name: String?,
+            ) = RealtimeEnvelope.of(
+                StatusFrames.MODULE,
+                StatusFrames.VIEWED,
+                seq,
+                MomentViewedFrame(momentId, UserId.new(), at, reaction != null, viewerName = name, reaction = reaction),
+                MomentViewedFrame.serializer(),
+            )
+            realtime.deliver(poster, viewed(1, null, null)) // a plain view
+            realtime.deliver(poster, viewed(2, "😂", "Amina"))
+            realtime.deliver(poster, viewed(3, null, null)) // cleared
+            realtime.deliver(poster, viewed(4, "🔥", null)) // no name: status found no profile
+            realtime.deliver(poster, viewed(5, "\u2764\uFE0F", "Baraka"))
+
+            assertEquals(
+                listOf("Amina reacted 😂 to your moment", "Baraka reacted \u2764\uFE0F to your moment"),
+                push.sent.map { it.second.body },
+            )
+            assertTrue(push.sent.all { it.second.title == "Circaso" && it.second.data.kind == "moment.loved" })
         }
 
     /** Two nodes sharing [redis], both listening, served at `/one/ws` and `/two/ws`. */

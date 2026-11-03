@@ -6,6 +6,7 @@ import com.circaso.status.api.MomentId
 import com.circaso.status.domain.models.MomentPage
 import com.circaso.status.domain.models.PostMomentCommand
 import com.circaso.status.domain.models.PostedMoment
+import com.circaso.status.domain.models.ReactionChange
 import com.circaso.status.domain.models.ViewOutcome
 import com.circaso.status.domain.models.ViewRecord
 import com.circaso.status.domain.usecases.DeleteMoment
@@ -33,8 +34,8 @@ class MomentService(
     suspend fun view(
         caller: UserId,
         momentId: MomentId,
-        reacted: Boolean?,
-    ): Resource<ViewOutcome> = viewMoment(caller, momentId, reacted)
+        reaction: ReactionChange,
+    ): Resource<ViewOutcome> = viewMoment(caller, momentId, reaction)
 
     suspend fun views(caller: UserId, momentId: MomentId): Resource<List<ViewRecord>> = listViews(caller, momentId)
 

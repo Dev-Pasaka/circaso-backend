@@ -17,7 +17,9 @@ import com.circaso.status.domain.models.MomentView
 import com.circaso.status.domain.models.PostMomentCommand
 import com.circaso.status.domain.models.PostedMoment
 import com.circaso.status.domain.models.PrepareMediaCommand
+import com.circaso.status.domain.models.ReactionChange
 import com.circaso.status.domain.models.ViewRecord
+import com.circaso.status.domain.support.HEART
 import com.circaso.status.presentation.dto.KeyCopyDto
 import com.circaso.status.presentation.dto.MediaCompletedResponse
 import com.circaso.status.presentation.dto.MediaDownloadResponse
@@ -27,6 +29,7 @@ import com.circaso.status.presentation.dto.MomentsResponse
 import com.circaso.status.presentation.dto.PostMomentRequest
 import com.circaso.status.presentation.dto.PostedMomentResponse
 import com.circaso.status.presentation.dto.PrepareMediaRequest
+import com.circaso.status.presentation.dto.ReactionField
 import com.circaso.status.presentation.dto.UploadHeadersDto
 import com.circaso.status.presentation.dto.ViewDto
 import com.circaso.status.presentation.dto.ViewMomentRequest
@@ -85,17 +88,43 @@ private fun KeyCopyDto.toKeyCopy(): KeyCopy? {
     return KeyCopy(user, ciphertext)
 }
 
-/** ST5's body is optional: none, or `{}`, records a view without changing `reacted`. */
-fun parseViewRequest(body: String): Resource<ViewMomentRequest> {
-    if (body.isBlank()) return Resource.success(ViewMomentRequest())
-    return try {
-        Resource.success(CircasoJson.decodeFromString(ViewMomentRequest.serializer(), body))
-    } catch (e: SerializationException) {
-        malformed("reacted", "must be true or false")
-    } catch (e: IllegalArgumentException) {
-        malformed("reacted", "must be true or false")
-    }
+/**
+ * ST5's body is optional: none, or `{}`, records a view without changing the reaction. A `reaction` sets it (the
+ * use case checks it is one emoji) or clears it (`null`); without one, `reacted: true` is the heart and `false`
+ * clears, as older apps send.
+ */
+fun parseViewRequest(body: String): Resource<ReactionChange> {
+    if (body.isBlank()) return Resource.success(ReactionChange.Keep)
+    val request =
+        try {
+            CircasoJson.decodeFromString(ViewMomentRequest.serializer(), body)
+        } catch (e: SerializationException) {
+            return malformed("reaction", VIEW_BODY)
+        } catch (e: IllegalArgumentException) {
+            return malformed("reaction", VIEW_BODY)
+        }
+    val change =
+        when (val reaction = request.reaction) {
+            is ReactionField.Value -> {
+                ReactionChange.Set(reaction.text)
+            }
+
+            ReactionField.Null -> {
+                ReactionChange.Clear
+            }
+
+            ReactionField.Absent -> {
+                when (request.reacted) {
+                    true -> ReactionChange.Set(HEART)
+                    false -> ReactionChange.Clear
+                    null -> ReactionChange.Keep
+                }
+            }
+        }
+    return Resource.success(change)
 }
+
+private const val VIEW_BODY = "reaction must be one emoji or null, reacted true or false"
 
 // ---- model → response ----
 
@@ -122,7 +151,10 @@ private fun MomentView.toDto() =
         mine = mine,
         viewed = viewed,
         reacted = reacted,
+        reaction = reaction,
         viewCount = viewCount,
+        reactionCount = reactionCount,
     )
 
-fun List<ViewRecord>.toResponse() = ViewsResponse(map { ViewDto(it.userId.toString(), it.viewedAt, it.reacted) })
+fun List<ViewRecord>.toResponse() =
+    ViewsResponse(map { ViewDto(it.userId.toString(), it.viewedAt, it.reacted, it.reaction) })

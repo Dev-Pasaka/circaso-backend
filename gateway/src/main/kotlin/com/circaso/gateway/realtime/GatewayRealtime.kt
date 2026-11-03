@@ -124,12 +124,10 @@ class GatewayRealtime(
                 decode(RequestUpdatedFrame.serializer(), frame)?.let { requestPush(it, recipient) }
             }
 
-            // A heart on my moment (Pasaka, 2026-11-03); a plain view never pushes. Replies are chat messages and
-            // push as such.
+            // A reaction added or changed on my moment (Pasaka, 2026-11-03): the module names the viewer only then. A
+            // plain view or a cleared reaction never pushes; replies are chat messages and push as such.
             "${StatusFrames.MODULE}.${StatusFrames.VIEWED}" -> {
-                decode(MomentViewedFrame.serializer(), frame)?.takeIf { it.reacted && it.viewerName != null }?.let {
-                    PushMessage("Circaso", "${it.viewerName} loved your moment", PushPayload(kind = MOMENT_LOVED_KIND))
-                }
+                decode(MomentViewedFrame.serializer(), frame)?.let(::reactionPush)
             }
 
             "${CallFrames.MODULE}.${CallFrames.RINGING}" -> {
@@ -238,6 +236,17 @@ class GatewayRealtime(
             }
         }
 
+    /** Only a frame that names the viewer, which status does when it adds or changes a reaction. */
+    private fun reactionPush(frame: MomentViewedFrame): PushMessage? {
+        val name = frame.viewerName ?: return null
+        val reaction = frame.reaction ?: return null
+        return PushMessage(
+            "Circaso",
+            "$name reacted $reaction to your moment",
+            PushPayload(kind = MOMENT_LOVED_KIND),
+        )
+    }
+
     /**
      * Data-only and high priority with a short life, so the app wakes and shows its incoming-call screen (Android's
      * full-screen intent, CallKit on iOS); the text shows only if it can't.
@@ -295,6 +304,6 @@ class GatewayRealtime(
 /** What wakes the app for money received, and the sound it ships for it. */
 private const val PAYMENT_RECEIVED_KIND = "payment.received"
 
-/** A heart on my moment: the app opens my moments when it is tapped. */
+/** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
 private const val MOMENT_LOVED_KIND = "moment.loved"
 private const val MONEY_SOUND = "money_received.wav"
