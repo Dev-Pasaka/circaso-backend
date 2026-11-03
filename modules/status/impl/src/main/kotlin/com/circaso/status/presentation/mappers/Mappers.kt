@@ -11,6 +11,7 @@ import com.circaso.status.domain.models.KeyCopy
 import com.circaso.status.domain.models.MediaDownload
 import com.circaso.status.domain.models.MediaKind
 import com.circaso.status.domain.models.MediaUpload
+import com.circaso.status.domain.models.MomentKeyCopy
 import com.circaso.status.domain.models.MomentMedia
 import com.circaso.status.domain.models.MomentPage
 import com.circaso.status.domain.models.MomentView
@@ -20,7 +21,9 @@ import com.circaso.status.domain.models.PrepareMediaCommand
 import com.circaso.status.domain.models.ReactionChange
 import com.circaso.status.domain.models.ViewRecord
 import com.circaso.status.domain.support.HEART
+import com.circaso.status.presentation.dto.KeyCopiesRequest
 import com.circaso.status.presentation.dto.KeyCopyDto
+import com.circaso.status.presentation.dto.KeyRequestRequest
 import com.circaso.status.presentation.dto.MediaCompletedResponse
 import com.circaso.status.presentation.dto.MediaDownloadResponse
 import com.circaso.status.presentation.dto.MediaUploadResponse
@@ -87,6 +90,21 @@ private fun KeyCopyDto.toKeyCopy(): KeyCopy? {
     if (!isBase64(ciphertext)) return null
     return KeyCopy(user, ciphertext)
 }
+
+fun KeyRequestRequest.toPosters(): Resource<List<UserId>> =
+    Resource.success(posterIds.map { UserId.parse(it) ?: return malformed("posterIds", "each must be a user id") })
+
+fun KeyCopiesRequest.toCopies(): Resource<List<MomentKeyCopy>> =
+    Resource.success(
+        copies.map {
+            val momentId = MomentId.parse(it.momentId)
+            val userId = UserId.parse(it.userId)
+            if (momentId == null || userId == null || !isBase64(it.ciphertext)) {
+                return malformed("copies", "each needs a moment id, a user id and $BASE64")
+            }
+            MomentKeyCopy(momentId, userId, it.ciphertext)
+        },
+    )
 
 /**
  * ST5's body is optional: none, or `{}`, records a view without changing the reaction. A `reaction` sets it (the

@@ -11,6 +11,7 @@ import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeModule
 import com.circaso.status.api.StatusFrames
 import com.circaso.status.data.cache.RealtimeFramesImpl
+import com.circaso.status.data.cache.RedisKeyRequestThrottle
 import com.circaso.status.data.repositories.DatabaseTransactor
 import com.circaso.status.data.repositories.MediaRepositoryImpl
 import com.circaso.status.data.repositories.MomentRepositoryImpl
@@ -21,6 +22,7 @@ import com.circaso.status.data.tables.MediaTable
 import com.circaso.status.data.tables.MomentsTable
 import com.circaso.status.data.tables.RealtimeTable
 import com.circaso.status.domain.ports.FrameSender
+import com.circaso.status.domain.ports.KeyRequestThrottle
 import com.circaso.status.domain.ports.MediaStorage
 import com.circaso.status.domain.ports.RealtimeLog
 import com.circaso.status.domain.ports.Transactor
@@ -40,6 +42,8 @@ import com.circaso.status.domain.usecases.PrepareMomentMedia
 import com.circaso.status.domain.usecases.PurgeMomentMedia
 import com.circaso.status.domain.usecases.RemoveAccountMoments
 import com.circaso.status.domain.usecases.ReplayFrames
+import com.circaso.status.domain.usecases.RequestMomentKeys
+import com.circaso.status.domain.usecases.ShareMomentKeyCopies
 import com.circaso.status.domain.usecases.ViewMoment
 import com.circaso.status.presentation.api.StatusRealtimeReplay
 import com.circaso.status.presentation.controllers.momentController
@@ -70,7 +74,7 @@ internal val statusDatabaseSpec =
         migrationsLocation = "classpath:db/status",
     )
 
-/** Redis prefix `sts:` (`sts:seq:{userId}`). */
+/** Redis prefix `sts:` (`sts:seq:{userId}`, `sts:keyreq:{requester}:{poster}`). */
 private const val REDIS_PREFIX = "sts"
 
 /** `status.purge-expired` (Moments API → Retention): expired moments, their views and files, and the partitions. */
@@ -105,6 +109,7 @@ fun statusModule(config: Config): Module =
             )
         }
         single<FrameSender> { get<RealtimeFramesImpl>() }
+        single<KeyRequestThrottle> { RedisKeyRequestThrottle(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single(named("status.purge-expired")) {
             val expiry = StatusExpiry(get(named("status.database")))
@@ -127,9 +132,11 @@ fun statusModule(config: Config): Module =
         single { DeleteMoment(get(), get(), clock) }
         single { RemoveAccountMoments(get(), get(), get()) }
         single { ReplayFrames(get()) }
+        single { RequestMomentKeys(get(), get(), get(), get(), status, clock) }
+        single { ShareMomentKeyCopies(get(), get(), get(), get(), status, clock) }
 
         // presentation
-        single { MomentService(get(), get(), get(), get(), get()) }
+        single { MomentService(get(), get(), get(), get(), get(), get(), get()) }
         single { MomentMediaService(get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single { RealtimeService(get()) }

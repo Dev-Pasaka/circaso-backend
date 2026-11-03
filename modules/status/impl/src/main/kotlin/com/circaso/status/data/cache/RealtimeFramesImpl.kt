@@ -7,6 +7,8 @@ import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
 import com.circaso.status.api.MomentDeletedFrame
+import com.circaso.status.api.MomentKeyRequestedFrame
+import com.circaso.status.api.MomentKeysReadyFrame
 import com.circaso.status.api.MomentPostedFrame
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrame
@@ -136,5 +138,13 @@ internal fun StatusFrame.envelope(seq: Long, ts: Instant): RealtimeEnvelope =
 
         is MomentViewedFrame -> {
             RealtimeEnvelope.of(StatusFrames.MODULE, type, seq, this, MomentViewedFrame.serializer(), ts)
+        }
+
+        is MomentKeyRequestedFrame -> {
+            RealtimeEnvelope.of(StatusFrames.MODULE, type, seq, this, MomentKeyRequestedFrame.serializer(), ts)
+        }
+
+        is MomentKeysReadyFrame -> {
+            RealtimeEnvelope.of(StatusFrames.MODULE, type, seq, this, MomentKeysReadyFrame.serializer(), ts)
         }
     }

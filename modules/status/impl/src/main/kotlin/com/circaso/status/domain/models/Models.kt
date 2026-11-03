@@ -44,6 +44,9 @@ sealed interface ReactionChange {
 /** A pairwise-encrypted copy of the poster's moments sender key for one audience member. */
 data class KeyCopy(val userId: UserId, val ciphertext: String)
 
+/** `POST /moments/key-copies`: [userId]'s fresh copy for one of the poster's live moments. */
+data class MomentKeyCopy(val momentId: MomentId, val userId: UserId, val ciphertext: String)
+
 data class PostMomentCommand(
     val poster: UserId,
     val clientMomentId: UUID,

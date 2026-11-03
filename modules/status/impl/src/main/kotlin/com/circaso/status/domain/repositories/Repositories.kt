@@ -72,6 +72,20 @@ interface MomentRepository {
     /** Every moment [posterId] still has, for when their account goes. */
     suspend fun allPostedBy(posterId: UserId): List<Moment>
 
+    /** Of [posters], those with a live moment at [now] whose audience includes [viewer]. */
+    suspend fun postersShowing(
+        viewer: UserId,
+        posters: Collection<UserId>,
+        now: Instant,
+    ): Set<UserId>
+
+    /** Replaces [userId]'s key copy on [momentId]. False when they aren't in its audience. */
+    suspend fun replaceKeyCopy(
+        momentId: MomentId,
+        userId: UserId,
+        keyCopy: String,
+    ): Boolean
+
     /** Takes [userId] out of every audience. Returns how many rows went. */
     suspend fun leaveAudiences(userId: UserId): Int
 }

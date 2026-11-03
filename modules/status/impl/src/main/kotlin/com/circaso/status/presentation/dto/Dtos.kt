@@ -146,3 +146,22 @@ data class ViewsResponse(val views: List<ViewDto>)
 
 @Serializable
 data class DeletedResponse(val deleted: Boolean)
+
+/** `POST /moments/keys/request`: the posters whose moments this phone can't open, 1 to 100, never yourself. */
+@Serializable
+data class KeyRequestRequest(val posterIds: List<String>)
+
+/** The posters who were asked; the others have nothing live for you, or were asked in the last 10 minutes. */
+@Serializable
+data class KeyRequestResponse(val requested: List<String>)
+
+/** One fresh copy for `userId` on one of your live moments: the body sealed again over your 1:1 session with them. */
+@Serializable
+data class MomentKeyCopyDto(val momentId: String, val userId: String, val ciphertext: String)
+
+/** `POST /moments/key-copies`: 1 to 200 copies, one per (moment, person). */
+@Serializable
+data class KeyCopiesRequest(val copies: List<MomentKeyCopyDto>)
+
+@Serializable
+data class KeyCopiesResponse(val copied: Int)

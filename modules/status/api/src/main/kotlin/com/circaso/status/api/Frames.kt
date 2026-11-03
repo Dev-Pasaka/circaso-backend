@@ -15,6 +15,8 @@ object StatusFrames {
     const val POSTED = "status.posted"
     const val DELETED = "status.deleted"
     const val VIEWED = "status.viewed"
+    const val KEY_REQUESTED = "status.key_requested"
+    const val KEYS_READY = "status.keys_ready"
 }
 
 /** A frame status sends. [type] names it in the envelope and is not part of its `data`. */
@@ -49,4 +51,20 @@ data class MomentViewedFrame(
     val reaction: String? = null,
 ) : StatusFrame {
     override val type: String get() = StatusFrames.VIEWED
+}
+
+/**
+ * To a poster, when someone in the audience of their live moments can't open them (a new phone, a new Signal
+ * identity): the poster's phone seals fresh copies for [requesterId] and sends them with `POST /moments/key-copies`.
+ * At most one per (requester, poster) every 10 minutes. Never pushed: replay brings it on the poster's next connect.
+ */
+@Serializable
+data class MomentKeyRequestedFrame(val requesterId: UserId) : StatusFrame {
+    override val type: String get() = StatusFrames.KEY_REQUESTED
+}
+
+/** To a viewer, once [posterId] has sent them fresh copies: the phone reads ST4 again and opens what it couldn't. */
+@Serializable
+data class MomentKeysReadyFrame(val posterId: UserId) : StatusFrame {
+    override val type: String get() = StatusFrames.KEYS_READY
 }

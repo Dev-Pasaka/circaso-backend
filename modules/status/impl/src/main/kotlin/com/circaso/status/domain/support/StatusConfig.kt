@@ -22,6 +22,15 @@ data class StatusConfig(
     /** A file prepared but not attached to a moment within this is deleted. */
     val unattachedMediaTtl: Duration = Duration.ofHours(1),
     val mediaPurgeBatch: Int = 200,
+    /** `POST /moments/keys/request`: posters named in one call, and how often one requester may ask one poster. */
+    val keyRequestPostersMax: Int = 100,
+    val keyRequestInterval: Duration = Duration.ofMinutes(10),
+    /**
+     * `POST /moments/key-copies`: copies in one call (one per live moment per person; a poster has at most 50 live
+     * moments), and one copy decoded: a moment's body sealed pairwise, so the body's limit plus Signal's overhead.
+     */
+    val keyCopiesMax: Int = 200,
+    val resealedCopyMaxBytes: Int = 72 * 1_024,
     /** ST4's page: default and most. */
     val pageDefault: Int = 50,
     val pageMax: Int = 200,

@@ -34,6 +34,8 @@ Built 2026-11-03 (Spaces phase 1). **Moments**: WhatsApp-style statuses that liv
 | ST5 | `POST /moments/{momentId}/view` `{reaction?, reacted?}` | app | `ViewMoment` | audience only; `viewed_at` set once. A `reaction` key sets the emoji (`isReaction`: 1 to 16 UTF-8 bytes, no letters, digits, spaces or controls, ASCII only as a keycap base; else `status.reaction_invalid`) or clears it (`null`); without one, `reacted: true` is `❤️` and `false` clears (older apps). The mapper reads the body as a `JsonObject` because a present `null` and an absent key differ. `reaction` and `reacted` are written in one `UPDATE`, so a retry is idempotent. `status.viewed` to the poster when something changed |
 | ST6 | `GET /moments/{momentId}/views` | app | `ListViews` | each `{userId, viewedAt, reacted, reaction}`; poster only; an audience member gets `status.not_poster`, anyone else `status.moment_not_found` |
 | ST7 | `DELETE /moments/{momentId}` | app | `DeleteMoment` | poster only (as ST6); deletes moment and audience, brings the file's expiry to now, `status.deleted` to the audience, then deletes the object and its row |
+| ST9 | `POST /moments/keys/request` `{posterIds}` | app | `RequestMomentKeys` | 1 to 100 distinct posters, never the caller (`status.keys_invalid`). Each poster with a live moment whose audience includes the caller (`postersShowing`), and no block either way, gets `status.key_requested {requesterId}`, at most once per 10 minutes per pair (`KeyRequestThrottle`, Redis `sts:keyreq:{requester}:{poster}` `SET NX`). Others skipped silently. `{requested: [posterId]}`. Not pushed |
+| ST10 | `POST /moments/key-copies` `{copies: [{momentId, userId, ciphertext}]}` | app | `ShareMomentKeyCopies` | the poster's answer: 1 to 200 copies, one per (moment, person), never the caller, each at most 72 KiB decoded (`status.keys_invalid`). Replaces `audience.key_copy` for a live moment of the caller's whose audience includes that person and no block; others skipped. `status.keys_ready {posterId}` to each person reached. `{copied}` |
 | ST8 | `GET /moments/media/{mediaId}` | app | `GetMomentMediaDownload` | 15-minute link for the poster or the audience of the live moment carrying it; everything else `status.media_not_found` |
 
 Moment ids come from `OrderedIds` (UUIDv7, at least a millisecond apart per node), so listing by id is posting order.
@@ -66,11 +68,11 @@ Job `status.purge-expired` (every 10 minutes, leader lock): `purgeExpired("momen
 
 Consumes `events:identity` (group `status`): `AccountStatusChanged` (only `DELETED`) and `AccountDeleted` → `RemoveAccountMoments` (each moment removed as ST7 does, every file, every audience row). Publishes nothing.
 
-Frames: `status.posted`, `status.deleted`, `status.viewed` as above; replayed through `RealtimeReplay` (`StatusRealtimeReplay`), `resync` beyond 7 days.
+Frames: `status.posted`, `status.deleted`, `status.viewed` as above, and `status.key_requested` (`MomentKeyRequestedFrame {requesterId}`, to a poster) and `status.keys_ready` (`MomentKeysReadyFrame {posterId}`, to a viewer), neither pushed; replayed through `RealtimeReplay` (`StatusRealtimeReplay`), `resync` beyond 7 days.
 
 ## Error codes
 
-`status.audience_invalid` 400, `status.moment_too_large` 400 (body over 64 KiB decoded, or a key copy over 16 KiB), `status.media_invalid` 400 (ST1 size or kind, ST2 size, more than one file on ST3), `status.media_not_found` 404, `status.moment_not_found` 404, `status.not_poster` 403, `status.too_many_moments` 429 (`Retry-After`: until the oldest of the 50 leaves the 24-hour window), `status.reaction_invalid` 400 (ST5's `reaction` is not one emoji).
+`status.audience_invalid` 400, `status.moment_too_large` 400 (body over 64 KiB decoded, or a key copy over 16 KiB), `status.media_invalid` 400 (ST1 size or kind, ST2 size, more than one file on ST3), `status.media_not_found` 404, `status.moment_not_found` 404, `status.not_poster` 403, `status.too_many_moments` 429 (`Retry-After`: until the oldest of the 50 leaves the 24-hour window), `status.reaction_invalid` 400 (ST5's `reaction` is not one emoji), `status.keys_invalid` 400 (ST9's posters or ST10's copies: none, too many, a repeat, the caller, or a copy over 72 KiB).
 
 ## Not in v1
 
