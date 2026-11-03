@@ -23,6 +23,7 @@ class LogLevelsTest {
             "LOG_LEVEL_MESSAGING",
             "LOG_LEVEL_WALLET",
             "LOG_LEVEL_CALLS",
+            "LOG_LEVEL_STATUS",
             "LOG_LEVEL_ASSISTANT",
             "LOG_LEVEL_INTEGRATIONS",
             "LOG_LEVEL_CIRCLE",
@@ -162,6 +163,13 @@ class LogLevelsTest {
         configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_CALLS" to "DEBUG")
         assertEquals(Level.DEBUG, levelOf("com.circaso.calls.domain.usecases.JoinCall"))
         assertEquals(Level.WARN, levelOf("com.circaso.wallet.domain.usecases.GetWallet"))
+    }
+
+    @Test
+    fun `LOG_LEVEL_STATUS moves the status module alone`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_STATUS" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.status.domain.usecases.PostMoment"))
+        assertEquals(Level.WARN, levelOf("com.circaso.calls.domain.usecases.JoinCall"))
     }
 
     @Test

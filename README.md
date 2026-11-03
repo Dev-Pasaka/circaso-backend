@@ -1,7 +1,7 @@
 # Circaso backend
 
-One Kotlin/Ktor deployable split into strict modules: `identity`, `users`, `messaging` and `assistant` are built;
-wallet and calls are not. The spec is in `.claude/skills/circaso-backend-docs` (architecture, decisions, module designs).
+One Kotlin/Ktor deployable split into strict modules: `identity`, `users`, `messaging`, `wallet`, `chama`, `calls`,
+`status` (Moments) and `assistant`. The spec is in `.claude/skills/circaso-backend-docs` (architecture, decisions, module designs).
 
 ## Layout
 
@@ -11,7 +11,7 @@ wallet and calls are not. The spec is in `.claude/skills/circaso-backend-docs` (
 | `infrastructure` | PostgreSQL (Exposed over R2DBC; Flyway for `migrate`), Redis, event bus and outbox, scheduler, HTTP clients, config, file storage (Cloudflare R2 through the AWS SDK for Kotlin; see `STORAGE_*` and `R2_*` in `.env.example`) |
 | `integrations` | Contracts for SMS, email, social sign-in, carrier check and push; `dev` (log/fake) and placeholder vendors |
 | `gateway` | Version check, auth and scopes, rate limits, idempotency, webhooks, WebSocket hub, the OpenAPI spec, the error pages |
-| `modules/identity`, `modules/users`, `modules/messaging`, `modules/assistant` | Business modules: `api` (the contract) and `impl` (presentation, domain, data, di), each with its own PostgreSQL schema, role and Flyway scripts (`db/<module>`) |
+| `modules/identity`, `modules/users`, `modules/messaging`, `modules/wallet`, `modules/chama`, `modules/calls`, `modules/status`, `modules/assistant` | Business modules: `api` (the contract) and `impl` (presentation, domain, data, di), each with its own PostgreSQL schema, role and Flyway scripts (`db/<module>`) |
 | `app` | `serve` and `migrate`; the only place that knows the implementations |
 | `architecture-tests` | Konsist rules that fail the build on a boundary breach |
 
@@ -41,7 +41,7 @@ set in `.env` or the environment, per service, each `OFF`, `ERROR`, `WARN`, `INF
 | `LOG_LEVEL` | Circaso's own code, every module (default `INFO`) |
 | `LOG_LEVEL_OTHER` | libraries and anything not named below (default `WARN`) |
 | `LOG_LEVEL_REQUESTS` | the one line per HTTP request |
-| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_ASSISTANT` | the gateway and each module |
+| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_MESSAGING`, `_WALLET`, `_CALLS`, `_STATUS`, `_ASSISTANT` | the gateway and each module |
 | `LOG_LEVEL_INTEGRATIONS`, `_EVENTS`, `_SCHEDULER` | vendors, the event streams, scheduled jobs |
 | `LOG_LEVEL_CIRCLE` | Circle wallets and its webhook (follows `LOG_LEVEL_INTEGRATIONS` when unset) |
 | `LOG_LEVEL_DATABASE`, `_REDIS`, `_HTTP` | PostgreSQL (pools, transactions, migrations), Redis, the Ktor server and Netty (the libraries' side too) |

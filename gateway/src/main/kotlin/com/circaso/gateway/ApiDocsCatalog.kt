@@ -275,6 +275,23 @@ internal object ApiDocsCatalog {
                             "for when the old phone is gone. Fetching it is limited to 5 times a day.",
                     ),
                     DocTag(
+                        "Moments",
+                        "Moments are statuses that live 24 hours, end to end encrypted on the poster's phone the " +
+                            "way WhatsApp's are: the body is encrypted once under the poster's moments sender key, " +
+                            "and people who don't have that key yet get their own copy, encrypted over their " +
+                            "1:1 session. The server keeps ciphertext, the audience, views and expiry.\n\n" +
+                            "- The poster's phone chooses the **audience** from its own contacts; the server only " +
+                            "checks that each person and the poster can reach each other, and leaves the others " +
+                            "out without a word.\n" +
+                            "- **Files** go like chat media: start an upload, PUT the ciphertext, complete it, then " +
+                            "post the moment carrying it; the audience downloads it through a 15-minute link.\n" +
+                            "- **Views**: the audience records a view (and a reaction); only the poster sees who " +
+                            "viewed. `status` frames tell phones about new, deleted and viewed moments; there " +
+                            "are no pushes.\n" +
+                            "- A moment, its views and its file are deleted 24 hours after it was posted, or " +
+                            "when the poster deletes it.",
+                    ),
+                    DocTag(
                         "Calls",
                         "Voice and video calls in a chat, up to 8 people at once. The phones talk WebRTC to " +
                             "Cloudflare Realtime's SFU; the server only brokers each connection's session " +

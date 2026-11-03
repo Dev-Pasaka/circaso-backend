@@ -81,7 +81,7 @@ circaso-backend/
 │  ├─ users/
 │  │  ├─ api/
 │  │  └─ impl/
-│  └─ (messaging, wallet, calls — later, same shape)
+│  └─ (messaging, wallet, chama, calls, status, assistant — same shape)
 │
 ├─ app/                          main(): `serve` loads config, picks vendor implementations,
 │                                wires modules, starts the server; `Migrate` runs migrations
