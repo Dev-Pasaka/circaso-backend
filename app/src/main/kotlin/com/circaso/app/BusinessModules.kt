@@ -6,6 +6,7 @@ import com.circaso.chama.di.chamaModule
 import com.circaso.identity.di.identityModule
 import com.circaso.infrastructure.api.Config
 import com.circaso.messaging.di.messagingModule
+import com.circaso.status.di.statusModule
 import com.circaso.users.di.usersModule
 import com.circaso.wallet.di.walletModule
 import org.koin.core.module.Module
@@ -23,5 +24,6 @@ fun businessModules(config: Config): List<Module> =
         walletModule(config),
         chamaModule(config),
         callsModule(config),
+        statusModule(config),
         assistantModule(config),
     )
