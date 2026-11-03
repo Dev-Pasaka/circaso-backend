@@ -10,11 +10,13 @@ import com.circaso.status.domain.ports.FrameSender
 import com.circaso.status.domain.ports.Transactor
 import com.circaso.status.domain.repositories.MomentRepository
 import com.circaso.status.domain.support.MomentReach
+import com.circaso.users.api.Profiles
 import java.time.Clock
 
 /**
  * ST5 `POST /moments/{momentId}/view`: the audience only. The first call records the view; later ones change
- * `reacted` when they carry it. The poster gets `status.viewed` whenever something changed, never for a repeat.
+ * `reacted` when they carry it. The poster gets `status.viewed` whenever something changed, never for a repeat; a
+ * frame that adds a heart carries the viewer's name, which the gateway turns into a push (Pasaka, 2026-11-03).
  */
 class ViewMoment(
     private val moments: MomentRepository,
@@ -22,6 +24,7 @@ class ViewMoment(
     private val reach: MomentReach,
     private val frames: FrameSender,
     private val clock: Clock,
+    private val profiles: Profiles? = null,
 ) {
     suspend operator fun invoke(
         caller: UserId,
@@ -34,16 +37,33 @@ class ViewMoment(
             return Resource.error(StatusError.MomentNotFound)
         }
 
-        val outcome =
+        val result =
             transactor.run("moments.view") {
                 val before = moments.member(momentId, caller) ?: return@run null
                 val after = moments.recordView(momentId, caller, now, reacted) ?: return@run null
                 val viewedAt = after.viewedAt ?: now
-                ViewOutcome(viewedAt, after.reacted, before.viewedAt == null || before.reacted != after.reacted)
+                ViewOutcome(viewedAt, after.reacted, before.viewedAt == null || before.reacted != after.reacted) to
+                    (after.reacted && !before.reacted)
             } ?: return Resource.error(StatusError.MomentNotFound)
+        val (outcome, hearted) = result
 
         if (outcome.changed) {
-            frames.send(listOf(moment.posterId), MomentViewedFrame(momentId, caller, outcome.viewedAt, outcome.reacted))
+            val name =
+                if (hearted) {
+                    runCatching {
+                        profiles
+                            ?.get(
+                                setOf(caller),
+                            )?.get(caller)
+                            ?.displayName
+                    }.getOrNull()
+                } else {
+                    null
+                }
+            frames.send(
+                listOf(moment.posterId),
+                MomentViewedFrame(momentId, caller, outcome.viewedAt, outcome.reacted, name),
+            )
         }
         return Resource.success(outcome)
     }

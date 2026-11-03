@@ -41,6 +41,8 @@ data class MomentViewedFrame(
     val viewerId: UserId,
     @Serializable(with = InstantSerializer::class) val viewedAt: Instant,
     val reacted: Boolean,
+    /** Set only when this frame adds a heart, for the poster's push ("Wanjiru loved your moment"). */
+    val viewerName: String? = null,
 ) : StatusFrame {
     override val type: String get() = StatusFrames.VIEWED
 }

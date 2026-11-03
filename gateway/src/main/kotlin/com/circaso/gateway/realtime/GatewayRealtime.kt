@@ -19,6 +19,8 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
+import com.circaso.status.api.MomentViewedFrame
+import com.circaso.status.api.StatusFrames
 import com.circaso.users.api.ConnectionAddedFrame
 import com.circaso.users.api.ContactJoinedFrame
 import com.circaso.users.api.UsersFrames
@@ -120,6 +122,14 @@ class GatewayRealtime(
 
             "${ChamaFrames.MODULE}.${ChamaFrames.REQUEST_UPDATED}" -> {
                 decode(RequestUpdatedFrame.serializer(), frame)?.let { requestPush(it, recipient) }
+            }
+
+            // A heart on my moment (Pasaka, 2026-11-03); a plain view never pushes. Replies are chat messages and
+            // push as such.
+            "${StatusFrames.MODULE}.${StatusFrames.VIEWED}" -> {
+                decode(MomentViewedFrame.serializer(), frame)?.takeIf { it.reacted && it.viewerName != null }?.let {
+                    PushMessage("Circaso", "${it.viewerName} loved your moment", PushPayload(kind = MOMENT_LOVED_KIND))
+                }
             }
 
             "${CallFrames.MODULE}.${CallFrames.RINGING}" -> {
@@ -284,4 +294,7 @@ class GatewayRealtime(
 
 /** What wakes the app for money received, and the sound it ships for it. */
 private const val PAYMENT_RECEIVED_KIND = "payment.received"
+
+/** A heart on my moment: the app opens my moments when it is tapped. */
+private const val MOMENT_LOVED_KIND = "moment.loved"
 private const val MONEY_SOUND = "money_received.wav"
