@@ -16,7 +16,7 @@ object WalletFrames {
 }
 
 /**
- * `wallet/transfer.updated`, to the sender: the transfer moved to [state] (`SUBMITTED`, `CONFIRMED` or `FAILED`).
+ * `wallet/transfer.updated`, to the sender (for a group wallet: the person who signs for it): the transfer moved to [state] (`SUBMITTED`, `CONFIRMED` or `FAILED`).
  * Pushed when offline on `CONFIRMED` and `FAILED` only.
  */
 @Serializable
@@ -27,10 +27,13 @@ data class TransferUpdatedFrame(
     val amount: WalletAmount,
     val txHash: String? = null,
     val failureReason: String? = null,
+    /** The wallet it left when that is a group wallet (added 2026-11-03); null for your personal wallet. */
+    val walletId: WalletId? = null,
 )
 
 /**
- * `wallet/payment.received`, to the recipient, once the incoming transaction is confirmed on chain. [fromUserId] and
+ * `wallet/payment.received`, to the recipient (for a group wallet: the person who signs for it; members hear of
+ * contributions from chama's `contribution.added`), once the incoming transaction is confirmed on chain. [fromUserId] and
  * [fromName] are set when the sender is a Circaso user; null for an outside address.
  */
 @Serializable
@@ -40,11 +43,16 @@ data class PaymentReceivedFrame(
     val amount: WalletAmount,
     val fromUserId: UserId? = null,
     val fromName: String? = null,
+    /** The wallet that received it when that is a group wallet you sign for (added 2026-11-03). */
+    val walletId: WalletId? = null,
 )
 
-/** `wallet/wallet.ready`, to the user, when the wallet turns `ACTIVE` (its first chain, [blockchain]). No push. */
+/**
+ * `wallet/wallet.ready`, to the user, when the wallet turns `ACTIVE` (its first chain, [blockchain]). No push. For a
+ * group wallet it goes to every member, with [walletId] set (added 2026-11-03).
+ */
 @Serializable
-data class WalletReadyFrame(val blockchain: String)
+data class WalletReadyFrame(val blockchain: String, val walletId: WalletId? = null)
 
 /** `wallet/setup.requested` (W10), to a contact without a wallet: [fromName] wants to pay them. Pushed. */
 @Serializable

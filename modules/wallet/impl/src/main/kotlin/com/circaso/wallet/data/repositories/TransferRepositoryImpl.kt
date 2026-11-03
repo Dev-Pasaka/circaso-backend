@@ -55,6 +55,10 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[failureReason] = transfer.failureReason
                     it[createdAt] = transfer.createdAt
                     it[updatedAt] = transfer.updatedAt
+                    it[signerId] = transfer.signerId?.value
+                    it[payoutRequestId] = transfer.payoutRequestId
+                    it[fromGroupId] = transfer.fromGroupId?.value
+                    it[toGroupId] = transfer.toGroupId?.value
                 }
             statement.insertedCount > 0
         }
@@ -67,6 +71,15 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     (TransfersTable.senderId eq senderId.value) and (TransfersTable.idempotencyKey eq idempotencyKey)
                 }.map { it.toTransfer() }
                 .singleOrNull()
+        }
+
+    override suspend fun forPayout(payoutRequestId: UUID): List<Transfer> =
+        database.tx("transfers.for-payout") {
+            TransfersTable
+                .selectAll()
+                .where { TransfersTable.payoutRequestId eq payoutRequestId }
+                .map { it.toTransfer() }
+                .toList()
         }
 
     override suspend fun find(transferId: TransferId): Transfer? =
@@ -139,5 +152,9 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             failureReason = this[TransfersTable.failureReason],
             createdAt = this[TransfersTable.createdAt],
             updatedAt = this[TransfersTable.updatedAt],
+            signerId = this[TransfersTable.signerId]?.let(::UserId),
+            payoutRequestId = this[TransfersTable.payoutRequestId],
+            fromGroupId = this[TransfersTable.fromGroupId]?.let(::ChatId),
+            toGroupId = this[TransfersTable.toGroupId]?.let(::ChatId),
         )
 }

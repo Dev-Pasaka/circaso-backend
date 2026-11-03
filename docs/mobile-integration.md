@@ -420,7 +420,7 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 
 ### Chama (a group's shared goal)
 
-A chama is a group chat with a goal. The money sits in the **treasurer's** own wallet (one member; the goal names who): contributing is an ordinary W4 payment to the treasurer with `chatId` = the group, after which you send the payment card into the chat; the server counts it from the confirmed transfer. Paying someone from the group needs the admins' approval, then the treasurer pays it (W4 from the chat) and links the transfer. Amounts are strings as across the wallet.
+**Changed by group wallets (Spaces phase 2, below): the treasurer model is retired; the money sits in the group's own wallet and the goal is an optional target.** What follows describes the treasurer model for the record. A chama is a group chat with a goal. The money sits in the **treasurer's** own wallet (one member; the goal names who): contributing is an ordinary W4 payment to the treasurer with `chatId` = the group, after which you send the payment card into the chat; the server counts it from the confirmed transfer. Paying someone from the group needs the admins' approval, then the treasurer pays it (W4 from the chat) and links the transfer. Amounts are strings as across the wallet.
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
@@ -430,6 +430,70 @@ A chama is a group chat with a goal. The money sits in the **treasurer's** own w
 | `POST /v1/chama/chats/{chatId}/requests`<br>**CH4** Ask the group to pay someone | `app` | CreateRequestRequest → RequestDto | **READY** | Any member. Needs two admins' approval (all admins when fewer); an admin asking counts as their own. Open 48 hours, then `EXPIRED`. Everyone gets `chama` / `request.updated`; admins still to decide are pushed. Errors: `chama.no_goal`, `chama.amount_invalid`, `chama.payee_invalid`. |
 | `POST /v1/chama/requests/{requestId}/approve` and `/decline`<br>**CH5** Decide | `app` | — → RequestDto | **READY** | Admins, once each. Enough approvals → `APPROVED`; one decline → `DECLINED`. Errors: `chama.not_admin`, `chama.request_closed`, `chama.already_decided`. |
 | `POST /v1/chama/requests/{requestId}/payment`<br>**CH6** Link the treasurer's payment | `app` | AttachPaymentRequest → RequestDto | **READY** | Treasurer only, for an `APPROVED` request: pay with W4 (`to` = the request's payee, the same amount, `chatId` = the group), then send the `transferId` here. `PAID` once confirmed on chain. Errors: `chama.not_treasurer`, `chama.not_approved`, `chama.transfer_mismatch`. |
+
+### Group wallets (Spaces phase 2)
+
+Spaces phase 2 (decisions of 2026-11-03, the app's `spaces-plan.md` §7 and §11): **a wallet belongs to a person or a group**. A group may have its own wallet (set up when the group is created, or later from group info); it is separate from everyone's personal money, it is **its own Circle user** (so its own PIN, and its own biometrics on the owner's phone), and **option A** applies: the group's owner sets the PIN and becomes the wallet's **signer**, the only person who can send from it, and only for a payout the group's admins approved. Chamas and groups are one thing: a group with a wallet may have an optional **target** (the old chama goal). The **treasurer model is retired**.
+
+**Wallet ids.** Every wallet has a `walletId`. Your own wallet's id is **your user id** (nothing changes for personal wallets: every route without `walletId` works exactly as before). A group wallet has its own id, from W14, W15 or W16. A group wallet's name and picture are the group's own, which are sealed (end to end): **the server never knows the name**, so the phone names a group wallet from its group (`owner.chatId`) on every screen, PIN and biometric prompt ("Approve from Kilimani Chama").
+
+**What needs a connection:** everything here (money is never queued). Fees (`fee`) are still always zero and the daily limits are still the personal placeholders: fees, per-wallet-type limits and the group daily cap arrive with phase 2F.
+
+#### New wallet routes
+
+| Call | Scope | Request → response | What to know |
+| --- | --- | --- | --- |
+| `POST /v1/wallet/groups/{chatId}`<br>**W14** Set up the group's wallet | `app` | — → GroupWalletSetupResponse `{ walletId, chatId, status, challengeId?, sdk }` | **The group's owner only.** Send an `Idempotency-Key`. Run `challengeId` in the Circle SDK with **this answer's `sdk`** (the group wallet's own session, not your personal one), with the Circle PIN texts naming the group (GW2/GW3). Then offer biometrics for this wallet (GW4) with a W3 session for this `walletId`, and call W13 with `?walletId=` to put it on every network (GW5). Calling again while `SETTING_UP` gives a fresh challenge (GW6b "Finish Wallet Setup"); once `ACTIVE`, `wallet.already_exists`. Every member gets `wallet` / `wallet.ready` with `walletId` when it turns active. Errors: `wallet.group_not_found` (not a group, or you're not in it), `wallet.not_group_owner`, `wallet.not_signer` (someone else started the set-up and ownership has moved since), `wallet.already_exists`, `wallet.account_restricted`, `wallet.support_account_has_no_wallet`, `wallet.custody_unavailable`, `request.malformed`. |
+| `GET /v1/wallet/groups/{chatId}`<br>**W15** The group's wallet | `app` | — → GroupWalletResponse `{ chatId, status, wallet? }` | Members only. `status` `NONE` (no wallet: the owner sees Add a Group Wallet, members see no money at all, GW6), `SETTING_UP` (owner: Finish Wallet Setup; members: "Wallet being set up", GW6b) or `ACTIVE`. `wallet` is a WalletListingDto `{ walletId, owner { type: "GROUP", chatId, signerUserId }, status, canSign, blockchains }`. Read from the server's rows only, so it is cheap to poll during set-up. Errors: `wallet.group_not_found`, `request.malformed`. |
+| `GET /v1/wallets`<br>**W16** Every wallet you can see | `app` | — → WalletsResponse `{ wallets: [WalletListingDto] }` | For the **Paying from** switcher (GW10) and the Wallet tab's title switcher (GW16). Your own wallet first (`owner.type: "PERSON"`, `status` may be `NONE`), then the wallets of the groups you are in, the ones you sign for (`canSign`) first. Show the chip only when the list has more than your own. Only `canSign` wallets can be picked to pay from; picking a group wallet turns the review into **Request Payout** (CH4). Balances: W1 with `?walletId=` for each. |
+
+#### Changed wallet routes (all additive)
+
+| Call | What changed |
+| --- | --- |
+| **W1** `GET /v1/wallet?walletId=` | Reads a group wallet for any member (GW8, GW16). The response gains `walletId`, `owner` (`{ type, userId? , chatId?, signerUserId }`) and `canSign`. A wallet you can't see answers `wallet.not_found`; a malformed id `request.malformed`. |
+| **W3** `POST /v1/wallet/session?walletId=` | The group wallet's own Circle session, **for its signer only**: use it for that wallet's challenges and for `WalletSigner.enableBiometrics(session)` (biometrics per wallet; if Circle reports biometrics lost for it, only that wallet falls back to its PIN, GW8b). New errors: `wallet.not_signer`, `wallet.signer_left` (the signer has left the group: nobody can send from it until they're back), `request.malformed`. |
+| **W4** `POST /v1/wallet/transfers` | `to` takes **`{ "groupId": "<chatId>" }`**: pay into a group's wallet (members only; with `chatId` = the group, this is a **contribution**, counted towards its target if it has one; GW9a2/GW9d). New body fields `walletId` (pay **from** a group wallet you sign for) and `payoutRequestId` (required then: a CH4 request the admins approved; `to` and `amount` must be exactly the request's payee and amount, GW9). The answer gains `walletId` (the wallet it leaves). New errors: `wallet.group_not_found` (paying a group you're not in), `wallet.recipient_no_wallet` / `wallet.recipient_not_on_chain` (the group has no wallet, or none on that chain), `wallet.not_signer`, `wallet.signer_left`, `wallet.payout_required`, `wallet.payout_not_approved` (not approved, or already paid), `wallet.payout_mismatch`, `wallet.payout_in_progress` (one payment for this payout can still be signed or has gone through; a failed or expired one doesn't count, so Try Again works with a new key, GW19). The same `Idempotency-Key` still answers the same transfer. |
+| **W5** `GET /v1/wallet/transfers/{id}` | Every member of a group whose wallet is on either side sees the transfer, from the wallet's side (`direction` `OUT` for a payout, `IN` for a contribution). New fields `fromGroupId`, `toGroupId`, `signerUserId`, `payoutRequestId`. |
+| **W6** `GET /v1/wallet/transactions?walletId=` | A group wallet's history for any member (statements per wallet). `counterparty.groupId` is set when the other side is a group's wallet (name it from the group on the phone). |
+| **W12** `GET/POST /v1/wallet/chains?walletId=` and **W13** `POST /v1/wallet/chains/missing?walletId=` | The group wallet's networks; adding one is for its signer only (`wallet.not_signer`). |
+| Deleting an account (I14) | Also refused with **`wallet.group_funds_remaining`** while a group wallet you sign for still holds money ("Pay it out before deleting the account"). |
+
+#### Group money routes (chama, changed and new)
+
+| Call | Scope | Request → response | What to know |
+| --- | --- | --- | --- |
+| `GET /v1/chama/chats/{chatId}/money`<br>**CH7** The group's money, target or not | `app` | — → GroupMoneyResponse | Members only, any group. `wallet` (`{ walletId, status, signerUserId }`) is null until the owner sets one up: **show no money actions then**. `approvalPolicy` `TWO_ADMINS` or `ANY_ADMIN`. `goal` (the target) is null without one. `contributed`/`myContribution`/`contributors` count towards the target since it was set. `isAdmin`, `isOwner` (may change who approves, CH9), `isSigner` (pays approved requests). Use this instead of CH1 for group info (GW6–GW8) and the thread. Reload on `chama` / `group.updated`, `goal.updated`, `contribution.added`, `request.updated`. Errors: `chama.not_a_member`, `request.malformed`. |
+| `PUT /v1/chama/chats/{chatId}/settings`<br>**CH9** Who approves payouts | `app` | `{ "approvalPolicy": "TWO_ADMINS" \| "ANY_ADMIN" }` → GroupSettingsDto | **The group's owner only.** Send it right after W14 with what was picked in New Group (GW1b "Who approves payouts"); the default is `TWO_ADMINS` (every admin when there are fewer). Requests already made keep theirs. Every member gets `chama` / `group.updated`. Errors: `chama.not_a_member`, `chama.not_owner`, `request.malformed`. |
+| `DELETE /v1/chama/chats/{chatId}/goal`<br>**CH8** Remove the target | `app` | — → (no data) | Admins only. The wallet, its money, the ledger and open requests stay; a new target counts from when it is set. Everyone gets `chama` / `group.updated`. Errors: `chama.not_admin`, `chama.no_goal`. |
+| **CH1** `GET /v1/chama/chats/{chatId}` | | | Still `chama.no_goal` without a target. Gains `walletId` and `approvalPolicy`; `isTreasurer` now means "you send from the group wallet", `goal.treasurerUserId` is the wallet's signer (null before a wallet). `held` is what the ledger says; W1 has the real balance. |
+| **CH2** `PUT …/goal` | | | **A target needs the group's active wallet**: `chama.no_wallet` otherwise (GW7: walk the owner through W14 first, then GW7b). `treasurerUserId` is ignored. `chama.treasurer_not_member` is gone. |
+| **CH3** `GET …/ledger` | | | No longer needs a target. Contributions from before group wallets are kept (marked legacy server-side) and never count towards a target. |
+| **CH4** `POST …/requests` | | | Needs the group's **active wallet** (`chama.no_wallet`), not a target. Approvals follow CH9. The `request.updated` frame gains `signerId`; the signer is pushed when a request is approved ("It's ready for you to pay"). |
+| **CH6** `POST /v1/chama/requests/{id}/payment` | | | **Optional now**: W4 with `payoutRequestId` ties the payment to the request, and the request turns `PAID` when the wallet confirms it. Linking early shows the others it's being paid. For the wallet's signer only (`chama.not_signer` replaces `chama.not_treasurer`; `chama.no_wallet`). |
+
+#### Frames
+
+| Module / type | Change |
+| --- | --- |
+| `wallet` / `transfer.updated`, `payment.received` | A group wallet's go to its **signer**, with `walletId` set (null for your personal wallet). The push for money into a group wallet says "… paid into a group wallet". |
+| `wallet` / `wallet.ready` | For a group wallet: to **every member**, with `walletId`. |
+| `chama` / `group.updated` (new) | `{ chatId, byUserId }`: who approves payouts changed, or the target was removed: reload CH7. No push. |
+| `chama` / `request.updated` | Gains `signerId`. `goalName` is empty for a group without a target (say "the group wallet"). |
+| `chama` / `contribution.added` | Only for a group with a target (a contribution to a group without one is recorded quietly; the payment card in the chat shows it). |
+
+#### Migration of existing chamas (dev is testnet)
+
+Goals made under the treasurer model stay as targets with `walletId` null, waiting for their group's wallet (GW7); setting a target again after the wallet exists starts it over. Their contributions stay in the ledger but count towards nothing (the money is in the old treasurer's wallet). Requests that were still open became `EXPIRED`.
+
+#### Suggested order in the app
+
+1. Owner model in `feature/wallet`: `WalletOwner`, `walletId` on every read, W16 switcher, W1/W6 per wallet, sessions per wallet (W3 `?walletId=`) and biometrics per wallet.
+2. New Group with the wallet switch (GW1) → messaging create → W14 → Circle PIN (GW2/GW3) → biometrics offer (GW4) → W13 → CH9 → CH2 if a target was typed (GW5).
+3. Group info (GW6–GW8) from W15 + CH7.
+4. Contributions: `#` in a group with a wallet → W4 `to: { groupId }` (GW9a2, GW9d).
+5. Payouts: Request Payout (CH4, GW9c) and Pay Payout (W4 `walletId` + `payoutRequestId`, GW9, GW11, GW12, GW17–GW19), replacing the treasurer's flow and CH6.
+
 
 ### Calls
 

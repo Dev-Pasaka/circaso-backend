@@ -10,6 +10,7 @@ import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.support.orCustodyUnavailable
@@ -39,9 +40,16 @@ class AddChain(
     private val custody: StablecoinCustody,
     private val support: SupportAccountRule,
     private val clock: Clock,
+    private val holders: Holders,
 ) {
-    suspend operator fun invoke(command: AddChainCommand): Resource<ChainAddition> {
-        support.refusal(command.userId)?.let { return it }
+    suspend operator fun invoke(request: AddChainCommand): Resource<ChainAddition> {
+        support.refusal(request.userId)?.let { return it }
+        // A group wallet's chains are added by its signer, with that wallet's PIN (decision 2026-11-03).
+        val command =
+            when (val access = holders.sign(request.userId, request.walletId)) {
+                is Resource.Success -> request.copy(userId = access.data.owner.holder)
+                is Resource.Error -> return access
+            }
         val chain = custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(command.userId) ?: return Resource.error(WalletError.NotFound)
 

@@ -10,10 +10,14 @@ import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.Payee
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 
-/** Where a transfer goes: the person paid ([recipientId], null for an outside address) and the address on chain. */
-data class Destination(val recipientId: UserId?, val address: String) {
+/**
+ * Where a transfer goes: the wallet paid ([recipientId]: a person, or a group wallet's holder with [toGroupId] set;
+ * null for an outside address) and the address on chain.
+ */
+data class Destination(val recipientId: UserId?, val address: String, val toGroupId: ChatId? = null) {
     override fun toString(): String = "Destination($recipientId, ***)"
 }
 
@@ -25,6 +29,7 @@ data class Destination(val recipientId: UserId?, val address: String) {
  */
 class Payees(
     private val wallets: WalletRepository,
+    private val owners: WalletOwnerRepository,
     private val reach: ReachPolicy,
     private val chats: ChatDirectory,
     private val custody: StablecoinCustody,
@@ -55,27 +60,55 @@ class Payees(
     /** Whether [blockchain] is supported and not retired from receiving. */
     fun receives(blockchain: String): Boolean = custody.supported.find(blockchain)?.receiveEnabled == true
 
-    /** W4's payee checked and turned into a destination on [blockchain], in the order the rules list them. */
+    /**
+     * W4's payee checked and turned into a destination on [blockchain], in the order the rules list them. [sender]
+     * is the holder of the wallet it leaves; [actor] the person paying (the signer), whose reach and groups count.
+     */
     suspend fun resolve(
         sender: UserId,
         payee: Payee,
         blockchain: String,
         chatId: ChatId?,
+        actor: UserId = sender,
     ): Resource<Destination> =
         when (payee) {
-            is Payee.Person -> person(sender, payee.userId, blockchain, chatId)
+            is Payee.Person -> person(sender, payee.userId, blockchain, chatId, actor)
             is Payee.Address -> address(sender, payee.address, blockchain)
+            is Payee.Group -> group(sender, payee.chatId, blockchain, actor)
         }
+
+    /**
+     * A group's wallet (decision 2026-11-03): only its members pay into it, and only once it is set up on the chain.
+     * A group without a wallet answers `wallet.recipient_no_wallet`, as a person without one does.
+     */
+    private suspend fun group(
+        sender: UserId,
+        chatId: ChatId,
+        blockchain: String,
+        actor: UserId,
+    ): Resource<Destination> {
+        if (!chats.isMember(chatId, actor)) return Resource.error(WalletError.GroupNotFound)
+        val owner = owners.byChat(chatId) ?: return Resource.error(WalletError.RecipientNoWallet)
+        if (owner.holder == sender) return Resource.error(WalletError.SelfTransfer)
+        val receiving = receiving(owner.holder)
+        if (receiving.active.isEmpty()) return Resource.error(WalletError.RecipientNoWallet)
+        val wallet =
+            receiving.open.firstOrNull { it.blockchain == blockchain }
+                ?: return Resource.error(WalletError.RecipientNotOnChain)
+        return Resource.success(Destination(owner.holder, wallet.address, toGroupId = chatId))
+    }
 
     private suspend fun person(
         sender: UserId,
         recipient: UserId,
         blockchain: String,
         chatId: ChatId?,
+        actor: UserId,
     ): Resource<Destination> {
         if (recipient == sender) return Resource.error(WalletError.SelfTransfer)
         support.refusal(recipient)?.let { return it }
-        if (!canReach(sender, recipient, chatId)) return Resource.error(WalletError.NotReachable)
+        // A group wallet's payee was approved by the group's admins; the signer still has to be able to reach them.
+        if (!canReach(actor, recipient, chatId)) return Resource.error(WalletError.NotReachable)
         val receiving = receiving(recipient)
         if (receiving.active.isEmpty()) return Resource.error(WalletError.RecipientNoWallet)
         val wallet =

@@ -21,6 +21,66 @@ data class WalletResponse(
     val fiat: FiatDto? = null,
     /** Outgoing payments on hold after a support restore; null when there is none. */
     val hold: HoldDto? = null,
+    /** Which wallet this is (added 2026-11-03): your user id for your own, a group wallet's own id otherwise. */
+    val walletId: String? = null,
+    /** Whose wallet it is. */
+    val owner: WalletOwnerDto? = null,
+    /** Whether you are the one who signs for it (your own wallet, or a group wallet whose PIN you set). */
+    val canSign: Boolean = true,
+)
+
+/**
+ * Whose a wallet is (decision 2026-11-03): `PERSON` with `userId`, or `GROUP` with `chatId` and `signerUserId`, the
+ * one person who can send from it after the admins approve. The phone names a group wallet from the group's own
+ * (sealed) name and picture: the server never knows the name.
+ */
+@Serializable
+data class WalletOwnerDto(
+    /** `PERSON` or `GROUP` (`SPACE` with Spaces, phase 3). */
+    val type: String,
+    val userId: String? = null,
+    val chatId: String? = null,
+    val signerUserId: String,
+)
+
+/** W14 `POST /wallet/groups/{chatId}`. */
+@Serializable
+data class GroupWalletSetupResponse(
+    val walletId: String,
+    val chatId: String,
+    /** `SETTING_UP` until the PIN is set and Circle has made the wallet; then W15 and W1 say `ACTIVE`. */
+    val status: String,
+    /** Run it in the Circle SDK with [sdk] (this wallet's own session); null when the PIN is already set. */
+    val challengeId: String? = null,
+    val sdk: SdkDto,
+)
+
+/** One wallet in W15 and W16. */
+@Serializable
+data class WalletListingDto(
+    val walletId: String,
+    val owner: WalletOwnerDto,
+    /** `NONE` (your own, not created yet), `SETTING_UP` or `ACTIVE`, from the server's rows. */
+    val status: String,
+    val canSign: Boolean,
+    /** The chains it can be paid on now. */
+    val blockchains: List<String>,
+)
+
+/** W15 `GET /wallet/groups/{chatId}`. */
+@Serializable
+data class GroupWalletResponse(
+    val chatId: String,
+    /** `NONE` (no wallet yet: the owner may set one up), `SETTING_UP` or `ACTIVE`. */
+    val status: String,
+    val wallet: WalletListingDto? = null,
+)
+
+/** W16 `GET /wallets`. */
+@Serializable
+data class WalletsResponse(
+    /** Your own first, then your groups' wallets (those you sign for first). */
+    val wallets: List<WalletListingDto>,
 )
 
 @Serializable

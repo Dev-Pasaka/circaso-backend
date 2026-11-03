@@ -5,15 +5,21 @@ import com.circaso.chama.domain.models.AskPayoutCommand
 import com.circaso.chama.domain.models.ChamaView
 import com.circaso.chama.domain.models.Decision
 import com.circaso.chama.domain.models.Goal
+import com.circaso.chama.domain.models.GroupMoney
+import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.LedgerEntry
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.SetGoalCommand
+import com.circaso.chama.domain.models.SetSettingsCommand
 import com.circaso.chama.domain.usecases.AskPayout
 import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
 import com.circaso.chama.domain.usecases.GetChama
+import com.circaso.chama.domain.usecases.GetGroupMoney
 import com.circaso.chama.domain.usecases.ListLedger
+import com.circaso.chama.domain.usecases.RemoveGoal
 import com.circaso.chama.domain.usecases.SetGoal
+import com.circaso.chama.domain.usecases.SetSettings
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -28,6 +34,9 @@ class ChamaService(
     private val createRequest: AskPayout,
     private val decideRequest: DecidePayout,
     private val attachPayment: AttachPayment,
+    private val getGroupMoney: GetGroupMoney,
+    private val removeGoal: RemoveGoal,
+    private val setSettings: SetSettings,
 ) {
     suspend fun setGoal(command: SetGoalCommand): Resource<Goal> = setGoal.invoke(command)
 
@@ -53,4 +62,10 @@ class ChamaService(
         requestId: RequestId,
         transferId: TransferId,
     ): Resource<Payout> = attachPayment(userId, requestId, transferId)
+
+    suspend fun money(userId: UserId, chatId: ChatId): Resource<GroupMoney> = getGroupMoney(userId, chatId)
+
+    suspend fun removeGoal(userId: UserId, chatId: ChatId): Resource<Unit> = removeGoal.invoke(userId, chatId)
+
+    suspend fun setSettings(command: SetSettingsCommand): Resource<GroupSettings> = setSettings.invoke(command)
 }

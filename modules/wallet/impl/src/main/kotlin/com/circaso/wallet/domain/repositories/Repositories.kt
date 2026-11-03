@@ -1,8 +1,10 @@
 package com.circaso.wallet.domain.repositories
 
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.CircleUser
 import com.circaso.wallet.domain.models.HistoryFilter
@@ -10,6 +12,7 @@ import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import java.time.Instant
 import java.util.UUID
@@ -40,6 +43,26 @@ interface WalletRepository {
     suspend fun insertWallet(wallet: ChainWallet): Boolean
 }
 
+/**
+ * `wallet_owners`: who the wallets that aren't a person's own belong to (decision 2026-11-03). A wallet id with no row
+ * is a person's own wallet.
+ */
+interface WalletOwnerRepository {
+    suspend fun find(walletId: WalletId): WalletOwner.Group?
+
+    /** The group's wallet, through `wallet_owners_chat_key`. */
+    suspend fun byChat(chatId: ChatId): WalletOwner.Group?
+
+    /** The wallets of [chatIds] that have one (W16: the groups the caller is in). */
+    suspend fun byChats(chatIds: Collection<ChatId>): List<WalletOwner.Group>
+
+    /** The group wallets [signerId] signs for (`wallet_owners_signer_idx`). */
+    suspend fun bySigner(signerId: UserId): List<WalletOwner.Group>
+
+    /** Inserts [owner] unless the wallet id or the group already has a row; true if this call inserted it. */
+    suspend fun insert(owner: WalletOwner.Group): Boolean
+}
+
 /** `transfers`: one row per prepared transfer, unique per sender and `Idempotency-Key` for good. */
 interface TransferRepository {
     /** Inserts [transfer] unless the sender already used its key; true if this call inserted it. */
@@ -48,6 +71,9 @@ interface TransferRepository {
     suspend fun byKey(senderId: UserId, idempotencyKey: UUID): Transfer?
 
     suspend fun find(transferId: TransferId): Transfer?
+
+    /** Every transfer prepared for the approved payout [payoutRequestId] (`transfers_payout_idx`), in any state. */
+    suspend fun forPayout(payoutRequestId: UUID): List<Transfer>
 
     /**
      * The transition guard: moves the transfer to [to] only from one of [from] (by default every allowed predecessor,

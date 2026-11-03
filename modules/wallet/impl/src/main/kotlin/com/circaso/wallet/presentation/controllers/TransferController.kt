@@ -60,6 +60,13 @@ fun Route.transferController(transfers: TransferService) {
                         "wallet.address_invalid",
                         "wallet.insufficient_funds",
                         "wallet.pin_locked",
+                        "wallet.not_signer",
+                        "wallet.signer_left",
+                        "wallet.payout_required",
+                        "wallet.payout_not_approved",
+                        "wallet.payout_mismatch",
+                        "wallet.payout_in_progress",
+                        "wallet.group_not_found",
                         CUSTODY,
                         MALFORMED,
                     ),
@@ -71,19 +78,23 @@ fun Route.transferController(transfers: TransferService) {
                             "\"20\" }`. The checks run in this order: account, wallet on the chain, hold, amount and " +
                             "limits, payee, balance. Run `challengeId` in the Circle SDK with `sdk` before " +
                             "`expiresAt` (15 minutes); updates arrive as `wallet/transfer.updated` frames. The same " +
-                            "`Idempotency-Key` always answers the same transfer.",
+                            "`Idempotency-Key` always answers the same transfer. Group wallets (added 2026-11-03): " +
+                            "`to: { groupId }` pays a group's wallet (members only; a contribution when it has a " +
+                            "target); `walletId` pays from a group wallet you sign for, and then `payoutRequestId` " +
+                            "must name a payout the admins approved, to exactly its payee and for exactly its amount.",
                 )
 
                 get("{transferId}") {
                     val userId = call.principal().userId
                     val result = transferIdOf(call.parameters["transferId"]).flatMap { transfers.transfer(userId, it) }
-                    call.respondDefault(result.toDefaultResponse { it.toResponse(userId) })
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
                 }.docs<NoBody, TransferResponse>(
                     "W5 · One payment and its state",
                     TAG,
                     listOf("wallet.transfer_not_found", MALFORMED),
                     notes =
-                        "$SCOPE For the sender (`direction: OUT`) and the person paid (`IN`). States: " +
+                        "$SCOPE For the sender (`direction: OUT`) and the person paid (`IN`), and for every member " +
+                            "of a group whose wallet is on either side, from the wallet's side. States: " +
                             "`AWAITING_SIGNATURE`, `SUBMITTED`, `CONFIRMED`, `FAILED`, `EXPIRED`.",
                 )
             }

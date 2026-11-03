@@ -36,7 +36,11 @@ sealed interface ChamaFrame {
         val approvals: Int,
         val approvalsNeeded: Int,
         val waitingOn: List<UserId>,
+        val signerId: UserId? = null,
     ) : ChamaFrame
+
+    /** The group's money settings changed or its target was removed: reload CH7 (decision 2026-11-03). No push. */
+    data class GroupUpdated(val chatId: ChatId, val byUserId: UserId) : ChamaFrame
 }
 
 /** Sends a frame to the members named: to their sockets, or as a push where the gateway words one. */

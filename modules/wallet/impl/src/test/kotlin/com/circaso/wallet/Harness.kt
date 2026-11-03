@@ -24,6 +24,8 @@ import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
+import com.circaso.wallet.domain.support.HolderFrames
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.OrderedIds
@@ -33,18 +35,24 @@ import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
+import com.circaso.wallet.domain.support.WalletCreation
+import com.circaso.wallet.domain.support.WalletListings
 import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
+import com.circaso.wallet.domain.usecases.CreateGroupWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
+import com.circaso.wallet.domain.usecases.FindGroupWallet
+import com.circaso.wallet.domain.usecases.GetGroupWallet
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.ListMyWallets
 import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
@@ -91,23 +99,35 @@ class Harness(
     val notices = MemoryStuckNotices()
     val jobs = JobSettings()
 
-    val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, frames, clock)
+    val owners = MemoryWalletOwners()
+    val approvals = FakePayoutApprovals()
+    val holders = Holders(owners, chats)
+
+    /** What reached people: [frames] records them per person, after [HolderFrames] fans a group wallet's out. */
+    private val sent = HolderFrames(holders, chats, frames)
+    val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, sent, clock, owners)
     val warnings = RecordingWarnings()
     private val holdings = HoldingsReader(custody, cache, warnings)
     private val support = SupportAccountRule(accounts)
-    private val payees = Payees(wallets, reach, chats, custody, support)
+    private val payees = Payees(wallets, owners, reach, chats, custody, support)
+    private val listings = WalletListings(wallets, payees)
     private val events = TransferEvents(bus)
     val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, support, clock)
 
-    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active)
-    val createWallet = CreateWallet(wallets, transactor, custody, sync, support, clock)
-    val openSession = OpenSession(wallets, custody, active)
-    val listChains = ListChains(wallets, sync, adding, custody)
-    val addChain = AddChain(wallets, sync, adding, custody, support, clock)
+    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active, holders)
+    private val creation = WalletCreation(wallets, transactor, custody, sync, clock)
+    val createWallet = CreateWallet(creation, support)
+    val createGroupWallet = CreateGroupWallet(chats, owners, accounts, support, creation, clock)
+    val getGroupWallet = GetGroupWallet(chats, owners, listings)
+    val listMyWallets = ListMyWallets(chats, owners, listings)
+    val findGroupWallet = FindGroupWallet(owners, listings)
+    val openSession = OpenSession(wallets, custody, active, holders)
+    val listChains = ListChains(wallets, sync, adding, custody, holders)
+    val addChain = AddChain(wallets, sync, adding, custody, support, clock, holders)
     val addMissingChains =
         com.circaso.wallet.domain.usecases
-            .AddMissingChains(wallets, sync, adding, custody, support, clock)
-    val checkFunds = CheckFundsBeforeDeletion(wallets, sync, holdings)
+            .AddMissingChains(wallets, sync, adding, custody, support, clock, holders)
+    val checkFunds = CheckFundsBeforeDeletion(wallets, sync, holdings, owners)
     val hasWallet = HasWallet(wallets)
     val prepareTransfer =
         PrepareTransfer(
@@ -123,20 +143,22 @@ class Harness(
             events,
             ids,
             clock,
+            holders,
+            approvals,
         )
-    val getTransfer = GetTransfer(transfers)
-    val listTransactions = ListTransactions(transactions, Counterparties(profiles), rates)
+    val getTransfer = GetTransfer(transfers, chats)
+    val listTransactions = ListTransactions(transactions, Counterparties(profiles, wallets, owners), rates, holders)
     val checkRecipient = CheckRecipient(payees, custody, support)
-    val requestSetup = RequestSetup(payees, reminders, profiles, frames, support)
+    val requestSetup = RequestSetup(payees, reminders, profiles, sent, support)
     val validateAddress = ValidateAddress(custody)
     val outgoing =
-        OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, frames, rules, warnings, ids)
+        OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, sent, rules, warnings, ids)
     val updates =
         CustodyUpdates(
             wallets,
             sync,
             outgoing,
-            IncomingUpdates(wallets, transactions, transactor, frames, profiles, ids),
+            IncomingUpdates(wallets, transactions, transactor, sent, profiles, ids),
             cache,
             warnings,
             clock,
@@ -155,6 +177,7 @@ class Harness(
             applyUpdate,
             ReplayFrames(NoFramesKept),
             LookupTransfer(transfers),
+            findGroupWallet,
         )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))
@@ -238,3 +261,6 @@ class Harness(
 fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 
 fun <T> Resource<T>.code(): String = (this as Resource.Error).error.code
+
+/** The access rules with no group wallets anywhere: everyone sees only their own wallet. */
+fun personalHolders() = Holders(MemoryWalletOwners(), FakeChats())

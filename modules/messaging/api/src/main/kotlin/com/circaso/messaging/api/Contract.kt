@@ -38,4 +38,10 @@ interface ChatDirectory {
 
     /** The groups [userId] is in, for chama's list of the user's chamas (Asha, decision 2026-10-31). */
     suspend fun groupsOf(userId: UserId): List<ChatId>
+
+    /**
+     * The group's owner, for the wallet (only the owner sets up a group wallet, decision 2026-11-03) and chama (only
+     * the owner chooses who approves payouts). Null for a direct chat and for one that doesn't exist.
+     */
+    suspend fun owner(chatId: ChatId): UserId?
 }

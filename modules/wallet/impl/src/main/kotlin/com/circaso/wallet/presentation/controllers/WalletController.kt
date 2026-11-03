@@ -7,12 +7,18 @@ import com.circaso.wallet.presentation.dto.AddChainResponse
 import com.circaso.wallet.presentation.dto.AddMissingChainsResponse
 import com.circaso.wallet.presentation.dto.ChainsResponse
 import com.circaso.wallet.presentation.dto.CreateWalletResponse
+import com.circaso.wallet.presentation.dto.GroupWalletResponse
+import com.circaso.wallet.presentation.dto.GroupWalletSetupResponse
 import com.circaso.wallet.presentation.dto.SdkDto
 import com.circaso.wallet.presentation.dto.WalletResponse
+import com.circaso.wallet.presentation.dto.WalletsResponse
+import com.circaso.wallet.presentation.mappers.createGroupWalletCommand
 import com.circaso.wallet.presentation.mappers.createWalletCommand
+import com.circaso.wallet.presentation.mappers.groupIdOf
 import com.circaso.wallet.presentation.mappers.toCommand
 import com.circaso.wallet.presentation.mappers.toDto
 import com.circaso.wallet.presentation.mappers.toResponse
+import com.circaso.wallet.presentation.mappers.walletIdOf
 import com.circaso.wallet.presentation.mappers.walletQuery
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.web.NoBody
@@ -37,7 +43,8 @@ fun Route.walletController(wallets: WalletService) {
     route("/wallet") {
         authenticate(Scope.APP) {
             get {
-                val result = walletQuery(call.principal().userId, call.request.queryParameters["currency"])
+                val parameters = call.request.queryParameters
+                val result = walletQuery(call.principal().userId, parameters["currency"], parameters["walletId"])
                 call.respondDefault(result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse() })
             }.docs<NoBody, WalletResponse>(
                 "W1 · Your wallet: status, each chain with its address and assets, totals, and the fiat value",
@@ -49,7 +56,9 @@ fun Route.walletController(wallets: WalletService) {
                         "for example `KES`) adds `fiat`: what the US dollar stablecoins are worth at USDC = 1 USD. " +
                         "`fiat` is null when no rate is known (never an error) and `partial` is true when something " +
                         "held has no price yet. A code that isn't ISO 4217 answers `request.malformed`. Show " +
-                        "\"Rates by Exchange Rate API\" wherever the fiat value appears.",
+                        "\"Rates by Exchange Rate API\" wherever the fiat value appears. `?walletId=` reads a " +
+                        "group wallet instead (any member; added 2026-11-03): `owner` says whose it is and `canSign` " +
+                        "whether you are the one who sends from it.",
             )
 
             post {
@@ -66,20 +75,27 @@ fun Route.walletController(wallets: WalletService) {
             )
 
             post("session") {
-                val result = wallets.session(call.principal().userId)
+                val userId = call.principal().userId
+                val result =
+                    walletIdOf(
+                        call.request.queryParameters["walletId"],
+                    ).flatMap { wallets.session(userId, it) }
                 call.respondDefault(result.toDefaultResponse { it.toDto() })
             }.docs<NoBody, SdkDto>(
                 "W3 · The Circle SDK's session values",
                 TAG,
-                listOf("wallet.not_found", CUSTODY),
+                listOf("wallet.not_found", "wallet.not_signer", "wallet.signer_left", CUSTODY, "request.malformed"),
                 notes =
                     "$SCOPE `appId`, `userToken` and `encryptionKey` for the Circle SDK, valid until `expiresAt` " +
-                        "(an hour at most). Keep them in memory only.",
+                        "(an hour at most). Keep them in memory only. `?walletId=` opens a group wallet's own " +
+                        "session (its own Circle user: its own PIN and biometrics), for its signer only.",
             )
 
             route("/chains") {
                 get {
-                    val result = wallets.chains(call.principal().userId)
+                    val userId = call.principal().userId
+                    val result =
+                        walletIdOf(call.request.queryParameters["walletId"]).flatMap { wallets.chains(userId, it) }
                     call.respondDefault(result.toDefaultResponse { it.toResponse() })
                 }.docs<NoBody, ChainsResponse>(
                     "W12 · The supported chains, and which your wallet is on",
@@ -92,7 +108,10 @@ fun Route.walletController(wallets: WalletService) {
 
                 post {
                     val userId = call.principal().userId
-                    val result = call.receive<AddChainRequest>().toCommand(userId).flatMap { wallets.addChain(it) }
+                    val result =
+                        walletIdOf(call.request.queryParameters["walletId"]).flatMap { walletId ->
+                            call.receive<AddChainRequest>().toCommand(userId, walletId).flatMap { wallets.addChain(it) }
+                        }
                     call.respondDefault(result.toDefaultResponse { it.toResponse() })
                 }.docs<AddChainRequest, AddChainResponse>(
                     "W12 · Add a supported chain to your wallet",
@@ -115,7 +134,11 @@ fun Route.walletController(wallets: WalletService) {
                 )
 
                 post("missing") {
-                    val result = wallets.addMissingChains(call.principal().userId)
+                    val userId = call.principal().userId
+                    val result =
+                        walletIdOf(call.request.queryParameters["walletId"]).flatMap {
+                            wallets.addMissingChains(userId, it)
+                        }
                     call.respondDefault(
                         result.toDefaultResponse { list -> AddMissingChainsResponse(list.map { it.toResponse() }) },
                     )
@@ -131,6 +154,72 @@ fun Route.walletController(wallets: WalletService) {
                             "An empty list means the wallet is already on every supported chain.",
                 )
             }
+
+            route("/groups/{chatId}") {
+                post {
+                    val userId = call.principal().userId
+                    val key = call.idempotencyKey()
+                    val result =
+                        groupIdOf(call.parameters["chatId"]).flatMap {
+                            wallets.createGroupWallet(createGroupWalletCommand(userId, it, key))
+                        }
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<NoBody, GroupWalletSetupResponse>(
+                    "W14 · Set up the group's wallet: the challenge that sets its own PIN",
+                    TAG,
+                    listOf(
+                        "wallet.group_not_found",
+                        "wallet.not_group_owner",
+                        "wallet.not_signer",
+                        "wallet.already_exists",
+                        "wallet.account_restricted",
+                        "wallet.support_account_has_no_wallet",
+                        CUSTODY,
+                        "request.malformed",
+                    ),
+                    notes =
+                        "$SCOPE The group's owner only (decision 2026-11-03, Spaces phase 2). The group wallet is " +
+                            "separate from everyone's personal money: its own Circle user, so its own PIN and " +
+                            "biometrics. Run `challengeId` with this answer's `sdk` (not your personal session), " +
+                            "naming the group on the PIN screens; then W13 with `?walletId=` puts it on every " +
+                            "network. You become its signer: the only person who can send from it, and only for " +
+                            "payouts the admins approved. Calling again while `SETTING_UP` gives a fresh challenge " +
+                            "(Finish Wallet Setup); once `ACTIVE`, `wallet.already_exists`. Members get " +
+                            "`wallet/wallet.ready` (with `walletId`) when it turns active.",
+                )
+
+                get {
+                    val userId = call.principal().userId
+                    val result = groupIdOf(call.parameters["chatId"]).flatMap { wallets.groupWallet(userId, it) }
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<NoBody, GroupWalletResponse>(
+                    "W15 · The group's wallet: none, being set up, or active",
+                    TAG,
+                    listOf("wallet.group_not_found", "request.malformed"),
+                    notes =
+                        "$SCOPE Members only. `status` `NONE` (the owner may offer Add a Group Wallet), " +
+                            "`SETTING_UP` (the owner sees Finish Wallet Setup, members \"Wallet being set up\") or " +
+                            "`ACTIVE`. Read from the server's rows only, so it is cheap to poll during set-up; the " +
+                            "balance is W1 with `?walletId=`.",
+                )
+            }
+        }
+    }
+
+    route("/wallets") {
+        authenticate(Scope.APP) {
+            get {
+                val result = wallets.wallets(call.principal().userId)
+                call.respondDefault(result.toDefaultResponse { it.toResponse() })
+            }.docs<NoBody, WalletsResponse>(
+                "W16 · Every wallet you can see: yours, then your groups'",
+                TAG,
+                notes =
+                    "$SCOPE For the Paying from switcher (GW10) and the Wallet tab's title switcher (GW16). Your own " +
+                        "comes first (its `status` may be `NONE`), then the wallets of the groups you are in, those " +
+                        "you sign for (`canSign`) first. Only wallets with `canSign` can be paid from; for a group " +
+                        "wallet that means a payout request (CH4), paid once approved. Balances: W1 per wallet.",
+            )
         }
     }
 }

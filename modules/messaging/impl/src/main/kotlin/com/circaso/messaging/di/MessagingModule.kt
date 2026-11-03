@@ -80,6 +80,7 @@ import com.circaso.messaging.domain.usecases.GetAttachmentDownload
 import com.circaso.messaging.domain.usecases.GetChat
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
+import com.circaso.messaging.domain.usecases.GetOwner
 import com.circaso.messaging.domain.usecases.GetPresence
 import com.circaso.messaging.domain.usecases.GetStaticMap
 import com.circaso.messaging.domain.usecases.IsGroup
@@ -269,6 +270,7 @@ fun messagingModule(config: Config): Module =
         single { SetRole(get(), get(), get(), get(), get()) }
         single { GetMembers(get()) }
         single { GetAdmins(get()) }
+        single { GetOwner(get()) }
         single { IsGroup(get()) }
         single { ListGroupIds(get()) }
         single { ReplayFrames(get()) }
@@ -307,6 +309,7 @@ fun messagingModule(config: Config): Module =
         single { KeyService(get(), get(), get(), get()) }
         single {
             ChatService(
+                get(),
                 get(),
                 get(),
                 get(),

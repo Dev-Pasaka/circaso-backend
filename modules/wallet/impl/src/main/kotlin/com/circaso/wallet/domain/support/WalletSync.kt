@@ -5,6 +5,7 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.envelope
 import com.circaso.wallet.api.WalletCreated
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
@@ -13,6 +14,7 @@ import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.repositories.WalletOutbox
+import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 import java.time.Clock
 
@@ -35,6 +37,7 @@ class WalletSync(
     private val adding: AddingChains,
     private val frames: FrameSender,
     private val clock: Clock,
+    private val owners: WalletOwnerRepository,
 ) {
     /** Every wallet of [user] after recording the new ones; `wallet.custody_unavailable` if Circle can't answer. */
     suspend fun sync(user: CircleUser): Resource<List<ChainWallet>> =
@@ -69,7 +72,8 @@ class WalletSync(
     data class Synced(val recorded: List<ChainWallet>, val atCircle: List<ChainWallet>)
 
     private suspend fun record(fresh: List<ChainWallet>, isFirst: Boolean) {
-        val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain)) }
+        val groupId = owners.find(WalletId(fresh.first().userId.value))?.chatId
+        val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain, groupId)) }
         val inserted =
             transactor.run("wallets.record") {
                 val won = fresh.filter { wallets.insertWallet(it) }

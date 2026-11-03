@@ -3,12 +3,14 @@ package com.circaso.wallet.domain.usecases
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.ChainOption
 import com.circaso.wallet.domain.models.ChainStatus
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.WalletSync
 
 /**
@@ -21,8 +23,15 @@ class ListChains(
     private val sync: WalletSync,
     private val adding: AddingChains,
     private val custody: StablecoinCustody,
+    private val holders: Holders,
 ) {
-    suspend operator fun invoke(userId: UserId): Resource<List<ChainOption>> {
+    /** [walletId] null lists for the caller's own wallet; a group wallet's for any of its members. */
+    suspend operator fun invoke(caller: UserId, walletId: WalletId? = null): Resource<List<ChainOption>> {
+        val userId =
+            when (val access = holders.view(caller, walletId)) {
+                is Resource.Success -> access.data.owner.holder
+                is Resource.Error -> return access
+            }
         val enabled = enabledChains(userId)
         val pending = adding.list(userId)
         val supported = custody.supported

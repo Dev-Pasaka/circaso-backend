@@ -2,18 +2,26 @@ package com.circaso.chama.presentation.mappers
 
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.domain.errors.ChamaError
+import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.AskPayoutCommand
 import com.circaso.chama.domain.models.ChamaView
 import com.circaso.chama.domain.models.Goal
+import com.circaso.chama.domain.models.GroupMoney
+import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.LedgerEntry
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.SetGoalCommand
+import com.circaso.chama.domain.models.SetSettingsCommand
 import com.circaso.chama.domain.support.Amounts
 import com.circaso.chama.presentation.dto.ApprovalDto
 import com.circaso.chama.presentation.dto.ChamaResponse
 import com.circaso.chama.presentation.dto.ContributorDto
 import com.circaso.chama.presentation.dto.CreateRequestRequest
 import com.circaso.chama.presentation.dto.GoalDto
+import com.circaso.chama.presentation.dto.GroupMoneyResponse
+import com.circaso.chama.presentation.dto.GroupSettingsDto
+import com.circaso.chama.presentation.dto.GroupSettingsRequest
+import com.circaso.chama.presentation.dto.GroupWalletDto
 import com.circaso.chama.presentation.dto.LedgerEntryDto
 import com.circaso.chama.presentation.dto.LedgerResponse
 import com.circaso.chama.presentation.dto.RequestDto
@@ -46,12 +54,7 @@ fun SetGoalRequest.toCommand(userId: UserId, chatId: ChatId): Resource<SetGoalCo
             runCatching { Instant.parse(it) }.getOrNull()
                 ?: return Resource.error(SharedError.Malformed("deadline", "is not a time"))
         }
-    val treasurer =
-        this.treasurerUserId?.let {
-            UserId.parse(it)
-                ?: return Resource.error(SharedError.Malformed("treasurerUserId", "is not a user id"))
-        }
-    return Resource.success(SetGoalCommand(userId, chatId, name, target, deadline, treasurer))
+    return Resource.success(SetGoalCommand(userId, chatId, name, target, deadline))
 }
 
 fun CreateRequestRequest.toCommand(userId: UserId, chatId: ChatId): Resource<AskPayoutCommand> {
@@ -65,16 +68,46 @@ fun CreateRequestRequest.toCommand(userId: UserId, chatId: ChatId): Resource<Ask
     return Resource.success(AskPayoutCommand(userId, chatId, payee, to.address, to.name, amount, note))
 }
 
-fun Goal.toDto() =
+/** [signerId] is who sends from the group's wallet; a goal from the treasurer model names its treasurer instead. */
+fun Goal.toDto(signerId: UserId? = null) =
     GoalDto(
         chatId.toString(),
         name,
         Amounts.usdc(targetMinor),
         deadline?.toString(),
-        treasurerId.toString(),
+        (treasurerId ?: signerId)?.toString(),
         createdBy.toString(),
         updatedAt.toString(),
         version,
+    )
+
+fun GroupSettingsRequest.toCommand(userId: UserId, chatId: ChatId): Resource<SetSettingsCommand> {
+    val policy =
+        ApprovalPolicy.entries.firstOrNull { it.name == approvalPolicy.trim().uppercase() }
+            ?: return Resource.error(SharedError.Malformed("approvalPolicy", "is not TWO_ADMINS or ANY_ADMIN"))
+    return Resource.success(SetSettingsCommand(userId, chatId, policy))
+}
+
+fun GroupSettings.toDto() = GroupSettingsDto(chatId.toString(), approvalPolicy.name, updatedAt?.toString())
+
+private fun Map<UserId, Long>.toContributors() =
+    entries.sortedByDescending { it.value }.map { ContributorDto(it.key.toString(), Amounts.usdc(it.value)) }
+
+fun GroupMoney.toResponse() =
+    GroupMoneyResponse(
+        chatId = chatId.toString(),
+        wallet = wallet?.let { GroupWalletDto(it.walletId.toString(), it.status, it.signerId.toString()) },
+        approvalPolicy = settings.approvalPolicy.name,
+        goal = goal?.toDto(wallet?.signerId),
+        memberCount = memberCount,
+        contributed = Amounts.usdc(contributedMinor),
+        myContribution = Amounts.usdc(myContributedMinor),
+        contributors = contributorsMinor.toContributors(),
+        paidOut = Amounts.usdc(paidOutMinor),
+        openRequests = openRequests.map { it.toDto() },
+        isAdmin = isAdmin,
+        isOwner = isOwner,
+        isSigner = isSigner,
     )
 
 fun Payout.toDto() =
@@ -98,7 +131,7 @@ fun Payout.toDto() =
 
 fun ChamaView.toResponse() =
     ChamaResponse(
-        goal = goal.toDto(),
+        goal = goal.toDto(wallet?.signerId),
         memberCount = memberCount,
         contributed = Amounts.usdc(contributedMinor),
         paidOut = Amounts.usdc(paidOutMinor),
@@ -112,6 +145,8 @@ fun ChamaView.toResponse() =
         openRequests = openRequests.map { it.toDto() },
         isAdmin = isAdmin,
         isTreasurer = isTreasurer,
+        walletId = wallet?.walletId?.toString(),
+        approvalPolicy = (settings?.approvalPolicy ?: ApprovalPolicy.TWO_ADMINS).name,
     )
 
 fun List<LedgerEntry>.toResponse(limit: Int) =

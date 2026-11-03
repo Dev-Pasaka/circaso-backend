@@ -24,11 +24,23 @@ class TransferEvents(private val bus: EventBus) {
                 origin = transfer.origin.name,
                 proposalId = transfer.proposalId?.toString(),
                 chatId = transfer.chatId,
+                fromGroupId = transfer.fromGroupId,
+                toGroupId = transfer.toGroupId,
+                payoutRequestId = transfer.payoutRequestId?.toString(),
+                signerId = transfer.signer,
             ),
         )
 
     fun failed(transfer: Transfer, reason: String?): EventEnvelope =
-        bus.envelope(TransferFailed(transfer.transferId, transfer.senderId, reason ?: FAILED_WITHOUT_REASON))
+        bus.envelope(
+            TransferFailed(
+                transfer.transferId,
+                transfer.senderId,
+                reason ?: FAILED_WITHOUT_REASON,
+                fromGroupId = transfer.fromGroupId,
+                payoutRequestId = transfer.payoutRequestId?.toString(),
+            ),
+        )
 
     private companion object {
         const val FAILED_WITHOUT_REASON = "FAILED"

@@ -135,12 +135,22 @@ class GatewayRealtime(
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.PAYMENT_RECEIVED}" -> {
-                val name = decode(PaymentReceivedFrame.serializer(), frame)?.fromName
+                val received = decode(PaymentReceivedFrame.serializer(), frame)
+                val name = received?.fromName
+                // A group wallet's money is pushed to its signer (decision 2026-11-03). The group's name is sealed, so
+                // the server never has it: the text says "a group wallet".
+                val text =
+                    when {
+                        received?.walletId != null && name != null -> "$name paid into a group wallet"
+                        received?.walletId != null -> "A group wallet received money"
+                        name != null -> "$name sent you money"
+                        else -> "You received money"
+                    }
                 // The coins sound (decision 2026-10-31): iOS plays it from the app; Android gets the push as data and
                 // plays it itself, or the usual sound when the person turned it off. No amount in a push, ever.
                 PushMessage(
                     "Circaso",
-                    if (name != null) "$name sent you money" else "You received money",
+                    text,
                     PushPayload(kind = PAYMENT_RECEIVED_KIND),
                     dataOnly = true,
                     sound = MONEY_SOUND,
@@ -184,49 +194,41 @@ class GatewayRealtime(
      * the lock screen.
      */
     // The admins still to decide hear of a pending request; the requester hears the outcome. Never an amount.
-    private fun requestPush(frame: RequestUpdatedFrame, recipient: UserId): PushMessage? =
-        when (frame.state) {
+    // A group without a target has no goal name (decision 2026-11-03): the push says "the group wallet". The wallet's
+    // signer hears when a payout is approved, since they are the one who pays it.
+    private fun requestPush(frame: RequestUpdatedFrame, recipient: UserId): PushMessage? {
+        val title = frame.goalName.ifBlank { "Circaso" }
+        val from = frame.goalName.ifBlank { "the group wallet" }
+        return when (frame.state) {
             "PENDING" -> {
-                if (recipient in
-                    frame.waitingOn
-                ) {
-                    PushMessage(
-                        frame.goalName,
-                        "${frame.requesterName} needs your approval to pay from ${frame.goalName}",
-                    )
+                if (recipient in frame.waitingOn) {
+                    PushMessage(title, "${frame.requesterName} needs your approval to pay from $from")
                 } else {
                     null
                 }
             }
 
             "APPROVED" -> {
-                if (recipient ==
-                    frame.requestedBy
-                ) {
-                    PushMessage(frame.goalName, "Your request was approved")
-                } else {
-                    null
+                when (recipient) {
+                    frame.requestedBy -> PushMessage(title, "Your request was approved")
+                    frame.signerId -> PushMessage(title, "A payout from $from was approved. It's ready for you to pay")
+                    else -> null
                 }
             }
 
             "DECLINED" -> {
-                if (recipient ==
-                    frame.requestedBy
-                ) {
-                    PushMessage(frame.goalName, "Your request was declined")
-                } else {
-                    null
-                }
+                if (recipient == frame.requestedBy) PushMessage(title, "Your request was declined") else null
             }
 
             "PAID" -> {
-                if (recipient == frame.requestedBy) PushMessage(frame.goalName, "Your request was paid") else null
+                if (recipient == frame.requestedBy) PushMessage(title, "Your request was paid") else null
             }
 
             else -> {
                 null
             }
         }
+    }
 
     /**
      * Data-only and high priority with a short life, so the app wakes and shows its incoming-call screen (Android's

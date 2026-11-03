@@ -16,10 +16,22 @@ sealed class ChamaError(
 
     data object NotAdmin : ChamaError("chama.not_admin", "Only the group's admins can do that.", ErrorKind.FORBIDDEN)
 
-    data object NotTreasurer : ChamaError(
-        "chama.not_treasurer",
-        "Only the group's treasurer can pay this out.",
+    data object NotSigner : ChamaError(
+        "chama.not_signer",
+        "Only the group wallet's owner can pay this out.",
         ErrorKind.FORBIDDEN,
+    )
+
+    data object NotOwner : ChamaError(
+        "chama.not_owner",
+        "Only the group's owner can change who approves payouts.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object NoWallet : ChamaError(
+        "chama.no_wallet",
+        "This group has no wallet yet. Set one up first.",
+        ErrorKind.CONFLICT,
     )
 
     data object NoGoal : ChamaError("chama.no_goal", "This group has no shared goal yet.", ErrorKind.NOT_FOUND)
@@ -31,12 +43,6 @@ sealed class ChamaError(
             ErrorKind.INVALID,
             ErrorDetails(fields = listOf(FieldError(field, problem))),
         )
-
-    data object TreasurerNotMember : ChamaError(
-        "chama.treasurer_not_member",
-        "The treasurer must be in the group.",
-        ErrorKind.INVALID,
-    )
 
     data object AmountInvalid : ChamaError("chama.amount_invalid", "That amount isn't right.", ErrorKind.INVALID)
 

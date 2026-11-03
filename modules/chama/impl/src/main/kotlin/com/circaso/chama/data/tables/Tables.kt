@@ -11,7 +11,9 @@ object GoalsTable : Table("chama.goals") {
     val targetMinor = long("target_minor")
     val asset = text("asset")
     val deadline = timestamp("deadline").nullable()
-    val treasurerId = javaUUID("treasurer_id")
+
+    /** Only on goals from before group wallets (decision 2026-11-03); null on every target since. */
+    val treasurerId = javaUUID("treasurer_id").nullable()
     val createdBy = javaUUID("created_by")
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
@@ -19,7 +21,10 @@ object GoalsTable : Table("chama.goals") {
     override val primaryKey = PrimaryKey(chatId)
 }
 
-/** A member's confirmed payment to the treasurer from the chat, once per transfer. */
+/**
+ * A member's confirmed payment into the group's wallet, once per transfer. `legacy` marks those paid to a treasurer
+ * before group wallets (decision 2026-11-03): kept in the ledger, never counted towards a target.
+ */
 object ContributionsTable : Table("chama.contributions") {
     val transferId = javaUUID("transfer_id")
     val chatId = javaUUID("chat_id")
@@ -27,7 +32,17 @@ object ContributionsTable : Table("chama.contributions") {
     val amountMinor = long("amount_minor")
     val asset = text("asset")
     val at = timestamp("at")
+    val legacy = bool("legacy").default(false)
     override val primaryKey = PrimaryKey(transferId)
+}
+
+/** Who approves the group's payouts (decision 2026-11-03); no row means the default, two admins. */
+object GroupSettingsTable : Table("chama.group_settings") {
+    val chatId = javaUUID("chat_id")
+    val approvalPolicy = text("approval_policy")
+    val updatedBy = javaUUID("updated_by")
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(chatId)
 }
 
 /** A request to pay someone from the group; its state moves only by the transition guard. */

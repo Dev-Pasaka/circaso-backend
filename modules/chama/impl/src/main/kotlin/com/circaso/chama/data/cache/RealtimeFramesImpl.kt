@@ -3,6 +3,7 @@ package com.circaso.chama.data.cache
 import com.circaso.chama.api.ChamaFrames
 import com.circaso.chama.api.ContributionAddedFrame
 import com.circaso.chama.api.GoalUpdatedFrame
+import com.circaso.chama.api.GroupUpdatedFrame
 import com.circaso.chama.api.RequestUpdatedFrame
 import com.circaso.chama.data.tables.RealtimeTable
 import com.circaso.chama.domain.ports.ChamaFrame
@@ -133,8 +134,20 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                     approvals,
                     approvalsNeeded,
                     waitingOn,
+                    signerId,
                 ),
                 RequestUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is ChamaFrame.GroupUpdated -> {
+            RealtimeEnvelope.of(
+                ChamaFrames.MODULE,
+                ChamaFrames.GROUP_UPDATED,
+                seq,
+                GroupUpdatedFrame(chatId, byUserId),
+                GroupUpdatedFrame.serializer(),
                 ts,
             )
         }

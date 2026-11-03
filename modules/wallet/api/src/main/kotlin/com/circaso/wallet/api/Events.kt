@@ -12,7 +12,13 @@ import kotlinx.serialization.Serializable
  * they add a chain (decision 2026-10-28, a wallet on several chains). Published once per chain.
  */
 @Serializable
-data class WalletCreated(val userId: UserId, val blockchain: String) : DomainEvent {
+data class WalletCreated(
+    /** The wallet's holder: the person, or a group wallet's id ([groupId] says which group). */
+    val userId: UserId,
+    val blockchain: String,
+    /** Set for a group wallet (added 2026-11-03). */
+    val groupId: ChatId? = null,
+) : DomainEvent {
     override val type: String get() = TYPE
 
     companion object {
@@ -36,6 +42,14 @@ data class TransferConfirmed(
     val proposalId: String? = null,
     /** The chat it was paid from, when it was (added 2026-10-29 for chama contributions). */
     val chatId: ChatId? = null,
+    /** Set when it left a group wallet; [senderId] is then that wallet's id (added 2026-11-03). */
+    val fromGroupId: ChatId? = null,
+    /** Set when it paid a group wallet; [recipientId] is then that wallet's id: a contribution. */
+    val toGroupId: ChatId? = null,
+    /** The approved payout request it paid, for a payment from a group wallet. */
+    val payoutRequestId: String? = null,
+    /** The person who signed it. */
+    val signerId: UserId? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 
@@ -51,6 +65,10 @@ data class TransferFailed(
     val senderId: UserId,
     /** Circle's reason as it gave it, or `FAILED` when it gave none. */
     val reason: String,
+    /** Set when it was to leave a group wallet (added 2026-11-03). */
+    val fromGroupId: ChatId? = null,
+    /** The approved payout request it was to pay; the request stays `APPROVED` and can be paid again. */
+    val payoutRequestId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 

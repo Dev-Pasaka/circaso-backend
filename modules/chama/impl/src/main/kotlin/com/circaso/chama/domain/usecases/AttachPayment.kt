@@ -4,7 +4,6 @@ import com.circaso.chama.api.RequestId
 import com.circaso.chama.domain.errors.ChamaError
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
-import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.support.Members
 import com.circaso.chama.domain.support.RequestFrames
@@ -15,13 +14,14 @@ import com.circaso.wallet.api.Wallets
 import java.time.Clock
 
 /**
- * `POST /chama/requests/{requestId}/payment`: the treasurer paid an approved request with their own transfer (W4,
- * from the chat) and links it. The transfer must be theirs, to the request's payee, for its amount, from the chat;
- * the request is `PAID` once the transfer is confirmed (now, or when the wallet's event arrives).
+ * `POST /chama/requests/{requestId}/payment` (CH6): the group wallet's signer links the transfer that pays an approved
+ * request, so every member sees it as being paid before it is confirmed. Optional since group wallets (decision
+ * 2026-11-03): W4 with `payoutRequestId` already ties the transfer to the request, and the request is `PAID` when the
+ * wallet confirms it. The transfer must leave this group's wallet, to the request's payee, for its amount; it is
+ * `PAID` at once when already confirmed.
  */
 class AttachPayment(
     private val members: Members,
-    private val goals: GoalRepository,
     private val requests: RequestRepository,
     private val wallets: Wallets,
     private val requestFrames: RequestFrames,
@@ -37,8 +37,9 @@ class AttachPayment(
             is Resource.Error -> return r
             is Resource.Success -> Unit
         }
-        val goal = goals.find(request.chatId) ?: return Resource.error(ChamaError.NoGoal)
-        if (userId != goal.treasurerId) return Resource.error(ChamaError.NotTreasurer)
+        val wallet = wallets.groupWallet(request.chatId) ?: return Resource.error(ChamaError.NoWallet)
+        if (userId != wallet.signerId) return Resource.error(ChamaError.NotSigner)
+        if (request.state == RequestState.PAID && request.transferId == transferId) return Resource.success(request)
         if (request.state != RequestState.APPROVED) return Resource.error(ChamaError.NotApproved)
 
         val transfer = wallets.transfer(transferId) ?: return Resource.error(ChamaError.TransferMismatch)
@@ -49,10 +50,10 @@ class AttachPayment(
                         transfer.destinationAddress.equals(request.payeeAddress, ignoreCase = true)
                 )
         val matches =
-            transfer.senderId == userId &&
+            transfer.fromGroupId == request.chatId &&
+                (transfer.payoutRequestId == null || transfer.payoutRequestId == requestId.value) &&
                 samePayee &&
                 transfer.amount.amountMinor == request.amountMinor.toString() &&
-                transfer.chatId == request.chatId &&
                 transfer.state != "FAILED" &&
                 transfer.state != "EXPIRED"
         if (!matches) return Resource.error(ChamaError.TransferMismatch)

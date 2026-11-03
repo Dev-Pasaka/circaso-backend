@@ -21,7 +21,15 @@ internal fun WalletFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 WalletFrames.MODULE,
                 WalletFrames.TRANSFER_UPDATED,
                 seq,
-                TransferUpdatedFrame(transferId, state, blockchain, Amounts.of(amount), txHash, failureReason),
+                TransferUpdatedFrame(
+                    transferId,
+                    state,
+                    blockchain,
+                    Amounts.of(amount),
+                    txHash,
+                    failureReason,
+                    walletId,
+                ),
                 TransferUpdatedFrame.serializer(),
                 ts,
             )
@@ -32,7 +40,14 @@ internal fun WalletFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 WalletFrames.MODULE,
                 WalletFrames.PAYMENT_RECEIVED,
                 seq,
-                PaymentReceivedFrame(transactionId.toString(), blockchain, Amounts.of(amount), fromUserId, fromName),
+                PaymentReceivedFrame(
+                    transactionId.toString(),
+                    blockchain,
+                    Amounts.of(amount),
+                    fromUserId,
+                    fromName,
+                    walletId,
+                ),
                 PaymentReceivedFrame.serializer(),
                 ts,
             )
@@ -43,7 +58,7 @@ internal fun WalletFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 WalletFrames.MODULE,
                 WalletFrames.WALLET_READY,
                 seq,
-                WalletReadyFrame(blockchain),
+                WalletReadyFrame(blockchain, walletId),
                 WalletReadyFrame.serializer(),
                 ts,
             )

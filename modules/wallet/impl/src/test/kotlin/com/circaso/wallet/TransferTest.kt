@@ -423,8 +423,20 @@ class TransferTest {
             ready()
             val transferId = payBob().data().transfer.transferId
 
-            assertEquals(transferId, h.getTransfer(amina, transferId).data().transferId)
-            assertEquals(transferId, h.getTransfer(bob, transferId).data().transferId)
+            assertEquals(
+                transferId,
+                h
+                    .getTransfer(amina, transferId)
+                    .data()
+                    .transfer.transferId,
+            )
+            assertEquals(
+                transferId,
+                h
+                    .getTransfer(bob, transferId)
+                    .data()
+                    .transfer.transferId,
+            )
             assertEquals("wallet.transfer_not_found", h.getTransfer(UserId.new(), transferId).code())
             assertEquals(
                 "wallet.transfer_not_found",

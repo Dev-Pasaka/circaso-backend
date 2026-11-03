@@ -107,7 +107,7 @@ class HistoryDataTest {
         runBlocking<Unit> {
             transactions.insert(row("2026-10-20T10:00:00Z"))
             val profiles = FakeProfiles().apply { names[bob] = "Bob" }
-            val list = ListTransactions(transactions, Counterparties(profiles), FakeRates())
+            val list = ListTransactions(transactions, Counterparties(profiles), FakeRates(), personalHolders())
 
             val page = list(HistoryQuery(amina, null, null, 50)).data()
 

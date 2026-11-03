@@ -38,10 +38,18 @@ class SenderRules(
     private val support: SupportAccountRule,
     private val clock: Clock,
 ) {
-    /** The account may pay, and its wallet is active on [blockchain], with no hold on it. */
-    suspend fun sender(userId: UserId, blockchain: String): Resource<Sender> {
-        support.refusal(userId)?.let { return it }
-        if (accounts.status(userId) != AccountStatus.ACTIVE) return Resource.error(WalletError.AccountRestricted)
+    /**
+     * The account may pay, and its wallet is active on [blockchain], with no hold on it. [userId] is the wallet's
+     * holder; [signer] the person signing (the same for a personal wallet; a group wallet's owner otherwise), whose
+     * account and hold are what count.
+     */
+    suspend fun sender(
+        userId: UserId,
+        blockchain: String,
+        signer: UserId = userId,
+    ): Resource<Sender> {
+        support.refusal(signer)?.let { return it }
+        if (accounts.status(signer) != AccountStatus.ACTIVE) return Resource.error(WalletError.AccountRestricted)
         custody.supported.find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(userId) ?: return Resource.error(WalletError.NotFound)
         val open = wallets.wallets(userId).filter { it.state != ChainWalletState.CLOSED }
@@ -49,7 +57,7 @@ class SenderRules(
         val wallet =
             open.firstOrNull { it.blockchain == blockchain && it.state == ChainWalletState.ACTIVE }
                 ?: return Resource.error(WalletError.NotOnChain)
-        if (holds.active(userId) != null) return Resource.error(WalletError.OnHold)
+        if (holds.active(signer) != null) return Resource.error(WalletError.OnHold)
         return Resource.success(Sender(user, wallet))
     }
 
