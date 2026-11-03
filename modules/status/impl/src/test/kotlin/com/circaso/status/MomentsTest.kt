@@ -8,6 +8,12 @@ import com.circaso.status.api.MomentPostedFrame
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.domain.errors.StatusError
 import com.circaso.status.domain.models.KeyCopy
+import com.circaso.status.domain.models.ReactionChange
+import com.circaso.status.domain.models.ReactionChange.Clear
+import com.circaso.status.domain.models.ReactionChange.Keep
+import com.circaso.status.domain.support.HEART
+import com.circaso.status.domain.support.isReaction
+import com.circaso.status.presentation.mappers.parseViewRequest
 import kotlinx.coroutines.test.runTest
 import java.time.Duration
 import java.util.UUID
@@ -110,7 +116,7 @@ class MomentsTest {
             val copy = h.base64(20)
             val posted =
                 h.post(h.command(poster, listOf(amina, baraka), keyCopies = listOf(KeyCopy(amina, copy)))).data()
-            h.view(amina, posted.momentId, null).data()
+            h.view(amina, posted.momentId, Keep).data()
 
             val seen =
                 h
@@ -194,43 +200,158 @@ class MomentsTest {
                     .moments
                     .isEmpty(),
             )
-            h.view(amina, posted.momentId, null).assertError(StatusError.MomentNotFound)
+            h.view(amina, posted.momentId, Keep).assertError(StatusError.MomentNotFound)
             h.views(poster, posted.momentId).assertError(StatusError.MomentNotFound)
         }
 
     @Test
     fun `the first view tells the poster, a repeat tells nobody, and a reaction change tells them again`() =
         runTest {
+            h.profiles.names[amina] = "Amina"
             val posted = h.posted(poster, amina)
 
-            val first = h.view(amina, posted.momentId, null).data()
+            val first = h.view(amina, posted.momentId, Keep).data()
             h.clock.advance(Duration.ofMinutes(5))
-            h.view(amina, posted.momentId, null).data()
-            h.view(amina, posted.momentId, false).data()
-            val reacted = h.view(amina, posted.momentId, true).data()
+            h.view(amina, posted.momentId, Keep).data()
+            h.view(amina, posted.momentId, Clear).data()
+            val reacted = h.view(amina, posted.momentId, ReactionChange.Set(HEART)).data()
 
             assertEquals(first.viewedAt, reacted.viewedAt)
             assertEquals(
                 listOf(
-                    MomentViewedFrame(posted.momentId, amina, first.viewedAt, false),
-                    MomentViewedFrame(posted.momentId, amina, first.viewedAt, true),
+                    MomentViewedFrame(posted.momentId, amina, first.viewedAt, reacted = false),
+                    MomentViewedFrame(
+                        posted.momentId,
+                        amina,
+                        first.viewedAt,
+                        reacted = true,
+                        viewerName = "Amina",
+                        reaction = HEART,
+                    ),
                 ),
                 h.frames.to(poster),
             )
             val views = h.views(poster, posted.momentId).data()
             assertEquals(listOf(amina), views.map { it.userId })
             assertTrue(views.single().reacted)
+            assertEquals(HEART, views.single().reaction)
         }
+
+    @Test
+    fun `a reaction is set, changed and cleared, telling the poster once each, and a new emoji names the viewer`() =
+        runTest {
+            h.profiles.names[amina] = "Amina"
+            val posted = h.posted(poster, amina)
+            val id = posted.momentId
+
+            val first = h.view(amina, id, ReactionChange.Set("😂")).data()
+            h.view(amina, id, ReactionChange.Set("😂")).data() // a retry: nothing new
+            h.view(amina, id, Keep).data()
+            h.view(amina, id, ReactionChange.Set("🔥")).data()
+            h.view(amina, id, Clear).data()
+            h.view(amina, id, Clear).data()
+
+            fun frame(reaction: String?, name: String?) =
+                MomentViewedFrame(id, amina, first.viewedAt, reaction != null, viewerName = name, reaction = reaction)
+            assertEquals(
+                listOf(frame("😂", "Amina"), frame("🔥", "Amina"), frame(null, null)),
+                h.frames.to(poster),
+            )
+            val view = h.views(poster, id).data().single()
+            assertNull(view.reaction)
+            assertFalse(view.reacted)
+        }
+
+    @Test
+    fun `a reaction must be one emoji, and a refused one records nothing`() =
+        runTest {
+            val posted = h.posted(poster, amina)
+
+            for (bad in listOf("", "ok", "a😂", "😂 ", " ", "1", "\u200D", "\u0007", "😂😂😂😂😂")) {
+                h.view(amina, posted.momentId, ReactionChange.Set(bad)).assertError(StatusError.ReactionInvalid)
+            }
+            assertNull(h.moments.member(posted.momentId, amina)?.viewedAt)
+            assertTrue(h.frames.to(poster).isEmpty())
+
+            for (good in listOf(HEART, "❤", "😂", "👍🏽", "🇰🇪", "1️⃣", "#⃣", "👩‍💻", "©️")) {
+                assertTrue(isReaction(good), good)
+            }
+            assertFalse(isReaction("👨‍👩‍👧‍👦")) // 25 bytes: over the limit
+            h.view(amina, posted.momentId, ReactionChange.Set("👍🏽")).data()
+        }
+
+    @Test
+    fun `the viewer sees their own emoji, and the poster how many viewed and how many reacted`() =
+        runTest {
+            val posted = h.post(h.command(poster, listOf(amina, baraka, chebet))).data()
+            h.view(amina, posted.momentId, ReactionChange.Set("😂")).data()
+            h.view(baraka, posted.momentId, Keep).data()
+
+            val seen =
+                h
+                    .list(amina, null, 50)
+                    .data()
+                    .moments
+                    .single()
+            assertEquals("😂", seen.reaction)
+            assertTrue(seen.reacted)
+            assertNull(seen.reactionCount)
+            assertNull(
+                h
+                    .list(baraka, null, 50)
+                    .data()
+                    .moments
+                    .single()
+                    .reaction,
+            )
+
+            val own =
+                h
+                    .list(poster, null, 50)
+                    .data()
+                    .moments
+                    .single()
+            assertEquals(2, own.viewCount)
+            assertEquals(1, own.reactionCount)
+            assertNull(own.reaction)
+
+            h.posted(poster, amina) // nobody has seen it yet
+            val counts =
+                h
+                    .list(poster, null, 50)
+                    .data()
+                    .moments
+                    .map { it.viewCount to it.reactionCount }
+            assertEquals(listOf(2 to 1, 0 to 0), counts)
+        }
+
+    @Test
+    fun `ST5's body sets, clears or keeps the reaction, and an older app's reacted still works`() {
+        fun parsed(body: String) = parseViewRequest(body).data()
+
+        assertEquals(Keep, parsed(""))
+        assertEquals(Keep, parsed("{}"))
+        assertEquals(Keep, parsed("""{"reacted":null}"""))
+        assertEquals(ReactionChange.Set(HEART), parsed("""{"reacted":true}"""))
+        assertEquals(Clear, parsed("""{"reacted":false}"""))
+        assertEquals(ReactionChange.Set("😂"), parsed("""{"reaction":"😂"}"""))
+        assertEquals(Clear, parsed("""{"reaction":null}"""))
+        assertEquals(Clear, parsed("""{"reacted":true,"reaction":null}"""))
+        assertEquals(ReactionChange.Set("🔥"), parsed("""{"reacted":false,"reaction":"🔥"}"""))
+        for (bad in listOf("""{"reaction":5}""", """{"reaction":["😂"]}""", """{"reacted":"yes"}""", "[]", "{")) {
+            assertEquals("request.malformed", assertIs<Resource.Error>(parseViewRequest(bad)).error.code, bad)
+        }
+    }
 
     @Test
     fun `only the audience can view, and a block since posting hides the moment`() =
         runTest {
             val posted = h.posted(poster, amina)
 
-            h.view(baraka, posted.momentId, null).assertError(StatusError.MomentNotFound)
-            h.view(poster, posted.momentId, null).assertError(StatusError.MomentNotFound)
+            h.view(baraka, posted.momentId, Keep).assertError(StatusError.MomentNotFound)
+            h.view(poster, posted.momentId, Keep).assertError(StatusError.MomentNotFound)
             h.reach.blocked += setOf(amina, poster)
-            h.view(amina, posted.momentId, null).assertError(StatusError.MomentNotFound)
+            h.view(amina, posted.momentId, Keep).assertError(StatusError.MomentNotFound)
         }
 
     @Test
@@ -250,7 +371,7 @@ class MomentsTest {
         runTest {
             val mediaId = h.readyMedia(poster)
             val posted = h.post(h.command(poster, listOf(amina, baraka), mediaIds = listOf(mediaId))).data()
-            h.view(amina, posted.momentId, true).data()
+            h.view(amina, posted.momentId, ReactionChange.Set(HEART)).data()
 
             h.delete(poster, posted.momentId).data()
 

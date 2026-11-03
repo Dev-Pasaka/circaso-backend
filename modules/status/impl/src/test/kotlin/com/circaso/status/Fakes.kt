@@ -8,12 +8,16 @@ import com.circaso.status.domain.models.AudienceMember
 import com.circaso.status.domain.models.MediaState
 import com.circaso.status.domain.models.Moment
 import com.circaso.status.domain.models.MomentMedia
+import com.circaso.status.domain.models.ReactionChange
+import com.circaso.status.domain.models.ViewCounts
 import com.circaso.status.domain.models.ViewRecord
 import com.circaso.status.domain.ports.FrameSender
 import com.circaso.status.domain.ports.MediaStorage
 import com.circaso.status.domain.ports.Transactor
 import com.circaso.status.domain.repositories.MediaRepository
 import com.circaso.status.domain.repositories.MomentRepository
+import com.circaso.users.api.Profiles
+import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
 import java.time.Clock
 import java.time.Duration
@@ -73,18 +77,26 @@ class MemoryMoments : MomentRepository {
 
     override suspend fun viewCounts(momentIds: Collection<MomentId>) =
         momentIds
-            .associateWith { id -> audience[id].orEmpty().values.count { it.viewedAt != null } }
-            .filterValues { it > 0 }
+            .associateWith { id ->
+                val viewed = audience[id].orEmpty().values.filter { it.viewedAt != null }
+                ViewCounts(viewed.size, viewed.count { it.reacted })
+            }.filterValues { it.views > 0 }
 
     override suspend fun recordView(
         momentId: MomentId,
         viewer: UserId,
         at: Instant,
-        reacted: Boolean?,
+        reaction: ReactionChange,
     ): AudienceMember? {
         val rows = audience[momentId] ?: return null
         val row = rows[viewer] ?: return null
-        val after = row.copy(viewedAt = row.viewedAt ?: at, reacted = reacted ?: row.reacted)
+        val emoji =
+            when (reaction) {
+                ReactionChange.Keep -> row.reaction
+                ReactionChange.Clear -> null
+                is ReactionChange.Set -> reaction.emoji
+            }
+        val after = row.copy(viewedAt = row.viewedAt ?: at, reaction = emoji)
         rows[viewer] = after
         return after
     }
@@ -95,7 +107,7 @@ class MemoryMoments : MomentRepository {
             .values
             .filter { it.viewedAt != null }
             .sortedBy { it.viewedAt }
-            .map { ViewRecord(it.userId, it.viewedAt!!, it.reacted) }
+            .map { ViewRecord(it.userId, it.viewedAt!!, it.reaction) }
 
     override suspend fun delete(momentId: MomentId): Boolean {
         audience.remove(momentId)
@@ -243,6 +255,14 @@ class FakeReach : ReachPolicy {
     override suspend fun reachable(from: UserId, to: Set<UserId>) = to.filterTo(mutableSetOf()) { canReach(from, it) }
 
     override suspend fun blockedEitherWay(a: UserId, b: UserId) = setOf(a, b) in blocked
+}
+
+/** Display names by user; anyone not in [names] has no profile. */
+class FakeProfiles : Profiles {
+    val names = mutableMapOf<UserId, String>()
+
+    override suspend fun get(ids: Set<UserId>) =
+        ids.mapNotNull { id -> names[id]?.let { id to PublicProfile(id, it, null, null, null) } }.toMap()
 }
 
 /** A clock the test moves. */

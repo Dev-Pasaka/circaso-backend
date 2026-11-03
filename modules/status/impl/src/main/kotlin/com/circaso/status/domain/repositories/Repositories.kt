@@ -5,6 +5,8 @@ import com.circaso.status.api.MomentId
 import com.circaso.status.domain.models.AudienceMember
 import com.circaso.status.domain.models.Moment
 import com.circaso.status.domain.models.MomentMedia
+import com.circaso.status.domain.models.ReactionChange
+import com.circaso.status.domain.models.ViewCounts
 import com.circaso.status.domain.models.ViewRecord
 import java.time.Instant
 import java.util.UUID
@@ -47,18 +49,18 @@ interface MomentRepository {
         limit: Int,
     ): List<Moment>
 
-    /** How many people have viewed each of [momentIds]; a moment nobody viewed is absent. */
-    suspend fun viewCounts(momentIds: Collection<MomentId>): Map<MomentId, Int>
+    /** How many people have viewed each of [momentIds], and how many reacted; a moment nobody viewed is absent. */
+    suspend fun viewCounts(momentIds: Collection<MomentId>): Map<MomentId, ViewCounts>
 
     /**
-     * Records [viewer]'s view: `viewed_at` is set the first time only; [reacted] replaces the stored value when given.
-     * Null when [viewer] isn't in the audience.
+     * Records [viewer]'s view: `viewed_at` is set the first time only; [reaction] sets or clears the stored emoji
+     * (and `reacted` with it) unless it is [ReactionChange.Keep]. Null when [viewer] isn't in the audience.
      */
     suspend fun recordView(
         momentId: MomentId,
         viewer: UserId,
         at: Instant,
-        reacted: Boolean?,
+        reaction: ReactionChange,
     ): AudienceMember?
 
     /** Those who have viewed the moment, in the order they did. */

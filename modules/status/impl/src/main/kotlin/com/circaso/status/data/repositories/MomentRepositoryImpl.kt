@@ -7,6 +7,8 @@ import com.circaso.status.data.tables.AudienceTable
 import com.circaso.status.data.tables.MomentsTable
 import com.circaso.status.domain.models.AudienceMember
 import com.circaso.status.domain.models.Moment
+import com.circaso.status.domain.models.ReactionChange
+import com.circaso.status.domain.models.ViewCounts
 import com.circaso.status.domain.models.ViewRecord
 import com.circaso.status.domain.repositories.MomentRepository
 import kotlinx.coroutines.flow.map
@@ -142,18 +144,24 @@ class MomentRepositoryImpl(private val database: Database) : MomentRepository {
                 .toList()
         }
 
-    override suspend fun viewCounts(momentIds: Collection<MomentId>): Map<MomentId, Int> {
+    override suspend fun viewCounts(momentIds: Collection<MomentId>): Map<MomentId, ViewCounts> {
         if (momentIds.isEmpty()) return emptyMap()
         return database.tx("audience.view-counts") {
             val viewers = AudienceTable.userId.count()
             AudienceTable
-                .select(AudienceTable.momentId, viewers)
+                .select(AudienceTable.momentId, AudienceTable.reacted, viewers)
                 .where {
                     (AudienceTable.momentId inList momentIds.map { it.value }) and AudienceTable.viewedAt.isNotNull()
-                }.groupBy(AudienceTable.momentId)
-                .map { MomentId(it[AudienceTable.momentId]) to it[viewers].toInt() }
+                }.groupBy(AudienceTable.momentId, AudienceTable.reacted)
+                .map { Triple(MomentId(it[AudienceTable.momentId]), it[AudienceTable.reacted], it[viewers].toInt()) }
                 .toList()
-                .toMap()
+                .groupBy({ it.first }) { it.second to it.third }
+                .mapValues { (_, rows) ->
+                    ViewCounts(
+                        views = rows.sumOf { it.second },
+                        reactions = rows.filter { it.first }.sumOf { it.second },
+                    )
+                }
         }
     }
 
@@ -161,12 +169,19 @@ class MomentRepositoryImpl(private val database: Database) : MomentRepository {
         momentId: MomentId,
         viewer: UserId,
         at: Instant,
-        reacted: Boolean?,
+        reaction: ReactionChange,
     ): AudienceMember? =
         database.tx("audience.record-view") {
             val row = (AudienceTable.momentId eq momentId.value) and (AudienceTable.userId eq viewer.value)
             AudienceTable.update(where = { row and AudienceTable.viewedAt.isNull() }) { it[viewedAt] = at }
-            if (reacted != null) AudienceTable.update(where = { row }) { it[this.reacted] = reacted }
+            if (reaction != ReactionChange.Keep) {
+                val emoji = (reaction as? ReactionChange.Set)?.emoji
+                // one statement, so `reacted` never disagrees with `reaction`
+                AudienceTable.update(where = { row }) {
+                    it[this.reaction] = emoji
+                    it[reacted] = emoji != null
+                }
+            }
             AudienceTable
                 .selectAll()
                 .where { row }
@@ -184,7 +199,7 @@ class MomentRepositoryImpl(private val database: Database) : MomentRepository {
                     ViewRecord(
                         UserId(it[AudienceTable.userId]),
                         it[AudienceTable.viewedAt]!!,
-                        it[AudienceTable.reacted],
+                        it[AudienceTable.reaction],
                     )
                 }.toList()
         }
@@ -233,5 +248,5 @@ private fun ResultRow.toMember() =
         userId = UserId(this[AudienceTable.userId]),
         keyCopy = this[AudienceTable.keyCopy],
         viewedAt = this[AudienceTable.viewedAt],
-        reacted = this[AudienceTable.reacted],
+        reaction = this[AudienceTable.reaction],
     )

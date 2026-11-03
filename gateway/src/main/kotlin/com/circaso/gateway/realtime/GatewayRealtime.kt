@@ -19,6 +19,8 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
+import com.circaso.status.api.MomentViewedFrame
+import com.circaso.status.api.StatusFrames
 import com.circaso.users.api.ConnectionAddedFrame
 import com.circaso.users.api.ContactJoinedFrame
 import com.circaso.users.api.UsersFrames
@@ -120,6 +122,12 @@ class GatewayRealtime(
 
             "${ChamaFrames.MODULE}.${ChamaFrames.REQUEST_UPDATED}" -> {
                 decode(RequestUpdatedFrame.serializer(), frame)?.let { requestPush(it, recipient) }
+            }
+
+            // A reaction added or changed on my moment (Pasaka, 2026-11-03): the module names the viewer only then. A
+            // plain view or a cleared reaction never pushes; replies are chat messages and push as such.
+            "${StatusFrames.MODULE}.${StatusFrames.VIEWED}" -> {
+                decode(MomentViewedFrame.serializer(), frame)?.let(::reactionPush)
             }
 
             "${CallFrames.MODULE}.${CallFrames.RINGING}" -> {
@@ -228,6 +236,17 @@ class GatewayRealtime(
             }
         }
 
+    /** Only a frame that names the viewer, which status does when it adds or changes a reaction. */
+    private fun reactionPush(frame: MomentViewedFrame): PushMessage? {
+        val name = frame.viewerName ?: return null
+        val reaction = frame.reaction ?: return null
+        return PushMessage(
+            "Circaso",
+            "$name reacted $reaction to your moment",
+            PushPayload(kind = MOMENT_LOVED_KIND),
+        )
+    }
+
     /**
      * Data-only and high priority with a short life, so the app wakes and shows its incoming-call screen (Android's
      * full-screen intent, CallKit on iOS); the text shows only if it can't.
@@ -284,4 +303,7 @@ class GatewayRealtime(
 
 /** What wakes the app for money received, and the sound it ships for it. */
 private const val PAYMENT_RECEIVED_KIND = "payment.received"
+
+/** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
+private const val MOMENT_LOVED_KIND = "moment.loved"
 private const val MONEY_SOUND = "money_received.wav"

@@ -122,7 +122,7 @@ fun statusModule(config: Config): Module =
         single { OrderedIds(clock) }
         single { PostMoment(get(), get(), get(), get(), get(), get(), background, status, clock) }
         single { ListMoments(get(), get(), clock) }
-        single { ViewMoment(get(), get(), get(), get(), clock) }
+        single { ViewMoment(get(), get(), get(), get(), clock, profiles = getOrNull()) }
         single { ListViews(get(), clock) }
         single { DeleteMoment(get(), get(), clock) }
         single { RemoveAccountMoments(get(), get(), get()) }

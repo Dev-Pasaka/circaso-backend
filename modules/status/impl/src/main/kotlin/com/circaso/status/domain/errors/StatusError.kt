@@ -51,6 +51,13 @@ sealed class StatusError(
         ErrorKind.FORBIDDEN,
     )
 
+    /** ST5's `reaction`: one emoji, 1 to 16 UTF-8 bytes, no letters, digits or spaces. */
+    data object ReactionInvalid : StatusError(
+        "status.reaction_invalid",
+        "Choose one emoji to react with.",
+        ErrorKind.INVALID,
+    )
+
     class TooManyMoments(retryAfterSeconds: Long) :
         StatusError(
             "status.too_many_moments",

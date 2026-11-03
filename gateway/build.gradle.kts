@@ -17,6 +17,7 @@ dependencies {
     api(project(":modules:wallet:api"))
     api(project(":modules:chama:api"))
     api(project(":modules:calls:api"))
+    api(project(":modules:status:api"))
     api(libs.ktor.server.core)
     api(libs.ktor.server.websockets)
     implementation(libs.ktor.server.compression)

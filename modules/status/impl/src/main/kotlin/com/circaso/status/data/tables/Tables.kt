@@ -33,6 +33,9 @@ object AudienceTable : Table("status.audience") {
     val keyCopy = text("key_copy").nullable()
     val viewedAt = timestamp("viewed_at").nullable()
     val reacted = bool("reacted").default(false)
+
+    /** The one emoji the viewer reacted with, null for none (V2); [reacted] is always written with it. */
+    val reaction = text("reaction").nullable()
     override val primaryKey = PrimaryKey(momentId, userId)
 
     init {
