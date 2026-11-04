@@ -912,7 +912,43 @@ class WalletQaTest {
         }
 
     @Test
-    fun `an expired transfer that Circle then fails does not give its amount back again`() =
+    fun `W17 quotes the fee and the limit for exactly a payment, and nothing is prepared`() =
+        testApplication {
+            val fakes = boot()
+            val (payer, _) = walletOwner(fakes, usdc(5_000_000_000))
+            val outside = """{"address":"0x0123456789abcdef0123456789abcdef01234567"}"""
+            w4(payer, transferBody(outside, amountOf("500"))).data()
+            w4(payer, transferBody(outside, amountOf("100"))).data()
+            val before = count("SELECT count(*) FROM wallet.transfers")
+
+            val quote =
+                send(
+                    "POST",
+                    "/v1/wallet/transfers/quote",
+                    payer.app,
+                    transferBody(outside, amountOf("450")),
+                    UUID.randomUUID().toString(),
+                )
+            val data = quote.data()
+
+            assertEquals(200, quote.status.value)
+            // The fake custodian can't batch, so the 2 % rule for outside addresses takes nothing (as on Solana).
+            assertEquals("0", data["fee"]!!.jsonObject["amountMinor"]!!.jsonPrimitive.content)
+            assertEquals("200", data["fee"]!!.jsonObject["rateBps"]!!.jsonPrimitive.content)
+            assertEquals("DAILY_LIMIT", data["problem"]!!.jsonPrimitive.content, "600 + 450 is over the 1 000 a day")
+            assertEquals(
+                "400",
+                data["limit"]!!
+                    .jsonObject["left"]!!
+                    .jsonObject["amount"]!!
+                    .jsonPrimitive.content,
+            )
+            assertEquals("400", data["maxAmount"]!!.jsonObject["amount"]!!.jsonPrimitive.content, "what is left today")
+            assertEquals(before, count("SELECT count(*) FROM wallet.transfers"), "a quote prepares nothing")
+        }
+
+    @Test
+    fun `an expired transfer that Circle then fails stops counting against the day, and nothing more comes back`() =
         testApplication {
             val fakes = boot()
             val (payer, payerCircle) = walletOwner(fakes, usdc(5_000_000_000))
@@ -941,8 +977,10 @@ class WalletQaTest {
             assertTrue(fakes.notifications.onTransaction(failed) is Resource.Success)
             assertEquals("FAILED", get("/v1/wallet/transfers/$a", payer.app).data()["state"]!!.jsonPrimitive.content)
             assertEquals(1, outbox("wallet.TransferFailed", a), "TransferFailed once")
+            // Phase 2F: the window counts transfers by state, so the failed one is out and only the other 500 counts.
+            expect("the failed one is out of the window", w4(payer, transferBody(outside, amountOf("500"))), 200, null)
             expect(
-                "nothing came back",
+                "nothing more came back",
                 w4(payer, transferBody(outside, """{"asset":"USDC","amountMinor":"1"}""")),
                 400,
                 "wallet.limit_exceeded",

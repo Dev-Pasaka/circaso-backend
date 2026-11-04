@@ -3,6 +3,7 @@ package com.circaso.integrations.api
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
+import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
 import java.util.UUID
@@ -84,6 +85,27 @@ interface StablecoinCustody {
 
     /** The challenge the user signs to send [TransferRequest.amount]; nothing moves until they do. */
     suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge>
+
+    /**
+     * Whether one challenge on [blockchain] can pay several addresses at once, all or nothing (spaces-plan §7b, fee
+     * spike: a batch on the sender's own smart-contract wallet on EVM chains; Solana can't). Only then can a payment
+     * carry Circaso's fee in the same signature.
+     */
+    fun canSplit(blockchain: String): Boolean = false
+
+    /**
+     * What the vendor expects the network to charge for [request] right now (the gas Circaso sponsors), in the chain's
+     * native coin. Nothing is created. `Rejected` where [canSplit] is false.
+     */
+    suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> =
+        Resource.error(IntegrationError.Rejected("${request.blockchain} can't pay several addresses at once."))
+
+    /**
+     * The one challenge the user signs to pay every leg of [request] together: all legs move, or none. `Rejected`
+     * where [canSplit] is false.
+     */
+    suspend fun prepareSplitTransfer(circleUserId: String, request: SplitTransferRequest): Resource<Challenge> =
+        Resource.error(IntegrationError.Rejected("${request.blockchain} can't pay several addresses at once."))
 
     suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction>
 
@@ -189,6 +211,29 @@ data class TransferRequest(
     val refId: String,
 )
 
+/** One leg of a split payment: [amount] to [destinationAddress]. */
+data class PaymentLeg(val destinationAddress: String, val amount: Money) {
+    override fun toString(): String = "PaymentLeg(***)"
+}
+
+/**
+ * Several payments from one wallet in one challenge (the payee and Circaso's fee wallet): [walletId] is the sending
+ * wallet and [walletAddress] its address on [blockchain]. [refId] is ours, echoed back as for [TransferRequest].
+ */
+data class SplitTransferRequest(
+    val blockchain: String,
+    val walletId: String,
+    val walletAddress: String,
+    val legs: List<PaymentLeg>,
+    val idempotencyKey: UUID,
+    val refId: String,
+) {
+    override fun toString(): String = "SplitTransferRequest($blockchain, ${legs.size} legs)"
+}
+
+/** What a network charges, in its native coin ([symbol]: ETH, POL, SOL), as a decimal of whole coins. */
+data class NetworkCost(val amount: BigDecimal, val symbol: String)
+
 enum class PinChallenge {
     /** The user changes the PIN, typing the current one. */
     CHANGE,
@@ -213,6 +258,8 @@ data class CustodyTransaction(
     val failureReason: String,
     /** When the vendor last changed it; updates can arrive out of order, so only a newer one applies. */
     val updatedAt: Instant,
+    /** What the network charged, in the chain's native coin as a decimal ("0.00000133"); empty until it is known. */
+    val networkFee: String = "",
 )
 
 enum class CustodyDirection { IN, OUT }

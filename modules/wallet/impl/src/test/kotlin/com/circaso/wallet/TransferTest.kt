@@ -23,7 +23,6 @@ import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -83,7 +82,7 @@ class TransferTest {
             assertEquals(amina, row.userId)
             assertEquals(transfer.transferId, row.transferId)
             assertEquals(TransferState.AWAITING_SIGNATURE, row.state)
-            assertEquals(tenUsdc, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "taken from today's limit")
+            assertEquals(tenUsdc, h.used(amina), "taken from today's limit")
         }
 
     @Test
@@ -299,7 +298,7 @@ class TransferTest {
             h.custody.held[base.circleWalletId] = mapOf("USDC" to BigInteger.valueOf(tenUsdc - 1))
 
             assertEquals("wallet.insufficient_funds", payBob().code())
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "a refused transfer takes no limit")
+            assertEquals(0L, h.used(amina), "a refused transfer takes no limit")
         }
 
     // ---- idempotency ----
@@ -318,7 +317,7 @@ class TransferTest {
             assertEquals(tenUsdc, again.transfer.amount.amountMinor, "the first request's transfer, as it was")
             assertEquals(1, (h.transfers as MemoryTransferRepository).rows.size)
             assertEquals(1, (h.transactions as MemoryTransactionRepository).rows.size)
-            assertEquals(tenUsdc, h.spend.total(amina, LocalDate.of(2026, 10, 28)))
+            assertEquals(tenUsdc, h.used(amina))
         }
 
     @Test
@@ -350,7 +349,7 @@ class TransferTest {
             assertEquals(TransferState.FAILED, transfer.state)
             assertEquals("wallet.insufficient_funds", transfer.failureReason)
             assertEquals(TransferState.FAILED, (h.transactions as MemoryTransactionRepository).rows.single().state)
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)))
+            assertEquals(0L, h.used(amina))
             h.custody.refuseTransfers = null
             assertNull(payBob(key = key).data().challengeId, "the same key answers the failed transfer")
 
@@ -384,7 +383,7 @@ class TransferTest {
             assertEquals(transferId, event.transferId)
             assertEquals(amina, event.senderId)
             assertEquals("wallet.insufficient_funds", event.reason)
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "given back once, not below zero")
+            assertEquals(0L, h.used(amina), "given back once, not below zero")
         }
 
     @Test

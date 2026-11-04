@@ -35,6 +35,8 @@ object TransfersTable : Table("wallet.transfers") {
     val payoutRequestId = javaUUID("payout_request_id").nullable()
     val fromGroupId = javaUUID("from_group_id").nullable()
     val toGroupId = javaUUID("to_group_id").nullable()
+    val feeMinor = long("fee_minor").default(0)
+    val feeAddress = text("fee_address").nullable()
     override val primaryKey = PrimaryKey(transferId)
 
     init {

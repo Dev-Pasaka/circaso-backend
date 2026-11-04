@@ -75,6 +75,42 @@ internal data class TransferBody(
     val refId: String,
 ) : CircleWrite
 
+/**
+ * `POST /v1/w3s/user/transactions/contractExecution`: a call the user signs. For a split payment the call is
+ * `executeBatch((address,uint256,bytes)[])` on the sending smart-contract wallet itself ([contractAddress] is its own
+ * address), each entry a USDC `transfer` (fee spike, 2026-11-03).
+ */
+@Serializable
+internal data class ContractExecutionBody(
+    override val idempotencyKey: String,
+    val walletId: String,
+    val contractAddress: String,
+    val abiFunctionSignature: String,
+    val abiParameters: List<List<List<String>>>,
+    val feeLevel: String,
+    val refId: String,
+) : CircleWrite
+
+/** `POST /v1/w3s/transactions/contractExecution/estimateFee`: the same call, estimated as the user; nothing is made. */
+@Serializable
+internal data class EstimateContractBody(
+    val walletId: String,
+    val contractAddress: String,
+    val abiFunctionSignature: String,
+    val abiParameters: List<List<List<String>>>,
+)
+
+/** The estimate per fee level; `networkFee` is in the chain's native coin and is the buffered upper bound. */
+@Serializable
+internal data class FeeEstimateData(
+    val low: FeeLevelData? = null,
+    val medium: FeeLevelData? = null,
+    val high: FeeLevelData? = null,
+)
+
+@Serializable
+internal data class FeeLevelData(val networkFee: String = "", val gasLimit: String = "")
+
 @Serializable
 internal data class PinBody(override val idempotencyKey: String) : CircleWrite
 
@@ -154,6 +190,10 @@ internal data class TransactionPayload(
     val errorReason: String = "",
     val createDate: String = "",
     val updateDate: String = "",
+    /** `TRANSFER` or `CONTRACT_EXECUTION` (a split payment's batch arrives as one, with no token or amount). */
+    val operation: String = "",
+    /** What the network charged, in the chain's native coin. */
+    val networkFee: String = "",
 )
 
 // Notifications

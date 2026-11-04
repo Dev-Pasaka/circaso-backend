@@ -14,8 +14,15 @@ import com.circaso.wallet.api.ApprovedPayout
 import com.circaso.wallet.api.PayoutApprovals
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
+import com.circaso.wallet.api.WalletOwnerType
+import com.circaso.wallet.domain.models.FeeEntry
+import com.circaso.wallet.domain.models.FeeKind
+import com.circaso.wallet.domain.models.FeeQuote
+import com.circaso.wallet.domain.models.FeeRule
+import com.circaso.wallet.domain.models.FeeState
 import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
+import com.circaso.wallet.domain.models.LimitRule
 import com.circaso.wallet.domain.models.PaymentHold
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
@@ -23,7 +30,7 @@ import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.ActiveWallets
-import com.circaso.wallet.domain.ports.DailySpend
+import com.circaso.wallet.domain.ports.FeeConfig
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.LoggedFrame
 import com.circaso.wallet.domain.ports.PaymentHolds
@@ -31,13 +38,17 @@ import com.circaso.wallet.domain.ports.RealtimeLog
 import com.circaso.wallet.domain.ports.Reminders
 import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.WalletFrame
+import com.circaso.wallet.domain.repositories.CountedTransfer
+import com.circaso.wallet.domain.repositories.FeeLedgerRepository
+import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
+import java.math.BigDecimal
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.UUID
@@ -116,6 +127,158 @@ class MemoryTransferRepository : TransferRepository {
                     ) && it.createdAt.isBefore(createdBefore)
             }.sortedByDescending { it.createdAt }
             .take(limit)
+
+    override suspend fun lockHolder(holder: UserId) = Unit
+
+    override suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer> =
+        rows.values
+            .filter { it.senderId == holder && !it.createdAt.isBefore(since) && it.state in COUNTED }
+            .map { CountedTransfer(it.createdAt, it.totalMinor, it.state == TransferState.AWAITING_SIGNATURE) }
+
+    private companion object {
+        val COUNTED = setOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED, TransferState.CONFIRMED)
+    }
+}
+
+/** The rules in memory: by default the personal placeholders the server had, and no fee rules. */
+class MemoryRules : RuleRepository {
+    val fees: MutableList<FeeRule> = CopyOnWriteArrayList()
+    val limits: MutableList<LimitRule> = CopyOnWriteArrayList(listOf(PERSONAL_LIMITS))
+
+    override suspend fun feeRules(): List<FeeRule> = fees.toList()
+
+    override suspend fun limitRules(): List<LimitRule> = limits.toList()
+
+    /** A fee rule in force since the epoch: [rateBps] on everything the match fields allow. */
+    fun fee(
+        rateBps: Int,
+        kind: FeeKind? = null,
+        senderType: WalletOwnerType? = null,
+        receiverType: WalletOwnerType? = null,
+        blockchain: String? = null,
+        minFeeMinor: Long? = null,
+        ruleId: UUID = UUID.randomUUID(),
+        version: Int = 1,
+        from: Instant = Instant.EPOCH,
+    ): FeeRule =
+        FeeRule(
+            ruleId,
+            version,
+            kind,
+            senderType,
+            receiverType,
+            blockchain,
+            null,
+            null,
+            rateBps,
+            10_000_000_000,
+            minFeeMinor,
+            2_500,
+            2_000,
+            from,
+            null,
+        ).also { fees += it }
+
+    /** The seeds of the migration (V4): 0.5 % internal, 1 % to or from groups and spaces, 2 % outside, Solana 0 %. */
+    fun seedFees() {
+        fee(50, kind = FeeKind.INTERNAL)
+        fee(100, kind = FeeKind.INTERNAL, senderType = WalletOwnerType.GROUP)
+        fee(100, kind = FeeKind.INTERNAL, receiverType = WalletOwnerType.GROUP)
+        fee(100, kind = FeeKind.INTERNAL, senderType = WalletOwnerType.SPACE)
+        fee(100, kind = FeeKind.INTERNAL, receiverType = WalletOwnerType.SPACE)
+        fee(200, kind = FeeKind.EXTERNAL)
+        fee(0, blockchain = "SOL-DEVNET")
+    }
+
+    /** The group cap of the migration: 10 000 USDC over a rolling 24 hours. */
+    fun seedGroupLimit(dailyMinor: Long = 10_000_000_000) {
+        limits +=
+            LimitRule(
+                UUID.randomUUID(),
+                1,
+                WalletOwnerType.GROUP,
+                null,
+                null,
+                null,
+                dailyMinor,
+                Duration.ofHours(24),
+                Instant.EPOCH,
+                null,
+            )
+    }
+
+    companion object {
+        val PERSONAL_LIMITS =
+            LimitRule(
+                UUID.randomUUID(),
+                1,
+                WalletOwnerType.PERSON,
+                null,
+                null,
+                TEST_LIMITS.perPaymentMinor,
+                TEST_LIMITS.dailyMinor,
+                Duration.ofHours(24),
+                Instant.EPOCH,
+                null,
+            )
+    }
+}
+
+class MemoryFeeQuotes : FeeQuoteRepository {
+    val rows = ConcurrentHashMap<UUID, FeeQuote>()
+
+    override suspend fun insert(quote: FeeQuote) {
+        rows[quote.quoteId] = quote
+    }
+
+    override suspend fun find(quoteId: UUID): FeeQuote? = rows[quoteId]
+}
+
+class MemoryFeeLedger : FeeLedgerRepository {
+    val rows = ConcurrentHashMap<TransferId, FeeEntry>()
+
+    /** (transfer, actual gas native, actual gas micro-dollars) as each settled. */
+    val gas = ConcurrentHashMap<TransferId, Pair<String?, Long?>>()
+
+    override suspend fun insert(entry: FeeEntry) {
+        rows[entry.transferId] = entry
+    }
+
+    override suspend fun settle(
+        transferId: TransferId,
+        state: FeeState,
+        txHash: String?,
+        actualGasNative: String?,
+        actualGasMinor: Long?,
+        at: Instant,
+    ): FeeEntry? =
+        synchronized(rows) {
+            val current = rows[transferId] ?: return null
+            val allowed =
+                when (state) {
+                    FeeState.COLLECTED -> setOf(FeeState.QUOTED, FeeState.VOID)
+                    FeeState.VOID -> setOf(FeeState.QUOTED)
+                    FeeState.QUOTED -> emptySet()
+                }
+            if (current.state !in allowed) return null
+            val moved = current.copy(state = state)
+            rows[transferId] = moved
+            gas[transferId] = actualGasNative to actualGasMinor
+            moved
+        }
+}
+
+/** The fee settings in tests: a fee wallet on every EVM chain, ETH at 2 500 dollars. */
+class FakeFeeConfig : FeeConfig {
+    val addresses = ConcurrentHashMap(mapOf("BASE-SEPOLIA" to FEE_WALLET, "MATIC-AMOY" to FEE_WALLET))
+
+    override fun feeAddress(blockchain: String): String? = addresses[blockchain]
+
+    override fun nativeUsd(blockchain: String): BigDecimal = BigDecimal("2500")
+
+    companion object {
+        const val FEE_WALLET = "0xfee0000000000000000000000000000000000fee"
+    }
 }
 
 /** `transactions` in memory, unique per (Circle transaction, user) and per transfer. */
@@ -228,18 +391,6 @@ object NoFramesKept : RealtimeLog {
     ): List<LoggedFrame> = emptyList()
 
     override suspend fun latest(userId: UserId): Long? = null
-}
-
-class MemoryDailySpend : DailySpend {
-    val totals = ConcurrentHashMap<Pair<UserId, LocalDate>, Long>()
-
-    override suspend fun total(userId: UserId, day: LocalDate): Long = totals[userId to day] ?: 0
-
-    override suspend fun add(
-        userId: UserId,
-        day: LocalDate,
-        amountMinor: Long,
-    ): Long = totals.merge(userId to day, amountMinor, Long::plus)!!
 }
 
 /** `wal:active` in memory: the last time each user was seen. */

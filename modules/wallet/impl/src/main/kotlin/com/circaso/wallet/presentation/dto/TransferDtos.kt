@@ -44,6 +44,27 @@ data class PrepareTransferRequest(
     val walletId: String? = null,
     /** From a group wallet: the approved payout request this pays (same payee, same amount). */
     val payoutRequestId: String? = null,
+    /**
+     * The W17 quote the person was shown (added 2026-11-04, phase 2F): its fee is charged while it holds. Without
+     * one, or once it has run out, a fee above zero answers `wallet.fee_changed` with a new quote to show first.
+     */
+    val quoteId: String? = null,
+)
+
+/**
+ * The one Circaso fee, network cost included (phase 2F): the same fields as an amount, plus how it was priced.
+ * [rateBps] (0..200) and [minimum] (the floor that covers the network cost made it more than the rate did) are null
+ * on a repeated W4 request, which only knows the amount.
+ */
+@Serializable
+data class FeeDto(
+    val asset: String,
+    val amountMinor: String,
+    val amount: String,
+    val rateBps: Int? = null,
+    val minimum: Boolean? = null,
+    val ruleId: String? = null,
+    val ruleVersion: Int? = null,
 )
 
 @Serializable
@@ -56,12 +77,51 @@ data class PrepareTransferResponse(
     /** Run it in the Circle SDK with [sdk]: the user signs with the PIN. Null once the transfer is past signing. */
     val challengeId: String? = null,
     val sdk: SdkDto? = null,
-    /** Gas is paid by Circaso for now: always zero. */
-    val fee: AmountDto,
+    /** Circaso's fee, locked for this transfer and paid on top in the same signature (zero where none is taken). */
+    val fee: FeeDto,
     /** Sign before this, or the transfer expires. */
     @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
     /** The wallet it leaves: your user id for your own, the group wallet's id otherwise (added 2026-11-03). */
     val walletId: String? = null,
+    /** What leaves the wallet: the amount and the fee (added 2026-11-04). The payee gets exactly `amount`. */
+    val total: AmountDto? = null,
+)
+
+/** Where a wallet stands against its limits (§7a); amounts in the payment's asset. */
+@Serializable
+data class LimitDto(
+    /** One payment's cap on its amount; null when there is none. */
+    val perPaymentMax: AmountDto? = null,
+    /** The cap on what leaves in [windowHours], fees included; null when there is none (spaces). */
+    val dailyMax: AmountDto? = null,
+    val used: AmountDto,
+    val left: AmountDto? = null,
+    val windowHours: Int,
+    /** When more becomes available: the oldest counted payment leaves the window. */
+    @Serializable(with = InstantSerializer::class) val moreAt: Instant? = null,
+)
+
+/** W17 `POST /wallet/transfers/quote`: the fee for this exact payment before it is signed (GW13). */
+@Serializable
+data class QuoteTransferResponse(
+    val blockchain: String,
+    val amount: AmountDto,
+    val fee: FeeDto,
+    /** The amount and the fee. */
+    val total: AmountDto,
+    /** What the wallet holds of the asset on the chain now. */
+    val balance: AmountDto,
+    /** The most that can be sent now with its fee, within the balance and the limits ("Send all", GW20). */
+    val maxAmount: AmountDto,
+    val limit: LimitDto,
+    /** Null when it can be paid as it is; else `INSUFFICIENT_FUNDS`, `PER_PAYMENT_LIMIT` or `DAILY_LIMIT`. */
+    val problem: String? = null,
+    /** With `DAILY_LIMIT`: when this payment fits the window (GW14b); null when it never can. */
+    @Serializable(with = InstantSerializer::class) val fitsAt: Instant? = null,
+    /** Pass to W4 to be charged exactly this fee; only for the person who signs for the wallet. */
+    val quoteId: String? = null,
+    /** Until when the fee is held. */
+    @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
 )
 
 /** Who a transfer pays: [userId] for a Circaso user (null for an outside address), and the address on chain. */

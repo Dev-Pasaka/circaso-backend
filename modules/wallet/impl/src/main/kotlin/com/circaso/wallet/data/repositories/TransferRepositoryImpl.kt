@@ -6,11 +6,13 @@ import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.TransfersTable
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.repositories.CountedTransfer
 import com.circaso.wallet.domain.repositories.TransferRepository
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -22,7 +24,9 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
+import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
 import java.time.Instant
@@ -59,6 +63,8 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[payoutRequestId] = transfer.payoutRequestId
                     it[fromGroupId] = transfer.fromGroupId?.value
                     it[toGroupId] = transfer.toGroupId?.value
+                    it[feeMinor] = transfer.feeMinor
+                    it[feeAddress] = transfer.feeAddress
                 }
             statement.insertedCount > 0
         }
@@ -156,5 +162,44 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             payoutRequestId = this[TransfersTable.payoutRequestId],
             fromGroupId = this[TransfersTable.fromGroupId]?.let(::ChatId),
             toGroupId = this[TransfersTable.toGroupId]?.let(::ChatId),
+            feeMinor = this[TransfersTable.feeMinor],
+            feeAddress = this[TransfersTable.feeAddress],
         )
+
+    override suspend fun lockHolder(holder: UserId) {
+        database.tx("transfers.lock-holder") {
+            CircleUsersTable
+                .select(CircleUsersTable.userId)
+                .where { CircleUsersTable.userId eq holder.value }
+                .forUpdate(ForUpdateOption.ForUpdate)
+                .toList()
+        }
+    }
+
+    override suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer> =
+        database.tx("transfers.spent-since") {
+            TransfersTable
+                .select(
+                    TransfersTable.createdAt,
+                    TransfersTable.amountMinor,
+                    TransfersTable.feeMinor,
+                    TransfersTable.state,
+                ).where {
+                    (TransfersTable.senderId eq holder.value) and
+                        (TransfersTable.createdAt greaterEq since) and
+                        (TransfersTable.state inList COUNTED)
+                }.map {
+                    CountedTransfer(
+                        createdAt = it[TransfersTable.createdAt],
+                        totalMinor = it[TransfersTable.amountMinor] + it[TransfersTable.feeMinor],
+                        awaiting = it[TransfersTable.state] == TransferState.AWAITING_SIGNATURE.name,
+                    )
+                }.toList()
+        }
+
+    private companion object {
+        /** What counts against a limit (§7a): signed or about to be. */
+        val COUNTED =
+            listOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED, TransferState.CONFIRMED).map { it.name }
+    }
 }

@@ -4,7 +4,6 @@ import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.UserId
 import com.circaso.wallet.data.cache.RedisAddingChains
 import com.circaso.wallet.data.cache.RedisBalanceCache
-import com.circaso.wallet.data.cache.RedisDailySpend
 import com.circaso.wallet.data.cache.RedisReminders
 import com.circaso.wallet.domain.models.Holding
 import kotlinx.coroutines.flow.Flow
@@ -12,7 +11,6 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.time.Duration
-import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -56,22 +54,6 @@ class WalletRedisTest {
             assertEquals(Duration.ofHours(1), redis.ttls["adding:$amina"])
             assertTrue(adding.list(UserId.new()).isEmpty())
             assertFalse(redis.values.containsKey("adding:$amina"), "kept as a hash, not a plain key")
-        }
-
-    @Test
-    fun `wal sent adds up a day's transfers for 2 days, and gives back`() =
-        runBlocking<Unit> {
-            val spend = RedisDailySpend(redis)
-            val amina = UserId.new()
-            val day = LocalDate.of(2026, 10, 28)
-
-            assertEquals(0L, spend.total(amina, day))
-            assertEquals(10L, spend.add(amina, day, 10))
-            assertEquals(15L, spend.add(amina, day, 5))
-            assertEquals(5L, spend.add(amina, day, -10))
-            assertEquals(5L, spend.total(amina, day))
-            assertEquals(0L, spend.total(amina, day.plusDays(1)))
-            assertEquals(Duration.ofDays(2), redis.ttls["sent:$amina:2026-10-28"])
         }
 
     @Test
