@@ -18,7 +18,7 @@ internal object CircleErrors {
 
     private const val PIN_LOCKED = 155119
     private const val DESTINATION_INVALID = 155219
-    private val INSUFFICIENT_FUNDS = setOf(155201, 155204, 155205, 155258)
+    private val INSUFFICIENT_FUNDS = setOf(155201, 155204, 155205, 155208, 155258)
 
     private val log = LoggerFactory.getLogger(CircleErrors::class.java)
 

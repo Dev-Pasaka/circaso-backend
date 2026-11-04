@@ -7,17 +7,22 @@ import com.circaso.wallet.domain.models.AddressCheck
 import com.circaso.wallet.domain.models.PreparedTransfer
 import com.circaso.wallet.domain.models.SeenTransfer
 import com.circaso.wallet.domain.models.TransferCommand
+import com.circaso.wallet.domain.models.TransferQuote
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.PrepareTransfer
+import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ValidateAddress
 
-/** Sending: W4 prepare, W5 one transfer, W11 checking an outside address. */
+/** Sending: W4 prepare, W5 one transfer, W11 checking an outside address, W17 the fee before signing. */
 class TransferService(
     private val prepareTransfer: PrepareTransfer,
     private val getTransfer: GetTransfer,
     private val validateAddress: ValidateAddress,
+    private val quoteTransfer: QuoteTransfer,
 ) {
     suspend fun prepare(command: TransferCommand): Resource<PreparedTransfer> = prepareTransfer(command)
+
+    suspend fun quote(command: TransferCommand): Resource<TransferQuote> = quoteTransfer(command)
 
     suspend fun transfer(userId: UserId, transferId: TransferId): Resource<SeenTransfer> =
         getTransfer(userId, transferId)

@@ -9,8 +9,10 @@ import com.circaso.shared.Uuid7
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.AddressCheck
+import com.circaso.wallet.domain.models.Fee
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.PreparedTransfer
+import com.circaso.wallet.domain.models.QuoteProblem
 import com.circaso.wallet.domain.models.RecipientCheck
 import com.circaso.wallet.domain.models.RecipientQuery
 import com.circaso.wallet.domain.models.RecipientStatus
@@ -18,18 +20,23 @@ import com.circaso.wallet.domain.models.ReminderOutcome
 import com.circaso.wallet.domain.models.SeenTransfer
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
+import com.circaso.wallet.domain.models.TransferQuote
 import com.circaso.wallet.domain.support.Amounts
 import com.circaso.wallet.presentation.dto.AmountDto
 import com.circaso.wallet.presentation.dto.AmountRequest
+import com.circaso.wallet.presentation.dto.FeeDto
+import com.circaso.wallet.presentation.dto.LimitDto
 import com.circaso.wallet.presentation.dto.PayeeDto
 import com.circaso.wallet.presentation.dto.PayeeRequest
 import com.circaso.wallet.presentation.dto.PrepareTransferRequest
 import com.circaso.wallet.presentation.dto.PrepareTransferResponse
+import com.circaso.wallet.presentation.dto.QuoteTransferResponse
 import com.circaso.wallet.presentation.dto.RecipientResponse
 import com.circaso.wallet.presentation.dto.RemindResponse
 import com.circaso.wallet.presentation.dto.TransferResponse
 import com.circaso.wallet.presentation.dto.ValidateAddressRequest
 import com.circaso.wallet.presentation.dto.ValidateAddressResponse
+import java.util.UUID
 
 // ---- request → command: shape checks answer `request.malformed`; an amount that can't be sent, the wallet's ----
 
@@ -58,11 +65,21 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
             is Resource.Error -> return read
         }
     val payout = payoutRequestId?.let { Uuid7.parse(it.trim()) ?: return malformed("payoutRequestId", "is not an id") }
+    val quote =
+        quoteId?.let {
+            runCatching { UUID.fromString(it.trim()) }.getOrNull() ?: return malformed("quoteId", "is not an id")
+        }
     val key = circleKey(userId, "wallet.transfer", requestKey)
     return Resource.success(
-        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout),
+        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout, quote),
     )
 }
+
+/** W17 takes W4's body; nothing is created, so the key only has to be well formed. */
+fun PrepareTransferRequest.toQuoteCommand(userId: UserId): Resource<TransferCommand> =
+    toCommand(userId, UUID.randomUUID().toString()).let { read ->
+        if (read is Resource.Success) Resource.success(read.data.copy(quoteId = null)) else read
+    }
 
 private fun PayeeRequest.toPayee(): Resource<Payee> {
     if (listOfNotNull(userId, address, groupId).size != 1) {
@@ -130,10 +147,57 @@ fun PreparedTransfer.toResponse() =
         amount = transfer.amount.toDto(),
         challengeId = challengeId,
         sdk = sdk?.toDto(),
-        fee = Money.zero(transfer.amount.asset).toDto(),
+        fee = feeDto(transfer, fee),
         expiresAt = transfer.expiresAt,
         walletId = transfer.senderId.toString(),
+        total = Money(transfer.totalMinor, transfer.amount.asset).toDto(),
     )
+
+private fun feeDto(transfer: Transfer, fee: Fee?): FeeDto {
+    val amount = Money(transfer.feeMinor, transfer.amount.asset).toDto()
+    return FeeDto(
+        asset = amount.asset,
+        amountMinor = amount.amountMinor,
+        amount = amount.amount,
+        rateBps = fee?.rateBps,
+        minimum = fee?.minimum,
+        ruleId = fee?.ruleId?.toString(),
+        ruleVersion = fee?.ruleVersion,
+    )
+}
+
+private fun Fee.toDto(asset: Asset): FeeDto {
+    val money = Money(amountMinor, asset).toDto()
+    return FeeDto(money.asset, money.amountMinor, money.amount, rateBps, minimum, ruleId?.toString(), ruleVersion)
+}
+
+/** W17's answer. */
+fun TransferQuote.toResponse(): QuoteTransferResponse {
+    val asset = amount.asset
+
+    fun minor(value: Long) = Money(value, asset).toDto()
+    return QuoteTransferResponse(
+        blockchain = blockchain,
+        amount = amount.toDto(),
+        fee = fee.toDto(asset),
+        total = minor(totalMinor),
+        balance = minor(balanceMinor),
+        maxAmount = minor(maxAmountMinor),
+        limit =
+            LimitDto(
+                perPaymentMax = allowance.perPaymentMaxMinor?.let(::minor),
+                dailyMax = allowance.dailyMaxMinor?.let(::minor),
+                used = minor(allowance.usedMinor),
+                left = allowance.leftMinor?.let(::minor),
+                windowHours = allowance.window.toHours().toInt(),
+                moreAt = allowance.moreAt,
+            ),
+        problem = problem?.name,
+        fitsAt = if (problem == QuoteProblem.DAILY_LIMIT) fitsAt else null,
+        quoteId = quoteId?.toString(),
+        expiresAt = expiresAt,
+    )
+}
 
 /** W5 from the side it is seen from ([SeenTransfer.side]). */
 fun SeenTransfer.toResponse(): TransferResponse = transfer.toResponse(side)
@@ -153,7 +217,7 @@ fun Transfer.toResponse(viewer: UserId): TransferResponse {
         from = senderId,
         to = PayeeDto(recipientId, destinationAddress),
         amount = amount.toDto(),
-        fee = Money.zero(amount.asset).toDto(),
+        fee = Money(feeMinor, amount.asset).toDto(),
         chatId = chatId?.toString(),
         origin = origin.name.takeIf { isSender },
         proposalId = proposalId?.toString()?.takeIf { isSender },

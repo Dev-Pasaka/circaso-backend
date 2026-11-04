@@ -4,11 +4,13 @@ import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.wallet.presentation.dto.PrepareTransferRequest
 import com.circaso.wallet.presentation.dto.PrepareTransferResponse
+import com.circaso.wallet.presentation.dto.QuoteTransferResponse
 import com.circaso.wallet.presentation.dto.TransferResponse
 import com.circaso.wallet.presentation.dto.ValidateAddressRequest
 import com.circaso.wallet.presentation.dto.ValidateAddressResponse
 import com.circaso.wallet.presentation.mappers.toCommand
 import com.circaso.wallet.presentation.mappers.toQuery
+import com.circaso.wallet.presentation.mappers.toQuoteCommand
 import com.circaso.wallet.presentation.mappers.toResponse
 import com.circaso.wallet.presentation.mappers.transferIdOf
 import com.circaso.wallet.presentation.services.TransferService
@@ -67,6 +69,7 @@ fun Route.transferController(transfers: TransferService) {
                         "wallet.payout_mismatch",
                         "wallet.payout_in_progress",
                         "wallet.group_not_found",
+                        "wallet.fee_changed",
                         CUSTODY,
                         MALFORMED,
                     ),
@@ -81,7 +84,48 @@ fun Route.transferController(transfers: TransferService) {
                             "`Idempotency-Key` always answers the same transfer. Group wallets (added 2026-11-03): " +
                             "`to: { groupId }` pays a group's wallet (members only; a contribution when it has a " +
                             "target); `walletId` pays from a group wallet you sign for, and then `payoutRequestId` " +
-                            "must name a payout the admins approved, to exactly its payee and for exactly its amount.",
+                            "must name a payout the admins approved, to exactly its payee and for exactly its " +
+                            "amount. Fees and limits (phase 2F): pass W17's `quoteId`; its fee is charged on top " +
+                            "and paid in the same signature, and `total` is what leaves the wallet. A fee above " +
+                            "the one shown answers `wallet.fee_changed` with a new `quoteId` in `details.fields`: " +
+                            "show it, then send again with that id and a new key. `wallet.limit_exceeded` and " +
+                            "`wallet.insufficient_funds` carry their numbers in `details.fields` too.",
+                )
+
+                post("quote") {
+                    val userId = call.principal().userId
+                    val result =
+                        call.receive<PrepareTransferRequest>().toQuoteCommand(userId).flatMap { transfers.quote(it) }
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<PrepareTransferRequest, QuoteTransferResponse>(
+                    "W17 · The fee for a payment before you sign it",
+                    TAG,
+                    listOf(
+                        "wallet.account_restricted",
+                        "wallet.chain_unsupported",
+                        "wallet.not_found",
+                        "wallet.not_ready",
+                        "wallet.not_on_chain",
+                        "wallet.on_hold",
+                        "wallet.amount_invalid",
+                        "wallet.self_transfer",
+                        "wallet.support_account_has_no_wallet",
+                        "users.not_reachable",
+                        "wallet.recipient_no_wallet",
+                        "wallet.recipient_not_on_chain",
+                        "wallet.address_invalid",
+                        "wallet.group_not_found",
+                        CUSTODY,
+                        MALFORMED,
+                    ),
+                    notes =
+                        "$SCOPE W4's body (`quoteId` ignored). The one Circaso fee for exactly this payment, " +
+                            "network cost included (`fee`, with `rateBps` and `minimum`), the `total`, the " +
+                            "`balance`, the most that can be sent with its fee (`maxAmount`) and the wallet's " +
+                            "`limit`. A short balance or a limit is reported in `problem` (`INSUFFICIENT_FUNDS`, " +
+                            "`PER_PAYMENT_LIMIT`, `DAILY_LIMIT`, with `fitsAt`), not refused. Nothing moves. For the " +
+                            "person who signs for the wallet the fee is held until `expiresAt` (15 minutes): pass " +
+                            "`quoteId` to W4. A group's members may quote its wallet (no `quoteId`).",
                 )
 
                 get("{transferId}") {

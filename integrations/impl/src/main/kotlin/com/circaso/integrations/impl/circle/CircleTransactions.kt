@@ -21,6 +21,9 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
 
     suspend fun translate(transaction: TransactionPayload): Resource<CustodyTransaction?> {
         val direction = directionOf(transaction.transactionType)
+        if (transaction.operation == CONTRACT_EXECUTION && transaction.tokenId.isEmpty()) {
+            return Resource.success(execution(transaction, direction))
+        }
         if (transaction.id.isEmpty() || direction == null || transaction.tokenId.isEmpty()) {
             return unreadable("id, type or token")
         }
@@ -50,7 +53,34 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
                 txHash = transaction.txHash,
                 failureReason = transaction.errorReason,
                 updatedAt = instantOf(transaction.updateDate) ?: instantOf(transaction.createDate) ?: Instant.EPOCH,
+                networkFee = transaction.networkFee,
             ),
+        )
+    }
+
+    /**
+     * A contract execution has no token or amount of its own. Ours (a split payment: the payee and Circaso's fee in
+     * one batch, phase 2F) is outbound and carries our `refId`, so it leads back to its transfer, which knows the
+     * amounts; it is reported with a zero amount. The legs reach the receiving wallets as ordinary inbound
+     * transfers. Any other contract execution isn't a payment we follow.
+     */
+    private fun execution(transaction: TransactionPayload, direction: CustodyDirection?): CustodyTransaction? {
+        if (transaction.id.isEmpty() || direction != CustodyDirection.OUT || transaction.refId.isEmpty()) return null
+        return CustodyTransaction(
+            circleTxId = transaction.id,
+            circleUserId = transaction.userId,
+            walletId = transaction.walletId,
+            blockchain = transaction.blockchain,
+            direction = direction,
+            state = stateOf(transaction.state),
+            amount = Money(0, Asset.USDC),
+            sourceAddress = transaction.sourceAddress,
+            destinationAddress = transaction.destinationAddress,
+            refId = transaction.refId,
+            txHash = transaction.txHash,
+            failureReason = transaction.errorReason,
+            updatedAt = instantOf(transaction.updateDate) ?: instantOf(transaction.createDate) ?: Instant.EPOCH,
+            networkFee = transaction.networkFee,
         )
     }
 
@@ -94,6 +124,8 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
     }
 
     companion object {
+        private const val CONTRACT_EXECUTION = "CONTRACT_EXECUTION"
+
         /** "20.5" USDC as 20 500 000 minor units; null if it isn't a number or has more decimals than [asset]. */
         fun minorUnits(decimal: String, asset: Asset): Long? =
             runCatching {
