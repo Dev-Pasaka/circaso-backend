@@ -161,7 +161,8 @@ class StreamingTest {
             assertEquals(HttpStatusCode.OK, response.status)
             val lines = response.bodyAsText().lines()
             val events = lines.filter { it.startsWith("event: ") }.map { it.removePrefix("event: ") }
-            assertEquals(listOf("message", "message", "done"), events)
+            // the mascot's hints (decision 2026-11-04) come before the first text and at the end
+            assertEquals(listOf("mascot", "message", "message", "mascot", "done"), events)
             val deltas = lines.filter { it.startsWith("data: {\"delta\"") }
             assertEquals(listOf("data: {\"delta\":\"Hi \"}", "data: {\"delta\":\"Amina!\"}"), deltas)
         }
@@ -181,7 +182,7 @@ class StreamingTest {
 
             val lines = response.bodyAsText().lines()
             val events = lines.filter { it.startsWith("event: ") }.map { it.removePrefix("event: ") }
-            assertEquals(listOf("tool_status", "tool_done", "message", "done"), events)
+            assertEquals(listOf("tool_status", "tool_done", "mascot", "message", "mascot", "done"), events)
             val status = lines.first { it.startsWith("data: {\"turnId\"") }
             assertTrue("\"tool\":\"searchContacts\"" in status && "\"label\":\"Looking at your contacts…\"" in status)
             assertTrue(lines.any { "\"ok\":true" in it })

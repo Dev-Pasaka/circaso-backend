@@ -83,13 +83,15 @@ data class TurnCommand(
 
 /**
  * One tool call as the app is told about it (decision 2026-10-31): `tool_status` before it runs, `tool_done` after.
- * [label] is the server's own line for it, never the model's.
+ * [label] is the server's own line for it, never the model's. [mascot] is what the mascot does meanwhile (decision
+ * 2026-11-04): on `tool_status` the work the tool is, on `tool_done` thinking.
  */
 data class ToolStatus(
     val turnId: UUID,
     val callId: String,
     val tool: String,
     val label: String,
+    val mascot: MascotHints? = null,
 )
 
 /** What a turn comes to: an answer, or a question for the phone (a device tool) that the phone answers through A9. */

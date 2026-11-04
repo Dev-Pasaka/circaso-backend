@@ -2,6 +2,7 @@ package com.circaso.assistant.domain.ports
 
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.LiveEvent
+import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
@@ -181,4 +182,21 @@ interface VoiceSamples {
         text: String,
         audio: SpokenAudio,
     )
+}
+
+/**
+ * Each conversation's mascot scene between turns (decision 2026-11-04), for the hysteresis in TurnMascot. A lookup
+ * that fails, or a state lost, is never an error: the mascot starts again from the default scene.
+ */
+interface MascotScenes {
+    suspend fun find(userId: UserId, conversationId: UUID): MascotSceneState?
+
+    suspend fun save(
+        userId: UserId,
+        conversationId: UUID,
+        state: MascotSceneState,
+    )
+
+    /** Every conversation's scene of [userId] (their account is gone). */
+    suspend fun forget(userId: UserId)
 }

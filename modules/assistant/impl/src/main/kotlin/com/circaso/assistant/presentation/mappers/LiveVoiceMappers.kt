@@ -9,6 +9,7 @@ import com.circaso.assistant.presentation.dto.LiveAudioDto
 import com.circaso.assistant.presentation.dto.LiveClosingFrame
 import com.circaso.assistant.presentation.dto.LiveErrorFrame
 import com.circaso.assistant.presentation.dto.LiveInterruptedFrame
+import com.circaso.assistant.presentation.dto.LiveMascotFrame
 import com.circaso.assistant.presentation.dto.LivePhoneFrame
 import com.circaso.assistant.presentation.dto.LiveReadyFrame
 import com.circaso.assistant.presentation.dto.LiveReplyDoneFrame
@@ -90,15 +91,19 @@ fun LiveEvent.toJson(): String? =
         is LiveEvent.ToolStarted -> {
             CircasoJson.encodeToString(
                 LiveToolStatusFrame.serializer(),
-                LiveToolStatusFrame(status.turnId.toString(), status.callId, status.tool, status.label),
+                status.toStatusFrame(),
             )
         }
 
         is LiveEvent.ToolFinished -> {
             CircasoJson.encodeToString(
                 LiveToolDoneFrame.serializer(),
-                LiveToolDoneFrame(status.turnId.toString(), status.callId, status.tool, isOk),
+                status.toDoneFrame(isOk),
             )
+        }
+
+        is LiveEvent.Mascot -> {
+            CircasoJson.encodeToString(LiveMascotFrame.serializer(), hints.toFrame())
         }
 
         is LiveEvent.Interrupted -> {

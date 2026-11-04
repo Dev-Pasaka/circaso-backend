@@ -745,9 +745,9 @@ class AssistantTest {
             assertTrue("never ask for, accept or repeat a PIN" in system)
             assertTrue("- Mode: voice." in system)
             assertTrue("- Display currency: UGX." in system)
-            assertEquals("asha-2026-10-31-v2", AshaPrompt.VERSION)
+            assertEquals("asha-2026-11-04-v1", AshaPrompt.VERSION)
             assertTrue(
-                "prompt=asha-2026-10-31-v2" in
+                "prompt=asha-2026-11-04-v1" in
                     h.memory.audit
                         .single()
                         .detail,
