@@ -41,6 +41,16 @@ sealed interface ChamaFrame {
 
     /** The group's money settings changed or its target was removed: reload CH7 (decision 2026-11-03). No push. */
     data class GroupUpdated(val chatId: ChatId, val byUserId: UserId) : ChamaFrame
+
+    /** Money moved in or out of the group's wallet, confirmed: every member reloads CH7 and the wallet. No push. */
+    data class MoneyUpdated(
+        val chatId: ChatId,
+        val transferId: String,
+        val kind: String,
+        val amount: WalletAmount,
+        val userId: UserId? = null,
+        val requestId: RequestId? = null,
+    ) : ChamaFrame
 }
 
 /** Sends a frame to the members named: to their sockets, or as a push where the gateway words one. */

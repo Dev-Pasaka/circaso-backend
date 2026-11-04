@@ -4,6 +4,7 @@ import com.circaso.chama.api.ChamaFrames
 import com.circaso.chama.api.ContributionAddedFrame
 import com.circaso.chama.api.GoalUpdatedFrame
 import com.circaso.chama.api.GroupUpdatedFrame
+import com.circaso.chama.api.MoneyUpdatedFrame
 import com.circaso.chama.api.RequestUpdatedFrame
 import com.circaso.chama.data.tables.RealtimeTable
 import com.circaso.chama.domain.ports.ChamaFrame
@@ -148,6 +149,17 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 seq,
                 GroupUpdatedFrame(chatId, byUserId),
                 GroupUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is ChamaFrame.MoneyUpdated -> {
+            RealtimeEnvelope.of(
+                ChamaFrames.MODULE,
+                ChamaFrames.MONEY_UPDATED,
+                seq,
+                MoneyUpdatedFrame(chatId, transferId, kind, amount, userId, requestId),
+                MoneyUpdatedFrame.serializer(),
                 ts,
             )
         }

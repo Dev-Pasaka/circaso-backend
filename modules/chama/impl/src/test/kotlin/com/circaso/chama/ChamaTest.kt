@@ -375,6 +375,7 @@ class ChamaTest {
             assertEquals(4, view.memberCount)
             assertEquals(h.walletId, view.wallet?.walletId)
             val frame = h.frames.ofType<ChamaFrame.ContributionAdded>().single()
+            assertEquals(1, h.frames.ofType<ChamaFrame.MoneyUpdated>().size, "once, even when the event arrives twice")
             assertEquals("Wanjiru", frame.displayName)
             assertEquals("1000", frame.amount.amount)
             assertEquals(1, h.bus.published.count { it.type == ContributionRecorded.TYPE })
@@ -398,6 +399,13 @@ class ChamaTest {
             h.contribute(h.juma, 300_000_000)
             assertEquals(1, h.contributions.rows.size, "recorded: the group wallet's ledger has it")
             assertTrue(h.frames.ofType<ChamaFrame.ContributionAdded>().isEmpty(), "no target, no goal frame")
+            // ...but every member still hears the money moved, so the balance updates live on their phones.
+            val (to, moved) = h.frames.sent.single { it.second is ChamaFrame.MoneyUpdated }
+            moved as ChamaFrame.MoneyUpdated
+            assertEquals(com.circaso.chama.api.MoneyUpdatedFrame.CONTRIBUTION, moved.kind)
+            assertEquals(h.juma, moved.userId)
+            assertEquals("300", moved.amount.amount)
+            assertEquals(4, to.size, "to every member, the payer too")
 
             h.now = h.now.plusSeconds(60)
             h.goal()
@@ -582,6 +590,10 @@ class ChamaTest {
             val paid = h.requests.rows.getValue(request.requestId)
             assertEquals(RequestState.PAID, paid.state)
             assertEquals(t, paid.transferId)
+            val payout = h.frames.ofType<ChamaFrame.MoneyUpdated>().single()
+            assertEquals(com.circaso.chama.api.MoneyUpdatedFrame.PAYOUT, payout.kind)
+            assertEquals(request.requestId, payout.requestId)
+            assertEquals(t.value.toString(), payout.transferId)
             assertEquals(1, h.bus.published.count { it.type == RequestPaid.TYPE })
             assertEquals(0, h.contributions.rows.size)
             assertNull(h.findApproved(h.chat, request.requestId.value), "a paid request can't be paid again")
