@@ -1,6 +1,7 @@
 package com.circaso.chama.domain.usecases
 
 import com.circaso.chama.api.ContributionRecorded
+import com.circaso.chama.api.MoneyUpdatedFrame
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.api.RequestPaid
 import com.circaso.chama.domain.models.Contribution
@@ -26,7 +27,8 @@ import java.time.Clock
  * On `wallet.TransferConfirmed` (decision 2026-11-03, group wallets): a member's payment into the group's wallet is a
  * contribution (every member hears `contribution.added`, pushed as "Wanjiru added to Holiday Fund", when the group
  * has a target); a payment out of the group's wallet for an approved request (W4 `payoutRequestId`, or one linked by
- * CH6) moves that request to `PAID`. Safe to run twice: a contribution is recorded once per transfer, and a request
+ * CH6) moves that request to `PAID`. Either way every member gets `money.updated` (2026-11-04), target or not, so the
+ * group's balance and target move live on every phone. Safe to run twice: a contribution is recorded once per transfer, and a request
  * moves only from `APPROVED`.
  */
 class RecordTransfer(
@@ -60,6 +62,16 @@ class RecordTransfer(
         publish(
             bus.envelope(
                 ContributionRecorded(chat, transfer.senderId, transfer.transferId, Amounts.usdc(transfer.amountMinor)),
+            ),
+        )
+        frames.send(
+            everyone,
+            ChamaFrame.MoneyUpdated(
+                chat,
+                transfer.transferId.value.toString(),
+                MoneyUpdatedFrame.CONTRIBUTION,
+                Amounts.usdc(transfer.amountMinor),
+                userId = transfer.senderId,
             ),
         )
 
@@ -98,7 +110,18 @@ class RecordTransfer(
                 transferId = transfer.transferId,
                 at = clock.instant(),
             ) ?: return
-        requestFrames.changed(paid, members.members(paid.chatId), members.admins(paid.chatId))
+        val everyone = members.members(paid.chatId)
+        requestFrames.changed(paid, everyone, members.admins(paid.chatId))
+        frames.send(
+            everyone,
+            ChamaFrame.MoneyUpdated(
+                paid.chatId,
+                transfer.transferId.value.toString(),
+                MoneyUpdatedFrame.PAYOUT,
+                Amounts.usdc(paid.amountMinor),
+                requestId = paid.requestId,
+            ),
+        )
         publish(
             bus.envelope(
                 RequestPaid(paid.chatId, paid.requestId, transfer.transferId, Amounts.usdc(paid.amountMinor)),

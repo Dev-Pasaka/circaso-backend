@@ -15,6 +15,29 @@ object ChamaFrames {
     const val CONTRIBUTION_ADDED = "contribution.added"
     const val REQUEST_UPDATED = "request.updated"
     const val GROUP_UPDATED = "group.updated"
+    const val MONEY_UPDATED = "money.updated"
+}
+
+/**
+ * `chama/money.updated`, to every member (added 2026-11-04): money moved in or out of the group's wallet and is
+ * confirmed on chain: a member's contribution ([kind] `CONTRIBUTION`, target or not; [userId] is who paid) or an
+ * approved payout (`PAYOUT`, with its [requestId]). Reload the group's money (CH7) and the group wallet (W1/W6 `?walletId=`) so its
+ * balance and target move while the screen is open. No push (contributions to a target still push through
+ * `contribution.added`).
+ */
+@Serializable
+data class MoneyUpdatedFrame(
+    val chatId: ChatId,
+    val transferId: String,
+    val kind: String,
+    val amount: WalletAmount,
+    val userId: UserId? = null,
+    val requestId: RequestId? = null,
+) {
+    companion object {
+        const val CONTRIBUTION = "CONTRIBUTION"
+        const val PAYOUT = "PAYOUT"
+    }
 }
 
 /**
