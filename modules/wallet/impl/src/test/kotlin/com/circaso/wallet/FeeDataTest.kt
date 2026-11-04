@@ -48,6 +48,9 @@ class FeeDataTest {
             TestPostgres.truncate("wallet")
             // The seeds of V4, which the truncate took away, straight from the script.
             seeds().forEach(::sql)
+            // The container's clock may run ahead of this JVM's: start the seeds a little earlier.
+            sql("UPDATE wallet.fee_rules SET effective_from = now() - interval '1 hour'")
+            sql("UPDATE wallet.limit_rules SET effective_from = now() - interval '1 hour'")
         }
 
     private fun sql(statement: String) {
@@ -173,13 +176,11 @@ class FeeDataTest {
         fun seeds(): List<String> =
             checkNotNull(FeeDataTest::class.java.getResource("/db/wallet/V4__fees_limits.sql"))
                 .readText()
+                .lines()
+                // Comments first: one may hold a ";" (the seeds' do).
+                .joinToString("\n") { it.substringBefore("--") }
                 .split(";")
-                .map { statement ->
-                    statement
-                        .lines()
-                        .filterNot { it.trim().startsWith("--") }
-                        .joinToString("\n")
-                        .trim()
-                }.filter { it.startsWith("INSERT INTO") }
+                .map { it.trim() }
+                .filter { it.startsWith("INSERT INTO") }
     }
 }
