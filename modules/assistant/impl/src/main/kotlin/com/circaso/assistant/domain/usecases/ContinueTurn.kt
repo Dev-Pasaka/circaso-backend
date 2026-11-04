@@ -60,8 +60,8 @@ class ContinueTurn(
             return Resource.error(AssistantError.TurnNotFound)
         }
 
+        // its `tool_done` goes first on the stream, with the mascot, from the agent
         val device = ToolStatus(turn.turnId, turn.callId, turn.toolName, DeviceTools.label(turn.toolName))
-        listener.toolFinished(device, isOk = true)
 
         val snippets =
             result.snippets
@@ -74,7 +74,7 @@ class ContinueTurn(
                 ModelMessage.ToolResult(turn.callId, turn.toolName, AshaAgent.snippetsAsText(snippets))
 
         val outcome =
-            when (val r = carryOn(turn, conversation, result.agentToken, listener, purpose)) {
+            when (val r = carryOn(turn, conversation, result.agentToken, listener, purpose, device)) {
                 is Resource.Success -> r.data
                 is Resource.Error -> return r
             }
@@ -105,6 +105,7 @@ class ContinueTurn(
         agentToken: String?,
         listener: ReplyListener,
         purpose: ModelPurpose,
+        device: ToolStatus,
     ) = agent.run(
         conversation,
         AgentTurn(
@@ -115,9 +116,12 @@ class ContinueTurn(
             deviceTools = true,
             purpose = purpose,
             today = clock.today(),
+            conversationId = turn.conversationId,
+            question = turn.userText,
         ),
         startSteps = turn.steps,
         shownBefore = AshaAgent.shownSoFar(turn.conversation),
         listener = listener,
+        deviceDone = device,
     )
 }

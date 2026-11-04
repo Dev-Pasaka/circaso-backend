@@ -18,6 +18,9 @@ class BlockFilter(private val blocks: ReplyBlocks, private val isVoice: Boolean)
     private var inCode = false
     private var atLineStart = true
 
+    /** The rich block being held right now, if any: the mascot draws or writes while it is (decision 2026-11-04). */
+    val openBlock: BlockKind? get() = block
+
     /** Takes the next piece the model wrote; what may be shown now. */
     fun feed(delta: String): String {
         held.append(delta)
