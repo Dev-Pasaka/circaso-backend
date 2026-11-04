@@ -6,6 +6,7 @@ import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.LiveVoiceLine
+import com.circaso.assistant.domain.models.MascotHints
 import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.integrations.api.AudioSpan
@@ -135,6 +136,19 @@ class LiveConversation(
         override suspend fun toolFinished(status: ToolStatus, isOk: Boolean) {
             if (generation.get() == asked) emit(LiveEvent.ToolFinished(status, isOk))
         }
+
+        /** The mascot's hints go to the phone at once, unless the user has moved on. */
+        override suspend fun mascot(hints: MascotHints) {
+            if (generation.get() == asked) emit(LiveEvent.Mascot(hints))
+        }
+
+        /** Her last hints wait for the reply to be heard: they ride on its `reply_done`. */
+        override suspend fun mascotDone(hints: MascotHints) {
+            endHints = hints
+        }
+
+        var endHints: MascotHints? = null
+            private set
 
         /**
          * The turn has ended (or paused for the phone): the last words are spoken, unless the turn failed half way
@@ -332,7 +346,10 @@ class LiveConversation(
 
     /** Sends [event] unless the conversation has ended: a turn that finishes after a hang-up is saved, not sent. */
     private suspend fun emit(event: LiveEvent) {
-        if (!ended.isCompleted) out.send(event)
+        if (ended.isCompleted) return
+        out.send(event)
+        // the mascot is done once the reply has been heard (or talked over): its last hints follow `reply_done`
+        if (event is LiveEvent.ReplyDone) event.mascot?.let { out.send(LiveEvent.Mascot(it)) }
     }
 
     // ---- listening -------------------------------------------------------------------------------------------
@@ -605,7 +622,7 @@ class LiveConversation(
     ) {
         when (result) {
             is TurnResult.Answer -> {
-                val done = LiveEvent.ReplyDone(result.message, spoken = true)
+                val done = LiveEvent.ReplyDone(result.message, spoken = true, mascot = reply.endHints)
                 if (!reply.finish(done, speakRest = true)) emit(done.copy(spoken = false))
             }
 

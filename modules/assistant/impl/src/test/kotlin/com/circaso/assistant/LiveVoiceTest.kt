@@ -198,7 +198,10 @@ class LiveVoiceTest {
             // a reply far shorter than it reads), all before reply_done. One Flush for the whole reply.
             // (The turn's `timing` frame goes out among them, once its first audio has.)
             val afterTurn = got.frames.dropWhile { !(it is JsonObject && it.type() == "turn") }.drop(1)
-            val untilDone = afterTurn.takeWhile { !(it is JsonObject && it.type() == "reply_done") }
+            val untilDone =
+                afterTurn
+                    .takeWhile { !(it is JsonObject && it.type() == "reply_done") }
+                    .filterNot { it is JsonObject && it.type() == "mascot" }
             // Asha says what she is doing while the tool runs (decision 2026-10-31), before any of the reply.
             val status = (untilDone.first() as JsonObject)
             assertEquals("tool_status", status.type())
@@ -230,6 +233,19 @@ class LiveVoiceTest {
                 "You sent Mum 2,000 shillings yesterday. Anything else?",
                 done["message"]!!.jsonObject.text("text"),
             )
+
+            // The mascot (decision 2026-11-04): the tool frames carry her activity, a `mascot` frame comes before the
+            // first sentence, and the last, `done`, right after `reply_done`, once her voice has finished.
+            assertEquals("thinking", status.text("activity"))
+            assertEquals("office", status.text("scene"))
+            val json = got.json
+            val firstReply = json.indexOfFirst { it.type() == "reply" }
+            val speaking = json.indexOfFirst { it.type() == "mascot" }
+            assertTrue(speaking in 0 until firstReply, "a mascot frame before the first sentence")
+            assertEquals("speaking", json[speaking].text("activity"))
+            val after = json[json.indexOfFirst { it.type() == "reply_done" } + 1]
+            assertEquals("mascot", after.type())
+            assertEquals("done", after.text("activity"))
 
             assertEquals(
                 listOf(ModelPurpose.VOICE, ModelPurpose.VOICE),

@@ -137,6 +137,11 @@ data class ToolStatusEvent(
     val callId: String,
     val tool: String,
     val label: String,
+    val scene: String? = null,
+    val mood: String? = null,
+    val activity: String? = null,
+    val reaction: String? = null,
+    val sensitive: Boolean? = null,
 )
 
 /** That tool has answered; [ok] false when the lookup failed. */
@@ -146,6 +151,24 @@ data class ToolDoneEvent(
     val callId: String,
     val tool: String,
     val ok: Boolean,
+    val scene: String? = null,
+    val mood: String? = null,
+    val activity: String? = null,
+    val reaction: String? = null,
+    val sensitive: Boolean? = null,
+)
+
+/**
+ * The mascot's hints (decision 2026-11-04): SSE `mascot`, once the turn's hints are known (before its first text),
+ * when they change (a chart being drawn), and at the end (activity `done`). Values from the fixed lists only.
+ */
+@Serializable
+data class MascotEvent(
+    val scene: String,
+    val mood: String,
+    val activity: String,
+    val reaction: String? = null,
+    val sensitive: Boolean = false,
 )
 
 /** The turn failed after its reply had started streaming, so the status line was already sent: nothing is saved. */

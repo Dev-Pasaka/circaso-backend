@@ -1,15 +1,19 @@
 package com.circaso.assistant.presentation.sse
 
+import com.circaso.assistant.domain.models.MascotHints
 import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.support.ReplyListener
 import com.circaso.assistant.presentation.dto.DeltaEvent
 import com.circaso.assistant.presentation.dto.DoneEvent
 import com.circaso.assistant.presentation.dto.ErrorEvent
+import com.circaso.assistant.presentation.dto.MascotEvent
 import com.circaso.assistant.presentation.dto.ToolDoneEvent
 import com.circaso.assistant.presentation.dto.ToolRequestEvent
 import com.circaso.assistant.presentation.dto.ToolStatusEvent
 import com.circaso.assistant.presentation.mappers.toDoneEvent
+import com.circaso.assistant.presentation.mappers.toEvent
+import com.circaso.assistant.presentation.mappers.toStatusEvent
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
 import com.circaso.web.EnvelopeSent
@@ -34,6 +38,8 @@ private sealed interface StreamItem {
     data class ToolStarted(val status: ToolStatus) : StreamItem
 
     data class ToolFinished(val status: ToolStatus, val isOk: Boolean) : StreamItem
+
+    data class Mascot(val hints: MascotHints) : StreamItem
 }
 
 /** Puts the turn's text and tool activity on [items], in the order they happen. */
@@ -44,6 +50,10 @@ private class StreamingListener(private val items: Channel<StreamItem>) : ReplyL
 
     override suspend fun toolFinished(status: ToolStatus, isOk: Boolean) =
         items.send(StreamItem.ToolFinished(status, isOk))
+
+    override suspend fun mascot(hints: MascotHints) = items.send(StreamItem.Mascot(hints))
+
+    override suspend fun mascotDone(hints: MascotHints) = items.send(StreamItem.Mascot(hints))
 }
 
 /**
@@ -88,15 +98,16 @@ private fun Writer.item(item: StreamItem) =
         }
 
         is StreamItem.ToolStarted -> {
-            val status = item.status
-            val data = ToolStatusEvent(status.turnId.toString(), status.callId, status.tool, status.label)
-            event("tool_status", CircasoJson.encodeToString(ToolStatusEvent.serializer(), data))
+            event("tool_status", CircasoJson.encodeToString(ToolStatusEvent.serializer(), item.status.toStatusEvent()))
         }
 
         is StreamItem.ToolFinished -> {
-            val status = item.status
-            val data = ToolDoneEvent(status.turnId.toString(), status.callId, status.tool, item.isOk)
+            val data = item.status.toDoneEvent(item.isOk)
             event("tool_done", CircasoJson.encodeToString(ToolDoneEvent.serializer(), data))
+        }
+
+        is StreamItem.Mascot -> {
+            event("mascot", CircasoJson.encodeToString(MascotEvent.serializer(), item.hints.toEvent()))
         }
     }
 

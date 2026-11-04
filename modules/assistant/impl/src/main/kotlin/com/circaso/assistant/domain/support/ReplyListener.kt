@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.support
 
+import com.circaso.assistant.domain.models.MascotHints
 import com.circaso.assistant.domain.models.ToolStatus
 
 /**
@@ -14,6 +15,15 @@ fun interface ReplyListener {
 
     /** That tool has answered ([isOk] false when it failed): `tool_done`. */
     suspend fun toolFinished(status: ToolStatus, isOk: Boolean) = Unit
+
+    /**
+     * The mascot's hints changed (decision 2026-11-04): A2's `mascot` event, A11's frame of the same name. The first
+     * comes before the turn's first reply text.
+     */
+    suspend fun mascot(hints: MascotHints) = Unit
+
+    /** The turn is over (not paused for the phone): the last hints, activity `done`. */
+    suspend fun mascotDone(hints: MascotHints) = Unit
 
     companion object {
         /** For a caller that only wants the finished turn. */

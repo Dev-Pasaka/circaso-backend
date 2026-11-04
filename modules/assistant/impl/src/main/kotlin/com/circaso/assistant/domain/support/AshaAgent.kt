@@ -2,10 +2,13 @@ package com.circaso.assistant.domain.support
 
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.ChatSnippet
+import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.ReadNote
 import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.ports.AgentTools
+import com.circaso.assistant.domain.ports.BlockKind
 import com.circaso.assistant.domain.ports.DeviceTools
+import com.circaso.assistant.domain.ports.MascotScenes
 import com.circaso.assistant.domain.ports.PendingCall
 import com.circaso.assistant.domain.ports.PendingMessage
 import com.circaso.assistant.domain.ports.PendingReadNote
@@ -56,6 +59,10 @@ data class AgentTurn(
     val deviceTools: Boolean,
     val purpose: ModelPurpose,
     val today: String,
+    /** The conversation the turn is in, for the mascot's scene between turns; null keeps no scene. */
+    val conversationId: UUID? = null,
+    /** The user's question, read only for the mascot's hardship net. Never logged. */
+    val question: String = "",
 ) {
     val isVoice: Boolean get() = purpose == ModelPurpose.VOICE
 
@@ -73,12 +80,17 @@ data class AgentTurn(
  * On its way out the text passes a [BlockFilter] (decision 2026-10-31): rich blocks reach the app checked and whole,
  * or not at all, and a spoken turn carries none. Each tool call is announced to the listener with the server's own
  * label before it runs, and again when it has answered.
+ *
+ * The mascot rides along (decision 2026-11-04): the model's `<mascot/>` tag is taken out of the text by a
+ * [MascotTagFilter] and turned by a [TurnMascot] into hints for the listener, the first before any reply text, the
+ * tool and block activity on the way, `done` at the end. No extra model call: the tag comes with the answer.
  */
 class AshaAgent(
     private val model: LanguageModel,
     private val tools: AgentTools,
     private val config: AssistantConfig,
     private val blocks: ReplyBlocks,
+    private val scenes: MascotScenes,
 ) {
     suspend fun run(
         history: List<ModelMessage>,
@@ -88,13 +100,17 @@ class AshaAgent(
         /** Text of this turn the user was shown before it paused for the phone (A9 carries on after it). */
         shownBefore: String = "",
         listener: ReplyListener = ReplyListener.None,
+        /** The device tool the phone has just answered (A9), told to the listener as `tool_done`. */
+        deviceDone: ToolStatus? = null,
     ): Resource<AgentOutcome> {
+        val mascot = TurnMascot(sceneOf(turn), turn.turnId, turn.question)
+        deviceDone?.let { listener.toolFinished(it.copy(mascot = mascot.toolFinished()), isOk = true) }
         val messages = history.toMutableList()
         val specs = specs(turn)
         val system = AshaPrompt.of(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
         val context = ToolContext(turn.userId, turn.agentToken, turn.currency)
         val used = usedBefore.toMutableList()
-        val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice))
+        val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice), mascot, turn.isVoice)
         var input = 0
         var output = 0
 
@@ -111,6 +127,7 @@ class AshaAgent(
             output += response.usage.outputTokens
 
             if (response.toolCalls.isEmpty()) {
+                finish(turn, mascot, listener)
                 return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
             }
 
@@ -125,7 +142,9 @@ class AshaAgent(
                     messages +=
                         ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.")
                 }
-                listener.toolStarted(ToolStatus(turn.turnId, call.id, call.name, DeviceTools.label(call.name)))
+                val label = DeviceTools.label(call.name)
+                listener.toolStarted(ToolStatus(turn.turnId, call.id, call.name, label, mascot.toolStarted(call.name)))
+                saveScene(turn, mascot.state)
                 return Resource.success(
                     AgentOutcome.WaitingForDevice(call, messages.toPending(), steps, input, output, used),
                 )
@@ -135,13 +154,14 @@ class AshaAgent(
                 if (specs.none { it.name == call.name }) {
                     NOT_AVAILABLE
                 } else {
-                    runServerTool(call, turn, context, listener)
+                    runServerTool(call, turn, context, listener, mascot)
                 }
             messages += ModelMessage.ToolResult(call.id, call.name, answer)
             skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }
         }
         reply.newStep()
         reply.show(GAVE_UP)
+        finish(turn, mascot, listener)
         return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
     }
 
@@ -166,12 +186,40 @@ class AshaAgent(
         }
     }
 
+    /** The turn has its answer: the mascot is done, and the conversation keeps its scene for the next turn. */
+    private suspend fun finish(
+        turn: AgentTurn,
+        mascot: TurnMascot,
+        listener: ReplyListener,
+    ) {
+        listener.mascotDone(mascot.done())
+        saveScene(turn, mascot.state)
+    }
+
+    /** The mascot never fails a turn: a scene that can't be read starts from the default. */
+    private suspend fun sceneOf(turn: AgentTurn): MascotSceneState {
+        val conversationId = turn.conversationId ?: return MascotSceneState.NEW
+        return runCatching { scenes.find(turn.userId, conversationId) }.getOrNull() ?: MascotSceneState.NEW
+    }
+
+    private suspend fun saveScene(turn: AgentTurn, state: MascotSceneState) {
+        val conversationId = turn.conversationId ?: return
+        runCatching { scenes.save(turn.userId, conversationId, state) }
+    }
+
     /**
      * The reply as the user has been shown it: each step's text, a blank line between steps, after the [filter].
      * [hasModelText] is whether the model wrote anything in this step, held back by the filter or not.
      */
-    private class ShownReply(before: String, private val listener: ReplyListener, private val filter: BlockFilter) {
+    private class ShownReply(
+        before: String,
+        private val listener: ReplyListener,
+        private val filter: BlockFilter,
+        private val mascot: TurnMascot,
+        private val isVoice: Boolean,
+    ) {
         private val shown = StringBuilder(before.trim())
+        private val tags = MascotTagFilter()
         private var hasStepText = false
         private var hasModelText = false
 
@@ -184,14 +232,31 @@ class AshaAgent(
 
         suspend fun add(delta: String) {
             hasModelText = true
-            show(filter.feed(delta))
+            feed(tags.feed(delta))
         }
 
-        /** The step is over: what the filter held goes out (a provider that sent its text only at the end too). */
+        /** The step is over: what the filters held goes out (a provider that sent its text only at the end too). */
         suspend fun endStep(stepText: String?) {
-            if (!hasModelText && stepText != null) show(filter.feed(stepText))
-            show(filter.finish())
+            if (!hasModelText && stepText != null) feed(tags.feed(stepText))
+            feed(tags.finish())
+            shownWithBlock(filter.finish())
         }
+
+        /** The model's text without its mascot tags: each tag's hints go out first, then the text, block by block. */
+        private suspend fun feed(piece: MascotTagFilter.Piece) {
+            piece.tags.forEach { listener.mascot(mascot.proposed(it)) }
+            if (piece.text.isNotEmpty()) shownWithBlock(filter.feed(piece.text))
+        }
+
+        /** Shows [text], then tells the mascot if a chart or a statement has started or ended (text replies only). */
+        private suspend fun shownWithBlock(text: String) {
+            show(text)
+            val block = filter.openBlock
+            if (block != lastBlock && !isVoice) listener.mascot(mascot.block(block))
+            lastBlock = block
+        }
+
+        private var lastBlock: BlockKind? = null
 
         suspend fun show(delta: String) {
             var piece = if (hasStepText) delta else delta.trimStart()
@@ -199,6 +264,7 @@ class AshaAgent(
             if (!hasStepText && shown.isNotEmpty()) piece = STEP_BREAK + piece
             hasStepText = true
             shown.append(piece)
+            if (!mascot.isAnnounced) listener.mascot(mascot.replying())
             listener.text(piece)
         }
     }
@@ -212,12 +278,14 @@ class AshaAgent(
         turn: AgentTurn,
         context: ToolContext,
         listener: ReplyListener,
+        mascot: TurnMascot,
     ): String {
         if (!tools.handles(call.name)) return NOT_AVAILABLE
-        val status = ToolStatus(turn.turnId, call.id, call.name, tools.label(call.name, call.argumentsJson))
+        val label = tools.label(call.name, call.argumentsJson)
+        val status = ToolStatus(turn.turnId, call.id, call.name, label, mascot.toolStarted(call.name))
         listener.toolStarted(status)
         val result = tools.call(call.name, call.argumentsJson, context)
-        listener.toolFinished(status, result is Resource.Success)
+        listener.toolFinished(status.copy(mascot = mascot.toolFinished()), result is Resource.Success)
         return when (result) {
             is Resource.Success -> "<untrusted>${result.data}</untrusted>"
             is Resource.Error -> "The lookup failed (${result.error.message}). Tell the user if it matters."
