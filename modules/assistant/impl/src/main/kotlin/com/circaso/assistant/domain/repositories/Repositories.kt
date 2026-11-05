@@ -126,5 +126,7 @@ interface AssistantStore {
         inputTokens: Long,
         outputTokens: Long,
         at: Instant,
+        /** Added 2026-11-05; a writer that doesn't count them (older totals) stores 0, which never lowers a count. */
+        webSearches: Int = 0,
     )
 }

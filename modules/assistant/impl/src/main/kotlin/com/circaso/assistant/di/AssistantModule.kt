@@ -46,6 +46,7 @@ import com.circaso.assistant.domain.support.ConversationResolver
 import com.circaso.assistant.domain.support.ConversationTitler
 import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
+import com.circaso.assistant.domain.support.SearchAllowance
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.usecases.CheckLiveSession
@@ -117,12 +118,14 @@ internal fun assistantConfig(assistant: Config): AssistantConfig {
             textTurnsPerDay = assistant.int("$plan.text-turns-per-day", base.textTurnsPerDay),
             voiceSecondsPerDay = assistant.int("$plan.voice-seconds-per-day", base.voiceSecondsPerDay),
             contextMessages = assistant.int("$plan.context-messages", base.contextMessages),
+            webSearchesPerDay = assistant.int("$plan.web-searches-per-day", base.webSearchesPerDay),
         )
     return defaults.copy(
         free = limits("free", defaults.free),
         plus = limits("plus", defaults.plus),
         isUnlimited = assistant.boolean("limits-unlimited", false),
         maxToolSteps = assistant.int("max-tool-steps", defaults.maxToolSteps),
+        maxWebSearchesPerTurn = assistant.int("max-web-searches-per-turn", defaults.maxWebSearchesPerTurn),
         voices = assistantVoices(assistant, defaults.voices),
     )
 }
@@ -199,12 +202,13 @@ fun assistantModule(config: Config): Module =
                             "http://localhost:" + config.string("port", "8080"),
                         ).trimEnd('/'),
                 )
-            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get())))
+            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get(), get())))
         }
 
         // domain
         single { AshaAgent(get(), get(), get(), get(), get()) }
         single { UsageReader(get(), get(), get(), clock) }
+        single { SearchAllowance(get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DailyUsage(get(), get(), get(), clock) }
         single { ConversationResolver(get(), get(), clock) }

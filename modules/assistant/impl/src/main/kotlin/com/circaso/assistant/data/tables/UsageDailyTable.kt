@@ -13,6 +13,9 @@ object UsageDailyTable : Table("assistant.usage_daily") {
     val voiceSeconds = integer("voice_seconds")
     val inputTokens = long("input_tokens")
     val outputTokens = long("output_tokens")
+
+    /** Web searches run for the user that day (V3, decision 2026-11-05). */
+    val webSearches = integer("web_searches").default(0)
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(userId, usageDay)
 }

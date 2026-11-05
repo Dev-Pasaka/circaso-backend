@@ -247,8 +247,9 @@ class MemoryAssistant :
         inputTokens: Long,
         outputTokens: Long,
         at: Instant,
+        webSearches: Int,
     ) {
-        usage["$userId:$day"] = listOf(textTurns, voiceSeconds, inputTokens, outputTokens)
+        usage["$userId:$day"] = listOf(textTurns, voiceSeconds, inputTokens, outputTokens, webSearches)
     }
 }
 
@@ -304,6 +305,19 @@ class MemoryQuota : QuotaCounters {
 
     override suspend fun tokens(userId: UserId, day: String) =
         (counters["i:$userId:$day"] ?: 0) to (counters["o:$userId:$day"] ?: 0)
+
+    override suspend fun countWebSearch(
+        userId: UserId,
+        day: String,
+        cap: Int,
+    ): Long =
+        synchronized(counters) {
+            val after = (counters["s:$userId:$day"] ?: 0) + 1
+            if (after <= cap) counters["s:$userId:$day"] = after
+            after
+        }
+
+    override suspend fun webSearches(userId: UserId, day: String) = counters["s:$userId:$day"] ?: 0
 
     override suspend fun forget(userId: UserId, days: List<String>) {
         counters.keys.removeAll { key -> days.any { day -> key.endsWith(":$userId:$day") } }

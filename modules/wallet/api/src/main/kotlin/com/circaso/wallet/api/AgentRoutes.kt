@@ -134,3 +134,92 @@ data class AgentSummaryResponse(
     val rate: AgentRateDto? = null,
     val truncated: Boolean = false,
 )
+
+/**
+ * One asset's value (`/agent/wallet/values`, decision 2026-11-05) from the wallet's own rate, the one balances,
+ * payments and fees are shown with. `priced` is false for an asset the wallet doesn't hold or price (then only
+ * `asset` is set). `usdPrice` is one unit in US dollars; `unitValue` one unit and `value` the amount asked, in
+ * `currency`.
+ */
+@Serializable
+data class AgentAssetValueDto(
+    val asset: String,
+    val priced: Boolean,
+    val usdPrice: String? = null,
+    val unitValue: String? = null,
+    val value: String? = null,
+)
+
+/**
+ * `currency` is the one the values are in: the one asked, or `USD` when none was asked or no rate for it is known.
+ * `source` is always `circaso`: these are the wallet's own numbers, never a market feed. `rate` is null in US dollars.
+ */
+@Serializable
+data class AgentAssetValuesResponse(
+    val currency: String,
+    val source: String,
+    val values: List<AgentAssetValueDto>,
+    val amount: String? = null,
+    val rate: AgentRateDto? = null,
+)
+
+/**
+ * Where the wallet stands against its limits: the most one payment may be, the most per rolling `windowHours`, what
+ * went out in that window (`used`) and what is left (null when there is no such limit); `moreAt` is when the oldest
+ * payment leaves the window. Amounts in whole units of the payment's asset.
+ */
+@Serializable
+data class AgentLimitDto(
+    val perPaymentMax: String? = null,
+    val dailyMax: String? = null,
+    val used: String,
+    val left: String? = null,
+    val windowHours: Int,
+    val moreAt: String? = null,
+)
+
+/**
+ * The fee for a payment that may never be made (`/agent/wallet/fee`, decision 2026-11-05): W17's numbers, no quote
+ * held. `fee` is Circaso's one fee, network cost included (`rateBps` its rate, `minimum` true when a floor set it,
+ * `noFeeReason` why none is charged); `total` is amount plus fee; `maxAmount` the most that can be sent with its fee.
+ * `problem` is `INSUFFICIENT_FUNDS`, `PER_PAYMENT_LIMIT` or `DAILY_LIMIT` (then `fitsAt`, when it would fit). The
+ * `fiat*` values are in `rate.currency` at today's rate, when a currency was asked.
+ */
+@Serializable
+data class AgentFeeQuoteResponse(
+    val blockchain: String,
+    val asset: String,
+    val amount: String,
+    val fee: String,
+    val rateBps: Int,
+    val minimum: Boolean,
+    val total: String,
+    val balance: String,
+    val maxAmount: String,
+    val limit: AgentLimitDto,
+    val noFeeReason: String? = null,
+    val problem: String? = null,
+    val fitsAt: String? = null,
+    val fiatAmount: String? = null,
+    val fiatFee: String? = null,
+    val fiatTotal: String? = null,
+    val rate: AgentRateDto? = null,
+)
+
+/**
+ * A wallet the user can see (`/agent/wallet/wallets`): `type` `PERSON` (their own) or `GROUP` (a group's, with its
+ * `chatId`); `status` `NONE`, `SETTING_UP` or `ACTIVE`; `canSign` whether they are the one who sends from it; the
+ * chains it can be paid on now. Pass `walletId` to `/agent/wallet` for its balances.
+ */
+@Serializable
+data class AgentWalletListingDto(
+    val walletId: String,
+    val type: String,
+    val status: String,
+    val canSign: Boolean,
+    val blockchains: List<String>,
+    val chatId: String? = null,
+)
+
+@Serializable
+data class AgentWalletsResponse(val wallets: List<AgentWalletListingDto>)

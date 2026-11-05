@@ -14,11 +14,15 @@ import java.time.Duration
  * TODO(decision: Asha's free allowance and the Asha Plus price) daily text turns, voice seconds and context length.
  */
 data class AssistantConfig(
-    val free: Limits = Limits(textTurnsPerDay = 20, voiceSecondsPerDay = 120, contextMessages = 6),
-    val plus: Limits = Limits(textTurnsPerDay = 300, voiceSecondsPerDay = 1_800, contextMessages = 60),
+    val free: Limits =
+        Limits(textTurnsPerDay = 20, voiceSecondsPerDay = 120, contextMessages = 6, webSearchesPerDay = 10),
+    val plus: Limits =
+        Limits(textTurnsPerDay = 300, voiceSecondsPerDay = 1_800, contextMessages = 60, webSearchesPerDay = 60),
     val isUnlimited: Boolean = false,
     /** Model calls in one turn; an agent that chains lookups (contact, then payments, then a chama) needs a few. */
     val maxToolSteps: Int = 10,
+    /** Web searches in one turn (decision 2026-11-05): two is a search and a follow-up; more is the model looping. */
+    val maxWebSearchesPerTurn: Int = 2,
     val maxVoiceSeconds: Int = 60,
     val maxMessageChars: Int = 4_000,
     val maxSnippets: Int = 30,
@@ -48,6 +52,12 @@ data class AssistantConfig(
          * "No limit" as numbers the counters can hold: a million turns or voice seconds a day is never reached, and
          * the context is the last 200 messages, as long as the models' context windows comfortably take.
          */
-        val UNLIMITED = Limits(textTurnsPerDay = 1_000_000, voiceSecondsPerDay = 1_000_000, contextMessages = 200)
+        val UNLIMITED =
+            Limits(
+                textTurnsPerDay = 1_000_000,
+                voiceSecondsPerDay = 1_000_000,
+                contextMessages = 200,
+                webSearchesPerDay = 1_000_000,
+            )
     }
 }

@@ -96,6 +96,7 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
         inputTokens: Long,
         outputTokens: Long,
         at: Instant,
+        webSearches: Int,
     ) {
         database.tx("usage.save") {
             UsageDailyTable.upsert(
@@ -109,6 +110,7 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
                 it[this.voiceSeconds] = voiceSeconds
                 it[this.inputTokens] = inputTokens
                 it[this.outputTokens] = outputTokens
+                it[this.webSearches] = webSearches
                 it[updatedAt] = at
             }
         }
@@ -119,6 +121,7 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
         update[UsageDailyTable.voiceSeconds] = larger(UsageDailyTable.voiceSeconds)
         update[UsageDailyTable.inputTokens] = larger(UsageDailyTable.inputTokens)
         update[UsageDailyTable.outputTokens] = larger(UsageDailyTable.outputTokens)
+        update[UsageDailyTable.webSearches] = larger(UsageDailyTable.webSearches)
         update[UsageDailyTable.updatedAt] = insertValue(UsageDailyTable.updatedAt)
     }
 

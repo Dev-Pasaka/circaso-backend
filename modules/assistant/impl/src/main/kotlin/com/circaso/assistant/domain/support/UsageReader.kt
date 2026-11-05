@@ -7,7 +7,10 @@ import com.circaso.shared.UserId
 import java.time.Clock
 import java.time.ZoneOffset
 
-/** Today's allowance used and left, and the plan: A7's answer, and what Asha's own usage tool reads. */
+/**
+ * Today's allowance used and left, and the plan: A7's answer, what Asha's own usage tool reads, and what a web search
+ * checks against. The period is the UTC day: it starts at midnight and resets at the next.
+ */
 class UsageReader(
     private val entitlements: EntitlementRepository,
     private val quota: QuotaCounters,
@@ -20,21 +23,25 @@ class UsageReader(
         val day = clock.today()
         val text = quota.textTurns(userId, day).toInt()
         val voice = quota.voiceSeconds(userId, day).toInt()
-        val resets =
+        val searches = quota.webSearches(userId, day).toInt()
+        val start =
             clock
                 .instant()
                 .atZone(ZoneOffset.UTC)
                 .toLocalDate()
-                .plusDays(1)
                 .atStartOfDay(ZoneOffset.UTC)
-                .toInstant()
         return Usage(
             plan = plan,
             textTurnsUsed = text,
             textTurnsLeft = (limits.textTurnsPerDay - text).coerceAtLeast(0),
             voiceSecondsUsed = voice,
             voiceSecondsLeft = (limits.voiceSecondsPerDay - voice).coerceAtLeast(0),
-            resetsAt = resets,
+            resetsAt = start.plusDays(1).toInstant(),
+            webSearchesUsed = searches,
+            webSearchesLeft = (limits.webSearchesPerDay - searches).coerceAtLeast(0),
+            periodStart = start.toInstant(),
+            limits = limits,
+            isUnlimited = config.isUnlimited,
         )
     }
 }

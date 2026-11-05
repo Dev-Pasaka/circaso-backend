@@ -126,3 +126,6 @@ data class MediaDownload(val downloadUrl: String, val expiresAt: Instant, val si
 
 /** Every blob is ciphertext, so storage only ever sees this type. */
 const val MEDIA_CONTENT_TYPE = "application/octet-stream"
+
+/** One of the caller's own live moments with its counts (Asha's agent route, decision 2026-11-05). */
+data class OwnMoment(val moment: Moment, val views: Int, val reactions: Int)

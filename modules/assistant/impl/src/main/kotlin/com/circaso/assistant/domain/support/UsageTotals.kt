@@ -13,12 +13,19 @@ data class UsageTotals(
     val voiceSeconds: Int,
     val inputTokens: Long,
     val outputTokens: Long,
+    val webSearches: Int = 0,
 )
 
 /** Read before the transaction that stores them: a transaction holds database work only. */
 suspend fun QuotaCounters.totals(userId: UserId, day: String): UsageTotals {
     val (input, output) = tokens(userId, day)
-    return UsageTotals(textTurns(userId, day).toInt(), voiceSeconds(userId, day).toInt(), input, output)
+    return UsageTotals(
+        textTurns(userId, day).toInt(),
+        voiceSeconds(userId, day).toInt(),
+        input,
+        output,
+        webSearches(userId, day).toInt(),
+    )
 }
 
 /** Through the same `GREATEST` upsert as every writer, so totals read earlier never lower ones stored since. */
@@ -27,7 +34,16 @@ suspend fun AssistantStore.saveUsage(
     day: String,
     totals: UsageTotals,
     at: Instant,
-) = saveUsage(userId, day, totals.textTurns, totals.voiceSeconds, totals.inputTokens, totals.outputTokens, at)
+) = saveUsage(
+    userId,
+    day,
+    totals.textTurns,
+    totals.voiceSeconds,
+    totals.inputTokens,
+    totals.outputTokens,
+    at,
+    totals.webSearches,
+)
 
 /**
  * Stores the day's totals when usage changes outside a text turn: a clip transcribed (A3) or spoken (A4), a live

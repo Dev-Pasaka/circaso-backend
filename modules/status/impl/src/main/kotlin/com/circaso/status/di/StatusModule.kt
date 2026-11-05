@@ -36,6 +36,7 @@ import com.circaso.status.domain.usecases.CompleteMomentMedia
 import com.circaso.status.domain.usecases.DeleteMoment
 import com.circaso.status.domain.usecases.GetMomentMediaDownload
 import com.circaso.status.domain.usecases.ListMoments
+import com.circaso.status.domain.usecases.ListOwnMoments
 import com.circaso.status.domain.usecases.ListViews
 import com.circaso.status.domain.usecases.PostMoment
 import com.circaso.status.domain.usecases.PrepareMomentMedia
@@ -45,6 +46,7 @@ import com.circaso.status.domain.usecases.ReplayFrames
 import com.circaso.status.domain.usecases.RequestMomentKeys
 import com.circaso.status.domain.usecases.ShareMomentKeyCopies
 import com.circaso.status.domain.usecases.ViewMoment
+import com.circaso.status.presentation.agent.agentController
 import com.circaso.status.presentation.api.StatusRealtimeReplay
 import com.circaso.status.presentation.controllers.momentController
 import com.circaso.status.presentation.controllers.momentMediaController
@@ -53,6 +55,7 @@ import com.circaso.status.presentation.services.IdentityEventsService
 import com.circaso.status.presentation.services.MomentMediaService
 import com.circaso.status.presentation.services.MomentService
 import com.circaso.status.presentation.services.RealtimeService
+import com.circaso.status.presentation.services.StatusAgentService
 import com.circaso.users.api.ReachPolicy
 import com.circaso.web.RouteContributor
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -127,6 +130,7 @@ fun statusModule(config: Config): Module =
         single { OrderedIds(clock) }
         single { PostMoment(get(), get(), get(), get(), get(), get(), background, status, clock) }
         single { ListMoments(get(), get(), clock) }
+        single { ListOwnMoments(get(), clock) }
         single { ViewMoment(get(), get(), get(), get(), clock, profiles = getOrNull()) }
         single { ListViews(get(), clock) }
         single { DeleteMoment(get(), get(), clock) }
@@ -138,14 +142,17 @@ fun statusModule(config: Config): Module =
         // presentation
         single { MomentService(get(), get(), get(), get(), get(), get(), get()) }
         single { MomentMediaService(get(), get(), get(), get()) }
+        single { StatusAgentService(get()) }
         single { IdentityEventsService(get()) }
         single { RealtimeService(get()) }
         single<RouteContributor>(named("status.routes")) {
             val moments = get<MomentService>()
             val media = get<MomentMediaService>()
+            val agent = get<StatusAgentService>()
             RouteContributor { route ->
                 route.momentMediaController(media)
                 route.momentController(moments, status.pageDefault, status.pageMax)
+                route.agentController(agent)
             }
         }
         single<EventSubscription>(named("status.identity-events")) { IdentityEventHandler(get()).subscription() }

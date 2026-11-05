@@ -44,6 +44,7 @@ import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.SplitPayments
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
+import com.circaso.wallet.domain.support.TransferQuoter
 import com.circaso.wallet.domain.support.WalletCreation
 import com.circaso.wallet.domain.support.WalletListings
 import com.circaso.wallet.domain.support.WalletSync
@@ -140,7 +141,8 @@ class Harness(
     val fees = FeeCalculator(ruleRows, custody, feeConfig, wallets, owners, warnings, clock)
     private val planner = PaymentPlanner(rules, payees, fees, limits, spaces)
     private val quotes = FeeQuotes(quoteRows, clock)
-    val quoteTransfer = QuoteTransfer(holders, planner, quotes, clock)
+    val quoter = TransferQuoter(holders, planner, quotes, clock)
+    val quoteTransfer = QuoteTransfer(quoter)
 
     val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active, holders, progress)
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock, pendingSetups)

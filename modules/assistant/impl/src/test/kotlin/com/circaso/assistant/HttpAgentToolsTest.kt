@@ -96,18 +96,31 @@ class HttpAgentToolsTest {
                 "getTransaction" to "/v1/agent/wallet/transactions/0192e3a4-0000-7000-8000-000000000001",
                 "listChamas" to "/v1/agent/chama",
                 "getChama" to "/v1/agent/chama/0192e3a4-0000-7000-8000-000000000002",
+                "listWallets" to "/v1/agent/wallet/wallets",
+                "getAssetValues" to "/v1/agent/wallet/values",
+                "getFeeQuote" to "/v1/agent/wallet/fee",
+                "getMyMoments" to "/v1/agent/status/moments",
             )
         val arguments =
             mapOf(
                 "getTransaction" to """{"id":"0192e3a4-0000-7000-8000-000000000001"}""",
                 "getChama" to """{"chatId":"0192e3a4-0000-7000-8000-000000000002"}""",
+                "getFeeQuote" to """{"amount":"20","blockchain":"BASE","toAddress":"0xabc"}""",
             )
 
         expected.keys.forEach { call(it, arguments[it] ?: "{}") }
 
         assertEquals(expected.values.toList(), requests.map { it.url.encodedPath })
         assertTrue(requests.all { it.headers[HttpHeaders.Authorization] == "Bearer agent-tok" })
-        val money = setOf("getWallet", "listTransactions", "summarizeTransactions", "getTransaction")
+        val money =
+            setOf(
+                "getWallet",
+                "listTransactions",
+                "summarizeTransactions",
+                "getTransaction",
+                "getAssetValues",
+                "getFeeQuote",
+            )
         requests.zip(expected.keys).forEach { (request, tool) ->
             assertEquals(if (tool in money) "KES" else null, request.url.parameters["currency"], tool)
         }
@@ -120,7 +133,7 @@ class HttpAgentToolsTest {
         assertIs<Resource.Error>(result)
         assertTrue(requests.isEmpty())
         assertTrue(tools.specs(hasAgentToken = false).isEmpty())
-        assertEquals(12, tools.specs(hasAgentToken = true).size)
+        assertEquals(16, tools.specs(hasAgentToken = true).size)
     }
 
     @Test
@@ -210,5 +223,83 @@ class HttpAgentToolsTest {
             tools.label("listTransactions", """{"counterpartyName":"Mum","month":"2026-10"}"""),
         )
         assertEquals("Looking for “Mum” in your contacts…", tools.label("searchContacts", """{"query":"Mum"}"""))
+    }
+
+    @Test
+    fun `a value is asked of the wallet's own rate, in the user's currency unless the model names one`() {
+        answer(
+            "/v1/agent/wallet/values",
+            """{"currency":"KES","source":"circaso","values":[{"asset":"USDC","priced":true,"usdPrice":"1",""" +
+                """"unitValue":"129.50","value":"2590.00"}],"amount":"20",""" +
+                """"rate":{"currency":"KES","usdRate":"129.5","asOf":"2026-11-05T06:00:00Z"}}""",
+        )
+
+        val text = (call("getAssetValues", """{"assets":["usdc"," "],"amount":"20"}""") as Resource.Success).data
+        call("getAssetValues", """{"currency":"UGX"}""")
+
+        val (first, second) = requests
+        assertEquals("usdc", first.url.parameters["assets"])
+        assertEquals("20", first.url.parameters["amount"])
+        assertEquals("KES", first.url.parameters["currency"])
+        assertEquals(null, second.url.parameters["assets"], "no names asks for every supported asset")
+        assertEquals("UGX", second.url.parameters["currency"])
+        assertTrue(""""source":"circaso"""" in text, text)
+        assertTrue(""""value":"2590.00"""" in text, text)
+    }
+
+    @Test
+    fun `a fee quote turns a name into a person and passes the payment, reading only`() {
+        answer(
+            "/v1/agent/users/contacts/search",
+            """{"contacts":[{"userId":"u-mum","displayName":"Mum"}]}""",
+        )
+        answer(
+            "/v1/agent/wallet/fee",
+            """{"blockchain":"BASE","asset":"USDC","amount":"20","fee":"0.1","rateBps":50,"minimum":false,""" +
+                """"total":"20.1","balance":"100","maxAmount":"99.5",""" +
+                """"limit":{"used":"0","windowHours":24,"dailyMax":"500","left":"500"}}""",
+        )
+
+        val text =
+            (
+                call(
+                    "getFeeQuote",
+                    """{"amount":"20","blockchain":"BASE","counterpartyName":"Mum","walletId":"w-1"}""",
+                ) as Resource.Success
+            ).data
+
+        val fee = requests.last()
+        assertEquals("/v1/agent/wallet/fee", fee.url.encodedPath)
+        assertEquals("u-mum", fee.url.parameters["toUserId"])
+        assertEquals("20", fee.url.parameters["amount"])
+        assertEquals("BASE", fee.url.parameters["blockchain"])
+        assertEquals("w-1", fee.url.parameters["walletId"])
+        assertEquals("KES", fee.url.parameters["currency"])
+        assertTrue(requests.all { it.method.value == "GET" }, "every agent call is a read")
+        assertTrue(""""fee":"0.1"""" in text, text)
+    }
+
+    @Test
+    fun `a group wallet is opened by its id from the list, and a made-up id is answered without a call`() {
+        call("getWallet", """{"walletId":"0192e3a4-0000-7000-8000-000000000009"}""")
+        val made = (call("getWallet", """{"walletId":"the chama one"}""") as Resource.Success).data
+
+        assertEquals("0192e3a4-0000-7000-8000-000000000009", requests.single().url.parameters["walletId"])
+        assertTrue("listWallets" in made, made)
+    }
+
+    @Test
+    fun `own moments are read as counts only`() {
+        answer(
+            "/v1/agent/status/moments",
+            """{"live":1,"totalViews":4,"totalReactions":1,"moments":[{"momentId":"m1",""" +
+                """"postedAt":"2026-11-05T07:00:00Z","expiresAt":"2026-11-06T07:00:00Z","hasMedia":true,""" +
+                """"viewCount":4,"reactionCount":1}]}""",
+        )
+
+        val text = (call("getMyMoments") as Resource.Success).data
+
+        assertTrue(""""totalViews":4""" in text, text)
+        assertEquals("/v1/agent/status/moments", requests.single().url.encodedPath)
     }
 }

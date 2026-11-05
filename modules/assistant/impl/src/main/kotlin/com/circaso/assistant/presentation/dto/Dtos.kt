@@ -51,6 +51,11 @@ data class SnippetDto(
 @Serializable
 data class ToolResultsRequest(val callId: String, val snippets: List<SnippetDto> = emptyList())
 
+/**
+ * A7. The flat fields are the original answer; the period and the meters (added 2026-11-05, for the app's usage menu)
+ * say the same with each limit, which is null when there is none (`ASSISTANT_LIMITS_UNLIMITED`). The period is the
+ * UTC day: `periodEnd` and `resetsAt` are the same instant.
+ */
 @Serializable
 data class UsageResponse(
     val plan: String,
@@ -59,7 +64,16 @@ data class UsageResponse(
     val voiceSecondsUsed: Int,
     val voiceSecondsLeft: Int,
     @Serializable(with = InstantSerializer::class) val resetsAt: Instant,
+    @Serializable(with = InstantSerializer::class) val periodStart: Instant,
+    @Serializable(with = InstantSerializer::class) val periodEnd: Instant,
+    val messages: UsageMeterDto,
+    val voiceSeconds: UsageMeterDto,
+    val searches: UsageMeterDto,
 )
+
+/** One allowance today: how much was [used] and the day's [limit] (null: no limit). */
+@Serializable
+data class UsageMeterDto(val used: Int, val limit: Int? = null)
 
 @Serializable
 data class TranscriptResponse(val text: String, val seconds: Int)

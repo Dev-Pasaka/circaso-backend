@@ -5,6 +5,8 @@ import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import com.circaso.status.api.AgentMomentDto
+import com.circaso.status.api.AgentMomentsResponse
 import com.circaso.status.api.MomentId
 import com.circaso.status.domain.errors.StatusError
 import com.circaso.status.domain.models.KeyCopy
@@ -15,6 +17,7 @@ import com.circaso.status.domain.models.MomentKeyCopy
 import com.circaso.status.domain.models.MomentMedia
 import com.circaso.status.domain.models.MomentPage
 import com.circaso.status.domain.models.MomentView
+import com.circaso.status.domain.models.OwnMoment
 import com.circaso.status.domain.models.PostMomentCommand
 import com.circaso.status.domain.models.PostedMoment
 import com.circaso.status.domain.models.PrepareMediaCommand
@@ -176,3 +179,22 @@ private fun MomentView.toDto() =
 
 fun List<ViewRecord>.toResponse() =
     ViewsResponse(map { ViewDto(it.userId.toString(), it.viewedAt, it.reacted, it.reaction) })
+
+/** Asha's answer (decision 2026-11-05): counts and times only. */
+fun List<OwnMoment>.toAgentResponse() =
+    AgentMomentsResponse(
+        live = size,
+        totalViews = sumOf { it.views },
+        totalReactions = sumOf { it.reactions },
+        moments =
+            map {
+                AgentMomentDto(
+                    momentId = it.moment.momentId.toString(),
+                    postedAt = it.moment.postedAt.toString(),
+                    expiresAt = it.moment.expiresAt.toString(),
+                    hasMedia = it.moment.mediaId != null,
+                    viewCount = it.views,
+                    reactionCount = it.reactions,
+                )
+            },
+    )
