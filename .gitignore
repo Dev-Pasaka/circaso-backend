@@ -19,3 +19,6 @@ node_modules/
 
 # agent worktrees (Claude Code)
 .claude/worktrees/
+
+# Circle entity-secret recovery files (move to a password manager)
+scripts/circle-recovery-*.dat
