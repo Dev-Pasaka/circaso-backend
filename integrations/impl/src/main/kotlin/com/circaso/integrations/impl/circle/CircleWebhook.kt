@@ -1,5 +1,7 @@
 package com.circaso.integrations.impl.circle
 
+import com.circaso.integrations.api.CustodyChallenge
+import com.circaso.integrations.api.CustodyChallengeKind
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.WebhookVendor
@@ -15,7 +17,9 @@ import java.util.Base64
 /**
  * Circle's notifications at `/v1/hooks/circle`. Each is signed with ECDSA over SHA-256 of the raw body: the signature
  * (base64 DER) in `X-Circle-Signature`, the key id in `X-Circle-Key-Id`. `transactions.inbound` and
- * `transactions.outbound` are handed to [notifications] in our words; every other type is acknowledged and ignored.
+ * `transactions.outbound` are handed to [notifications] in our words, and so is a completed `challenges.initialize`
+ * (the PIN set and the first wallets) or `challenges.createWallet` (a chain added), so a wallet being set up is read
+ * from Circle at once instead of at the app's next poll. Every other type is acknowledged and ignored.
  *
  * The gateway waits for the translation ([answersAfterTranslation]): a failure answers non-200, so Circle delivers
  * again with the same `notificationId`, which is the delivery id for the duplicate check. No replay window: Circle
@@ -61,6 +65,7 @@ class CircleWebhook internal constructor(
 
     override suspend fun translate(body: ByteArray): Resource<Unit> {
         val header = decode<NotificationHeader>(body) ?: return unreadable()
+        CHALLENGE_TYPES[header.notificationType]?.let { return challenge(body, it) }
         if (header.notificationType !in TRANSACTION_TYPES) return Resource.success(Unit)
 
         val transaction = decode<TransactionNotification>(body)?.notification ?: return unreadable(body, header)
@@ -83,6 +88,21 @@ class CircleWebhook internal constructor(
                 log.warn("circle notification not delivered: nothing listens for custody notifications")
             }
         return listener.onTransaction(update)
+    }
+
+    /**
+     * A wallet-creating challenge that finished: completed (Circle creates the wallets right after, so the wallet
+     * module reads them from Circle on this call) or failed (it is no longer handed out). One still open is ignored.
+     */
+    private suspend fun challenge(body: ByteArray, kind: CustodyChallengeKind): Resource<Unit> {
+        val payload = decode<ChallengeNotification>(body)?.notification ?: return Resource.success(Unit)
+        val outcome = payload.outcome.uppercase()
+        if (payload.userId.isEmpty() || (outcome !in COMPLETED && outcome != FAILED)) return Resource.success(Unit)
+        val listener =
+            notifications() ?: return Resource.error(IntegrationError.Unavailable("Custody notifications")).also {
+                log.warn("circle challenge not delivered: nothing listens for custody notifications")
+            }
+        return listener.onWalletChallenge(CustodyChallenge(payload.userId, payload.id, kind, outcome in COMPLETED))
     }
 
     private inline fun <reified T> decode(body: ByteArray): T? =
@@ -114,6 +134,17 @@ class CircleWebhook internal constructor(
         const val KEY_ID_HEADER = "x-circle-key-id"
         const val SIGNATURE_HEADER = "x-circle-signature"
         val TRANSACTION_TYPES = setOf("transactions.inbound", "transactions.outbound")
+
+        /** The challenges that create wallets (Circle's notification types for user-controlled wallets). */
+        val CHALLENGE_TYPES =
+            mapOf(
+                "challenges.initialize" to CustodyChallengeKind.SETUP,
+                "challenges.createWallet" to CustodyChallengeKind.CREATE_WALLET,
+            )
+
+        /** Circle's word for a passed challenge; its pages also spell it `COMPLETED`. */
+        private val COMPLETED = setOf("COMPLETE", "COMPLETED")
+        private const val FAILED = "FAILED"
 
         /** The fields [TransactionPayload] reads to follow a transaction. */
         private val FOLLOWED =

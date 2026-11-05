@@ -1,5 +1,6 @@
 package com.circaso.wallet.presentation.services
 
+import com.circaso.integrations.api.CustodyChallenge
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
@@ -10,6 +11,7 @@ import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.domain.ports.LoggedFrame
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
+import com.circaso.wallet.domain.usecases.ApplyWalletChallenge
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
 import com.circaso.wallet.domain.usecases.FindGroupWallet
@@ -32,6 +34,7 @@ class WalletDirectoryService(
     private val findGroupWallet: FindGroupWallet,
     private val findSpaceWallet: FindSpaceWallet,
     private val checkSpaceWalletFunds: CheckSpaceWalletFunds,
+    private val applyWalletChallenge: ApplyWalletChallenge,
 ) {
     suspend fun hasWallet(userId: UserId): Boolean = hasWallet.invoke(userId)
 
@@ -46,6 +49,8 @@ class WalletDirectoryService(
     suspend fun canDelete(userId: UserId): Resource<Unit> = checkFundsBeforeDeletion(userId)
 
     suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> = applyCustodyUpdate(update)
+
+    suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> = applyWalletChallenge(challenge)
 
     suspend fun missedFrames(userId: UserId, seq: Long): Resource<List<LoggedFrame>?> = replayFrames(userId, seq)
 }

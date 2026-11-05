@@ -15,7 +15,9 @@ import com.circaso.wallet.data.cache.RealtimeFramesImpl
 import com.circaso.wallet.data.cache.RedisActiveWallets
 import com.circaso.wallet.data.cache.RedisAddingChains
 import com.circaso.wallet.data.cache.RedisBalanceCache
+import com.circaso.wallet.data.cache.RedisPendingSetups
 import com.circaso.wallet.data.cache.RedisReminders
+import com.circaso.wallet.data.cache.RedisSetupChecks
 import com.circaso.wallet.data.cache.RedisStuckNotices
 import com.circaso.wallet.data.repositories.ConfiguredFees
 import com.circaso.wallet.data.repositories.DatabaseTransactor
@@ -49,8 +51,10 @@ import com.circaso.wallet.domain.ports.BalanceCache
 import com.circaso.wallet.domain.ports.FeeConfig
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.PaymentHolds
+import com.circaso.wallet.domain.ports.PendingSetups
 import com.circaso.wallet.domain.ports.RealtimeLog
 import com.circaso.wallet.domain.ports.Reminders
+import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletWarnings
@@ -79,6 +83,7 @@ import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.SetupProgress
 import com.circaso.wallet.domain.support.SplitPayments
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
@@ -88,6 +93,7 @@ import com.circaso.wallet.domain.support.WalletSync
 import com.circaso.wallet.domain.usecases.AddChain
 import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
+import com.circaso.wallet.domain.usecases.ApplyWalletChallenge
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
 import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
@@ -116,6 +122,7 @@ import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
 import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SummariseTransactions
+import com.circaso.wallet.domain.usecases.SweepWalletSetups
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
@@ -248,6 +255,8 @@ fun walletModule(config: Config): Module =
         single<WalletWarnings> { LogWalletWarnings() }
         single<ActiveWallets> { RedisActiveWallets(get<RedisScopes>().scope(REDIS_PREFIX), jobs.activeWindow, clock) }
         single<StuckNotices> { RedisStuckNotices(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<SetupChecks> { RedisSetupChecks(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<PendingSetups> { RedisPendingSetups(get<RedisScopes>().scope(REDIS_PREFIX), clock) }
         single {
             RealtimeFramesImpl(get<RedisScopes>().scope(REDIS_PREFIX), get(named("wallet.database")), get(), clock)
         }
@@ -275,6 +284,10 @@ fun walletModule(config: Config): Module =
             val service = get<WalletJobsService>()
             ScheduledJob("wallet.unsettled-splits", jobs.splitInterval) { service.settleSplits() }
         }
+        single(named("wallet.setup-sweep")) {
+            val service = get<WalletJobsService>()
+            ScheduledJob("wallet.setup-sweep", SweepWalletSetups.SETUP_SWEEP_INTERVAL) { service.sweepSetups() }
+        }
         single(named("wallet.reconcile-daily")) {
             val service = get<WalletJobsService>()
             ScheduledJob("wallet.reconcile-daily", DAILY_INTERVAL) { service.reconcile(ReconcilePass.DAILY) }
@@ -285,7 +298,8 @@ fun walletModule(config: Config): Module =
         // SpaceWalletPolicy is spaces' (it implements wallet:api's guard and binds it in its own Koin module).
         single { Holders(get(), get(), getOrNull()) }
         single { WalletSync(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
-        single { WalletCreation(get(), get(), get(), get(), clock) }
+        single { SetupProgress(get(), get(), get(), get()) }
+        single { WalletCreation(get(), get(), get(), get(), clock, get()) }
         single { WalletListings(get(), get()) }
         single { HoldingsReader(get(), get(), get()) }
         single { SupportAccountRule(get()) }
@@ -302,14 +316,14 @@ fun walletModule(config: Config): Module =
         single { SplitPayments(get(), get(), get(), clock) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
-        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get()) }
         single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
-        single { GetGroupWallet(get(), get(), get()) }
+        single { GetGroupWallet(get(), get(), get(), get()) }
         single { ListMyWallets(get(), get(), get(), getOrNull()) }
         single { HeldFunds(get(), get(), get()) }
         single { CreateSpaceWallet(get(), get(), get(), get(), get(), get(), clock) }
-        single { GetSpaceWallet(get(), get(), get()) }
+        single { GetSpaceWallet(get(), get(), get(), get()) }
         single { FindSpaceWallet(get(), get()) }
         single { CheckSpaceWalletFunds(get(), get()) }
         single { FindGroupWallet(get(), get()) }
@@ -350,6 +364,8 @@ fun walletModule(config: Config): Module =
         single { RequestSetup(get(), get(), get(), get(), get()) }
         single { ValidateAddress(get()) }
         single { ApplyCustodyUpdate(get()) }
+        single { ApplyWalletChallenge(get()) }
+        single { SweepWalletSetups(get(), clock) }
         single { ExpireUnsignedTransfers(get(), get(), jobs, clock) }
         single { CheckStuckTransfers(get(), get(), get(), get(), get(), get(), jobs, clock) }
         single { ReconcileWallets(get(), get(), get(), jobs, clock) }
@@ -362,10 +378,10 @@ fun walletModule(config: Config): Module =
         single { HistoryService(get()) }
         single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
-        single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SpaceWalletService(get(), get()) }
         single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
-        single { WalletJobsService(get(), get(), get(), get()) }
+        single { WalletJobsService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()
             val transfers = get<TransferService>()

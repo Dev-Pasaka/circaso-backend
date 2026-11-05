@@ -15,6 +15,7 @@ import com.circaso.wallet.domain.models.SpaceWalletView
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.support.HeldFunds
+import com.circaso.wallet.domain.support.SetupProgress
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletCreation
 import com.circaso.wallet.domain.support.WalletListings
@@ -74,16 +75,22 @@ class CreateSpaceWallet(
     }
 }
 
-/** W19 `GET /wallet/spaces/{spaceId}`: the space's wallet for its owner and admins: none, being set up, or active. */
+/**
+ * W19 `GET /wallet/spaces/{spaceId}`: the space's wallet for its owner and admins: none, being set up, or active.
+ * While it is being set up, Circle's list is read first (at most once per [SetupProgress] window), so the app's poll
+ * sees it turn active, and the space go live, as soon as Circle has the wallet.
+ */
 class GetSpaceWallet(
     private val owners: WalletOwnerRepository,
     private val listings: WalletListings,
     private val spaces: SpaceWalletPolicy,
+    private val progress: SetupProgress,
 ) {
     suspend operator fun invoke(userId: UserId, spaceId: UUID): Resource<SpaceWalletView> {
         val access = spaces.access(spaceId, userId)
         if (access != SpaceAccess.OWNER && access != SpaceAccess.ADMIN) return Resource.error(WalletError.SpaceNotFound)
         val owner = owners.bySpace(spaceId) ?: return Resource.success(SpaceWalletView(spaceId, listing = null))
+        progress.refresh(owner.holder)
         return Resource.success(SpaceWalletView(spaceId, listings.of(owner, userId)))
     }
 }

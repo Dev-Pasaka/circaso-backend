@@ -1,5 +1,7 @@
 package com.circaso.integrations.impl.circle
 
+import com.circaso.integrations.api.CustodyChallenge
+import com.circaso.integrations.api.CustodyChallengeKind
 import com.circaso.integrations.api.CustodyDirection
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.CustodyOperation
@@ -34,11 +36,17 @@ class CircleWebhookTest {
         }
 
     private val received = CopyOnWriteArrayList<CustodyTransaction>()
+    private val challenges = CopyOnWriteArrayList<CustodyChallenge>()
     private var answer: Resource<Unit> = Resource.success(Unit)
     private var listener: CustodyNotifications? =
         object : CustodyNotifications {
             override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> {
                 received += update
+                return answer
+            }
+
+            override suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> {
+                challenges += challenge
                 return answer
             }
         }
@@ -196,6 +204,54 @@ class CircleWebhookTest {
                 webhook.translate(notification("challenges.initialize", """{"id":"c-1"}""").toByteArray()),
             )
             assertTrue(received.isEmpty())
+        }
+
+    @Test
+    fun `a completed PIN setup or wallet creation reaches the wallet with Circle's user`() =
+        runBlocking<Unit> {
+            val setup = notification("challenges.initialize", challenge("INITIALIZE", status = "COMPLETE"))
+            assertIs<Resource.Success<Unit>>(webhook.translate(setup.toByteArray()))
+            // Circle's pages also show the outcome as `state`, and spell it COMPLETED.
+            val added =
+                notification("challenges.createWallet", challenge("CREATE_WALLET", status = null, state = "COMPLETED"))
+            assertIs<Resource.Success<Unit>>(webhook.translate(added.toByteArray()))
+
+            assertEquals(
+                listOf(
+                    CustodyChallenge(CIRCLE_USER, CHALLENGE_ID, CustodyChallengeKind.SETUP, completed = true),
+                    CustodyChallenge(CIRCLE_USER, CHALLENGE_ID, CustodyChallengeKind.CREATE_WALLET, completed = true),
+                ),
+                challenges,
+            )
+            assertTrue(received.isEmpty())
+        }
+
+    @Test
+    fun `a failed setup is passed on as failed, one still open and other challenges are ignored`() =
+        runBlocking<Unit> {
+            val failed = notification("challenges.initialize", challenge("INITIALIZE", status = "FAILED"))
+            assertIs<Resource.Success<Unit>>(webhook.translate(failed.toByteArray()))
+            assertEquals(listOf(false), challenges.map { it.completed })
+
+            for (status in listOf("PENDING", "IN_PROGRESS")) {
+                val open = notification("challenges.initialize", challenge("INITIALIZE", status = status))
+                assertIs<Resource.Success<Unit>>(webhook.translate(open.toByteArray()))
+            }
+            val transfer = notification("challenges.createTransaction", challenge("CREATE_TRANSACTION"))
+            assertIs<Resource.Success<Unit>>(webhook.translate(transfer.toByteArray()))
+            val unknown = notification("wallets.created", """{"id":"w-1"}""")
+            assertIs<Resource.Success<Unit>>(webhook.translate(unknown.toByteArray()))
+            assertEquals(1, challenges.size)
+        }
+
+    @Test
+    fun `a setup the wallet couldn't follow makes Circle deliver it again`() =
+        runBlocking<Unit> {
+            val setup = notification("challenges.initialize", challenge("INITIALIZE")).toByteArray()
+            answer = Resource.error(IntegrationError.Unavailable("Circle"))
+            assertIs<Resource.Error>(webhook.translate(setup))
+            listener = null
+            assertIs<Resource.Error>(webhook.translate(setup))
         }
 
     @Test
@@ -376,6 +432,20 @@ class CircleWebhookTest {
 
     companion object {
         const val KEY_ID = "879dc113-5ca4-4ff7-a6b7-54652083fcf8"
+
+        const val CIRCLE_USER = "2f1dcb5e-312a-4b15-8240-abeffc0e3463"
+        const val CHALLENGE_ID = "c4d1da72-111e-4d52-bdbf-2e74a2d803d5"
+
+        /** A challenge notification's `notification`, as Circle's docs show it (user-controlled wallets). */
+        fun challenge(
+            type: String,
+            status: String? = "COMPLETE",
+            state: String? = null,
+        ): String =
+            """{"id":"$CHALLENGE_ID","userId":"$CIRCLE_USER","type":"$type",""" +
+                (status?.let { """"status":"$it",""" } ?: "") +
+                (state?.let { """"state":"$it",""" } ?: "") +
+                """"correlationIds":["54399e5a-1bf6-4921-9559-10c1115678cd"],"errorCode":0,"errorMessage":""}"""
 
         fun notification(type: String, payload: String): String =
             """{"subscriptionId":"sub-1","notificationId":"notification-1","notificationType":"$type",""" +

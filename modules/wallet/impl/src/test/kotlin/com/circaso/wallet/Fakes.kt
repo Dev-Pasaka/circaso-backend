@@ -108,6 +108,9 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
 
     private val challenges = AtomicInteger()
 
+    /** Setup challenges handed out and not signed yet, challenge id to Circle user: open at Circle. */
+    val openChallenges = ConcurrentHashMap<String, String>()
+
     /** The user ran the challenge in the SDK: Circle now has their wallet on [blockchain]. */
     fun sign(
         circleUserId: String,
@@ -124,6 +127,7 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
             )
         wallets.merge(circleUserId, listOf(wallet)) { old, new -> old + new }
         initialized += circleUserId
+        openChallenges.values.removeAll { it == circleUserId }
         return wallet
     }
 
@@ -141,9 +145,12 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
             if (circleUserId in initialized) {
                 Resource.success(Challenge("", session(circleUserId)))
             } else {
-                Resource.success(challenge(circleUserId))
+                Resource.success(challenge(circleUserId).also { openChallenges[it.challengeId] = circleUserId })
             }
         }
+
+    override suspend fun challengeOpen(circleUserId: String, challengeId: String): Resource<Boolean> =
+        call("challengeOpen") { Resource.success(openChallenges[challengeId] == circleUserId) }
 
     override suspend fun addWallet(
         circleUserId: String,

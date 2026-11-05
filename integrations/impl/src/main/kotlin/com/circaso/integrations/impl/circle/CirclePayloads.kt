@@ -118,6 +118,16 @@ internal data class PinBody(override val idempotencyKey: String) : CircleWrite
 @Serializable
 internal data class ChallengeData(val challengeId: String = "")
 
+/** `GET /v1/w3s/user/challenges/{id}`: `{"challenge": {"id", "type", "status", ...}}`. */
+@Serializable
+internal data class ChallengeStatusData(val challenge: ChallengeStatus? = null)
+
+@Serializable
+internal data class ChallengeStatus(val id: String = "", val type: String = "", val status: String = "")
+
+/** A challenge the user can still sign (Circle: `PENDING`, `IN_PROGRESS`; done: `COMPLETE`, `FAILED`, `EXPIRED`). */
+internal val OPEN_CHALLENGE = setOf("PENDING", "IN_PROGRESS")
+
 // Wallets and balances
 
 @Serializable
@@ -210,6 +220,25 @@ internal data class NotificationHeader(val notificationId: String = "", val noti
 
 @Serializable
 internal data class TransactionNotification(val notification: TransactionPayload? = null)
+
+/**
+ * A `challenges.*` notification's `notification` (developers.circle.com, user-controlled wallets: challenge
+ * notification): the challenge id, Circle's user id, the challenge type (`INITIALIZE`, `CREATE_WALLET`, ...) and its
+ * outcome, `COMPLETE` or `FAILED`. Circle's pages show the outcome both as `status` and as `state`, so both are read.
+ */
+@Serializable
+internal data class ChallengeNotification(val notification: ChallengePayload? = null)
+
+@Serializable
+internal data class ChallengePayload(
+    val id: String = "",
+    val userId: String = "",
+    val type: String = "",
+    val status: String = "",
+    val state: String = "",
+) {
+    val outcome: String get() = status.ifEmpty { state }
+}
 
 /** Only the field names of a notification we couldn't read, for its log line (names and presence, never values). */
 @Serializable

@@ -62,7 +62,10 @@ fun Route.spaceWalletController(spaceWallets: SpaceWalletService) {
                 "W19 · The space's wallet: none, being set up, or active",
                 "Wallet",
                 listOf("wallet.space_not_found", "request.malformed"),
-                notes = "Scope: `app`. The owner and admins only. The balance is W1 with `?walletId=`.",
+                notes =
+                    "Scope: `app`. The owner and admins only. Poll it every 3 seconds during set-up: while " +
+                        "`SETTING_UP` the server reads Circle at most once every few seconds, so it turns `ACTIVE` " +
+                        "on the first poll after the PIN. The balance is W1 with `?walletId=`.",
             )
         }
     }
