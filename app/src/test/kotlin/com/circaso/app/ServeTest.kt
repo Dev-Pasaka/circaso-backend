@@ -123,7 +123,7 @@ class ServeTest {
             signUp(sms!!, "Warm Up", "+254722${(100000..999999).random()}")
 
             assertEquals(
-                listOf("identity", "infrastructure", "messaging", "users", "wallet"),
+                listOf("chama", "database.pool", "identity", "infrastructure", "messaging", "users", "wallet"),
                 warmUps.map { it.name }.sorted(),
             )
             // each one directly, so a failure fails here with its exception rather than being logged and skipped
