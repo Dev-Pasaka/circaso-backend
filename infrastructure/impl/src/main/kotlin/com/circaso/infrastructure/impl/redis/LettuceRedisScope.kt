@@ -22,24 +22,33 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.redis
 private const val SLOW_REDIS_MILLIS = 20L
 
 // HSET plus PEXPIRE as one step.
-private const val HASH_SET_WITH_TTL = """
+private val HASH_SET_WITH_TTL =
+    RedisScript(
+        """
 for i = 2, #ARGV, 2 do redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1]) end
 redis.call('PEXPIRE', KEYS[1], ARGV[1])
 return 1
-"""
+""",
+    )
 
 // HINCRBY only on a hash that exists; otherwise it would create one with no expiry.
-private const val HASH_INCREMENT_IF_EXISTS = """
+private val HASH_INCREMENT_IF_EXISTS =
+    RedisScript(
+        """
 if redis.call('EXISTS', KEYS[1]) == 0 then return false end
 return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
-"""
+""",
+    )
 
 // HGETALL then DEL in one script: nothing written between the two is lost.
-private const val HASH_TAKE = """
+private val HASH_TAKE =
+    RedisScript(
+        """
 local fields = redis.call('HGETALL', KEYS[1])
 redis.call('DEL', KEYS[1])
 return fields
-"""
+""",
+    )
 
 @OptIn(ExperimentalLettuceCoroutinesApi::class)
 class LettuceRedisScopes(private val redis: RedisConnection) : RedisScopes {
@@ -145,7 +154,7 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
                     add(value)
                 }
             }
-        commands.eval<Long>(HASH_SET_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key(key)), *args.toTypedArray())
+        redis.run<Long>(HASH_SET_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key(key)), *args.toTypedArray())
         Unit
     }
 
@@ -156,8 +165,8 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
 
     override suspend fun hashTake(key: String): Map<String, String> =
         timed("HGETALL+DEL", key) {
-            commands
-                .eval<List<String>>(HASH_TAKE, ScriptOutputType.MULTI, arrayOf(key(key)))
+            redis
+                .run<List<String>>(HASH_TAKE, ScriptOutputType.MULTI, arrayOf(key(key)))
                 .orEmpty()
                 .chunked(2)
                 .associate { (field, value) -> field to value }
@@ -174,7 +183,7 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
         by: Long,
     ): Long? =
         timed("HINCRBY", key) {
-            commands.eval<Long>(
+            redis.run<Long>(
                 HASH_INCREMENT_IF_EXISTS,
                 ScriptOutputType.INTEGER,
                 arrayOf(key(key)),

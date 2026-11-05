@@ -12,7 +12,6 @@ import com.circaso.web.DefaultResponse
 import com.circaso.web.EnvelopeSent
 import com.circaso.web.ResponseRecorder
 import com.circaso.web.ResponseRecorderKey
-import com.circaso.web.principalOrNull
 import com.circaso.web.respondDefault
 import com.circaso.web.respondError
 import io.ktor.http.ContentType
@@ -52,99 +51,93 @@ fun ApplicationCall.clientIp(): String =
  * scope rules (the agent token can only `GET` under `/v1/agent/`), rate limits, then idempotency. The first step
  * that refuses answers with the envelope and the route never runs. Request ids, JSON and StatusPages are
  * installed by `shared-web`; the request log is [RequestLog].
+ *
+ * The Redis steps go out together, not one after another: the token's deny-list lookup, the rate-limit counter and,
+ * for a state change, the idempotency claim are written to the connection back to back and share one round trip
+ * ([Admissions]). Their answers are then read in the order above, so the caller gets what the steps run in turn would
+ * have answered; a step that ran ahead of an earlier refusal is undone (the count of a request whose session turned
+ * out revoked, the claim of a request refused for its rate).
  */
 fun Application.installGatewayEdge(deps: GatewayDeps) {
-    val limiter = RateLimiter(deps.redis.scope("gw"))
-    val idempotency = Idempotency(deps.redis.scope("gw"))
+    val admissions = Admissions(RateLimiter(deps.redis.scope("gw")), Idempotency(deps.redis.scope("gw")))
 
     // A plain interceptor rather than a plugin hook: `finish()` is what stops the route from running after a refusal.
     intercept(ApplicationCallPipeline.Plugins) {
         val path = call.apiPath()
-        if (!path.isApi()) return@intercept
+        if (!path.isApi() || path.isWebhook()) return@intercept
 
-        refusal(call, path, deps)?.let { error ->
-            // The one refusal whose status isn't its kind's: 426 tells the app to show Force update.
-            if (error === SharedError.ClientOutdated) {
-                call.respondDefault(
-                    DefaultResponse<Unit>(HttpStatusCode.UpgradeRequired.value, false, error.message, error.code),
-                )
-            } else {
-                call.respondError(error)
+        val admitted =
+            when (val outcome = admit(call, path, deps, admissions)) {
+                is Admission.Refused -> {
+                    respondRefusal(call, outcome.error)
+                    return@intercept finish()
+                }
+
+                is Admission.Counted -> {
+                    outcome
+                }
             }
+        admitted.limited?.let { error ->
+            admitted.release()
+            call.respondError(error)
             return@intercept finish()
         }
-        if (path.isWebhook()) return@intercept
 
-        val principal = call.principalOrNull()
-        val method = call.request.httpMethod.value
+        val claim = admitted.claim ?: return@intercept
+        val key = claim.key
+        if (key == null) {
+            call.respondError(SharedError.IdempotencyKeyMissing)
+            return@intercept finish()
+        }
+        if (claim.claimed) {
+            call.attributes.put(
+                ResponseRecorderKey,
+                ResponseRecorder { status, json -> admissions.idempotency.finish(key, status, json) },
+            )
+            return@intercept
+        }
+        when (val state = admissions.idempotency.state(key)) {
+            is IdempotencyState.Done -> {
+                call.attributes.put(EnvelopeSent, true)
+                call.response.header("Idempotent-Replayed", "true")
+                call.respondText(state.json, ContentType.Application.Json, HttpStatusCode.fromValue(state.status))
+            }
 
-        RateLimitTable.limitFor(method, path, principal != null)?.let { limit ->
-            val subject =
-                when (limit.by) {
-                    LimitBy.USER -> principal?.userId?.toString() ?: call.clientIp()
-                    LimitBy.IP -> call.clientIp()
-                }
-            limiter.check(limit, subject)?.let { error ->
-                call.respondError(error)
-                return@intercept finish()
+            else -> {
+                call.respondError(SharedError.InProgress)
             }
         }
-
-        if (method in Idempotency.mutating) {
-            val clientKey =
-                call.request
-                    .header(Idempotency.HEADER)
-                    ?.trim()
-                    .orEmpty()
-            if (clientKey.isEmpty()) {
-                call.respondError(SharedError.IdempotencyKeyMissing)
-                return@intercept finish()
-            }
-            val key = Idempotency.redisKey(principal?.userId?.toString() ?: call.clientIp(), method, path, clientKey)
-            if (idempotency.begin(key)) {
-                call.attributes.put(
-                    ResponseRecorderKey,
-                    ResponseRecorder {
-                        status,
-                        json,
-                        ->
-                        idempotency.finish(key, status, json)
-                    },
-                )
-            } else {
-                when (val state = idempotency.state(key)) {
-                    is IdempotencyState.Done -> {
-                        call.attributes.put(EnvelopeSent, true)
-                        call.response.header("Idempotent-Replayed", "true")
-                        call.respondText(
-                            state.json,
-                            ContentType.Application.Json,
-                            HttpStatusCode.fromValue(state.status),
-                        )
-                    }
-
-                    else -> {
-                        call.respondError(SharedError.InProgress)
-                    }
-                }
-                finish()
-            }
-        }
+        finish()
     }
 }
 
-/** Version, authentication and scope rules; returns the error to answer with, or null to carry on. */
-private suspend fun refusal(
+private suspend fun respondRefusal(call: ApplicationCall, error: DomainError) {
+    // The one refusal whose status isn't its kind's: 426 tells the app to show Force update.
+    if (error === SharedError.ClientOutdated) {
+        call.respondDefault(
+            DefaultResponse<Unit>(HttpStatusCode.UpgradeRequired.value, false, error.message, error.code),
+        )
+    } else {
+        call.respondError(error)
+    }
+}
+
+/**
+ * Version, authentication and scope rules, with the rate limit and the idempotency claim sent alongside the token's
+ * deny-list lookup. [Admission.Refused] for a refusal of the first three; otherwise what the counter and the claim
+ * found, for the caller to read in order.
+ */
+private suspend fun admit(
     call: ApplicationCall,
     path: String,
     deps: GatewayDeps,
-): DomainError? {
-    if (path.isWebhook()) return null
-
+    admissions: Admissions,
+): Admission {
     ClientVersion.parseHeader(call.request.header(ClientVersion.HEADER))?.let { (platform, version) ->
         val minimum = deps.config.minClientVersions[platform]
-        if (minimum != null && version < minimum) return SharedError.ClientOutdated
+        if (minimum != null && version < minimum) return Admission.Refused(SharedError.ClientOutdated)
     }
+    val method = call.request.httpMethod.value
 
     val token =
         call.request
@@ -152,20 +145,44 @@ private suspend fun refusal(
             ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
             ?.substring(7)
             ?.trim()
-    if (token != null) {
-        when (val result = deps.verifier.verify(token)) {
-            is Resource.Error -> {
-                return result.error
-            }
-
-            is Resource.Success -> {
-                val p = result.data
-                call.attributes.put(CallPrincipalKey, CallPrincipal(p.userId, p.deviceId, p.sessionId.value, p.scope))
-            }
-        }
+    if (token == null) {
+        return scopeRefusal(null, path, method)?.let(Admission::Refused) ?: admissions.count(call, path, method, null)
     }
 
-    val principal = call.principalOrNull()
+    // Set by the work sent alongside, so a failing deny-list lookup can still take back the idempotency claim.
+    var counted: Admission.Counted? = null
+    val (verified, alongside) =
+        try {
+            deps.verifier.verifyAlongside(token) { p ->
+                val principal = CallPrincipal(p.userId, p.deviceId, p.sessionId.value, p.scope)
+                scopeRefusal(principal, path, method)?.let(Admission::Refused)
+                    ?: admissions.count(call, path, method, principal).also { counted = it }
+            }
+        } catch (e: Throwable) {
+            counted?.abandon()
+            throw e
+        }
+    return when (verified) {
+        is Resource.Error -> {
+            // A revoked session never got past authentication: its request neither counts nor holds its key.
+            (alongside as? Admission.Counted)?.undo()
+            Admission.Refused(verified.error)
+        }
+
+        is Resource.Success -> {
+            val p = verified.data
+            call.attributes.put(CallPrincipalKey, CallPrincipal(p.userId, p.deviceId, p.sessionId.value, p.scope))
+            alongside ?: Admission.Refused(SharedError.Internal)
+        }
+    }
+}
+
+/** The scope rules: what a caller with [principal] (or none) may not reach. */
+private fun scopeRefusal(
+    principal: CallPrincipal?,
+    path: String,
+    method: String,
+): DomainError? {
     val agentRoute = path.isAgent()
     return when {
         agentRoute && principal == null -> SharedError.TokenMissing
@@ -175,7 +192,7 @@ private suspend fun refusal(
         // An agent token reaches nothing but GET under /v1/agent/ (and the JWKS, which carries no data).
         principal?.scope == Scope.AGENT && !agentRoute && !path.isPublicDoc() -> SharedError.ScopeInsufficient
 
-        principal?.scope == Scope.AGENT && call.request.httpMethod.value != "GET" -> SharedError.ScopeInsufficient
+        principal?.scope == Scope.AGENT && method != "GET" -> SharedError.ScopeInsufficient
 
         else -> null
     }

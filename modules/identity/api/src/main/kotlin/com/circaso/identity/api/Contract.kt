@@ -37,6 +37,23 @@ data class Principal(
 interface TokenVerifier {
     /** Checks the signature and expiry locally, then identity's deny-list of revoked sessions. */
     suspend fun verify(accessToken: String): Resource<Principal>
+
+    /**
+     * [verify], with [alongside] run while the deny-list lookup is on its way, so the gateway's own Redis work (rate
+     * limit, idempotency claim) shares the round trip instead of waiting behind it. [alongside] runs only once the
+     * signature and expiry check out, with the principal they name, before revocation is known. The first value is
+     * what [verify] would answer; the second is [alongside]'s result, null when it didn't run. It is given back even
+     * when the session turns out revoked, so the caller can undo what it did.
+     *
+     * The default runs the two in turn: one round trip after the other, the same answers.
+     */
+    suspend fun <T> verifyAlongside(
+        accessToken: String,
+        alongside: suspend (Principal) -> T,
+    ): Pair<Resource<Principal>, T?> {
+        val verified = verify(accessToken)
+        return verified to (verified as? Resource.Success)?.let { alongside(it.data) }
+    }
 }
 
 enum class AccountStatus { PENDING_PHONE, ACTIVE, RECOVERY_PENDING, SUSPENDED, BLOCKED, DELETED }

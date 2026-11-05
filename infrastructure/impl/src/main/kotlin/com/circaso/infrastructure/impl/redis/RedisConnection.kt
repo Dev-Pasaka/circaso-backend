@@ -7,6 +7,7 @@ import io.lettuce.core.ClientOptions
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
 import io.lettuce.core.MaintNotificationsConfig
 import io.lettuce.core.RedisClient
+import io.lettuce.core.RedisNoScriptException
 import io.lettuce.core.RedisURI
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.api.StatefulRedisConnection
@@ -14,25 +15,48 @@ import io.lettuce.core.api.async.RedisAsyncCommands
 import io.lettuce.core.api.coroutines
 import io.lettuce.core.api.coroutines.RedisCoroutinesCommands
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection
+import java.security.MessageDigest
 import java.time.Duration
 
-private const val INCREMENT_WITH_TTL = """
+private val INCREMENT_WITH_TTL =
+    RedisScript(
+        """
 local value = redis.call('INCR', KEYS[1])
 if value == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
 return value
-"""
+""",
+    )
 
-private const val INCREMENT_BY_WITH_TTL = """
+private val INCREMENT_BY_WITH_TTL =
+    RedisScript(
+        """
 local value = redis.call('INCRBY', KEYS[1], ARGV[2])
 if value == tonumber(ARGV[2]) then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
 return value
-"""
+""",
+    )
 
-private const val INCREMENT_AND_RENEW = """
+private val INCREMENT_AND_RENEW =
+    RedisScript(
+        """
 local value = redis.call('INCR', KEYS[1])
 redis.call('PEXPIRE', KEYS[1], ARGV[1])
 return value
-"""
+""",
+    )
+
+/**
+ * A Lua script sent by its SHA-1 (`EVALSHA`), not its text: the rate limiter runs one on every request. Valkey keeps
+ * scripts it has seen, so the text goes out once per server (and again after a restart or `SCRIPT FLUSH`, when the
+ * server answers `NOSCRIPT` and [RedisConnection.run] falls back to `EVAL`, which loads it).
+ */
+class RedisScript(val source: String) {
+    val sha: String =
+        MessageDigest
+            .getInstance("SHA-1")
+            .digest(source.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+}
 
 /**
  * The one Redis client of the process, with a shared connection for ordinary commands. Blocking reads (the
@@ -54,16 +78,29 @@ class RedisConnection(url: String) : AutoCloseable {
     /** The same connection, for commands sent back to back without waiting for each reply (a pipeline). */
     val async: RedisAsyncCommands<String, String> = shared.async()
 
+    /** Runs [script] by its SHA-1; if the server doesn't have it yet, sends the text once, which also loads it. */
+    suspend fun <T> run(
+        script: RedisScript,
+        type: ScriptOutputType,
+        keys: Array<String>,
+        vararg values: String,
+    ): T? =
+        try {
+            commands.evalsha<T>(script.sha, type, keys, *values)
+        } catch (e: RedisNoScriptException) {
+            commands.eval<T>(script.source, type, keys, *values)
+        }
+
     /** INCR that sets the expiry in the same step, so a crash between the two can't leave a key that never expires. */
     suspend fun incrementWithTtl(key: String, ttl: Duration): Long =
-        commands.eval<Long>(INCREMENT_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
+        run<Long>(INCREMENT_WITH_TTL, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
 
     suspend fun incrementByWithTtl(
         key: String,
         by: Long,
         ttl: Duration,
     ): Long =
-        commands.eval<Long>(
+        run<Long>(
             INCREMENT_BY_WITH_TTL,
             ScriptOutputType.INTEGER,
             arrayOf(key),
@@ -72,7 +109,7 @@ class RedisConnection(url: String) : AutoCloseable {
         )!!
 
     suspend fun incrementAndRenew(key: String, ttl: Duration): Long =
-        commands.eval<Long>(INCREMENT_AND_RENEW, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
+        run<Long>(INCREMENT_AND_RENEW, ScriptOutputType.INTEGER, arrayOf(key), ttl.toMillis().toString())!!
 
     /** A connection nobody else uses, for blocking commands. The caller closes it. */
     fun openDedicated(): StatefulRedisConnection<String, String> = client.connect()

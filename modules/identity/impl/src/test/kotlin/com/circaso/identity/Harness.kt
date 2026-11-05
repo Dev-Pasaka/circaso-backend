@@ -38,6 +38,7 @@ import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
 import com.circaso.identity.domain.usecases.UnlinkProvider
 import com.circaso.identity.domain.usecases.VerifyAccessToken
+import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
 import com.circaso.infrastructure.api.Secrets
@@ -253,6 +254,7 @@ class Harness(
     val refresh = RefreshSession(p.transactor, p.sessions, p.accounts, p.devices, p.store, cache, opener, proofs)
     val signOut = SignOut(p.transactor, p.sessions, p.store, cache, bus)
     val verifyToken = VerifyAccessToken(tokens, cache)
+    val verifyTokenAlongside = VerifyAccessTokenAlongside(tokens, cache)
     val overview = GetSecurityOverview(p.accounts, p.providers, p.devices)
     val link = LinkProvider(p.transactor, cache, FakeSocial(), p.accounts, p.providers, p.store, clock)
     val unlink = UnlinkProvider(p.transactor, p.accounts, p.providers, p.store)

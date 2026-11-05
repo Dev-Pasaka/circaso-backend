@@ -47,6 +47,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+private const val REVOKED = "revoked"
+
 class GatewayTest {
     private class MemoryRedis(override val prefix: String = "gw") : RedisScope {
         val values = ConcurrentHashMap<String, String>()
@@ -128,11 +130,22 @@ class GatewayTest {
 
     private val user = UserId.new()
 
+    /** `revoked` is a well-signed app token whose session is on the deny-list, found out only after [alongside] ran. */
     private val verifier =
         object : TokenVerifier {
             override suspend fun verify(accessToken: String): Resource<Principal> {
+                if (accessToken == REVOKED) return Resource.error(SharedError.TokenInvalid)
                 val scope = Scope.fromWire(accessToken) ?: return Resource.error(SharedError.TokenInvalid)
                 return Resource.success(Principal(user, DeviceId.new(), SessionId.new(), scope))
+            }
+
+            override suspend fun <T> verifyAlongside(
+                accessToken: String,
+                alongside: suspend (Principal) -> T,
+            ): Pair<Resource<Principal>, T?> {
+                if (accessToken != REVOKED) return super.verifyAlongside(accessToken, alongside)
+                val done = alongside(Principal(user, DeviceId.new(), SessionId.new(), Scope.APP))
+                return Resource.error(SharedError.TokenInvalid) to done
             }
         }
 
@@ -181,50 +194,52 @@ class GatewayTest {
             }
         }
 
-    private fun gatewayApp(config: GatewayConfig = GatewayConfig(), block: suspend ApplicationTestBuilder.() -> Unit) =
-        testApplication {
-            val redis = MemoryRedis()
-            application {
-                installRequestId()
-                installJson()
-                installStatusPages()
-                installGatewayEdge(
-                    GatewayDeps(
-                        config,
-                        verifier,
-                        object : RedisScopes {
-                            override fun scope(prefix: String) = redis
-                        },
-                    ),
-                )
-                routing {
-                    route("/v1") {
-                        authenticate(Scope.APP) {
-                            get(
-                                "/me",
-                            ) { call.respondDefault(DefaultResponse(status = true, data = call.userId().toString())) }
-                            post("/things") {
-                                hits.incrementAndGet()
-                                call.respondDefault(DefaultResponse(status = true, data = "made"))
-                            }
+    private fun gatewayApp(
+        config: GatewayConfig = GatewayConfig(),
+        redis: MemoryRedis = MemoryRedis(),
+        block: suspend ApplicationTestBuilder.() -> Unit,
+    ) = testApplication {
+        application {
+            installRequestId()
+            installJson()
+            installStatusPages()
+            installGatewayEdge(
+                GatewayDeps(
+                    config,
+                    verifier,
+                    object : RedisScopes {
+                        override fun scope(prefix: String) = redis
+                    },
+                ),
+            )
+            routing {
+                route("/v1") {
+                    authenticate(Scope.APP) {
+                        get(
+                            "/me",
+                        ) { call.respondDefault(DefaultResponse(status = true, data = call.userId().toString())) }
+                        post("/things") {
+                            hits.incrementAndGet()
+                            call.respondDefault(DefaultResponse(status = true, data = "made"))
                         }
-                        authenticate(Scope.AGENT) {
-                            get(
-                                "/agent/contacts",
-                            ) { call.respondDefault(DefaultResponse(status = true, data = "list")) }
-                        }
-                        post("/auth/nonce") { call.respondDefault(DefaultResponse(status = true, data = "n")) }
-                        webhookRoutes(
-                            listOf(waitingVendor, atOnceVendor),
-                            config,
-                            redis,
-                            CoroutineScope(Dispatchers.Unconfined),
-                        )
                     }
+                    authenticate(Scope.AGENT) {
+                        get(
+                            "/agent/contacts",
+                        ) { call.respondDefault(DefaultResponse(status = true, data = "list")) }
+                    }
+                    post("/auth/nonce") { call.respondDefault(DefaultResponse(status = true, data = "n")) }
+                    webhookRoutes(
+                        listOf(waitingVendor, atOnceVendor),
+                        config,
+                        redis,
+                        CoroutineScope(Dispatchers.Unconfined),
+                    )
                 }
             }
-            block()
         }
+        block()
+    }
 
     @Test
     fun `a request with no token reaches a public route but not a scoped one`() =
@@ -320,6 +335,47 @@ class GatewayTest {
             assertEquals("42", response.headers["Retry-After"])
             assertTrue(response.bodyAsText().contains("request.rate_limited"))
         }
+
+    @Test
+    fun `a revoked session is refused, and its request neither counts against the limit nor holds its key`() {
+        val redis = MemoryRedis()
+        gatewayApp(redis = redis) {
+            hits.set(0)
+            val response =
+                client.post("/v1/things") {
+                    header("Authorization", "Bearer $REVOKED")
+                    header("Idempotency-Key", "r")
+                }
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+            assertEquals(0, hits.get())
+            assertEquals("0", redis.values["rl:user:$user"], "the count sent alongside is taken back")
+            assertTrue(redis.values.keys.none { it.startsWith("idem:") }, "the claim sent alongside is given back")
+
+            // The same key with a good token runs, as if the revoked attempt had never been.
+            val again =
+                client.post("/v1/things") {
+                    header("Authorization", "Bearer app")
+                    header("Idempotency-Key", "r")
+                }
+            assertEquals(HttpStatusCode.OK, again.status)
+            assertEquals(1, hits.get())
+        }
+    }
+
+    @Test
+    fun `a request refused for its rate does not hold its idempotency key`() {
+        val redis = MemoryRedis()
+        gatewayApp(redis = redis) {
+            repeat(20) { client.post("/v1/auth/nonce") { header("Idempotency-Key", "k$it") } }
+            assertEquals(
+                HttpStatusCode.TooManyRequests,
+                client.post("/v1/auth/nonce") { header("Idempotency-Key", "last") }.status,
+            )
+            assertEquals(20, redis.values.keys.count { it.startsWith("idem:") })
+            // Over the limit, a missing key is still answered with the limit first.
+            assertEquals(HttpStatusCode.TooManyRequests, client.post("/v1/auth/nonce").status)
+        }
+    }
 
     @Test
     fun `an app older than the minimum is told to update with 426`() =

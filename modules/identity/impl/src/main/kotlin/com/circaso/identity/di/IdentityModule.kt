@@ -72,6 +72,7 @@ import com.circaso.identity.domain.usecases.SweepPendingAccounts
 import com.circaso.identity.domain.usecases.UnlinkProvider
 import com.circaso.identity.domain.usecases.UpdatePushToken
 import com.circaso.identity.domain.usecases.VerifyAccessToken
+import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyDeviceSignature
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
@@ -230,6 +231,7 @@ fun identityModule(config: Config): Module =
         single { GetRecoveryCase(get(), get()) }
         single { GetPublicKeys(get()) }
         single { VerifyAccessToken(get(), get()) }
+        single { VerifyAccessTokenAlongside(get(), get()) }
         single { GetAccountStatus(get()) }
         single { GetAccountKind(get()) }
         single { GetAccountCreatedAt(get()) }
@@ -249,7 +251,7 @@ fun identityModule(config: Config): Module =
         single { AccountService(get(), get(), get(), get(), get()) }
         single { IdentityAgentService(get()) }
         single { RecoveryService(get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single<RouteContributor>(named("identity.routes")) {

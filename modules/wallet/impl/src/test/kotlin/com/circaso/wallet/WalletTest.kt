@@ -144,6 +144,31 @@ class WalletTest {
         }
 
     @Test
+    fun `W1 reads its chains from Circle at the same time, and one chain down still fails the read`() =
+        runBlocking<Unit> {
+            val circleUserId = h.activeWallet(amina)
+            h.custody.sign(circleUserId, "SOL-DEVNET")
+            h.adding.add(amina, "SOL-DEVNET")
+            h.wallet(amina).data() // picks up the second chain
+            h.cache.values.clear()
+            h.custody.balancesTakeMillis = 50
+            h.custody.balancesAtOnce.set(0)
+
+            assertEquals(
+                2,
+                h
+                    .wallet(amina)
+                    .data()
+                    .chains.size,
+            )
+            assertEquals(2, h.custody.balancesAtOnce.get(), "both chains in flight together")
+
+            h.cache.values.clear()
+            h.custody.down = true
+            assertEquals("wallet.custody_unavailable", h.wallet(amina).code())
+        }
+
+    @Test
     fun `an asset with no price that is held makes the fiat value partial`() =
         runBlocking<Unit> {
             h.activeWallet(amina)

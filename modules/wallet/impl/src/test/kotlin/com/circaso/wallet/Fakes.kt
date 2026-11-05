@@ -34,6 +34,7 @@ import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
+import kotlinx.coroutines.delay
 import kotlinx.serialization.KSerializer
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -105,6 +106,12 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
 
     @Volatile
     var down = false
+
+    /** How long a balance read takes, and the most reads seen in flight at once. */
+    @Volatile
+    var balancesTakeMillis = 0L
+    private val balancesInFlight = AtomicInteger()
+    val balancesAtOnce = AtomicInteger()
 
     private val challenges = AtomicInteger()
 
@@ -178,12 +185,19 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         circleUserId: String,
         walletId: String,
         blockchain: String,
-    ): Resource<List<AssetBalance>> =
-        call("balances") {
+    ): Resource<List<AssetBalance>> {
+        balancesAtOnce.accumulateAndGet(balancesInFlight.incrementAndGet(), ::maxOf)
+        try {
+            if (balancesTakeMillis > 0) delay(balancesTakeMillis)
+        } finally {
+            balancesInFlight.decrementAndGet()
+        }
+        return call("balances") {
             val chain = supported.find(blockchain) ?: return@call Resource.error(IntegrationError.Rejected("chain"))
             val amounts = held[walletId].orEmpty()
             Resource.success(chain.assets.map { AssetBalance(it, amounts[it.symbol] ?: BigInteger.ZERO) })
         }
+    }
 
     override suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> =
         call("prepareTransfer") {

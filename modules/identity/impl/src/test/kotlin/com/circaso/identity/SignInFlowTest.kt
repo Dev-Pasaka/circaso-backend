@@ -144,6 +144,27 @@ class SignInFlowTest {
         }
 
     @Test
+    fun `the gateway's work sent alongside the deny-list lookup runs for a good signature, not a bad one`() =
+        runTest {
+            val h = Harness()
+            val registered = h.signUp("amina", Phone(), number)
+            val token = registered.session.accessToken
+
+            val (good, ranFor) = h.verifyTokenAlongside(token) { it.userId }
+            assertEquals(h.principalOf(token).userId, (good as Resource.Success).data.userId)
+            assertEquals(good.data.userId, ranFor)
+
+            val (bad, ranForBad) = h.verifyTokenAlongside("nonsense") { it.userId }
+            assertEquals("auth.token_invalid", bad.errorCode())
+            assertEquals(null, ranForBad, "nothing runs for a token that isn't ours")
+
+            h.signOut(h.principalOf(token))
+            val (revoked, ranForRevoked) = h.verifyTokenAlongside(token) { "counted" }
+            assertEquals("identity.session_revoked", revoked.errorCode())
+            assertEquals("counted", ranForRevoked, "handed back so the gateway can undo it")
+        }
+
+    @Test
     fun `a sign-out tells the gateway which session ended, once`() =
         runTest {
             val h = Harness()

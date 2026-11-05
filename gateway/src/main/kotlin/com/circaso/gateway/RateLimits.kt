@@ -85,4 +85,9 @@ class RateLimiter(private val redis: RedisScope) {
         val wait = redis.ttl(key)?.let { (it.toMillis() + 999) / 1000 }?.coerceAtLeast(1) ?: limit.window.seconds
         return SharedError.RateLimited(wait)
     }
+
+    /** Takes back one [check]: for a request counted alongside its authentication, which then refused it. */
+    suspend fun undo(limit: Limit, subject: String) {
+        redis.incrementBy("rl:${limit.name}:$subject", -1, limit.window)
+    }
 }

@@ -12,6 +12,9 @@ import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import io.ktor.client.request.HttpRequestData
 import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import java.time.Duration
 import java.time.Instant
@@ -179,6 +182,15 @@ class CircleCustodyTest {
             circle.reply("GET /v1/w3s/wallets", """{"data":{"wallets":[]}}""")
             assertEquals(emptyList(), custody.wallets(user).data())
             assertEquals(2, circle.tokensIssued, "the fresh token is kept")
+        }
+
+    @Test
+    fun `calls at the same time for a user with no token yet share one token request`() =
+        runBlocking<Unit> {
+            circle.reply("GET /v1/w3s/wallets", """{"data":{"wallets":[]}}""")
+            val reads = (1..4).map { async(Dispatchers.Default) { custody.wallets(user) } }.awaitAll()
+            reads.forEach { assertEquals(emptyList(), it.data()) }
+            assertEquals(1, circle.tokensIssued)
         }
 
     @Test

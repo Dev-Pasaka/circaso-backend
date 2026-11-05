@@ -2,6 +2,9 @@ package com.circaso.integrations.impl.circle
 
 import com.circaso.shared.Resource
 import io.ktor.http.HttpMethod
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -12,7 +15,8 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Circle user tokens, kept in memory on this node until [REFRESH_BEFORE] their expiry, so a wallet screen that opens
  * three calls asks Circle for one token. A token lives 60 minutes; its own `exp` claim says exactly when it ends, and
- * 60 minutes from now is assumed if it can't be read. Two calls that miss at once both fetch, which is harmless.
+ * 60 minutes from now is assumed if it can't be read. Calls that miss at once share one fetch: the wallet screen
+ * reads its chains at the same time, and each would otherwise ask Circle for a token of its own.
  */
 internal class CircleUserTokens(private val client: CircleClient, private val clock: Clock) {
     class UserToken(val userToken: String, val encryptionKey: String, val expiresAt: Instant) {
@@ -20,12 +24,33 @@ internal class CircleUserTokens(private val client: CircleClient, private val cl
     }
 
     private val cache = ConcurrentHashMap<String, UserToken>()
+    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<Resource<UserToken>>>()
 
     suspend fun get(circleUserId: String): Resource<UserToken> {
         val now = clock.instant()
         cache[circleUserId]?.takeIf { now.isBefore(it.expiresAt.minus(REFRESH_BEFORE)) }?.let {
             return Resource.success(it)
         }
+        val mine = CompletableDeferred<Resource<UserToken>>()
+        val running = inFlight.putIfAbsent(circleUserId, mine)
+        if (running != null) {
+            // Another call is fetching this user's token: wait for its answer. If that call was cancelled or threw,
+            // fetch here instead, so one caller going away never fails the others.
+            val shared = runCatching { running.await() }.getOrNull()
+            currentCoroutineContext().ensureActive()
+            return shared ?: fetch(circleUserId, now)
+        }
+        try {
+            return fetch(circleUserId, now).also { mine.complete(it) }
+        } catch (e: Throwable) {
+            mine.completeExceptionally(e)
+            throw e
+        } finally {
+            inFlight.remove(circleUserId, mine)
+        }
+    }
+
+    private suspend fun fetch(circleUserId: String, now: Instant): Resource<UserToken> {
         val reply =
             client.write<UserTokenBody, UserTokenData>(
                 HttpMethod.Post,
