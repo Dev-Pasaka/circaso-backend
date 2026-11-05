@@ -26,6 +26,13 @@ class Palette(private val enabled: Boolean) {
 
     fun boldWhite(text: String) = paint("1;37", text)
 
+    /** The bright shades are kept for who sent a request (address, device, app), so it stands out from the rest. */
+    fun brightCyan(text: String) = paint("96", text)
+
+    fun brightMagenta(text: String) = paint("95", text)
+
+    fun brightBlue(text: String) = paint("94", text)
+
     private fun paint(code: String, text: String) = if (enabled) "\u001B[${code}m$text\u001B[0m" else text
 
     companion object {
