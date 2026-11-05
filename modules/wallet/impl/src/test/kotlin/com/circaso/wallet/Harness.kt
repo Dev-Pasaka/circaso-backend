@@ -203,7 +203,7 @@ class Harness(
             wallets,
             sync,
             outgoing,
-            IncomingUpdates(wallets, transactions, transactor, sent, profiles, ids),
+            IncomingUpdates(wallets, transactions, transactor, sent, profiles, ids, transfers),
             cache,
             warnings,
             clock,

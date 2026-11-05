@@ -81,12 +81,15 @@ internal fun decodeCursor(raw: String): HistoryPosition? =
 
 fun HistoryPage.toResponse() = TransactionsResponse(entries.map { it.toDto() }, next?.let(::encodeCursor))
 
-/** `origin` only on `OUT`, as in W5: how the sender started a payment is the sender's to know. */
+/**
+ * `origin` only on `OUT`, as in W5: how the sender started a payment is the sender's to know. `transferId` is the
+ * `OUT` row's own transfer, or on an `IN` row the Circaso transfer that paid it once linked (2026-11-05).
+ */
 private fun HistoryEntry.toDto(): TransactionDto {
     val amount = Amounts.of(transaction.amount)
     return TransactionDto(
         id = transaction.id.toString(),
-        transferId = transaction.transferId,
+        transferId = transaction.transferId ?: transaction.paidByTransferId,
         direction = transaction.direction.name,
         state = transaction.state.name,
         blockchain = transaction.blockchain,

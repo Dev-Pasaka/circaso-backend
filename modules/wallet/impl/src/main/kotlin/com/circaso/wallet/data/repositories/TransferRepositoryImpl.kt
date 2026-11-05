@@ -239,7 +239,34 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                 }.toList()
         }
 
+    override suspend fun paidTo(
+        recipientId: UserId,
+        senderWalletId: String,
+        blockchain: String,
+        amountMinor: Long,
+        createdAfter: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        database.tx("transfers.paid-to") {
+            TransfersTable
+                .selectAll()
+                .where {
+                    (TransfersTable.recipientId eq recipientId.value) and
+                        (TransfersTable.senderWalletId eq senderWalletId) and
+                        (TransfersTable.createdAt greaterEq createdAfter) and
+                        (TransfersTable.blockchain eq blockchain) and
+                        (TransfersTable.amountMinor eq amountMinor) and
+                        (TransfersTable.state inList PAID)
+                }.orderBy(TransfersTable.createdAt to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toTransfer() }
+                .toList()
+        }
+
     private companion object {
+        /** A transfer that may have reached its recipient: signed, on its way or on chain. */
+        val PAID = listOf(TransferState.SUBMITTED, TransferState.CONFIRMED).map { it.name }
+
         /** A split payment Circle may still settle (`transfers_unsettled_split_idx`). */
         val UNSETTLED = listOf(TransferState.AWAITING_SIGNATURE, TransferState.EXPIRED).map { it.name }
 
