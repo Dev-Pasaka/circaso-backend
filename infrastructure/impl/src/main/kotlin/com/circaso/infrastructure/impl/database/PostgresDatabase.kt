@@ -6,7 +6,6 @@ import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.PartitionChanges
 import com.circaso.infrastructure.impl.logging.kv
-import com.circaso.infrastructure.impl.logging.millisSince
 import com.circaso.shared.EventEnvelope
 import io.r2dbc.postgresql.api.PostgresqlException
 import io.r2dbc.spi.R2dbcException
@@ -26,10 +25,27 @@ import kotlin.coroutines.CoroutineContext
 
 private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.database.Transactions")
 
+private const val NANOS_PER_MILLI = 1_000_000L
+
 /** The transaction a coroutine is inside, so a repository called within a use case's transaction joins it. */
-private class OpenTransaction(val schema: String, val transaction: R2dbcTransaction) :
+private class OpenTransaction(val schema: String, val transaction: R2dbcTransaction, durable: Boolean) :
     AbstractCoroutineContextElement(Key) {
     object Key : CoroutineContext.Key<OpenTransaction>
+
+    /** False while the transaction commits without waiting for the WAL flush (`Database.tx(durable = false)`). */
+    @Volatile
+    var durable: Boolean = durable
+        private set
+
+    /**
+     * Makes a relaxed transaction durable again, for a durable call or an outbox write that joins it: one statement,
+     * once, and only in the rare transaction that mixes the two.
+     */
+    suspend fun requireDurable() {
+        if (durable) return
+        transaction.exec("SET LOCAL synchronous_commit = on")
+        durable = true
+    }
 }
 
 /**
@@ -67,15 +83,22 @@ class ModuleDatabase(
 
     private val outboxTable by lazy { OutboxTable(schema) }
 
-    override suspend fun <T> tx(operation: String, block: suspend R2dbcTransaction.() -> T): T {
+    override suspend fun <T> tx(
+        operation: String,
+        durable: Boolean,
+        block: suspend R2dbcTransaction.() -> T,
+    ): T {
         val context = currentCoroutineContext()
         context[OpenTransaction.Key]?.let { open ->
             check(open.schema == schema) {
                 "A '$schema' transaction can't open inside a '${open.schema}' one: no transaction spans two modules"
             }
-            return withoutValues(operation) { open.transaction.block() }
+            return withoutValues(operation) {
+                if (durable) open.requireDurable()
+                open.transaction.block()
+            }
         }
-        return run(pools.forWork(context), operation, block)
+        return run(pools.forWork(context), operation, durable, block)
     }
 
     override suspend fun writeOutbox(envelope: EventEnvelope) {
@@ -84,56 +107,99 @@ class ModuleDatabase(
                 "writeOutbox belongs inside the transaction that makes the change"
             }
         check(open.schema == schema) { "'$schema' can't write its outbox inside a '${open.schema}' transaction" }
-        withoutValues("outbox.write") { outboxTable.write(envelope) }
+        withoutValues("outbox.write") {
+            // An event is a promise to other modules: it is never written by a commit that may not survive a crash.
+            open.requireDurable()
+            outboxTable.write(envelope)
+        }
     }
 
+    /**
+     * One transaction, in three round trips for one statement: the begin (`BEGIN`, `SET LOCAL ROLE`, and the
+     * durability when relaxed, sent together by [OneTripBegin]), the statement, the `COMMIT`. The borrow itself checks
+     * the connection locally, without a query.
+     */
     private suspend fun <T> run(
         pool: Pool,
         operation: String,
+        durable: Boolean,
         block: suspend R2dbcTransaction.() -> T,
     ): T {
         val started = System.nanoTime()
         var transaction: R2dbcTransaction? = null
+        var begin: ModuleTransaction? = null
         var outcome = "rollback"
+        var starved = false
         try {
             val result =
                 suspendTransaction(db = pool.exposed) {
                     transaction = this
-                    exec("SET LOCAL ROLE ${quoted(schema)}")
-                    withContext(OpenTransaction(schema, this)) { block() }
+                    // Before the first statement borrows the connection: the begin carries the role and durability.
+                    val definition = ModuleTransaction(schema, durable, transactionIsolation, readOnly)
+                    connection().setTransactionDefinition(definition)
+                    begin = definition
+                    withContext(OpenTransaction(schema, this, durable)) { block() }
                 }
             outcome = "commit"
             return result
         } catch (e: Exception) {
-            if (e.isAcquireTimeout()) throw pool.unavailable(e)
+            if (e.isAcquireTimeout()) {
+                starved = true
+                throw pool.unavailable(e)
+            }
             throw e.withoutValues(operation)
         } finally {
-            // The role switch is ours, not the caller's: it isn't counted.
-            val statements = ((transaction?.statementCount ?: 1) - 1).coerceAtLeast(0)
-            logLine(pool, operation, statements, 0L.millisSince(started), outcome)
+            val totalNanos = System.nanoTime() - started
+            // No borrow recorded: the pool never handed one over (the acquire timed out), so it was all waiting.
+            val waitNanos = begin?.waitNanos?.takeIf { it >= 0 } ?: if (starved) totalNanos else 0L
+            logLine(pool, operation, durable, transaction?.statementCount ?: 0, totalNanos, waitNanos, outcome)
         }
     }
 
+    @Suppress("LongParameterList")
     private fun logLine(
         pool: Pool,
         operation: String,
+        durable: Boolean,
         statements: Int,
-        durationMs: Long,
+        totalNanos: Long,
+        waitNanos: Long,
         outcome: String,
     ) {
+        val durationMs = totalNanos / NANOS_PER_MILLI
         val slow = durationMs > pool.settings.slowAfter.toMillis()
         if (!slow && !log.isDebugEnabled) return
+        val waitMs = waitNanos / NANOS_PER_MILLI
+        val execMs = (totalNanos - waitNanos).coerceAtLeast(0) / NANOS_PER_MILLI
         val fields =
-            arrayOf(
+            listOfNotNull(
                 kv("kind", "db.tx"),
                 kv("operation", operation),
                 kv("schema", schema),
                 kv("pool", pool.name),
                 kv("statements", statements),
                 kv("durationMs", durationMs),
+                kv("waitMs", waitMs),
+                kv("execMs", execMs),
                 kv("outcome", outcome),
-            )
-        if (slow) log.warn("slow transaction", *fields) else log.debug("transaction", *fields)
+                if (durable) null else kv("durable", false),
+            ).toTypedArray()
+        when {
+            !slow -> {
+                log.debug("transaction", *fields)
+            }
+
+            waitNanos >= totalNanos - waitNanos -> {
+                log.warn(
+                    "slow transaction: waiting for a pooled connection",
+                    *fields,
+                )
+            }
+
+            else -> {
+                log.warn("slow transaction: in the database", *fields)
+            }
+        }
     }
 
     override suspend fun purgeExpired(table: String, chunk: Int): Int {

@@ -26,6 +26,37 @@ class PostgresSettingsTest {
     }
 
     @Test
+    fun `the pools open full and stay full, idle connections are kept, and every size can be tuned`() {
+        val defaults = settings(emptyMap())
+
+        assertEquals(listOf(10, 10, 10), defaults.app.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
+        assertEquals(listOf(3, 3, 3), defaults.jobs.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
+        assertNull(defaults.timings.maxIdleTime, "an idle connection is never closed")
+        assertEquals(Duration.ofMinutes(30), defaults.timings.maxLifeTime)
+        assertEquals(Duration.ofSeconds(5), defaults.timings.maintenanceInterval)
+
+        val tuned =
+            settings(
+                mapOf(
+                    "DATABASE_POOL_APP_SIZE" to "20",
+                    "DATABASE_POOL_APP_INITIAL_SIZE" to "5",
+                    "DATABASE_POOL_APP_MIN_IDLE" to "8",
+                    "DATABASE_POOL_JOBS_SIZE" to "2",
+                    "DATABASE_POOL_JOBS_MIN_IDLE" to "9", // more than the pool holds: capped at its size
+                    "DATABASE_POOL_MAX_IDLE_MS" to "60000",
+                    "DATABASE_POOL_MAX_LIFE_MS" to "600000",
+                    "DATABASE_POOL_MAINTENANCE_MS" to "1000",
+                ),
+            )
+        assertEquals(listOf(20, 5, 8), tuned.app.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
+        assertEquals(listOf(2, 2, 2), tuned.jobs.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
+        assertEquals(Duration.ofMinutes(1), tuned.timings.maxIdleTime)
+        assertEquals(Duration.ofMinutes(10), tuned.timings.maxLifeTime)
+        assertEquals(Duration.ofSeconds(1), tuned.timings.maintenanceInterval)
+        assertNull(settings(mapOf("DATABASE_POOL_MAX_IDLE_MS" to "0")).timings.maxIdleTime, "0 also means never")
+    }
+
+    @Test
     fun `TLS is verified outside local, and switched off only where it is configured so`() {
         assertEquals("disable", settings(mapOf("CIRCASO_ENV" to "local")).sslMode)
         assertEquals("verify-full", settings(mapOf("CIRCASO_ENV" to "staging")).sslMode)

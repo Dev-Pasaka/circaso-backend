@@ -24,6 +24,8 @@ import io.r2dbc.spi.ConnectionFactoryMetadata
 import io.r2dbc.spi.ConnectionFactoryOptions
 import io.r2dbc.spi.IsolationLevel
 import io.r2dbc.spi.Option
+import io.r2dbc.spi.TransactionDefinition
+import io.r2dbc.spi.ValidationDepth
 import io.r2dbc.spi.Wrapped
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import org.jetbrains.exposed.v1.core.SqlLogger
@@ -34,9 +36,13 @@ import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabase
 import org.jetbrains.exposed.v1.r2dbc.R2dbcDatabaseConfig
 import org.reactivestreams.Publisher
 import org.slf4j.LoggerFactory
+import reactor.core.Disposable
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.pool.PooledRefMetadata
 import java.time.Duration
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -56,9 +62,40 @@ internal object OnJobsPool : AbstractCoroutineContextElement(Key) {
  * One r2dbc-pool `ConnectionPool` and the one Exposed `R2dbcDatabase` built over it (connected once: connecting again
  * leaks). Nothing here blocks a thread: a transaction waiting for a connection suspends in the pool's queue, and gives
  * up after the pool's acquire timeout.
+ *
+ * Every [maintenanceInterval] the pool tops itself up to its `minIdle` in the background, so a connection retired by
+ * its lifetime (or lost with its socket) is replaced before a request needs it, not by the request.
  */
-class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCloseable {
+class Pool(val settings: PoolSettings, val connections: ConnectionPool, maintenanceInterval: Duration? = null) :
+    AutoCloseable {
     val name: String get() = settings.name
+
+    private val maintenance: Disposable? =
+        maintenanceInterval?.takeIf { settings.minIdle > 0 }?.let { interval ->
+            val failing = AtomicBoolean(false)
+            Flux
+                .interval(interval, interval)
+                .onBackpressureDrop()
+                .concatMap(
+                    {
+                        connections
+                            .warmup()
+                            .doOnNext { opened ->
+                                if (failing.getAndSet(false)) log.info("pool refills again", *poolFields())
+                                if (opened > 0) log.debug("pool refilled", *poolFields(), kv("opened", opened))
+                            }.onErrorResume { e ->
+                                // Once per outage, not every tick; the next transaction fails on its own anyway.
+                                if (!failing.getAndSet(true)) {
+                                    log.warn("pool can't refill", *poolFields(), kv("error", e.javaClass.simpleName))
+                                }
+                                Mono.empty()
+                            }
+                    },
+                    1,
+                ).subscribe()
+        }
+
+    private fun poolFields() = arrayOf(kv("kind", "db.pool"), kv("pool", name), kv("idle", metrics?.idleSize()))
 
     val exposed: R2dbcDatabase =
         R2dbcDatabase.connect(
@@ -88,6 +125,7 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
     }
 
     override fun close() {
+        maintenance?.dispose()
         connections.dispose()
     }
 
@@ -100,19 +138,31 @@ class Pool(val settings: PoolSettings, val connections: ConnectionPool) : AutoCl
             settings: PoolSettings,
             timings: PoolTimings,
         ): Pool {
-            val factory = ConnectionFactories.get(connectionOptions(url, sslMode, sslRootCert, settings))
+            val factory = OneTripBegin(ConnectionFactories.get(connectionOptions(url, sslMode, sslRootCert, settings)))
+            // r2dbc-pool keeps max(initialSize, minIdle) connections at least, and opens that many at warm-up.
+            val least = maxOf(settings.initialSize, settings.minIdle)
             val configuration =
                 ConnectionPoolConfiguration
                     .builder(factory)
                     .name(settings.name)
-                    .initialSize(minOf(settings.initialSize, settings.maxSize))
+                    .initialSize(settings.initialSize)
+                    .minIdle(settings.minIdle)
                     .maxSize(settings.maxSize)
                     .maxAcquireTime(settings.maxAcquireTime)
                     .maxIdleTime(timings.maxIdleTime)
                     .maxLifeTime(timings.maxLifeTime)
-                    .validationQuery("SELECT 1")
-                    .build()
-            return Pool(settings, ConnectionPool(configuration))
+                    // Retired connections are closed by a background sweep; the refill (Pool.maintenance) follows.
+                    .backgroundEvictionInterval(timings.maintenanceInterval)
+                    // A borrow checks the socket is open, locally: no `SELECT 1` round trip before every transaction.
+                    // A connection that died quietly is caught by tcpKeepAlive and its lifetime, and one whose server
+                    // went away fails its statement and is closed by the driver.
+                    .validationDepth(ValidationDepth.LOCAL)
+                    .customizer { pool ->
+                        // Opens up to four at once, so a deploy fills the pool in a few connection times.
+                        pool.sizeBetween(least, settings.maxSize, least.coerceIn(1, 4))
+                        pool.evictionPredicate(Retirement(timings)::due)
+                    }.build()
+            return Pool(settings, ConnectionPool(configuration), timings.maintenanceInterval)
         }
 
         /**
@@ -175,7 +225,11 @@ class PostgresPools(
     /** The jobs pool for background work ([OnJobsPool]), the app pool for everything else. */
     fun forWork(context: CoroutineContext): Pool = if (context[OnJobsPool.Key] != null) jobs else app
 
-    /** Opens both pools now and fills them to their initial size; fails if the database can't be reached. */
+    /**
+     * Opens both pools now and fills them to their initial size (by default full), so the first requests after a deploy
+     * don't make connections; fails if the database can't be reached. From then on each pool keeps itself at its
+     * `minIdle` in the background.
+     */
     suspend fun open() {
         app.connections.warmup().awaitFirstOrNull()
         jobs.connections.warmup().awaitFirstOrNull()
@@ -189,6 +243,7 @@ class PostgresPools(
                 kv("kind", "db.pool"),
                 kv("pool", pool.name),
                 kv("maxSize", pool.maxSize),
+                kv("minIdle", pool.minIdle),
                 kv("user", pool.user),
             )
         }
@@ -223,17 +278,55 @@ class PostgresPools(
  * out connections that ignore the per-statement call. Everything else goes straight through.
  */
 private class TimeoutsFromTheConnection(private val pool: ConnectionPool) : ConnectionFactory {
-    override fun create(): Publisher<out Connection> = Mono.from(pool.create()).map { IgnoresStatementTimeout(it) }
+    override fun create(): Publisher<out Connection> =
+        Mono.defer {
+            val asked = System.nanoTime()
+            Mono.from(pool.create()).map { IgnoresStatementTimeout(it, waitNanos = System.nanoTime() - asked) }
+        }
 
     override fun getMetadata(): ConnectionFactoryMetadata = pool.metadata
 }
 
-private class IgnoresStatementTimeout(private val connection: Connection) :
+/**
+ * A borrowed connection as Exposed sees it: the per-statement timeout call is dropped, and a [ModuleTransaction]
+ * learns how long the borrow took ([waitNanos]) when it begins.
+ */
+private class IgnoresStatementTimeout(private val connection: Connection, private val waitNanos: Long) :
     Connection by connection,
     Wrapped<Connection> {
     override fun setStatementTimeout(timeout: Duration): Publisher<Void> = Mono.empty()
 
+    override fun beginTransaction(definition: TransactionDefinition): Publisher<Void> {
+        (definition as? ModuleTransaction)?.waitNanos = waitNanos
+        return connection.beginTransaction(definition)
+    }
+
     override fun unwrap(): Connection = connection
+}
+
+/**
+ * When a pooled connection is retired: idle past [PoolTimings.maxIdleTime] (if set), or past its own lifetime, which
+ * is [PoolTimings.maxLifeTime] less up to [PoolTimings.LIFETIME_SPREAD] of it, fixed per connection. The pool opens
+ * all its connections together at start; without the spread they would all retire in one sweep, 30 minutes on.
+ */
+internal class Retirement(private val timings: PoolTimings) {
+    fun lifetimeMillis(connection: Any): Long {
+        val life = timings.maxLifeTime.toMillis()
+        val share = Math.floorMod(System.identityHashCode(connection) * SPREAD_HASH, PERMILLE) / PERMILLE.toDouble()
+        return life - (life * PoolTimings.LIFETIME_SPREAD * share).toLong()
+    }
+
+    fun due(connection: Connection, metadata: PooledRefMetadata): Boolean {
+        val idleCut = timings.maxIdleTime?.toMillis()
+        return (idleCut != null && metadata.idleTime() >= idleCut) || metadata.lifeTime() >= lifetimeMillis(connection)
+    }
+
+    private companion object {
+        const val PERMILLE = 1000
+
+        /** Spreads neighbouring identity hashes over the range (Knuth's multiplicative constant, as an Int). */
+        const val SPREAD_HASH = -1640531535
+    }
 }
 
 /** r2dbc-pool's acquire timeout: no connection came free within `maxAcquireTime`. */
