@@ -26,8 +26,11 @@ import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
 import com.circaso.users.api.ReachPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import java.time.Clock
 import java.time.Instant
@@ -62,12 +65,11 @@ class SendMessage(
 ) {
     suspend operator fun invoke(command: SendMessageCommand): Resource<SentMessage> {
         if (tooLarge(command)) return Resource.error(MessagingError.MessageTooLarge)
-        val chat = chats.chat(command.chatId) ?: return Resource.error(MessagingError.ChatNotFound)
-        val members = membership.members(command.chatId)
-        if (command.sender !in members) return Resource.error(MessagingError.ChatNotFound)
-        val others = members - command.sender
-        val problem = check(chat, command, others)
-        if (problem != null) return Resource.error(problem)
+        val (chat, others) =
+            when (val allowed = supervisorScope { authorize(command) }) {
+                is Resource.Error -> return allowed
+                is Resource.Success -> allowed.data
+            }
 
         val messageId = ids.next()
         val sentAt = sentAt(messageId)
@@ -111,6 +113,45 @@ class SendMessage(
         }
     }
 
+    /**
+     * The chat and the other members, or the send's refusal. The chat row (a transaction), the members (the cache,
+     * the rows on a miss) and, for a request shaped as a direct message by a member, reach both ways are read at
+     * once rather than one after another; the answers are then judged in the order they always were, so the same
+     * request gets the same error. A read whose answer isn't needed is cancelled, and its failure never surfaces,
+     * as when it was never made: in a supervisor scope only an awaited read's failure is the send's.
+     */
+    private suspend fun CoroutineScope.authorize(command: SendMessageCommand): Resource<Pair<Chat, Set<UserId>>> {
+        val members = async { membership.members(command.chatId) }
+        val reach = async { directReach(command, members.await()) }
+        val chat = chats.chat(command.chatId)
+        if (chat == null) {
+            members.cancel()
+            reach.cancel()
+            return Resource.error(MessagingError.ChatNotFound)
+        }
+        val all = members.await()
+        if (command.sender !in all) {
+            reach.cancel()
+            return Resource.error(MessagingError.ChatNotFound)
+        }
+        val others = all - command.sender
+        val problem = check(chat, command, others, reach)
+        reach.cancel()
+        return if (problem != null) Resource.error(problem) else Resource.success(chat to others)
+    }
+
+    /**
+     * Reach both ways, read early, for a request a direct chat would take: no group ciphertext, not a sender key, one
+     * recipient, and the sender and that recipient the chat's only members. Null for any other request. Whether the
+     * chat is direct (and not a space's) is only known once its row is read; [canWrite] uses this answer only then.
+     */
+    private suspend fun directReach(command: SendMessageCommand, members: Set<UserId>): Boolean? {
+        val shapedDirect = command.ciphertext == null && command.kind != MessageKind.SENDER_KEY
+        val recipient = command.recipients.singleOrNull()?.userId ?: return null
+        if (!shapedDirect || members != setOf(command.sender, recipient)) return null
+        return reachableBothWays(command.sender, recipient)
+    }
+
     private fun tooLarge(command: SendMessageCommand): Boolean {
         val texts = listOfNotNull(command.ciphertext) + command.recipients.map { it.ciphertext }
         return texts.any { decodedSize(it) > config.maxCiphertextBytes }
@@ -121,12 +162,13 @@ class SendMessage(
         chat: Chat,
         command: SendMessageCommand,
         others: Set<UserId>,
+        reach: Deferred<Boolean?>,
     ): DomainError? {
         val perRecipient = chat.kind == ChatKind.DIRECT || command.kind == MessageKind.SENDER_KEY
         if (!perRecipient) return groupCheck(command)
         if (command.ciphertext != null) return malformed("ciphertext", "goes in recipients for this message")
         if (!recipientsMatch(chat, command, others)) return MessagingError.RecipientsMismatch
-        if (chat.kind == ChatKind.DIRECT && !canWrite(chat, command.sender, others.single())) {
+        if (chat.kind == ChatKind.DIRECT && !canWrite(chat, command.sender, others.single(), reach)) {
             return MessagingError.NotReachable
         }
         return null
@@ -152,18 +194,37 @@ class SendMessage(
             else -> null
         }
 
-    private suspend fun reachableBothWays(sender: UserId, other: UserId) =
-        reach.canReach(sender, other) && reach.canReach(other, sender)
+    /** Both directions at once; the second is cancelled, and never fails the send, once the first says no. */
+    private suspend fun reachableBothWays(sender: UserId, other: UserId): Boolean =
+        bothTrue({ reach.canReach(sender, other) }, { reach.canReach(other, sender) })
 
-    /** A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways. */
+    /**
+     * A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways, from
+     * [early] when that read was made for this pair (`recipientsMatch` has checked that [other] is the recipient).
+     */
     private suspend fun canWrite(
         chat: Chat,
         sender: UserId,
         other: UserId,
+        early: Deferred<Boolean?>,
     ): Boolean {
-        val via = chat.viaSpaceId ?: return reachableBothWays(sender, other)
-        return spaceChats?.allowed(via, sender, other) == true && !reach.blockedEitherWay(sender, other)
+        val via = chat.viaSpaceId ?: return early.await() ?: reachableBothWays(sender, other)
+        early.cancel()
+        val spaces = spaceChats ?: return false
+        return bothTrue({ spaces.allowed(via, sender, other) }, { !reach.blockedEitherWay(sender, other) })
     }
+
+    /** `first() && second()`, the two read at once. */
+    private suspend fun bothTrue(first: suspend () -> Boolean, second: suspend () -> Boolean): Boolean =
+        supervisorScope {
+            val later = async { second() }
+            if (!first()) {
+                later.cancel()
+                false
+            } else {
+                later.await()
+            }
+        }
 
     private fun fanout(
         chat: Chat,

@@ -2,13 +2,13 @@ package com.circaso.messaging.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
-import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.data.tables.ChatHeadsTable
 import com.circaso.messaging.data.tables.ChatsTable
 import com.circaso.messaging.data.tables.MembersTable
-import com.circaso.messaging.data.tables.MessageRecordsTable
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.ChatLine
+import com.circaso.messaging.domain.models.ChatListing
 import com.circaso.messaging.domain.models.ChatSettings
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
@@ -21,14 +21,13 @@ import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.v1.core.JoinType
-import org.jetbrains.exposed.v1.core.Op
-import org.jetbrains.exposed.v1.core.QueryAlias
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.alias
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.inSubQuery
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
@@ -45,7 +44,10 @@ import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.updateReturning
 import java.util.UUID
 
-/** Chats and membership over `chats` and `members`; the chat list is `members` read by user through its index. */
+/**
+ * Chats and membership over `chats`, `members` and `chat_heads`; the chat list is `members` read by user through its
+ * index, each chat's newest message its `chat_heads` row.
+ */
 class ChatRepositoryImpl(private val database: Database) : ChatRepository {
     override suspend fun chat(chatId: ChatId): Chat? =
         database.tx("chats.find") {
@@ -142,7 +144,10 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
         }
 
     override suspend fun deleteChat(chatId: ChatId) {
-        database.tx("chats.delete") { ChatsTable.deleteWhere { ChatsTable.chatId eq chatId.value } }
+        database.tx("chats.delete") {
+            ChatsTable.deleteWhere { ChatsTable.chatId eq chatId.value }
+            ChatHeadsTable.deleteWhere { ChatHeadsTable.chatId eq chatId.value }
+        }
     }
 
     override suspend fun members(chatId: ChatId): List<Member> = members(listOf(chatId))[chatId].orEmpty()
@@ -201,21 +206,45 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
         }
 
     /**
-     * `members JOIN chats LEFT JOIN LATERAL (newest MESSAGE record of the chat LIMIT 1)`: one query for the whole
-     * list, each chat's last message read backwards through `message_records_chat_idx`.
+     * `members JOIN chats LEFT JOIN chat_heads`, every side by key: one query whose cost follows the user's chats,
+     * never the days of messages kept (each chat's newest message is its `chat_heads` row, not a probe into every
+     * daily partition of `message_records`).
      */
-    override suspend fun chatList(userId: UserId): List<ChatLine> =
-        database.tx("chats.list") {
-            val last = newestMessage()
-            MembersTable
-                .join(ChatsTable, JoinType.INNER, MembersTable.chatId, ChatsTable.chatId)
-                .join(last, JoinType.LEFT, lateral = true, additionalConstraint = { Op.TRUE })
-                .select(ChatsTable.columns + last[MessageRecordsTable.messageId])
-                .where { MembersTable.userId eq userId.value }
-                .orderBy(ChatsTable.chatId to SortOrder.ASC)
-                .map { ChatLine(it.toChat(), it[last[MessageRecordsTable.messageId]]) }
-                .toList()
+    override suspend fun chatList(userId: UserId): List<ChatLine> = database.tx("chats.list") { lines(userId) }
+
+    /**
+     * The list, then the members of the user's chats (`members WHERE chat_id IN (the user's chat ids)`, both through
+     * the members indexes), as two statements of one transaction. Only the members of chats on the list are kept, so
+     * a chat joined between the two statements waits for the next read.
+     */
+    override suspend fun chatListWithMembers(userId: UserId): ChatListing =
+        database.tx("chats.list-with-members") {
+            val lines = lines(userId)
+            val listed = lines.mapTo(HashSet()) { it.chat.chatId }
+            val mine =
+                MembersTable
+                    .select(MembersTable.chatId)
+                    .where { MembersTable.userId eq userId.value }
+            val members =
+                MembersTable
+                    .selectAll()
+                    .where { MembersTable.chatId inSubQuery mine }
+                    .map { it.toMember() }
+                    .toList()
+                    .filter { it.chatId in listed }
+                    .groupBy { it.chatId }
+            ChatListing(lines, members)
         }
+
+    private suspend fun lines(userId: UserId): List<ChatLine> =
+        MembersTable
+            .join(ChatsTable, JoinType.INNER, MembersTable.chatId, ChatsTable.chatId)
+            .join(ChatHeadsTable, JoinType.LEFT, ChatsTable.chatId, ChatHeadsTable.chatId)
+            .select(ChatsTable.columns + ChatHeadsTable.lastMessageId)
+            .where { MembersTable.userId eq userId.value }
+            .orderBy(ChatsTable.chatId to SortOrder.ASC)
+            .map { ChatLine(it.toChat(), it.getOrNull(ChatHeadsTable.lastMessageId)) }
+            .toList()
 
     override suspend fun chatIdsOf(userId: UserId): List<ChatId> =
         database.tx("chats.ids-of") {
@@ -243,16 +272,13 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
                 }.singleOrNull()
         }
 
+    /** The chat's `chat_heads` row, by key. */
     override suspend fun lastMessageId(chatId: ChatId): UUID? =
         database.tx("chats.last-message") {
-            MessageRecordsTable
-                .select(MessageRecordsTable.messageId)
-                .where {
-                    (MessageRecordsTable.chatId eq chatId.value) and
-                        (MessageRecordsTable.kind eq MessageKind.MESSAGE.name)
-                }.orderBy(MessageRecordsTable.messageId to SortOrder.DESC)
-                .limit(1)
-                .map { it[MessageRecordsTable.messageId] }
+            ChatHeadsTable
+                .select(ChatHeadsTable.lastMessageId)
+                .where { ChatHeadsTable.chatId eq chatId.value }
+                .map { it[ChatHeadsTable.lastMessageId] }
                 .singleOrNull()
         }
 
@@ -288,17 +314,6 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
                 .toList()
                 .isNotEmpty()
         }
-
-    /** The newest `MESSAGE` record of the outer query's chat: the right side of M6's lateral join. */
-    private fun newestMessage(): QueryAlias =
-        MessageRecordsTable
-            .select(MessageRecordsTable.messageId)
-            .where {
-                (MessageRecordsTable.chatId eq ChatsTable.chatId) and
-                    (MessageRecordsTable.kind eq MessageKind.MESSAGE.name)
-            }.orderBy(MessageRecordsTable.messageId to SortOrder.DESC)
-            .limit(1)
-            .alias("last_message")
 }
 
 /** The columns every rewrite of a chat carries; ids, creation and the version are set by the caller. */

@@ -7,6 +7,7 @@ import com.circaso.messaging.data.cache.RedisPresenceWatchers
 import com.circaso.messaging.domain.models.RecipientCopy
 import com.circaso.messaging.domain.models.SendMessageCommand
 import com.circaso.messaging.domain.models.SentMessage
+import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.support.ChatPresence
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
@@ -30,6 +31,7 @@ import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.services.PhoneFrameService
 import com.circaso.messaging.presentation.services.PresenceService
 import com.circaso.shared.UserId
+import com.circaso.users.api.ReachPolicy
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -59,11 +61,14 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
     private val removal = InboxRemoval(delivery, pending)
     private val senders = MessageSenders(delivery)
 
-    val sendMessage =
+    val sendMessage = sendMessageOver()
+
+    /** A send over these fakes, with the chat rows and reach swapped for wrappers that watch or slow them. */
+    fun sendMessageOver(rows: ChatRepository = chats.chats, reach: ReachPolicy = chats.reach) =
         SendMessage(
-            chats.chats,
+            rows,
             chats.membership,
-            chats.reach,
+            reach,
             delivery,
             chats.transactor,
             pending,
@@ -73,6 +78,7 @@ class DeliveryHarness(val config: MessagingConfig = MessagingConfig()) {
             config,
             chats.clock,
         )
+
     val readInbox = ReadInbox(delivery, config)
     val ackDelivered = AckDelivered(delivery, removal, batcher, chats.clock)
     val markRead = MarkRead(chats.chats, delivery, senders, batcher, chats.clock)

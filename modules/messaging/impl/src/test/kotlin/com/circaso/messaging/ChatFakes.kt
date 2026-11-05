@@ -6,6 +6,7 @@ import com.circaso.messaging.api.MessagingFrame
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.ChatLine
+import com.circaso.messaging.domain.models.ChatListing
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.MessageRecord
 import com.circaso.messaging.domain.models.UserChat
@@ -151,6 +152,11 @@ class MemoryChats : ChatRepository {
 
     override suspend fun chatList(userId: UserId): List<ChatLine> =
         chatIdsOf(userId).mapNotNull { chatId -> chats[chatId]?.let { ChatLine(it, lastMessageId(chatId)) } }
+
+    override suspend fun chatListWithMembers(userId: UserId): ChatListing {
+        val lines = chatList(userId)
+        return ChatListing(lines, members(lines.map { it.chat.chatId }))
+    }
 
     override suspend fun chatIdsOf(userId: UserId): List<ChatId> =
         synchronized(this) { members.filterValues { userId in it }.keys.toList() }

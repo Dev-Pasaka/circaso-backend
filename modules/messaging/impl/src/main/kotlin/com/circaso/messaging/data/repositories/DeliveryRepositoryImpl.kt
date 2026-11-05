@@ -72,17 +72,13 @@ class DeliveryRepositoryImpl(private val database: Database, private val clock: 
                 .singleOrNull()
         }
 
-    /** The record, the body and the inbox rows; the rows as one multi-row `INSERT` (Messaging → Fan-out). */
+    /**
+     * The body, the inbox rows (one multi-row `INSERT`, Messaging → Fan-out) and the record. The record goes last: its
+     * insert moves the chat's `chat_heads` row (a trigger, no round trip of its own), and that row stays locked until
+     * the commit, so the next send to the same chat waits only for this commit, not for this whole write.
+     */
     override suspend fun writeMessage(fanout: Fanout) {
         database.tx("messages.write") {
-            val record = fanout.record
-            MessageRecordsTable.insert {
-                it[messageId] = record.messageId
-                it[chatId] = record.chatId.value
-                it[senderId] = record.senderId.value
-                it[kind] = record.kind.name
-                it[sentAt] = record.sentAt
-            }
             fanout.body?.let { body ->
                 GroupMessagesTable.insert {
                     it[chatId] = body.chatId.value
@@ -103,6 +99,14 @@ class DeliveryRepositoryImpl(private val database: Database, private val clock: 
                     this[InboxTable.mediaIds] = it.mediaIds
                     this[InboxTable.sentAt] = it.sentAt
                 }
+            }
+            val record = fanout.record
+            MessageRecordsTable.insert {
+                it[messageId] = record.messageId
+                it[chatId] = record.chatId.value
+                it[senderId] = record.senderId.value
+                it[kind] = record.kind.name
+                it[sentAt] = record.sentAt
             }
         }
     }

@@ -84,6 +84,9 @@ data class UserChat(
  */
 data class ChatLine(val chat: Chat, val lastMessageId: UUID?)
 
+/** M6 in one read: the user's chat lines and every member of each of those chats. */
+data class ChatListing(val lines: List<ChatLine>, val members: Map<ChatId, List<Member>>)
+
 data class MemberView(val profile: PublicProfile, val role: Role, val joinedAt: Instant)
 
 /**
