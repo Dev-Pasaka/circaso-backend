@@ -318,6 +318,23 @@ class FeeTest {
             assertEquals("wallet.custody_unavailable", h.quote(amina, Payee.Person(bob), 100 * usdc).code())
         }
 
+    @Test
+    fun `the gas estimate and the balance are asked of Circle at once, with the same answer as one after the other`() =
+        runBlocking<Unit> {
+            ready()
+            val inTurn = quoteBob(100 * usdc)
+            h.clock.advance(Duration.ofMinutes(2)) // past the kept estimate, so Circle is asked again
+            h.custody.estimateTakeMillis = 200
+            h.custody.balancesTakeMillis = 50
+
+            val atOnce = quoteBob(100 * usdc)
+
+            assertTrue(h.custody.balanceDuringEstimate, "the balance was read while the estimate was in flight")
+            assertEquals(inTurn.fee.amountMinor, atOnce.fee.amountMinor)
+            assertEquals(inTurn.totalMinor, atOnce.totalMinor)
+            assertEquals(inTurn.maxAmountMinor, atOnce.maxAmountMinor)
+        }
+
     // ---- the ledger ----
 
     @Test

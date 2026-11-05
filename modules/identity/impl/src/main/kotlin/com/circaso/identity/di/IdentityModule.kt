@@ -300,5 +300,5 @@ fun identityModule(config: Config): Module =
         single<PushRegistrations> { PushRegistrationsImpl(get()) }
 
         // read-only, run at start-up before the app reports ready
-        single<WarmUp>(named("identity.warm-up")) { IdentityWarmUp(get(), get(), get(), get(), get()) }
+        single<WarmUp>(named("identity.warm-up")) { IdentityWarmUp(get(), get(), get(), get(), get(), get()) }
     }

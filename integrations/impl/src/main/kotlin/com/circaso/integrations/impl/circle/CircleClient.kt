@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.IDEMPOTENCY_KEY_HEADER
 import com.circaso.infrastructure.api.operation
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
@@ -13,6 +14,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.serializer
@@ -75,6 +77,22 @@ internal class CircleClient(private val http: HttpClient, private val apiKey: St
         } catch (e: Exception) {
             log.warn("circle unreachable: operation={} error={}", operation, e::class.simpleName)
             CircleReply.Unreachable(e)
+        }
+
+    /**
+     * `GET /ping`, which needs no key and changes nothing: the start-up warm-up's one call to Circle, to open the
+     * kept-alive connection and run the TLS and HTTP paths once. True when Circle answered `2xx`; never throws.
+     */
+    suspend fun ping(): Boolean =
+        try {
+            val response = http.get("/ping") { operation("ping") }
+            response.bodyAsText()
+            response.status.isSuccess()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.debug("circle ping failed: error={}", e::class.simpleName)
+            false
         }
 
     private fun HttpRequestBuilder.authorize(userToken: String?) {

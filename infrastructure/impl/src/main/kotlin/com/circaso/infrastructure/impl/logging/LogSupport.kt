@@ -1,7 +1,10 @@
 package com.circaso.infrastructure.impl.logging
 
+import com.circaso.infrastructure.api.WarmingUp
+import kotlinx.coroutines.currentCoroutineContext
 import net.logstash.logback.argument.StructuredArgument
 import net.logstash.logback.argument.StructuredArguments
+import org.slf4j.Logger
 
 /** A structured log argument: a field in JSON, `key=value` on the console. */
 internal fun kv(name: String, value: Any?): StructuredArgument = StructuredArguments.kv(name, value)
@@ -12,3 +15,16 @@ private val uuid = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 internal fun shortenIds(key: String): String = uuid.replace(key) { it.value.take(8) + "…" }
 
 internal fun Long.millisSince(startNanos: Long): Long = (System.nanoTime() - startNanos) / 1_000_000
+
+/** True inside a start-up warm-up call ([WarmingUp]). */
+internal suspend fun warmingUp(): Boolean = currentCoroutineContext()[WarmingUp.Key] != null
+
+/**
+ * A "slow" line: WARN, or DEBUG for a call the warm-up made, whose time is the busy start-up CPU's and says nothing
+ * about the dependency (deploy log 2026-11-05: about 100 such WARNs in 15 s, none with a request id).
+ */
+internal fun Logger.slow(
+    warming: Boolean,
+    message: String,
+    vararg fields: Any?,
+) = if (warming) debug(message, *fields) else warn(message, *fields)

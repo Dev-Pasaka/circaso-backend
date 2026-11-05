@@ -12,6 +12,8 @@ import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.time.Clock
 import java.util.UUID
 
@@ -87,18 +89,45 @@ class PaymentPlanner(
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
-        val pricing =
-            when (val priced = fees.pricing(owner, sender, destination, command.amount)) {
-                is Resource.Success -> priced.data
-                is Resource.Error -> return priced
-            }
-        val balance =
-            when (val read = rules.balance(sender, command.amount)) {
-                is Resource.Success -> read.data
-                is Resource.Error -> return read
-            }
-        return Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance))
+        return priceAndBalance(owner, command, sender, destination, allowance)
     }
+
+    /**
+     * The price (Circle's gas estimate, the slow one) and the balance (Circle's live read), asked at once: neither
+     * needs the other. The answer is what asking them in turn gave: a pricing error wins over a balance error, and a
+     * balance read whose answer isn't needed is cancelled.
+     */
+    private suspend fun priceAndBalance(
+        owner: WalletOwner,
+        command: TransferCommand,
+        sender: Sender,
+        destination: Destination,
+        allowance: Allowance,
+    ): Resource<PaymentPlan> =
+        coroutineScope {
+            val priced = async { fees.pricing(owner, sender, destination, command.amount) }
+            val read = async { rules.balance(sender, command.amount) }
+            val pricing =
+                when (val answer = priced.await()) {
+                    is Resource.Success -> {
+                        answer.data
+                    }
+
+                    is Resource.Error -> {
+                        read.cancel()
+                        return@coroutineScope answer
+                    }
+                }
+            when (val balance = read.await()) {
+                is Resource.Success -> {
+                    Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance.data))
+                }
+
+                is Resource.Error -> {
+                    balance
+                }
+            }
+        }
 
     /**
      * A membership payment (SP13, Spaces phase 3) is paid from the personal wallet, into exactly its space and for

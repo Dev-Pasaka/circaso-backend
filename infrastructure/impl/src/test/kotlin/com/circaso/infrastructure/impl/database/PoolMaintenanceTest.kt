@@ -64,6 +64,28 @@ class PoolMaintenanceTest {
         }
 
     @Test
+    fun `the warm-up's pool touch runs a statement on every app connection at once and gives them all back`() =
+        runBlocking<Unit> {
+            val pools = pools(name = "circaso-app-touched")
+            pools.open()
+
+            PoolTouch(pools).run()
+
+            val lastQueries =
+                TestPostgres.superuser { connection ->
+                    val sql = "SELECT query FROM pg_stat_activity WHERE application_name = ?"
+                    connection.prepareStatement(sql).use { statement ->
+                        statement.setString(1, "circaso-app-touched")
+                        statement.executeQuery().use { rows ->
+                            generateSequence { if (rows.next()) rows.getString(1) else null }.toList()
+                        }
+                    }
+                }
+            assertEquals(List(10) { "SELECT 1" }, lastQueries, "each of the 10 ran one")
+            assertEquals(10, pools.app.metrics?.idleSize(), "every one is back in the pool")
+        }
+
+    @Test
     fun `a retired connection is replaced in the background, before any transaction asks for one`() =
         runBlocking<Unit> {
             val pools =

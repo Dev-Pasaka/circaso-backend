@@ -11,6 +11,8 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.WarmUp
+import com.circaso.infrastructure.impl.database.PoolTouch
 import com.circaso.infrastructure.impl.database.PostgresDatabases
 import com.circaso.infrastructure.impl.database.PostgresHealth
 import com.circaso.infrastructure.impl.database.PostgresOutboxes
@@ -55,6 +57,7 @@ fun infrastructureModule(config: Config, secrets: Secrets) =
         single<Secrets> { secrets }
         single { PostgresSettings(get(), get()) }
         single { PostgresPools(get(), get()) }
+        single<WarmUp>(named("database.pool-touch")) { PoolTouch(get()) }
         single { PostgresDatabases(get()) } bind Databases::class
         single {
             val koin = this

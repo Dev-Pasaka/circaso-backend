@@ -5,6 +5,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.web.installJson
 import com.circaso.web.installStatusPages
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -16,6 +17,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
+import io.ktor.server.websocket.webSocket
 import org.slf4j.LoggerFactory
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -78,6 +80,30 @@ class RequestLogTest {
                 listOf("/v1/handles/{handle}/availability", "/v1/invites/{token}", UNMATCHED_ROUTE),
                 routes(),
             )
+        }
+
+    @Test
+    fun `an opened WebSocket is left out of the request log, which would call its whole life its duration`() =
+        testApplication {
+            application {
+                install(RequestLog)
+                install(io.ktor.server.websocket.WebSockets)
+                routing {
+                    webSocket("/v1/ws") { incoming.receive() }
+                    get("/v1/chats") { call.respondText("ok") }
+                }
+            }
+            val sockets = createClient { install(io.ktor.client.plugins.websocket.WebSockets) }
+
+            sockets.webSocket("/v1/ws") {
+                send(
+                    io.ktor.websocket.Frame
+                        .Text("hi"),
+                )
+            }
+            client.get("/v1/chats")
+
+            assertEquals(listOf("/v1/chats"), routes(), "only the plain request")
         }
 
     @Test

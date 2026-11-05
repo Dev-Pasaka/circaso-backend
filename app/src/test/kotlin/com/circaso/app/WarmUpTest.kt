@@ -1,22 +1,31 @@
 package com.circaso.app
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.HealthCheck
 import com.circaso.infrastructure.api.WarmUp
+import com.circaso.infrastructure.api.WarmingUp
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.shared.Resource
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import ch.qos.logback.classic.Logger as LogbackLogger
 
 class WarmUpTest {
     /** Counts its runs and how many ran at once at most. */
@@ -46,7 +55,7 @@ class WarmUpTest {
             val a = Counting("a")
             val b = Counting("b")
 
-            val outcome = WarmUpRunner(listOf(a, b), WarmUpSettings(workers = 4, rounds = 3)).run()
+            val outcome = WarmUpRunner(listOf(a, b), WarmUpSettings(workers = 4, wideWorkers = 0, rounds = 3)).run()
 
             assertEquals(WarmUpOutcome(passes = 12, timedOut = false, failed = emptyMap()), outcome)
             assertEquals(12, a.runs.get())
@@ -69,7 +78,11 @@ class WarmUpTest {
                 }
             val fine = Counting("fine", pause = 0)
 
-            val outcome = WarmUpRunner(listOf(broken, fine), WarmUpSettings(workers = 1, rounds = 5)).run()
+            val outcome =
+                WarmUpRunner(
+                    listOf(broken, fine),
+                    WarmUpSettings(workers = 1, wideWorkers = 0, rounds = 5),
+                ).run()
 
             assertEquals(mapOf("broken" to "IllegalStateException"), outcome.failed)
             assertEquals(1, calls.get())
@@ -84,8 +97,10 @@ class WarmUpTest {
             val started = System.nanoTime()
 
             val outcome =
-                WarmUpRunner(listOf(slow), WarmUpSettings(workers = 2, rounds = 10, budget = Duration.ofMillis(100)))
-                    .run()
+                WarmUpRunner(
+                    listOf(slow),
+                    WarmUpSettings(workers = 2, wideWorkers = 2, rounds = 10, budget = Duration.ofMillis(100)),
+                ).run()
 
             assertTrue(outcome.timedOut)
             assertEquals(0, outcome.passes)
@@ -102,12 +117,21 @@ class WarmUpTest {
         }
 
     @Test
-    fun `settings come from WARMUP_ and default to one worker per pooled app connection`() {
-        val defaults = WarmUpSettings.from(EnvConfig(emptyMap()))
+    fun `settings come from WARMUP_, one worker per CPU (2 to the pool size), a wide pass per connection`() {
+        val none = EnvConfig(emptyMap())
         assertEquals(
-            WarmUpSettings(enabled = true, workers = 10, rounds = 100, budget = Duration.ofSeconds(15)),
-            defaults,
+            WarmUpSettings(
+                enabled = true,
+                workers = 4,
+                wideWorkers = 10,
+                rounds = 20,
+                budget = Duration.ofSeconds(15),
+            ),
+            WarmUpSettings.from(none, processors = 4),
+            "the 4 vCPU server",
         )
+        assertEquals(2, WarmUpSettings.from(none, processors = 1).workers, "never fewer than 2")
+        assertEquals(10, WarmUpSettings.from(none, processors = 32).workers, "never more than the pool's connections")
 
         val set =
             WarmUpSettings.from(
@@ -115,13 +139,105 @@ class WarmUpTest {
                     mapOf(
                         "DATABASE_POOL_APP_SIZE" to "6",
                         "WARMUP_ROUNDS" to "7",
+                        "WARMUP_WIDE_WORKERS" to "3",
                         "WARMUP_BUDGET_MS" to "2500",
                         "WARMUP_ENABLED" to "false",
                     ),
                 ),
+                processors = 8,
             )
-        assertEquals(WarmUpSettings(enabled = false, workers = 6, rounds = 7, budget = Duration.ofMillis(2500)), set)
+        assertEquals(
+            WarmUpSettings(enabled = false, workers = 6, wideWorkers = 3, rounds = 7, budget = Duration.ofMillis(2500)),
+            set,
+        )
     }
+
+    @Test
+    fun `a wide pass on every pooled connection comes first, then the rounds on the CPU workers`() =
+        runBlocking {
+            val a = Counting("a", pause = 20)
+
+            val outcome = WarmUpRunner(listOf(a), WarmUpSettings(workers = 2, wideWorkers = 6, rounds = 3)).run()
+
+            assertEquals(WarmUpOutcome(passes = 6 + 2 * 3, timedOut = false, failed = emptyMap()), outcome)
+            assertEquals(6, a.mostAtOnce.get(), "the wide pass ran on six at once")
+        }
+
+    @Test
+    fun `a once warm-up runs a single time, before the passes, and alone`() =
+        runBlocking {
+            val order = java.util.concurrent.CopyOnWriteArrayList<String>()
+            val ping =
+                object : WarmUp {
+                    override val name = "circle"
+                    override val once = true
+
+                    override suspend fun run() {
+                        order += "ping"
+                    }
+                }
+            val pass =
+                object : WarmUp {
+                    override val name = "wallet"
+
+                    override suspend fun run() {
+                        order += "pass"
+                    }
+                }
+
+            WarmUpRunner(listOf(pass, ping), WarmUpSettings(workers = 3, wideWorkers = 4, rounds = 2)).run()
+
+            assertEquals("ping", order.first())
+            assertEquals(1, order.count { it == "ping" })
+            assertEquals(4 + 3 * 2, order.count { it == "pass" })
+        }
+
+    @Test
+    fun `every warm-up call runs marked as the warm-up, and a warm-up that went well writes no WARN line`() =
+        runBlocking {
+            val captured = ListAppender<ILoggingEvent>().apply { start() }
+            val root = LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME) as LogbackLogger
+            root.addAppender(captured)
+            val unmarked = AtomicInteger()
+            val checking =
+                object : WarmUp {
+                    override val name = "checking"
+
+                    override suspend fun run() {
+                        if (currentCoroutineContext()[WarmingUp.Key] == null) unmarked.incrementAndGet()
+                        coroutineScope {
+                            launch {
+                                if (currentCoroutineContext()[WarmingUp.Key] ==
+                                    null
+                                ) {
+                                    unmarked.incrementAndGet()
+                                }
+                            }
+                        }
+                    }
+                }
+            try {
+                val outcome =
+                    WarmUpRunner(
+                        listOf(checking),
+                        WarmUpSettings(workers = 2, wideWorkers = 3, rounds = 5),
+                    ).run()
+                assertFalse(outcome.timedOut)
+            } finally {
+                root.detachAppender(captured)
+            }
+
+            assertEquals(0, unmarked.get(), "infrastructure tells the warm-up's calls by this mark")
+            val warnings = captured.list.filter { it.level.isGreaterOrEqual(Level.WARN) }
+            assertTrue(warnings.isEmpty(), warnings.joinToString { it.formattedMessage })
+            val summary = captured.list.single { it.formattedMessage == "Warm-up done" }
+            val fields = summary.argumentArray.joinToString(" ")
+            listOf(
+                "passes=13",
+                "checking=p50",
+                "outOfTime=false",
+            ).forEach { assertTrue(it in fields, "$it in $fields") }
+        }
 
     @Test
     fun `ready is 503 with warm-up down until the warm-up has finished, then 200, and live is 200 throughout`() =

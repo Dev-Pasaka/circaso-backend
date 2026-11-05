@@ -65,6 +65,7 @@ class EventBusTest {
     private val fast =
         EventRuntimeConfig(
             claimIdle = Duration.ofMillis(300),
+            claimEvery = Duration.ofMillis(100),
             readBlock = Duration.ofMillis(100),
             metricsInterval = Duration.ofMillis(200),
         )

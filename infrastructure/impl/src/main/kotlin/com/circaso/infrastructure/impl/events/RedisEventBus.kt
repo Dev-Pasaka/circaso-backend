@@ -54,6 +54,12 @@ const val DEAD_LETTER_STREAM = "events:dlq"
 data class EventRuntimeConfig(
     /** A message not acknowledged for this long is reclaimed and retried. */
     val claimIdle: Duration = Duration.ofSeconds(30),
+    /**
+     * How often each consumer looks for such messages (`XAUTOCLAIM`), and at once again while a look fills a whole
+     * batch. A failed event is retried between [claimIdle] and [claimIdle] plus this after its failure. Looking on
+     * every read (every [readBlock] when quiet) was one more Redis command per group every 2 s for nothing.
+     */
+    val claimEvery: Duration = Duration.ofSeconds(30),
     /** Handler attempts before an event moves to `events:dlq`. */
     val maxAttempts: Int = 5,
     /** Streams are trimmed to this age, and so are the done and attempt records. */
@@ -213,11 +219,16 @@ class RedisEventBus(
         val connection = redis.openDedicated() // a blocking read must not hold the shared connection
         val reader = connection.coroutines()
         val consumer = Consumer.from(subscription.group, nodeId)
+        val claims = ClaimSchedule(config.claimEvery, config.batchSize)
         try {
             ensureGroup(reader, subscription)
             while (currentCoroutineContext().isActive) {
                 try {
-                    claimStale(reader, consumer, subscription).forEach { handle(reader, subscription, it) }
+                    if (claims.due(System.nanoTime())) {
+                        val stale = claimStale(reader, consumer, subscription)
+                        claims.ran(System.nanoTime(), stale.size)
+                        stale.forEach { handle(reader, subscription, it) }
+                    }
                     val fresh =
                         reader
                             .xreadgroup(
@@ -400,6 +411,20 @@ class RedisEventBus(
 
     private companion object {
         const val ENVELOPE_FIELD = "e"
+    }
+}
+
+/**
+ * When a consumer next looks for stale messages: at its start (a node that died left some), then every [every], and
+ * straight away again after a look that filled a whole batch, since more may be waiting.
+ */
+internal class ClaimSchedule(private val every: Duration, private val batchSize: Int) {
+    private var nextAt: Long? = null
+
+    fun due(nowNanos: Long): Boolean = nextAt?.let { nowNanos - it >= 0 } ?: true
+
+    fun ran(nowNanos: Long, claimed: Int) {
+        nextAt = if (claimed >= batchSize) nowNanos else nowNanos + every.toNanos()
     }
 }
 

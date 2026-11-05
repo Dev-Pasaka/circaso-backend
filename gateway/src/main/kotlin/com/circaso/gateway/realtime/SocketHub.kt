@@ -26,6 +26,7 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
@@ -33,9 +34,11 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
+import net.logstash.logback.argument.StructuredArguments.kv
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.SocketHub")
 
@@ -83,6 +86,10 @@ internal sealed interface NodeMessage {
  * frame for many users, and every revoke, goes once on `rt:fanout`, which every node reads.
  * Frames the phone sends after authenticating go to the `RealtimeInbound` of the module they name, at most
  * [FrameRateLimiter.FRAMES_PER_SECOND] a second per socket.
+ *
+ * Each socket writes two log lines (the request log leaves its `101` out): `ws.open` once it is authenticated and
+ * caught up (`authMs` from the upgrade to the accepted auth frame, `replayMs` and `replayed` frames), and `ws.close`
+ * when it ends (`lifetimeMs`, `framesIn` and `framesOut`, the close code). Never a token or a frame's content.
  */
 class SocketHub(
     private val redis: RedisScope,
@@ -102,7 +109,11 @@ class SocketHub(
         val deviceId: DeviceId,
         val sessionId: SessionId,
         val session: WebSocketSession,
-    )
+    ) {
+        /** Frames written to the phone (heartbeats included) and read from it after the auth frame. */
+        val framesOut = AtomicLong()
+        val framesIn = AtomicLong()
+    }
 
     /** How the auth frame went: a phone to serve, a reason to close with, or a socket that is already closing. */
     private sealed interface Auth {
@@ -253,7 +264,8 @@ class SocketHub(
             connection.session.send(
                 Frame.Text(CircasoJson.encodeToString(RealtimeEnvelope.serializer(), frame)),
             )
-        }.onFailure { log.debug("socket write failed", it) }
+        }.onSuccess { connection.framesOut.incrementAndGet() }
+            .onFailure { log.debug("socket write failed", it) }
     }
 
     private fun register(connection: Connection) {
@@ -270,13 +282,24 @@ class SocketHub(
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class) // closeReason.getCompleted(), read only once it has completed
     fun routes(route: Route) =
         with(route) {
             webSocket("ws") {
+                val opened = System.nanoTime()
                 val auth = authenticate()
-                if (auth is Auth.Refused) close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, auth.reason))
+                if (auth is Auth.Refused) {
+                    log.info(
+                        "ws.refused",
+                        kv("kind", "ws"),
+                        kv("reason", auth.reason),
+                        kv("authMs", millisSince(opened)),
+                    )
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, auth.reason))
+                }
                 if (auth !is Auth.Accepted) return@webSocket
                 val principal = auth.principal
+                val authMs = millisSince(opened)
 
                 val connection = Connection(principal.userId, principal.deviceId, principal.sessionId, this)
                 register(connection)
@@ -286,15 +309,35 @@ class SocketHub(
                         while (true) {
                             delay(HEARTBEAT_MILLIS)
                             redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
-                            runCatching { send(Frame.Text(PING)) }
+                            runCatching { send(Frame.Text(PING)) }.onSuccess { connection.framesOut.incrementAndGet() }
                         }
                     }
                 try {
-                    replay(connection, auth.last)
+                    val replayStarted = System.nanoTime()
+                    val replayed = replay(connection, auth.last)
+                    log.info(
+                        "ws.open",
+                        kv("kind", "ws"),
+                        kv("userId", principal.userId.toString()),
+                        kv("deviceId", principal.deviceId.toString()),
+                        kv("authMs", authMs),
+                        kv("replayMs", millisSince(replayStarted)),
+                        kv("replayed", replayed),
+                    )
                     readFrames(connection)
                 } finally {
                     heartbeat.cancel()
                     unregister(connection)
+                    val reason = closeReason.takeIf { it.isCompleted }?.getCompleted()
+                    log.info(
+                        "ws.close",
+                        kv("kind", "ws"),
+                        kv("userId", principal.userId.toString()),
+                        kv("lifetimeMs", millisSince(opened)),
+                        kv("framesIn", connection.framesIn.get()),
+                        kv("framesOut", connection.framesOut.get()),
+                        kv("closeCode", reason?.code),
+                    )
                 }
             }
         }
@@ -354,6 +397,7 @@ class SocketHub(
         val limiter = FrameRateLimiter(nowMillis = nowMillis)
         try {
             for (frame in incoming) {
+                connection.framesIn.incrementAndGet()
                 if (!limiter.tryAcquire()) {
                     telemetry.count(Metrics.GATEWAY_SOCKET_FRAMES_DROPPED, mapOf("reason" to "rate_limited"))
                     continue
@@ -396,15 +440,26 @@ class SocketHub(
         }
     }
 
-    private suspend fun replay(connection: Connection, last: Map<String, Long>) {
+    /** Sends what the phone missed from each module; how many frames that was. */
+    private suspend fun replay(connection: Connection, last: Map<String, Long>): Int {
+        var sent = 0
         for (module in replays()) {
             val since = last[module.module] ?: continue
             when (val missed = module.replay.since(connection.userId, since)) {
-                is Resource.Success -> missed.data.forEach { send(connection, it) }
-                is Resource.Error -> log.warn("replay failed: module={} code={}", module.module, missed.error.code)
+                is Resource.Success -> {
+                    missed.data.forEach { send(connection, it) }
+                    sent += missed.data.size
+                }
+
+                is Resource.Error -> {
+                    log.warn("replay failed: module={} code={}", module.module, missed.error.code)
+                }
             }
         }
+        return sent
     }
+
+    private fun millisSince(startNanos: Long): Long = (System.nanoTime() - startNanos) / 1_000_000
 
     companion object {
         /** The largest frame a phone may send (plan GW1: 64 KB, the largest chat ciphertext). */

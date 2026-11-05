@@ -187,6 +187,7 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         blockchain: String,
     ): Resource<List<AssetBalance>> {
         balancesAtOnce.accumulateAndGet(balancesInFlight.incrementAndGet(), ::maxOf)
+        if (estimatesInFlight.get() > 0) balanceDuringEstimate = true
         try {
             if (balancesTakeMillis > 0) delay(balancesTakeMillis)
         } finally {
@@ -217,15 +218,30 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
     @Volatile
     var estimateFails = false
 
+    /** How long an estimate takes; whether a balance read started while one was in flight. */
+    @Volatile
+    var estimateTakeMillis = 0L
+    private val estimatesInFlight = AtomicInteger()
+
+    @Volatile
+    var balanceDuringEstimate = false
+
     /** EVM chains batch (smart-contract wallets); Solana doesn't. */
     override fun canSplit(blockchain: String): Boolean =
         supported.find(blockchain) != null && !blockchain.startsWith("SOL")
 
-    override suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> =
-        call("estimateSplit") {
+    override suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> {
+        estimatesInFlight.incrementAndGet()
+        try {
+            if (estimateTakeMillis > 0) delay(estimateTakeMillis)
+        } finally {
+            estimatesInFlight.decrementAndGet()
+        }
+        return call("estimateSplit") {
             if (estimateFails) return@call Resource.error(IntegrationError.Unavailable("Circle"))
             Resource.success(NetworkCost(networkCost, "ETH"))
         }
+    }
 
     override suspend fun prepareSplitTransfer(
         circleUserId: String,

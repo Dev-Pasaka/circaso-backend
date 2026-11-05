@@ -5,4 +5,4 @@ FROM nginxinc/nginx-unprivileged:alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY dist/docs/ /usr/share/nginx/html/docs/
 EXPOSE 8080
-HEALTHCHECK --interval=15s --timeout=3s --retries=4 CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
+HEALTHCHECK --interval=60s --timeout=3s --start-period=10s --start-interval=2s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
