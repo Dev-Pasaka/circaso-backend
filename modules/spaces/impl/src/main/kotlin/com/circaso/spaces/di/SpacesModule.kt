@@ -70,6 +70,7 @@ import com.circaso.spaces.domain.usecases.FindMembershipCharge
 import com.circaso.spaces.domain.usecases.FollowSpace
 import com.circaso.spaces.domain.usecases.GetSpace
 import com.circaso.spaces.domain.usecases.GetSpaceByHandle
+import com.circaso.spaces.domain.usecases.GetSpaceName
 import com.circaso.spaces.domain.usecases.GetSpaceTeam
 import com.circaso.spaces.domain.usecases.GetWalletAccess
 import com.circaso.spaces.domain.usecases.GoLiveWhenWalletReady
@@ -258,6 +259,7 @@ fun spacesModule(config: Config): Module =
         single { GetSpaceTeam(get()) }
         single { FindMembershipCharge(get(), clock) }
         single { CheckPrivateChat(get(), get(), get()) }
+        single { GetSpaceName(get()) }
         single { RemoveAccountFromSpaces(get(), get(), get(), get(), clock) }
         single { ReplayFrames(get()) }
 
@@ -268,7 +270,7 @@ fun spacesModule(config: Config): Module =
         single { MemberService(get(), get(), get(), get(), get()) }
         single { PostService(get(), get(), get(), get(), get(), get(), get()) }
         single { ReportService(get(), get(), get(), get(), get()) }
-        single { PolicyService(get(), get(), get(), get(), get()) }
+        single { PolicyService(get(), get(), get(), get(), get(), get()) }
         single { EventsService(get(), get(), get()) }
         single { JobsService(get(), get()) }
         single { RealtimeService(get()) }

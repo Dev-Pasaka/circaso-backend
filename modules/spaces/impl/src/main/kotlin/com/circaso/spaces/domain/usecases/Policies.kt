@@ -105,3 +105,8 @@ class CheckPrivateChat(
         return Resource.success(allowed)
     }
 }
+
+/** The wallet's `SpaceWalletPolicy.name`: the space's name for the "money received" push. */
+class GetSpaceName(private val spaces: SpaceRepository) {
+    suspend operator fun invoke(spaceId: SpaceId): Resource<String?> = Resource.success(spaces.find(spaceId)?.name)
+}

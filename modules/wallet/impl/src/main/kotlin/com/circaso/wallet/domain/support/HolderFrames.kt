@@ -38,7 +38,7 @@ class HolderFrames(
             }
 
             is WalletFrame.PaymentReceived -> {
-                sender.send(group.signerId, frame.copy(walletId = walletId))
+                sender.send(group.signerId, frame.copy(walletId = walletId, ownerType = "GROUP"))
             }
 
             is WalletFrame.WalletReady -> {
@@ -63,7 +63,13 @@ class HolderFrames(
             }
 
             is WalletFrame.PaymentReceived -> {
-                sender.send(owner.signerId, frame.copy(walletId = walletId))
+                val named =
+                    frame.copy(
+                        walletId = walletId,
+                        ownerType = "SPACE",
+                        spaceName = spaces?.name(owner.spaceId),
+                    )
+                sender.send(owner.signerId, named)
             }
 
             is WalletFrame.WalletReady -> {

@@ -59,6 +59,9 @@ interface SpaceWalletPolicy {
     /** The space's owner and admins: who hears that its wallet is ready. */
     suspend fun team(spaceId: UUID): Set<UserId>
 
+    /** The space's name, for the push that money arrived in its wallet; null when there is no such space. */
+    suspend fun name(spaceId: UUID): String? = null
+
     /** The membership payment [paymentId] made for [payer] (SP13), while it can still be paid; null otherwise. */
     suspend fun membershipCharge(paymentId: UUID, payer: UserId): MembershipCharge?
 }

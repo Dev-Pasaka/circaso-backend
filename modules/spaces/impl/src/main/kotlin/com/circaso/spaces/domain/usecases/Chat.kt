@@ -178,7 +178,14 @@ class CreatePost(
             }
         }
         val view = views.one(command.spaceId, post, command.caller)
-        announce(space.name, view, reply, members.active(command.spaceId), seat.isAtLeast(Role.MODERATOR))
+        announce(
+            space.name,
+            space.visibility.name,
+            view,
+            reply,
+            members.active(command.spaceId),
+            seat.isAtLeast(Role.MODERATOR),
+        )
         members.markRead(command.spaceId, command.caller, post.postId.value)
         return Resource.success(view)
     }
@@ -209,6 +216,7 @@ class CreatePost(
     /** Two frames at most: one for the members it is pushed to, one for the rest. */
     private suspend fun announce(
         spaceName: String,
+        visibility: String,
         view: PostView,
         reply: Post?,
         everyone: List<Membership>,
@@ -230,7 +238,7 @@ class CreatePost(
                 pushed.map {
                     it.userId
                 },
-                PostNewFrame(view.post.spaceId, spaceName, frame, notify = true),
+                PostNewFrame(view.post.spaceId, spaceName, frame, notify = true, visibility = visibility),
             )
         }
         if (quiet.isNotEmpty()) {
@@ -238,7 +246,7 @@ class CreatePost(
                 quiet.map {
                     it.userId
                 },
-                PostNewFrame(view.post.spaceId, spaceName, frame, notify = false),
+                PostNewFrame(view.post.spaceId, spaceName, frame, notify = false, visibility = visibility),
             )
         }
     }

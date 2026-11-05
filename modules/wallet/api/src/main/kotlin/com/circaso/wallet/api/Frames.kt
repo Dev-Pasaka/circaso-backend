@@ -43,8 +43,12 @@ data class PaymentReceivedFrame(
     val amount: WalletAmount,
     val fromUserId: UserId? = null,
     val fromName: String? = null,
-    /** The wallet that received it when that is a group wallet you sign for (added 2026-11-03). */
+    /** The wallet that received it when that is a group or space wallet you sign for (added 2026-11-03). */
     val walletId: WalletId? = null,
+    /** `GROUP` or `SPACE` when [walletId] is set (added 2026-11-05). */
+    val ownerType: String? = null,
+    /** For a space wallet: the space's name, so the push names it (a group's name is sealed and never here). */
+    val spaceName: String? = null,
 )
 
 /**

@@ -33,6 +33,8 @@ class SpaceWalletPolicyImpl(private val policy: PolicyService) : SpaceWalletPoli
 
     override suspend fun team(spaceId: UUID): Set<UserId> = policy.team(SpaceId(spaceId)).getOrNull().orEmpty()
 
+    override suspend fun name(spaceId: UUID): String? = policy.name(SpaceId(spaceId)).getOrNull()
+
     override suspend fun membershipCharge(paymentId: UUID, payer: UserId): MembershipCharge? =
         policy.charge(paymentId, payer).getOrNull()
 }

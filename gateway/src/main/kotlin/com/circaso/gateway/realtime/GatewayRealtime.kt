@@ -153,9 +153,11 @@ class GatewayRealtime(
                 val received = decode(PaymentReceivedFrame.serializer(), frame)
                 val name = received?.fromName
                 // A group wallet's money is pushed to its signer (decision 2026-11-03). The group's name is sealed, so
-                // the server never has it: the text says "a group wallet".
+                // the server never has it: the text says "a group wallet". A space's name is no secret, so its push names it.
                 val text =
                     when {
+                        received?.spaceName != null && name != null -> "$name paid ${received.spaceName}"
+                        received?.spaceName != null -> "${received.spaceName} received money"
                         received?.walletId != null && name != null -> "$name paid into a group wallet"
                         received?.walletId != null -> "A group wallet received money"
                         name != null -> "$name sent you money"
@@ -193,18 +195,20 @@ class GatewayRealtime(
                     PostNewFrame.serializer(),
                     frame,
                 )?.takeIf { it.notify && it.post.author.userId != recipient }?.let {
-                    val what =
-                        it.post.text?.take(POST_PREVIEW) ?: mediaWord(
-                            it.post.media
-                                .firstOrNull()
-                                ?.kind,
-                        )
-                    spaceMessage(
-                        it.spaceName,
-                        "${it.post.author.displayName}: $what",
-                        "space.post",
-                        it.spaceId.toString(),
-                    )
+                    // Lock-screen privacy (decision 2026-11-05): only a public space's push shows what was posted.
+                    val text =
+                        if (it.visibility == "PUBLIC") {
+                            val what =
+                                it.post.text?.take(POST_PREVIEW) ?: mediaWord(
+                                    it.post.media
+                                        .firstOrNull()
+                                        ?.kind,
+                                )
+                            "${it.post.author.displayName}: $what"
+                        } else {
+                            "New post in ${it.spaceName}"
+                        }
+                    spaceMessage(it.spaceName, text, "space.post", it.spaceId.toString())
                 }
             }
 

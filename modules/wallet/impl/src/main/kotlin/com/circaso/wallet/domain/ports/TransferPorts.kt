@@ -29,6 +29,10 @@ sealed interface WalletFrame {
         val fromUserId: UserId?,
         val fromName: String?,
         val walletId: WalletId? = null,
+        /** `GROUP` or `SPACE` when [walletId] is set (added 2026-11-05). */
+        val ownerType: String? = null,
+        /** The space's name when it is a space wallet (spaces aren't end-to-end encrypted). */
+        val spaceName: String? = null,
     ) : WalletFrame
 
     data class WalletReady(val blockchain: String, val walletId: WalletId? = null) : WalletFrame

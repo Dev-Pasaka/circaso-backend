@@ -90,6 +90,8 @@ data class PostNewFrame(
     val spaceName: String,
     val post: FramePost,
     val notify: Boolean = false,
+    /** The space's `visibility`: only a `PUBLIC` space's push may show the post's text (decision 2026-11-05). */
+    val visibility: String? = null,
 ) : SpaceFrame {
     override val type: String get() = SpacesFrames.POST_NEW
 }

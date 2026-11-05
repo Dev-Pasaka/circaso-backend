@@ -5,6 +5,7 @@ import com.circaso.shared.UserId
 import com.circaso.spaces.api.SpaceId
 import com.circaso.spaces.domain.usecases.CheckPrivateChat
 import com.circaso.spaces.domain.usecases.FindMembershipCharge
+import com.circaso.spaces.domain.usecases.GetSpaceName
 import com.circaso.spaces.domain.usecases.GetSpaceTeam
 import com.circaso.spaces.domain.usecases.GetWalletAccess
 import com.circaso.spaces.domain.usecases.ListAdministeredSpaces
@@ -19,7 +20,10 @@ class PolicyService(
     private val getSpaceTeam: GetSpaceTeam,
     private val findMembershipCharge: FindMembershipCharge,
     private val checkPrivateChat: CheckPrivateChat,
+    private val getSpaceName: GetSpaceName,
 ) {
+    suspend fun name(spaceId: SpaceId): Resource<String?> = getSpaceName(spaceId)
+
     suspend fun access(spaceId: SpaceId, userId: UserId): Resource<SpaceAccess> = getWalletAccess(spaceId, userId)
 
     suspend fun administered(userId: UserId): Resource<List<SpaceId>> = listAdministeredSpaces(userId)
