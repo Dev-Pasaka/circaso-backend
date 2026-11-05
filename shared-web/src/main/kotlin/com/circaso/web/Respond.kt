@@ -8,6 +8,8 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.route
 import io.ktor.util.AttributeKey
 import kotlinx.serialization.serializer
 
@@ -41,3 +43,14 @@ suspend inline fun <reified R> ApplicationCall.respondDefault(body: DefaultRespo
 
 /** Responds with a failure, for code that holds a [DomainError] rather than a `Resource`. */
 suspend fun ApplicationCall.respondError(error: DomainError) = respondDefault(error.toDefaultResponse<Unit>())
+
+/**
+ * Answers [error] for [path] and everything under it, whatever the method: how a switched-off feature keeps one
+ * stable code instead of the gateway's `request.not_found` (Spaces, archived 2026-11-05: `spaces.unavailable`).
+ */
+fun Route.unavailable(path: String, error: DomainError) {
+    route(path) {
+        handle { call.respondError(error) }
+        route("{...}") { handle { call.respondError(error) } }
+    }
+}

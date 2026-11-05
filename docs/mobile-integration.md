@@ -651,6 +651,16 @@ The flow for a photo: **ST1** (size of the ciphertext) → `PUT` the ciphertext 
 
 ### Spaces (phase 3, Spaces core; branch `feat/spaces`, not deployed)
 
+> **Spaces (archived 2026-11-05).** The feature is stopped and archived, not deleted; the apps remove it. The server
+> keeps the code, the tables and their migrations, but Spaces is **off unless `SPACES_ENABLED=true`**. While off:
+> every route under `/v1/spaces`, `/v1/ops/spaces` and `/v1/wallet/spaces` (SP1-SP37, SPO1-SPO2, W18-W19) answers
+> **404 `spaces.unavailable`**; the `spaces.memberships` and `spaces.purge-expired` jobs, the `events:wallet` and
+> `events:identity` consumers and the `spaces` replay aren't bound, so no `spaces` frame or push is sent; W16 lists no
+> space wallet and nobody can see, sign for or pay one; a chat opened via a space (`viaSpaceId`) is an ordinary direct
+> chat (the reach rule, both ways), and M4 with `viaSpaceId` opens none (`messaging.not_reachable`). Group wallets,
+> fees, limits and Moments are not part of the archive. **To re-enable:** set `SPACES_ENABLED=true` and restart; the
+> schema is still migrated on every deploy, so the data is where it was.
+
 The full contract is the app repo's `.claude/skills/circaso-mobile/references/spaces-api.md` (SP1-SP37, SPO1-SPO2,
 W18-W19, frames, pushes, `spaces.*` errors); the reader at `/docs` (tag `Spaces`) has every route. In short:
 

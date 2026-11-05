@@ -12,6 +12,16 @@ sealed class SpacesError(
     override val kind: ErrorKind,
     override val details: ErrorDetails? = null,
 ) : DomainError {
+    /**
+     * Spaces is archived (decision 2026-11-05): while `SPACES_ENABLED` is off every Spaces route, and the wallet's
+     * space-wallet routes (W18, W19), answer this. The data is kept, so turning the switch on brings it all back.
+     */
+    data object Unavailable : SpacesError(
+        "spaces.unavailable",
+        "Spaces isn't available.",
+        ErrorKind.NOT_FOUND,
+    )
+
     /** Missing, or not visible to the caller: they look the same. */
     data object SpaceNotFound : SpacesError(
         "spaces.space_not_found",

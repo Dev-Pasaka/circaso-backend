@@ -44,6 +44,7 @@ import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.data.tables.TransfersTable
 import com.circaso.wallet.data.tables.WalletOwnersTable
 import com.circaso.wallet.data.tables.WalletsTable
+import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.JobSettings
 import com.circaso.wallet.domain.models.ReconcilePass
 import com.circaso.wallet.domain.ports.ActiveWallets
@@ -145,6 +146,7 @@ import com.circaso.wallet.presentation.services.WalletJobsService
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.wallet.presentation.warmup.WalletWarmUp
 import com.circaso.web.RouteContributor
+import com.circaso.web.unavailable
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
@@ -226,6 +228,16 @@ internal fun feeConfig(config: Config): FeeConfig {
 }
 
 /**
+ * `SPACES_ENABLED`, spaces' switch (spaces' `SPACES_ENABLED_KEY`; this module can't name spaces' impl). Spaces is
+ * archived (decision 2026-11-05): while it is off, no space wallet is offered and W18 and W19 answer
+ * `spaces.unavailable`.
+ */
+private const val SPACES_ENABLED_KEY = "spaces.enabled"
+
+/** W18 and W19's path (`spaceWalletController`). */
+private const val SPACE_WALLET_PATH = "/wallet/spaces"
+
+/**
  * Wallet's Koin bindings: data, domain, presentation, its `api`, identity's `DeletionGuard`, integrations'
  * `CustodyNotifications`, its realtime replay, its database spec (with the outbox) and its purge job. Circle and the
  * exchange rates come from integrations as `StablecoinCustody` and `ExchangeRates`; the wallet never reads a Circle
@@ -236,6 +248,7 @@ fun walletModule(config: Config): Module =
         val clock = Clock.systemUTC()
         val fees = feeConfig(config)
         val jobs = jobSettings(config)
+        val spacesEnabled = config.boolean(SPACES_ENABLED_KEY, false)
 
         // data
         single(named("wallet.spec")) { walletDatabaseSpec }
@@ -324,8 +337,11 @@ fun walletModule(config: Config): Module =
         single { GetGroupWallet(get(), get(), get(), get()) }
         single { ListMyWallets(get(), get(), get(), getOrNull()) }
         single { HeldFunds(get(), get(), get()) }
-        single { CreateSpaceWallet(get(), get(), get(), get(), get(), get(), clock) }
-        single { GetSpaceWallet(get(), get(), get(), get()) }
+        // W18 and W19 need spaces' SpaceWalletPolicy, which only a live Spaces binds (archived 2026-11-05)
+        if (spacesEnabled) {
+            single { CreateSpaceWallet(get(), get(), get(), get(), get(), get(), clock) }
+            single { GetSpaceWallet(get(), get(), get(), get()) }
+        }
         single { FindSpaceWallet(get(), get()) }
         single { CheckSpaceWalletFunds(get(), get()) }
         single { FindGroupWallet(get(), get()) }
@@ -381,7 +397,7 @@ fun walletModule(config: Config): Module =
         single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { SpaceWalletService(get(), get()) }
+        if (spacesEnabled) single { SpaceWalletService(get(), get()) }
         single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
         single { WalletJobsService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
@@ -390,10 +406,14 @@ fun walletModule(config: Config): Module =
             val recipients = get<RecipientService>()
             val history = get<HistoryService>()
             val agent = get<WalletAgentService>()
-            val spaceWallets = get<SpaceWalletService>()
+            val spaceWallets = if (spacesEnabled) get<SpaceWalletService>() else null
             RouteContributor { route ->
                 route.walletController(wallets)
-                route.spaceWalletController(spaceWallets)
+                if (spaceWallets != null) {
+                    route.spaceWalletController(spaceWallets)
+                } else {
+                    route.unavailable(SPACE_WALLET_PATH, WalletError.SpacesUnavailable)
+                }
                 route.transferController(transfers)
                 route.recipientController(recipients)
                 route.historyController(history)

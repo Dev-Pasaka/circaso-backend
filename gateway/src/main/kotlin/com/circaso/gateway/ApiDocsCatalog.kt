@@ -293,7 +293,10 @@ internal object ApiDocsCatalog {
                     ),
                     DocTag(
                         "Spaces",
-                        "Spaces are communities and small businesses: a space chat every member reads, members " +
+                        "**Archived on 2026-11-05**: off unless the server runs with `SPACES_ENABLED=true`. While " +
+                            "off, every route under `/v1/spaces`, `/v1/ops/spaces` and `/v1/wallet/spaces` " +
+                            "answers 404 `spaces.unavailable`, and none is listed here.\n\n" +
+                            "Spaces are communities and small businesses: a space chat every member reads, members " +
                             "with roles, and its own wallet. Space chats are **not** end-to-end encrypted: the " +
                             "server stores posts so it can page, search and moderate them; the private chat with " +
                             "a space's owner is an ordinary end-to-end encrypted direct chat (M4 `viaSpaceId`).\n\n" +
