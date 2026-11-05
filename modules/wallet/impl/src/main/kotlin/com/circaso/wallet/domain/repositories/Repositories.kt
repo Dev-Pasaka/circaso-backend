@@ -53,7 +53,8 @@ interface WalletRepository {
  * is a person's own wallet.
  */
 interface WalletOwnerRepository {
-    suspend fun find(walletId: WalletId): WalletOwner.Group?
+    /** The group's or space's wallet filed under [walletId]; null for a person's own (they have no row). */
+    suspend fun find(walletId: WalletId): WalletOwner?
 
     /** The group's wallet, through `wallet_owners_chat_key`. */
     suspend fun byChat(chatId: ChatId): WalletOwner.Group?
@@ -61,11 +62,20 @@ interface WalletOwnerRepository {
     /** The wallets of [chatIds] that have one (W16: the groups the caller is in). */
     suspend fun byChats(chatIds: Collection<ChatId>): List<WalletOwner.Group>
 
-    /** The group wallets [signerId] signs for (`wallet_owners_signer_idx`). */
-    suspend fun bySigner(signerId: UserId): List<WalletOwner.Group>
+    /** The group and space wallets [signerId] signs for (`wallet_owners_signer_idx`). */
+    suspend fun bySigner(signerId: UserId): List<WalletOwner>
 
     /** Inserts [owner] unless the wallet id or the group already has a row; true if this call inserted it. */
     suspend fun insert(owner: WalletOwner.Group): Boolean
+
+    /** The space's wallet, through `wallet_owners_space_key` (Spaces phase 3). */
+    suspend fun bySpace(spaceId: UUID): WalletOwner.Space? = null
+
+    /** The wallets of [spaceIds] that have one (W16: the spaces the caller administers). */
+    suspend fun bySpaces(spaceIds: Collection<UUID>): List<WalletOwner.Space> = emptyList()
+
+    /** Inserts [owner] unless the wallet id or the space already has a row; true if this call inserted it. */
+    suspend fun insertSpace(owner: WalletOwner.Space): Boolean = false
 }
 
 /** `transfers`: one row per prepared transfer, unique per sender and `Idempotency-Key` for good. */

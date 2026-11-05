@@ -74,6 +74,7 @@ fun ChatView.toDto() =
         version = chat.version,
         created = created,
         notAdded = notAdded?.map { it.toString() },
+        viaSpaceId = chat.viaSpaceId?.toString(),
     )
 
 private fun MemberView.toDto() =

@@ -257,7 +257,8 @@ fun messagingModule(config: Config): Module =
         single { AddOneTimeKeys(get(), get(), get(), get(), clock) }
         single { GetKeyStatus(get()) }
         single { FetchKeyBundle(get(), get<ReachPolicy>(), get(), get(), get()) }
-        single { OpenDirectChat(get(), get(), get(), get<ReachPolicy>(), get(), get(), clock) }
+        // SpacePrivateChats is spaces' (it implements messaging:api's guard and binds it in its own Koin module).
+        single { OpenDirectChat(get(), get(), get(), get<ReachPolicy>(), get(), get(), clock, getOrNull()) }
         single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
@@ -287,6 +288,7 @@ fun messagingModule(config: Config): Module =
                 background,
                 messaging,
                 clock,
+                getOrNull(),
             )
         }
         single { ReadInbox(get(), messaging) }

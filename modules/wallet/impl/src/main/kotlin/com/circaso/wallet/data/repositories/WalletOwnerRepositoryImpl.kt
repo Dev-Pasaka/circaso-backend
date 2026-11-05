@@ -17,18 +17,19 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.selectAll
+import java.util.UUID
 
 /**
  * `wallet_owners` by its primary key and by `wallet_owners_chat_key`. The insert is the claim behind W14: of two
  * owners' taps at once, one row lands and the other reads it.
  */
 class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRepository {
-    override suspend fun find(walletId: WalletId): WalletOwner.Group? =
+    override suspend fun find(walletId: WalletId): WalletOwner? =
         database.tx("wallet-owners.find") {
             WalletOwnersTable
                 .selectAll()
                 .where { WalletOwnersTable.walletId eq walletId.value }
-                .map { it.toGroup() }
+                .map { it.toOwner() }
                 .singleOrNull()
         }
 
@@ -56,14 +57,65 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
         }
     }
 
-    override suspend fun bySigner(signerId: UserId): List<WalletOwner.Group> =
+    override suspend fun bySigner(signerId: UserId): List<WalletOwner> =
         database.tx("wallet-owners.by-signer") {
             WalletOwnersTable
                 .selectAll()
                 .where { WalletOwnersTable.signerId eq signerId.value }
-                .map { it.toGroup() }
+                .map { it.toOwner() }
                 .toList()
         }
+
+    override suspend fun bySpace(spaceId: UUID): WalletOwner.Space? =
+        database.tx("wallet-owners.by-space") {
+            WalletOwnersTable
+                .selectAll()
+                .where {
+                    (WalletOwnersTable.spaceId eq spaceId) and
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
+                }.map { it.toSpace() }
+                .singleOrNull()
+        }
+
+    override suspend fun bySpaces(spaceIds: Collection<UUID>): List<WalletOwner.Space> {
+        if (spaceIds.isEmpty()) return emptyList()
+        return database.tx("wallet-owners.by-spaces") {
+            WalletOwnersTable
+                .selectAll()
+                .where {
+                    (WalletOwnersTable.spaceId inList spaceIds.distinct()) and
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
+                }.map { it.toSpace() }
+                .toList()
+        }
+    }
+
+    override suspend fun insertSpace(owner: WalletOwner.Space): Boolean =
+        database.tx("wallet-owners.insert-space") {
+            val statement =
+                WalletOwnersTable.insertIgnore {
+                    it[walletId] = owner.walletId.value
+                    it[ownerType] = WalletOwnerType.SPACE.name
+                    it[spaceId] = owner.spaceId
+                    it[signerId] = owner.signerId.value
+                    it[createdBy] = owner.createdBy.value
+                    it[createdAt] = owner.createdAt
+                }
+            statement.insertedCount > 0
+        }
+
+    /** A group's or a space's wallet, by the row's owner type. */
+    private fun ResultRow.toOwner(): WalletOwner =
+        if (this[WalletOwnersTable.ownerType] == WalletOwnerType.SPACE.name) toSpace() else toGroup()
+
+    private fun ResultRow.toSpace() =
+        WalletOwner.Space(
+            walletId = WalletId(this[WalletOwnersTable.walletId]),
+            spaceId = checkNotNull(this[WalletOwnersTable.spaceId]),
+            signerId = UserId(this[WalletOwnersTable.signerId]),
+            createdBy = UserId(this[WalletOwnersTable.createdBy]),
+            createdAt = this[WalletOwnersTable.createdAt],
+        )
 
     override suspend fun insert(owner: WalletOwner.Group): Boolean =
         database.tx("wallet-owners.insert") {

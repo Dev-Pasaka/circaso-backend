@@ -45,13 +45,19 @@ data class ChatDto(
     val version: Long,
     val created: Boolean? = null,
     val notAdded: List<String>? = null,
+    /** A private chat with a space's owner (Spaces phase 3): the space it came from. Label it "Private · via …". */
+    val viaSpaceId: String? = null,
 )
 
 @Serializable
 data class ChatsResponse(val chats: List<ChatDto>)
 
 @Serializable
-data class OpenDirectChatRequest(val userId: String)
+data class OpenDirectChatRequest(
+    val userId: String,
+    /** Open the private chat with a space's owner instead (Spaces phase 3), separate from your other chat with them. */
+    val viaSpaceId: String? = null,
+)
 
 @Serializable
 data class CreateGroupRequest(val sealedMeta: String, val memberIds: List<String> = emptyList())

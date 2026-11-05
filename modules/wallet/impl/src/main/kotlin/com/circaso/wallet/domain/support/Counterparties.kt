@@ -5,6 +5,7 @@ import com.circaso.users.api.Profiles
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.Counterparty
 import com.circaso.wallet.domain.models.HistoryEntry
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
@@ -50,7 +51,7 @@ class Counterparties(
     private suspend fun groups(ids: Set<UserId>): Map<UserId, Counterparty> {
         val repository = groupWallets ?: return emptyMap()
         return ids
-            .mapNotNull { id -> repository.find(WalletId(id.value))?.let { id to it } }
+            .mapNotNull { id -> (repository.find(WalletId(id.value)) as? WalletOwner.Group)?.let { id to it } }
             .associate { (id, group) -> id to Counterparty(id, null, null, null, null, group.chatId) }
     }
 

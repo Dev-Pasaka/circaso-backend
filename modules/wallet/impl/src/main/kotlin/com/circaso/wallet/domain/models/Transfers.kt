@@ -61,6 +61,9 @@ sealed interface Payee {
 
     /** A group's wallet (decision 2026-11-03): a member pays into it, a contribution when the group has a target. */
     data class Group(val chatId: ChatId) : Payee
+
+    /** A space's wallet (Spaces phase 3): its members pay into it; [spaceId] is spaces' id. */
+    data class Space(val spaceId: UUID) : Payee
 }
 
 /** A transfer prepared by W4, from one of the sender's chain wallets. Amounts and addresses are never logged. */
@@ -92,6 +95,12 @@ data class Transfer(
     val fromGroupId: ChatId? = null,
     /** The group whose wallet it pays ([recipientId] is then that wallet's holder id). */
     val toGroupId: ChatId? = null,
+    /** The space whose wallet it leaves (Spaces phase 3; spaces' id). */
+    val fromSpaceId: UUID? = null,
+    /** The space whose wallet it pays ([recipientId] is then that wallet's holder id). */
+    val toSpaceId: UUID? = null,
+    /** The membership payment (SP13) it pays. */
+    val spacePaymentId: UUID? = null,
     /** Circaso's fee, in [amount]'s asset, locked when it was prepared (phase 2F); the sender pays it on top. */
     val feeMinor: Long = 0,
     /** Circaso's fee wallet the fee goes to, in the same signature; null when there is no fee leg. */
@@ -171,6 +180,8 @@ data class TransferCommand(
     val payoutRequestId: UUID? = null,
     /** The W17 quote the person was shown: W4 charges its fee while it holds (phase 2F). */
     val quoteId: UUID? = null,
+    /** A membership payment (SP13) this pays: the amount and the space must be exactly its own. */
+    val spacePaymentId: UUID? = null,
 )
 
 /**

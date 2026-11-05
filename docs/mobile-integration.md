@@ -644,6 +644,36 @@ The flow for a photo: **ST1** (size of the ciphertext) → `PUT` the ciphertext 
 
 **Retention.** `status.purge-expired` runs every 10 minutes and hard-deletes moments past `expiresAt` with their views and files, so reads hide a moment the moment it expires and the rows go within 10 minutes. A deleted account's moments are removed at once (its audiences get `status.deleted`).
 
+### Spaces (phase 3, Spaces core; branch `feat/spaces`, not deployed)
+
+The full contract is the app repo's `.claude/skills/circaso-mobile/references/spaces-api.md` (SP1-SP37, SPO1-SPO2,
+W18-W19, frames, pushes, `spaces.*` errors); the reader at `/docs` (tag `Spaces`) has every route. In short:
+
+- **Spaces** (`/v1/spaces`): create (SP2, `SETTING_UP` until its wallet is active, then `LIVE`; 7-day account age, 3 a
+  day), read by id or `@handle` (SP3, SP4), change (SP5; a price change is told to every member and applies from
+  each one's next period), delete once the wallet is empty (SP6), yours (SP7), suggested (SP8), search by words or
+  `@handle` (SP9; invite-only never listed).
+- **Joining**: follow a public space (SP10), leave (SP11), notifications (SP12); a members-only space is joined by a
+  payment (SP13 then W17 and W4 with `to: { spaceId }`, `spacePaymentId`, `quoteId`): a member only once the
+  transfer is confirmed (`wallet.TransferConfirmed` → `space.membership_updated`). Reminder 3 days before the end (7
+  for yearly), 3 days' grace, then ended (`spaces.memberships` job). Invite-only: requests (SP14-SP17, 30 days after a
+  decline) and invites (SP18-SP22, 14 days; a decline is never told).
+- **Moderation**: members and roles (SP23-SP27: owner, admins, moderators; mute, remove, ban), reports (SP35-SP37 to
+  the space's moderators; Circaso's queue SPO1, removal SPO2, scope `ops`).
+- **Space chat** (not end-to-end encrypted, stored on the server): posts with replies, files (SP33/SP34) and one-emoji
+  reactions with counts, tombstones for removed posts, admins-only posting, paging and read markers (SP28-SP32).
+- **Private chat with the owner**: M4 `POST /chats/direct` takes `viaSpaceId`; the chat is an ordinary end-to-end
+  encrypted direct chat, separate from the pair's own, and every chat answer carries `viaSpaceId`. Allowed by the
+  space's rule instead of reach (blocks still apply); a ban closes it both ways (`messaging.not_reachable`).
+- **Space wallet** (owner type `SPACE`, option A): W18 `POST /wallet/spaces/{spaceId}` (owner), W19 `GET` (owner and
+  admins); W1/W3/W5/W6/W12/W13 with `?walletId=`; W16 lists space wallets (signer first, then those you administer);
+  W4/W17 `to: { spaceId }` (members only, or a membership payment) priced at the space fee rule (seed 1 %); the owner
+  sends from it directly. Events carry `fromSpaceId`, `toSpaceId`, `spacePaymentId`; `WalletCreated` carries `spaceId`.
+- **Realtime** module `spaces` (replayable 7 days): `space.post_new`, `space.post_updated`, `space.updated`,
+  `space.membership_updated`, `space.price_changed`, `space.invited`, `space.invite_removed`,
+  `space.invite_accepted`, `space.request_new`, `space.report_new`, `space.report_resolved`. Pushes carry `kind`
+  `space.*` and `spaceId`.
+
 ## 8. Realtime socket
 
 While the app is open, keep one WebSocket to `wss://<host>/v1/ws` (Ktor `WebSockets` plugin; the server pings every 25 seconds). The **first frame** must authenticate within a few seconds or the server closes it:

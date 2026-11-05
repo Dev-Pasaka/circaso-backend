@@ -45,3 +45,21 @@ interface ChatDirectory {
      */
     suspend fun owner(chatId: ChatId): UserId?
 }
+
+/**
+ * Asked by messaging about a private chat with a space's owner (Spaces phase 3, M4 `viaSpaceId`): an end-to-end
+ * encrypted direct chat between a person and the owner, separate from any other chat between the two. Spaces
+ * implements it and binds it, as chama does the wallet's guard; spaces' id is a UUID, since spaces' api can't be named
+ * by this one. Blocks are still messaging's own check.
+ */
+interface SpacePrivateChats {
+    /**
+     * Whether [from] may open, or write in, the private chat with [to] via [spaceId]: one of them owns the live space,
+     * the other may message its owner (its `privateMessages` setting) and neither is banned from it.
+     */
+    suspend fun allowed(
+        spaceId: UUID,
+        from: UserId,
+        to: UserId,
+    ): Boolean
+}

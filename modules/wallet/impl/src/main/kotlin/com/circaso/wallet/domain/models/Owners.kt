@@ -38,6 +38,17 @@ sealed interface WalletOwner {
     ) : WalletOwner {
         override val type get() = WalletOwnerType.GROUP
     }
+
+    /** A space's wallet (Spaces phase 3): [signerId], the space's owner, set its PIN and sends from it directly. */
+    data class Space(
+        override val walletId: WalletId,
+        val spaceId: UUID,
+        override val signerId: UserId,
+        val createdBy: UserId,
+        val createdAt: Instant,
+    ) : WalletOwner {
+        override val type get() = WalletOwnerType.SPACE
+    }
 }
 
 /** The holder id of a group wallet, for the wallet's own tables. */
@@ -68,3 +79,12 @@ data class WalletListing(
 
 /** W15's answer: the group's wallet, or none yet ([listing] null, so `status` is `NONE`). */
 data class GroupWalletView(val chatId: ChatId, val listing: WalletListing?)
+
+/** W18 `POST /wallet/spaces/{spaceId}`: the space's owner sets up its wallet. */
+data class CreateSpaceWalletCommand(val userId: UserId, val spaceId: UUID, val idempotencyKey: UUID)
+
+/** W18's answer: the space's wallet and, while its PIN isn't set, the challenge that sets it. */
+data class SpaceWalletSetup(val owner: WalletOwner.Space, val setup: WalletSetup)
+
+/** W19's answer: the space's wallet, or none yet. */
+data class SpaceWalletView(val spaceId: UUID, val listing: WalletListing?)

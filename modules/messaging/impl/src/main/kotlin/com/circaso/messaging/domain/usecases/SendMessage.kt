@@ -1,6 +1,7 @@
 package com.circaso.messaging.domain.usecases
 
 import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.api.SpacePrivateChats
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
@@ -56,6 +57,8 @@ class SendMessage(
     private val background: CoroutineScope,
     private val config: MessagingConfig,
     private val clock: Clock,
+    /** Spaces' guard (Spaces phase 3): a private chat via a space closes once either side is banned from it. */
+    private val spaceChats: SpacePrivateChats? = null,
 ) {
     suspend operator fun invoke(command: SendMessageCommand): Resource<SentMessage> {
         if (tooLarge(command)) return Resource.error(MessagingError.MessageTooLarge)
@@ -123,7 +126,7 @@ class SendMessage(
         if (!perRecipient) return groupCheck(command)
         if (command.ciphertext != null) return malformed("ciphertext", "goes in recipients for this message")
         if (!recipientsMatch(chat, command, others)) return MessagingError.RecipientsMismatch
-        if (chat.kind == ChatKind.DIRECT && !reachableBothWays(command.sender, others.single())) {
+        if (chat.kind == ChatKind.DIRECT && !canWrite(chat, command.sender, others.single())) {
             return MessagingError.NotReachable
         }
         return null
@@ -151,6 +154,16 @@ class SendMessage(
 
     private suspend fun reachableBothWays(sender: UserId, other: UserId) =
         reach.canReach(sender, other) && reach.canReach(other, sender)
+
+    /** A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways. */
+    private suspend fun canWrite(
+        chat: Chat,
+        sender: UserId,
+        other: UserId,
+    ): Boolean {
+        val via = chat.viaSpaceId ?: return reachableBothWays(sender, other)
+        return spaceChats?.allowed(via, sender, other) == true && !reach.blockedEitherWay(sender, other)
+    }
 
     private fun fanout(
         chat: Chat,

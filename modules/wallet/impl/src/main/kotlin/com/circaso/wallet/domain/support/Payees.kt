@@ -6,6 +6,8 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.ReachPolicy
+import com.circaso.wallet.api.SpaceAccess
+import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
@@ -17,7 +19,13 @@ import com.circaso.wallet.domain.repositories.WalletRepository
  * Where a transfer goes: the wallet paid ([recipientId]: a person, or a group wallet's holder with [toGroupId] set;
  * null for an outside address) and the address on chain.
  */
-data class Destination(val recipientId: UserId?, val address: String, val toGroupId: ChatId? = null) {
+data class Destination(
+    val recipientId: UserId?,
+    val address: String,
+    val toGroupId: ChatId? = null,
+    /** Set when it pays a space's wallet (Spaces phase 3). */
+    val toSpaceId: java.util.UUID? = null,
+) {
     override fun toString(): String = "Destination($recipientId, ***)"
 }
 
@@ -34,6 +42,8 @@ class Payees(
     private val chats: ChatDirectory,
     private val custody: StablecoinCustody,
     private val support: SupportAccountRule,
+    /** Spaces' guard (Spaces phase 3): who may pay a space. */
+    private val spaces: SpaceWalletPolicy? = null,
 ) {
     /**
      * The reach rule, or both people in the chat the payment is made from. A shared chat never overrides a block
@@ -70,12 +80,40 @@ class Payees(
         blockchain: String,
         chatId: ChatId?,
         actor: UserId = sender,
+        membership: Boolean = false,
     ): Resource<Destination> =
         when (payee) {
             is Payee.Person -> person(sender, payee.userId, blockchain, chatId, actor)
             is Payee.Address -> address(sender, payee.address, blockchain)
             is Payee.Group -> group(sender, payee.chatId, blockchain, actor)
+            is Payee.Space -> space(sender, payee.spaceId, blockchain, actor, membership)
         }
+
+    /**
+     * A space's wallet (Spaces phase 3, §8 Q7): its members pay into it; anyone not banned may pay a membership
+     * ([membership], already checked against spaces' payment). A space without a wallet on that chain is refused as
+     * a person without one is.
+     */
+    private suspend fun space(
+        sender: UserId,
+        spaceId: java.util.UUID,
+        blockchain: String,
+        actor: UserId,
+        membership: Boolean,
+    ): Resource<Destination> {
+        val owner = owners.bySpace(spaceId) ?: return Resource.error(WalletError.SpaceNotFound)
+        if (!membership) {
+            val access = spaces?.access(spaceId, actor) ?: SpaceAccess.NONE
+            if (access == SpaceAccess.NONE) return Resource.error(WalletError.SpaceNotMember)
+        }
+        if (owner.holder == sender) return Resource.error(WalletError.SelfTransfer)
+        val receiving = receiving(owner.holder)
+        if (receiving.active.isEmpty()) return Resource.error(WalletError.RecipientNoWallet)
+        val wallet =
+            receiving.open.firstOrNull { it.blockchain == blockchain }
+                ?: return Resource.error(WalletError.RecipientNotOnChain)
+        return Resource.success(Destination(owner.holder, wallet.address, toSpaceId = spaceId))
+    }
 
     /**
      * A group's wallet (decision 2026-11-03): only its members pay into it, and only once it is set up on the chain.

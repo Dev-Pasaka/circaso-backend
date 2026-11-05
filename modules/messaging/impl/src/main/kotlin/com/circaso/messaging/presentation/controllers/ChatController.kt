@@ -15,7 +15,10 @@ import com.circaso.messaging.presentation.mappers.parseUserIds
 import com.circaso.messaging.presentation.mappers.toCommand
 import com.circaso.messaging.presentation.mappers.toDto
 import com.circaso.messaging.presentation.services.ChatService
+import com.circaso.shared.Resource
 import com.circaso.shared.Scope
+import com.circaso.shared.SharedError
+import com.circaso.shared.Uuid7
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
 import com.circaso.web.NoBody
@@ -56,9 +59,13 @@ fun Route.chatController(chats: ChatService) {
 
             post("direct") {
                 val caller = call.userId()
+                val request = call.receive<OpenDirectChatRequest>()
+                val via = request.viaSpaceId?.let { Uuid7.parse(it.trim()) }
                 val result =
-                    parseUserId(call.receive<OpenDirectChatRequest>().userId).flatMap {
-                        chats.openDirect(caller, it)
+                    if (request.viaSpaceId != null && via == null) {
+                        Resource.error(SharedError.Malformed("viaSpaceId", "is not an id"))
+                    } else {
+                        parseUserId(request.userId).flatMap { chats.openDirect(caller, it, via) }
                     }
                 call.respondDefault(result.toDefaultResponse { it.toDto() })
             }.docs<OpenDirectChatRequest, ChatDto>(
@@ -67,7 +74,9 @@ fun Route.chatController(chats: ChatService) {
                 listOf("users.not_reachable", "request.malformed"),
                 notes =
                     "$SCOPE You must be able to reach the person. `created` is true on the first open; two " +
-                        "people opening it at the same moment get the same chat.",
+                        "people opening it at the same moment get the same chat. With `viaSpaceId` (Spaces phase " +
+                        "3): the private chat with that space's owner, separate from any other chat between you, " +
+                        "allowed by the space's rule instead of reach (blocks still apply); it carries `viaSpaceId`.",
             )
 
             post("groups") {

@@ -1017,6 +1017,77 @@ class SocketHubTest {
             assertTrue(push.sent.all { it.second.title == "Circaso" && it.second.data.kind == "moment.loved" })
         }
 
+    @Test
+    fun `space pushes - post text only for public spaces, and money into a space wallet names the space`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val member = UserId.new()
+            val spaceId =
+                com.circaso.spaces.api.SpaceId
+                    .new()
+
+            fun posted(visibility: String) =
+                RealtimeEnvelope.of(
+                    com.circaso.spaces.api.SpacesFrames.MODULE,
+                    com.circaso.spaces.api.SpacesFrames.POST_NEW,
+                    1,
+                    com.circaso.spaces.api.PostNewFrame(
+                        spaceId,
+                        "Book Club",
+                        com.circaso.spaces.api.FramePost(
+                            postId =
+                                com.circaso.spaces.api.PostId
+                                    .new(),
+                            spaceId = spaceId,
+                            author =
+                                com.circaso.spaces.api
+                                    .FramePerson(UserId.new(), "Njeri"),
+                            text = "Chapter 7 tonight",
+                            createdAt = "2026-11-05T09:00:00Z",
+                        ),
+                        notify = true,
+                        visibility = visibility,
+                    ),
+                    com.circaso.spaces.api.PostNewFrame
+                        .serializer(),
+                )
+            realtime.deliver(member, posted("PUBLIC"))
+            realtime.deliver(member, posted("MEMBERS_ONLY"))
+            realtime.deliver(member, posted("INVITE_ONLY"))
+            val amount = WalletAmount("USDC", "20000000", "20")
+            realtime.deliver(
+                member,
+                RealtimeEnvelope.of(
+                    WalletFrames.MODULE,
+                    WalletFrames.PAYMENT_RECEIVED,
+                    2,
+                    PaymentReceivedFrame(
+                        "t-1",
+                        "BASE",
+                        amount,
+                        UserId.new(),
+                        "Amina",
+                        com.circaso.wallet.api.WalletId
+                            .new(),
+                        "SPACE",
+                        "Sneaker Drop",
+                    ),
+                    PaymentReceivedFrame.serializer(),
+                ),
+            )
+
+            assertEquals(
+                listOf(
+                    "Njeri: Chapter 7 tonight",
+                    "New post in Book Club",
+                    "New post in Book Club",
+                    "Amina paid Sneaker Drop",
+                ),
+                push.sent.map { it.second.body },
+            )
+        }
+
     /** Two nodes sharing [redis], both listening, served at `/one/ws` and `/two/ws`. */
     private fun ApplicationTestBuilder.twoNodes(redis: MemoryRedis): Pair<SocketHub, SocketHub> {
         val nodeOne = hub(redis, nodeId = "node-1")

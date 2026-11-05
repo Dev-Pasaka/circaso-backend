@@ -37,6 +37,11 @@ object TransfersTable : Table("wallet.transfers") {
     val toGroupId = javaUUID("to_group_id").nullable()
     val feeMinor = long("fee_minor").default(0)
     val feeAddress = text("fee_address").nullable()
+
+    /** Spaces (V5): the space wallet on either side, and the membership payment (SP13) it pays. */
+    val fromSpaceId = javaUUID("from_space_id").nullable()
+    val toSpaceId = javaUUID("to_space_id").nullable()
+    val spacePaymentId = javaUUID("space_payment_id").nullable()
     override val primaryKey = PrimaryKey(transferId)
 
     init {

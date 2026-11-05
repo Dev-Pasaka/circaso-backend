@@ -13,6 +13,9 @@ object WalletOwnersTable : Table("wallet.wallet_owners") {
     val walletId = javaUUID("wallet_id")
     val ownerType = text("owner_type")
     val chatId = javaUUID("chat_id").nullable()
+
+    /** SPACE (V5): spaces' id; one wallet per space (`wallet_owners_space_key`). */
+    val spaceId = javaUUID("space_id").nullable()
     val signerId = javaUUID("signer_id")
     val createdBy = javaUUID("created_by")
     val createdAt = timestamp("created_at")

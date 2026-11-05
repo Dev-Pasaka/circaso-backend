@@ -1,6 +1,9 @@
 package com.circaso.wallet.domain.support
 
+import com.circaso.shared.Asset
 import com.circaso.shared.Resource
+import com.circaso.wallet.api.SpaceWalletPolicy
+import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Allowance
 import com.circaso.wallet.domain.models.Fee
 import com.circaso.wallet.domain.models.FeeQuote
@@ -43,6 +46,8 @@ class PaymentPlanner(
     private val payees: Payees,
     private val fees: FeeCalculator,
     private val limits: Limits,
+    /** Spaces' guard (Spaces phase 3): what a membership payment must be. */
+    private val spaces: SpaceWalletPolicy? = null,
 ) {
     suspend fun plan(
         owner: WalletOwner,
@@ -56,6 +61,11 @@ class PaymentPlanner(
                 is Resource.Error -> return found
             }
         rules.checkAmount(command.blockchain, command.amount).let { if (it is Resource.Error) return it }
+        val membership =
+            when (val checked = spacePayment(owner, command)) {
+                is Resource.Success -> checked.data
+                is Resource.Error -> return checked
+            }
         val allowance = limits.allowance(owner, command.amount.asset)
         val cap = allowance.perPaymentMaxMinor
         if (strict && cap != null && command.amount.amountMinor > cap) {
@@ -65,7 +75,14 @@ class PaymentPlanner(
         val destination =
             when (
                 val resolved =
-                    payees.resolve(holder, command.payee, command.blockchain, command.chatId, actor = command.senderId)
+                    payees.resolve(
+                        holder,
+                        command.payee,
+                        command.blockchain,
+                        command.chatId,
+                        actor = command.senderId,
+                        membership = membership,
+                    )
             ) {
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
@@ -81,6 +98,24 @@ class PaymentPlanner(
                 is Resource.Error -> return read
             }
         return Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance))
+    }
+
+    /**
+     * A membership payment (SP13, Spaces phase 3) is paid from the personal wallet, into exactly its space and for
+     * exactly its amount, while spaces still holds it (15 minutes). True when this payment is one, so the payee check
+     * lets someone who isn't yet a member pay it. Its fee is the space rate, like any payment into a space wallet.
+     */
+    private suspend fun spacePayment(owner: WalletOwner, command: TransferCommand): Resource<Boolean> {
+        val paymentId = command.spacePaymentId ?: return Resource.success(false)
+        if (owner !is WalletOwner.Person) return Resource.error(WalletError.SpacePaymentPersonalOnly)
+        val payee = command.payee as? Payee.Space ?: return Resource.error(WalletError.SpacePaymentInvalid)
+        val charge =
+            spaces?.membershipCharge(paymentId, command.senderId)
+                ?: return Resource.error(WalletError.SpacePaymentInvalid)
+        val exact =
+            charge.spaceId == payee.spaceId && command.amount.asset == Asset.USDC &&
+                command.amount.amountMinor == charge.amountMinor
+        return if (exact) Resource.success(true) else Resource.error(WalletError.SpacePaymentInvalid)
     }
 }
 
@@ -125,6 +160,7 @@ class FeeQuotes(private val quotes: FeeQuoteRepository, private val clock: Clock
         when (payee) {
             is Payee.Person -> "user:${payee.userId.value}"
             is Payee.Group -> "group:${payee.chatId.value}"
+            is Payee.Space -> "space:${payee.spaceId}"
             is Payee.Address -> "address:${Addresses.normalise(payee.address.trim())}"
         }
 }

@@ -9,6 +9,7 @@ import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckSupportHandle
 import com.circaso.users.domain.usecases.FilterReachable
 import com.circaso.users.domain.usecases.GetProfiles
+import com.circaso.users.domain.usecases.ListContactIds
 import com.circaso.users.domain.usecases.ReplayFrames
 
 /**
@@ -22,6 +23,7 @@ class DirectoryService(
     private val replayFrames: ReplayFrames,
     private val checkBlockedEitherWay: CheckBlockedEitherWay,
     private val checkSupportHandle: CheckSupportHandle,
+    private val listContactIds: ListContactIds,
 ) {
     suspend fun canReach(from: UserId, to: UserId): Resource<Boolean> = canReach.invoke(from, to)
 
@@ -30,6 +32,8 @@ class DirectoryService(
     suspend fun blockedEitherWay(a: UserId, b: UserId): Resource<Boolean> = checkBlockedEitherWay(a, b)
 
     suspend fun getProfiles(ids: Set<UserId>): Resource<Map<UserId, PublicProfile>> = getProfiles.invoke(ids)
+
+    suspend fun contactIds(userId: UserId, limit: Int): Resource<Set<UserId>> = listContactIds(userId, limit)
 
     suspend fun checkSupportHandle(handle: String): Resource<String> = checkSupportHandle.invoke(handle)
 

@@ -177,7 +177,7 @@ class PrepareTransfer(
                     approved.payeeAddress?.let { Addresses.normalise(it.trim()) } == Addresses.normalise(payee.address)
                 }
 
-                is Payee.Group -> {
+                is Payee.Group, is Payee.Space -> {
                     false
                 }
             }
@@ -327,6 +327,9 @@ class PrepareTransfer(
             toGroupId = destination.toGroupId,
             feeMinor = if (fee.charged) fee.amountMinor else 0,
             feeAddress = if (fee.charged) fee.feeAddress else null,
+            fromSpaceId = (owner as? WalletOwner.Space)?.spaceId,
+            toSpaceId = destination.toSpaceId,
+            spacePaymentId = command.spacePaymentId,
         )
     }
 

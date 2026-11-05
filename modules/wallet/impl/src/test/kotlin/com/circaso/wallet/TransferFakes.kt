@@ -486,15 +486,34 @@ class FakeChats : ChatDirectory {
 class MemoryWalletOwners : WalletOwnerRepository {
     val rows = ConcurrentHashMap<WalletId, WalletOwner.Group>()
 
-    override suspend fun find(walletId: WalletId): WalletOwner.Group? = rows[walletId]
+    /** Space wallets (Spaces phase 3). */
+    val spaceRows = ConcurrentHashMap<WalletId, WalletOwner.Space>()
+
+    override suspend fun find(walletId: WalletId): WalletOwner? = rows[walletId] ?: spaceRows[walletId]
+
+    override suspend fun bySpace(spaceId: UUID): WalletOwner.Space? =
+        spaceRows.values.firstOrNull {
+            it.spaceId ==
+                spaceId
+        }
+
+    override suspend fun bySpaces(spaceIds: Collection<UUID>): List<WalletOwner.Space> =
+        spaceRows.values.filter { it.spaceId in spaceIds }
+
+    override suspend fun insertSpace(owner: WalletOwner.Space): Boolean =
+        synchronized(spaceRows) {
+            val taken = spaceRows.containsKey(owner.walletId) || spaceRows.values.any { it.spaceId == owner.spaceId }
+            if (!taken) spaceRows[owner.walletId] = owner
+            !taken
+        }
 
     override suspend fun byChat(chatId: ChatId): WalletOwner.Group? = rows.values.firstOrNull { it.chatId == chatId }
 
     override suspend fun byChats(chatIds: Collection<ChatId>): List<WalletOwner.Group> =
         rows.values.filter { it.chatId in chatIds }
 
-    override suspend fun bySigner(signerId: UserId): List<WalletOwner.Group> =
-        rows.values.filter { it.signerId == signerId }
+    override suspend fun bySigner(signerId: UserId): List<WalletOwner> =
+        rows.values.filter { it.signerId == signerId } + spaceRows.values.filter { it.signerId == signerId }
 
     override suspend fun insert(owner: WalletOwner.Group): Boolean =
         synchronized(rows) {

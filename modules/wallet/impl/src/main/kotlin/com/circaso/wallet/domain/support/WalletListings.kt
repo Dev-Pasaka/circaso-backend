@@ -19,7 +19,7 @@ class WalletListings(private val wallets: WalletRepository, private val payees: 
             when {
                 recorded.any { it.state == ChainWalletState.ACTIVE } -> WalletStatus.ACTIVE
                 recorded.isNotEmpty() || wallets.circleUser(holder) != null -> WalletStatus.SETTING_UP
-                owner is WalletOwner.Group -> WalletStatus.SETTING_UP
+                owner is WalletOwner.Group || owner is WalletOwner.Space -> WalletStatus.SETTING_UP
                 else -> WalletStatus.NONE
             }
         val chains = payees.receiving(holder).open.map { it.blockchain }

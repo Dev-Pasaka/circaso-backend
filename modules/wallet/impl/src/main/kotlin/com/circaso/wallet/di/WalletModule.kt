@@ -67,6 +67,7 @@ import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.FeeCalculator
 import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.FeeSettlement
+import com.circaso.wallet.domain.support.HeldFunds
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
@@ -88,12 +89,16 @@ import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
+import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CreateGroupWallet
+import com.circaso.wallet.domain.usecases.CreateSpaceWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.FindGroupWallet
+import com.circaso.wallet.domain.usecases.FindSpaceWallet
 import com.circaso.wallet.domain.usecases.GetGroupWallet
+import com.circaso.wallet.domain.usecases.GetSpaceWallet
 import com.circaso.wallet.domain.usecases.GetTransaction
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
@@ -117,10 +122,12 @@ import com.circaso.wallet.presentation.api.WalletRealtimeReplay
 import com.circaso.wallet.presentation.api.WalletsImpl
 import com.circaso.wallet.presentation.controllers.historyController
 import com.circaso.wallet.presentation.controllers.recipientController
+import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
 import com.circaso.wallet.presentation.controllers.walletController
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.RecipientService
+import com.circaso.wallet.presentation.services.SpaceWalletService
 import com.circaso.wallet.presentation.services.TransferService
 import com.circaso.wallet.presentation.services.WalletAgentService
 import com.circaso.wallet.presentation.services.WalletDirectoryService
@@ -241,7 +248,7 @@ fun walletModule(config: Config): Module =
         }
         // Frames name a wallet's holder; HolderFrames sends them on to the people behind it (a group wallet's signer
         // or members, decision 2026-11-03).
-        single<FrameSender> { HolderFrames(get(), get(), get<RealtimeFramesImpl>()) }
+        single<FrameSender> { HolderFrames(get(), get(), get<RealtimeFramesImpl>(), getOrNull()) }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single(named("wallet.purge-expired")) {
             val expiry = WalletExpiry(get(named("wallet.database")))
@@ -266,17 +273,18 @@ fun walletModule(config: Config): Module =
 
         // domain: helpers and use cases
         single { OrderedIds(clock) }
-        single { Holders(get(), get()) }
+        // SpaceWalletPolicy is spaces' (it implements wallet:api's guard and binds it in its own Koin module).
+        single { Holders(get(), get(), getOrNull()) }
         single { WalletSync(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { WalletCreation(get(), get(), get(), get(), clock) }
         single { WalletListings(get(), get()) }
         single { HoldingsReader(get(), get(), get()) }
         single { SupportAccountRule(get()) }
-        single { Payees(get(), get(), get(), get(), get(), get()) }
+        single { Payees(get(), get(), get(), get(), get(), get(), getOrNull()) }
         single { SenderRules(get(), get(), get(), get(), get(), get()) }
         single { Limits(get(), get(), clock) }
         single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock) }
-        single { PaymentPlanner(get(), get(), get(), get()) }
+        single { PaymentPlanner(get(), get(), get(), get(), getOrNull()) }
         single { FeeQuotes(get(), clock) }
         single { FeeSettlement(get(), get(), get()) }
         single { TransferEvents(get()) }
@@ -288,7 +296,12 @@ fun walletModule(config: Config): Module =
         single { CreateWallet(get(), get()) }
         single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
         single { GetGroupWallet(get(), get(), get()) }
-        single { ListMyWallets(get(), get(), get()) }
+        single { ListMyWallets(get(), get(), get(), getOrNull()) }
+        single { HeldFunds(get(), get(), get()) }
+        single { CreateSpaceWallet(get(), get(), get(), get(), get(), get(), clock) }
+        single { GetSpaceWallet(get(), get(), get()) }
+        single { FindSpaceWallet(get(), get()) }
+        single { CheckSpaceWalletFunds(get(), get()) }
         single { FindGroupWallet(get(), get()) }
         single { OpenSession(get(), get(), get(), get()) }
         single { ListChains(get(), get(), get(), get(), get()) }
@@ -318,7 +331,7 @@ fun walletModule(config: Config): Module =
             )
         }
         single { QuoteTransfer(get(), get(), get(), clock) }
-        single { GetTransfer(get(), get()) }
+        single { GetTransfer(get(), get(), getOrNull()) }
         single { Counterparties(get(), get(), get()) }
         single { ListTransactions(get(), get(), get(), get()) }
         single { GetTransaction(get(), get(), get()) }
@@ -339,7 +352,8 @@ fun walletModule(config: Config): Module =
         single { HistoryService(get()) }
         single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
-        single { WalletDirectoryService(get(), get(), get(), get(), get(), get()) }
+        single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SpaceWalletService(get(), get()) }
         single { WalletJobsService(get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()
@@ -347,8 +361,10 @@ fun walletModule(config: Config): Module =
             val recipients = get<RecipientService>()
             val history = get<HistoryService>()
             val agent = get<WalletAgentService>()
+            val spaceWallets = get<SpaceWalletService>()
             RouteContributor { route ->
                 route.walletController(wallets)
+                route.spaceWalletController(spaceWallets)
                 route.transferController(transfers)
                 route.recipientController(recipients)
                 route.historyController(history)

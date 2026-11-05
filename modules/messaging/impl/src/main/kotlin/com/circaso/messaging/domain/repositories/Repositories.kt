@@ -76,8 +76,15 @@ interface ChatRepository {
     /** Inserts [chat] unless its id (or, for a direct chat, its pair) is taken; true when this call inserted it. */
     suspend fun insertChat(chat: Chat): Boolean
 
-    /** The direct chat between two people, whichever of them is named first. */
-    suspend fun directChat(a: UserId, b: UserId): Chat?
+    /**
+     * The direct chat between two people, whichever of them is named first; with [viaSpaceId], their private chat
+     * via that space instead (Spaces phase 3).
+     */
+    suspend fun directChat(
+        a: UserId,
+        b: UserId,
+        viaSpaceId: UUID? = null,
+    ): Chat?
 
     /**
      * Writes [new] only if the stored chat is still at [old]'s version, moving the version on by one; the chat as

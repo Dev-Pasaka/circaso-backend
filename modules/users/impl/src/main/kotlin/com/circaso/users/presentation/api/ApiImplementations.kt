@@ -8,6 +8,7 @@ import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
+import com.circaso.users.api.ContactBook
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
@@ -43,6 +44,12 @@ class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {
     override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
         directory.getProfiles(ids).getOrNull().orEmpty()
+}
+
+/** users:api for spaces: whose contacts are on Circaso, as ids. */
+class ContactBookImpl(private val directory: DirectoryService) : ContactBook {
+    override suspend fun contactsOf(userId: UserId, limit: Int): Set<UserId> =
+        directory.contactIds(userId, limit).getOrNull().orEmpty()
 }
 
 /** Identity's `SupportProfiles`: what its ops routes need to know of a support account's profile and handle. */

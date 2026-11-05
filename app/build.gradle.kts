@@ -48,6 +48,8 @@ dependencies {
     implementation(project(":modules:calls:impl"))
     implementation(project(":modules:status:api"))
     implementation(project(":modules:status:impl"))
+    implementation(project(":modules:spaces:api"))
+    implementation(project(":modules:spaces:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
 

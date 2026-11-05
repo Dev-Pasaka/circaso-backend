@@ -8,6 +8,7 @@ import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
 import com.circaso.shared.UuidIdSerializer
 import kotlinx.serialization.Serializable
+import java.time.Instant
 import java.util.UUID
 
 @Serializable(with = SessionId.Serializer::class)
@@ -56,6 +57,12 @@ interface AccountDirectory {
 
     /** Of the numbers given, those that belong to active accounts. */
     suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId>
+
+    /**
+     * When the account was made, for rules that wait on an account's age (spaces: accounts younger than 7 days can't
+     * start one, decision 2026-11-04). Null if there is no such account; implementations that can't say answer null.
+     */
+    suspend fun createdAt(userId: UserId): Instant? = null
 }
 
 /** Device-bound actions; wallet transactions are signed with the Circle PIN instead. */

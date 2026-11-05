@@ -47,6 +47,8 @@ internal fun WalletFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                     fromUserId,
                     fromName,
                     walletId,
+                    ownerType,
+                    spaceName,
                 ),
                 PaymentReceivedFrame.serializer(),
                 ts,

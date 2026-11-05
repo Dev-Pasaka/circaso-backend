@@ -46,6 +46,7 @@ import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.CompleteDeletions
 import com.circaso.identity.domain.usecases.CreateSupportAccount
+import com.circaso.identity.domain.usecases.GetAccountCreatedAt
 import com.circaso.identity.domain.usecases.GetAccountKind
 import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPublicKeys
@@ -231,6 +232,7 @@ fun identityModule(config: Config): Module =
         single { VerifyAccessToken(get(), get()) }
         single { GetAccountStatus(get()) }
         single { GetAccountKind(get()) }
+        single { GetAccountCreatedAt(get()) }
         // SupportProfiles is users' (bound in its module, wired by `app`): identity never depends on users.
         single { CreateSupportAccount(get(), get(), get(), get(), get(), clock) }
         single { ListSupportAccounts(get(), get()) }
@@ -247,7 +249,7 @@ fun identityModule(config: Config): Module =
         single { AccountService(get(), get(), get(), get(), get()) }
         single { IdentityAgentService(get()) }
         single { RecoveryService(get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
