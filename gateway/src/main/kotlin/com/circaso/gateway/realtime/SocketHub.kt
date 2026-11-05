@@ -26,12 +26,13 @@ import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import net.logstash.logback.argument.StructuredArguments.kv
@@ -44,6 +45,7 @@ private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.SocketHu
 
 private val AUTH_WINDOW_MILLIS = 10_000L
 private val HEARTBEAT_MILLIS = 25_000L
+private const val CLOSE_REASON_WAIT_MILLIS = 500L
 private val CONN_TTL: Duration = Duration.ofSeconds(60)
 private val SEQ_TTL: Duration = Duration.ofDays(8)
 
@@ -282,7 +284,6 @@ class SocketHub(
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class) // closeReason.getCompleted(), read only once it has completed
     fun routes(route: Route) =
         with(route) {
             webSocket("ws") {
@@ -328,7 +329,14 @@ class SocketHub(
                 } finally {
                     heartbeat.cancel()
                     unregister(connection)
-                    val reason = closeReason.takeIf { it.isCompleted }?.getCompleted()
+                    // The reason completes just after the frames end; wait a moment for it, even if this socket's
+                    // coroutine is being cancelled, and log without one if it never comes.
+                    val reason =
+                        withContext(NonCancellable) {
+                            withTimeoutOrNull(
+                                CLOSE_REASON_WAIT_MILLIS,
+                            ) { runCatching { closeReason.await() }.getOrNull() }
+                        }
                     log.info(
                         "ws.close",
                         kv("kind", "ws"),
