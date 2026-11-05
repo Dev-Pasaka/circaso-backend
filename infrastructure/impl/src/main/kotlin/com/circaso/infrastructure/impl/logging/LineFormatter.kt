@@ -45,6 +45,8 @@ class LineFormatter(private val palette: Palette) {
         (fields["http.route"] ?: fields["url.path"])?.let { parts += it.toString() }
         fields["http.status"]?.let { parts += status(it.toString()) }
         fields["durationMs"]?.let { parts += duration(it.toString()) }
+        // Right after the status and time, in its own colours, so who sent it doesn't drown in the metadata.
+        if (kind == "request" || kind == "response") parts += clientInfo(event, fields)
 
         val message = Redaction.mask(event.formattedMessage)
         if (!(kind == "request" && message == "in") && !(kind == "response" && message == "out")) parts += message
@@ -54,7 +56,6 @@ class LineFormatter(private val palette: Palette) {
                 .filterKeys { it !in consumed }
                 .map { (key, value) -> palette.gray("$key=${Redaction.mask(shorten(key, value.toString()))}") }
         parts += metadata
-        if (kind == "request" || kind == "response") parts += clientInfo(event, fields)
         fields["error.code"]?.let { parts += levelColor(event.level, it.toString()) }
 
         return parts.filter { it.isNotBlank() }.joinToString(" ")
@@ -111,7 +112,7 @@ class LineFormatter(private val palette: Palette) {
     }
 
     /**
-     * Where the request came from, at the end of its line: `ip=… KE` then the device and app version, and the raw
+     * Where the request came from, after its status and time: `ip=… KE` then the device and app version, and the raw
      * User-Agent only when no device could be read from it. Fields first, the MDC as a fallback.
      */
     private fun clientInfo(event: ILoggingEvent, fields: Map<String, Any?>): String {
@@ -123,7 +124,12 @@ class LineFormatter(private val palette: Palette) {
         val device = pick("client.device")?.let { "device=\"$it\"" }
         val version = pick("client.version")?.let { "app=$it" }
         val ua = if (device == null) pick("client.ua")?.let { "ua=\"${it.take(UA_ON_CONSOLE)}\"" } else null
-        return listOfNotNull(ip, device, version, ua).joinToString(" ") { palette.gray(Redaction.mask(it)) }
+        return listOfNotNull(
+            ip?.let { palette.brightCyan(Redaction.mask(it)) },
+            device?.let { palette.brightMagenta(Redaction.mask(it)) },
+            version?.let { palette.brightBlue(Redaction.mask(it)) },
+            ua?.let { palette.brightMagenta(Redaction.mask(it)) },
+        ).joinToString(" ")
     }
 
     /** Ids are shortened only on the console; JSON keeps them whole so they can be searched. */
