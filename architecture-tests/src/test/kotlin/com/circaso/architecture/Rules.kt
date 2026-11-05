@@ -552,7 +552,8 @@ object Rules {
      */
     fun httpOnlyThroughKtor(files: List<KoFileDeclaration>): List<String> =
         files.flatMap { file ->
-            val ktorEngine = projectOf(file)?.kind == "infrastructure-impl" && file.path.endsWith("/http/JdkHttpEngine.kt")
+            val ktorEngine =
+                projectOf(file)?.kind == "infrastructure-impl" && file.path.endsWith("/http/JdkHttpEngine.kt")
             val other =
                 file
                     .importNames()
