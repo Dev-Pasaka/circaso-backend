@@ -85,3 +85,37 @@ interface AddingChains {
 
     suspend fun remove(userId: UserId, blockchain: String)
 }
+
+/**
+ * `wal:setupcheck:{holder}`: Circle's wallet list is read for a wallet being set up at most once per window (`SET NX`,
+ * [SETUP_CHECK_WINDOW]), so the app polling W1, W15 or W19 every 3 seconds, from one device or several, can't hammer
+ * Circle.
+ */
+interface SetupChecks {
+    /** True if this call may ask Circle now for [holder]'s wallets. */
+    suspend fun claim(holder: UserId): Boolean
+}
+
+/** Shorter than the app's 3-second poll, so each poll reads Circle while extra callers in between share it. */
+val SETUP_CHECK_WINDOW: java.time.Duration = java.time.Duration.ofMillis(2_500)
+
+/**
+ * Wallets being set up: `wal:setup:{holder}` the challenge handed out (so a second "set up" tap gives back the one
+ * still open instead of a second `user/initialize`), and `wal:setups`, a hash of holder to when the setup began, for
+ * `wallet.setup-sweep`. Both last [SETUP_SWEEP_WINDOW] from the last challenge handed out.
+ */
+interface PendingSetups {
+    suspend fun put(holder: UserId, challengeId: String)
+
+    /** The challenge handed out for [holder]'s setup and not yet finished, if any. */
+    suspend fun challenge(holder: UserId): String?
+
+    /** The holders whose setup began since [cutoff]; older entries are dropped. */
+    suspend fun since(cutoff: Instant): List<UserId>
+
+    /** The setup finished (the wallet recorded) or its challenge failed. */
+    suspend fun clear(holder: UserId)
+}
+
+/** How long a wallet setup is followed by `wallet.setup-sweep`, and its challenge handed out again. */
+val SETUP_SWEEP_WINDOW: java.time.Duration = java.time.Duration.ofMinutes(30)

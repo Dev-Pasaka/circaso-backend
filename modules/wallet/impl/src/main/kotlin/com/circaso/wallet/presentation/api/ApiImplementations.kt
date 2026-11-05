@@ -1,6 +1,7 @@
 package com.circaso.wallet.presentation.api
 
 import com.circaso.identity.api.DeletionGuard
+import com.circaso.integrations.api.CustodyChallenge
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.messaging.api.ChatId
@@ -42,9 +43,15 @@ class WalletDeletionGuard(private val directory: WalletDirectoryService) : Delet
     override suspend fun canDelete(userId: UserId): Resource<Unit> = directory.canDelete(userId)
 }
 
-/** Integrations' Circle webhook hands every transaction update here; an error makes Circle deliver it again. */
+/**
+ * Integrations' Circle webhook hands every transaction update and every completed wallet-creating challenge here; an
+ * error makes Circle deliver it again.
+ */
 class WalletCustodyNotifications(private val directory: WalletDirectoryService) : CustodyNotifications {
     override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> = directory.onTransaction(update)
+
+    override suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> =
+        directory.onWalletChallenge(challenge)
 }
 
 /**

@@ -16,13 +16,15 @@ import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
+import com.circaso.wallet.domain.support.SetupProgress
 import com.circaso.wallet.domain.support.Valuation
 import com.circaso.wallet.domain.support.WalletSync
 
 /**
  * W1 `GET /wallet`: the wallet's status, each chain it is on with the assets held there, the totals over all chains
  * and, with `currency`, their worth in that currency. While the wallet is being set up or a chain added, Circle's
- * wallet list is read first, so a wallet the user just finished in the SDK shows at once.
+ * wallet list is read first, so a wallet the user just finished in the SDK shows at once (while setting up, at most
+ * once per [SetupProgress] window, since the app polls).
  *
  * The fiat part is never an error: no rate (an unknown currency, the source down too long) leaves it out. A read
  * marks the user active ([ActiveWallets]) for `wallet.reconcile-active`.
@@ -36,6 +38,7 @@ class GetWallet(
     private val custody: StablecoinCustody,
     private val active: ActiveWallets,
     private val holders: Holders,
+    private val progress: SetupProgress,
 ) {
     suspend operator fun invoke(query: WalletQuery): Resource<WalletView> {
         val access =
@@ -64,6 +67,7 @@ class GetWallet(
     private suspend fun current(user: CircleUser): List<ChainWallet> {
         val known = wallets.wallets(user.userId)
         if (known.isNotEmpty() && adding.list(user.userId).isEmpty()) return known
+        if (known.none { it.state == ChainWalletState.ACTIVE }) return progress.refresh(user) ?: known
         return (sync.sync(user) as? Resource.Success)?.data ?: known
     }
 

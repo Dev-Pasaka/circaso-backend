@@ -4,6 +4,10 @@ import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.ports.ActiveWallets
+import com.circaso.wallet.domain.ports.PendingSetups
+import com.circaso.wallet.domain.ports.SETUP_CHECK_WINDOW
+import com.circaso.wallet.domain.ports.SETUP_SWEEP_WINDOW
+import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.ports.StuckNotices
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
@@ -51,5 +55,71 @@ class RedisStuckNotices(private val redis: RedisScope) : StuckNotices {
 
     private companion object {
         val TTL: Duration = Duration.ofDays(2)
+    }
+}
+
+/**
+ * `wal:setupcheck:{holder}`: `1` for [SETUP_CHECK_WINDOW] after a wallet being set up was read from Circle. Redis
+ * failing answers no: the read falls back to our rows, never fails, and the webhook and the next poll still come.
+ */
+class RedisSetupChecks(private val redis: RedisScope) : SetupChecks {
+    private val log = LoggerFactory.getLogger(RedisSetupChecks::class.java)
+
+    override suspend fun claim(holder: UserId): Boolean =
+        try {
+            redis.setIfAbsent("setupcheck:$holder", "1", SETUP_CHECK_WINDOW)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("wallet setup check not claimed: {}", e.javaClass.simpleName)
+            false
+        }
+}
+
+/**
+ * `wal:setup:{holder}` (the challenge handed out) and `wal:setups` (field the holder, value the epoch ms the setup
+ * began), both for [SETUP_SWEEP_WINDOW] from the last write. Writing never fails the setup: without it the next tap
+ * starts a fresh challenge, as before, and the webhook and the polls still record the wallet.
+ */
+class RedisPendingSetups(private val redis: RedisScope, private val clock: Clock) : PendingSetups {
+    private val log = LoggerFactory.getLogger(RedisPendingSetups::class.java)
+
+    override suspend fun put(holder: UserId, challengeId: String) {
+        quietly("record") {
+            redis.set(key(holder), challengeId, SETUP_SWEEP_WINDOW)
+            redis.hashSet(SETUPS, mapOf(holder.toString() to clock.millis().toString()), SETUP_SWEEP_WINDOW)
+        }
+    }
+
+    override suspend fun challenge(holder: UserId): String? = quietly("read") { redis.get(key(holder)) }
+
+    override suspend fun since(cutoff: Instant): List<UserId> {
+        val entries = redis.hashGetAll(SETUPS)
+        val (fresh, stale) = entries.entries.partition { (it.value.toLongOrNull() ?: 0) >= cutoff.toEpochMilli() }
+        stale.forEach { redis.hashDelete(SETUPS, it.key) }
+        return fresh.sortedByDescending { it.value.toLong() }.mapNotNull { UserId.parse(it.key) }
+    }
+
+    override suspend fun clear(holder: UserId) {
+        quietly("clear") {
+            redis.delete(key(holder))
+            redis.hashDelete(SETUPS, holder.toString())
+        }
+    }
+
+    private suspend fun <T> quietly(what: String, block: suspend () -> T): T? =
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("wallet setup not {}: error={}", what, e::class.simpleName)
+            null
+        }
+
+    private fun key(holder: UserId) = "setup:$holder"
+
+    private companion object {
+        const val SETUPS = "setups"
     }
 }

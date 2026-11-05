@@ -182,6 +182,36 @@ class CircleCustodyTest {
         }
 
     @Test
+    fun `a challenge is open while Circle has it pending or in progress, as the user`() =
+        runBlocking<Unit> {
+            val id = "c4d1da72-111e-4d52-bdbf-2e74a2d803d5"
+
+            fun status(value: String) =
+                circle.reply(
+                    "GET /v1/w3s/user/challenges/$id",
+                    """{"data":{"challenge":{"id":"$id","correlationIds":[],"errorCode":0,"errorMessage":"",""" +
+                        """"status":"$value","type":"INITIALIZE"}}}""",
+                )
+
+            status("PENDING")
+            assertTrue(custody.challengeOpen(user, id).data())
+            status("IN_PROGRESS")
+            assertTrue(custody.challengeOpen(user, id).data())
+            for (closed in listOf("COMPLETE", "FAILED", "EXPIRED")) {
+                status(closed)
+                assertFalse(custody.challengeOpen(user, id).data(), closed)
+            }
+            assertEquals(
+                circle.tokenOf(1),
+                circle.requests("GET /v1/w3s/user/challenges/$id").first().headers["X-User-Token"],
+            )
+
+            val before = circle.clients.requests.size
+            assertFalse(custody.challengeOpen(user, "../../wallets").data(), "not a UUID: never reaches Circle's URL")
+            assertEquals(before, circle.clients.requests.size)
+        }
+
+    @Test
     fun `wallets come back in our words with the address exactly as Circle gave it`() =
         runBlocking<Unit> {
             circle.reply(

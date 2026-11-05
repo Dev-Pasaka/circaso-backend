@@ -70,8 +70,9 @@ fun Route.walletController(wallets: WalletService) {
                 listOf("wallet.already_exists", "wallet.support_account_has_no_wallet", CUSTODY),
                 notes =
                     "$SCOPE Run `challengeId` in the Circle SDK with `sdk`. Calling again while `SETTING_UP` gives " +
-                        "a fresh challenge; `challengeId` is null when the PIN is already set and the wallet is on " +
-                        "its way (poll W1). Once `ACTIVE`: `wallet.already_exists`.",
+                        "the challenge still open at Circle (or a fresh one once it expired or failed); " +
+                        "`challengeId` is null when the PIN is already set and the wallet is on its way (poll W1). " +
+                        "Once `ACTIVE`: `wallet.already_exists`.",
             )
 
             post("session") {
@@ -183,7 +184,7 @@ fun Route.walletController(wallets: WalletService) {
                             "biometrics. Run `challengeId` with this answer's `sdk` (not your personal session), " +
                             "naming the group on the PIN screens; then W13 with `?walletId=` puts it on every " +
                             "network. You become its signer: the only person who can send from it, and only for " +
-                            "payouts the admins approved. Calling again while `SETTING_UP` gives a fresh challenge " +
+                            "payouts the admins approved. Calling again while `SETTING_UP` gives the open challenge " +
                             "(Finish Wallet Setup); once `ACTIVE`, `wallet.already_exists`. Members get " +
                             "`wallet/wallet.ready` (with `walletId`) when it turns active.",
                 )
@@ -199,8 +200,9 @@ fun Route.walletController(wallets: WalletService) {
                     notes =
                         "$SCOPE Members only. `status` `NONE` (the owner may offer Add a Group Wallet), " +
                             "`SETTING_UP` (the owner sees Finish Wallet Setup, members \"Wallet being set up\") or " +
-                            "`ACTIVE`. Read from the server's rows only, so it is cheap to poll during set-up; the " +
-                            "balance is W1 with `?walletId=`.",
+                            "`ACTIVE`. Cheap to poll every 3 seconds during set-up: while `SETTING_UP` the server " +
+                            "reads Circle at most once every few seconds, so it turns `ACTIVE` on the first poll " +
+                            "after the PIN. The balance is W1 with `?walletId=`.",
                 )
             }
         }

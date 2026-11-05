@@ -145,6 +145,21 @@ class CircleCustody internal constructor(
             is Resource.Error -> token
         }
 
+    /** `GET /v1/w3s/user/challenges/{id}`: open while Circle says `PENDING` or `IN_PROGRESS`. */
+    override suspend fun challengeOpen(circleUserId: String, challengeId: String): Resource<Boolean> {
+        val id = runCatching { UUID.fromString(challengeId) }.getOrNull() ?: return Resource.success(false)
+        return asUser(circleUserId) { token ->
+            client.get<ChallengeStatusData>("/v1/w3s/user/challenges/$id", "get_challenge", token)
+        }.flatMapReply { _, reply ->
+            if (reply !is CircleReply.Ok) return@flatMapReply CircleErrors.failure(reply, "get_challenge")
+            Resource.success(
+                reply.data.challenge
+                    ?.status
+                    ?.uppercase() in OPEN_CHALLENGE,
+            )
+        }
+    }
+
     override suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>> =
         asUser(circleUserId) { token ->
             client.get<WalletsData>("/v1/w3s/wallets", "list_wallets", token)

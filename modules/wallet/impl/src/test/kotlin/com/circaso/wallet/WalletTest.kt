@@ -45,15 +45,18 @@ class WalletTest {
         }
 
     @Test
-    fun `W2 again while setting up gives a fresh challenge for the same Circle user`() =
+    fun `W2 again while setting up gives back the open challenge, and a fresh one once Circle closed it`() =
         runBlocking<Unit> {
             val first = h.create(amina).data()
             val circleUserId = h.circleUserOf(amina)
 
             val second = h.create(amina).data()
-
             assertEquals(WalletStatus.SETTING_UP, second.status)
-            assertTrue(first.challengeId != second.challengeId)
+            assertEquals(first.challengeId, second.challengeId, "still open at Circle: no second initialize")
+
+            h.custody.openChallenges.clear() // expired at Circle
+            val third = h.create(amina).data()
+            assertTrue(first.challengeId != third.challengeId)
             assertEquals(circleUserId, h.circleUserOf(amina))
             assertEquals(1, h.custody.users.size)
         }
@@ -94,6 +97,7 @@ class WalletTest {
         runBlocking<Unit> {
             h.create(amina).data()
             h.custody.initialized += h.circleUserOf(amina)
+            h.custody.openChallenges.clear() // signed: Circle no longer has it open
 
             val setup = h.create(amina).data()
 

@@ -63,6 +63,13 @@ interface StablecoinCustody {
     /** What the phone's SDK needs to run a challenge; reused until 5 minutes before it expires. */
     suspend fun sdkSession(circleUserId: String): Resource<SdkSession>
 
+    /**
+     * Whether [challengeId] of [circleUserId] can still be signed (the vendor has it pending or in progress), so a
+     * second "set up" tap can hand back the challenge already open instead of starting another. False when it was
+     * completed, failed or expired, or the vendor doesn't say.
+     */
+    suspend fun challengeOpen(circleUserId: String, challengeId: String): Resource<Boolean> = Resource.success(false)
+
     /** The user's wallets, one per chain they are on. */
     suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>
 
@@ -299,4 +306,31 @@ enum class CustodyTransactionState {
  */
 interface CustodyNotifications {
     suspend fun onTransaction(update: CustodyTransaction): Resource<Unit>
+
+    /**
+     * The vendor's user [CustodyChallenge.providerUserId] finished a challenge that creates wallets (the PIN set and
+     * the first wallet, or a chain added): their wallets may be new, so they are read at once rather than at the next
+     * poll; a failed one is no longer handed out again. An error makes the webhook answer non-200, so the vendor
+     * retries.
+     */
+    suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> = Resource.success(Unit)
+}
+
+/** A finished wallet-creating challenge (completed or failed), as the vendor's webhook reports it. Ids only. */
+data class CustodyChallenge(
+    /** The vendor's id for the user (Circle's `userId`), the one `StablecoinCustody.wallets` takes. */
+    val providerUserId: String,
+    /** The vendor's challenge id. */
+    val challengeId: String,
+    val kind: CustodyChallengeKind,
+    /** Signed and done; false when it failed (a wrong PIN too often, expired): nothing was created. */
+    val completed: Boolean = true,
+)
+
+enum class CustodyChallengeKind {
+    /** The first PIN and the first wallets (Circle: `challenges.initialize`). */
+    SETUP,
+
+    /** A wallet on another chain (Circle: `challenges.createWallet`). */
+    CREATE_WALLET,
 }

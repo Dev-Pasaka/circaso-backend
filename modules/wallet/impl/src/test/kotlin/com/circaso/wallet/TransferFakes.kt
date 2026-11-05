@@ -34,8 +34,10 @@ import com.circaso.wallet.domain.ports.FeeConfig
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.LoggedFrame
 import com.circaso.wallet.domain.ports.PaymentHolds
+import com.circaso.wallet.domain.ports.PendingSetups
 import com.circaso.wallet.domain.ports.RealtimeLog
 import com.circaso.wallet.domain.ports.Reminders
+import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.repositories.CountedTransfer
@@ -54,6 +56,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 /** A clock the test moves. */
 class MutableClock(
@@ -460,6 +463,46 @@ class MemoryActiveWallets(private val clock: Clock) : ActiveWallets {
             .filter { !it.value.isBefore(cutoff) }
             .sortedByDescending { it.value }
             .map { it.key }
+}
+
+/** Like `wal:setupcheck`, against [now]; [window] null lets every read through (the old behaviour, for other tests). */
+class MemorySetupChecks(var window: Duration? = null, var now: () -> Instant = { Instant.now() }) : SetupChecks {
+    private val until = ConcurrentHashMap<UserId, Instant>()
+    val claims = AtomicInteger()
+
+    override suspend fun claim(holder: UserId): Boolean {
+        val window = window ?: return true.also { claims.incrementAndGet() }
+        val at = now()
+        val free = until[holder]?.let { !at.isBefore(it) } ?: true
+        if (free) {
+            until[holder] = at.plus(window)
+            claims.incrementAndGet()
+        }
+        return free
+    }
+}
+
+/** `wal:setup:{holder}` and `wal:setups` in memory, against the test's clock. */
+class MemoryPendingSetups(private val clock: Clock) : PendingSetups {
+    val challenges = ConcurrentHashMap<UserId, String>()
+    val began = ConcurrentHashMap<UserId, Instant>()
+
+    override suspend fun put(holder: UserId, challengeId: String) {
+        challenges[holder] = challengeId
+        began[holder] = clock.instant()
+    }
+
+    override suspend fun challenge(holder: UserId): String? = challenges[holder]
+
+    override suspend fun since(cutoff: Instant): List<UserId> {
+        began.entries.removeIf { it.value.isBefore(cutoff) }
+        return began.entries.sortedByDescending { it.value }.map { it.key }
+    }
+
+    override suspend fun clear(holder: UserId) {
+        challenges.remove(holder)
+        began.remove(holder)
+    }
 }
 
 class MemoryStuckNotices : StuckNotices {
