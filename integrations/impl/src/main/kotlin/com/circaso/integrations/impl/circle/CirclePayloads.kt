@@ -2,6 +2,7 @@ package com.circaso.integrations.impl.circle
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 // Circle's request and response bodies, as Circle names them (developers.circle.com/api-reference/wallets). They never
 // leave this package: CircleCustody and CircleWebhook turn them into the contract's types. Answers are read leniently
@@ -165,7 +166,8 @@ internal data class ValidateAddressBody(
 @Serializable
 internal data class ValidateAddressData(val isValid: Boolean = false)
 
-// Transactions, from the API and from webhooks (same shape)
+// Transactions, from the API and from webhooks. Mostly the same shape, but not quite: the webhook's body may leave out
+// `operation` (and a contract execution never has `tokenId` or `refId`), so nothing here may depend on those.
 
 @Serializable
 internal data class TransactionData(val transaction: TransactionPayload? = null)
@@ -194,6 +196,10 @@ internal data class TransactionPayload(
     val operation: String = "",
     /** What the network charged, in the chain's native coin. */
     val networkFee: String = "",
+    /** `ENDUSER` (a user-controlled wallet) or `DEVELOPER` (one of Circaso's own, such as a fee wallet). */
+    val custodyType: String = "",
+    /** The contract a `CONTRACT_EXECUTION` called (for a split payment, the sending wallet itself). */
+    val contractAddress: String = "",
 )
 
 // Notifications
@@ -204,6 +210,10 @@ internal data class NotificationHeader(val notificationId: String = "", val noti
 
 @Serializable
 internal data class TransactionNotification(val notification: TransactionPayload? = null)
+
+/** Only the field names of a notification we couldn't read, for its log line (names and presence, never values). */
+@Serializable
+internal data class NotificationFields(val notification: Map<String, JsonElement>? = null)
 
 @Serializable
 internal data class NotificationKeyData(val publicKey: String = "")

@@ -2,6 +2,7 @@ package com.circaso.integrations.impl.circle
 
 import com.circaso.integrations.api.CustodyDirection
 import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodyOperation
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.IntegrationError
@@ -52,6 +53,8 @@ class CircleWebhookTest {
         )
         circle.reply("GET /v1/w3s/tokens/${FakeCircle.USDC_TOKEN_ID}", FakeCircle.USDC_TOKEN_REPLY)
     }
+
+    private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 
     private fun sign(body: ByteArray, keys: KeyPair = keyPair): String =
         Signature.getInstance("SHA256withECDSA").run {
@@ -207,8 +210,12 @@ class CircleWebhookTest {
             assertIs<IntegrationError.Unavailable>((webhook.translate(body) as Resource.Error).error)
 
             assertIs<IntegrationError.Rejected>((webhook.translate("{".toByteArray()) as Resource.Error).error)
-            assertIs<Resource.Error>(
-                webhook.translate(notification("transactions.inbound", """{"id":"tx-2"}""").toByteArray()),
+            // Retrying a body that can't be read changes nothing, so it is acknowledged (its shape logged).
+            assertIs<Resource.Success<Unit>>(
+                webhook.translate(
+                    notification("transactions.inbound", """{"transactionType":"INBOUND","tokenId":"t"}""")
+                        .toByteArray(),
+                ),
             )
 
             circle.replies.remove("GET /v1/w3s/tokens/${FakeCircle.USDC_TOKEN_ID}")
@@ -223,6 +230,68 @@ class CircleWebhookTest {
                     .error,
             )
         }
+
+    @Test
+    fun `the batch's execution is followed in all three shapes Circle sends - API, webhook without operation`() =
+        runBlocking<Unit> {
+            for (payload in listOf(CircleRecords.SENDER_EXECUTION, CircleRecords.SENDER_EXECUTION_WEBHOOK)) {
+                val body = notification("transactions.outbound", payload).toByteArray()
+                assertIs<Resource.Success<Unit>>(webhook.translate(body), "never 400: Circle would retry for nothing")
+            }
+
+            assertEquals(2, received.size)
+            for (update in received) {
+                assertEquals(CustodyOperation.CONTRACT_EXECUTION, update.operation)
+                assertEquals(CustodyDirection.OUT, update.direction)
+                assertEquals("8822478d-1b93-54c5-87b6-619290cd7d80", update.circleTxId)
+                assertEquals("5e1a6fd7-e13b-51c7-a1b0-cf13fb183238", update.walletId)
+                assertEquals(CircleRecords.TX_HASH, update.txHash)
+                assertEquals("", update.refId)
+                assertEquals(CustodyTransactionState.CONFIRMED, update.state)
+            }
+        }
+
+    @Test
+    fun `the payee's leg is a plain inbound transfer, the fee wallet's is marked as the developer's`() =
+        runBlocking<Unit> {
+            webhook.translate(notification("transactions.inbound", CircleRecords.PAYEE_INBOUND).toByteArray()).data()
+            webhook.translate(notification("transactions.inbound", CircleRecords.FEE_INBOUND).toByteArray()).data()
+
+            val (payee, fee) = received
+            assertEquals(7_699_911L, payee.amount.amountMinor)
+            assertFalse(payee.developerWallet)
+            assertEquals(CustodyOperation.TRANSFER, payee.operation)
+            assertEquals(100_000L, fee.amount.amountMinor)
+            assertTrue(fee.developerWallet)
+        }
+
+    @Test
+    fun `an inbound record without a token, or without an id, is acknowledged and not handed on`() =
+        runBlocking<Unit> {
+            val inbound = CircleRecords.SENDER_EXECUTION_WEBHOOK.replace("OUTBOUND", "INBOUND")
+            val noId = CircleRecords.PAYEE_INBOUND.replace(""""id":"54bc4e3c-fa44-57a4-9f41-6426a126a9c8",""", "")
+
+            assertIs<Resource.Success<Unit>>(
+                webhook.translate(notification("transactions.inbound", inbound).toByteArray()),
+            )
+            assertIs<Resource.Success<Unit>>(
+                webhook.translate(notification("transactions.inbound", noId).toByteArray()),
+            )
+            assertTrue(received.isEmpty())
+        }
+
+    @Test
+    fun `an unreadable notification's shape names its fields and their presence, never a value`() {
+        val noId = CircleRecords.PAYEE_INBOUND.replace(""""id":"54bc4e3c-fa44-57a4-9f41-6426a126a9c8",""", "")
+        val shape = CircleWebhook.shapeOf(notification("transactions.inbound", noId).toByteArray())
+
+        assertTrue("walletId" in shape.fields.split(","))
+        assertTrue("id:absent" in shape.present)
+        assertTrue("tokenId:set" in shape.present)
+        assertTrue("refId:absent" in shape.present)
+        assertFalse("6e62c682" in shape.fields + shape.present, "no values")
+        assertFalse("7.699911" in shape.fields + shape.present, "no amounts")
+    }
 
     @Test
     fun `a key id Circle refused is not asked about again for a few minutes`() =

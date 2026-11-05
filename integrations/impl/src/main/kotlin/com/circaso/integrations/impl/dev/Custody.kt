@@ -167,6 +167,15 @@ class FakeCustody(
             )
         }
 
+    override suspend fun chainTransaction(blockchain: String, txHash: String): Resource<List<CustodyTransaction>> =
+        guarded {
+            Resource.success(
+                transactions.values.filter {
+                    it.blockchain == blockchain && txHash.isNotEmpty() && it.txHash == txHash
+                },
+            )
+        }
+
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         guarded {
             val format = if (blockchain.startsWith("SOL")) SOLANA_ADDRESS else ADDRESS
@@ -280,6 +289,9 @@ class LogCustody(private val fake: FakeCustody = FakeCustody(autoCompleteSetup =
         limit: Int,
     ): Resource<List<CustodyTransaction>> =
         fake.transactions(circleUserId, since, limit).also { log.info("custody transactions of {}", circleUserId) }
+
+    override suspend fun chainTransaction(blockchain: String, txHash: String): Resource<List<CustodyTransaction>> =
+        fake.chainTransaction(blockchain, txHash).also { log.info("custody chain transaction on {}", blockchain) }
 
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         fake.validateAddress(blockchain, address).also { log.info("custody validate an address on {}", blockchain) }

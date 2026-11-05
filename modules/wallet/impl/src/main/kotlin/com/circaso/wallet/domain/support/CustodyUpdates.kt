@@ -1,6 +1,7 @@
 package com.circaso.wallet.domain.support
 
 import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyOperation
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.shared.Resource
@@ -34,10 +35,15 @@ class CustodyUpdates(
     private val clock: Clock,
     /** Circaso's fee wallets (phase 2F): their incoming fee legs are ours to ignore, not an unknown wallet's. */
     private val feeConfig: FeeConfig? = null,
+    /** Finds a split payment's transfer from its batch, which carries no `refId`. */
+    private val splits: SplitPayments? = null,
 ) {
     suspend fun apply(update: CustodyTransaction): Resource<Unit> {
+        // Circaso's own wallets (the fee wallets): their legs are settled by the payment's own update.
+        if (update.developerWallet) return Resource.success(Unit)
         val change = changeOf(update)
         val next = stateOf(update.state)
+        if (update.operation == CustodyOperation.CONTRACT_EXECUTION) return applyExecution(update, next, change)
         if (update.direction == CustodyDirection.OUT && outgoing.applyToTransfer(update, next, change)) {
             cache.clear(update.walletId)
             return Resource.success(Unit)
@@ -58,6 +64,29 @@ class CustodyUpdates(
             CustodyDirection.OUT -> outgoing.applyUntracked(wallet, update, next, change)
         }
         cache.clear(wallet.circleWalletId)
+        return Resource.success(Unit)
+    }
+
+    /**
+     * An outgoing contract execution: a split payment's batch moves its transfer exactly as a plain transfer's update
+     * does ([OutgoingUpdates.applyToTransfer]: the state, the `OUT` row, the fee ledger, the event, the frames). Found
+     * by `refId` if Circle kept one, else by [SplitPayments]. One that pays no transfer of ours (any other contract
+     * call) is left alone: it has no amount to put in the history.
+     */
+    private suspend fun applyExecution(
+        update: CustodyTransaction,
+        next: TransferState,
+        change: TransferChange,
+    ): Resource<Unit> {
+        val refId =
+            update.refId.ifEmpty {
+                when (val found = splits?.transferOf(update)) {
+                    null -> null
+                    is Resource.Error -> return found
+                    is Resource.Success -> found.data?.transferId?.toString()
+                }
+            } ?: return Resource.success(Unit)
+        if (outgoing.applyToTransfer(update.copy(refId = refId), next, change)) cache.clear(update.walletId)
         return Resource.success(Unit)
     }
 

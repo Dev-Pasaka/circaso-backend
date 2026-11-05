@@ -41,6 +41,7 @@ import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.SplitPayments
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletCreation
@@ -69,6 +70,7 @@ import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
+import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.presentation.services.WalletDirectoryService
 import java.math.BigInteger
@@ -206,6 +208,7 @@ class Harness(
             warnings,
             clock,
             feeConfig,
+            SplitPayments(transfers, custody, warnings, clock),
         )
     val applyUpdate = ApplyCustodyUpdate(updates)
     val expireUnsigned = ExpireUnsignedTransfers(transfers, outgoing, jobs, clock)
@@ -213,6 +216,7 @@ class Harness(
         CheckStuckTransfers(transfers, wallets, custody, updates, notices, warnings, jobs, clock)
     val reconcileWallets =
         ReconcileWallets(active, transactions, Reconciler(wallets, custody, updates, warnings), jobs, clock)
+    val settleSplits = SettleSplitPayments(transfers, wallets, custody, updates, warnings, jobs, clock)
 
     val directory =
         WalletDirectoryService(

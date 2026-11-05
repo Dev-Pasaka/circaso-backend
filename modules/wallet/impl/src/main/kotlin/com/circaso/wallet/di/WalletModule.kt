@@ -79,6 +79,7 @@ import com.circaso.wallet.domain.support.Payees
 import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
+import com.circaso.wallet.domain.support.SplitPayments
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.WalletCreation
@@ -113,6 +114,7 @@ import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
+import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.presentation.agent.agentController
@@ -190,6 +192,9 @@ internal fun jobSettings(config: Config): JobSettings {
         activeBatch = jobs.positive("active-batch", defaults.activeBatch),
         dailyBatch = jobs.positive("daily-batch", defaults.dailyBatch),
         transactionsPerUser = jobs.positive("transactions-per-user", defaults.transactionsPerUser),
+        splitInterval = jobs.seconds("split-interval-seconds", defaults.splitInterval),
+        splitAfter = jobs.seconds("split-after-seconds", defaults.splitAfter),
+        splitMaxAge = jobs.minutes("split-max-age-minutes", defaults.splitMaxAge),
     )
 }
 
@@ -266,6 +271,10 @@ fun walletModule(config: Config): Module =
             val service = get<WalletJobsService>()
             ScheduledJob("wallet.reconcile-active", jobs.reconcileInterval) { service.reconcile(ReconcilePass.ACTIVE) }
         }
+        single(named("wallet.unsettled-splits")) {
+            val service = get<WalletJobsService>()
+            ScheduledJob("wallet.unsettled-splits", jobs.splitInterval) { service.settleSplits() }
+        }
         single(named("wallet.reconcile-daily")) {
             val service = get<WalletJobsService>()
             ScheduledJob("wallet.reconcile-daily", DAILY_INTERVAL) { service.reconcile(ReconcilePass.DAILY) }
@@ -290,7 +299,8 @@ fun walletModule(config: Config): Module =
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
-        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get()) }
+        single { SplitPayments(get(), get(), get(), clock) }
+        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get()) }
@@ -354,7 +364,8 @@ fun walletModule(config: Config): Module =
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SpaceWalletService(get(), get()) }
-        single { WalletJobsService(get(), get(), get()) }
+        single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
+        single { WalletJobsService(get(), get(), get(), get()) }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()
             val transfers = get<TransferService>()

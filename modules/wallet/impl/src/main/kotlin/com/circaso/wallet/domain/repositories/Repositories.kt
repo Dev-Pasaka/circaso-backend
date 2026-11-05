@@ -114,6 +114,24 @@ interface TransferRepository {
     ): List<Transfer>
 
     /**
+     * The transfer from the wallet [senderWalletId] that Circle's transaction [circleTxId] already moved
+     * (`transfers_circle_tx_idx`): a split payment's batch carries no `refId`, so its later updates find it this way.
+     */
+    suspend fun byCircleTx(senderWalletId: String, circleTxId: String): Transfer?
+
+    /**
+     * Split payments (a fee leg, phase 2F) prepared in [createdAfter, createdBefore) that no Circle transaction has
+     * moved yet: still awaiting a signature, or expired while Circle may have them signed after all
+     * (`transfers_unsettled_split_idx`). Only the wallet [senderWalletId]'s when given. Newest first, at most [limit].
+     */
+    suspend fun unsettledSplits(
+        senderWalletId: String?,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer>
+
+    /**
      * Holds [holder]'s spending for the transaction that is open (a row lock on its `circle_users` row), so two
      * payments prepared at once can't both fit under a limit only one of them fits.
      */

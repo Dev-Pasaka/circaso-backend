@@ -4,6 +4,7 @@ import com.circaso.wallet.domain.models.ReconcilePass
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.ReconcileWallets
+import com.circaso.wallet.domain.usecases.SettleSplitPayments
 
 /**
  * The wallet's scheduled jobs (Wallet → Data → Scheduled jobs), the safety net for a lost Circle webhook. Each returns
@@ -13,10 +14,13 @@ class WalletJobsService(
     private val expireUnsignedTransfers: ExpireUnsignedTransfers,
     private val checkStuckTransfers: CheckStuckTransfers,
     private val reconcileWallets: ReconcileWallets,
+    private val settleSplitPayments: SettleSplitPayments,
 ) {
     suspend fun expireUnsigned(): Int = expireUnsignedTransfers()
 
     suspend fun checkStuck(): Int = checkStuckTransfers()
 
     suspend fun reconcile(pass: ReconcilePass): Int = reconcileWallets(pass)
+
+    suspend fun settleSplits(): Int = settleSplitPayments()
 }

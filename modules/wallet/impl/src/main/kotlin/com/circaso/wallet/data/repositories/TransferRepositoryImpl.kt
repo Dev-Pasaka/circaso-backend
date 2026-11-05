@@ -23,6 +23,8 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
@@ -142,6 +144,40 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                 .toList()
         }
 
+    override suspend fun byCircleTx(senderWalletId: String, circleTxId: String): Transfer? =
+        database.tx("transfers.by-circle-tx") {
+            TransfersTable
+                .selectAll()
+                .where {
+                    (TransfersTable.senderWalletId eq senderWalletId) and (TransfersTable.circleTxId eq circleTxId)
+                }.limit(1)
+                .map { it.toTransfer() }
+                .singleOrNull()
+        }
+
+    override suspend fun unsettledSplits(
+        senderWalletId: String?,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        database.tx("transfers.unsettled-splits") {
+            TransfersTable
+                .selectAll()
+                .where {
+                    val open =
+                        TransfersTable.feeAddress.isNotNull() and
+                            TransfersTable.circleTxId.isNull() and
+                            (TransfersTable.state inList UNSETTLED) and
+                            (TransfersTable.createdAt greaterEq createdAfter) and
+                            (TransfersTable.createdAt less createdBefore)
+                    if (senderWalletId == null) open else open and (TransfersTable.senderWalletId eq senderWalletId)
+                }.orderBy(TransfersTable.createdAt to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toTransfer() }
+                .toList()
+        }
+
     private fun ResultRow.toTransfer() =
         Transfer(
             transferId = TransferId(this[TransfersTable.transferId]),
@@ -204,6 +240,9 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         }
 
     private companion object {
+        /** A split payment Circle may still settle (`transfers_unsettled_split_idx`). */
+        val UNSETTLED = listOf(TransferState.AWAITING_SIGNATURE, TransferState.EXPIRED).map { it.name }
+
         /** What counts against a limit (§7a): signed or about to be. */
         val COUNTED =
             listOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED, TransferState.CONFIRMED).map { it.name }

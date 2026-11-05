@@ -23,6 +23,14 @@ class LogWalletWarnings : WalletWarnings {
         )
     }
 
+    override fun splitPaymentAmbiguous(circleTxId: String, candidates: Int) {
+        log.warn(
+            "split payment matched several transfers by its legs, took the newest: circleTxId={} candidates={}",
+            circleTxId,
+            candidates,
+        )
+    }
+
     override fun transferStuck(transferId: String, blockchain: String) {
         log.warn(
             "transfer still submitted an hour after it was prepared: transferId={} blockchain={}",
