@@ -15,6 +15,8 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
@@ -80,6 +82,28 @@ class AttachmentRepositoryImpl(private val database: Database) : AttachmentRepos
                 .limit(limit)
                 .map { it.toAttachment() }
                 .toList()
+        }
+
+    override suspend fun keepAsGroupPhoto(attachmentId: UUID, now: Instant): Boolean =
+        database.tx("attachments.keep-as-group-photo") {
+            AttachmentsTable.update(
+                where = {
+                    (AttachmentsTable.attachmentId eq attachmentId) and
+                        (AttachmentsTable.state eq AttachmentState.READY.name) and
+                        (AttachmentsTable.expiresAt.isNull() or (AttachmentsTable.expiresAt greater now))
+                },
+            ) {
+                it[expiresAt] = null
+            } > 0
+        }
+
+    override suspend fun releaseGroupPhoto(attachmentId: UUID, purgeAt: Instant): Boolean =
+        database.tx("attachments.release-group-photo") {
+            AttachmentsTable.update(
+                where = { (AttachmentsTable.attachmentId eq attachmentId) and AttachmentsTable.expiresAt.isNull() },
+            ) {
+                it[expiresAt] = purgeAt
+            } > 0
         }
 
     override suspend fun delete(attachmentId: UUID): Boolean =

@@ -249,7 +249,7 @@ fun messagingModule(config: Config): Module =
         single { Membership(get(), get()) }
         single { ChatViews(get(), get<Profiles>()) }
         single { ChatNotifier(get()) }
-        single { MemberRemoval(get(), get(), get(), get(), get(), get()) }
+        single { MemberRemoval(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DeliveryNotifier(get(), get(), messaging) }
         single { ReceiptBatcher(get(), get(), background, clock, messaging) }
@@ -267,7 +267,7 @@ fun messagingModule(config: Config): Module =
         single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
-        single { UpdateGroup(get(), get(), get(), get(), get(), get()) }
+        single { UpdateGroup(get(), get(), get(), get(), get(), get(), messaging, clock) }
         single {
             AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock)
         }

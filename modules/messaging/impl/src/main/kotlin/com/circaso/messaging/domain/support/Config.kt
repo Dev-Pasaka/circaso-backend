@@ -51,4 +51,14 @@ data class MessagingConfig(
     val pendingAttachmentTtl: Duration = Duration.ofDays(1),
     /** `messaging.purge-attachments`: rows read per round. */
     val attachmentPurgeBatch: Int = 500,
+    /**
+     * Decision 2026-11-05: a group photo is at most this much ciphertext. The app sends a 1,024 px JPEG (a few hundred
+     * KB), so this leaves room without letting a group keep a video's worth forever.
+     */
+    val maxGroupPhotoBytes: Long = 2L * 1_024 * 1_024,
+    /**
+     * Decision 2026-11-05: a replaced or cleared group photo is deleted this long after, so a member who started
+     * fetching it a moment earlier still gets it.
+     */
+    val groupPhotoGrace: Duration = Duration.ofHours(24),
 )

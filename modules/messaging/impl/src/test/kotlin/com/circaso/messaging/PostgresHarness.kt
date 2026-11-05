@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
@@ -81,6 +82,7 @@ class PostgresHarness(
     val keys = KeyRepositoryImpl(database)
     val delivery: DeliveryRepository = delivery(DeliveryRepositoryImpl(database, clock))
     val settings = SettingsRepositoryImpl(database)
+    val attachments = AttachmentRepositoryImpl(database)
     private val outbox = outbox(database)
 
     val cache = MemoryMembersCache()
@@ -96,7 +98,8 @@ class PostgresHarness(
     private val views = ChatViews(chats, FakeProfiles())
     private val chatNotifier = ChatNotifier(frames)
     private val notifier = DeliveryNotifier(live, frames, config)
-    private val removal = MemberRemoval(chats, transactor, this.outbox, membership, chatNotifier, bus)
+    private val removal =
+        MemberRemoval(chats, attachments, transactor, this.outbox, membership, chatNotifier, bus, clock)
     private val batcher = ReceiptBatcher(receipts, notifier, background, clock, config)
     private val inboxRemoval = InboxRemoval(this.delivery, pending)
     private val senders = MessageSenders(this.delivery)
@@ -110,7 +113,17 @@ class PostgresHarness(
     val removeMember = RemoveMember(removal)
     val leaveGroup = LeaveGroup(removal)
     val setRole = SetRole(chats, transactor, membership, views, chatNotifier)
-    val updateGroup = UpdateGroup(chats, transactor, membership, views, chatNotifier, config)
+    val updateGroup =
+        UpdateGroup(
+            chats,
+            attachments,
+            transactor,
+            membership,
+            views,
+            chatNotifier,
+            config,
+            clock,
+        )
     val listChats = ListChats(chats, views)
     val publishKeys = PublishKeys(keys, transactor, proofs, clock)
     val addOneTimeKeys = AddOneTimeKeys(keys, transactor, proofs, config, clock)

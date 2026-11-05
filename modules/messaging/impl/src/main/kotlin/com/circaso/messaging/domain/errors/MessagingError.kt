@@ -125,6 +125,16 @@ sealed class MessagingError(
         ErrorKind.INVALID,
     )
 
+    /**
+     * M8: the group photo isn't a completed, live image attachment of this group, up to 2 MB of ciphertext. Upload it
+     * to the group (AT1, PUT, AT2) and send its id again.
+     */
+    data object AvatarInvalid : MessagingError(
+        "messaging.avatar_invalid",
+        "That photo can't be the group's photo. Upload it to this group as an image, then try again.",
+        ErrorKind.INVALID,
+    )
+
     /** MAP1: a point off the globe, a zoom or size out of range, or a colour that isn't `RRGGBB`. */
     data object MapInvalid : MessagingError(
         "messaging.map_invalid",

@@ -14,7 +14,11 @@ enum class AttachmentKind { IMAGE, VOICE, VIDEO, FILE }
 /** `PENDING` from AT1 until AT2 finds the object in storage at the size promised, then `READY`. */
 enum class AttachmentState { PENDING, READY }
 
-/** One encrypted file in a chat (decision 2026-10-30): the AES key and digest travel only inside the E2EE message. */
+/**
+ * One encrypted file in a chat (decision 2026-10-30): the AES key and digest travel only inside the E2EE message.
+ * [expiresAt] is null while the attachment is its group's photo (M8, decision 2026-11-05): kept until it is replaced,
+ * cleared or the group is deleted.
+ */
 data class Attachment(
     val attachmentId: UUID,
     val chatId: ChatId,
@@ -23,8 +27,11 @@ data class Attachment(
     val sizeBytes: Long,
     val state: AttachmentState,
     val createdAt: Instant,
-    val expiresAt: Instant,
-)
+    val expiresAt: Instant?,
+) {
+    /** Still there at [now]: a group's photo always is, anything else until its 30 days are up. */
+    fun isLiveAt(now: Instant): Boolean = expiresAt == null || expiresAt.isAfter(now)
+}
 
 data class PrepareAttachmentCommand(
     val caller: UserId,

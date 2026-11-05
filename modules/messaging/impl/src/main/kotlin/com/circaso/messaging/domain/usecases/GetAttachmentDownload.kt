@@ -30,7 +30,7 @@ class GetAttachmentDownload(
         val visible =
             attachment != null &&
                 attachment.state == AttachmentState.READY &&
-                attachment.expiresAt.isAfter(now) &&
+                attachment.isLiveAt(now) &&
                 membership.isMember(attachment.chatId, caller)
         if (!visible) return Resource.error(MessagingError.AttachmentNotFound)
 

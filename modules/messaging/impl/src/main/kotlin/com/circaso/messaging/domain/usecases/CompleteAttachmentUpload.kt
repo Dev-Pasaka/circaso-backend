@@ -24,7 +24,7 @@ class CompleteAttachmentUpload(
 ) {
     suspend operator fun invoke(caller: UserId, attachmentId: UUID): Resource<Attachment> {
         val attachment = attachments.find(attachmentId)
-        if (attachment == null || attachment.uploaderId != caller || !attachment.expiresAt.isAfter(clock.instant())) {
+        if (attachment == null || attachment.uploaderId != caller || !attachment.isLiveAt(clock.instant())) {
             return Resource.error(MessagingError.AttachmentNotFound)
         }
         if (attachment.state == AttachmentState.READY) return Resource.success(attachment)

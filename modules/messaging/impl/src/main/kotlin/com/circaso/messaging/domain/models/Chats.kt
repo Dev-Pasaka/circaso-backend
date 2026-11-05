@@ -40,7 +40,10 @@ data class Chat(
     val createdAt: Instant,
     val version: Long,
     val ownerId: UserId? = null,
-    /** The encrypted avatar file (chat media, MS5). Kept here so every rewrite of the chat carries it over. */
+    /**
+     * The group's photo: an image attachment of the group that M8 made the avatar (decision 2026-11-05), kept from the
+     * purge while it is. On the chat so every rewrite of the chat carries it over.
+     */
     val avatarMediaId: UUID? = null,
     /** A direct chat's two people, in any order; null for a group. Unique per pair: the claim behind M4. */
     val directPair: Pair<UserId, UserId>? = null,
@@ -112,6 +115,15 @@ data class CreateGroupCommand(
     val requestKey: String,
 )
 
+/** M8's change to the group photo (decision 2026-11-05); no change at all is a null [UpdateGroupCommand.avatar]. */
+sealed interface AvatarChange {
+    /** Make [attachmentId], an image attachment of the group, its photo: kept until replaced or the group is gone. */
+    data class Set(val attachmentId: UUID) : AvatarChange
+
+    /** The group has no photo any more; the old one is deleted after the grace. */
+    data object Remove : AvatarChange
+}
+
 /** M8: each field left null stays as it is. [version] is the chat version the phone last read. */
 data class UpdateGroupCommand(
     val caller: UserId,
@@ -119,6 +131,7 @@ data class UpdateGroupCommand(
     val sealedMeta: String?,
     val membersCanAdd: Boolean?,
     val version: Long,
+    val avatar: AvatarChange? = null,
 )
 
 /** M11 decided inside the version check: the chat to write (a new owner, a new version) and the rows that follow. */

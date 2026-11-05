@@ -12,7 +12,7 @@ import com.circaso.shared.UserId
  * The membership frames (Messaging → Socket frames). They go to the members and the people themselves, and tell
  * phones to send or rotate sender keys. `member.added` lists everyone one action added in `userIds`, so a member gets
  * one frame per action (decision 2026-10-26); `member.removed` is one frame per person. `chat.updated` covers the
- * sealed name, settings and roles.
+ * sealed name, the group photo, settings and roles.
  */
 class ChatNotifier(private val frames: RealtimeFrames) {
     suspend fun membersAdded(
@@ -30,5 +30,5 @@ class ChatNotifier(private val frames: RealtimeFrames) {
     ) = frames.send(recipients, MemberRemovedFrame(chatId, removed, by))
 
     suspend fun chatUpdated(recipients: Collection<UserId>, chat: Chat) =
-        frames.send(recipients, ChatUpdatedFrame(chat.chatId, chat.metaVersion, chat.version))
+        frames.send(recipients, ChatUpdatedFrame(chat.chatId, chat.metaVersion, chat.version, chat.avatarMediaId))
 }
