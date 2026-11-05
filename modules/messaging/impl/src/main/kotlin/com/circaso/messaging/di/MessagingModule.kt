@@ -7,6 +7,7 @@ import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.ObjectStores
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.data.cache.LiveFramesImpl
 import com.circaso.messaging.data.cache.REDIS_PREFIX
@@ -25,6 +26,7 @@ import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
+import com.circaso.messaging.data.repositories.MessagingWarmUpSample
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
 import com.circaso.messaging.data.storage.ObjectStoreAttachments
 import com.circaso.messaging.data.tables.AttachmentsTable
@@ -125,6 +127,7 @@ import com.circaso.messaging.presentation.services.MessagingAgentService
 import com.circaso.messaging.presentation.services.PhoneFrameService
 import com.circaso.messaging.presentation.services.PresenceService
 import com.circaso.messaging.presentation.services.RealtimeService
+import com.circaso.messaging.presentation.warmup.MessagingWarmUp
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeInboundModule
@@ -361,6 +364,19 @@ fun messagingModule(config: Config): Module =
         single(named("messaging.replay")) { RealtimeModule("messaging", MessagingRealtimeReplay(get())) }
         single(named("messaging.inbound")) {
             RealtimeInboundModule("messaging", MessagingRealtimeInbound(get(), get(), messaging.inboxPageMax))
+        }
+
+        // read-only, run at start-up before the app reports ready
+        single<WarmUp>(named("messaging.warm-up")) {
+            MessagingWarmUp(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                MessagingWarmUpSample(get(named("messaging.database"))),
+            )
         }
     }
 

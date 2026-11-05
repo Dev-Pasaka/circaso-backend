@@ -138,19 +138,24 @@ jobs:
           echo "starting"
           docker compose up -d --remove-orphans </dev/null
 
+          # /health/ready answers 503 until the app has warmed up (every module's read-only hot paths, at most
+          # WARMUP_BUDGET_MS, 15 s by default) and every connection answers, so success here means a warm process.
           ready=
-          for _ in $(seq 1 40); do
+          started=$(date +%s)
+          for _ in $(seq 1 60); do
             if docker compose exec -T app curl -fsS http://localhost:8080/health/ready >/dev/null 2>&1 </dev/null; then
               ready=yes
               break
             fi
-            sleep 3
+            sleep 2
           done
           if [ -z "$ready" ]; then
             docker compose logs --tail 60 app </dev/null || true
             echo "the new version did not become ready"
             exit 1
           fi
+          echo "ready after $(( $(date +%s) - started )) s"
+          docker compose logs --no-log-prefix app </dev/null 2>/dev/null | grep -m1 -E 'Warm-up (done|ran out)' || true
 
           # What is running, for a manual restart (/opt/circaso/up.sh) and for rolling back
           echo "$IMAGE" > .current
