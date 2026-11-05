@@ -86,13 +86,24 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
             statement.insertedCount > 0
         }
 
-    override suspend fun directChat(a: UserId, b: UserId, viaSpaceId: UUID?): Chat? {
+    override suspend fun directChat(
+        a: UserId,
+        b: UserId,
+        viaSpaceId: UUID?,
+    ): Chat? {
         val (low, high) = ordered(a, b)
         return database.tx("chats.find-direct") {
             ChatsTable
                 .selectAll()
                 .where {
-                    val via = if (viaSpaceId == null) ChatsTable.viaSpaceId.isNull() else ChatsTable.viaSpaceId eq viaSpaceId
+                    val via =
+                        if (viaSpaceId ==
+                            null
+                        ) {
+                            ChatsTable.viaSpaceId.isNull()
+                        } else {
+                            ChatsTable.viaSpaceId eq viaSpaceId
+                        }
                     (ChatsTable.kind eq ChatKind.DIRECT.name) and
                         (ChatsTable.directLow eq low) and
                         (ChatsTable.directHigh eq high) and via

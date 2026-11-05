@@ -26,7 +26,12 @@ class PolicyService(
 
     suspend fun team(spaceId: SpaceId): Resource<Set<UserId>> = getSpaceTeam(spaceId)
 
-    suspend fun charge(paymentId: UUID, payer: UserId): Resource<MembershipCharge?> = findMembershipCharge(paymentId, payer)
+    suspend fun charge(paymentId: UUID, payer: UserId): Resource<MembershipCharge?> =
+        findMembershipCharge(paymentId, payer)
 
-    suspend fun privateChat(spaceId: SpaceId, from: UserId, to: UserId): Resource<Boolean> = checkPrivateChat(spaceId, from, to)
+    suspend fun privateChat(
+        spaceId: SpaceId,
+        from: UserId,
+        to: UserId,
+    ): Resource<Boolean> = checkPrivateChat(spaceId, from, to)
 }

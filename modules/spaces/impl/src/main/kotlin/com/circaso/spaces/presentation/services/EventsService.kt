@@ -18,8 +18,11 @@ class EventsService(
     private val goLiveWhenWalletReady: GoLiveWhenWalletReady,
     private val removeAccountFromSpaces: RemoveAccountFromSpaces,
 ) {
-    suspend fun paymentConfirmed(paymentId: UUID, payer: UserId, amountMinor: Long): Resource<Unit> =
-        confirmMembershipPayment(paymentId, payer, amountMinor)
+    suspend fun paymentConfirmed(
+        paymentId: UUID,
+        payer: UserId,
+        amountMinor: Long,
+    ): Resource<Unit> = confirmMembershipPayment(paymentId, payer, amountMinor)
 
     suspend fun walletReady(spaceId: SpaceId): Resource<Unit> = goLiveWhenWalletReady(spaceId)
 

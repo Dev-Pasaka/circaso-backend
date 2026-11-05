@@ -56,8 +56,14 @@ sealed interface LiveEvent {
     /** A piece of Asha's spoken reply. Never stored. */
     class ReplyAudio(val bytes: ByteArray) : LiveEvent
 
-    /** The reply as saved in the Asha chat. [spoken] is false when the user talked over it before it was heard. */
-    data class ReplyDone(val message: ChatMessage, val spoken: Boolean) : LiveEvent
+    /**
+     * The reply as saved in the Asha chat. [spoken] is false when the user talked over it before it was heard. The
+     * turn's last mascot hints ([mascot], activity `done`) follow it, so she finishes when her voice does.
+     */
+    data class ReplyDone(val message: ChatMessage, val spoken: Boolean, val mascot: MascotHints? = null) : LiveEvent
+
+    /** The mascot's hints changed (decision 2026-11-04), as A2's `mascot` event. */
+    data class Mascot(val hints: MascotHints) : LiveEvent
 
     /** Asha needs the phone to read its chats (a device tool); the phone answers on the socket. */
     data class DeviceToolAsked(val request: TurnResult.NeedsDevice) : LiveEvent

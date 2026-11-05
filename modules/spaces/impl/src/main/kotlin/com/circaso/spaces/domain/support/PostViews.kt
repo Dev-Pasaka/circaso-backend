@@ -28,7 +28,11 @@ class PostViews(
     private val storage: MediaStorage,
     private val config: SpacesConfig,
 ) {
-    suspend fun of(spaceId: SpaceId, list: List<Post>, caller: UserId?): List<PostView> {
+    suspend fun of(
+        spaceId: SpaceId,
+        list: List<Post>,
+        caller: UserId?,
+    ): List<PostView> {
         if (list.isEmpty()) return emptyList()
         val replies = posts.findAll(list.mapNotNull { it.replyTo }.distinct()).associateBy { it.postId }
         val people = profiles.get((list.map { it.authorId } + replies.values.map { it.authorId }).toSet())
@@ -64,7 +68,11 @@ class PostViews(
         }
     }
 
-    suspend fun one(spaceId: SpaceId, post: Post, caller: UserId?): PostView = of(spaceId, listOf(post), caller).single()
+    suspend fun one(
+        spaceId: SpaceId,
+        post: Post,
+        caller: UserId?,
+    ): PostView = of(spaceId, listOf(post), caller).single()
 
     private companion object {
         const val QUOTE = 120

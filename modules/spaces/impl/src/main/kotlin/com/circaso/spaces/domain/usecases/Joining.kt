@@ -4,6 +4,7 @@ import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountStatus
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import com.circaso.spaces.api.MembershipUpdatedFrame
 import com.circaso.spaces.api.SpaceId
 import com.circaso.spaces.domain.errors.SpacesError
@@ -28,7 +29,6 @@ import com.circaso.spaces.domain.support.Lifecycle
 import com.circaso.spaces.domain.support.Periods
 import com.circaso.spaces.domain.support.SpaceViews
 import com.circaso.spaces.domain.support.SpacesConfig
-import com.circaso.shared.Uuid7
 import com.circaso.wallet.api.Wallets
 import java.time.Clock
 import java.time.Instant
@@ -122,12 +122,12 @@ class LeaveSpace(
 }
 
 /** SP12: which posts push (All, Mentions and admins, Off). */
-class SetNotifications(
-    private val members: MemberRepository,
-    private val gate: Gate,
-    private val views: SpaceViews,
-) {
-    suspend operator fun invoke(caller: UserId, spaceId: SpaceId, level: NotificationLevel): Resource<MeView> {
+class SetNotifications(private val members: MemberRepository, private val gate: Gate, private val views: SpaceViews) {
+    suspend operator fun invoke(
+        caller: UserId,
+        spaceId: SpaceId,
+        level: NotificationLevel,
+    ): Resource<MeView> {
         val seat =
             when (val found = gate.seat(spaceId, caller)) {
                 is Resource.Success -> found.data
@@ -163,9 +163,13 @@ class StartMembershipPayment(
         val space = seat.space
         if (seat.banned) return Resource.error(SpacesError.Banned)
         if (!space.isLive) return Resource.error(SpacesError.SpaceNotFound)
-        val price = space.price?.takeIf { space.visibility == Visibility.MEMBERS_ONLY } ?: return Resource.error(SpacesError.NotPaidSpace)
+        val price =
+            space.price?.takeIf { space.visibility == Visibility.MEMBERS_ONLY }
+                ?: return Resource.error(SpacesError.NotPaidSpace)
         if (accounts.status(caller) != AccountStatus.ACTIVE) return Resource.error(SpacesError.AccountRestricted)
-        val wallet = wallets.spaceWallet(spaceId.value)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.WalletNotReady)
+        val wallet =
+            wallets.spaceWallet(spaceId.value)?.takeIf { it.isActive }
+                ?: return Resource.error(SpacesError.WalletNotReady)
 
         val now = clock.instant()
         val membership = seat.membership
@@ -228,7 +232,11 @@ class ConfirmMembershipPayment(
     private val frames: FrameSender,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(paymentId: UUID, payer: UserId, amountMinor: Long): Resource<Unit> {
+    suspend operator fun invoke(
+        paymentId: UUID,
+        payer: UserId,
+        amountMinor: Long,
+    ): Resource<Unit> {
         val payment = payments.find(paymentId) ?: return Resource.success(Unit)
         if (payment.payerId != payer || payment.amountMinor != amountMinor) return Resource.success(Unit)
         val space = spaces.find(payment.spaceId) ?: return Resource.success(Unit)
@@ -265,7 +273,8 @@ class ConfirmMembershipPayment(
 
 /**
  * `spaces.memberships` (every 10 minutes): the renewal reminder once per period (3 days before a monthly end, 7 before
- * a yearly one), `ACTIVE` → `GRACE` at the end of the period, `GRACE` → `ENDED` 3 days later. Never charges anything.
+ * a yearly one), `ACTIVE` → `GRACE` at the end of the period, `GRACE` → `ENDED` 3 days later. Never charges
+ * anything.
  * How many memberships it moved or reminded.
  */
 class RunMembershipTimers(
@@ -281,9 +290,18 @@ class RunMembershipTimers(
         val names = mutableMapOf<SpaceId, String>()
 
         suspend fun nameOf(spaceId: SpaceId): String? =
-            names[spaceId] ?: spaces.find(spaceId)?.takeIf { it.state == SpaceState.LIVE }?.name?.also { names[spaceId] = it }
+            names[spaceId]
+                ?: spaces
+                    .find(spaceId)
+                    ?.takeIf { it.state == SpaceState.LIVE }
+                    ?.name
+                    ?.also { names[spaceId] = it }
 
-        for (membership in members.reminderDue(now.plus(config.remindMonthlyBefore), now.plus(config.remindYearlyBefore), BATCH)) {
+        for (membership in members.reminderDue(
+            now.plus(config.remindMonthlyBefore),
+            now.plus(config.remindYearlyBefore),
+            BATCH,
+        )) {
             val name = nameOf(membership.spaceId) ?: continue
             members.save(membership.copy(remindedFor = membership.paidUntil))
             frames.send(
@@ -304,7 +322,10 @@ class RunMembershipTimers(
                 }
             members.save(membership.copy(paidState = state))
             if (state == PaidState.ENDED) spaces.refreshMemberCount(membership.spaceId)
-            frames.send(listOf(membership.userId), MembershipUpdatedFrame(membership.spaceId, name, reason, until.toString()))
+            frames.send(
+                listOf(membership.userId),
+                MembershipUpdatedFrame(membership.spaceId, name, reason, until.toString()),
+            )
             done++
         }
         return Resource.success(done)

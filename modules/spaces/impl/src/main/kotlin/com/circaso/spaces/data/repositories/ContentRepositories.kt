@@ -34,11 +34,11 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.neq
-import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
@@ -95,7 +95,11 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
         }
     }
 
-    override suspend fun before(spaceId: SpaceId, before: PostId?, limit: Int): List<Post> =
+    override suspend fun before(
+        spaceId: SpaceId,
+        before: PostId?,
+        limit: Int,
+    ): List<Post> =
         database.tx("posts.before") {
             PostsTable
                 .selectAll()
@@ -109,7 +113,11 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
                 .toList()
         }
 
-    override suspend fun after(spaceId: SpaceId, after: PostId, limit: Int): List<Post> =
+    override suspend fun after(
+        spaceId: SpaceId,
+        after: PostId,
+        limit: Int,
+    ): List<Post> =
         database.tx("posts.after") {
             PostsTable
                 .selectAll()
@@ -133,7 +141,11 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
             times.size to times.minOrNull()
         }
 
-    override suspend fun remove(postId: PostId, by: RemovedBy, at: Instant): Post? =
+    override suspend fun remove(
+        postId: PostId,
+        by: RemovedBy,
+        at: Instant,
+    ): Post? =
         database.tx("posts.remove") {
             PostsTable.update(where = { (PostsTable.postId eq postId.value) and PostsTable.removedAt.isNull() }) {
                 it[removedAt] = at
@@ -148,7 +160,11 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
                 .singleOrNull()
         }
 
-    override suspend fun countAfter(spaceId: SpaceId, after: UUID?, cap: Int): Int =
+    override suspend fun countAfter(
+        spaceId: SpaceId,
+        after: UUID?,
+        cap: Int,
+    ): Int =
         database.tx("posts.count-after") {
             PostsTable
                 .select(PostsTable.postId)
@@ -162,10 +178,18 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
                 .size
         }
 
-    override suspend fun react(postId: PostId, userId: UserId, emoji: String?, at: Instant) {
+    override suspend fun react(
+        postId: PostId,
+        userId: UserId,
+        emoji: String?,
+        at: Instant,
+    ) {
         database.tx("reactions.set") {
             if (emoji == null) {
-                ReactionsTable.deleteWhere { (ReactionsTable.postId eq postId.value) and (ReactionsTable.userId eq userId.value) }
+                ReactionsTable.deleteWhere {
+                    (ReactionsTable.postId eq postId.value) and
+                        (ReactionsTable.userId eq userId.value)
+                }
             } else {
                 ReactionsTable.upsert(ReactionsTable.postId, ReactionsTable.userId) {
                     it[this.postId] = postId.value
@@ -188,7 +212,9 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
                 .map { Triple(PostId(it[ReactionsTable.postId]), it[ReactionsTable.emoji], it[total].toInt()) }
                 .toList()
                 .groupBy({ it.first }) { ReactionCount(it.second, it.third) }
-                .mapValues { (_, counts) -> counts.sortedWith(compareByDescending<ReactionCount> { it.count }.thenBy { it.emoji }) }
+                .mapValues { (_, counts) ->
+                    counts.sortedWith(compareByDescending<ReactionCount> { it.count }.thenBy { it.emoji })
+                }
         }
     }
 
@@ -197,8 +223,10 @@ class PostRepositoryImpl(private val database: Database) : PostRepository {
         return database.tx("reactions.mine") {
             ReactionsTable
                 .selectAll()
-                .where { (ReactionsTable.postId inList postIds.map { it.value }.distinct()) and (ReactionsTable.userId eq userId.value) }
-                .map { PostId(it[ReactionsTable.postId]) to it[ReactionsTable.emoji] }
+                .where {
+                    (ReactionsTable.postId inList postIds.map { it.value }.distinct()) and
+                        (ReactionsTable.userId eq userId.value)
+                }.map { PostId(it[ReactionsTable.postId]) to it[ReactionsTable.emoji] }
                 .toList()
                 .toMap()
         }
@@ -261,7 +289,10 @@ class MediaRepositoryImpl(private val database: Database) : MediaRepository {
 
     override suspend fun markReady(mediaId: UUID, sizeBytes: Long): Boolean =
         database.tx("media.ready") {
-            MediaTable.update(where = { (MediaTable.mediaId eq mediaId) and (MediaTable.state eq MediaState.PENDING.name) }) {
+            MediaTable.update(where = {
+                (MediaTable.mediaId eq mediaId) and
+                    (MediaTable.state eq MediaState.PENDING.name)
+            }) {
                 it[state] = MediaState.READY.name
                 it[this.sizeBytes] = sizeBytes
             } > 0
@@ -336,10 +367,18 @@ class ReportRepositoryImpl(private val database: Database) : ReportRepository {
                 .selectAll()
                 .where {
                     var condition: Op<Boolean> =
-                        (ReportsTable.reporterId eq report.reporterId.value) and (ReportsTable.spaceId eq report.spaceId.value) and
+                        (ReportsTable.reporterId eq report.reporterId.value) and
+                            (ReportsTable.spaceId eq report.spaceId.value) and
                             (ReportsTable.state eq ReportState.OPEN.name)
                     condition =
-                        if (report.postId == null) condition and ReportsTable.postId.isNull() else condition and (ReportsTable.postId eq report.postId.value)
+                        if (report.postId ==
+                            null
+                        ) {
+                            condition and ReportsTable.postId.isNull()
+                        } else {
+                            condition and
+                                (ReportsTable.postId eq report.postId.value)
+                        }
                     condition
                 }.map { it.toReport() }
                 .singleOrNull() ?: report
@@ -350,8 +389,9 @@ class ReportRepositoryImpl(private val database: Database) : ReportRepository {
             val times =
                 ReportsTable
                     .select(ReportsTable.createdAt)
-                    .where { (ReportsTable.reporterId eq reporterId.value) and (ReportsTable.createdAt greaterEq since) }
-                    .map { it[ReportsTable.createdAt] }
+                    .where {
+                        (ReportsTable.reporterId eq reporterId.value) and (ReportsTable.createdAt greaterEq since)
+                    }.map { it[ReportsTable.createdAt] }
                     .toList()
             times.size to times.minOrNull()
         }
@@ -361,8 +401,10 @@ class ReportRepositoryImpl(private val database: Database) : ReportRepository {
             val state = if (open) ReportState.OPEN else ReportState.DONE
             ReportsTable
                 .selectAll()
-                .where { (ReportsTable.spaceId eq spaceId.value) and (ReportsTable.state eq state.name) and ReportsTable.postId.isNotNull() }
-                .orderBy(ReportsTable.createdAt to SortOrder.DESC)
+                .where {
+                    (ReportsTable.spaceId eq spaceId.value) and (ReportsTable.state eq state.name) and
+                        ReportsTable.postId.isNotNull()
+                }.orderBy(ReportsTable.createdAt to SortOrder.DESC)
                 .limit(REPORTS_CAP)
                 .map { it.toReport() }
                 .toList()

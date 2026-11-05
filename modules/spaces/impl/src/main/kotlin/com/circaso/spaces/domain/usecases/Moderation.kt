@@ -10,9 +10,9 @@ import com.circaso.spaces.domain.models.Ban
 import com.circaso.spaces.domain.models.InviteState
 import com.circaso.spaces.domain.models.MemberFilter
 import com.circaso.spaces.domain.models.MemberView
-import com.circaso.spaces.domain.models.Membership
 import com.circaso.spaces.domain.models.MembersQuery
 import com.circaso.spaces.domain.models.MembersView
+import com.circaso.spaces.domain.models.Membership
 import com.circaso.spaces.domain.models.MuteDuration
 import com.circaso.spaces.domain.models.Role
 import com.circaso.spaces.domain.ports.FrameSender
@@ -64,10 +64,25 @@ class ListMembers(
         val now = clock.instant()
         val first = query.cursor == null
         val offset = query.cursor?.toIntOrNull() ?: 0
-        val team = if (first) members.team(query.spaceId).sortedWith(compareByDescending<Membership> { it.role.rank }.thenBy { it.joinedAt }) else emptyList()
+        val team =
+            if (first) {
+                members.team(query.spaceId).sortedWith(
+                    compareByDescending<Membership> {
+                        it.role.rank
+                    }.thenBy { it.joinedAt },
+                )
+            } else {
+                emptyList()
+            }
         val teamIds = team.map { it.userId }.toSet()
         val contacts =
-            if (first) members.among(query.spaceId, views.contactsOf(query.caller)).filterNot { it.userId in teamIds } else emptyList()
+            if (first) {
+                members.among(query.spaceId, views.contactsOf(query.caller)).filterNot {
+                    it.userId in teamIds
+                }
+            } else {
+                emptyList()
+            }
 
         var page = emptyList<MemberView>()
         var next: String? = null
@@ -104,10 +119,18 @@ class ListMembers(
     private suspend fun matching(query: MembersQuery, mutedAfter: Instant?): List<Membership> {
         val all = members.page(query.spaceId, mutedAfter, 0, SEARCH_CAP)
         val people = profiles.get(all.map { it.userId }.toSet())
-        val needle = query.query.orEmpty().trim().removePrefix("@").lowercase()
+        val needle =
+            query.query
+                .orEmpty()
+                .trim()
+                .removePrefix("@")
+                .lowercase()
         return all.filter {
             val profile = people.profileOf(it.userId)
-            profile.displayName.lowercase().split(' ').any { word -> word.startsWith(needle) } ||
+            profile.displayName
+                .lowercase()
+                .split(' ')
+                .any { word -> word.startsWith(needle) } ||
                 profile.displayName.lowercase().startsWith(needle) ||
                 profile.handle?.lowercase()?.startsWith(needle) == true
         }
@@ -117,7 +140,15 @@ class ListMembers(
         if (rows.isEmpty()) return emptyList()
         val people = profiles.get(rows.map { it.userId }.toSet())
         return rows.map {
-            MemberView(people.profileOf(it.userId), it.role, it.joinedAt, it.mutedUntil?.takeIf { m -> m.isAfter(now) }, null)
+            MemberView(
+                people.profileOf(it.userId),
+                it.role,
+                it.joinedAt,
+                it.mutedUntil?.takeIf { m ->
+                    m.isAfter(now)
+                },
+                null,
+            )
         }
     }
 
@@ -148,7 +179,8 @@ class SetRole(
                 is Resource.Error -> return found
             }
         if (role == Role.OWNER) return Resource.error(SpacesError.CannotModerate)
-        val membership = members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
+        val membership =
+            members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
         if (!seat.outranks(membership)) return Resource.error(SpacesError.CannotModerate)
         if (seat.role != Role.OWNER && role == Role.ADMIN) return Resource.error(SpacesError.NotOwner)
         val updated = membership.copy(role = role)
@@ -181,7 +213,8 @@ class MuteMember(
                 is Resource.Success -> found.data
                 is Resource.Error -> return found
             }
-        val membership = members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
+        val membership =
+            members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
         if (!seat.outranks(membership)) return Resource.error(SpacesError.CannotModerate)
         val until = duration?.let { until(it, clock.instant()) }
         members.save(membership.copy(mutedUntil = until))
@@ -208,13 +241,18 @@ class RemoveMember(
     private val gate: Gate,
     private val frames: FrameSender,
 ) {
-    suspend operator fun invoke(caller: UserId, spaceId: SpaceId, target: UserId): Resource<Unit> {
+    suspend operator fun invoke(
+        caller: UserId,
+        spaceId: SpaceId,
+        target: UserId,
+    ): Resource<Unit> {
         val seat =
             when (val found = gate.require(spaceId, caller, Role.ADMIN, SpacesError.NotAdmin)) {
                 is Resource.Success -> found.data
                 is Resource.Error -> return found
             }
-        val membership = members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
+        val membership =
+            members.find(spaceId, target)?.takeIf { it.isActive } ?: return Resource.error(SpacesError.NotMember)
         if (!seat.outranks(membership)) return Resource.error(SpacesError.CannotModerate)
         transactor.run("members.remove") {
             members.delete(spaceId, target)

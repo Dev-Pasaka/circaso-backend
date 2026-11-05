@@ -39,7 +39,11 @@ class MemberService(
         duration: MuteDuration?,
     ): Resource<MemberView> = muteMember(caller, spaceId, target, duration)
 
-    suspend fun remove(caller: UserId, spaceId: SpaceId, target: UserId): Resource<Unit> = removeMember(caller, spaceId, target)
+    suspend fun remove(
+        caller: UserId,
+        spaceId: SpaceId,
+        target: UserId,
+    ): Resource<Unit> = removeMember(caller, spaceId, target)
 
     suspend fun ban(
         caller: UserId,

@@ -10,9 +10,9 @@ import com.circaso.spaces.domain.models.ReceivedInviteView
 import com.circaso.spaces.domain.models.RequestState
 import com.circaso.spaces.domain.models.SpaceView
 import com.circaso.spaces.domain.usecases.AcceptInvite
-import com.circaso.spaces.domain.usecases.AnswerRequest
+import com.circaso.spaces.domain.usecases.AnswerJoinAsk
 import com.circaso.spaces.domain.usecases.CancelInvite
-import com.circaso.spaces.domain.usecases.CancelRequest
+import com.circaso.spaces.domain.usecases.CancelJoinAsk
 import com.circaso.spaces.domain.usecases.DeclineInvite
 import com.circaso.spaces.domain.usecases.InvitePeople
 import com.circaso.spaces.domain.usecases.ListInvitesAndRequests
@@ -23,9 +23,9 @@ import java.util.UUID
 /** Requests and invites: SP14-SP22. */
 class InviteService(
     private val requestToJoin: RequestToJoin,
-    private val cancelRequest: CancelRequest,
+    private val cancelJoinAsk: CancelJoinAsk,
     private val listInvitesAndRequests: ListInvitesAndRequests,
-    private val answerRequest: AnswerRequest,
+    private val answerJoinAsk: AnswerJoinAsk,
     private val invitePeople: InvitePeople,
     private val cancelInvite: CancelInvite,
     private val listMyInvites: ListMyInvites,
@@ -34,7 +34,8 @@ class InviteService(
 ) {
     suspend fun request(caller: UserId, spaceId: SpaceId): Resource<MeView> = requestToJoin(caller, spaceId)
 
-    suspend fun cancelRequest(caller: UserId, spaceId: SpaceId): Resource<MeView> = cancelRequest.invoke(caller, spaceId)
+    suspend fun cancelRequest(caller: UserId, spaceId: SpaceId): Resource<MeView> =
+        cancelJoinAsk.invoke(caller, spaceId)
 
     suspend fun list(caller: UserId, spaceId: SpaceId): Resource<InvitesView> = listInvitesAndRequests(caller, spaceId)
 
@@ -43,13 +44,19 @@ class InviteService(
         spaceId: SpaceId,
         userId: UserId,
         accept: Boolean,
-    ): Resource<RequestState> = answerRequest(caller, spaceId, userId, accept)
+    ): Resource<RequestState> = answerJoinAsk(caller, spaceId, userId, accept)
 
-    suspend fun invite(caller: UserId, spaceId: SpaceId, userIds: List<UserId>): Resource<List<InviteResult>> =
-        invitePeople(caller, spaceId, userIds)
+    suspend fun invite(
+        caller: UserId,
+        spaceId: SpaceId,
+        userIds: List<UserId>,
+    ): Resource<List<InviteResult>> = invitePeople(caller, spaceId, userIds)
 
-    suspend fun cancelInvite(caller: UserId, spaceId: SpaceId, inviteId: UUID): Resource<Unit> =
-        cancelInvite.invoke(caller, spaceId, inviteId)
+    suspend fun cancelInvite(
+        caller: UserId,
+        spaceId: SpaceId,
+        inviteId: UUID,
+    ): Resource<Unit> = cancelInvite.invoke(caller, spaceId, inviteId)
 
     suspend fun mine(caller: UserId): Resource<List<ReceivedInviteView>> = listMyInvites(caller)
 

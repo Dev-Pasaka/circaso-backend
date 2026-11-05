@@ -27,7 +27,11 @@ class ReportService(
 ) {
     suspend fun report(command: ReportCommand): Resource<Report> = reportContent(command)
 
-    suspend fun list(caller: UserId, spaceId: SpaceId, open: Boolean): Resource<List<ReportGroupView>> = listReports(caller, spaceId, open)
+    suspend fun list(
+        caller: UserId,
+        spaceId: SpaceId,
+        open: Boolean,
+    ): Resource<List<ReportGroupView>> = listReports(caller, spaceId, open)
 
     suspend fun resolve(
         caller: UserId,

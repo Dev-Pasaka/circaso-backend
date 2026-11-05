@@ -7,8 +7,10 @@ import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyWallet
 import com.circaso.integrations.api.CustodyWalletState
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.NetworkCost
 import com.circaso.integrations.api.PinChallenge
 import com.circaso.integrations.api.SdkSession
+import com.circaso.integrations.api.SplitTransferRequest
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.TransferRequest
@@ -203,6 +205,100 @@ class CircleCustody internal constructor(
             )
         }.flatMapReply { token, reply -> challengeOf(token, reply, "create_transfer") }
     }
+
+    /** Smart-contract wallets batch calls (`executeBatch`); Solana's EOAs can't (fee spike, 2026-11-03). */
+    override fun canSplit(blockchain: String): Boolean =
+        settings.supported.find(blockchain) != null && settings.accountType(blockchain) == SCA
+
+    override suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> {
+        val batch =
+            when (val built = batchOf(request)) {
+                is Resource.Success -> built.data
+                is Resource.Error -> return built
+            }
+        val body = EstimateContractBody(request.walletId, request.walletAddress, EXECUTE_BATCH, batch)
+        val text = circleJson.encodeToString(EstimateContractBody.serializer(), body)
+        return asUser(circleUserId) { token ->
+            // Nothing is created, so Circle takes no key in the body; the header still lets the shared client retry.
+            client.exchange(
+                HttpMethod.Post,
+                "/v1/w3s/transactions/contractExecution/estimateFee",
+                "estimate_contract_execution",
+                token,
+                CircleClient.WrittenBody(freshKey(), text),
+                FeeEstimateData.serializer(),
+            )
+        }.flatMapReply { _, reply ->
+            if (reply !is CircleReply.Ok) return@flatMapReply CircleErrors.failure(reply, "estimate_contract_execution")
+            val level = reply.data.medium ?: reply.data.high
+            val fee = level?.networkFee?.toBigDecimalOrNull()
+            if (fee == null || fee.signum() < 0) {
+                return@flatMapReply CircleErrors.failure(CircleReply.Failed(200, null), "estimate_contract_execution")
+            }
+            Resource.success(NetworkCost(fee, nativeSymbol(request.blockchain)))
+        }
+    }
+
+    override suspend fun prepareSplitTransfer(
+        circleUserId: String,
+        request: SplitTransferRequest,
+    ): Resource<Challenge> {
+        val batch =
+            when (val built = batchOf(request)) {
+                is Resource.Success -> built.data
+                is Resource.Error -> return built
+            }
+        val body =
+            ContractExecutionBody(
+                idempotencyKey = request.idempotencyKey.toString(),
+                walletId = request.walletId,
+                contractAddress = request.walletAddress,
+                abiFunctionSignature = EXECUTE_BATCH,
+                abiParameters = batch,
+                feeLevel = FEE_LEVEL,
+                refId = request.refId,
+            )
+        return asUser(circleUserId) { token ->
+            client.write<ContractExecutionBody, ChallengeData>(
+                HttpMethod.Post,
+                "/v1/w3s/user/transactions/contractExecution",
+                "create_contract_execution",
+                body,
+                token,
+            )
+        }.flatMapReply { token, reply -> challengeOf(token, reply, "create_contract_execution") }
+    }
+
+    /**
+     * `executeBatch`'s one argument: per leg `(USDC, 0, transfer(to, amount))`. Every leg is USDC on a chain whose
+     * wallets are smart-contract accounts, to an EVM address.
+     */
+    private fun batchOf(request: SplitTransferRequest): Resource<List<List<List<String>>>> {
+        if (!canSplit(request.blockchain)) {
+            return Resource.error(
+                IntegrationError.Rejected("${request.blockchain} can't pay several addresses at once."),
+            )
+        }
+        val usdc = settings.usdcOn(request.blockchain) ?: return notSupported(request.blockchain)
+        if (request.legs.isEmpty()) return Resource.error(IntegrationError.Rejected("A payment needs a leg."))
+        val calls =
+            request.legs.map { leg ->
+                if (leg.amount.asset != Asset.USDC) return notOffered(leg.amount.asset)
+                val data =
+                    Erc20.transfer(leg.destinationAddress, leg.amount.amountMinor)
+                        ?: return Resource.error(IntegrationError.AddressInvalid())
+                listOf(usdc.tokenAddress, "0", data)
+            }
+        return Resource.success(listOf(calls))
+    }
+
+    private fun nativeSymbol(blockchain: String): String =
+        when {
+            blockchain.startsWith("MATIC") -> "POL"
+            blockchain.startsWith("SOL") -> "SOL"
+            blockchain.startsWith("AVAX") -> "AVAX"
+            else -> "ETH"
+        }
 
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
         asUser(circleUserId) { token ->
@@ -437,6 +533,11 @@ class CircleCustody internal constructor(
     private companion object {
         /** Gas is sponsored through Gas Station on SCA wallets; the level only sets how fast Circle bids. */
         const val FEE_LEVEL = "MEDIUM"
+
+        const val SCA = "SCA"
+
+        /** Every Circle smart-contract wallet has it; all calls succeed together or the whole batch reverts. */
+        const val EXECUTE_BATCH = "executeBatch((address,uint256,bytes)[])"
 
         /** The most Circle lists in one page. */
         const val PAGE_SIZE = 50

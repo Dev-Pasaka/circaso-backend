@@ -1,12 +1,12 @@
 package com.circaso.messaging.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
-import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.java.javaUUID
-import org.jetbrains.exposed.v1.javatime.timestamp
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.java.javaUUID
+import org.jetbrains.exposed.v1.javatime.timestamp
 
 /**
  * One row per chat. A direct chat carries its pair as `direct_low` < `direct_high`, and the partial unique index on

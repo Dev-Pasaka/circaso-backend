@@ -25,7 +25,11 @@ class SpaceWalletPolicyImpl(private val policy: PolicyService) : SpaceWalletPoli
         policy.access(SpaceId(spaceId), userId).getOrNull() ?: SpaceAccess.NONE
 
     override suspend fun administered(userId: UserId): List<UUID> =
-        policy.administered(userId).getOrNull().orEmpty().map { it.value }
+        policy
+            .administered(userId)
+            .getOrNull()
+            .orEmpty()
+            .map { it.value }
 
     override suspend fun team(spaceId: UUID): Set<UserId> = policy.team(SpaceId(spaceId)).getOrNull().orEmpty()
 
@@ -35,8 +39,11 @@ class SpaceWalletPolicyImpl(private val policy: PolicyService) : SpaceWalletPoli
 
 /** Messaging's guard for private chats with a space's owner (messaging:api `SpacePrivateChats`). Fails closed. */
 class SpacePrivateChatsImpl(private val policy: PolicyService) : SpacePrivateChats {
-    override suspend fun allowed(spaceId: UUID, from: UserId, to: UserId): Boolean =
-        policy.privateChat(SpaceId(spaceId), from, to).getOrNull() == true
+    override suspend fun allowed(
+        spaceId: UUID,
+        from: UserId,
+        to: UserId,
+    ): Boolean = policy.privateChat(SpaceId(spaceId), from, to).getOrNull() == true
 }
 
 /** What the gateway calls after a reconnect with the app's last `spaces` seq: the kept frames, or `resync`. */

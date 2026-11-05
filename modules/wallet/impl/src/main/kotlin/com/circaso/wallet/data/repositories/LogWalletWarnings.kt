@@ -42,4 +42,21 @@ class LogWalletWarnings : WalletWarnings {
             circleWalletId,
         )
     }
+
+    override fun gasAboveShare(
+        transferId: String,
+        blockchain: String,
+        shareBps: Int,
+    ) {
+        log.warn(
+            "network cost above the fee rule's share of the fee: transferId={} blockchain={} shareBps={}",
+            transferId,
+            blockchain,
+            shareBps,
+        )
+    }
+
+    override fun feeNotTaken(blockchain: String, reason: String) {
+        log.warn("a fee rule applies but no fee can be taken: blockchain={} reason={}", blockchain, reason)
+    }
 }

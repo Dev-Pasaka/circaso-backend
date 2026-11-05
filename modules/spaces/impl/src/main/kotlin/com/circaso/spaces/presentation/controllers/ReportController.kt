@@ -33,7 +33,11 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 
 /** Reports (Spaces API, SP35-SP37) and Circaso's queue (SPO1, SPO2, scope `ops`). */
-fun Route.reportController(reports: ReportService, pageDefault: Int, pageMax: Int) {
+fun Route.reportController(
+    reports: ReportService,
+    pageDefault: Int,
+    pageMax: Int,
+) {
     route("/spaces/{spaceId}/reports") {
         authenticate(Scope.APP) {
             post {
@@ -46,7 +50,13 @@ fun Route.reportController(reports: ReportService, pageDefault: Int, pageMax: In
             }.docs<ReportRequest, ReportResponse>(
                 "SP35 · Report a post or a space",
                 TAG,
-                listOf("spaces.report_invalid", "spaces.post_not_found", "spaces.too_many_reports", NOT_FOUND, MALFORMED),
+                listOf(
+                    "spaces.report_invalid",
+                    "spaces.post_not_found",
+                    "spaces.too_many_reports",
+                    NOT_FOUND,
+                    MALFORMED,
+                ),
                 notes =
                     "$SCOPE $IDEMPOTENT A post goes to the space's moderators and Circaso; the whole space (no " +
                         "`postId`) to Circaso only. The reporter is never named to the space.",
@@ -80,8 +90,16 @@ fun Route.reportController(reports: ReportService, pageDefault: Int, pageMax: In
             }.docs<ResolveReportRequest, ResolvedResponse>(
                 "SP37 · Act on a reported post (moderators)",
                 TAG,
-                listOf("spaces.not_moderator", "spaces.not_admin", "spaces.report_not_found", "spaces.cannot_moderate", MALFORMED),
-                notes = "$SCOPE $IDEMPOTENT `KEEP`, `REMOVE_POST`, `MUTE` (with `muteDuration`) or `REMOVE_MEMBER` (admins). Every open report on the post closes.",
+                listOf(
+                    "spaces.not_moderator",
+                    "spaces.not_admin",
+                    "spaces.report_not_found",
+                    "spaces.cannot_moderate",
+                    MALFORMED,
+                ),
+                notes =
+                    "$SCOPE $IDEMPOTENT `KEEP`, `REMOVE_POST`, `MUTE` (with `muteDuration`) or " +
+                        "`REMOVE_MEMBER` (admins). Every open report on the post closes.",
             )
         }
     }
@@ -90,19 +108,32 @@ fun Route.reportController(reports: ReportService, pageDefault: Int, pageMax: In
         authenticate(Scope.OPS) {
             get("reports") {
                 val query = call.request.queryParameters
-                val result = parsePage(query["cursor"], query["limit"], pageDefault, pageMax).flatMap { (offset, limit) -> reports.opsList(offset, limit) }
+                val result =
+                    parsePage(query["cursor"], query["limit"], pageDefault, pageMax).flatMap { (offset, limit) ->
+                        reports.opsList(offset, limit)
+                    }
                 call.respondDefault(result.toDefaultResponse { it.toResponse() })
-            }.docs<NoBody, OpsReportsResponse>("SPO1 · Circaso's report queue", TAG, listOf(MALFORMED), notes = "Scope: `ops`. Newest first.")
+            }.docs<NoBody, OpsReportsResponse>(
+                "SPO1 · Circaso's report queue",
+                TAG,
+                listOf(MALFORMED),
+                notes = "Scope: `ops`. Newest first.",
+            )
 
             post("{spaceId}/remove") {
                 val request = call.receive<RemoveSpaceRequest>()
-                val result = parseSpaceId(call.parameters["spaceId"]).flatMap { reports.removeSpace(it, request.reason) }
+                val result =
+                    parseSpaceId(
+                        call.parameters["spaceId"],
+                    ).flatMap { reports.removeSpace(it, request.reason) }
                 call.respondDefault(result.toDefaultResponse { RemovedResponse(true) })
             }.docs<RemoveSpaceRequest, RemovedResponse>(
                 "SPO2 · Remove a space for breaking the rules",
                 TAG,
                 listOf(NOT_FOUND, MALFORMED),
-                notes = "Scope: `ops`. $IDEMPOTENT Everyone in it gets `space.updated`; SP3 then answers `spaces.space_unavailable`.",
+                notes =
+                    "Scope: `ops`. $IDEMPOTENT Everyone in it gets `space.updated`; SP3 then answers " +
+                        "`spaces.space_unavailable`.",
             )
         }
     }

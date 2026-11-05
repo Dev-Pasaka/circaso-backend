@@ -58,13 +58,22 @@ class HolderFrames(
     private suspend fun space(owner: WalletOwner.Space, frame: WalletFrame) {
         val walletId = owner.walletId
         when (frame) {
-            is WalletFrame.TransferUpdated -> sender.send(owner.signerId, frame.copy(walletId = walletId))
-            is WalletFrame.PaymentReceived -> sender.send(owner.signerId, frame.copy(walletId = walletId))
+            is WalletFrame.TransferUpdated -> {
+                sender.send(owner.signerId, frame.copy(walletId = walletId))
+            }
+
+            is WalletFrame.PaymentReceived -> {
+                sender.send(owner.signerId, frame.copy(walletId = walletId))
+            }
+
             is WalletFrame.WalletReady -> {
                 val team = spaces?.team(owner.spaceId).orEmpty() + owner.signerId
                 team.forEach { sender.send(it, frame.copy(walletId = walletId)) }
             }
-            is WalletFrame.SetupRequested -> Unit
+
+            is WalletFrame.SetupRequested -> {
+                Unit
+            }
         }
     }
 }

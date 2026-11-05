@@ -55,9 +55,9 @@ import com.circaso.spaces.domain.support.PostViews
 import com.circaso.spaces.domain.support.SpaceViews
 import com.circaso.spaces.domain.support.SpacesConfig
 import com.circaso.spaces.domain.usecases.AcceptInvite
-import com.circaso.spaces.domain.usecases.AnswerRequest
+import com.circaso.spaces.domain.usecases.AnswerJoinAsk
 import com.circaso.spaces.domain.usecases.CancelInvite
-import com.circaso.spaces.domain.usecases.CancelRequest
+import com.circaso.spaces.domain.usecases.CancelJoinAsk
 import com.circaso.spaces.domain.usecases.CheckHandle
 import com.circaso.spaces.domain.usecases.CheckPrivateChat
 import com.circaso.spaces.domain.usecases.CompleteSpaceMedia
@@ -185,7 +185,14 @@ fun spacesModule(config: Config): Module =
         single<MediaRepository> { MediaRepositoryImpl(get(named("spaces.database"))) }
         single<ReportRepository> { ReportRepositoryImpl(get(named("spaces.database"))) }
         single<MediaStorage> { ObjectStoreSpaceMedia(get<ObjectStores>().scope("spaces")) }
-        single { RealtimeFramesImpl(get<RedisScopes>().scope(REDIS_PREFIX), get(named("spaces.database")), get<Realtime>(), clock) }
+        single {
+            RealtimeFramesImpl(
+                get<RedisScopes>().scope(REDIS_PREFIX),
+                get(named("spaces.database")),
+                get<Realtime>(),
+                clock,
+            )
+        }
         single<FrameSender> { get<RealtimeFramesImpl>() }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single(named("spaces.purge-expired")) {
@@ -220,9 +227,9 @@ fun spacesModule(config: Config): Module =
         single { RunMembershipTimers(get(), get(), get(), spaces, clock) }
         single { GoLiveWhenWalletReady(get(), get()) }
         single { RequestToJoin(get(), get(), get(), get(), get(), get(), get(), get(), get(), spaces, clock) }
-        single { CancelRequest(get(), get(), get(), clock) }
+        single { CancelJoinAsk(get(), get(), get(), clock) }
         single { ListInvitesAndRequests(get(), get(), get(), get(), get(), spaces, clock) }
-        single { AnswerRequest(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { AnswerJoinAsk(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { InvitePeople(get(), get(), get(), get(), get(), get(), get(), spaces, clock) }
         single { CancelInvite(get(), get(), get(), clock) }
         single { ListMyInvites(get(), get(), get(), get(), get(), clock) }
@@ -273,7 +280,13 @@ fun spacesModule(config: Config): Module =
             val posts = get<PostService>()
             val reports = get<ReportService>()
             RouteContributor { route ->
-                route.spaceController(spaceService, membership, spaces.pageDefault, spaces.pageMax, spaces.suggestedDefault)
+                route.spaceController(
+                    spaceService,
+                    membership,
+                    spaces.pageDefault,
+                    spaces.pageMax,
+                    spaces.suggestedDefault,
+                )
                 route.inviteController(invites)
                 route.memberController(members, spaces.pageDefault, spaces.pageMax)
                 route.postController(posts, spaces.pageDefault, spaces.pageMax)

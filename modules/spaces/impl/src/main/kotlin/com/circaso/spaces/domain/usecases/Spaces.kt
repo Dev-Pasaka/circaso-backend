@@ -82,7 +82,11 @@ class CreateSpace(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(command: CreateSpaceCommand): Resource<SpaceView> {
-        spaces.byCreateKey(command.ownerId, command.createKey)?.let { return Resource.success(viewOf(it, command.ownerId)) }
+        spaces
+            .byCreateKey(
+                command.ownerId,
+                command.createKey,
+            )?.let { return Resource.success(viewOf(it, command.ownerId)) }
         val now = clock.instant()
         refusal(command, now)?.let { return Resource.error(it) }
         val handle = Handles.normalise(command.handle)
@@ -131,7 +135,10 @@ class CreateSpace(
             is Resource.Success -> if (!written.data) return raced(command, handle)
         }
         command.team.forEach {
-            frames.send(listOf(it.userId), MembershipUpdatedFrame(space.spaceId, space.name, "ROLE_CHANGED", role = it.role.name))
+            frames.send(
+                listOf(it.userId),
+                MembershipUpdatedFrame(space.spaceId, space.name, "ROLE_CHANGED", role = it.role.name),
+            )
         }
         return Resource.success(viewOf(space, command.ownerId))
     }
@@ -158,13 +165,21 @@ class CreateSpace(
             ids.size > config.teamMax || ids.size != ids.toSet().size || command.ownerId in ids ||
                 command.team.any { it.role == Role.OWNER || it.role == Role.MEMBER }
         if (bad) return SpacesError.TeamInvalid
-        if (ids.isNotEmpty() && reach.reachable(command.ownerId, ids.toSet()) != ids.toSet()) return SpacesError.TeamInvalid
+        if (ids.isNotEmpty() &&
+            reach.reachable(command.ownerId, ids.toSet()) != ids.toSet()
+        ) {
+            return SpacesError.TeamInvalid
+        }
         return null
     }
 
     /** Lost a race: the same create key won (return it) or the handle went to someone else meanwhile. */
     private suspend fun raced(command: CreateSpaceCommand, handle: String): Resource<SpaceView> {
-        spaces.byCreateKey(command.ownerId, command.createKey)?.let { return Resource.success(viewOf(it, command.ownerId)) }
+        spaces
+            .byCreateKey(
+                command.ownerId,
+                command.createKey,
+            )?.let { return Resource.success(viewOf(it, command.ownerId)) }
         return Resource.error(SpacesError.HandleTaken(SpaceRules.freeHandles(spaces, handle, command.name)))
     }
 
@@ -255,7 +270,8 @@ class UpdateSpace(
                 is Resource.Error -> return found
             }
         val ownerOnly =
-            command.handle != null || command.visibility != null || command.price != null || command.privateMessages != null
+            command.handle != null || command.visibility != null || command.price != null ||
+                command.privateMessages != null
         if (ownerOnly && seat.role != Role.OWNER) return Resource.error(SpacesError.NotOwner)
         val old = seat.space
         val handle = command.handle?.let(Handles::normalise) ?: old.handle
@@ -371,7 +387,11 @@ class ListMySpaces(
     private val profiles: Profiles,
     private val config: SpacesConfig,
 ) {
-    suspend operator fun invoke(caller: UserId, offset: Int, limit: Int): Resource<Page<MySpaceView>> {
+    suspend operator fun invoke(
+        caller: UserId,
+        offset: Int,
+        limit: Int,
+    ): Resource<Page<MySpaceView>> {
         val mine = members.ofUser(caller).associateBy { it.spaceId }
         val found = spaces.findAll(mine.keys).filterNot { it.isGone }
         val banned = bans.spacesBanning(caller)
@@ -392,7 +412,14 @@ class ListMySpaces(
                     lastPost =
                         last?.let {
                             val kind = if (it.mediaIds.isEmpty()) "TEXT" else "MEDIA"
-                            LastPost(it.postId, author.orEmpty(), it.text?.take(PREVIEW), kind, it.createdAt, it.isRemoved)
+                            LastPost(
+                                it.postId,
+                                author.orEmpty(),
+                                it.text?.take(PREVIEW),
+                                kind,
+                                it.createdAt,
+                                it.isRemoved,
+                            )
                         },
                     unreadCount = me.unreadCount.coerceAtMost(config.unreadCap),
                     activityAt = space.lastPostAt ?: membership.joinedAt,
@@ -432,7 +459,14 @@ class SuggestSpaces(
             spaces
                 .findAll(byContacts.keys)
                 .filter { it.isDiscoverable && (topic == null || it.topic == topic) }
-                .sortedWith(compareByDescending<Space> { byContacts.getValue(it.spaceId).size }.thenByDescending { it.memberCount })
+                .sortedWith(
+                    compareByDescending<Space> {
+                        byContacts
+                            .getValue(
+                                it.spaceId,
+                            ).size
+                    }.thenByDescending { it.memberCount },
+                )
         val seen = exclude + viaContacts.map { it.spaceId }
         val local = if (country != null) spaces.popular(country, topic, seen, 0, want) else emptyList()
         val anywhere = spaces.popular(null, topic, seen + local.map { it.spaceId }, 0, want)
@@ -462,7 +496,11 @@ class SearchSpaces(private val spaces: SpaceRepository, private val views: Space
         limit: Int,
     ): Resource<SearchView> {
         val text = query.trim()
-        if (text.isEmpty() || text.length > MAX_QUERY) return Resource.error(SpacesError.DetailsInvalid("q", "1 to 60 characters"))
+        if (text.isEmpty() ||
+            text.length > MAX_QUERY
+        ) {
+            return Resource.error(SpacesError.DetailsInvalid("q", "1 to 60 characters"))
+        }
         if (text.startsWith("@")) {
             val handle = Handles.normalise(text)
             if (handle.isEmpty()) return Resource.error(SpacesError.DetailsInvalid("q", "a handle after @"))

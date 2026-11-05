@@ -15,22 +15,30 @@ import com.circaso.wallet.domain.models.CreateWalletCommand
 import com.circaso.wallet.domain.models.JobSettings
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.TransferCommand
-import com.circaso.wallet.domain.models.TransferLimits
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.ports.Transactor
+import com.circaso.wallet.domain.repositories.FeeLedgerRepository
+import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
+import com.circaso.wallet.domain.support.FeeCalculator
+import com.circaso.wallet.domain.support.FeeQuotes
+import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
+import com.circaso.wallet.domain.support.Limits
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.SupportAccountRule
@@ -57,6 +65,7 @@ import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
+import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
@@ -66,7 +75,10 @@ import java.math.BigInteger
 import java.util.UUID
 
 /** 500 USDC a payment, 1 000 a day, in minor units (the defaults of the settings). */
-val TEST_LIMITS = TransferLimits(perPaymentMinor = 500_000_000, dailyMinor = 1_000_000_000)
+val TEST_LIMITS = TestLimits(perPaymentMinor = 500_000_000, dailyMinor = 1_000_000_000)
+
+/** The personal placeholders the server seeds (V4), in USDC minor units. */
+data class TestLimits(val perPaymentMinor: Long, val dailyMinor: Long)
 
 /**
  * The wallet's use cases over in-memory fakes of their ports, or over the real repositories and transactor when a
@@ -79,6 +91,9 @@ class Harness(
     val transfers: TransferRepository = MemoryTransferRepository(),
     val transactions: TransactionRepository = MemoryTransactionRepository(),
     chains: SupportedChains = TEST_CHAINS,
+    val ruleRows: RuleRepository = MemoryRules(),
+    val quoteRows: FeeQuoteRepository = MemoryFeeQuotes(),
+    val ledger: FeeLedgerRepository = MemoryFeeLedger(),
 ) {
     val custody = FakeCustody(chains)
     val rates = FakeRates()
@@ -87,7 +102,6 @@ class Harness(
     val adding = MemoryAddingChains()
     val clock = MutableClock()
     val frames = RecordingFrames()
-    val spend = MemoryDailySpend()
     val reminders = MemoryReminders()
     val holds = MemoryHolds()
     val accounts = FakeAccounts()
@@ -113,7 +127,13 @@ class Harness(
     private val payees = Payees(wallets, owners, reach, chats, custody, support, spaces)
     private val listings = WalletListings(wallets, payees)
     private val events = TransferEvents(bus)
-    val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, support, clock)
+    val rules = SenderRules(wallets, accounts, holds, holdings, custody, support)
+    val feeConfig = FakeFeeConfig()
+    val limits = Limits(ruleRows, transfers, clock)
+    val fees = FeeCalculator(ruleRows, custody, feeConfig, wallets, owners, warnings, clock)
+    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces)
+    private val quotes = FeeQuotes(quoteRows, clock)
+    val quoteTransfer = QuoteTransfer(holders, planner, quotes, clock)
 
     val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active, holders)
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock)
@@ -124,8 +144,12 @@ class Harness(
     val createSpaceWallet =
         com.circaso.wallet.domain.usecases
             .CreateSpaceWallet(owners, accounts, support, creation, listings, spaces, clock)
-    val getSpaceWallet = com.circaso.wallet.domain.usecases.GetSpaceWallet(owners, listings, spaces)
-    val findSpaceWallet = com.circaso.wallet.domain.usecases.FindSpaceWallet(owners, listings)
+    val getSpaceWallet =
+        com.circaso.wallet.domain.usecases
+            .GetSpaceWallet(owners, listings, spaces)
+    val findSpaceWallet =
+        com.circaso.wallet.domain.usecases
+            .FindSpaceWallet(owners, listings)
     val findGroupWallet = FindGroupWallet(owners, listings)
     val openSession = OpenSession(wallets, custody, active, holders)
     val listChains = ListChains(wallets, sync, adding, custody, holders)
@@ -141,8 +165,10 @@ class Harness(
             transactions,
             wallets,
             transactor,
-            rules,
-            payees,
+            planner,
+            limits,
+            quotes,
+            ledger,
             custody,
             outbox,
             bus,
@@ -151,7 +177,6 @@ class Harness(
             clock,
             holders,
             approvals,
-            spaces,
         )
     val getTransfer = GetTransfer(transfers, chats, spaces)
     val listTransactions = ListTransactions(transactions, Counterparties(profiles, wallets, owners), rates, holders)
@@ -159,7 +184,18 @@ class Harness(
     val requestSetup = RequestSetup(payees, reminders, profiles, sent, support)
     val validateAddress = ValidateAddress(custody)
     val outgoing =
-        OutgoingUpdates(transfers, transactions, transactor, outbox, bus, events, sent, rules, warnings, ids)
+        OutgoingUpdates(
+            transfers,
+            transactions,
+            transactor,
+            outbox,
+            bus,
+            events,
+            sent,
+            FeeSettlement(ledger, feeConfig, warnings),
+            warnings,
+            ids,
+        )
     val updates =
         CustodyUpdates(
             wallets,
@@ -169,6 +205,7 @@ class Harness(
             cache,
             warnings,
             clock,
+            feeConfig,
         )
     val applyUpdate = ApplyCustodyUpdate(updates)
     val expireUnsigned = ExpireUnsignedTransfers(transfers, outgoing, jobs, clock)
@@ -188,7 +225,8 @@ class Harness(
             findSpaceWallet,
             com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds(
                 owners,
-                com.circaso.wallet.domain.support.HeldFunds(wallets, sync, holdings),
+                com.circaso.wallet.domain.support
+                    .HeldFunds(wallets, sync, holdings),
             ),
         )
 
@@ -241,6 +279,37 @@ class Harness(
     ) = prepareTransfer(
         TransferCommand(sender, blockchain, payee, Money(usdcMinor, Asset.USDC), chatId, proposalId, key),
     )
+
+    /** W17 for the same payment as [pay]. */
+    suspend fun quote(
+        sender: UserId,
+        payee: Payee,
+        usdcMinor: Long,
+        blockchain: String = TEST_CHAINS.default,
+        walletId: com.circaso.wallet.api.WalletId? = null,
+    ) = quoteTransfer(
+        TransferCommand(
+            sender,
+            blockchain,
+            payee,
+            Money(usdcMinor, Asset.USDC),
+            null,
+            null,
+            UUID.randomUUID(),
+            walletId,
+        ),
+    )
+
+    /** What has left [holder]'s wallet (or may still, awaiting a signature) in its rolling window, fees included. */
+    fun used(holder: UserId): Long =
+        kotlinx.coroutines.runBlocking {
+            val owner =
+                owners.find(
+                    com.circaso.wallet.api
+                        .WalletId(holder.value),
+                ) ?: WalletOwner.Person(holder)
+            limits.allowance(owner, Asset.USDC).usedMinor
+        }
 
     /** Circle's update about a transaction of [wallet], in our words, as the webhook hands it over. */
     fun update(

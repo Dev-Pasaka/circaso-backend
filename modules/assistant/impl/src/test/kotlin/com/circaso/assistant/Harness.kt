@@ -6,8 +6,10 @@ import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Conversation
 import com.circaso.assistant.domain.models.ConversationCursor
 import com.circaso.assistant.domain.models.Limits
+import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.Plan
 import com.circaso.assistant.domain.ports.AgentTools
+import com.circaso.assistant.domain.ports.MascotScenes
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
@@ -499,6 +501,25 @@ class MemorySamples : VoiceSamples {
     }
 }
 
+/** The mascot's scenes kept in memory, as Redis keeps them for 30 days. */
+class MemoryScenes : MascotScenes {
+    val kept = ConcurrentHashMap<Pair<UserId, UUID>, MascotSceneState>()
+
+    override suspend fun find(userId: UserId, conversationId: UUID): MascotSceneState? = kept[userId to conversationId]
+
+    override suspend fun save(
+        userId: UserId,
+        conversationId: UUID,
+        state: MascotSceneState,
+    ) {
+        kept[userId to conversationId] = state
+    }
+
+    override suspend fun forget(userId: UserId) {
+        kept.keys.removeIf { it.first == userId }
+    }
+}
+
 /** The fallbacks reported, as (asked for, used). */
 class RecordingFallbacks : VoiceFallbacks {
     val seen = CopyOnWriteArrayList<Pair<String?, String>>()
@@ -520,10 +541,11 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val speech = RecordingSpeech()
     val samples = MemorySamples()
     val fallbacks = RecordingFallbacks()
+    val scenes = MemoryScenes()
     private val clock = Clock.systemUTC()
     val config = config
 
-    private val agent = AshaAgent(model, tools, config, JsonReplyBlocks())
+    private val agent = AshaAgent(model, tools, config, JsonReplyBlocks(), scenes)
     private val ids = OrderedIds(clock)
     val resolver = ConversationResolver(memory, ids, clock)
     private val titler = ConversationTitler(memory, memory)
@@ -549,7 +571,7 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     val speak = SynthesizeSpeech(speech, plans, quota, dailyUsage, config, fallbacks, clock)
     val listVoices = ListVoices(config)
     val voiceSample = GetVoiceSample(speech, samples, config)
-    val deleteData = DeleteAssistantData(memory, memory, pending, quota, clock)
+    val deleteData = DeleteAssistantData(memory, memory, pending, quota, scenes, clock)
 }
 
 fun smallLimits(turns: Int = 2, context: Int = 4) = AssistantConfig(free = Limits(turns, 30, context))

@@ -71,7 +71,8 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
             WalletOwnersTable
                 .selectAll()
                 .where {
-                    (WalletOwnersTable.spaceId eq spaceId) and (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
+                    (WalletOwnersTable.spaceId eq spaceId) and
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
                 }.map { it.toSpace() }
                 .singleOrNull()
         }

@@ -20,7 +20,6 @@ import com.circaso.spaces.presentation.mappers.parseEnum
 import com.circaso.spaces.presentation.mappers.parsePage
 import com.circaso.spaces.presentation.mappers.parseSpaceId
 import com.circaso.spaces.presentation.mappers.parseTopic
-import com.circaso.spaces.presentation.mappers.parseUpdate
 import com.circaso.spaces.presentation.mappers.toCommand
 import com.circaso.spaces.presentation.mappers.toDto
 import com.circaso.spaces.presentation.mappers.toResponse
@@ -42,7 +41,6 @@ import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
-import kotlinx.serialization.json.JsonElement
 
 internal const val TAG = "Spaces"
 internal const val SCOPE = "Scope: `app`."
@@ -58,7 +56,13 @@ internal fun ApplicationCall.idempotencyKey(): String = request.headers["Idempot
  * Spaces themselves (Spaces API, SP1-SP9) and joining them (SP10-SP13). Space chats are not end-to-end encrypted;
  * frames go out on module `spaces`.
  */
-fun Route.spaceController(spaces: SpaceService, membership: MembershipService, pageDefault: Int, pageMax: Int, suggestedDefault: Int) {
+fun Route.spaceController(
+    spaces: SpaceService,
+    membership: MembershipService,
+    pageDefault: Int,
+    pageMax: Int,
+    suggestedDefault: Int,
+) {
     route("/spaces") {
         authenticate(Scope.APP) {
             listRoutes(spaces, pageDefault, pageMax, suggestedDefault)
@@ -70,7 +74,12 @@ fun Route.spaceController(spaces: SpaceService, membership: MembershipService, p
     }
 }
 
-private fun Route.listRoutes(spaces: SpaceService, pageDefault: Int, pageMax: Int, suggestedDefault: Int) {
+private fun Route.listRoutes(
+    spaces: SpaceService,
+    pageDefault: Int,
+    pageMax: Int,
+    suggestedDefault: Int,
+) {
     get("handles/{handle}/availability") {
         val result = spaces.checkHandle(call.parameters["handle"].orEmpty())
         call.respondDefault(result.toDefaultResponse { it.toResponse() })
@@ -85,7 +94,13 @@ private fun Route.listRoutes(spaces: SpaceService, pageDefault: Int, pageMax: In
         val caller = call.userId()
         val country = call.request.headers["CF-IPCountry"]
         val result =
-            call.receive<CreateSpaceRequest>().toCommand(caller, country, call.idempotencyKey()).flatMap { spaces.create(it) }
+            call
+                .receive<CreateSpaceRequest>()
+                .toCommand(
+                    caller,
+                    country,
+                    call.idempotencyKey(),
+                ).flatMap { spaces.create(it) }
         call.respondDefault(result.toDefaultResponse { it.toDto() })
     }.docs<CreateSpaceRequest, SpaceDto>(
         "SP2 · Create a space",
@@ -104,14 +119,19 @@ private fun Route.listRoutes(spaces: SpaceService, pageDefault: Int, pageMax: In
         ),
         notes =
             "$SCOPE $IDEMPOTENT The space is `SETTING_UP` (seen by you and its team only) until its wallet is set up " +
-                "with W18 and turns active; then it is `LIVE`. The same key returns the same space (Try Again, SN7b). " +
+                "with W18 and turns active; then it is `LIVE`. The same key returns the same space " +
+                "(Try Again, SN7b). " +
                 "Accounts younger than 7 days can't create one; at most 3 in 24 hours.",
     )
 
     get("mine") {
         val result =
-            parsePage(call.request.queryParameters["cursor"], call.request.queryParameters["limit"], pageDefault, pageMax)
-                .flatMap { (offset, limit) -> spaces.mine(call.userId(), offset, limit) }
+            parsePage(
+                call.request.queryParameters["cursor"],
+                call.request.queryParameters["limit"],
+                pageDefault,
+                pageMax,
+            ).flatMap { (offset, limit) -> spaces.mine(call.userId(), offset, limit) }
         call.respondDefault(result.toDefaultResponse { it.toResponse() })
     }.docs<NoBody, MySpacesResponse>(
         "SP7 · Your spaces",
@@ -133,7 +153,9 @@ private fun Route.listRoutes(spaces: SpaceService, pageDefault: Int, pageMax: In
         "SP8 · Suggested spaces",
         TAG,
         listOf(MALFORMED),
-        notes = "$SCOPE Spaces your contacts are in, then popular in your country, then popular. Never invite-only ones.",
+        notes =
+            "$SCOPE Spaces your contacts are in, then popular in your country, then popular. Never " +
+                "invite-only ones.",
     )
 
     get("search") {
@@ -180,9 +202,11 @@ private fun Route.spaceRoutes(spaces: SpaceService) {
 
     patch {
         val caller = call.userId()
-        val body = call.receive<JsonElement>()
+        val request = call.receive<UpdateSpaceRequest>()
         val result =
-            parseSpaceId(call.parameters["spaceId"]).flatMap { id -> parseUpdate(caller, id, body).flatMap { spaces.update(it) } }
+            parseSpaceId(call.parameters["spaceId"]).flatMap { id ->
+                request.toCommand(caller, id).flatMap { spaces.update(it) }
+            }
         call.respondDefault(result.toDefaultResponse { UpdateSpaceResponse(it.view.toDto(), it.notified) })
     }.docs<UpdateSpaceRequest, UpdateSpaceResponse>(
         "SP5 · Change a space",
@@ -199,8 +223,9 @@ private fun Route.spaceRoutes(spaces: SpaceService) {
             MALFORMED,
         ),
         notes =
-            "$SCOPE $IDEMPOTENT Fields left out stay. Admins: name, about, topic, photoMediaId, coverMediaId (null " +
-                "removes), postingMode. Owner only: handle, visibility, price, privateMessages. A price change " +
+            "$SCOPE $IDEMPOTENT Fields left out stay. Admins: name, about, topic, photoMediaId, coverMediaId " +
+                "(`removePhoto` / `removeCover` take them away), postingMode. Owner only: handle, visibility, " +
+                "price, privateMessages. A price change " +
                 "applies from each member's next period and is told to every member now (`notified`).",
     )
 
@@ -222,7 +247,13 @@ private fun Route.joinRoutes(membership: MembershipService) {
     }.docs<NoBody, MeDto>(
         "SP10 · Follow a public space",
         TAG,
-        listOf("spaces.banned", "spaces.payment_required", "spaces.invite_required", "spaces.account_restricted", NOT_FOUND),
+        listOf(
+            "spaces.banned",
+            "spaces.payment_required",
+            "spaces.invite_required",
+            "spaces.account_restricted",
+            NOT_FOUND,
+        ),
         notes = "$SCOPE $IDEMPOTENT You're a member at once. Members-only: SP13; invite-only: SP14.",
     )
 

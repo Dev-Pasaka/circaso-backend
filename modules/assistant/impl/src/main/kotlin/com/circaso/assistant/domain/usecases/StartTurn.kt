@@ -88,6 +88,8 @@ class StartTurn(
                 deviceTools = command.chatReading,
                 purpose = command.purpose,
                 today = clock.today(),
+                conversationId = conversation.conversationId,
+                question = text,
             )
 
         val outcome =

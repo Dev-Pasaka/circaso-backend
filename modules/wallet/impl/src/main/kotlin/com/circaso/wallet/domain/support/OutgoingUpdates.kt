@@ -22,8 +22,8 @@ import com.circaso.wallet.domain.repositories.WalletOutbox
 /**
  * Circle's `transactions.outbound`. A transfer prepared here is found by `refId`: its state, its `OUT` row and the
  * event for a final state (`TransferConfirmed`, `TransferFailed`) are written in one transaction, and only the update
- * that moves it publishes and sends `transfer.updated`. A transfer that fails from an open state gives its amount back
- * to the daily limit; one that had expired already gave it back.
+ * that moves it publishes and sends `transfer.updated`. Its fee ledger row follows it
+ * (collected, or void).
  */
 class OutgoingUpdates(
     private val transfers: TransferRepository,
@@ -33,7 +33,7 @@ class OutgoingUpdates(
     private val bus: EventBus,
     private val events: TransferEvents,
     private val frames: FrameSender,
-    private val rules: SenderRules,
+    private val fees: FeeSettlement,
     private val warnings: WalletWarnings,
     private val ids: OrderedIds,
 ) {
@@ -58,7 +58,7 @@ class OutgoingUpdates(
 
     /**
      * `ExpireUnsignedTransfers`: a transfer still awaiting its signature when the signing window closed is `EXPIRED`,
-     * with its `OUT` row, through the same guard; its amount goes back to the daily limit and the sender is told, as
+     * with its `OUT` row, through the same guard; its fee is void and the sender is told, as
      * for any other move. False if it had moved on already (Circle's update came first). No event: only a final state
      * from Circle has one.
      */
@@ -68,37 +68,27 @@ class OutgoingUpdates(
             transactor.run("transfers.expire") {
                 transfers.move(id, TransferState.EXPIRED, change)?.also {
                     transactions.moveByTransfer(id, TransferState.EXPIRED, change)
+                    fees.follow(it, TransferState.EXPIRED, change)
                 }
             } ?: return false
-        announce(Moved(moved, event = null, givesBack = true))
+        announce(Moved(moved, event = null))
         return true
     }
 
-    /** After the commit: the event, the daily limit, then `transfer.updated` to the sender. */
+    /** After the commit: the event, then `transfer.updated` to the sender. */
     private suspend fun announce(moved: Moved) {
         moved.event?.let { bus.publish(it) }
         val transfer = moved.transfer
-        if (moved.givesBack) rules.release(transfer.senderId, transfer.createdAt, transfer.amount)
-        if (moved.retakes) rules.retake(transfer.senderId, transfer.createdAt, transfer.amount)
         frames.send(transfer.senderId, transfer.toFrame())
     }
 
-    /**
-     * What one update did to a transfer: the transfer now, its event, and whether its amount goes back to the daily
-     * limit or is taken again (an `EXPIRED` transfer the chain says was signed after all).
-     */
-    private class Moved(
-        val transfer: Transfer,
-        val event: EventEnvelope?,
-        val givesBack: Boolean,
-        val retakes: Boolean = false,
-    )
+    /** What one update did to a transfer: the transfer now and its event. */
+    private class Moved(val transfer: Transfer, val event: EventEnvelope?)
 
     /**
-     * The transfer, its `OUT` row and the event for a final state, in one transaction. `FAILED` is tried first from an
-     * open state, whose amount still sits in the daily limit and goes back, then from `EXPIRED`, whose amount was given
-     * back when it expired: so it is given back exactly once. `SUBMITTED` and `CONFIRMED` likewise try the open states
-     * first; from `EXPIRED` they take the amount again, since the money did leave.
+     * The transfer, its `OUT` row, its fee ledger row and the event for a final state, in one transaction. The limits
+     * need nothing here: they count transfers by state (phase 2F), so a failed or expired one simply stops counting,
+     * and an expired one the chain says was signed after all counts again.
      */
     private suspend fun move(
         transfer: Transfer,
@@ -108,19 +98,11 @@ class OutgoingUpdates(
         val event = eventFor(transfer, next, change)
         val id = transfer.transferId
         return transactor.run("transfers.apply-update") {
-            val moved =
-                if (next == TransferState.FAILED) {
-                    transfers.move(id, next, change, OPEN)?.let { Moved(it, event, givesBack = true) }
-                        ?: transfers.move(id, next, change, EXPIRED)?.let { Moved(it, event, givesBack = false) }
-                } else {
-                    transfers.move(id, next, change, next.from - EXPIRED)?.let { Moved(it, event, givesBack = false) }
-                        ?: transfers.move(id, next, change, EXPIRED)?.let {
-                            Moved(it, event, givesBack = false, retakes = true)
-                        }
-                }
-            moved?.also {
+            transfers.move(id, next, change)?.let { moved ->
                 transactions.moveByTransfer(id, next, change)
+                fees.follow(moved, next, change)
                 outbox.write(listOfNotNull(event))
+                Moved(moved, event)
             }
         }
     }
@@ -170,12 +152,4 @@ class OutgoingUpdates(
 
     private fun Transfer.toFrame() =
         WalletFrame.TransferUpdated(transferId, state.name, blockchain, amount, txHash, failureReason)
-
-    private companion object {
-        /** States whose amount still sits in the daily limit. */
-        val OPEN = setOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED)
-
-        /** Its amount was given back when it expired (`ExpireUnsignedTransfers`). */
-        val EXPIRED = setOf(TransferState.EXPIRED)
-    }
 }

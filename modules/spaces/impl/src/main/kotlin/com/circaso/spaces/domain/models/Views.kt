@@ -37,7 +37,12 @@ data class MembershipView(
 
 data class RequestView(val state: RequestState, val at: Instant, val canAskAgainAt: Instant?)
 
-data class InviteView(val inviteId: UUID, val invitedBy: PublicProfile, val invitedAt: Instant, val expiresAt: Instant)
+data class InviteView(
+    val inviteId: UUID,
+    val invitedBy: PublicProfile,
+    val invitedAt: Instant,
+    val expiresAt: Instant,
+)
 
 /** SP3's `me`. */
 data class MeView(
@@ -63,7 +68,14 @@ data class SpaceView(
     val me: MeView,
 )
 
-data class LastPost(val postId: PostId, val authorName: String, val text: String?, val kind: String, val at: Instant, val removed: Boolean)
+data class LastPost(
+    val postId: PostId,
+    val authorName: String,
+    val text: String?,
+    val kind: String,
+    val at: Instant,
+    val removed: Boolean,
+)
 
 /** One row of SP7. */
 data class MySpaceView(
@@ -103,7 +115,12 @@ data class MembersView(
 
 data class PostMediaView(val media: SpaceMedia, val url: String?)
 
-data class ReplyView(val postId: PostId, val authorName: String, val text: String?, val removed: Boolean)
+data class ReplyView(
+    val postId: PostId,
+    val authorName: String,
+    val text: String?,
+    val removed: Boolean,
+)
 
 data class PostView(
     val post: Post,
@@ -152,7 +169,12 @@ data class PaymentView(
     val blockchains: List<String>,
 )
 
-data class MediaUpload(val mediaId: UUID, val uploadUrl: String, val contentType: String, val expiresAt: Instant)
+data class MediaUpload(
+    val mediaId: UUID,
+    val uploadUrl: String,
+    val contentType: String,
+    val expiresAt: Instant,
+)
 
 data class ReportGroupView(
     val post: PostView,
@@ -219,7 +241,13 @@ data class CreatePostCommand(
 )
 
 /** SP28's paging: [before] (newest first) or [after] (oldest first). */
-data class PostsQuery(val caller: UserId, val spaceId: SpaceId, val before: PostId?, val after: PostId?, val limit: Int)
+data class PostsQuery(
+    val caller: UserId,
+    val spaceId: SpaceId,
+    val before: PostId?,
+    val after: PostId?,
+    val limit: Int,
+)
 
 data class PrepareMediaCommand(
     val ownerId: UserId,

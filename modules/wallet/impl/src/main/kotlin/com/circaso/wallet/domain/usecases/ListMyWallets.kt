@@ -31,7 +31,10 @@ class ListMyWallets(
         // Space wallets (SW1b): the ones the caller signs for (owns), then those of spaces they're an admin of.
         val signed = owners.bySigner(userId).filterIsInstance<WalletOwner.Space>().sortedBy { it.createdAt }
         val administered =
-            spaces?.let { policy -> owners.bySpaces(policy.administered(userId)).filter { it.signerId != userId } }.orEmpty()
+            spaces
+                ?.let { policy ->
+                    owners.bySpaces(policy.administered(userId)).filter { it.signerId != userId }
+                }.orEmpty()
         val spaceWallets = (signed + administered.sortedBy { it.createdAt }).map { listings.of(it, userId) }
         return Resource.success(listOf(own) + groups + spaceWallets)
     }

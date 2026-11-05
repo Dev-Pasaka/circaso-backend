@@ -45,8 +45,13 @@ class CreateSpaceWallet(
             SpaceAccess.NONE -> return Resource.error(WalletError.SpaceNotFound)
             else -> return Resource.error(WalletError.NotSpaceOwner)
         }
-        if (accounts.status(command.userId) != AccountStatus.ACTIVE) return Resource.error(WalletError.AccountRestricted)
-        val owner = owners.bySpace(command.spaceId) ?: claim(command) ?: return Resource.error(WalletError.SpaceNotFound)
+        if (accounts.status(command.userId) !=
+            AccountStatus.ACTIVE
+        ) {
+            return Resource.error(WalletError.AccountRestricted)
+        }
+        val owner =
+            owners.bySpace(command.spaceId) ?: claim(command) ?: return Resource.error(WalletError.SpaceNotFound)
         if (owner.signerId != command.userId) return Resource.error(WalletError.NotSigner)
         if (listings.of(owner, command.userId).status.name == "ACTIVE") return Resource.error(WalletError.AlreadyExists)
         return when (val setup = creation.start(owner.holder, command.idempotencyKey)) {

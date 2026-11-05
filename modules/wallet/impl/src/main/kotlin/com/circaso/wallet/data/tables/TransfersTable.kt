@@ -35,6 +35,8 @@ object TransfersTable : Table("wallet.transfers") {
     val payoutRequestId = javaUUID("payout_request_id").nullable()
     val fromGroupId = javaUUID("from_group_id").nullable()
     val toGroupId = javaUUID("to_group_id").nullable()
+    val feeMinor = long("fee_minor").default(0)
+    val feeAddress = text("fee_address").nullable()
 
     /** Spaces (V5): the space wallet on either side, and the membership payment (SP13) it pays. */
     val fromSpaceId = javaUUID("from_space_id").nullable()

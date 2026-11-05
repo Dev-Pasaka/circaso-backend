@@ -38,17 +38,25 @@ import io.ktor.server.routing.route
 private const val CANNOT = "spaces.cannot_moderate"
 
 /** Members, roles and moderation (Spaces API, SP23-SP27). */
-fun Route.memberController(members: MemberService, pageDefault: Int, pageMax: Int) {
+fun Route.memberController(
+    members: MemberService,
+    pageDefault: Int,
+    pageMax: Int,
+) {
     route("/spaces/{spaceId}") {
         authenticate(Scope.APP) {
             get("members") {
                 val query = call.request.queryParameters
-                val filter = query["filter"]?.let { parseEnum(it, "filter", MemberFilter.entries.toTypedArray()) } ?: Resource.success(MemberFilter.ALL)
+                val filter =
+                    query["filter"]?.let { parseEnum(it, "filter", MemberFilter.entries.toTypedArray()) }
+                        ?: Resource.success(MemberFilter.ALL)
                 val result =
                     parseSpaceId(call.parameters["spaceId"]).flatMap { space ->
                         filter.flatMap { f ->
                             parseLimit(query["limit"], pageDefault, pageMax).flatMap { limit ->
-                                members.members(MembersQuery(call.userId(), space, f, query["q"], query["cursor"], limit))
+                                members.members(
+                                    MembersQuery(call.userId(), space, f, query["q"], query["cursor"], limit),
+                                )
                             }
                         }
                     }
@@ -67,7 +75,11 @@ fun Route.memberController(members: MemberService, pageDefault: Int, pageMax: In
                     val request = call.receive<RoleRequest>()
                     val result =
                         target(call.parameters["spaceId"], call.parameters["userId"]) { space, user ->
-                            parseEnum(request.role, "role", Role.entries.toTypedArray()).flatMap { members.role(call.userId(), space, user, it) }
+                            parseEnum(
+                                request.role,
+                                "role",
+                                Role.entries.toTypedArray(),
+                            ).flatMap { members.role(call.userId(), space, user, it) }
                         }
                     call.respondDefault(result.toDefaultResponse { it.toDto() })
                 }.docs<RoleRequest, MemberDto>(
@@ -94,12 +106,24 @@ fun Route.memberController(members: MemberService, pageDefault: Int, pageMax: In
                 )
 
                 delete("mute") {
-                    val result = target(call.parameters["spaceId"], call.parameters["userId"]) { space, user -> members.mute(call.userId(), space, user, null) }
+                    val result =
+                        target(
+                            call.parameters["spaceId"],
+                            call.parameters["userId"],
+                        ) { space, user -> members.mute(call.userId(), space, user, null) }
                     call.respondDefault(result.toDefaultResponse { it.toDto() })
-                }.docs<NoBody, MemberDto>("SP25 · Unmute someone", TAG, listOf("spaces.not_moderator", CANNOT, "spaces.not_member", MALFORMED))
+                }.docs<NoBody, MemberDto>(
+                    "SP25 · Unmute someone",
+                    TAG,
+                    listOf("spaces.not_moderator", CANNOT, "spaces.not_member", MALFORMED),
+                )
 
                 delete {
-                    val result = target(call.parameters["spaceId"], call.parameters["userId"]) { space, user -> members.remove(call.userId(), space, user) }
+                    val result =
+                        target(
+                            call.parameters["spaceId"],
+                            call.parameters["userId"],
+                        ) { space, user -> members.remove(call.userId(), space, user) }
                     call.respondDefault(result.toDefaultResponse { RemovedResponse(true) })
                 }.docs<NoBody, RemovedResponse>(
                     "SP26 · Remove someone from the space",
@@ -110,17 +134,27 @@ fun Route.memberController(members: MemberService, pageDefault: Int, pageMax: In
             }
 
             put("bans/{userId}") {
-                val result = target(call.parameters["spaceId"], call.parameters["userId"]) { space, user -> members.ban(call.userId(), space, user, true) }
+                val result =
+                    target(
+                        call.parameters["spaceId"],
+                        call.parameters["userId"],
+                    ) { space, user -> members.ban(call.userId(), space, user, true) }
                 call.respondDefault(result.toDefaultResponse { BannedResponse(it) })
             }.docs<NoBody, BannedResponse>(
                 "SP27 · Ban someone",
                 TAG,
                 listOf("spaces.not_admin", CANNOT, MALFORMED),
-                notes = "$SCOPE $IDEMPOTENT Stops follow, join, requests, invites, paying and the private chat with the owner.",
+                notes =
+                    "$SCOPE $IDEMPOTENT Stops follow, join, requests, invites, paying and the private " +
+                        "chat with the owner.",
             )
 
             delete("bans/{userId}") {
-                val result = target(call.parameters["spaceId"], call.parameters["userId"]) { space, user -> members.ban(call.userId(), space, user, false) }
+                val result =
+                    target(
+                        call.parameters["spaceId"],
+                        call.parameters["userId"],
+                    ) { space, user -> members.ban(call.userId(), space, user, false) }
                 call.respondDefault(result.toDefaultResponse { BannedResponse(it) })
             }.docs<NoBody, BannedResponse>("SP27 · Lift a ban", TAG, listOf("spaces.not_admin", CANNOT, MALFORMED))
         }

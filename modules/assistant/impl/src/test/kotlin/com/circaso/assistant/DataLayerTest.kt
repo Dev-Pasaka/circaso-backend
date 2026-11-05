@@ -73,7 +73,8 @@ class DataLayerTest {
     private val store = AssistantStoreImpl(database, vault, clock)
     private val deleteExchange = DeleteExchange(chat, transactor, store)
     private val deleteChat = DeleteChat(transactor, store)
-    private val deleteData = DeleteAssistantData(transactor, store, MemoryPending(), MemoryQuota(), clock)
+    private val deleteData =
+        DeleteAssistantData(transactor, store, MemoryPending(), MemoryQuota(), MemoryScenes(), clock)
 
     @BeforeTest
     fun clean() = TestPostgres.truncate("assistant")

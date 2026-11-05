@@ -91,6 +91,11 @@ data class LiveToolStatusFrame(
     val tool: String,
     val label: String,
     val type: String = "tool_status",
+    val scene: String? = null,
+    val mood: String? = null,
+    val activity: String? = null,
+    val reaction: String? = null,
+    val sensitive: Boolean? = null,
 )
 
 /** That tool has answered; as A2's `tool_done` event. */
@@ -101,6 +106,22 @@ data class LiveToolDoneFrame(
     val tool: String,
     val ok: Boolean,
     val type: String = "tool_done",
+    val scene: String? = null,
+    val mood: String? = null,
+    val activity: String? = null,
+    val reaction: String? = null,
+    val sensitive: Boolean? = null,
+)
+
+/** The mascot's hints (decision 2026-11-04); as A2's `mascot` event. */
+@Serializable
+data class LiveMascotFrame(
+    val scene: String,
+    val mood: String,
+    val activity: String,
+    val reaction: String? = null,
+    val sensitive: Boolean = false,
+    val type: String = "mascot",
 )
 
 @Serializable

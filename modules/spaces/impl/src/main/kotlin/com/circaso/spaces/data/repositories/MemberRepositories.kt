@@ -11,7 +11,7 @@ import com.circaso.spaces.data.tables.RequestsTable
 import com.circaso.spaces.domain.models.Ban
 import com.circaso.spaces.domain.models.Invite
 import com.circaso.spaces.domain.models.InviteState
-import com.circaso.spaces.domain.models.JoinRequest
+import com.circaso.spaces.domain.models.JoinAsk
 import com.circaso.spaces.domain.models.Membership
 import com.circaso.spaces.domain.models.MembershipPayment
 import com.circaso.spaces.domain.models.NotificationLevel
@@ -151,26 +151,40 @@ class MemberRepositoryImpl(private val database: Database) : MemberRepository {
                 .toList()
         }
 
-    override suspend fun paidDue(graceStartedBefore: Instant, now: Instant, limit: Int): List<Membership> =
+    override suspend fun paidDue(
+        graceStartedBefore: Instant,
+        now: Instant,
+        limit: Int,
+    ): List<Membership> =
         database.tx("members.paid-due") {
             MembersTable
                 .selectAll()
                 .where {
                     ((MembersTable.paidState eq PaidState.ACTIVE.name) and (MembersTable.paidUntil lessEq now)) or
-                        ((MembersTable.paidState eq PaidState.GRACE.name) and (MembersTable.paidUntil lessEq graceStartedBefore))
+                        (
+                            (MembersTable.paidState eq PaidState.GRACE.name) and
+                                (MembersTable.paidUntil lessEq graceStartedBefore)
+                        )
                 }.limit(limit)
                 .map { it.toMembership() }
                 .toList()
         }
 
-    override suspend fun reminderDue(monthlyBefore: Instant, yearlyBefore: Instant, limit: Int): List<Membership> =
+    override suspend fun reminderDue(
+        monthlyBefore: Instant,
+        yearlyBefore: Instant,
+        limit: Int,
+    ): List<Membership> =
         database.tx("members.reminder-due") {
             MembersTable
                 .selectAll()
                 .where {
-                    val monthly = (MembersTable.period eq Period.MONTHLY.name) and (MembersTable.paidUntil lessEq monthlyBefore)
-                    val yearly = (MembersTable.period eq Period.YEARLY.name) and (MembersTable.paidUntil lessEq yearlyBefore)
-                    val unreminded = MembersTable.remindedFor.isNull() or (MembersTable.remindedFor neq MembersTable.paidUntil)
+                    val monthly =
+                        (MembersTable.period eq Period.MONTHLY.name) and (MembersTable.paidUntil lessEq monthlyBefore)
+                    val yearly =
+                        (MembersTable.period eq Period.YEARLY.name) and (MembersTable.paidUntil lessEq yearlyBefore)
+                    val unreminded =
+                        MembersTable.remindedFor.isNull() or (MembersTable.remindedFor neq MembersTable.paidUntil)
                     (MembersTable.paidState eq PaidState.ACTIVE.name) and MembersTable.paidUntil.isNotNull() and
                         (monthly or yearly) and unreminded
                 }.limit(limit)
@@ -178,7 +192,11 @@ class MemberRepositoryImpl(private val database: Database) : MemberRepository {
                 .toList()
         }
 
-    override suspend fun markRead(spaceId: SpaceId, userId: UserId, postId: UUID) {
+    override suspend fun markRead(
+        spaceId: SpaceId,
+        userId: UserId,
+        postId: UUID,
+    ) {
         database.tx("members.mark-read") {
             MembersTable.update(where = {
                 key(spaceId, userId) and (MembersTable.readUpTo.isNull() or (MembersTable.readUpTo less postId))
@@ -196,7 +214,10 @@ class MemberRepositoryImpl(private val database: Database) : MemberRepository {
 
     override suspend fun clearPaid(spaceId: SpaceId) {
         database.tx("members.clear-paid") {
-            MembersTable.deleteWhere { (MembersTable.spaceId eq spaceId.value) and (MembersTable.paidState eq PaidState.ENDED.name) }
+            MembersTable.deleteWhere {
+                (MembersTable.spaceId eq spaceId.value) and
+                    (MembersTable.paidState eq PaidState.ENDED.name)
+            }
             MembersTable.update(where = { MembersTable.spaceId eq spaceId.value }) {
                 it[paidState] = null
                 it[period] = null
@@ -209,7 +230,9 @@ class MemberRepositoryImpl(private val database: Database) : MemberRepository {
 
     override suspend fun makeComplimentary(spaceId: SpaceId) {
         database.tx("members.make-complimentary") {
-            MembersTable.update(where = { (MembersTable.spaceId eq spaceId.value) and MembersTable.paidState.isNull() }) {
+            MembersTable.update(
+                where = { (MembersTable.spaceId eq spaceId.value) and MembersTable.paidState.isNull() },
+            ) {
                 it[paidState] = PaidState.ACTIVE.name
                 it[period] = Period.ONE_TIME.name
                 it[paidUntil] = null
@@ -221,7 +244,8 @@ class MemberRepositoryImpl(private val database: Database) : MemberRepository {
     private fun key(spaceId: SpaceId, userId: UserId): Op<Boolean> =
         (MembersTable.spaceId eq spaceId.value) and (MembersTable.userId eq userId.value)
 
-    private fun active(): Op<Boolean> = MembersTable.paidState.isNull() or (MembersTable.paidState neq PaidState.ENDED.name)
+    private fun active(): Op<Boolean> =
+        MembersTable.paidState.isNull() or (MembersTable.paidState neq PaidState.ENDED.name)
 }
 
 private fun MembersTable.write(row: UpdateBuilder<*>, m: Membership) {
@@ -314,7 +338,7 @@ class BanRepositoryImpl(private val database: Database) : BanRepository {
 }
 
 class RequestRepositoryImpl(private val database: Database) : RequestRepository {
-    override suspend fun find(spaceId: SpaceId, userId: UserId): JoinRequest? =
+    override suspend fun find(spaceId: SpaceId, userId: UserId): JoinAsk? =
         database.tx("requests.find") {
             RequestsTable
                 .selectAll()
@@ -323,7 +347,7 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                 .singleOrNull()
         }
 
-    override suspend fun save(request: JoinRequest) {
+    override suspend fun save(request: JoinAsk) {
         database.tx("requests.save") {
             RequestsTable.upsert(RequestsTable.spaceId, RequestsTable.userId) {
                 it[spaceId] = request.spaceId.value
@@ -335,17 +359,18 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
         }
     }
 
-    override suspend fun pending(spaceId: SpaceId): List<JoinRequest> =
+    override suspend fun pending(spaceId: SpaceId): List<JoinAsk> =
         database.tx("requests.pending") {
             RequestsTable
                 .selectAll()
-                .where { (RequestsTable.spaceId eq spaceId.value) and (RequestsTable.state eq RequestState.PENDING.name) }
-                .map { it.toRequest() }
+                .where {
+                    (RequestsTable.spaceId eq spaceId.value) and (RequestsTable.state eq RequestState.PENDING.name)
+                }.map { it.toRequest() }
                 .toList()
         }
 
     private fun ResultRow.toRequest() =
-        JoinRequest(
+        JoinAsk(
             SpaceId(this[RequestsTable.spaceId]),
             UserId(this[RequestsTable.userId]),
             RequestState.valueOf(this[RequestsTable.state]),

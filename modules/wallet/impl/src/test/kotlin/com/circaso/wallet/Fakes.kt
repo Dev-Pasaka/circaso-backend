@@ -9,8 +9,10 @@ import com.circaso.integrations.api.CustodyWallet
 import com.circaso.integrations.api.CustodyWalletState
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.NetworkCost
 import com.circaso.integrations.api.PinChallenge
 import com.circaso.integrations.api.SdkSession
+import com.circaso.integrations.api.SplitTransferRequest
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.TransferRequest
@@ -184,6 +186,37 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
             Resource.success(Challenge(id, session(circleUserId)))
         }
 
+    /** Every split payment asked for (payee and fee in one batch), by Circle user. */
+    val splits: MutableList<Pair<String, SplitTransferRequest>> = CopyOnWriteArrayList()
+
+    /** What the estimate answers, in the native coin; [estimateFails] makes it fail as Circle down would. */
+    @Volatile
+    var networkCost: BigDecimal = BigDecimal("0.000004")
+
+    @Volatile
+    var estimateFails = false
+
+    /** EVM chains batch (smart-contract wallets); Solana doesn't. */
+    override fun canSplit(blockchain: String): Boolean =
+        supported.find(blockchain) != null && !blockchain.startsWith("SOL")
+
+    override suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> =
+        call("estimateSplit") {
+            if (estimateFails) return@call Resource.error(IntegrationError.Unavailable("Circle"))
+            Resource.success(NetworkCost(networkCost, "ETH"))
+        }
+
+    override suspend fun prepareSplitTransfer(
+        circleUserId: String,
+        request: SplitTransferRequest,
+    ): Resource<Challenge> =
+        call("prepareSplitTransfer") {
+            refuseTransfers?.let { return@call Resource.error(it) }
+            splits += circleUserId to request
+            val id = transferChallenges.getOrPut(request.idempotencyKey) { "challenge-${challenges.incrementAndGet()}" }
+            Resource.success(Challenge(id, session(circleUserId)))
+        }
+
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
         call("transaction") {
             ledger[circleTxId]?.let { Resource.success(it) }
@@ -334,6 +367,23 @@ class MemoryBalanceCache : BalanceCache {
 /** The warnings the wallet raised, as (chain, Circle wallet id). */
 class RecordingWarnings : WalletWarnings {
     val chainsNotConfigured: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    /** (transfer id, share in basis points) of every payment whose gas went over its share of the fee. */
+    val gasOverShare: MutableList<Pair<String, Int>> = CopyOnWriteArrayList()
+
+    val feesNotTaken: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    override fun gasAboveShare(
+        transferId: String,
+        blockchain: String,
+        shareBps: Int,
+    ) {
+        gasOverShare += transferId to shareBps
+    }
+
+    override fun feeNotTaken(blockchain: String, reason: String) {
+        feesNotTaken += blockchain to reason
+    }
 
     val unknownWallets: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
 

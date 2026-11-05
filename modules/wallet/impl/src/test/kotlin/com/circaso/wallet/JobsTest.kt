@@ -99,7 +99,7 @@ class JobsTest {
                     h.frames.to<WalletFrame.PaymentReceived>(bob).map {
                         Triple(it.amount.amountMinor, it.fromUserId?.role(), it.blockchain)
                     },
-                spent = h.spend.totals[amina to day] ?: 0,
+                spent = h.used(amina),
             )
         }
 

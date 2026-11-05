@@ -86,7 +86,11 @@ class MemoryChats : ChatRepository {
             true
         }
 
-    override suspend fun directChat(a: UserId, b: UserId, viaSpaceId: java.util.UUID?): Chat? =
+    override suspend fun directChat(
+        a: UserId,
+        b: UserId,
+        viaSpaceId: java.util.UUID?,
+    ): Chat? =
         chats.values.firstOrNull { it.directPair?.toList()?.toSet() == setOf(a, b) && it.viaSpaceId == viaSpaceId }
 
     override suspend fun updateChat(old: Chat, new: Chat): Chat? {

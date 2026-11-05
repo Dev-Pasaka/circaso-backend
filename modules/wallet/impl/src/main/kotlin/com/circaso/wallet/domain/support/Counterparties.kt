@@ -5,10 +5,10 @@ import com.circaso.users.api.Profiles
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.Counterparty
 import com.circaso.wallet.domain.models.HistoryEntry
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
-import com.circaso.wallet.domain.models.WalletOwner
 
 /**
  * Names the other side of history rows from users' `Profiles`, asked once for every person in the batch. Someone

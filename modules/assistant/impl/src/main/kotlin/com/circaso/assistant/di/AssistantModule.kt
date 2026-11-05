@@ -2,6 +2,7 @@ package com.circaso.assistant.di
 
 import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.data.cache.AesTextVault
+import com.circaso.assistant.data.cache.RedisMascotScenes
 import com.circaso.assistant.data.cache.RedisPendingTurns
 import com.circaso.assistant.data.cache.RedisQuotaCounters
 import com.circaso.assistant.data.cache.RedisVoiceSamples
@@ -26,6 +27,7 @@ import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.VoiceGender
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.LiveTimings
+import com.circaso.assistant.domain.ports.MascotScenes
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.ports.ReplyBlocks
@@ -174,6 +176,7 @@ fun assistantModule(config: Config): Module =
         single<TextVault> { AesTextVault(get<Secrets>(), local) }
         single<QuotaCounters> { RedisQuotaCounters(get<RedisScopes>().scope("ast")) }
         single<PendingTurns> { RedisPendingTurns(get<RedisScopes>().scope("ast")) }
+        single<MascotScenes> { RedisMascotScenes(get<RedisScopes>().scope("ast")) }
         single<LiveTimings> { TelemetryLiveTimings(get<Telemetry>()) }
         single<VoiceFallbacks> { LoggedVoiceFallbacks() }
         single<VoiceSamples> { RedisVoiceSamples(get<RedisScopes>().scope("ast")) }
@@ -200,7 +203,7 @@ fun assistantModule(config: Config): Module =
         }
 
         // domain
-        single { AshaAgent(get(), get(), get(), get()) }
+        single { AshaAgent(get(), get(), get(), get(), get()) }
         single { UsageReader(get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DailyUsage(get(), get(), get(), clock) }
@@ -222,7 +225,7 @@ fun assistantModule(config: Config): Module =
         single { SynthesizeSpeech(get(), get(), get(), get(), get(), get(), clock) }
         single { ListVoices(get()) }
         single { GetVoiceSample(get(), get(), get()) }
-        single { DeleteAssistantData(get(), get(), get(), get(), clock) }
+        single { DeleteAssistantData(get(), get(), get(), get(), get(), clock) }
         single { OpenLiveVoice(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { MeterLiveVoice(get(), clock) }
         single { SaveLiveVoiceUsage(get()) }

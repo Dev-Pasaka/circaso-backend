@@ -2,6 +2,7 @@ package com.circaso.spaces.domain.usecases
 
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import com.circaso.spaces.api.PostId
 import com.circaso.spaces.api.PostNewFrame
 import com.circaso.spaces.api.PostUpdatedFrame
@@ -31,7 +32,6 @@ import com.circaso.spaces.domain.support.PostViews
 import com.circaso.spaces.domain.support.SpacesConfig
 import com.circaso.spaces.domain.support.removedFrame
 import com.circaso.spaces.domain.support.toFrame
-import com.circaso.shared.Uuid7
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -75,7 +75,12 @@ class ListPosts(
                 posts.before(query.spaceId, query.before, query.limit + 1)
             }
         val page = list.take(query.limit)
-        val next = page.lastOrNull()?.postId?.toString()?.takeIf { list.size > query.limit }
+        val next =
+            page
+                .lastOrNull()
+                ?.postId
+                ?.toString()
+                ?.takeIf { list.size > query.limit }
         return Resource.success(Page(views.of(query.spaceId, page, query.caller), next))
     }
 }
@@ -114,13 +119,26 @@ class CreatePost(
         if (space.postingMode == PostingMode.ADMINS_ONLY && !seat.isAtLeast(Role.ADMIN)) {
             return Resource.error(SpacesError.PostingRestricted)
         }
-        if (membership.isMuted(now)) return Resource.error(SpacesError.Muted(checkNotNull(membership.mutedUntil).toString()))
+        if (membership.isMuted(
+                now,
+            )
+        ) {
+            return Resource.error(SpacesError.Muted(checkNotNull(membership.mutedUntil).toString()))
+        }
         rateLimit(command.caller, now)?.let { return Resource.error(it) }
-        val reply = command.replyTo?.let { posts.find(it)?.takeIf { p -> p.spaceId == command.spaceId } ?: return Resource.error(SpacesError.PostNotFound) }
+        val reply =
+            command.replyTo?.let {
+                posts.find(it)?.takeIf { p -> p.spaceId == command.spaceId }
+                    ?: return Resource.error(SpacesError.PostNotFound)
+            }
         if (command.mediaIds.isNotEmpty()) {
             val files = media.findAll(command.mediaIds)
-            val usable = files.size == command.mediaIds.size &&
-                files.all { it.ownerId == command.caller && it.purpose == MediaPurpose.POST && it.state == MediaState.READY }
+            val usable =
+                files.size == command.mediaIds.size &&
+                    files.all {
+                        it.ownerId == command.caller && it.purpose == MediaPurpose.POST &&
+                            it.state == MediaState.READY
+                    }
             if (!usable) return Resource.error(SpacesError.MediaNotFound)
         }
         val post =
@@ -146,10 +164,17 @@ class CreatePost(
                 Resource.success(true)
             }
         when (written) {
-            is Resource.Error -> return written
-            is Resource.Success -> if (!written.data) {
-                val first = posts.byClientId(command.caller, command.clientPostId) ?: return Resource.error(SpacesError.PostNotFound)
-                return Resource.success(views.one(command.spaceId, first, command.caller))
+            is Resource.Error -> {
+                return written
+            }
+
+            is Resource.Success -> {
+                if (!written.data) {
+                    val first =
+                        posts.byClientId(command.caller, command.clientPostId)
+                            ?: return Resource.error(SpacesError.PostNotFound)
+                    return Resource.success(views.one(command.spaceId, first, command.caller))
+                }
             }
         }
         val view = views.one(command.spaceId, post, command.caller)
@@ -175,8 +200,11 @@ class CreatePost(
         return null
     }
 
-    private fun wait(oldest: Instant?, window: Duration, now: Instant): Long =
-        Duration.between(now, (oldest ?: now).plus(window)).seconds.coerceAtLeast(1)
+    private fun wait(
+        oldest: Instant?,
+        window: Duration,
+        now: Instant,
+    ): Long = Duration.between(now, (oldest ?: now).plus(window)).seconds.coerceAtLeast(1)
 
     /** Two frames at most: one for the members it is pushed to, one for the rest. */
     private suspend fun announce(
@@ -197,8 +225,22 @@ class CreatePost(
                     }
             }
         val frame = view.toFrame()
-        if (pushed.isNotEmpty()) frames.send(pushed.map { it.userId }, PostNewFrame(view.post.spaceId, spaceName, frame, notify = true))
-        if (quiet.isNotEmpty()) frames.send(quiet.map { it.userId }, PostNewFrame(view.post.spaceId, spaceName, frame, notify = false))
+        if (pushed.isNotEmpty()) {
+            frames.send(
+                pushed.map {
+                    it.userId
+                },
+                PostNewFrame(view.post.spaceId, spaceName, frame, notify = true),
+            )
+        }
+        if (quiet.isNotEmpty()) {
+            frames.send(
+                quiet.map {
+                    it.userId
+                },
+                PostNewFrame(view.post.spaceId, spaceName, frame, notify = false),
+            )
+        }
     }
 
     private companion object {
@@ -207,7 +249,7 @@ class CreatePost(
     }
 }
 
-/** SP30: the author removes their own post, or a moderator any post: a tombstone stays, the moderator is never named. */
+/** SP30: the author removes their own post, or a moderator any post: a tombstone stays, the moderator unnamed. */
 class RemovePost(
     private val members: MemberRepository,
     private val posts: PostRepository,
@@ -216,23 +258,39 @@ class RemovePost(
     private val frames: FrameSender,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(caller: UserId, spaceId: SpaceId, postId: PostId): Resource<PostView> {
+    suspend operator fun invoke(
+        caller: UserId,
+        spaceId: SpaceId,
+        postId: PostId,
+    ): Resource<PostView> {
         val seat =
             when (val found = gate.seat(spaceId, caller)) {
                 is Resource.Success -> found.data
                 is Resource.Error -> return found
             }
-        val post = posts.find(postId)?.takeIf { it.spaceId == spaceId } ?: return Resource.error(SpacesError.PostNotFound)
+        val post =
+            posts.find(postId)?.takeIf { it.spaceId == spaceId } ?: return Resource.error(SpacesError.PostNotFound)
         val by =
             when {
                 post.authorId == caller -> RemovedBy.AUTHOR
                 seat.isAtLeast(Role.MODERATOR) -> RemovedBy.MODERATOR
                 else -> return Resource.error(SpacesError.NotModerator)
             }
-        val removed = if (post.isRemoved) post else posts.remove(postId, by, clock.instant()) ?: return Resource.error(SpacesError.PostNotFound)
+        val removed =
+            if (post.isRemoved) {
+                post
+            } else {
+                posts.remove(postId, by, clock.instant())
+                    ?: return Resource.error(SpacesError.PostNotFound)
+            }
         val view = views.one(spaceId, removed, caller)
         if (!post.isRemoved) {
-            frames.send(members.active(spaceId).map { it.userId }, PostUpdatedFrame(spaceId, postId, view.reactions.toFrame(), removedFrame(removed)))
+            frames.send(
+                members.active(spaceId).map {
+                    it.userId
+                },
+                PostUpdatedFrame(spaceId, postId, view.reactions.toFrame(), removedFrame(removed)),
+            )
         }
         return Resource.success(view)
     }
@@ -257,7 +315,9 @@ class ReactToPost(
             is Resource.Error -> return seat
             is Resource.Success -> Unit
         }
-        val post = posts.find(postId)?.takeIf { it.spaceId == spaceId && !it.isRemoved } ?: return Resource.error(SpacesError.PostNotFound)
+        val post =
+            posts.find(postId)?.takeIf { it.spaceId == spaceId && !it.isRemoved }
+                ?: return Resource.error(SpacesError.PostNotFound)
         posts.react(post.postId, caller, emoji, clock.instant())
         val counts = posts.reactionCounts(listOf(postId))[postId].orEmpty()
         frames.send(members.active(spaceId).map { it.userId }, PostUpdatedFrame(spaceId, postId, counts.toFrame()))
@@ -272,7 +332,11 @@ class MarkRead(
     private val gate: Gate,
     private val config: SpacesConfig,
 ) {
-    suspend operator fun invoke(caller: UserId, spaceId: SpaceId, postId: PostId): Resource<Int> {
+    suspend operator fun invoke(
+        caller: UserId,
+        spaceId: SpaceId,
+        postId: PostId,
+    ): Resource<Int> {
         val seat =
             when (val found = gate.seat(spaceId, caller)) {
                 is Resource.Success -> found.data

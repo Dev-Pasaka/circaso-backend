@@ -22,8 +22,12 @@ class MembershipService(
 
     suspend fun leave(caller: UserId, spaceId: SpaceId): Resource<Unit> = leaveSpace(caller, spaceId)
 
-    suspend fun notifications(caller: UserId, spaceId: SpaceId, level: NotificationLevel): Resource<MeView> =
-        setNotifications(caller, spaceId, level)
+    suspend fun notifications(
+        caller: UserId,
+        spaceId: SpaceId,
+        level: NotificationLevel,
+    ): Resource<MeView> = setNotifications(caller, spaceId, level)
 
-    suspend fun payment(caller: UserId, spaceId: SpaceId): Resource<PaymentView> = startMembershipPayment(caller, spaceId)
+    suspend fun payment(caller: UserId, spaceId: SpaceId): Resource<PaymentView> =
+        startMembershipPayment(caller, spaceId)
 }

@@ -7,8 +7,13 @@ import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.CircleUser
+import com.circaso.wallet.domain.models.FeeEntry
+import com.circaso.wallet.domain.models.FeeQuote
+import com.circaso.wallet.domain.models.FeeRule
+import com.circaso.wallet.domain.models.FeeState
 import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
+import com.circaso.wallet.domain.models.LimitRule
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
@@ -107,7 +112,22 @@ interface TransferRepository {
         createdBefore: Instant,
         limit: Int,
     ): List<Transfer>
+
+    /**
+     * Holds [holder]'s spending for the transaction that is open (a row lock on its `circle_users` row), so two
+     * payments prepared at once can't both fit under a limit only one of them fits.
+     */
+    suspend fun lockHolder(holder: UserId)
+
+    /**
+     * What [holder] has sent or may still send since [since] (§7a): transfers awaiting a signature, submitted or
+     * confirmed, each with what it takes out, fee included. A failed or expired one doesn't count.
+     */
+    suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer>
 }
+
+/** A transfer counted against a limit; [awaiting] while it still awaits its signature. */
+data class CountedTransfer(val createdAt: Instant, val totalMinor: Long, val awaiting: Boolean)
 
 /** `transactions`: the history rows, the sender's `OUT` and the recipient's `IN`. */
 interface TransactionRepository {
@@ -160,4 +180,38 @@ interface TransactionRepository {
 /** Wallet's outbox rows, written inside the transaction that makes the change. */
 interface WalletOutbox {
     suspend fun write(events: List<EventEnvelope>)
+}
+
+/** `fee_rules` and `limit_rules` (phase 2F): every version, edited with SQL now and from the admin site later. */
+interface RuleRepository {
+    /** Every version of every fee rule; `RuleVersions.current` picks the ones in force. */
+    suspend fun feeRules(): List<FeeRule>
+
+    /** Every version of every limit rule, as for [feeRules]. */
+    suspend fun limitRules(): List<LimitRule>
+}
+
+/** `fee_quotes`: what W17 showed, held for the signing window. */
+interface FeeQuoteRepository {
+    suspend fun insert(quote: FeeQuote)
+
+    suspend fun find(quoteId: UUID): FeeQuote?
+}
+
+/** `fee_ledger`: one row per transfer, written with it, settled when the chain says how it ended. */
+interface FeeLedgerRepository {
+    suspend fun insert(entry: FeeEntry)
+
+    /**
+     * Moves the transfer's row from `QUOTED` to [state], with the transaction hash and the network cost the chain
+     * reported ([actualGasNative] in the native coin, [actualGasMinor] in dollars); null when it had moved already.
+     */
+    suspend fun settle(
+        transferId: TransferId,
+        state: FeeState,
+        txHash: String?,
+        actualGasNative: String?,
+        actualGasMinor: Long?,
+        at: Instant,
+    ): FeeEntry?
 }

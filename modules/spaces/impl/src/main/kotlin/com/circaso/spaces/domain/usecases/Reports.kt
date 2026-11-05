@@ -104,7 +104,11 @@ class ListReports(
     private val views: PostViews,
     private val profiles: Profiles,
 ) {
-    suspend operator fun invoke(caller: UserId, spaceId: SpaceId, open: Boolean): Resource<List<ReportGroupView>> {
+    suspend operator fun invoke(
+        caller: UserId,
+        spaceId: SpaceId,
+        open: Boolean,
+    ): Resource<List<ReportGroupView>> {
         when (val seat = gate.require(spaceId, caller, Role.MODERATOR, SpacesError.NotModerator)) {
             is Resource.Error -> return seat
             is Resource.Success -> Unit
@@ -112,11 +116,22 @@ class ListReports(
         val groups = reports.ofSpace(spaceId, open).filter { it.postId != null }.groupBy { checkNotNull(it.postId) }
         val found = posts.findAll(groups.keys).associateBy { it.postId }
         val postViews = views.of(spaceId, found.values.toList(), caller).associateBy { it.post.postId }
-        val resolvers = profiles.get(groups.values.flatten().mapNotNull { it.resolvedBy }.toSet())
+        val resolvers =
+            profiles.get(
+                groups.values
+                    .flatten()
+                    .mapNotNull { it.resolvedBy }
+                    .toSet(),
+            )
         val items =
             groups.mapNotNull { (postId, list) ->
                 val view = postViews[postId] ?: return@mapNotNull null
-                val reason = list.groupingBy { it.reason }.eachCount().maxByOrNull { it.value }!!.key
+                val reason =
+                    list
+                        .groupingBy { it.reason }
+                        .eachCount()
+                        .maxByOrNull { it.value }!!
+                        .key
                 val resolved = list.firstOrNull { it.resolvedAt != null }
                 ReportGroupView(
                     post = view,
@@ -161,14 +176,26 @@ class ResolveReport(
                 is Resource.Success -> found.data
                 is Resource.Error -> return found
             }
-        if (action == ReportAction.REMOVE_MEMBER && !seat.isAtLeast(Role.ADMIN)) return Resource.error(SpacesError.NotAdmin)
-        if (reports.ofSpace(spaceId, open = true).none { it.postId == postId }) return Resource.error(SpacesError.ReportNotFound)
-        val post = posts.find(postId)?.takeIf { it.spaceId == spaceId } ?: return Resource.error(SpacesError.ReportNotFound)
+        if (action == ReportAction.REMOVE_MEMBER &&
+            !seat.isAtLeast(Role.ADMIN)
+        ) {
+            return Resource.error(SpacesError.NotAdmin)
+        }
+        if (reports.ofSpace(spaceId, open = true).none {
+                it.postId == postId
+            }
+        ) {
+            return Resource.error(SpacesError.ReportNotFound)
+        }
+        val post =
+            posts.find(postId)?.takeIf { it.spaceId == spaceId } ?: return Resource.error(SpacesError.ReportNotFound)
         val author = members.find(spaceId, post.authorId)?.takeIf { it.isActive }
         val now = clock.instant()
         val everyone = members.active(spaceId).map { it.userId }
         when (action) {
-            ReportAction.KEEP -> Unit
+            ReportAction.KEEP -> {
+                Unit
+            }
 
             ReportAction.REMOVE_POST -> {
                 posts.remove(postId, RemovedBy.MODERATOR, now)?.let { removed ->
@@ -188,7 +215,10 @@ class ResolveReport(
                             MuteDuration.UNTIL_UNMUTED -> FOREVER
                         }
                     members.save(author.copy(mutedUntil = until))
-                    frames.send(listOf(author.userId), MembershipUpdatedFrame(spaceId, seat.space.name, "MUTED", until.toString()))
+                    frames.send(
+                        listOf(author.userId),
+                        MembershipUpdatedFrame(spaceId, seat.space.name, "MUTED", until.toString()),
+                    )
                 }
             }
 
@@ -205,7 +235,10 @@ class ResolveReport(
         }
         val closed = reports.resolve(spaceId, postId, caller, action, now)
         closed.forEach {
-            frames.send(listOf(it.reporterId), ReportResolvedFrame(spaceId, seat.space.name, it.reportId.toString(), action.name))
+            frames.send(
+                listOf(it.reporterId),
+                ReportResolvedFrame(spaceId, seat.space.name, it.reportId.toString(), action.name),
+            )
         }
         return Resource.success(Unit)
     }
@@ -228,17 +261,20 @@ class ListOpsReports(
 }
 
 /** SPO2: Circaso removes a space for breaking the rules (SS6d); everyone in it hears `space.updated`. */
-class RemoveSpace(
-    private val spaces: SpaceRepository,
-    private val lifecycle: Lifecycle,
-    private val clock: Clock,
-) {
+class RemoveSpace(private val spaces: SpaceRepository, private val lifecycle: Lifecycle, private val clock: Clock) {
     suspend operator fun invoke(spaceId: SpaceId, reason: String): Resource<Unit> {
         repeat(RETRIES) {
             val space = spaces.find(spaceId) ?: return Resource.error(SpacesError.SpaceNotFound)
             if (space.state == SpaceState.REMOVED) return Resource.success(Unit)
             val removed =
-                spaces.update(space, space.copy(state = SpaceState.REMOVED, removedReason = reason.take(REASON_MAX), updatedAt = clock.instant()))
+                spaces.update(
+                    space,
+                    space.copy(
+                        state = SpaceState.REMOVED,
+                        removedReason = reason.take(REASON_MAX),
+                        updatedAt = clock.instant(),
+                    ),
+                )
             if (removed != null) {
                 lifecycle.announce(removed)
                 return Resource.success(Unit)

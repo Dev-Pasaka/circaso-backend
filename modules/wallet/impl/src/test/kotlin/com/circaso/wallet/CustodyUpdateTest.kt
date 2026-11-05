@@ -17,7 +17,6 @@ import com.circaso.wallet.domain.support.toChainWallet
 import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.time.Duration
-import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -147,7 +146,7 @@ class CustodyUpdateTest {
     fun `FAILED publishes TransferFailed with Circle's reason and gives the amount back to the daily limit`() =
         runBlocking<Unit> {
             val prepared = prepared()
-            assertEquals(tenUsdc, h.spend.total(amina, LocalDate.of(2026, 10, 28)))
+            assertEquals(tenUsdc, h.used(amina))
 
             outbound(prepared, CustodyTransactionState.FAILED).data()
             outbound(prepared, CustodyTransactionState.FAILED).data()
@@ -159,7 +158,7 @@ class CustodyUpdateTest {
                     .single { it.type == TransferFailed.TYPE }
                     .decode<TransferFailed>()
             assertEquals("INSUFFICIENT_TOKEN", failed.reason)
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "given back once")
+            assertEquals(0L, h.used(amina), "given back once")
             assertEquals(
                 "FAILED",
                 h.frames
@@ -189,14 +188,12 @@ class CustodyUpdateTest {
         runBlocking<Unit> {
             val prepared = prepared()
             h.transfers.move(prepared.transferId, TransferState.EXPIRED, TransferChange(at = h.clock.instant()))
-            // what ExpireUnsignedTransfers (WS4) does when it expires a transfer
-            h.spend.add(amina, LocalDate.of(2026, 10, 28), -tenUsdc)
 
             outbound(prepared, CustodyTransactionState.FAILED).data()
             outbound(prepared, CustodyTransactionState.FAILED).data()
 
             assertEquals(TransferState.FAILED, transfer(prepared).state)
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)), "given back exactly once")
+            assertEquals(0L, h.used(amina), "given back exactly once")
             assertEquals(1, h.bus.published.count { it.type == TransferFailed.TYPE })
         }
 
@@ -209,7 +206,7 @@ class CustodyUpdateTest {
             outbound(prepared, CustodyTransactionState.FAILED).data()
             outbound(prepared, CustodyTransactionState.FAILED).data()
 
-            assertEquals(0L, h.spend.total(amina, LocalDate.of(2026, 10, 28)))
+            assertEquals(0L, h.used(amina))
         }
 
     @Test

@@ -51,7 +51,12 @@ data class FrameMedia(
 )
 
 @Serializable
-data class FrameReplyTo(val postId: PostId, val authorName: String, val text: String? = null, val removed: Boolean)
+data class FrameReplyTo(
+    val postId: PostId,
+    val authorName: String,
+    val text: String? = null,
+    val removed: Boolean,
+)
 
 @Serializable
 data class FrameReaction(val emoji: String, val count: Int)
@@ -123,7 +128,12 @@ data class MembershipUpdatedFrame(
 }
 
 @Serializable
-data class FramePrice(val asset: String, val amountMinor: String, val amount: String, val period: String)
+data class FramePrice(
+    val asset: String,
+    val amountMinor: String,
+    val amount: String,
+    val period: String,
+)
 
 /** `space.price_changed`, to every member: the new price applies to each from their next period. */
 @Serializable

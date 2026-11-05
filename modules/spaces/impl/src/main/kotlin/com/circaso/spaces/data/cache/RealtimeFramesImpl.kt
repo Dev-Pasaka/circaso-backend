@@ -134,15 +134,103 @@ class RealtimeFramesImpl(
  */
 internal fun SpaceFrame.envelope(seq: Long, ts: Instant): RealtimeEnvelope =
     when (this) {
-        is PostNewFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, PostNewFrame.serializer(), ts)
-        is PostUpdatedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, PostUpdatedFrame.serializer(), ts)
-        is SpaceUpdatedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, SpaceUpdatedFrame.serializer(), ts)
-        is MembershipUpdatedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, MembershipUpdatedFrame.serializer(), ts)
-        is PriceChangedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, PriceChangedFrame.serializer(), ts)
-        is InvitedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, InvitedFrame.serializer(), ts)
-        is InviteRemovedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, InviteRemovedFrame.serializer(), ts)
-        is InviteAcceptedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, InviteAcceptedFrame.serializer(), ts)
-        is RequestNewFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, RequestNewFrame.serializer(), ts)
-        is ReportNewFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, ReportNewFrame.serializer(), ts)
-        is ReportResolvedFrame -> RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, ReportResolvedFrame.serializer(), ts)
+        is PostNewFrame -> {
+            RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, PostNewFrame.serializer(), ts)
+        }
+
+        is PostUpdatedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                PostUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is SpaceUpdatedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                SpaceUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is MembershipUpdatedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                MembershipUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is PriceChangedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                PriceChangedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is InvitedFrame -> {
+            RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, InvitedFrame.serializer(), ts)
+        }
+
+        is InviteRemovedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                InviteRemovedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is InviteAcceptedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                InviteAcceptedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is RequestNewFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                RequestNewFrame.serializer(),
+                ts,
+            )
+        }
+
+        is ReportNewFrame -> {
+            RealtimeEnvelope.of(SpacesFrames.MODULE, type, seq, this, ReportNewFrame.serializer(), ts)
+        }
+
+        is ReportResolvedFrame -> {
+            RealtimeEnvelope.of(
+                SpacesFrames.MODULE,
+                type,
+                seq,
+                this,
+                ReportResolvedFrame.serializer(),
+                ts,
+            )
+        }
     }

@@ -46,7 +46,8 @@ class SpaceWalletTest {
         h.spaces.roles[space to juma] = SpaceAccess.MEMBER
     }
 
-    private suspend fun setUp(by: UserId = baraka) = h.createSpaceWallet(CreateSpaceWalletCommand(by, space, UUID.randomUUID()))
+    private suspend fun setUp(by: UserId = baraka) =
+        h.createSpaceWallet(CreateSpaceWalletCommand(by, space, UUID.randomUUID()))
 
     private suspend fun activeSpaceWallet(): WalletOwner.Space {
         val owner = setUp().data().owner
@@ -96,9 +97,16 @@ class SpaceWalletTest {
     fun `when it turns active the event names the space, and the owner and admins hear wallet ready`() =
         runBlocking<Unit> {
             val owner = activeSpaceWallet()
-            val created = h.bus.published.single { it.type == WalletCreated.TYPE }.decode<WalletCreated>()
+            val created =
+                h.bus.published
+                    .single { it.type == WalletCreated.TYPE }
+                    .decode<WalletCreated>()
             assertEquals(space.toString(), created.spaceId)
-            val ready = h.frames.sent.filter { it.second is WalletFrame.WalletReady }.map { it.first }.toSet()
+            val ready =
+                h.frames.sent
+                    .filter { it.second is WalletFrame.WalletReady }
+                    .map { it.first }
+                    .toSet()
             assertEquals(setOf(baraka, amina), ready)
             assertEquals("wallet.already_exists", setUp().code())
             assertEquals("ACTIVE", h.findSpaceWallet(space)?.status)
@@ -109,17 +117,30 @@ class SpaceWalletTest {
     fun `the owner and admins see the space wallet, only the owner signs, members and others don't see it`() =
         runBlocking<Unit> {
             val owner = activeSpaceWallet()
-            assertTrue(h.getWallet(WalletQuery(amina, null, owner.walletId)).data().access?.canSign == false)
+            assertTrue(
+                h
+                    .getWallet(WalletQuery(amina, null, owner.walletId))
+                    .data()
+                    .access
+                    ?.canSign == false,
+            )
             assertEquals("wallet.not_found", h.getWallet(WalletQuery(juma, null, owner.walletId)).code())
             assertEquals("wallet.space_not_found", h.getSpaceWallet(juma, space).code())
-            assertEquals(WalletStatus.ACTIVE, h.getSpaceWallet(amina, space).data().listing?.status)
+            assertEquals(
+                WalletStatus.ACTIVE,
+                h
+                    .getSpaceWallet(amina, space)
+                    .data()
+                    .listing
+                    ?.status,
+            )
             val listed = h.listMyWallets(amina).data()
             assertEquals(owner.walletId, listed.last().owner.walletId, "W16 lists the space wallets she administers")
             assertEquals(false, listed.last().canSign)
         }
 
     @Test
-    fun `members pay into the space wallet; visitors can't, unless paying their membership`() =
+    fun `members pay into the space wallet - visitors can't, unless paying their membership`() =
         runBlocking<Unit> {
             val owner = activeSpaceWallet()
             h.fund(juma, 100_000_000)
@@ -148,13 +169,16 @@ class SpaceWalletTest {
                     destination = membership.destinationAddress,
                 ),
             )
-            val confirmed = h.bus.published.single { it.type == TransferConfirmed.TYPE }.decode<TransferConfirmed>()
+            val confirmed =
+                h.bus.published
+                    .single { it.type == TransferConfirmed.TYPE }
+                    .decode<TransferConfirmed>()
             assertEquals(space.toString(), confirmed.toSpaceId)
             assertEquals(paymentId.toString(), confirmed.spacePaymentId)
         }
 
     @Test
-    fun `the owner sends from the space wallet directly; admins can't; no payout is asked for`() =
+    fun `the owner sends from the space wallet directly - admins can't - no payout is asked for`() =
         runBlocking<Unit> {
             val owner = activeSpaceWallet()
             fund(owner, 100_000_000)
@@ -172,6 +196,7 @@ class SpaceWalletTest {
                     walletId = owner.walletId,
                 )
             assertEquals("wallet.not_signer", h.prepareTransfer(from(amina)).code())
+            h.reach.connect(baraka, juma)
             val sent = h.prepareTransfer(from(baraka)).data().transfer
             assertEquals(owner.holder, sent.senderId)
             assertEquals(space, sent.fromSpaceId)
@@ -219,5 +244,43 @@ class SpaceWalletTest {
                     walletId = owner.walletId,
                 )
             assertEquals("wallet.signer_left", h.prepareTransfer(command).code())
+        }
+
+    @Test
+    fun `a payment into a space and its membership are quoted at the space rate, 1 percent, and W4 charges it`() =
+        runBlocking<Unit> {
+            val rules = MemoryRules()
+            val fees = Harness(ruleRows = rules)
+            rules.seedFees()
+            fees.spaces.roles[space to baraka] = SpaceAccess.OWNER
+            fees.spaces.roles[space to juma] = SpaceAccess.MEMBER
+            val owner = fees.createSpaceWallet(CreateSpaceWalletCommand(baraka, space, UUID.randomUUID())).data().owner
+            fees.custody.sign(fees.circleUserOf(owner.holder))
+            fees.sync.sync(fees.wallets.circleUser(owner.holder)!!).data()
+            fees.fund(juma, 400_000_000)
+            fees.fund(visitor, 400_000_000)
+
+            val tip = fees.quote(juma, Payee.Space(space), 100_000_000).data()
+            assertEquals(1_000_000L, tip.fee.amountMinor)
+            assertEquals(com.circaso.wallet.api.WalletOwnerType.SPACE, tip.fee.parties.receiverType)
+
+            val paymentId = UUID.randomUUID()
+            fees.spaces.charges[paymentId] = visitor to MembershipCharge(paymentId, space, 100_000_000)
+            val membership =
+                TransferCommand(
+                    visitor,
+                    "BASE-SEPOLIA",
+                    Payee.Space(space),
+                    Money(100_000_000, Asset.USDC),
+                    null,
+                    null,
+                    UUID.randomUUID(),
+                    spacePaymentId = paymentId,
+                )
+            val quote = fees.quoteTransfer(membership).data()
+            assertEquals(1_000_000L, quote.fee.amountMinor)
+            val prepared = fees.prepareTransfer(membership.copy(quoteId = quote.quoteId)).data().transfer
+            assertEquals(1_000_000L, prepared.feeMinor)
+            assertEquals(paymentId, prepared.spacePaymentId)
         }
 }

@@ -80,11 +80,44 @@ sealed class WalletError(
         ErrorKind.INVALID,
     )
 
-    data object LimitExceeded : WalletError(
-        "wallet.limit_exceeded",
-        "That's over your payment limit.",
-        ErrorKind.INVALID,
-    )
+    /**
+     * Over a limit rule (§7a). `details.fields` carries the numbers, each `{field, problem}` pair a name and its
+     * value: `limit` (`PER_PAYMENT` or `DAILY`), `limitMinor`, `usedMinor`, `leftMinor`, `maxAmountMinor` (the most
+     * that fits with its fee), `resetsAt` (when this payment fits; absent when it never can) and `moreAt` (when more
+     * becomes available), amounts in USDC minor units.
+     */
+    class LimitExceeded(details: ErrorDetails? = null) :
+        WalletError(
+            "wallet.limit_exceeded",
+            "That's over this wallet's payment limit.",
+            ErrorKind.INVALID,
+            details,
+        )
+
+    /**
+     * The wallet holds the amount but not its fee as well, or not even the amount (GW20). `details.fields`:
+     * `balanceMinor`, `feeMinor`, `maxAmountMinor` (the most that can be sent with its fee).
+     */
+    class FundsShort(details: ErrorDetails) :
+        WalletError(
+            "wallet.insufficient_funds",
+            "Your wallet doesn't hold enough for this payment and its fee.",
+            ErrorKind.INVALID,
+            details,
+        )
+
+    /**
+     * W4's fee is more than the one the person was shown: the quote expired (15 minutes) or none was sent (GW13c).
+     * Nothing was prepared. `details.fields`: `quotedFeeMinor`, `feeMinor`, `totalMinor`, and `quoteId` and
+     * `expiresAt` of a new quote for the new fee: show it, then send W4 again with that `quoteId` and a new key.
+     */
+    class FeeChanged(details: ErrorDetails) :
+        WalletError(
+            "wallet.fee_changed",
+            "The fee changed since you saw it. Check the new total before you pay.",
+            ErrorKind.CONFLICT,
+            details,
+        )
 
     data object RecipientNoWallet : WalletError(
         "wallet.recipient_no_wallet",

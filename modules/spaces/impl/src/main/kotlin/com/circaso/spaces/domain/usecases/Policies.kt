@@ -28,7 +28,8 @@ class GetWalletAccess(
         val space = spaces.find(spaceId)?.takeIf { !it.isGone } ?: return Resource.success(SpaceAccess.NONE)
         if (space.ownerId == userId) return Resource.success(SpaceAccess.OWNER)
         if (bans.find(spaceId, userId) != null) return Resource.success(SpaceAccess.NONE)
-        val membership = members.find(spaceId, userId)?.takeIf { it.isActive } ?: return Resource.success(SpaceAccess.NONE)
+        val membership =
+            members.find(spaceId, userId)?.takeIf { it.isActive } ?: return Resource.success(SpaceAccess.NONE)
         return Resource.success(
             when {
                 membership.role.atLeast(Role.ADMIN) -> SpaceAccess.ADMIN
@@ -51,7 +52,13 @@ class ListAdministeredSpaces(private val spaces: SpaceRepository, private val me
 /** The wallet's `SpaceWalletPolicy.team`: the owner and admins, who hear that the space's wallet is ready. */
 class GetSpaceTeam(private val members: MemberRepository) {
     suspend operator fun invoke(spaceId: SpaceId): Resource<Set<UserId>> =
-        Resource.success(members.team(spaceId).filter { it.role.atLeast(Role.ADMIN) }.map { it.userId }.toSet())
+        Resource.success(
+            members
+                .team(spaceId)
+                .filter { it.role.atLeast(Role.ADMIN) }
+                .map { it.userId }
+                .toSet(),
+        )
 }
 
 /** The wallet's `SpaceWalletPolicy.membershipCharge`: SP13's payment while it can be paid, for its payer only. */
@@ -74,7 +81,11 @@ class CheckPrivateChat(
     private val members: MemberRepository,
     private val bans: BanRepository,
 ) {
-    suspend operator fun invoke(spaceId: SpaceId, from: UserId, to: UserId): Resource<Boolean> {
+    suspend operator fun invoke(
+        spaceId: SpaceId,
+        from: UserId,
+        to: UserId,
+    ): Resource<Boolean> {
         if (from == to) return Resource.success(false)
         val space = spaces.find(spaceId)?.takeIf { it.isLive } ?: return Resource.success(false)
         val other =

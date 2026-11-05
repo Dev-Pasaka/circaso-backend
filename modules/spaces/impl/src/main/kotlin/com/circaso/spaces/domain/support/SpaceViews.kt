@@ -82,7 +82,12 @@ class SpaceViews(
     }
 
     /** SP3 for [caller]: [membership] is theirs (an ended one too), [banned] whether a ban holds. */
-    suspend fun space(space: Space, caller: UserId, membership: Membership?, banned: Boolean): SpaceView {
+    suspend fun space(
+        space: Space,
+        caller: UserId,
+        membership: Membership?,
+        banned: Boolean,
+    ): SpaceView {
         val now = clock.instant()
         val me = me(space, caller, membership, banned, now)
         val inside = me.relation == Relation.MEMBER || me.relation == Relation.ENDED
@@ -113,7 +118,14 @@ class SpaceViews(
     ): MeView {
         val active = membership?.takeIf { it.isActive }
         val request = if (active == null && !banned) requests.find(space.spaceId, caller) else null
-        val invite = if (active == null && !banned) invites.of(space.spaceId, caller)?.takeIf { it.isLive(now) } else null
+        val invite =
+            if (active == null &&
+                !banned
+            ) {
+                invites.of(space.spaceId, caller)?.takeIf { it.isLive(now) }
+            } else {
+                null
+            }
         val relation =
             when {
                 banned -> Relation.BANNED
@@ -137,8 +149,22 @@ class SpaceViews(
             request =
                 request
                     ?.takeIf { it.state == RequestState.PENDING || it.state == RequestState.DECLINED }
-                    ?.let { RequestView(it.state, it.answeredAt ?: it.requestedAt, canAskAgain(it.state, it.answeredAt)) },
-            invite = invite?.let { InviteView(it.inviteId, people.profileOf(it.inviterId), it.invitedAt, it.expiresAt) },
+                    ?.let {
+                        RequestView(
+                            it.state,
+                            it.answeredAt ?: it.requestedAt,
+                            canAskAgain(it.state, it.answeredAt),
+                        )
+                    },
+            invite =
+                invite?.let {
+                    InviteView(
+                        it.inviteId,
+                        people.profileOf(it.inviterId),
+                        it.invitedAt,
+                        it.expiresAt,
+                    )
+                },
             unreadCount = unread,
             lastReadPostId = active?.readUpTo,
         )

@@ -1,8 +1,8 @@
 -- Space wallets (Spaces phase 3, decision 2026-11-04): a wallet may belong to a space, whose owner signs for it
 -- (option A, as group wallets). The space is spaces' own id; one wallet per space. Transfers name the space on
--- either side and the membership payment (SP13) they pay, so the events need no lookup. Numbered V5 after phase 2F's
--- V4 (fees and limits, branch feat/fees-limits): merge 2F first, or renumber this before either is deployed. Never
--- edit this script once applied; a change is a new one.
+-- either side and the membership payment (SP13) they pay, so the events need no lookup. Space payments are priced by
+-- phase 2F's fee rules (V4): the receiver's or sender's owner type SPACE (seed 1 %). Never edit this script once
+-- applied; a change is a new one.
 
 ALTER TABLE wallet.wallet_owners
     ADD COLUMN space_id uuid;

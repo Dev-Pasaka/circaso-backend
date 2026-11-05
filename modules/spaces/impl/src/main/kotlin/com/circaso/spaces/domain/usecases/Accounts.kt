@@ -25,7 +25,11 @@ class RemoveAccountFromSpaces(
     suspend operator fun invoke(userId: UserId): Resource<Unit> {
         val now = clock.instant()
         for (space in spaces.ownedBy(userId).filterNot { it.isGone }) {
-            spaces.update(space, space.copy(state = SpaceState.DELETED, updatedAt = now))?.let { lifecycle.announce(it) }
+            spaces
+                .update(
+                    space,
+                    space.copy(state = SpaceState.DELETED, updatedAt = now),
+                )?.let { lifecycle.announce(it) }
         }
         val rows = members.ofUser(userId)
         transactor.run("members.remove-account") {

@@ -5,7 +5,6 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.models.PaymentHold
-import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -60,21 +59,6 @@ interface RealtimeLog {
 }
 
 data class LoggedFrame(val seq: Long, val json: String)
-
-/**
- * `wal:sent:{userId}:{date}`: what the user has prepared to send on one UTC day, in USDC minor units, for the daily
- * limit (2 days). A transfer reserves its amount when it is prepared and gives it back when it fails.
- */
-interface DailySpend {
-    suspend fun total(userId: UserId, day: LocalDate): Long
-
-    /** Adds [amountMinor] (negative to give it back) and returns the day's new total. */
-    suspend fun add(
-        userId: UserId,
-        day: LocalDate,
-        amountMinor: Long,
-    ): Long
-}
 
 /** `wal:remind:{from}:{to}`: W10 tells one contact once per sender per 24 hours. */
 interface Reminders {

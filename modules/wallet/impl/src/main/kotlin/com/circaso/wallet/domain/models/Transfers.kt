@@ -101,7 +101,14 @@ data class Transfer(
     val toSpaceId: UUID? = null,
     /** The membership payment (SP13) it pays. */
     val spacePaymentId: UUID? = null,
+    /** Circaso's fee, in [amount]'s asset, locked when it was prepared (phase 2F); the sender pays it on top. */
+    val feeMinor: Long = 0,
+    /** Circaso's fee wallet the fee goes to, in the same signature; null when there is no fee leg. */
+    val feeAddress: String? = null,
 ) {
+    /** What leaves the sender's wallet: the amount and the fee. The payee gets exactly [amount]. */
+    val totalMinor: Long get() = amount.amountMinor + feeMinor
+
     /** The person who signed it. */
     val signer: UserId get() = signerId ?: senderId
 
@@ -129,6 +136,8 @@ data class TransferChange(
     val txHash: String? = null,
     val failureReason: String? = null,
     val at: Instant,
+    /** What the network charged, in the chain's native coin, once Circle says. */
+    val networkFee: String? = null,
 )
 
 /**
@@ -169,6 +178,8 @@ data class TransferCommand(
     val idempotencyKey: UUID,
     val walletId: WalletId? = null,
     val payoutRequestId: UUID? = null,
+    /** The W17 quote the person was shown: W4 charges its fee while it holds (phase 2F). */
+    val quoteId: UUID? = null,
     /** A membership payment (SP13) this pays: the amount and the space must be exactly its own. */
     val spacePaymentId: UUID? = null,
 )
@@ -177,7 +188,13 @@ data class TransferCommand(
  * W4's answer: the transfer, and the challenge to sign while it awaits a signature. [challengeId] is null once the
  * transfer is past that (a repeated request for a transfer already signed, or failed).
  */
-data class PreparedTransfer(val transfer: Transfer, val challengeId: String?, val sdk: SdkSession?)
+data class PreparedTransfer(
+    val transfer: Transfer,
+    val challengeId: String?,
+    val sdk: SdkSession?,
+    /** The fee as it was priced (rule, rate, minimum); null on a repeated request, which has only its amount. */
+    val fee: Fee? = null,
+)
 
 /** Whether W9's person can be paid, on [blockchains] (the chains they can receive on now). */
 enum class RecipientStatus { CAN_RECEIVE, NO_WALLET, NO_WALLET_ON_CHAIN }
@@ -207,9 +224,3 @@ enum class ReminderOutcome {
 data class AddressCheck(val blockchain: String, val address: String, val valid: Boolean) {
     override fun toString(): String = "AddressCheck($blockchain, ***, $valid)"
 }
-
-/**
- * The transfer limits, in USDC minor units, from configuration until they are decided.
- * TODO(decision: limits, KYC and licensing) per-payment and daily limits for unverified and verified accounts.
- */
-data class TransferLimits(val perPaymentMinor: Long, val dailyMinor: Long)

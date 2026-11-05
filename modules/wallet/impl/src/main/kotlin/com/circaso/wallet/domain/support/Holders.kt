@@ -58,7 +58,15 @@ class Holders(
         if (walletId == null || walletId.value == caller.value) return Resource.success(WalletOwner.Person(caller))
         return when (val owner = owners.find(walletId) ?: return Resource.error(WalletError.NotFound)) {
             is WalletOwner.Group -> {
-                if (chats.isMember(owner.chatId, caller)) Resource.success(owner) else Resource.error(WalletError.NotFound)
+                if (chats.isMember(
+                        owner.chatId,
+                        caller,
+                    )
+                ) {
+                    Resource.success(owner)
+                } else {
+                    Resource.error(WalletError.NotFound)
+                }
             }
 
             // The space's owner and admins see its wallet; members see only their own payments to it.

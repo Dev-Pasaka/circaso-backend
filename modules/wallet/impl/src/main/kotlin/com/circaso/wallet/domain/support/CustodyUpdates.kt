@@ -8,6 +8,7 @@ import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.ports.BalanceCache
+import com.circaso.wallet.domain.ports.FeeConfig
 import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.WalletRepository
 import java.time.Clock
@@ -31,6 +32,8 @@ class CustodyUpdates(
     private val cache: BalanceCache,
     private val warnings: WalletWarnings,
     private val clock: Clock,
+    /** Circaso's fee wallets (phase 2F): their incoming fee legs are ours to ignore, not an unknown wallet's. */
+    private val feeConfig: FeeConfig? = null,
 ) {
     suspend fun apply(update: CustodyTransaction): Resource<Unit> {
         val change = changeOf(update)
@@ -46,6 +49,7 @@ class CustodyUpdates(
                 is Resource.Error -> return found
             }
         if (wallet == null) {
+            if (isFeeLeg(update)) return Resource.success(Unit)
             warnings.unknownWallet(update.blockchain, update.walletId)
             return Resource.success(Unit)
         }
@@ -68,6 +72,11 @@ class CustodyUpdates(
         }
     }
 
+    private fun isFeeLeg(update: CustodyTransaction): Boolean =
+        update.direction == CustodyDirection.IN &&
+            feeConfig?.feeAddress(update.blockchain)?.let { Addresses.normalise(it) } ==
+            Addresses.normalise(update.destinationAddress)
+
     private fun changeOf(update: CustodyTransaction): TransferChange {
         val failed = stateOf(update.state) == TransferState.FAILED
         return TransferChange(
@@ -75,6 +84,7 @@ class CustodyUpdates(
             txHash = update.txHash.ifEmpty { null },
             failureReason = if (failed) update.failureReason.ifEmpty { FAILED_WITHOUT_REASON } else null,
             at = clock.instant(),
+            networkFee = update.networkFee.ifEmpty { null },
         )
     }
 

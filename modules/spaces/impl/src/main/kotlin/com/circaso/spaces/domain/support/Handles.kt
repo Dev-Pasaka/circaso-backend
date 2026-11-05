@@ -17,7 +17,14 @@ object Handles {
     /** Candidates to offer when [handle] is taken (SN1b), in the order the frame shows them. */
     fun candidates(handle: String, name: String): List<String> {
         val base = handle.ifBlank { name.lowercase().filter { it.isLetterOrDigit() } }.take(24).ifBlank { "space" }
-        val word = name.lowercase().split(' ').firstOrNull { it.isNotBlank() }?.filter { it.isLetterOrDigit() }.orEmpty()
+        val word =
+            name
+                .lowercase()
+                .split(
+                    ' ',
+                ).firstOrNull { it.isNotBlank() }
+                ?.filter { it.isLetterOrDigit() }
+                .orEmpty()
         return listOf(
             "$base.ke",
             if (word.isNotEmpty() && !base.startsWith(word)) "$word$base".take(30) else "the$base",

@@ -47,7 +47,11 @@ class SpaceService(
 
     suspend fun delete(caller: UserId, spaceId: SpaceId): Resource<Unit> = deleteSpace(caller, spaceId)
 
-    suspend fun mine(caller: UserId, offset: Int, limit: Int): Resource<Page<MySpaceView>> = listMySpaces(caller, offset, limit)
+    suspend fun mine(
+        caller: UserId,
+        offset: Int,
+        limit: Int,
+    ): Resource<Page<MySpaceView>> = listMySpaces(caller, offset, limit)
 
     suspend fun suggested(
         caller: UserId,

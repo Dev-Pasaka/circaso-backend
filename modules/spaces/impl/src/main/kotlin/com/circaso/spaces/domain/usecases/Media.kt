@@ -46,7 +46,14 @@ class PrepareSpaceMedia(
                 expiresAt = now.plus(config.mediaUploadWindow),
             )
         val url =
-            when (val signed = storage.prepareUpload(mediaKey(file.mediaId), file.contentType, config.mediaUploadWindow)) {
+            when (
+                val signed =
+                    storage.prepareUpload(
+                        mediaKey(file.mediaId),
+                        file.contentType,
+                        config.mediaUploadWindow,
+                    )
+            ) {
                 is Resource.Success -> signed.data
                 is Resource.Error -> return signed
             }
@@ -84,7 +91,8 @@ class CompleteSpaceMedia(
     private val clock: Clock,
 ) {
     suspend operator fun invoke(caller: UserId, mediaId: UUID): Resource<SpaceMedia> {
-        val file = media.find(mediaId)?.takeIf { it.ownerId == caller } ?: return Resource.error(SpacesError.MediaNotFound)
+        val file =
+            media.find(mediaId)?.takeIf { it.ownerId == caller } ?: return Resource.error(SpacesError.MediaNotFound)
         if (file.state != MediaState.PENDING) return Resource.success(file)
         if (clock.instant() >= file.expiresAt) return Resource.error(SpacesError.MediaNotFound)
         val size = storage.sizeOf(mediaKey(mediaId)) ?: return Resource.error(SpacesError.MediaNotFound)

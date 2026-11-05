@@ -5,7 +5,7 @@ import com.circaso.spaces.api.PostId
 import com.circaso.spaces.api.SpaceId
 import com.circaso.spaces.domain.models.Ban
 import com.circaso.spaces.domain.models.Invite
-import com.circaso.spaces.domain.models.JoinRequest
+import com.circaso.spaces.domain.models.JoinAsk
 import com.circaso.spaces.domain.models.Membership
 import com.circaso.spaces.domain.models.MembershipPayment
 import com.circaso.spaces.domain.models.Post
@@ -53,7 +53,11 @@ interface SpaceRepository {
     ): List<Space>
 
     /** Live public and members-only spaces whose handle starts with [prefix] (not equal to it). */
-    suspend fun handlesStartingWith(prefix: String, offset: Int, limit: Int): List<Space>
+    suspend fun handlesStartingWith(
+        prefix: String,
+        offset: Int,
+        limit: Int,
+    ): List<Space>
 
     /** Live discoverable spaces, most members first; only [country]'s when it is given. */
     suspend fun popular(
@@ -105,13 +109,25 @@ interface MemberRepository {
     ): List<Membership>
 
     /** Paid memberships whose state should move now: `ACTIVE` past `paid_until`, `GRACE` past its 3 days. */
-    suspend fun paidDue(graceStartedBefore: Instant, now: Instant, limit: Int): List<Membership>
+    suspend fun paidDue(
+        graceStartedBefore: Instant,
+        now: Instant,
+        limit: Int,
+    ): List<Membership>
 
     /** Paid `ACTIVE` memberships that reach [monthlyBefore] / [yearlyBefore] and haven't been reminded for it. */
-    suspend fun reminderDue(monthlyBefore: Instant, yearlyBefore: Instant, limit: Int): List<Membership>
+    suspend fun reminderDue(
+        monthlyBefore: Instant,
+        yearlyBefore: Instant,
+        limit: Int,
+    ): List<Membership>
 
     /** Moves the read marker to [postId] when it is later than the one held. */
-    suspend fun markRead(spaceId: SpaceId, userId: UserId, postId: UUID)
+    suspend fun markRead(
+        spaceId: SpaceId,
+        userId: UserId,
+        postId: UUID,
+    )
 
     /** Every row of [userId]'s, for account deletion. */
     suspend fun deleteAllOf(userId: UserId)
@@ -137,11 +153,11 @@ interface BanRepository {
 }
 
 interface RequestRepository {
-    suspend fun find(spaceId: SpaceId, userId: UserId): JoinRequest?
+    suspend fun find(spaceId: SpaceId, userId: UserId): JoinAsk?
 
-    suspend fun save(request: JoinRequest)
+    suspend fun save(request: JoinAsk)
 
-    suspend fun pending(spaceId: SpaceId): List<JoinRequest>
+    suspend fun pending(spaceId: SpaceId): List<JoinAsk>
 }
 
 interface InviteRepository {
@@ -180,10 +196,18 @@ interface PostRepository {
     suspend fun findAll(postIds: Collection<PostId>): List<Post>
 
     /** Newest first, before [before] (or the newest). */
-    suspend fun before(spaceId: SpaceId, before: PostId?, limit: Int): List<Post>
+    suspend fun before(
+        spaceId: SpaceId,
+        before: PostId?,
+        limit: Int,
+    ): List<Post>
 
     /** Oldest first, after [after]. */
-    suspend fun after(spaceId: SpaceId, after: PostId, limit: Int): List<Post>
+    suspend fun after(
+        spaceId: SpaceId,
+        after: PostId,
+        limit: Int,
+    ): List<Post>
 
     suspend fun latest(spaceId: SpaceId): Post?
 
@@ -191,13 +215,26 @@ interface PostRepository {
     suspend fun countSince(authorId: UserId, since: Instant): Pair<Int, Instant?>
 
     /** Tombstones the post: text and files gone. Null when there is no such post. */
-    suspend fun remove(postId: PostId, by: RemovedBy, at: Instant): Post?
+    suspend fun remove(
+        postId: PostId,
+        by: RemovedBy,
+        at: Instant,
+    ): Post?
 
     /** Posts after [after] (all when null), at most [cap]. */
-    suspend fun countAfter(spaceId: SpaceId, after: UUID?, cap: Int): Int
+    suspend fun countAfter(
+        spaceId: SpaceId,
+        after: UUID?,
+        cap: Int,
+    ): Int
 
     /** Sets (or with null clears) [userId]'s one reaction on the post. */
-    suspend fun react(postId: PostId, userId: UserId, emoji: String?, at: Instant)
+    suspend fun react(
+        postId: PostId,
+        userId: UserId,
+        emoji: String?,
+        at: Instant,
+    )
 
     suspend fun reactionCounts(postIds: Collection<PostId>): Map<PostId, List<ReactionCount>>
 

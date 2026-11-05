@@ -47,8 +47,9 @@ fun Route.spaceWalletController(spaceWallets: SpaceWalletService) {
                 notes =
                     "Scope: `app`. The space's owner only (SN4). The space wallet is its own Circle user, so its own " +
                         "PIN and biometrics: run `challengeId` with this answer's `sdk`, naming the space on the PIN " +
-                        "screens, then W13 with `?walletId=` puts it on every network. You become its signer and send " +
-                        "from it directly. Again while `SETTING_UP`: a fresh challenge (Finish Wallet Setup). When it " +
+                        "screens, then W13 with `?walletId=` puts it on every network. You become its signer " +
+                        "and send from it directly. Again while `SETTING_UP`: a fresh challenge (Finish Wallet " +
+                        "Setup). When it " +
                         "turns active, the space goes live (`spaces/space.updated`) and the owner and admins get " +
                         "`wallet/wallet.ready` with `walletId`.",
             )

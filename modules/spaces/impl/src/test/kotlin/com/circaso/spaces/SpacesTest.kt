@@ -3,9 +3,9 @@ package com.circaso.spaces
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.spaces.api.InvitedFrame
 import com.circaso.spaces.api.MembershipUpdatedFrame
+import com.circaso.spaces.api.PostId
 import com.circaso.spaces.api.PostNewFrame
 import com.circaso.spaces.api.PriceChangedFrame
-import com.circaso.spaces.api.PostId
 import com.circaso.spaces.domain.models.CreatePostCommand
 import com.circaso.spaces.domain.models.MemberFilter
 import com.circaso.spaces.domain.models.MembersQuery
@@ -53,8 +53,12 @@ class SpacesTest {
     @BeforeTest
     fun clean() = TestPostgres.truncate("spaces")
 
-    private fun post(by: com.circaso.shared.UserId, space: com.circaso.spaces.api.SpaceId, text: String, reply: PostId? = null) =
-        CreatePostCommand(by, space, UUID.randomUUID(), text, reply, emptyList())
+    private fun post(
+        by: com.circaso.shared.UserId,
+        space: com.circaso.spaces.api.SpaceId,
+        text: String,
+        reply: PostId? = null,
+    ) = CreatePostCommand(by, space, UUID.randomUUID(), text, reply, emptyList())
 
     // ---- creating ----
 
@@ -95,18 +99,40 @@ class SpacesTest {
             assertEquals(SpaceState.SETTING_UP, created.summary.space.state)
             h.get(juma, id).assertError("spaces.space_not_found")
             assertEquals(Role.ADMIN, h.spaceOf(amina, id).me.role, "the team sees it while it's set up")
-            assertTrue(h.search("sneaker", null, 0, 10).data().spaces.isEmpty())
+            assertTrue(
+                h
+                    .search("sneaker", null, 0, 10)
+                    .data()
+                    .spaces
+                    .isEmpty(),
+            )
 
             h.wallets.ready(id, baraka)
-            assertEquals(SpaceState.LIVE, h.spaceOf(baraka, id).summary.space.state, "SP3 heals a late event")
-            assertEquals(SpaceState.LIVE, h.spaceOf(juma, id).summary.space.state)
-            assertEquals(2, h.spaceOf(juma, id).summary.space.memberCount)
+            assertEquals(
+                SpaceState.LIVE,
+                h
+                    .spaceOf(baraka, id)
+                    .summary.space.state,
+                "SP3 heals a late event",
+            )
+            assertEquals(
+                SpaceState.LIVE,
+                h
+                    .spaceOf(juma, id)
+                    .summary.space.state,
+            )
+            assertEquals(
+                2,
+                h
+                    .spaceOf(juma, id)
+                    .summary.space.memberCount,
+            )
         }
 
     // ---- public spaces and the chat ----
 
     @Test
-    fun `follow a public space, post, react and read; visitors read the latest posts only`() =
+    fun `follow a public space, post, react and read - visitors read the latest posts only`() =
         runBlocking<Unit> {
             val id = h.liveSpace(baraka)
             val first = h.post(post(baraka, id, "New Jordan 1s land Friday")).data()
@@ -117,10 +143,15 @@ class SpacesTest {
             assertNull(visitor.next)
 
             assertEquals(Relation.MEMBER, h.follow(juma, id).data().relation)
-            assertEquals(2, h.spaceOf(juma, id).summary.space.memberCount)
+            assertEquals(
+                2,
+                h
+                    .spaceOf(juma, id)
+                    .summary.space.memberCount,
+            )
             val reply = h.post(post(juma, id, "Size 44?", first.post.postId)).data()
             assertEquals("New Jordan 1s land Friday", reply.replyTo?.text)
-            val frames = h.frames.of<PostNewFrame>().last()
+            val frames = h.frames.of<PostNewFrame>().last { it.second.notify }
             assertEquals(setOf(baraka), frames.first, "the owner is pushed a reply to them")
             assertTrue(frames.second.notify)
 
@@ -141,16 +172,26 @@ class SpacesTest {
             val a = h.post(command).data()
             val b = h.post(command).data()
             assertEquals(a.post.postId, b.post.postId)
-            assertEquals(1, h.listPosts(PostsQuery(baraka, id, null, null, 50)).data().items.size)
+            assertEquals(
+                1,
+                h
+                    .listPosts(PostsQuery(baraka, id, null, null, 50))
+                    .data()
+                    .items.size,
+            )
         }
 
     @Test
-    fun `admins-only spaces take posts from the team, muted members read but can't post, removed posts leave a tombstone`() =
+    fun `admins-only posting, muting, and removed posts leaving a tombstone`() =
         runBlocking<Unit> {
             val id =
                 h.liveSpace(
                     baraka,
-                    h.command(baraka, postingMode = PostingMode.ADMINS_ONLY, team = listOf(TeamEntry(amina, Role.MODERATOR))),
+                    h.command(
+                        baraka,
+                        postingMode = PostingMode.ADMINS_ONLY,
+                        team = listOf(TeamEntry(amina, Role.MODERATOR)),
+                    ),
                 )
             h.follow(juma, id).data()
             h.post(post(juma, id, "hello")).assertError("spaces.posting_restricted")
@@ -174,7 +215,16 @@ class SpacesTest {
     @Test
     fun `a members-only space is joined by a confirmed payment, renewed, then grace, then ended`() =
         runBlocking<Unit> {
-            val id = h.liveSpace(baraka, h.command(baraka, handle = "nairobibooks", visibility = Visibility.MEMBERS_ONLY, price = Price(usdc5, Period.MONTHLY)))
+            val id =
+                h.liveSpace(
+                    baraka,
+                    h.command(
+                        baraka,
+                        handle = "nairobibooks",
+                        visibility = Visibility.MEMBERS_ONLY,
+                        price = Price(usdc5, Period.MONTHLY),
+                    ),
+                )
             h.follow(juma, id).assertError("spaces.payment_required")
             h.listPosts(PostsQuery(juma, id, null, null, 50)).assertError("spaces.members_only")
 
@@ -198,52 +248,126 @@ class SpacesTest {
             h.clock.now = paidUntil.minus(Duration.ofDays(3))
             assertEquals(1, h.timers().data())
             assertEquals(0, h.timers().data())
-            assertEquals("RENEWAL_DUE", h.frames.of<MembershipUpdatedFrame>().last().second.reason)
+            assertEquals(
+                "RENEWAL_DUE",
+                h.frames
+                    .of<MembershipUpdatedFrame>()
+                    .last()
+                    .second.reason,
+            )
 
             // renewing early starts at the end of the paid period
             val renewal = h.startPayment(juma, id).data()
             assertEquals(PaymentKind.RENEWAL, renewal.payment.kind)
             assertEquals(paidUntil, renewal.periodStart)
             h.confirmPayment(renewal.payment.paymentId, juma, usdc5).data()
-            val renewed = assertNotNull(h.spaceOf(juma, id).me.membership?.paidUntil)
+            val renewed =
+                assertNotNull(
+                    h
+                        .spaceOf(juma, id)
+                        .me.membership
+                        ?.paidUntil,
+                )
             assertEquals(Instant.parse("2027-01-04T09:00:00Z"), renewed)
 
             // the period ends: 3 days' grace, still a member; then it ends
             h.clock.now = renewed.plusSeconds(60)
             h.timers().data()
-            assertEquals(PaidState.GRACE, h.spaceOf(juma, id).me.membership?.state)
+            assertEquals(
+                PaidState.GRACE,
+                h
+                    .spaceOf(juma, id)
+                    .me.membership
+                    ?.state,
+            )
             h.post(post(juma, id, "still here")).data()
             h.clock.advance(Duration.ofDays(3))
             h.timers().data()
             val ended = h.spaceOf(juma, id).me
             assertEquals(Relation.ENDED, ended.relation)
             h.listPosts(PostsQuery(juma, id, null, null, 50)).assertError("spaces.membership_ended")
-            assertEquals(PaymentKind.REJOIN, h.startPayment(juma, id).data().payment.kind)
-            assertEquals(1, h.mine(juma, 0, 10).data().items.size, "an ended membership keeps its place")
+            assertEquals(
+                PaymentKind.REJOIN,
+                h
+                    .startPayment(juma, id)
+                    .data()
+                    .payment.kind,
+            )
+            assertEquals(
+                1,
+                h
+                    .mine(juma, 0, 10)
+                    .data()
+                    .items.size,
+                "an ended membership keeps its place",
+            )
         }
 
     @Test
     fun `a price change is told to members and shows on their renewal`() =
         runBlocking<Unit> {
-            val id = h.liveSpace(baraka, h.command(baraka, handle = "nairobibooks", visibility = Visibility.MEMBERS_ONLY, price = Price(usdc5, Period.MONTHLY)))
+            val id =
+                h.liveSpace(
+                    baraka,
+                    h.command(
+                        baraka,
+                        handle = "nairobibooks",
+                        visibility = Visibility.MEMBERS_ONLY,
+                        price = Price(usdc5, Period.MONTHLY),
+                    ),
+                )
             val payment = h.startPayment(juma, id).data()
             h.confirmPayment(payment.payment.paymentId, juma, usdc5).data()
 
-            h.update(UpdateSpaceCommand(amina, id, price = Price(6_000_000, Period.MONTHLY))).assertError("spaces.not_admin")
+            h
+                .update(
+                    UpdateSpaceCommand(amina, id, price = Price(6_000_000, Period.MONTHLY)),
+                ).assertError("spaces.not_admin")
             val updated = h.update(UpdateSpaceCommand(baraka, id, price = Price(6_000_000, Period.MONTHLY))).data()
             assertEquals(1, updated.notified)
-            assertEquals(setOf(juma), h.frames.of<PriceChangedFrame>().single().first)
-            assertEquals(6_000_000, h.spaceOf(juma, id).me.membership?.nextPrice?.amountMinor)
-            h.update(UpdateSpaceCommand(baraka, id, price = Price(1, Period.MONTHLY))).assertError("spaces.price_invalid")
+            assertEquals(
+                setOf(juma),
+                h.frames
+                    .of<PriceChangedFrame>()
+                    .single()
+                    .first,
+            )
+            assertEquals(
+                6_000_000,
+                h
+                    .spaceOf(juma, id)
+                    .me.membership
+                    ?.nextPrice
+                    ?.amountMinor,
+            )
+            h
+                .update(
+                    UpdateSpaceCommand(baraka, id, price = Price(1, Period.MONTHLY)),
+                ).assertError("spaces.price_invalid")
         }
 
     // ---- invite-only ----
 
     @Test
-    fun `invite-only spaces never show in search; asking, declining and asking again after 30 days`() =
+    fun `invite-only spaces never show in search - asking, declining and asking again after 30 days`() =
         runBlocking<Unit> {
-            val id = h.liveSpace(baraka, h.command(baraka, name = "Nairobi Founders Circle", handle = "founderscircle", visibility = Visibility.INVITE_ONLY))
-            assertTrue(h.search("founders", null, 0, 10).data().spaces.isEmpty())
+            val id =
+                h.liveSpace(
+                    baraka,
+                    h.command(
+                        baraka,
+                        name = "Nairobi Founders Circle",
+                        handle = "founderscircle",
+                        visibility = Visibility.INVITE_ONLY,
+                    ),
+                )
+            assertTrue(
+                h
+                    .search("founders", null, 0, 10)
+                    .data()
+                    .spaces
+                    .isEmpty(),
+            )
             assertNull(h.search("@founderscircle", null, 0, 10).data().exact)
             val outside = h.spaceOf(juma, id)
             assertFalse(outside.summary.showAbout)
@@ -251,7 +375,13 @@ class SpacesTest {
             h.listPosts(PostsQuery(juma, id, null, null, 50)).assertError("spaces.members_only")
 
             assertEquals(Relation.REQUESTED, h.request(juma, id).data().relation)
-            assertEquals(1, h.listInvites(baraka, id).data().requests.size)
+            assertEquals(
+                1,
+                h
+                    .listInvites(baraka, id)
+                    .data()
+                    .requests.size,
+            )
             h.answer(baraka, id, juma, accept = false).data()
             h.request(juma, id).assertError("spaces.request_too_soon")
             h.clock.advance(Duration.ofDays(31))
@@ -263,24 +393,55 @@ class SpacesTest {
     @Test
     fun `invites expire after 14 days and a decline is never told`() =
         runBlocking<Unit> {
-            val id = h.liveSpace(baraka, h.command(baraka, handle = "founderscircle", visibility = Visibility.INVITE_ONLY))
+            val id =
+                h.liveSpace(
+                    baraka,
+                    h.command(baraka, handle = "founderscircle", visibility = Visibility.INVITE_ONLY),
+                )
             val results = h.invite(baraka, id, listOf(juma, faith)).data()
             assertTrue(results.all { it.outcome.name == "INVITED" })
-            assertEquals(setOf(juma), h.frames.of<InvitedFrame>().first().first)
+            assertEquals(
+                setOf(juma),
+                h.frames
+                    .of<InvitedFrame>()
+                    .first()
+                    .first,
+            )
             assertEquals(Relation.INVITED, h.spaceOf(juma, id).me.relation)
             assertTrue(h.spaceOf(juma, id).summary.showAbout, "an invited person sees more than a stranger")
 
             val faithInvite = h.invites.of(id, faith)!!
             h.decline(faith, faithInvite.inviteId).data()
-            val listed = h.listInvites(baraka, id).data().invites.associateBy { it.user.userId }
+            val listed =
+                h
+                    .listInvites(baraka, id)
+                    .data()
+                    .invites
+                    .associateBy { it.user.userId }
             assertEquals(SentInviteState.INVITED, listed.getValue(faith).state, "a decline shows as invited")
 
             h.clock.advance(Duration.ofDays(15))
             val jumaInvite = h.invites.of(id, juma)!!
             h.accept(juma, jumaInvite.inviteId).assertError("spaces.invite_not_found")
-            assertEquals(SentInviteState.EXPIRED, h.listInvites(baraka, id).data().invites.first { it.user.userId == juma }.state)
+            assertEquals(
+                SentInviteState.EXPIRED,
+                h
+                    .listInvites(baraka, id)
+                    .data()
+                    .invites
+                    .first {
+                        it.user.userId ==
+                            juma
+                    }.state,
+            )
             h.invite(baraka, id, listOf(juma)).data()
-            assertEquals(Relation.MEMBER, h.accept(juma, jumaInvite.inviteId).data().me.relation)
+            assertEquals(
+                Relation.MEMBER,
+                h
+                    .accept(juma, jumaInvite.inviteId)
+                    .data()
+                    .me.relation,
+            )
         }
 
     // ---- roles and moderation ----
@@ -298,7 +459,13 @@ class SpacesTest {
             h.setRole(baraka, id, faith, Role.ADMIN).data()
 
             val members = h.listMembers(MembersQuery(juma, id, MemberFilter.ALL, null, null, 50)).data()
-            assertEquals(baraka, members.team.first().profile.userId, "the owner first")
+            assertEquals(
+                baraka,
+                members.team
+                    .first()
+                    .profile.userId,
+                "the owner first",
+            )
             assertEquals(setOf(baraka, amina, faith, juma), members.team.map { it.profile.userId }.toSet())
             assertEquals(4, members.count)
         }
@@ -318,7 +485,14 @@ class SpacesTest {
             assertFalse(h.privateChat(id, juma, baraka).data())
             assertFalse(h.privateChat(id, baraka, juma).data(), "both ways")
             assertEquals(SpaceAccess.NONE, h.walletAccess(id, juma).data())
-            assertEquals("BANNED", h.invite(amina, id, listOf(juma)).data().single().outcome.name)
+            assertEquals(
+                "BANNED",
+                h
+                    .invite(amina, id, listOf(juma))
+                    .data()
+                    .single()
+                    .outcome.name,
+            )
             h.ban(amina, id, baraka, true).assertError("spaces.cannot_moderate")
 
             h.ban(amina, id, juma, false).data()
@@ -347,7 +521,14 @@ class SpacesTest {
 
             h.resolve(amina, id, spam.post.postId, ReportAction.REMOVE_POST, null).data()
             assertTrue(h.listReports(amina, id, true).data().isEmpty())
-            assertEquals(ReportAction.REMOVE_POST, h.listReports(amina, id, false).data().single().action)
+            assertEquals(
+                ReportAction.REMOVE_POST,
+                h
+                    .listReports(amina, id, false)
+                    .data()
+                    .single()
+                    .action,
+            )
             assertNotNull(h.posts.find(spam.post.postId)?.removedAt)
         }
 
@@ -358,14 +539,46 @@ class SpacesTest {
         runBlocking<Unit> {
             val sneakers = h.liveSpace(baraka)
             val similar = h.liveSpace(amina, h.command(amina, name = "Sneaker Drop Mombasa", handle = "sneakerdropmsa"))
-            val coffee = h.liveSpace(faith, h.command(faith, name = "Coffee Farmers Kenya", handle = "coffeefarmers", topic = Topic.FARMING, about = "Prices, buyers and weather"))
+            val coffee =
+                h.liveSpace(
+                    faith,
+                    h.command(
+                        faith,
+                        name = "Coffee Farmers Kenya",
+                        handle = "coffeefarmers",
+                        topic = Topic.FARMING,
+                        about = "Prices, buyers and weather",
+                    ),
+                )
 
             val byHandle = h.search("@sneakerdrop", null, 0, 10).data()
             assertEquals(sneakers, byHandle.exact?.space?.spaceId)
             assertEquals(listOf(similar), byHandle.spaces.map { it.space.spaceId })
-            assertEquals(setOf(sneakers, similar), h.search("sneak", null, 0, 10).data().spaces.map { it.space.spaceId }.toSet())
-            assertEquals(listOf(coffee), h.search("weather", null, 0, 10).data().spaces.map { it.space.spaceId })
-            assertEquals(listOf(coffee), h.search("kenya", Topic.FARMING, 0, 10).data().spaces.map { it.space.spaceId })
+            assertEquals(
+                setOf(sneakers, similar),
+                h
+                    .search("sneak", null, 0, 10)
+                    .data()
+                    .spaces
+                    .map { it.space.spaceId }
+                    .toSet(),
+            )
+            assertEquals(
+                listOf(coffee),
+                h
+                    .search("weather", null, 0, 10)
+                    .data()
+                    .spaces
+                    .map { it.space.spaceId },
+            )
+            assertEquals(
+                listOf(coffee),
+                h
+                    .search("kenya", Topic.FARMING, 0, 10)
+                    .data()
+                    .spaces
+                    .map { it.space.spaceId },
+            )
 
             h.follow(juma, coffee).data()
             h.contacts.contacts[faith] = mutableSetOf(juma)
@@ -373,7 +586,12 @@ class SpacesTest {
             assertTrue(suggested.none { it.summary.space.spaceId == coffee }, "never your own spaces")
             h.contacts.contacts[baraka] = mutableSetOf(juma)
             val forBaraka = h.suggest(baraka, "KE", null, 0, 10).data().items
-            assertEquals(coffee, forBaraka.first().summary.space.spaceId)
+            assertEquals(
+                coffee,
+                forBaraka
+                    .first()
+                    .summary.space.spaceId,
+            )
             assertEquals(listOf("Juma"), forBaraka.first().known.names)
             assertTrue(forBaraka.none { it.summary.space.spaceId == sneakers })
         }
@@ -387,7 +605,12 @@ class SpacesTest {
             val set = h.walletAccess(id, juma).data()
             assertEquals(SpaceAccess.MEMBER, set)
             h.leave(juma, id).data()
-            assertEquals(1, h.spaceOf(baraka, id).summary.space.memberCount)
+            assertEquals(
+                1,
+                h
+                    .spaceOf(baraka, id)
+                    .summary.space.memberCount,
+            )
             h.leave(juma, id).assertError("spaces.not_member")
             assertEquals(NotificationLevel.ALL, h.spaceOf(baraka, id).me.notifications)
         }

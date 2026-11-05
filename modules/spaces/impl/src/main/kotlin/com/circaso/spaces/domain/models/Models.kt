@@ -102,11 +102,16 @@ data class Membership(
     fun isMuted(now: Instant): Boolean = mutedUntil != null && now < mutedUntil
 }
 
-data class Ban(val spaceId: SpaceId, val userId: UserId, val bannedBy: UserId, val bannedAt: Instant)
+data class Ban(
+    val spaceId: SpaceId,
+    val userId: UserId,
+    val bannedBy: UserId,
+    val bannedAt: Instant,
+)
 
 enum class RequestState { PENDING, ACCEPTED, DECLINED, CANCELLED }
 
-data class JoinRequest(
+data class JoinAsk(
     val spaceId: SpaceId,
     val userId: UserId,
     val state: RequestState,

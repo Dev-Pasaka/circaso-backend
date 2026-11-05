@@ -42,7 +42,11 @@ class OpenDirectChat(
     /** Spaces' guard for private chats with a space's owner (Spaces phase 3); without it, none can be opened. */
     private val spaceChats: SpacePrivateChats? = null,
 ) {
-    suspend operator fun invoke(caller: UserId, other: UserId, viaSpaceId: UUID? = null): Resource<ChatView> {
+    suspend operator fun invoke(
+        caller: UserId,
+        other: UserId,
+        viaSpaceId: UUID? = null,
+    ): Resource<ChatView> {
         if (caller == other) return Resource.error(SharedError.Malformed("userId", "is you"))
         // A private chat via a space stands in for reach (a shop's visitor needn't be a contact), never for a block.
         val allowed =

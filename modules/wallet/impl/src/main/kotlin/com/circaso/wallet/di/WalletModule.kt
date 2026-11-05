@@ -7,7 +7,6 @@ import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.integrations.api.CustodyNotifications
-import com.circaso.shared.Asset
 import com.circaso.shared.RealtimeModule
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.Wallets
@@ -16,12 +15,15 @@ import com.circaso.wallet.data.cache.RealtimeFramesImpl
 import com.circaso.wallet.data.cache.RedisActiveWallets
 import com.circaso.wallet.data.cache.RedisAddingChains
 import com.circaso.wallet.data.cache.RedisBalanceCache
-import com.circaso.wallet.data.cache.RedisDailySpend
 import com.circaso.wallet.data.cache.RedisReminders
 import com.circaso.wallet.data.cache.RedisStuckNotices
+import com.circaso.wallet.data.repositories.ConfiguredFees
 import com.circaso.wallet.data.repositories.DatabaseTransactor
+import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
+import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
 import com.circaso.wallet.data.repositories.NoPaymentHolds
+import com.circaso.wallet.data.repositories.RuleRepositoryImpl
 import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
 import com.circaso.wallet.data.repositories.TransferRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletExpiry
@@ -29,6 +31,11 @@ import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletOwnerRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.data.tables.CircleUsersTable
+import com.circaso.wallet.data.tables.FeeBoundsTable
+import com.circaso.wallet.data.tables.FeeLedgerTable
+import com.circaso.wallet.data.tables.FeeQuotesTable
+import com.circaso.wallet.data.tables.FeeRulesTable
+import com.circaso.wallet.data.tables.LimitRulesTable
 import com.circaso.wallet.data.tables.RealtimeTable
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.data.tables.TransfersTable
@@ -36,11 +43,10 @@ import com.circaso.wallet.data.tables.WalletOwnersTable
 import com.circaso.wallet.data.tables.WalletsTable
 import com.circaso.wallet.domain.models.JobSettings
 import com.circaso.wallet.domain.models.ReconcilePass
-import com.circaso.wallet.domain.models.TransferLimits
 import com.circaso.wallet.domain.ports.ActiveWallets
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.ports.BalanceCache
-import com.circaso.wallet.domain.ports.DailySpend
+import com.circaso.wallet.domain.ports.FeeConfig
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.PaymentHolds
 import com.circaso.wallet.domain.ports.RealtimeLog
@@ -48,6 +54,9 @@ import com.circaso.wallet.domain.ports.Reminders
 import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletWarnings
+import com.circaso.wallet.domain.repositories.FeeLedgerRepository
+import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
@@ -55,14 +64,19 @@ import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
-import com.circaso.wallet.domain.support.HolderFrames
+import com.circaso.wallet.domain.support.FeeCalculator
+import com.circaso.wallet.domain.support.FeeQuotes
+import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HeldFunds
+import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
+import com.circaso.wallet.domain.support.Limits
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.SupportAccountRule
@@ -75,17 +89,17 @@ import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
-import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
+import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CreateGroupWallet
-import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.CreateSpaceWallet
+import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.FindGroupWallet
-import com.circaso.wallet.domain.usecases.GetGroupWallet
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
-import com.circaso.wallet.domain.usecases.GetTransaction
+import com.circaso.wallet.domain.usecases.GetGroupWallet
 import com.circaso.wallet.domain.usecases.GetSpaceWallet
+import com.circaso.wallet.domain.usecases.GetTransaction
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
@@ -95,6 +109,7 @@ import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.LookupTransfer
 import com.circaso.wallet.domain.usecases.OpenSession
 import com.circaso.wallet.domain.usecases.PrepareTransfer
+import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
@@ -123,7 +138,6 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
-import java.math.BigDecimal
 import java.time.Clock
 import java.time.Duration
 
@@ -132,7 +146,19 @@ internal val walletDatabaseSpec =
     DatabaseModuleSpec(
         schema = "wallet",
         tables =
-            listOf(CircleUsersTable, WalletsTable, TransfersTable, TransactionsTable, RealtimeTable, WalletOwnersTable),
+            listOf(
+                CircleUsersTable,
+                WalletsTable,
+                TransfersTable,
+                TransactionsTable,
+                RealtimeTable,
+                WalletOwnersTable,
+                FeeBoundsTable,
+                FeeRulesTable,
+                LimitRulesTable,
+                FeeQuotesTable,
+                FeeLedgerTable,
+            ),
         migrationsLocation = "classpath:db/wallet",
         outbox = true,
     )
@@ -177,22 +203,13 @@ private fun Config.minutes(key: String, default: Duration): Duration =
     Duration.ofMinutes(positive(key, default.toMinutes().toInt()).toLong())
 
 /**
- * The transfer limits in whole USDC: `WALLET_TRANSFER_LIMIT_PER_PAYMENT` and `WALLET_TRANSFER_LIMIT_DAILY`.
- * TODO(decision: limits, KYC and licensing) the defaults are placeholders until the limits are decided.
+ * The fee settings (phase 2F): `wallet.fees.chain.<chain>.address` (Circaso's fee wallet there; none, no fee) and
+ * `wallet.fees.chain.<chain>.native-usd`. The limits are rules in the database now (`limit_rules`), not settings.
  */
-internal fun transferLimits(config: Config): TransferLimits {
-    val transfer = config.section("wallet").section("transfer")
-    return TransferLimits(
-        perPaymentMinor = usdcMinor(transfer.string("limit-per-payment", "500")),
-        dailyMinor = usdcMinor(transfer.string("limit-daily", "1000")),
-    )
+internal fun feeConfig(config: Config): FeeConfig {
+    val fees = config.section("wallet").section("fees")
+    return ConfiguredFees { chain, name -> fees.string("chain.${chain.lowercase()}.$name") }
 }
-
-private fun usdcMinor(whole: String): Long =
-    BigDecimal(whole.trim())
-        .movePointRight(Asset.USDC.decimals)
-        .longValueExact()
-        .also { check(it > 0) { "A wallet transfer limit must be above zero (was '$whole')" } }
 
 /**
  * Wallet's Koin bindings: data, domain, presentation, its `api`, identity's `DeletionGuard`, integrations'
@@ -203,7 +220,7 @@ private fun usdcMinor(whole: String): Long =
 fun walletModule(config: Config): Module =
     module {
         val clock = Clock.systemUTC()
-        val limits = transferLimits(config)
+        val fees = feeConfig(config)
         val jobs = jobSettings(config)
 
         // data
@@ -217,7 +234,10 @@ fun walletModule(config: Config): Module =
         single<WalletOwnerRepository> { WalletOwnerRepositoryImpl(get(named("wallet.database"))) }
         single<BalanceCache> { RedisBalanceCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<AddingChains> { RedisAddingChains(get<RedisScopes>().scope(REDIS_PREFIX)) }
-        single<DailySpend> { RedisDailySpend(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<RuleRepository> { RuleRepositoryImpl(get(named("wallet.database"))) }
+        single<FeeQuoteRepository> { FeeQuoteRepositoryImpl(get(named("wallet.database"))) }
+        single<FeeLedgerRepository> { FeeLedgerRepositoryImpl(get(named("wallet.database"))) }
+        single<FeeConfig> { fees }
         single<Reminders> { RedisReminders(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<PaymentHolds> { NoPaymentHolds() }
         single<WalletWarnings> { LogWalletWarnings() }
@@ -261,11 +281,16 @@ fun walletModule(config: Config): Module =
         single { HoldingsReader(get(), get(), get()) }
         single { SupportAccountRule(get()) }
         single { Payees(get(), get(), get(), get(), get(), get(), getOrNull()) }
-        single { SenderRules(get(), get(), get(), get(), get(), get(), limits, get(), clock) }
+        single { SenderRules(get(), get(), get(), get(), get(), get()) }
+        single { Limits(get(), get(), clock) }
+        single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock) }
+        single { PaymentPlanner(get(), get(), get(), get(), getOrNull()) }
+        single { FeeQuotes(get(), clock) }
+        single { FeeSettlement(get(), get(), get()) }
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
-        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock) }
+        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get()) }
         single { Reconciler(get(), get(), get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get()) }
@@ -298,12 +323,14 @@ fun walletModule(config: Config): Module =
                 get(),
                 get(),
                 get(),
+                get(),
+                get(),
                 clock,
                 get(),
                 get(),
-                getOrNull(),
             )
         }
+        single { QuoteTransfer(get(), get(), get(), clock) }
         single { GetTransfer(get(), get(), getOrNull()) }
         single { Counterparties(get(), get(), get()) }
         single { ListTransactions(get(), get(), get(), get()) }
@@ -321,7 +348,7 @@ fun walletModule(config: Config): Module =
 
         // presentation
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { TransferService(get(), get(), get()) }
+        single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
         single { WalletAgentService(get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }

@@ -101,8 +101,10 @@ class SpaceRepositoryImpl(private val database: Database) : SpaceRepository {
         return database.tx("spaces.taken-handles") {
             SpacesTable
                 .select(SpacesTable.handle)
-                .where { (SpacesTable.handle inList handles.distinct()) and (SpacesTable.state neq SpaceState.DELETED.name) }
-                .map { it[SpacesTable.handle] }
+                .where {
+                    (SpacesTable.handle inList handles.distinct()) and
+                        (SpacesTable.state neq SpaceState.DELETED.name)
+                }.map { it[SpacesTable.handle] }
                 .toList()
                 .toSet()
         }
@@ -144,7 +146,12 @@ class SpaceRepositoryImpl(private val database: Database) : SpaceRepository {
         offset: Int,
         limit: Int,
     ): List<Space> {
-        val words = text.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }.take(MAX_WORDS)
+        val words =
+            text
+                .lowercase()
+                .split(Regex("[^\\p{L}\\p{N}]+"))
+                .filter { it.isNotEmpty() }
+                .take(MAX_WORDS)
         if (words.isEmpty()) return emptyList()
         val tsQuery = words.joinToString(" & ") { "$it:*" }
         val phrase = "%" + escapeLike(text.trim().lowercase()) + "%"
@@ -152,7 +159,8 @@ class SpaceRepositoryImpl(private val database: Database) : SpaceRepository {
             SpacesTable
                 .selectAll()
                 .where {
-                    discoverable() and (FullText(tsQuery) or (SpacesTable.name.lowerCase() like phrase)) and topicIs(topic)
+                    discoverable() and (FullText(tsQuery) or (SpacesTable.name.lowerCase() like phrase)) and
+                        topicIs(topic)
                 }.orderBy(SpacesTable.memberCount to SortOrder.DESC, SpacesTable.spaceId to SortOrder.ASC)
                 .limit(limit)
                 .offset(offset.toLong())
@@ -161,7 +169,11 @@ class SpaceRepositoryImpl(private val database: Database) : SpaceRepository {
         }
     }
 
-    override suspend fun handlesStartingWith(prefix: String, offset: Int, limit: Int): List<Space> =
+    override suspend fun handlesStartingWith(
+        prefix: String,
+        offset: Int,
+        limit: Int,
+    ): List<Space> =
         database.tx("spaces.handles-starting-with") {
             SpacesTable
                 .selectAll()
@@ -188,7 +200,10 @@ class SpaceRepositoryImpl(private val database: Database) : SpaceRepository {
                 .where {
                     var condition: Op<Boolean> = discoverable() and topicIs(topic)
                     if (country != null) condition = condition and (SpacesTable.country eq country)
-                    if (exclude.isNotEmpty()) condition = condition and (SpacesTable.spaceId notInList exclude.map { it.value })
+                    if (exclude.isNotEmpty()) {
+                        condition =
+                            condition and (SpacesTable.spaceId notInList exclude.map { it.value })
+                    }
                     condition
                 }.orderBy(SpacesTable.memberCount to SortOrder.DESC, SpacesTable.spaceId to SortOrder.ASC)
                 .limit(limit)

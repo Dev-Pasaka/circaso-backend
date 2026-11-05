@@ -29,7 +29,8 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
 
     override suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = directory.spaceWallet(spaceId)
 
-    override suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> = directory.spaceWalletHoldsMoney(spaceId)
+    override suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> =
+        directory.spaceWalletHoldsMoney(spaceId)
 }
 
 /**

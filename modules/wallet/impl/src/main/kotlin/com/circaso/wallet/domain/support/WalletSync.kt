@@ -6,10 +6,10 @@ import com.circaso.shared.Resource
 import com.circaso.shared.envelope
 import com.circaso.wallet.api.WalletCreated
 import com.circaso.wallet.api.WalletId
-import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.Transactor

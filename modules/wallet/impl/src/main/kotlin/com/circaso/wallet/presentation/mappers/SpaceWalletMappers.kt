@@ -13,13 +13,15 @@ import com.circaso.wallet.presentation.dto.SpaceWalletSetupResponse
 import java.util.UUID
 
 fun spaceIdOf(raw: String?): Resource<UUID> =
-    raw?.let { Uuid7.parse(it) }?.let { Resource.success(it) } ?: Resource.error(SharedError.Malformed("spaceId", "is not an id"))
+    raw?.let { Uuid7.parse(it) }?.let { Resource.success(it) }
+        ?: Resource.error(SharedError.Malformed("spaceId", "is not an id"))
 
 fun createSpaceWalletCommand(
     userId: UserId,
     spaceId: UUID,
     requestKey: String,
-): CreateSpaceWalletCommand = CreateSpaceWalletCommand(userId, spaceId, circleKey(userId, "wallet.create-space:$spaceId", requestKey))
+): CreateSpaceWalletCommand =
+    CreateSpaceWalletCommand(userId, spaceId, circleKey(userId, "wallet.create-space:$spaceId", requestKey))
 
 fun SpaceWalletSetup.toResponse() =
     SpaceWalletSetupResponse(

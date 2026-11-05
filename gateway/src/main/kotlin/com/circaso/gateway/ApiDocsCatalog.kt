@@ -292,6 +292,20 @@ internal object ApiDocsCatalog {
                             "when the poster deletes it.",
                     ),
                     DocTag(
+                        "Spaces",
+                        "Spaces are communities and small businesses: a space chat every member reads, members " +
+                            "with roles, and its own wallet. Space chats are **not** end-to-end encrypted: the " +
+                            "server stores posts so it can page, search and moderate them; the private chat with " +
+                            "a space's owner is an ordinary end-to-end encrypted direct chat (M4 `viaSpaceId`).\n\n" +
+                            "- Who can join: **public** (follow), **members only** (pay with SP13, then W17 and " +
+                            "W4; a member only once the payment is confirmed) or **invite only** (invites and " +
+                            "requests).\n" +
+                            "- Roles: owner, admins, moderators, members; mute, remove, ban; reports go to the " +
+                            "space's moderators and to Circaso's queue (`ops`).\n" +
+                            "- `spaces` frames tell phones about posts, changes and their membership; the space's " +
+                            "wallet is W18 and W19.",
+                    ),
+                    DocTag(
                         "Calls",
                         "Voice and video calls in a chat, up to 8 people at once. The phones talk WebRTC to " +
                             "Cloudflare Realtime's SFU; the server only brokers each connection's session " +

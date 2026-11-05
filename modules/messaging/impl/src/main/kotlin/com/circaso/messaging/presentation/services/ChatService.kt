@@ -40,8 +40,11 @@ class ChatService(
     private val listGroupIds: ListGroupIds,
     private val getOwner: GetOwner,
 ) {
-    suspend fun openDirect(caller: UserId, other: UserId, viaSpaceId: UUID? = null): Resource<ChatView> =
-        openDirectChat(caller, other, viaSpaceId)
+    suspend fun openDirect(
+        caller: UserId,
+        other: UserId,
+        viaSpaceId: UUID? = null,
+    ): Resource<ChatView> = openDirectChat(caller, other, viaSpaceId)
 
     suspend fun createGroup(command: CreateGroupCommand): Resource<ChatView> = createGroup.invoke(command)
 

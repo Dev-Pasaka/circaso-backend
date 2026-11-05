@@ -38,7 +38,7 @@ import com.circaso.spaces.domain.support.PostViews
 import com.circaso.spaces.domain.support.SpaceViews
 import com.circaso.spaces.domain.support.SpacesConfig
 import com.circaso.spaces.domain.usecases.AcceptInvite
-import com.circaso.spaces.domain.usecases.AnswerRequest
+import com.circaso.spaces.domain.usecases.AnswerJoinAsk
 import com.circaso.spaces.domain.usecases.CheckHandle
 import com.circaso.spaces.domain.usecases.CheckPrivateChat
 import com.circaso.spaces.domain.usecases.ConfirmMembershipPayment
@@ -112,7 +112,8 @@ class FakeAccounts(private val clock: Clock) : AccountDirectory {
 
     override suspend fun resolvePhones(phones: Set<PhoneNumber>) = emptyMap<PhoneNumber, UserId>()
 
-    override suspend fun createdAt(userId: UserId): Instant = created[userId] ?: clock.instant().minus(Duration.ofDays(30))
+    override suspend fun createdAt(userId: UserId): Instant =
+        created[userId] ?: clock.instant().minus(Duration.ofDays(30))
 }
 
 class FakeReach : ReachPolicy {
@@ -153,15 +154,19 @@ class FakeWallets : Wallets {
     override suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> = Resource.success(holdsMoney)
 
     fun ready(spaceId: SpaceId, owner: UserId) {
-        spaceWallets[spaceId.value] = SpaceWalletSummary(WalletId.new(), spaceId.value, "ACTIVE", owner, listOf("BASE-SEPOLIA"))
+        spaceWallets[spaceId.value] =
+            SpaceWalletSummary(WalletId.new(), spaceId.value, "ACTIVE", owner, listOf("BASE-SEPOLIA"))
     }
 }
 
 class MemoryStorage : MediaStorage {
     val objects = mutableMapOf<String, Long>()
 
-    override suspend fun prepareUpload(key: String, contentType: String, expiresIn: Duration): Resource<String> =
-        Resource.success("https://storage.test/$key")
+    override suspend fun prepareUpload(
+        key: String,
+        contentType: String,
+        expiresIn: Duration,
+    ): Resource<String> = Resource.success("https://storage.test/$key")
 
     override suspend fun sizeOf(key: String): Long? = objects[key]
 
@@ -179,7 +184,13 @@ class RecordingFrames : FrameSender {
         if (userIds.isNotEmpty()) sent += userIds.toSet() to frame
     }
 
-    inline fun <reified T : SpaceFrame> of(): List<Pair<Set<UserId>, T>> = sent.mapNotNull { (u, f) -> (f as? T)?.let { u to it } }
+    inline fun <reified T : SpaceFrame> of(): List<Pair<Set<UserId>, T>> =
+        sent.mapNotNull { (u, f) ->
+            (f as? T)?.let {
+                u to
+                    it
+            }
+        }
 }
 
 /** Spaces' use cases over its real PostgreSQL tables, with fakes for every other module and the clock. */
@@ -223,9 +234,10 @@ class SpacesHarness(val config: SpacesConfig = SpacesConfig()) {
     val confirmPayment = ConfirmMembershipPayment(spaces, members, payments, transactor, frames, clock)
     val timers = RunMembershipTimers(spaces, members, frames, config, clock)
     val goLive = GoLiveWhenWalletReady(spaces, lifecycle)
-    val request = RequestToJoin(spaces, members, requests, invites, transactor, gate, views, profiles, frames, config, clock)
+    val request =
+        RequestToJoin(spaces, members, requests, invites, transactor, gate, views, profiles, frames, config, clock)
     val listInvites = ListInvitesAndRequests(members, requests, invites, gate, profiles, config, clock)
-    val answer = AnswerRequest(spaces, members, requests, bans, transactor, gate, frames, clock)
+    val answer = AnswerJoinAsk(spaces, members, requests, bans, transactor, gate, frames, clock)
     val invite = InvitePeople(members, bans, invites, gate, reach, profiles, frames, config, clock)
     val accept = AcceptInvite(spaces, members, invites, bans, transactor, views, profiles, frames, clock)
     val decline = DeclineInvite(invites, clock)

@@ -6,7 +6,12 @@ import kotlinx.serialization.Serializable
 // ---- requests ----
 
 @Serializable
-data class PriceRequest(val asset: String = "USDC", val amountMinor: String? = null, val amount: String? = null, val period: String)
+data class PriceRequest(
+    val asset: String = "USDC",
+    val amountMinor: String? = null,
+    val amount: String? = null,
+    val period: String,
+)
 
 @Serializable
 data class TeamEntryRequest(val userId: String, val role: String)
@@ -27,10 +32,7 @@ data class CreateSpaceRequest(
     val team: List<TeamEntryRequest> = emptyList(),
 )
 
-/**
- * SP5's body as the docs show it: any of these fields. It is read as JSON in the controller, so `photoMediaId` and
- * `coverMediaId` sent as null remove them, while fields left out stay.
- */
+/** SP5's body: any of these fields; those left out stay. `removePhoto` / `removeCover` take them away. */
 @Serializable
 data class UpdateSpaceRequest(
     val name: String? = null,
@@ -43,6 +45,8 @@ data class UpdateSpaceRequest(
     val price: PriceRequest? = null,
     val postingMode: String? = null,
     val privateMessages: String? = null,
+    val removePhoto: Boolean = false,
+    val removeCover: Boolean = false,
 )
 
 @Serializable
@@ -98,10 +102,20 @@ data class RemoveSpaceRequest(val reason: String)
 data class MoneyDto(val asset: String, val amountMinor: String, val amount: String)
 
 @Serializable
-data class PriceDto(val asset: String, val amountMinor: String, val amount: String, val period: String)
+data class PriceDto(
+    val asset: String,
+    val amountMinor: String,
+    val amount: String,
+    val period: String,
+)
 
 @Serializable
-data class PersonDto(val userId: String, val displayName: String, val handle: String? = null, val avatarUrl: String? = null)
+data class PersonDto(
+    val userId: String,
+    val displayName: String,
+    val handle: String? = null,
+    val avatarUrl: String? = null,
+)
 
 @Serializable
 data class KnownDto(val names: List<String>, val count: Int)
@@ -139,7 +153,12 @@ data class MembershipDto(
 data class RequestStateDto(val state: String, val at: String, val canAskAgainAt: String? = null)
 
 @Serializable
-data class MyInviteDto(val inviteId: String, val invitedBy: PersonDto, val invitedAt: String, val expiresAt: String)
+data class MyInviteDto(
+    val inviteId: String,
+    val invitedBy: PersonDto,
+    val invitedAt: String,
+    val expiresAt: String,
+)
 
 @Serializable
 data class MeDto(
@@ -232,7 +251,11 @@ data class SuggestionDto(
 data class SuggestionsResponse(val spaces: List<SuggestionDto>, val next: String? = null)
 
 @Serializable
-data class SearchResponse(val exact: SpaceSummaryDto? = null, val spaces: List<SpaceSummaryDto>, val next: String? = null)
+data class SearchResponse(
+    val exact: SpaceSummaryDto? = null,
+    val spaces: List<SpaceSummaryDto>,
+    val next: String? = null,
+)
 
 @Serializable
 data class LeftResponse(val left: Boolean)
@@ -342,7 +365,12 @@ data class UploadHeadersDto(
 )
 
 @Serializable
-data class MediaUploadResponse(val mediaId: String, val uploadUrl: String, val uploadHeaders: UploadHeadersDto, val expiresAt: String)
+data class MediaUploadResponse(
+    val mediaId: String,
+    val uploadUrl: String,
+    val uploadHeaders: UploadHeadersDto,
+    val expiresAt: String,
+)
 
 @Serializable
 data class MediaCompletedResponse(val mediaId: String, val sizeBytes: Long)

@@ -57,5 +57,9 @@ interface SpacePrivateChats {
      * Whether [from] may open, or write in, the private chat with [to] via [spaceId]: one of them owns the live space,
      * the other may message its owner (its `privateMessages` setting) and neither is banned from it.
      */
-    suspend fun allowed(spaceId: UUID, from: UserId, to: UserId): Boolean
+    suspend fun allowed(
+        spaceId: UUID,
+        from: UserId,
+        to: UserId,
+    ): Boolean
 }

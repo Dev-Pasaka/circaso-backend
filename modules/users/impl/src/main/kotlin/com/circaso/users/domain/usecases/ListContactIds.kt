@@ -8,7 +8,13 @@ import com.circaso.users.domain.repositories.ContactRepository
 class ListContactIds(private val contacts: ContactRepository) {
     suspend operator fun invoke(userId: UserId, limit: Int): Resource<Set<UserId>> {
         val size = limit.coerceIn(1, MAX)
-        return Resource.success(contacts.list(userId, after = null, limit = size, activeOnly = true).map { it.contactId }.toSet())
+        return Resource.success(
+            contacts
+                .list(userId, after = null, limit = size, activeOnly = true)
+                .map {
+                    it.contactId
+                }.toSet(),
+        )
     }
 
     private companion object {

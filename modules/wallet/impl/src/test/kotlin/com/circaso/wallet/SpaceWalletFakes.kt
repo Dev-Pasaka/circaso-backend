@@ -12,14 +12,18 @@ class FakeSpaces : SpaceWalletPolicy {
     val roles = ConcurrentHashMap<Pair<UUID, UserId>, SpaceAccess>()
     val charges = ConcurrentHashMap<UUID, Pair<UserId, MembershipCharge>>()
 
-    override suspend fun access(spaceId: UUID, userId: UserId): SpaceAccess = roles[spaceId to userId] ?: SpaceAccess.NONE
+    override suspend fun access(spaceId: UUID, userId: UserId): SpaceAccess =
+        roles[spaceId to userId] ?: SpaceAccess.NONE
 
     override suspend fun administered(userId: UserId): List<UUID> =
         roles.filter { (key, access) -> key.second == userId && access == SpaceAccess.ADMIN }.keys.map { it.first }
 
     override suspend fun team(spaceId: UUID): Set<UserId> =
-        roles.filter { (key, access) -> key.first == spaceId && (access == SpaceAccess.OWNER || access == SpaceAccess.ADMIN) }
-            .keys
+        roles
+            .filter { (key, access) ->
+                key.first == spaceId &&
+                    (access == SpaceAccess.OWNER || access == SpaceAccess.ADMIN)
+            }.keys
             .map { it.second }
             .toSet()
 

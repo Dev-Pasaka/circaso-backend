@@ -35,7 +35,11 @@ class PostService(
 
     suspend fun create(command: CreatePostCommand): Resource<PostView> = createPost(command)
 
-    suspend fun remove(caller: UserId, spaceId: SpaceId, postId: PostId): Resource<PostView> = removePost(caller, spaceId, postId)
+    suspend fun remove(
+        caller: UserId,
+        spaceId: SpaceId,
+        postId: PostId,
+    ): Resource<PostView> = removePost(caller, spaceId, postId)
 
     suspend fun react(
         caller: UserId,
@@ -44,7 +48,11 @@ class PostService(
         emoji: String?,
     ): Resource<ReactionResult> = reactToPost(caller, spaceId, postId, emoji)
 
-    suspend fun read(caller: UserId, spaceId: SpaceId, postId: PostId): Resource<Int> = markRead(caller, spaceId, postId)
+    suspend fun read(
+        caller: UserId,
+        spaceId: SpaceId,
+        postId: PostId,
+    ): Resource<Int> = markRead(caller, spaceId, postId)
 
     suspend fun prepareMedia(command: PrepareMediaCommand): Resource<MediaUpload> = prepareSpaceMedia(command)
 

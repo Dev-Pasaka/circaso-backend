@@ -88,23 +88,27 @@ import com.circaso.spaces.presentation.dto.SpaceSummaryDto
 import com.circaso.spaces.presentation.dto.SpaceWalletDto
 import com.circaso.spaces.presentation.dto.SuggestionDto
 import com.circaso.spaces.presentation.dto.SuggestionsResponse
+import com.circaso.spaces.presentation.dto.UpdateSpaceRequest
 import com.circaso.spaces.presentation.dto.UploadHeadersDto
 import com.circaso.users.api.PublicProfile
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import java.math.BigDecimal
 import java.util.UUID
 
 // ---- request → command: shapes only; business rules are the use cases' ----
 
-private fun malformed(field: String, problem: String = "is not valid") = Resource.error(SharedError.Malformed(field, problem))
+private fun malformed(field: String, problem: String = "is not valid") =
+    Resource.error(SharedError.Malformed(field, problem))
 
-private inline fun <reified E : Enum<E>> enumOf(raw: String?): E? = raw?.let { v -> enumValues<E>().firstOrNull { it.name == v.trim().uppercase() } }
+private inline fun <reified E : Enum<E>> enumOf(raw: String?): E? =
+    raw?.let { v ->
+        enumValues<E>().firstOrNull {
+            it.name ==
+                v.trim().uppercase()
+        }
+    }
 
-fun parseSpaceId(raw: String?): Resource<SpaceId> = raw?.let(SpaceId::parse)?.let { Resource.success(it) } ?: malformed("spaceId")
+fun parseSpaceId(raw: String?): Resource<SpaceId> =
+    raw?.let(SpaceId::parse)?.let { Resource.success(it) } ?: malformed("spaceId")
 
 fun parsePostId(raw: String?, field: String = "postId"): Resource<PostId> =
     raw?.let(PostId::parse)?.let { Resource.success(it) } ?: malformed(field)
@@ -112,17 +116,27 @@ fun parsePostId(raw: String?, field: String = "postId"): Resource<PostId> =
 fun parseUserId(raw: String?, field: String = "userId"): Resource<UserId> =
     raw?.let(UserId::parse)?.let { Resource.success(it) } ?: malformed(field)
 
-fun parseUuid(raw: String?, field: String): Resource<UUID> = raw?.let(Uuid7::parse)?.let { Resource.success(it) } ?: malformed(field)
+fun parseUuid(raw: String?, field: String): Resource<UUID> =
+    raw?.let(Uuid7::parse)?.let { Resource.success(it) } ?: malformed(field)
 
 /** `?cursor=` (an offset this server gave) and `?limit=` 1 to [max]. */
-fun parsePage(cursor: String?, limit: String?, default: Int, max: Int): Resource<Pair<Int, Int>> {
+fun parsePage(
+    cursor: String?,
+    limit: String?,
+    default: Int,
+    max: Int,
+): Resource<Pair<Int, Int>> {
     val offset = cursor?.let { it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: return malformed("cursor") } ?: 0
     val size = limit?.let { it.toIntOrNull() ?: return malformed("limit") } ?: default
     if (size !in 1..max) return malformed("limit", "1 to $max")
     return Resource.success(offset to size)
 }
 
-fun parseLimit(limit: String?, default: Int, max: Int): Resource<Int> {
+fun parseLimit(
+    limit: String?,
+    default: Int,
+    max: Int,
+): Resource<Int> {
     val size = limit?.let { it.toIntOrNull() ?: return malformed("limit") } ?: default
     if (size !in 1..max) return malformed("limit", "1 to $max")
     return Resource.success(size)
@@ -133,7 +147,11 @@ fun parseTopic(raw: String?): Resource<Topic?> {
     return enumOf<Topic>(raw)?.let { Resource.success(it) } ?: malformed("topic")
 }
 
-fun <E : Enum<E>> parseEnum(raw: String?, field: String, values: Array<E>): Resource<E> =
+fun <E : Enum<E>> parseEnum(
+    raw: String?,
+    field: String,
+    values: Array<E>,
+): Resource<E> =
     values.firstOrNull { it.name == raw?.trim()?.uppercase() }?.let { Resource.success(it) } ?: malformed(field)
 
 /** USDC only; `amountMinor` or `amount`, and both only if they agree. */
@@ -147,11 +165,19 @@ fun PriceRequest.toPrice(): Resource<Price> {
                 ?: return malformed("price.amount")
         }
     val minor = fromMinor ?: fromWhole ?: return malformed("price", "needs amountMinor or amount")
-    if (fromMinor != null && fromWhole != null && fromMinor != fromWhole) return malformed("price", "amountMinor and amount differ")
+    if (fromMinor != null && fromWhole != null &&
+        fromMinor != fromWhole
+    ) {
+        return malformed("price", "amountMinor and amount differ")
+    }
     return Resource.success(Price(minor, period))
 }
 
-fun CreateSpaceRequest.toCommand(ownerId: UserId, country: String?, createKey: String): Resource<CreateSpaceCommand> {
+fun CreateSpaceRequest.toCommand(
+    ownerId: UserId,
+    country: String?,
+    createKey: String,
+): Resource<CreateSpaceCommand> {
     val topic = enumOf<Topic>(topic) ?: return malformed("topic")
     val visibility = enumOf<Visibility>(visibility) ?: return malformed("visibility")
     val posting = enumOf<PostingMode>(postingMode) ?: return malformed("postingMode")
@@ -192,49 +218,13 @@ fun CreateSpaceRequest.toCommand(ownerId: UserId, country: String?, createKey: S
     )
 }
 
-/**
- * SP5's body is read as JSON so a field sent as `null` (remove the photo) differs from one left out (keep it). Only
- * `photoMediaId` and `coverMediaId` may be null.
- */
-fun parseUpdate(caller: UserId, spaceId: SpaceId, body: JsonElement): Resource<UpdateSpaceCommand> {
-    val obj = body as? JsonObject ?: return malformed("body", "must be an object")
-
-    fun text(key: String): Resource<String?> {
-        val value = obj[key] ?: return Resource.success(null)
-        val primitive = value as? JsonPrimitive
-        if (primitive == null || value is JsonNull || !primitive.isString) return malformed(key)
-        return Resource.success(primitive.content)
-    }
-
-    fun media(key: String): Resource<Pair<UUID?, Boolean>> {
-        val value = obj[key] ?: return Resource.success(null to false)
-        if (value is JsonNull) return Resource.success(null to true)
-        val raw = (value as? JsonPrimitive)?.contentOrNull ?: return malformed(key)
-        return Uuid7.parse(raw)?.let { Resource.success(it to false) } ?: malformed(key)
-    }
-    val fields = mutableMapOf<String, String?>()
-    for (key in listOf("name", "handle", "about", "topic", "visibility", "postingMode", "privateMessages")) {
-        when (val read = text(key)) {
-            is Resource.Success -> fields[key] = read.data
-            is Resource.Error -> return read
-        }
-    }
-    val (photo, removePhoto) =
-        when (val read = media("photoMediaId")) {
-            is Resource.Success -> read.data
-            is Resource.Error -> return read
-        }
-    val (cover, removeCover) =
-        when (val read = media("coverMediaId")) {
-            is Resource.Success -> read.data
-            is Resource.Error -> return read
-        }
-    val price =
-        obj["price"]?.takeIf { it !is JsonNull }?.let { element ->
-            val request =
-                runCatching { com.circaso.shared.CircasoJson.decodeFromJsonElement(PriceRequest.serializer(), element) }.getOrNull()
-                    ?: return malformed("price")
-            when (val read = request.toPrice()) {
+/** SP5: fields left out (null) stay; `removePhoto` / `removeCover` take the photo or cover away. */
+fun UpdateSpaceRequest.toCommand(caller: UserId, spaceId: SpaceId): Resource<UpdateSpaceCommand> {
+    val photo = photoMediaId?.let { Uuid7.parse(it) ?: return malformed("photoMediaId") }
+    val cover = coverMediaId?.let { Uuid7.parse(it) ?: return malformed("coverMediaId") }
+    val parsedPrice =
+        price?.let {
+            when (val read = it.toPrice()) {
                 is Resource.Success -> read.data
                 is Resource.Error -> return read
             }
@@ -243,18 +233,19 @@ fun parseUpdate(caller: UserId, spaceId: SpaceId, body: JsonElement): Resource<U
         UpdateSpaceCommand(
             caller = caller,
             spaceId = spaceId,
-            name = fields["name"],
-            handle = fields["handle"],
-            about = fields["about"],
-            topic = fields["topic"]?.let { enumOf<Topic>(it) ?: return malformed("topic") },
+            name = name,
+            handle = handle,
+            about = about,
+            topic = topic?.let { enumOf<Topic>(it) ?: return malformed("topic") },
             photoMediaId = photo,
             removePhoto = removePhoto,
             coverMediaId = cover,
             removeCover = removeCover,
-            visibility = fields["visibility"]?.let { enumOf<Visibility>(it) ?: return malformed("visibility") },
-            price = price,
-            postingMode = fields["postingMode"]?.let { enumOf<PostingMode>(it) ?: return malformed("postingMode") },
-            privateMessages = fields["privateMessages"]?.let { enumOf<PrivateMessages>(it) ?: return malformed("privateMessages") },
+            visibility = visibility?.let { enumOf<Visibility>(it) ?: return malformed("visibility") },
+            price = parsedPrice,
+            postingMode = postingMode?.let { enumOf<PostingMode>(it) ?: return malformed("postingMode") },
+            privateMessages =
+                privateMessages?.let { enumOf<PrivateMessages>(it) ?: return malformed("privateMessages") },
         ),
     )
 }
@@ -269,7 +260,9 @@ fun CreatePostRequest.toCommand(caller: UserId, spaceId: SpaceId): Resource<Crea
 fun PrepareMediaRequest.toCommand(owner: UserId): Resource<PrepareMediaCommand> {
     val purpose = enumOf<MediaPurpose>(purpose) ?: return Resource.error(SpacesError.MediaInvalid)
     val kind = enumOf<MediaKind>(kind) ?: return Resource.error(SpacesError.MediaInvalid)
-    return Resource.success(PrepareMediaCommand(owner, purpose, kind, contentType.trim().lowercase(), sizeBytes, width, height, durationMs))
+    return Resource.success(
+        PrepareMediaCommand(owner, purpose, kind, contentType.trim().lowercase(), sizeBytes, width, height, durationMs),
+    )
 }
 
 fun ReportRequest.toCommand(reporter: UserId, spaceId: SpaceId): Resource<ReportCommand> {
@@ -324,7 +317,15 @@ fun MeView.toDto(): MeDto =
         mutedUntil = mutedUntil?.toString(),
         notifications = notifications.name,
         request = request?.let { RequestStateDto(it.state.name, it.at.toString(), it.canAskAgainAt?.toString()) },
-        invite = invite?.let { MyInviteDto(it.inviteId.toString(), it.invitedBy.toDto(), it.invitedAt.toString(), it.expiresAt.toString()) },
+        invite =
+            invite?.let {
+                MyInviteDto(
+                    it.inviteId.toString(),
+                    it.invitedBy.toDto(),
+                    it.invitedAt.toString(),
+                    it.expiresAt.toString(),
+                )
+            },
         unreadCount = unreadCount,
         lastReadPostId = lastReadPostId?.toString(),
     )
@@ -363,7 +364,9 @@ fun Page<MySpaceView>.toResponse() =
             MySpaceDto(
                 it.summary.toDto(),
                 it.me.toDto(),
-                it.lastPost?.let { p -> LastPostDto(p.postId.toString(), p.authorName, p.text, p.kind, p.at.toString(), p.removed) },
+                it.lastPost?.let { p ->
+                    LastPostDto(p.postId.toString(), p.authorName, p.text, p.kind, p.at.toString(), p.removed)
+                },
                 it.unreadCount,
                 it.activityAt.toString(),
             )
@@ -427,7 +430,12 @@ fun InvitesView.toResponse() =
         },
     )
 
-fun List<InviteResult>.toResponse() = InvitePeopleResponse(map { InviteResultDto(it.userId.toString(), it.outcome.name) })
+fun List<InviteResult>.toResponse() =
+    InvitePeopleResponse(
+        map {
+            InviteResultDto(it.userId.toString(), it.outcome.name)
+        },
+    )
 
 fun List<ReceivedInviteView>.toResponse() =
     MyInvitesResponse(
@@ -455,13 +463,30 @@ fun MemberView.toDto() =
         bannedAt?.toString(),
     )
 
-fun MembersView.toResponse() = MembersResponse(team.map { it.toDto() }, contacts.map { it.toDto() }, members.map { it.toDto() }, count, next)
+fun MembersView.toResponse() =
+    MembersResponse(
+        team.map {
+            it.toDto()
+        },
+        contacts.map { it.toDto() },
+        members.map { it.toDto() },
+        count,
+        next,
+    )
 
 fun Page<PostView>.toResponse() = PostsResponse(items.map { it.toFrame() }, next)
 
-fun ReactionResult.toResponse() = ReactionResponse(postId.toString(), reactions.map { ReactionDto(it.emoji, it.count) }, myReaction)
+fun ReactionResult.toResponse() =
+    ReactionResponse(
+        postId.toString(),
+        reactions.map {
+            ReactionDto(it.emoji, it.count)
+        },
+        myReaction,
+    )
 
-fun MediaUpload.toResponse() = MediaUploadResponse(mediaId.toString(), uploadUrl, UploadHeadersDto(contentType), expiresAt.toString())
+fun MediaUpload.toResponse() =
+    MediaUploadResponse(mediaId.toString(), uploadUrl, UploadHeadersDto(contentType), expiresAt.toString())
 
 fun List<ReportGroupView>.toResponse() =
     ReportsResponse(

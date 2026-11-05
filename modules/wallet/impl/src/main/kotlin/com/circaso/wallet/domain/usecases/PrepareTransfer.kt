@@ -1,16 +1,20 @@
 package com.circaso.wallet.domain.usecases
 
+import com.circaso.integrations.api.PaymentLeg
+import com.circaso.integrations.api.SplitTransferRequest
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TransferRequest
 import com.circaso.shared.Asset
 import com.circaso.shared.EventBus
+import com.circaso.shared.Money
 import com.circaso.shared.Resource
-import com.circaso.shared.UserId
 import com.circaso.wallet.api.PayoutApprovals
-import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Direction
+import com.circaso.wallet.domain.models.Fee
+import com.circaso.wallet.domain.models.FeeEntry
+import com.circaso.wallet.domain.models.FeeState
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.PreparedTransfer
 import com.circaso.wallet.domain.models.Transfer
@@ -21,17 +25,19 @@ import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.Transactor
+import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
 import com.circaso.wallet.domain.repositories.WalletOutbox
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Addresses
-import com.circaso.wallet.domain.support.Destination
+import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.Limits
 import com.circaso.wallet.domain.support.OrderedIds
-import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.PaymentPlan
+import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Sender
-import com.circaso.wallet.domain.support.SenderRules
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.isRefusal
 import com.circaso.wallet.domain.support.orTransferError
@@ -39,14 +45,22 @@ import java.time.Clock
 
 /**
  * W4 `POST /wallet/transfers`: checks the rules in order (account `ACTIVE`; wallet active on the transfer's chain; no
- * payment hold; amount within limits; the payee reachable with a wallet on that chain, or the address valid on it;
- * enough on that chain), writes the transfer `AWAITING_SIGNATURE` with the sender's `OUT` row, then asks Circle for
- * the challenge the user signs with the PIN, with `refId` = the transfer id, so Circle's updates lead back to it.
+ * payment hold; an amount that can be sent and within one payment's cap; the payee reachable with a wallet on that
+ * chain, or the address valid on it; the fee; enough on that chain for the amount and its fee; the rolling limit),
+ * writes the transfer `AWAITING_SIGNATURE` with the sender's `OUT` row and its fee ledger row, then asks Circle for the
+ * challenge the user signs with the PIN, with `refId` = the transfer id, so Circle's updates lead back to it.
+ *
+ * The fee (phase 2F, spaces-plan §7b) is the one the person was shown: the W17 quote named by `quoteId` while it holds
+ * (15 minutes). Without one, or once it has run out, the fee is worked out again; if it is now higher, nothing is
+ * prepared and `wallet.fee_changed` carries the new fee and a new quote to show first (GW13c). On a chain that can
+ * split, the fee travels in the same signature: one batch on the sender's own wallet pays the payee and Circaso's fee
+ * wallet, all or nothing.
  *
  * A transfer is unique per sender and `Idempotency-Key` for good: a repeated key returns the transfer already
  * prepared, with Circle's same challenge (same Circle key) while it still awaits a signature. The row is claimed before
- * Circle is asked, so two requests with one key never make two transfers. When Circle refuses, the transfer is
- * `FAILED` (with its `TransferFailed`) and its amount goes back to the daily limit; when Circle is down it stays
+ * Circle is asked, so two requests with one key never make two transfers, and the limit is checked again under a lock
+ * on the wallet, so two payments at once can't both use what is left. When Circle refuses, the transfer is `FAILED`
+ * (with its `TransferFailed`), which gives its amount back to the window; when Circle is down it stays
  * `AWAITING_SIGNATURE`, and the same request later asks again.
  */
 class PrepareTransfer(
@@ -54,8 +68,10 @@ class PrepareTransfer(
     private val transactions: TransactionRepository,
     private val wallets: WalletRepository,
     private val transactor: Transactor,
-    private val rules: SenderRules,
-    private val payees: Payees,
+    private val planner: PaymentPlanner,
+    private val limits: Limits,
+    private val quotes: FeeQuotes,
+    private val ledger: FeeLedgerRepository,
     private val custody: StablecoinCustody,
     private val outbox: WalletOutbox,
     private val bus: EventBus,
@@ -64,8 +80,6 @@ class PrepareTransfer(
     private val clock: Clock,
     private val holders: Holders,
     private val approvals: PayoutApprovals,
-    /** Spaces' guard (Spaces phase 3): what a membership payment must be. */
-    private val spaces: SpaceWalletPolicy? = null,
 ) {
     suspend operator fun invoke(command: TransferCommand): Resource<PreparedTransfer> {
         // The wallet it leaves (decision 2026-11-03): the caller's own, or a group wallet they sign for.
@@ -78,41 +92,68 @@ class PrepareTransfer(
         transfers.byKey(holder, command.idempotencyKey)?.let { return resume(it) }
 
         payout(owner, command).let { if (it is Resource.Error) return it }
-        val membership =
-            when (val checked = spacePayment(owner, command)) {
-                is Resource.Success -> checked.data
-                is Resource.Error -> return checked
+        val plan =
+            when (val planned = planner.plan(owner, command, strict = true)) {
+                is Resource.Success -> planned.data
+                is Resource.Error -> return planned
             }
-        val sender =
-            when (val checked = check(holder, command)) {
-                is Resource.Success -> checked.data
-                is Resource.Error -> return checked
+        val fee =
+            when (val locked = feeOf(plan, command)) {
+                is Resource.Success -> locked.data
+                is Resource.Error -> return locked
             }
-        val destination =
-            when (
-                val resolved =
-                    payees.resolve(
-                        holder,
-                        command.payee,
-                        command.blockchain,
-                        command.chatId,
-                        actor = command.senderId,
-                        membership = membership,
-                    )
-            ) {
-                is Resource.Success -> resolved.data
-                is Resource.Error -> return resolved
-            }
-        rules.checkBalance(sender, command.amount).let { if (it is Resource.Error) return it }
-
-        val transfer = transferOf(command, owner, sender, destination)
-        rules.reserve(holder, transfer.createdAt, command.amount).let { if (it is Resource.Error) return it }
-        if (!record(transfer)) {
-            rules.release(holder, transfer.createdAt, command.amount)
-            return resume(checkNotNull(transfers.byKey(holder, command.idempotencyKey)))
+        val amount = command.amount.amountMinor
+        if (amount + fee.amountMinor > plan.balanceMinor) return Resource.error(short(plan, fee))
+        limits.check(plan.allowance, amount, fee.amountMinor, plan.maxAmount()).let {
+            if (it is Resource.Error) return it
         }
-        return challenge(sender, transfer)
+
+        val transfer = transferOf(command, plan, fee)
+        val recorded =
+            when (val written = record(plan, transfer, fee)) {
+                is Resource.Success -> written.data
+                is Resource.Error -> return written
+            }
+        if (!recorded) return resume(checkNotNull(transfers.byKey(holder, command.idempotencyKey)))
+        return challenge(plan.sender, transfer).let {
+            if (it is Resource.Success) Resource.success(it.data.copy(fee = fee)) else it
+        }
     }
+
+    /**
+     * The fee to charge: the named quote's while it holds and is for exactly this payment; otherwise the fee now, as
+     * long as it isn't more than the one shown (none shown is a fee of zero).
+     */
+    private suspend fun feeOf(plan: PaymentPlan, command: TransferCommand): Resource<Fee> {
+        val named = quotes.named(plan, command)
+        if (named != null && quotes.holds(named)) return Resource.success(named.fee)
+        val now = plan.feeFor(command.amount.amountMinor)
+        val shown = named?.fee?.amountMinor ?: 0
+        if (now.amountMinor <= shown) return Resource.success(now)
+        val fresh = quotes.hold(plan, command, now)
+        return Resource.error(
+            WalletError.FeeChanged(
+                Limits.details(
+                    "quotedFeeMinor" to shown.toString(),
+                    "feeMinor" to now.amountMinor.toString(),
+                    "totalMinor" to (command.amount.amountMinor + now.amountMinor).toString(),
+                    "rateBps" to now.rateBps.toString(),
+                    "minimum" to now.minimum.toString(),
+                    "quoteId" to fresh.quoteId.toString(),
+                    "expiresAt" to fresh.expiresAt.toString(),
+                ),
+            ),
+        )
+    }
+
+    private fun short(plan: PaymentPlan, fee: Fee) =
+        WalletError.FundsShort(
+            Limits.details(
+                "balanceMinor" to plan.balanceMinor.toString(),
+                "feeMinor" to fee.amountMinor.toString(),
+                "maxAmountMinor" to plan.maxAmount().toString(),
+            ),
+        )
 
     /**
      * Option A (decision 2026-11-03): money leaves a group wallet only for a payout the group's admins approved, to
@@ -153,41 +194,32 @@ class PrepareTransfer(
     }
 
     /**
-     * A membership payment (SP13, Spaces phase 3) is paid from the personal wallet, into exactly its space and for
-     * exactly its amount, while spaces still holds it (15 minutes). True when this payment is one, so the payee check
-     * lets someone who isn't yet a member pay it.
+     * The transfer, the sender's history row and the fee ledger row, in one transaction under a lock on the wallet,
+     * with the limit checked again inside it; false when the key was already used.
      */
-    private suspend fun spacePayment(owner: WalletOwner, command: TransferCommand): Resource<Boolean> {
-        val paymentId = command.spacePaymentId ?: return Resource.success(false)
-        if (owner !is WalletOwner.Person) return Resource.error(WalletError.SpacePaymentPersonalOnly)
-        val payee = command.payee as? Payee.Space ?: return Resource.error(WalletError.SpacePaymentInvalid)
-        val charge =
-            spaces?.membershipCharge(paymentId, command.senderId) ?: return Resource.error(WalletError.SpacePaymentInvalid)
-        val exact =
-            charge.spaceId == payee.spaceId && command.amount.asset == Asset.USDC &&
-                command.amount.amountMinor == charge.amountMinor
-        return if (exact) Resource.success(true) else Resource.error(WalletError.SpacePaymentInvalid)
-    }
-
-    /** The rules about the sender, before the payee is looked at (Wallet → W4's order). */
-    private suspend fun check(holder: UserId, command: TransferCommand): Resource<Sender> {
-        val sender =
-            when (val found = rules.sender(holder, command.blockchain, signer = command.senderId)) {
-                is Resource.Success -> found.data
-                is Resource.Error -> return found
-            }
-        return when (val amount = rules.checkAmount(holder, command.blockchain, command.amount)) {
-            is Resource.Success -> Resource.success(sender)
-            is Resource.Error -> amount
-        }
-    }
-
-    /** The transfer and the sender's history row, in one transaction; false when the key was already used. */
-    private suspend fun record(transfer: Transfer): Boolean =
-        transactor.run("transfers.prepare") {
-            if (!transfers.insert(transfer)) return@run false
+    private suspend fun record(
+        plan: PaymentPlan,
+        transfer: Transfer,
+        fee: Fee,
+    ): Resource<Boolean> =
+        transactor.attempt("transfers.prepare") {
+            transfers.lockHolder(transfer.senderId)
+            val allowance = limits.allowance(plan.owner, transfer.amount.asset)
+            val fits = limits.check(allowance, transfer.amount.amountMinor, fee.amountMinor, plan.maxAmount())
+            if (fits is Resource.Error) return@attempt fits
+            if (!transfers.insert(transfer)) return@attempt Resource.success(false)
             transactions.insert(outgoingRow(transfer))
-            true
+            ledger.insert(
+                FeeEntry(
+                    transfer.transferId,
+                    transfer.senderId,
+                    transfer.amount,
+                    fee,
+                    FeeState.QUOTED,
+                    transfer.createdAt,
+                ),
+            )
+            Resource.success(true)
         }
 
     /** A transfer already prepared for this key: its challenge again while it can still be signed, else as it is. */
@@ -201,17 +233,40 @@ class PrepareTransfer(
         return challenge(Sender(user, wallet), transfer)
     }
 
+    /** One challenge: a plain transfer, or with a fee the batch that pays the payee and Circaso's fee wallet together. */
     private suspend fun challenge(sender: Sender, transfer: Transfer): Resource<PreparedTransfer> {
-        val request =
-            TransferRequest(
-                blockchain = transfer.blockchain,
-                walletId = transfer.senderWalletId,
-                destinationAddress = transfer.destinationAddress,
-                amount = transfer.amount,
-                idempotencyKey = transfer.idempotencyKey,
-                refId = transfer.transferId.toString(),
-            )
-        return when (val asked = custody.prepareTransfer(sender.user.circleUserId.toString(), request)) {
+        val feeAddress = transfer.feeAddress
+        val asked =
+            if (feeAddress != null && transfer.feeMinor > 0) {
+                custody.prepareSplitTransfer(
+                    sender.user.circleUserId.toString(),
+                    SplitTransferRequest(
+                        blockchain = transfer.blockchain,
+                        walletId = transfer.senderWalletId,
+                        walletAddress = sender.wallet.address,
+                        legs =
+                            listOf(
+                                PaymentLeg(transfer.destinationAddress, transfer.amount),
+                                PaymentLeg(feeAddress, Money(transfer.feeMinor, transfer.amount.asset)),
+                            ),
+                        idempotencyKey = transfer.idempotencyKey,
+                        refId = transfer.transferId.toString(),
+                    ),
+                )
+            } else {
+                custody.prepareTransfer(
+                    sender.user.circleUserId.toString(),
+                    TransferRequest(
+                        blockchain = transfer.blockchain,
+                        walletId = transfer.senderWalletId,
+                        destinationAddress = transfer.destinationAddress,
+                        amount = transfer.amount,
+                        idempotencyKey = transfer.idempotencyKey,
+                        refId = transfer.transferId.toString(),
+                    ),
+                )
+            }
+        return when (asked) {
             is Resource.Success -> Resource.success(PreparedTransfer(transfer, asked.data.challengeId, asked.data.sdk))
             is Resource.Error -> refused(transfer, asked)
         }
@@ -219,8 +274,8 @@ class PrepareTransfer(
 
     /**
      * Circle refused (the same request can't work later): the transfer fails with its `TransferFailed` in the same
-     * transaction, published after the commit, and its amount goes back to the daily limit. Only a transfer still
-     * awaiting its signature is moved, so the event and the give-back happen once.
+     * transaction, published after the commit; a failed transfer no longer counts against the limit, and its fee is
+     * void. Only a transfer still awaiting its signature is moved, so the event happens once.
      */
     private suspend fun refused(transfer: Transfer, error: Resource.Error): Resource<PreparedTransfer> {
         val answer = error.orTransferError()
@@ -228,30 +283,30 @@ class PrepareTransfer(
         val reason = (answer as Resource.Error).error.code
         val change = TransferChange(failureReason = reason, at = clock.instant())
         val event = events.failed(transfer, reason)
-        val failed =
-            transactor.run("transfers.refused") {
-                transfers.move(transfer.transferId, TransferState.FAILED, change, OPEN)?.also {
-                    transactions.moveByTransfer(transfer.transferId, TransferState.FAILED, change)
-                    outbox.write(listOf(event))
-                }
-            } ?: return answer
+        transactor.run("transfers.refused") {
+            transfers.move(transfer.transferId, TransferState.FAILED, change, OPEN)?.also {
+                transactions.moveByTransfer(transfer.transferId, TransferState.FAILED, change)
+                ledger.settle(transfer.transferId, FeeState.VOID, null, null, null, change.at)
+                outbox.write(listOf(event))
+            }
+        } ?: return answer
 
         bus.publish(event)
-        rules.release(failed.senderId, failed.createdAt, failed.amount)
         return answer
     }
 
     private fun transferOf(
         command: TransferCommand,
-        owner: WalletOwner,
-        sender: Sender,
-        destination: Destination,
+        plan: PaymentPlan,
+        fee: Fee,
     ): Transfer {
         val now = clock.instant()
+        val owner = plan.owner
+        val destination = plan.destination
         return Transfer(
             transferId = TransferId.new(),
             senderId = owner.holder,
-            senderWalletId = sender.wallet.circleWalletId,
+            senderWalletId = plan.sender.wallet.circleWalletId,
             blockchain = command.blockchain,
             idempotencyKey = command.idempotencyKey,
             recipientId = destination.recipientId,
@@ -270,6 +325,8 @@ class PrepareTransfer(
             payoutRequestId = command.payoutRequestId,
             fromGroupId = (owner as? WalletOwner.Group)?.chatId,
             toGroupId = destination.toGroupId,
+            feeMinor = if (fee.charged) fee.amountMinor else 0,
+            feeAddress = if (fee.charged) fee.feeAddress else null,
             fromSpaceId = (owner as? WalletOwner.Space)?.spaceId,
             toSpaceId = destination.toSpaceId,
             spacePaymentId = command.spacePaymentId,

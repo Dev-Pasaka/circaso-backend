@@ -20,7 +20,8 @@ class ObjectStoreSpaceMedia(private val store: ObjectStore) : MediaStorage {
 
     override suspend fun sizeOf(key: String): Long? = store.describe(key)?.sizeBytes
 
-    override suspend fun downloadUrl(key: String, expiresIn: Duration): String? = store.presignDownload(key, expiresIn).getOrNull()
+    override suspend fun downloadUrl(key: String, expiresIn: Duration): String? =
+        store.presignDownload(key, expiresIn).getOrNull()
 
     /** A storage failure is logged by its class (never the key) and left for the next sweep. */
     override suspend fun delete(key: String) {

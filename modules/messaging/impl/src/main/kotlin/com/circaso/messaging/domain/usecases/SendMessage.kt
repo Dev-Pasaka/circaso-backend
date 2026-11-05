@@ -1,7 +1,7 @@
 package com.circaso.messaging.domain.usecases
 
-import com.circaso.messaging.api.SpacePrivateChats
 import com.circaso.messaging.api.MessageKind
+import com.circaso.messaging.api.SpacePrivateChats
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
@@ -156,7 +156,11 @@ class SendMessage(
         reach.canReach(sender, other) && reach.canReach(other, sender)
 
     /** A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways. */
-    private suspend fun canWrite(chat: Chat, sender: UserId, other: UserId): Boolean {
+    private suspend fun canWrite(
+        chat: Chat,
+        sender: UserId,
+        other: UserId,
+    ): Boolean {
         val via = chat.viaSpaceId ?: return reachableBothWays(sender, other)
         return spaceChats?.allowed(via, sender, other) == true && !reach.blockedEitherWay(sender, other)
     }

@@ -15,7 +15,10 @@ import com.circaso.messaging.presentation.mappers.parseUserIds
 import com.circaso.messaging.presentation.mappers.toCommand
 import com.circaso.messaging.presentation.mappers.toDto
 import com.circaso.messaging.presentation.services.ChatService
+import com.circaso.shared.Resource
 import com.circaso.shared.Scope
+import com.circaso.shared.SharedError
+import com.circaso.shared.Uuid7
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
 import com.circaso.web.NoBody
@@ -24,9 +27,6 @@ import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
 import com.circaso.web.userId
-import com.circaso.shared.Resource
-import com.circaso.shared.SharedError
-import com.circaso.shared.Uuid7
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
