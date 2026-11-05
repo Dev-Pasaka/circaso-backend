@@ -90,9 +90,11 @@ class AttachmentDataTest {
             assertFalse(repository.keepAsGroupPhoto(pending.attachmentId, now), "only a completed upload")
 
             assertNull(repository.find(photo.attachmentId)?.expiresAt)
+            // A year on, with every pending row stale: the purge takes the abandoned upload, never the photo.
+            val later = now.plus(Duration.ofDays(400))
             assertEquals(
-                emptyList(),
-                repository.purgeable(now.plus(Duration.ofDays(400)), now, 10).map { it.attachmentId },
+                listOf(pending.attachmentId),
+                repository.purgeable(later, later, 10).map { it.attachmentId },
             )
         }
 
