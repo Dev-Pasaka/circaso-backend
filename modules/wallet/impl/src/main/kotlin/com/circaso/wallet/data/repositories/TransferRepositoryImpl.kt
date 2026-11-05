@@ -264,8 +264,17 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         }
 
     private companion object {
-        /** A transfer that may have reached its recipient: signed, on its way or on chain. */
-        val PAID = listOf(TransferState.SUBMITTED, TransferState.CONFIRMED).map { it.name }
+        /**
+         * A transfer that may have reached its recipient: on its way or on chain, or still awaiting a signature or
+         * expired here while the chain already has it (the inbound update can come before the outbound one).
+         */
+        val PAID =
+            listOf(
+                TransferState.AWAITING_SIGNATURE,
+                TransferState.SUBMITTED,
+                TransferState.CONFIRMED,
+                TransferState.EXPIRED,
+            ).map { it.name }
 
         /** A split payment Circle may still settle (`transfers_unsettled_split_idx`). */
         val UNSETTLED = listOf(TransferState.AWAITING_SIGNATURE, TransferState.EXPIRED).map { it.name }

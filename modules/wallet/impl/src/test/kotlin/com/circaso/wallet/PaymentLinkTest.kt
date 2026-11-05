@@ -13,6 +13,8 @@ import com.circaso.wallet.domain.models.Direction
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.ReconcilePass
 import com.circaso.wallet.domain.models.Transfer
+import com.circaso.wallet.domain.models.TransferChange
+import com.circaso.wallet.domain.models.TransferState
 import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.ports.WalletFrame
 import kotlinx.coroutines.runBlocking
@@ -128,6 +130,61 @@ class PaymentLinkTest {
             assertEquals(paying.transferId, incoming().paidByTransferId)
             assertEquals(chat, incoming().chatId)
             assertEquals(paying.transferId, received().single().transferId)
+        }
+
+    @Test
+    fun `money confirmed before the outbound webhook moved the transfer is linked, and the late webhook keeps it`() =
+        runBlocking<Unit> {
+            ready()
+            val prepared = h.pay(amina, Payee.Person(bob), tenUsdc, chatId = chat).data().transfer
+            assertEquals(TransferState.AWAITING_SIGNATURE, transfers().getValue(prepared.transferId).state)
+
+            inbound()
+
+            assertEquals(prepared.transferId, incoming().paidByTransferId)
+            assertEquals(chat, incoming().chatId)
+            assertEquals(prepared.transferId, received().single().transferId)
+
+            h
+                .applyUpdate(
+                    h.update(
+                        h.walletOn(amina),
+                        h.circleUserOf(amina),
+                        CustodyDirection.OUT,
+                        CustodyTransactionState.CONFIRMED,
+                        tenUsdc,
+                        refId = prepared.transferId.toString(),
+                        circleTxId = "tx-out-${prepared.transferId}",
+                        destination = prepared.destinationAddress,
+                    ),
+                ).data()
+
+            assertEquals(TransferState.CONFIRMED, transfers().getValue(prepared.transferId).state)
+            assertEquals(prepared.transferId, incoming().paidByTransferId)
+            assertEquals(1, received().size, "the late outbound webhook tells the recipient nothing more")
+        }
+
+    @Test
+    fun `a transfer marked EXPIRED that the chain shows as paid is linked`() =
+        runBlocking<Unit> {
+            ready()
+            val prepared = h.pay(amina, Payee.Person(bob), tenUsdc, chatId = chat).data().transfer
+            h.transfers.move(prepared.transferId, TransferState.EXPIRED, TransferChange(at = h.clock.instant()))
+
+            inbound()
+
+            assertEquals(prepared.transferId, incoming().paidByTransferId)
+        }
+
+    @Test
+    fun `a failed transfer never pays a row`() =
+        runBlocking<Unit> {
+            ready()
+            paid(CustodyTransactionState.FAILED)
+
+            inbound()
+
+            assertNull(incoming().paidByTransferId)
         }
 
     @Test

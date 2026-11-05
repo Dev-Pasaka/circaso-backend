@@ -145,8 +145,9 @@ interface TransferRepository {
 
     /**
      * The transfers that may have paid [recipientId]'s `IN` row (2026-11-05): from the wallet [senderWalletId] on
-     * [blockchain], of exactly [amountMinor], `SUBMITTED` or `CONFIRMED`, prepared since [createdAfter]; newest first,
-     * at most [limit] (`transfers_paid_to_idx`).
+     * [blockchain], of exactly [amountMinor], prepared since [createdAfter], in any state but `FAILED` (an
+     * `AWAITING_SIGNATURE` or `EXPIRED` one too: Circle's inbound update can arrive before its outbound one moves the
+     * transfer); newest first, at most [limit] (`transfers_paid_to_idx`).
      */
     suspend fun paidTo(
         recipientId: UserId,

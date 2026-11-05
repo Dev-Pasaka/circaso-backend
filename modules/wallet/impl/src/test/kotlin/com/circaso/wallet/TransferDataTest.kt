@@ -334,7 +334,7 @@ class TransferDataTest {
         }
 
     @Test
-    fun `paidTo finds signed transfers to the recipient from one wallet, of the amount, newest first`() =
+    fun `paidTo finds unfailed transfers to the recipient from one wallet, of the amount, newest first`() =
         runBlocking<Unit> {
             val recipient = UserId.new()
 
@@ -350,22 +350,27 @@ class TransferDataTest {
                 senderWalletId = wallet,
                 amount = Money(amount, Asset.USDC),
             )
+            val oldest = to(now.minusSeconds(180), TransferState.EXPIRED)
+            val awaiting = to(now.minusSeconds(120), TransferState.AWAITING_SIGNATURE)
             val older = to(now.minusSeconds(60), TransferState.CONFIRMED)
             val newer = to(now)
             val noise =
                 listOf(
-                    to(now, TransferState.AWAITING_SIGNATURE),
                     to(now, TransferState.FAILED),
                     to(now, wallet = "w-2"),
                     to(now, amount = 1),
                     to(now.minusSeconds(90_000)),
                     transfer(),
                 )
-            (listOf(older, newer) + noise).forEach { transfers.insert(it) }
+            (listOf(oldest, awaiting, older, newer) + noise).forEach { transfers.insert(it) }
 
             val found = transfers.paidTo(recipient, "w-1", "BASE-SEPOLIA", 20_000_000, now.minusSeconds(86_400), 5)
 
-            assertEquals(listOf(newer.transferId, older.transferId), found.map { it.transferId })
+            assertEquals(
+                listOf(newer, older, awaiting, oldest).map { it.transferId },
+                found.map { it.transferId },
+                "every state but FAILED, newest first",
+            )
         }
 
     @Test

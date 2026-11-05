@@ -169,7 +169,7 @@ class MemoryTransferRepository : TransferRepository {
                     it.senderWalletId == senderWalletId &&
                     it.blockchain == blockchain &&
                     it.amount.amountMinor == amountMinor &&
-                    it.state in setOf(TransferState.SUBMITTED, TransferState.CONFIRMED) &&
+                    it.state != TransferState.FAILED &&
                     !it.createdAt.isBefore(createdAfter)
             }.sortedByDescending { it.createdAt }
             .take(limit)
