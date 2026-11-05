@@ -349,6 +349,26 @@ class CircleCustody internal constructor(
         return Resource.success(listed.take(limit))
     }
 
+    /**
+     * `GET /v1/w3s/transactions?txHash=…` with the API key alone: Circle lists the record on every wallet the chain
+     * transaction touched (the sender's contract execution, each receiving wallet's inbound transfer, Circaso's fee
+     * wallet included), whoever controls them.
+     */
+    override suspend fun chainTransaction(blockchain: String, txHash: String): Resource<List<CustodyTransaction>> {
+        if (txHash.isEmpty()) return Resource.success(emptyList())
+        val path = "/v1/w3s/transactions?txHash=${encode(txHash)}&blockchain=${encode(blockchain)}&pageSize=$PAGE_SIZE"
+        val reply = client.get<TransactionsData>(path, "list_chain_transaction")
+        if (reply !is CircleReply.Ok) return CircleErrors.failure(reply, "list_chain_transaction")
+        val listed = mutableListOf<CustodyTransaction>()
+        for (payload in reply.data.transactions) {
+            when (val translated = transactions.translate(payload)) {
+                is Resource.Success -> translated.data?.let { listed += it }
+                is Resource.Error -> if (translated.error is IntegrationError.Unavailable) return translated
+            }
+        }
+        return Resource.success(listed)
+    }
+
     /** Circle's list may leave out the user on each transaction; it is the user we asked about. */
     private fun CustodyTransaction.withUser(circleUserId: String) =
         if (this.circleUserId.isEmpty()) copy(circleUserId = circleUserId) else this

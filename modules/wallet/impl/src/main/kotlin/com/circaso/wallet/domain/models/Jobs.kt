@@ -31,6 +31,12 @@ data class JobSettings(
     val dailyLookback: Duration = Duration.ofHours(26),
     /** The most transactions read from Circle per user in one pass. */
     val transactionsPerUser: Int = 100,
+    /** `wallet.unsettled-splits` runs this often. */
+    val splitInterval: Duration = Duration.ofMinutes(2),
+    /** A split payment no Circle transaction has moved, prepared at least this long ago, is looked for at Circle. */
+    val splitAfter: Duration = Duration.ofMinutes(2),
+    /** Older than this, an unsettled split payment is no longer looked for (an expired one was never signed). */
+    val splitMaxAge: Duration = Duration.ofDays(3),
 )
 
 /** Which reconciliation pass runs: the frequent one over active users, or the daily one over the day's activity. */

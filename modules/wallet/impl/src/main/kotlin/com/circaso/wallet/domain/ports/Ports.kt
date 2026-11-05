@@ -31,6 +31,12 @@ interface WalletWarnings {
     /** An update carries a transfer's `refId` but comes from another wallet than the transfer's; it isn't applied. */
     fun refIdOfAnotherWallet(transferId: String, circleWalletId: String)
 
+    /**
+     * A split payment's batch matched [candidates] unsettled transfers of its wallet by its legs (the same payee,
+     * amount and fee); the newest was taken.
+     */
+    fun splitPaymentAmbiguous(circleTxId: String, candidates: Int) {}
+
     /** A transfer is still `SUBMITTED` an hour after it was prepared (`wallet.stuck-transfers`); said once. */
     fun transferStuck(transferId: String, blockchain: String)
 

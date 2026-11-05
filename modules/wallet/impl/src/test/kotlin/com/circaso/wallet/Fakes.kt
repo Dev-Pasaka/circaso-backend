@@ -242,6 +242,22 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         ledger[transaction.circleTxId] = transaction
     }
 
+    /** Circle's other records of a chain transaction (a batch's inbound legs), by its hash; see [recordLeg]. */
+    val chainLegs = ConcurrentHashMap<String, List<CustodyTransaction>>()
+
+    /** Circle records [leg] as part of the chain transaction [txHash]. */
+    fun recordLeg(txHash: String, leg: CustodyTransaction) {
+        chainLegs.merge(txHash, listOf(leg)) { old, new -> old + new }
+    }
+
+    override suspend fun chainTransaction(blockchain: String, txHash: String): Resource<List<CustodyTransaction>> =
+        call("chainTransaction") {
+            Resource.success(
+                chainLegs[txHash].orEmpty() +
+                    ledger.values.filter { it.txHash == txHash && it.blockchain == blockchain },
+            )
+        }
+
     override suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean> =
         call("validateAddress") {
             val shape = if (blockchain.startsWith("SOL")) SOLANA_ADDRESS else EVM_ADDRESS
@@ -372,6 +388,13 @@ class RecordingWarnings : WalletWarnings {
     val gasOverShare: MutableList<Pair<String, Int>> = CopyOnWriteArrayList()
 
     val feesNotTaken: MutableList<Pair<String, String>> = CopyOnWriteArrayList()
+
+    /** (Circle transaction id, candidates) of every split payment that matched more than one transfer. */
+    val ambiguousSplits: MutableList<Pair<String, Int>> = CopyOnWriteArrayList()
+
+    override fun splitPaymentAmbiguous(circleTxId: String, candidates: Int) {
+        ambiguousSplits += circleTxId to candidates
+    }
 
     override fun gasAboveShare(
         transferId: String,

@@ -120,6 +120,15 @@ interface StablecoinCustody {
         limit: Int,
     ): Resource<List<CustodyTransaction>>
 
+    /**
+     * Every record the vendor keeps of the one chain transaction [txHash] on [blockchain], across all wallets, the
+     * developer's own included: a split payment's batch is one outgoing [CustodyOperation.CONTRACT_EXECUTION] on the
+     * sender's wallet, and each leg reaches a receiving vendor wallet as its own incoming transfer. Asked with the
+     * developer's key, not a user's. Empty where the vendor can't say.
+     */
+    suspend fun chainTransaction(blockchain: String, txHash: String): Resource<List<CustodyTransaction>> =
+        Resource.success(emptyList())
+
     /** Whether [address] is a valid address on [blockchain]. */
     suspend fun validateAddress(blockchain: String, address: String): Resource<Boolean>
 
@@ -260,7 +269,13 @@ data class CustodyTransaction(
     val updatedAt: Instant,
     /** What the network charged, in the chain's native coin as a decimal ("0.00000133"); empty until it is known. */
     val networkFee: String = "",
+    /** A token transfer, or a contract call (a split payment's batch), which has no token or amount of its own. */
+    val operation: CustodyOperation = CustodyOperation.TRANSFER,
+    /** The wallet is one the developer controls (Circaso's fee wallets), not a user's. */
+    val developerWallet: Boolean = false,
 )
+
+enum class CustodyOperation { TRANSFER, CONTRACT_EXECUTION }
 
 enum class CustodyDirection { IN, OUT }
 

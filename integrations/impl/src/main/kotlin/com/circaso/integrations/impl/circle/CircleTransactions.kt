@@ -1,6 +1,7 @@
 package com.circaso.integrations.impl.circle
 
 import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyOperation
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.IntegrationError
@@ -13,20 +14,18 @@ import java.math.RoundingMode
 import java.time.Instant
 
 /**
- * Circle's transaction (the API's and the webhook's, which share a shape) in our words. Only USDC on a supported
- * chain is followed, so a transaction in any other token translates to null and is left alone.
+ * Circle's transaction (the API's and the webhook's, which share most of a shape) in our words. Only USDC on a
+ * supported chain is followed, so a transaction in any other token translates to null and is left alone.
  */
 internal class CircleTransactions(private val tokens: CircleTokens, private val settings: CircleSettings) {
     private val log = LoggerFactory.getLogger(CircleTransactions::class.java)
 
     suspend fun translate(transaction: TransactionPayload): Resource<CustodyTransaction?> {
         val direction = directionOf(transaction.transactionType)
-        if (transaction.operation == CONTRACT_EXECUTION && transaction.tokenId.isEmpty()) {
-            return Resource.success(execution(transaction, direction))
-        }
-        if (transaction.id.isEmpty() || direction == null || transaction.tokenId.isEmpty()) {
-            return unreadable("id, type or token")
-        }
+        // No token: a contract execution. The webhook's body may not say `operation` (the API's does), so the
+        // missing token is what tells; it was read as unreadable, and Circle retried it for nothing (2026-11-05).
+        if (transaction.tokenId.isEmpty()) return Resource.success(execution(transaction, direction))
+        if (transaction.id.isEmpty() || direction == null) return unreadable("id or type")
 
         val token =
             when (val resolved = tokens.resolve(transaction.tokenId)) {
@@ -39,50 +38,46 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
         val amountMinor =
             transaction.amounts.firstOrNull()?.let { minorUnits(it, Asset.USDC) } ?: return unreadable("amount")
         return Resource.success(
-            CustodyTransaction(
-                circleTxId = transaction.id,
-                circleUserId = transaction.userId,
-                walletId = transaction.walletId,
-                blockchain = transaction.blockchain,
-                direction = direction,
-                state = stateOf(transaction.state),
-                amount = Money(amountMinor, Asset.USDC),
-                sourceAddress = transaction.sourceAddress,
-                destinationAddress = transaction.destinationAddress,
-                refId = transaction.refId,
-                txHash = transaction.txHash,
-                failureReason = transaction.errorReason,
-                updatedAt = instantOf(transaction.updateDate) ?: instantOf(transaction.createDate) ?: Instant.EPOCH,
-                networkFee = transaction.networkFee,
-            ),
+            transaction.toCustody(direction, Money(amountMinor, Asset.USDC), CustodyOperation.TRANSFER),
         )
     }
 
     /**
      * A contract execution has no token or amount of its own. Ours (a split payment: the payee and Circaso's fee in
-     * one batch, phase 2F) is outbound and carries our `refId`, so it leads back to its transfer, which knows the
-     * amounts; it is reported with a zero amount. The legs reach the receiving wallets as ordinary inbound
-     * transfers. Any other contract execution isn't a payment we follow.
+     * one batch, phase 2F) is outbound from the sender's wallet; it is reported with a zero amount, and the wallet
+     * finds its transfer (Circle doesn't keep the `refId` we send with a user's contract execution, so usually by
+     * its legs, which reach the receiving wallets as ordinary inbound transfers in the same chain transaction). An
+     * inbound one, or one without an id, isn't a payment we follow.
      */
     private fun execution(transaction: TransactionPayload, direction: CustodyDirection?): CustodyTransaction? {
-        if (transaction.id.isEmpty() || direction != CustodyDirection.OUT || transaction.refId.isEmpty()) return null
-        return CustodyTransaction(
-            circleTxId = transaction.id,
-            circleUserId = transaction.userId,
-            walletId = transaction.walletId,
-            blockchain = transaction.blockchain,
-            direction = direction,
-            state = stateOf(transaction.state),
-            amount = Money(0, Asset.USDC),
-            sourceAddress = transaction.sourceAddress,
-            destinationAddress = transaction.destinationAddress,
-            refId = transaction.refId,
-            txHash = transaction.txHash,
-            failureReason = transaction.errorReason,
-            updatedAt = instantOf(transaction.updateDate) ?: instantOf(transaction.createDate) ?: Instant.EPOCH,
-            networkFee = transaction.networkFee,
-        )
+        // Every inbound record is a token transfer, so a token-less one that doesn't say its type is outbound.
+        val way = direction ?: CustodyDirection.OUT.takeIf { transaction.transactionType.isEmpty() }
+        if (transaction.id.isEmpty() || way != CustodyDirection.OUT) return null
+        return transaction.toCustody(way, Money(0, Asset.USDC), CustodyOperation.CONTRACT_EXECUTION)
     }
+
+    private fun TransactionPayload.toCustody(
+        direction: CustodyDirection,
+        amount: Money,
+        operation: CustodyOperation,
+    ) = CustodyTransaction(
+        circleTxId = id,
+        circleUserId = userId,
+        walletId = walletId,
+        blockchain = blockchain,
+        direction = direction,
+        state = stateOf(state),
+        amount = amount,
+        sourceAddress = sourceAddress,
+        destinationAddress = destinationAddress,
+        refId = refId,
+        txHash = txHash,
+        failureReason = errorReason,
+        updatedAt = instantOf(updateDate) ?: instantOf(createDate) ?: Instant.EPOCH,
+        networkFee = networkFee,
+        operation = operation,
+        developerWallet = custodyType == DEVELOPER,
+    )
 
     private fun stateOf(state: String): CustodyTransactionState =
         when (state) {
@@ -124,7 +119,7 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
     }
 
     companion object {
-        private const val CONTRACT_EXECUTION = "CONTRACT_EXECUTION"
+        private const val DEVELOPER = "DEVELOPER"
 
         /** "20.5" USDC as 20 500 000 minor units; null if it isn't a number or has more decimals than [asset]. */
         fun minorUnits(decimal: String, asset: Asset): Long? =

@@ -1,6 +1,8 @@
 package com.circaso.integrations.impl.circle
 
 import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyOperation
+import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PaymentLeg
 import com.circaso.integrations.api.SplitTransferRequest
@@ -22,7 +24,7 @@ import kotlin.test.assertTrue
 /**
  * Phase 2F's one-challenge payment with Circaso's fee (fee spike, 2026-11-03): `executeBatch` on the sender's own
  * smart-contract wallet with one USDC `transfer` per leg, estimated first as the user; Solana can't; and the batch's
- * contract-execution update leads back to its transfer by `refId`.
+ * contract-execution update is read as one, whether or not Circle kept our `refId` (it doesn't, 2026-11-05).
  */
 class CircleSplitTest {
     private val circle = FakeCircle()
@@ -133,7 +135,7 @@ class CircleSplitTest {
         }
 
     @Test
-    fun `our batch's contract-execution update leads back to its transfer, and someone else's is ignored`() =
+    fun `a batch's contract-execution update is read as one, with or without a refId, and an inbound one is ignored`() =
         runBlocking<Unit> {
             val transactions = CircleTransactions(CircleTokens(circle.client), circle.settings)
             val ours =
@@ -156,6 +158,45 @@ class CircleSplitTest {
             assertEquals("transfer-1", update.refId)
             assertEquals("0.00000133", update.networkFee)
             assertEquals(0L, update.amount.amountMinor, "the transfer knows the amounts")
-            assertNull(transactions.translate(ours.copy(refId = "")).data(), "not one of ours")
+            assertEquals(CustodyOperation.CONTRACT_EXECUTION, update.operation)
+
+            // Circle keeps no refId on a user's contract execution (2026-11-05); the wallet matches it by its legs.
+            val withoutRef = transactions.translate(ours.copy(refId = "")).data()!!
+            assertEquals("", withoutRef.refId)
+            assertEquals(CustodyOperation.CONTRACT_EXECUTION, withoutRef.operation)
+            assertNull(transactions.translate(ours.copy(transactionType = "INBOUND")).data(), "not a payment of ours")
+            assertNull(transactions.translate(ours.copy(id = "")).data())
+        }
+
+    @Test
+    fun `chainTransaction lists every wallet's record of one chain transaction with the API key alone`() =
+        runBlocking<Unit> {
+            circle.reply("GET /v1/w3s/tokens/${FakeCircle.USDC_TOKEN_ID}", FakeCircle.USDC_TOKEN_REPLY)
+            circle.reply(
+                "GET /v1/w3s/transactions",
+                """{"data":{"transactions":[${CircleRecords.PAYEE_INBOUND},${CircleRecords.FEE_INBOUND},""" +
+                    "${CircleRecords.SENDER_EXECUTION}]}}",
+            )
+
+            val records = custody.chainTransaction("BASE-SEPOLIA", CircleRecords.TX_HASH).data()
+
+            val request = circle.requests("GET /v1/w3s/transactions").single()
+            assertEquals(CircleRecords.TX_HASH, request.url.parameters["txHash"])
+            assertEquals("BASE-SEPOLIA", request.url.parameters["blockchain"])
+            assertNull(request.headers["X-User-Token"], "asked as the developer, so every wallet is listed")
+            assertEquals(3, records.size)
+            val payee = records.single { it.walletId == "6e62c682-7770-5768-aeed-0b2a59644b24" }
+            assertEquals(CustodyDirection.IN, payee.direction)
+            assertEquals(7_699_911L, payee.amount.amountMinor)
+            assertEquals("0x893a99d22726c28d82469c226efd1a685ca0c570", payee.sourceAddress)
+            val fee = records.single { it.walletId == "d4eac6e0-25e4-5fb7-8dc6-deb56bcf9864" }
+            assertTrue(fee.developerWallet)
+            assertEquals(100_000L, fee.amount.amountMinor)
+            val execution = records.single { it.operation == CustodyOperation.CONTRACT_EXECUTION }
+            assertEquals(CustodyDirection.OUT, execution.direction)
+            assertEquals(CustodyTransactionState.CONFIRMED, execution.state)
+            assertEquals(CircleRecords.TX_HASH, execution.txHash)
+            assertEquals("0.0000018510681", execution.networkFee)
+            assertEquals("", execution.refId)
         }
 }

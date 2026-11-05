@@ -104,6 +104,42 @@ class TransferDataTest {
         )
 
     @Test
+    fun `split payments no Circle transaction has moved are found, and once moved by Circle's id instead`() =
+        runBlocking<Unit> {
+            fun split(created: Instant, wallet: String = "w-1") =
+                transfer().copy(createdAt = created, senderWalletId = wallet, feeMinor = 100_000, feeAddress = "0xfee")
+            val awaiting = split(now.minusSeconds(600))
+            val expired = split(now.minusSeconds(1_200))
+            val otherWallet = split(now.minusSeconds(300), wallet = "w-2")
+            val plain = transfer().copy(createdAt = now.minusSeconds(600))
+            listOf(awaiting, expired, otherWallet, plain).forEach { transfers.insert(it) }
+            transfers.move(expired.transferId, TransferState.EXPIRED, TransferChange(at = now))
+
+            assertEquals(
+                listOf(otherWallet, awaiting, expired).map { it.transferId },
+                transfers.unsettledSplits(null, Instant.EPOCH, now, 10).map { it.transferId },
+                "newest first, a plain transfer never",
+            )
+            assertEquals(
+                listOf(awaiting, expired).map { it.transferId },
+                transfers.unsettledSplits("w-1", Instant.EPOCH, now, 10).map { it.transferId },
+            )
+
+            transfers.move(
+                awaiting.transferId,
+                TransferState.CONFIRMED,
+                TransferChange(circleTxId = "circle-tx-1", txHash = "0xhash", at = now),
+            )
+
+            assertEquals(awaiting.transferId, transfers.byCircleTx("w-1", "circle-tx-1")?.transferId)
+            assertNull(transfers.byCircleTx("w-2", "circle-tx-1"), "only the sending wallet's")
+            assertEquals(
+                listOf(expired.transferId),
+                transfers.unsettledSplits("w-1", Instant.EPOCH, now, 10).map { it.transferId },
+            )
+        }
+
+    @Test
     fun `the jobs find open transfers by state and age, newest first, and the parties of recent history`() =
         runBlocking<Unit> {
             val old = transfer().copy(createdAt = now.minusSeconds(3_600))

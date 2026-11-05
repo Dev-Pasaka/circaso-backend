@@ -128,6 +128,26 @@ class MemoryTransferRepository : TransferRepository {
             }.sortedByDescending { it.createdAt }
             .take(limit)
 
+    override suspend fun byCircleTx(senderWalletId: String, circleTxId: String): Transfer? =
+        rows.values.firstOrNull { it.senderWalletId == senderWalletId && it.circleTxId == circleTxId }
+
+    override suspend fun unsettledSplits(
+        senderWalletId: String?,
+        createdAfter: Instant,
+        createdBefore: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        rows.values
+            .filter {
+                it.feeAddress != null &&
+                    it.circleTxId == null &&
+                    it.state in setOf(TransferState.AWAITING_SIGNATURE, TransferState.EXPIRED) &&
+                    (senderWalletId == null || it.senderWalletId == senderWalletId) &&
+                    !it.createdAt.isBefore(createdAfter) &&
+                    it.createdAt.isBefore(createdBefore)
+            }.sortedByDescending { it.createdAt }
+            .take(limit)
+
     override suspend fun lockHolder(holder: UserId) = Unit
 
     override suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer> =
