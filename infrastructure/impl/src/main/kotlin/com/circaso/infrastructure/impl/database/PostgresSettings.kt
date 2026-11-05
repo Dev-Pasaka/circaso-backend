@@ -16,22 +16,62 @@ data class PoolSettings(
     val user: String,
     val password: String,
     val maxSize: Int,
+    /** Connections opened at start (`PostgresPools.open`), before the first request. */
     val initialSize: Int,
     val statementTimeout: Duration,
     val slowAfter: Duration,
     /** How long a transaction waits for a free connection before it fails as `service.unavailable`. */
     val maxAcquireTime: Duration,
+    /**
+     * The fewest connections the pool keeps open. One that retires (past its [PoolTimings.maxLifeTime], or a dead
+     * socket) is replaced in the background, so a request never pays for making one: about 20 ms for the connection
+     * and more for its cold catalog cache.
+     */
+    val minIdle: Int = initialSize,
 ) {
+    init {
+        require(maxSize > 0) { "$name: maxSize must be positive (was $maxSize)" }
+        require(initialSize in 0..maxSize) { "$name: initialSize must be within 0..$maxSize (was $initialSize)" }
+        require(minIdle in 0..maxSize) { "$name: minIdle must be within 0..$maxSize (was $minIdle)" }
+    }
+
     // The password is a secret: never in a log line, even if something prints this object.
     override fun toString(): String = "PoolSettings(name=$name, user=$user, maxSize=$maxSize)"
 }
 
 /** The pool values both pools share; each can be overridden by its `DATABASE_POOL_*` setting. */
 data class PoolTimings(
-    val maxIdleTime: Duration = Duration.ofMinutes(10),
-    /** Below any proxy or firewall idle cut. */
+    /**
+     * How long a connection may sit unused before it is closed; null (the default) never closes an idle one. The pools
+     * reach Postgres over the internal Docker network, where nothing cuts an idle socket, and a pool that shrank while
+     * quiet would make its next requests pay for new connections. Behind a pooler or firewall that cuts idle clients,
+     * set `DATABASE_POOL_MAX_IDLE_MS` below its cut.
+     */
+    val maxIdleTime: Duration? = null,
+    /**
+     * A connection's longest life, so none outlives a server-side change or a half-open socket for long. Each
+     * connection's own limit is up to [LIFETIME_SPREAD] of this shorter, so the connections opened together at start
+     * don't all retire in the same sweep.
+     */
     val maxLifeTime: Duration = Duration.ofMinutes(30),
-)
+    /**
+     * How often each pool, in the background, closes the idle connections past their life and opens new ones up to its
+     * `minIdle`.
+     */
+    val maintenanceInterval: Duration = Duration.ofSeconds(5),
+) {
+    init {
+        require(maxLifeTime > Duration.ZERO) { "maxLifeTime must be positive (was $maxLifeTime)" }
+        require(
+            maintenanceInterval > Duration.ZERO,
+        ) { "maintenanceInterval must be positive (was $maintenanceInterval)" }
+    }
+
+    companion object {
+        /** The most a connection's own life falls short of [maxLifeTime], as a share of it. */
+        const val LIFETIME_SPREAD = 0.2
+    }
+}
 
 /** The `Migrate` step's direct JDBC connection, used only by Flyway and the schema and role setup. */
 data class MigrationSettings(val url: String, val user: String, val password: String) {
@@ -66,9 +106,14 @@ class PostgresSettings(config: Config, secrets: Secrets) {
 
     val timings: PoolTimings =
         PoolTimings(
-            maxIdleTime = pool.millis("max-idle-ms", PoolTimings().maxIdleTime),
+            // Unset, 0 or negative: an idle connection is never closed.
+            maxIdleTime = pool.int("max-idle-ms", 0).takeIf { it > 0 }?.let { Duration.ofMillis(it.toLong()) },
             maxLifeTime = pool.millis("max-life-ms", PoolTimings().maxLifeTime),
+            maintenanceInterval = pool.millis("maintenance-ms", PoolTimings().maintenanceInterval),
         )
+
+    private val appSize = pool.int("app-size", 10)
+    private val jobsSize = pool.int("jobs-size", 3)
 
     /** Requests and socket frames: the hot path. */
     val app: PoolSettings =
@@ -76,8 +121,10 @@ class PostgresSettings(config: Config, secrets: Secrets) {
             name = "circaso-app",
             user = database.string("user", "circaso_app"),
             password = secrets.get("database.password").orEmpty(),
-            maxSize = pool.int("app-size", 10),
-            initialSize = 2,
+            maxSize = appSize,
+            // Full from the start and kept full, so a request always finds a warm connection.
+            initialSize = pool.int("app-initial-size", appSize).coerceIn(0, appSize),
+            minIdle = pool.int("app-min-idle", appSize).coerceIn(0, appSize),
             statementTimeout = Duration.ofSeconds(5),
             slowAfter = Duration.ofMillis(100),
             // A request fails fast (503) rather than piling up.
@@ -90,8 +137,9 @@ class PostgresSettings(config: Config, secrets: Secrets) {
             name = "circaso-jobs",
             user = database.string("jobs-user", "circaso_jobs"),
             password = secrets.get("database.jobs-password").orEmpty(),
-            maxSize = pool.int("jobs-size", 3),
-            initialSize = 1,
+            maxSize = jobsSize,
+            initialSize = pool.int("jobs-initial-size", jobsSize).coerceIn(0, jobsSize),
+            minIdle = pool.int("jobs-min-idle", jobsSize).coerceIn(0, jobsSize),
             statementTimeout = Duration.ofSeconds(60),
             slowAfter = Duration.ofSeconds(5),
             // Background work can wait out a burst, but less than the consumers' 30 s claimIdle, so a message is never

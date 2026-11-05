@@ -61,8 +61,20 @@ interface Database {
      *
      * [operation] names the work in the per-transaction log line (`accounts.find`): a string literal, never a value
      * (Konsist checks it). A failed statement surfaces as a [DatabaseException], which never carries a bound value.
+     *
+     * [durable] `false` lets the commit return before its WAL record is flushed to disk (`SET LOCAL
+     * synchronous_commit = off`, for this transaction only, sent in the same round trip as its start). The commit
+     * stays atomic and the database stays consistent, but if the server crashes in the next few hundred milliseconds
+     * the transaction can be lost although the caller was told it committed. Use it **only for data that can be
+     * rebuilt or is harmless to lose**: presence, typing, read markers, last-seen. **Never** for money, messages,
+     * accounts, keys, an outbox write, or anything a user was promised. A durable call that joins a relaxed
+     * transaction makes the whole transaction durable again; a relaxed call that joins a durable one stays durable.
      */
-    suspend fun <T> tx(operation: String, block: suspend R2dbcTransaction.() -> T): T
+    suspend fun <T> tx(
+        operation: String,
+        durable: Boolean = true,
+        block: suspend R2dbcTransaction.() -> T,
+    ): T
 
     /**
      * Writes [envelope] to the module's `<schema>.outbox` in the transaction that is open (it must be called inside

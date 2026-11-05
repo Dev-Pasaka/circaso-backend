@@ -203,6 +203,8 @@ class TransactionsTest {
                         .map { n ->
                             async {
                                 db.tx("test") {
+                                    // The connection is borrowed by the first statement, not when the block starts.
+                                    exec("SELECT 1")
                                     most.accumulateAndGet(running.incrementAndGet(), ::maxOf)
                                     exec("SELECT pg_sleep(0.4)")
                                     running.decrementAndGet()
