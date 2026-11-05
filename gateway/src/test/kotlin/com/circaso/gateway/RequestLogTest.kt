@@ -7,6 +7,7 @@ import com.circaso.web.installJson
 import com.circaso.web.installStatusPages
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
 import io.ktor.server.response.respondText
@@ -97,5 +98,30 @@ class RequestLogTest {
             assertEquals(HttpStatusCode.NotFound, response.status)
             assertEquals(listOf(UNMATCHED_ROUTE), routes(), "one line per request")
             assertTrue("http.status=404" in captured.list.single().text(), captured.list.single().text())
+        }
+
+    @Test
+    fun `the line says where the request came from and on what device`() =
+        testApplication {
+            application {
+                install(RequestLog)
+                routing { get("/v1/chats") { call.respondText("ok") } }
+            }
+
+            client.get("/v1/chats") {
+                header("CF-Connecting-IP", "203.0.113.9")
+                header("CF-IPCountry", "KE")
+                header("X-Client-Version", "android/1.0.0")
+                header(io.ktor.http.HttpHeaders.UserAgent, "Circaso/1.0.0 (Android 15; Xiaomi 23129RAA4G)")
+            }
+
+            val line = captured.list.single().text()
+            listOf(
+                "client.ip=203.0.113.9",
+                "client.country=KE",
+                "client.version=android/1.0.0",
+                "client.device=Android 15 · Xiaomi 23129RAA4G",
+                "client.ua=Circaso/1.0.0 (Android 15; Xiaomi 23129RAA4G)",
+            ).forEach { assertTrue(it in line, "missing $it in: $line") }
         }
 }

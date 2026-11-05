@@ -21,7 +21,8 @@ private val Logged = AttributeKey<Unit>("circaso.request.logged")
 internal const val UNMATCHED_ROUTE = "(unmatched)"
 
 /**
- * One line per request: method, route, status, duration and the user id. The request id is already in every line
+ * One line per request: method, route, status, duration, the user id, and who sent it (address, country, app version,
+ * device and User-Agent; see [clientFields]). The request id is already in every line
  * through the MDC. The route is the matched route's template (`/v1/handles/{handle}/availability`), never the
  * concrete path or the query string, because a path parameter can be a handle, an invite token or a phone number.
  * Never a token, a phone number or an amount.
@@ -40,6 +41,7 @@ val RequestLog =
             call.attributes.put(Logged, Unit)
             val started = call.attributes.getOrNull(StartedAt) ?: return@on
             val status = call.response.status()?.value ?: 0
+            val client = call.clientFields()
             val line =
                 arrayOf(
                     kv("kind", "request"),
@@ -48,6 +50,11 @@ val RequestLog =
                     kv("http.status", status),
                     kv("durationMs", (System.nanoTime() - started) / 1_000_000),
                     kv("userId", call.principalOrNull()?.userId?.toString()),
+                    kv("client.ip", client.ip),
+                    kv("client.country", client.country),
+                    kv("client.version", client.version),
+                    kv("client.device", client.device),
+                    kv("client.ua", client.userAgent),
                 )
             if (status >= 500) log.warn("request", *line) else log.info("request", *line)
         }

@@ -10,7 +10,20 @@ import net.logstash.logback.marker.ObjectAppendingMarker
  */
 class LineFormatter(private val palette: Palette) {
     private val consumed =
-        setOf("kind", "http.method", "http.route", "url.path", "http.status", "durationMs", "error.code")
+        setOf(
+            "kind",
+            "http.method",
+            "http.route",
+            "url.path",
+            "http.status",
+            "durationMs",
+            "error.code",
+            "client.ip",
+            "client.country",
+            "client.version",
+            "client.device",
+            "client.ua",
+        )
 
     fun level(event: ILoggingEvent): String {
         val padded = event.level.toString().padEnd(5)
@@ -30,7 +43,6 @@ class LineFormatter(private val palette: Palette) {
         kind?.let { parts += tag(it) }
         fields["http.method"]?.let { parts += method(it.toString()) }
         (fields["http.route"] ?: fields["url.path"])?.let { parts += it.toString() }
-        if (kind == "request" || kind == "response") parts += clientInfo(event)
         fields["http.status"]?.let { parts += status(it.toString()) }
         fields["durationMs"]?.let { parts += duration(it.toString()) }
 
@@ -42,6 +54,7 @@ class LineFormatter(private val palette: Palette) {
                 .filterKeys { it !in consumed }
                 .map { (key, value) -> palette.gray("$key=${Redaction.mask(shorten(key, value.toString()))}") }
         parts += metadata
+        if (kind == "request" || kind == "response") parts += clientInfo(event, fields)
         fields["error.code"]?.let { parts += levelColor(event.level, it.toString()) }
 
         return parts.filter { it.isNotBlank() }.joinToString(" ")
@@ -97,13 +110,20 @@ class LineFormatter(private val palette: Palette) {
         }
     }
 
-    private fun clientInfo(event: ILoggingEvent): String {
+    /**
+     * Where the request came from, at the end of its line: `ip=… KE` then the device and app version, and the raw
+     * User-Agent only when no device could be read from it. Fields first, the MDC as a fallback.
+     */
+    private fun clientInfo(event: ILoggingEvent, fields: Map<String, Any?>): String {
         val mdc = event.mdcPropertyMap
-        val where = listOfNotNull(mdc["client.ip"], mdc["client.country"]).joinToString(" ")
-        return listOf(
-            where,
-            mdc["client.version"].orEmpty(),
-        ).filter { it.isNotBlank() }.joinToString(" ") { palette.gray(it) }
+
+        fun pick(key: String): String? =
+            (fields[key]?.toString() ?: mdc[key])?.takeIf { it.isNotBlank() && it != "null" }
+        val ip = pick("client.ip")?.let { ip -> "ip=$ip" + (pick("client.country")?.let { " $it" } ?: "") }
+        val device = pick("client.device")?.let { "device=\"$it\"" }
+        val version = pick("client.version")?.let { "app=$it" }
+        val ua = if (device == null) pick("client.ua")?.let { "ua=\"${it.take(UA_ON_CONSOLE)}\"" } else null
+        return listOfNotNull(ip, device, version, ua).joinToString(" ") { palette.gray(Redaction.mask(it)) }
     }
 
     /** Ids are shortened only on the console; JSON keeps them whole so they can be searched. */
@@ -126,6 +146,8 @@ class LineFormatter(private val palette: Palette) {
         }
 
     companion object {
+        private const val UA_ON_CONSOLE = 120
+
         /** `com.circaso.identity.domain.X` → `identity`; anything else keeps its last segment. */
         fun moduleOf(loggerName: String): String {
             val segments = loggerName.split('.')
