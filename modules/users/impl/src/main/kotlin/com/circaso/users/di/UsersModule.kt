@@ -9,6 +9,7 @@ import com.circaso.infrastructure.api.ObjectStores
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.users.api.ContactBook
@@ -105,6 +106,7 @@ import com.circaso.users.presentation.services.HandleService
 import com.circaso.users.presentation.services.IdentityEventsService
 import com.circaso.users.presentation.services.ProfileService
 import com.circaso.users.presentation.services.UsersAgentService
+import com.circaso.users.presentation.warmup.UsersWarmUp
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -244,4 +246,7 @@ fun usersModule(config: Config): Module =
         // identity:api's SupportProfiles, which identity's ops routes ask (decision 2026-10-31)
         single<SupportProfiles> { SupportProfilesImpl(get()) }
         single(named("users.replay")) { RealtimeModule("users", UsersRealtimeReplay(get())) }
+
+        // read-only, run at start-up before the app reports ready
+        single<WarmUp>(named("users.warm-up")) { UsersWarmUp(get(), get(), get(), get()) }
     }

@@ -95,6 +95,7 @@ import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
 import com.circaso.identity.presentation.services.SupportAccountService
+import com.circaso.identity.presentation.warmup.IdentityWarmUp
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.DatabaseModuleSpec
@@ -103,6 +104,7 @@ import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.getOrNull
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
@@ -294,4 +296,7 @@ fun identityModule(config: Config): Module =
         single<AccountDirectory> { AccountDirectoryImpl(get()) }
         single<DeviceSignatures> { DeviceSignaturesImpl(get()) }
         single<PushRegistrations> { PushRegistrationsImpl(get()) }
+
+        // read-only, run at start-up before the app reports ready
+        single<WarmUp>(named("identity.warm-up")) { IdentityWarmUp(get(), get(), get(), get(), get()) }
     }

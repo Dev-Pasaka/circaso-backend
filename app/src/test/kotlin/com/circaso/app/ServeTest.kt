@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.DatabaseModuleSpec
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
@@ -29,6 +30,7 @@ import io.ktor.http.isSuccess
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.runTestApplication
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -80,21 +82,54 @@ class ServeTest {
             "CIRCASO_ENV" to "local",
             "REDIS_URL" to "redis://${redis.host}:${redis.getMappedPort(6379)}",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
+            // one short pass, so /health/ready turns 200 quickly; the warm-ups' own test runs them in full
+            "WARMUP_WORKERS" to "2",
+            "WARMUP_ROUNDS" to "1",
         ) + TestPostgres.env().filterKeys { it.startsWith("DATABASE_") } + extra
 
     @Test
-    fun `serve starts and reports PostgreSQL, Redis and the stream consumers ready`() =
+    fun `serve starts and reports PostgreSQL, Redis, the stream consumers and the warm-up ready`() =
         testApplication {
             application { circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env())) }
 
-            val response = client.get("/health/ready")
+            // 503 while the warm-up runs, then 200
+            var response = client.get("/health/ready")
+            val deadline = System.nanoTime() + 60_000_000_000
+            while (response.status != HttpStatusCode.OK && System.nanoTime() < deadline) {
+                delay(100)
+                response = client.get("/health/ready")
+            }
             val checks = Json.decodeFromString<HealthReport>(response.bodyAsText()).checks
 
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals(
-                listOf("postgres", "redis", "streams").map { HealthCheckStatus(it, "up") },
+                listOf("postgres", "redis", "streams", WARM_UP_CHECK).map { HealthCheckStatus(it, "up") },
                 checks.sortedBy { it.name },
             )
+        }
+
+    @Test
+    fun `every module's warm-up runs against PostgreSQL and Redis without failing`() =
+        testApplication {
+            var sms: FakeSms? = null
+            var warmUps: List<WarmUp> = emptyList()
+            application {
+                circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+                sms = getKoin().get<SmsGateway>() as FakeSms
+                warmUps = getKoin().getAll<WarmUp>()
+            }
+            client.get("/health/live") // start the application
+            // someone real, so the warm-ups that sample real rows have one to read
+            signUp(sms!!, "Warm Up", "+254722${(100000..999999).random()}")
+
+            assertEquals(
+                listOf("identity", "infrastructure", "messaging", "users", "wallet"),
+                warmUps.map { it.name }.sorted(),
+            )
+            // each one directly, so a failure fails here with its exception rather than being logged and skipped
+            repeat(3) { warmUps.forEach { it.run() } }
+            val outcome = WarmUpRunner(warmUps, WarmUpSettings(workers = 4, rounds = 5)).run()
+            assertEquals(WarmUpOutcome(passes = 20, timedOut = false, failed = emptyMap()), outcome)
         }
 
     @Test

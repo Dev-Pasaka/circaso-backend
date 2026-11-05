@@ -19,19 +19,26 @@ import java.util.concurrent.ConcurrentHashMap
 @Serializable
 data class HealthReport(val status: String, val checks: List<HealthCheckStatus> = emptyList())
 
-/** One connection's result: [name] is `postgres`, `redis` or `streams`, [status] is `up` or `down`. */
+/**
+ * One connection's result: [name] is `postgres`, `redis`, `streams` or `warm-up` (the start-up warm-up, `down` until it
+ * has finished), [status] is `up` or `down`.
+ */
 @Serializable
 data class HealthCheckStatus(val name: String, val status: String)
 
 private val log = LoggerFactory.getLogger("com.circaso.app.Health")
 private const val TAG = "Health"
 
+/** The readiness report's entry for the start-up warm-up. */
+const val WARM_UP_CHECK = "warm-up"
+
 /**
  * `/health/live`: the process is up; restart it if this fails.
- * `/health/ready`: every connection answers; take it out of the load balancer if this fails.
- * Neither is logged by the request log; metrics count them.
+ * `/health/ready`: every connection answers and the start-up warm-up has finished ([readiness]; null means there is
+ * no warm-up to wait for); take it out of the load balancer if this fails.
+ * Neither is logged by the request log (the gateway's `RequestLog` skips `/health/…`, which is probed every few seconds).
  */
-fun Route.healthRoutes(checks: List<HealthCheck>) {
+fun Route.healthRoutes(checks: List<HealthCheck>, readiness: Readiness? = null) {
     val transitions = HealthTransitions()
     route("/health") {
         get("live") {
@@ -57,7 +64,7 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
                         }
                     transitions.record(check.name, outcome)
                     HealthCheckStatus(check.name, if (outcome is Resource.Success) "up" else "down")
-                }
+                } + listOfNotNull(readiness?.let { HealthCheckStatus(WARM_UP_CHECK, if (it.isReady) "up" else "down") })
             val ready = report.all { it.status == "up" }
             call.respond(
                 if (ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
@@ -68,8 +75,8 @@ fun Route.healthRoutes(checks: List<HealthCheck>) {
             TAG,
             envelope = false,
             notes =
-                "`200` with `status: ready` when PostgreSQL, Redis and the event streams all answer; " +
-                    "`503` with " +
+                "`200` with `status: ready` when PostgreSQL, Redis and the event streams all answer and the " +
+                    "start-up warm-up (`warm-up`) has finished; `503` with " +
                     "`status: not_ready` and the failing check marked `down` otherwise. " +
                     "Load balancers take the instance out of rotation when this fails. No token needed.",
         )

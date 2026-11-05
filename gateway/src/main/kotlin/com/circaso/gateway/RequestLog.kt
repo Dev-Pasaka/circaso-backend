@@ -20,12 +20,16 @@ private val Logged = AttributeKey<Unit>("circaso.request.logged")
 /** What `http.route` says for a request no route matched: its path is the caller's text, so it is never logged. */
 internal const val UNMATCHED_ROUTE = "(unmatched)"
 
+/** `/health/live` and `/health/ready`, which the request log leaves out. */
+private const val HEALTH_ROUTES = "/health/"
+
 /**
  * One line per request: method, route, status, duration, the user id, and who sent it (address, country, app version,
  * device and User-Agent; see [clientFields]). The request id is already in every line
  * through the MDC. The route is the matched route's template (`/v1/handles/{handle}/availability`), never the
  * concrete path or the query string, because a path parameter can be a handle, an invite token or a phone number.
- * Never a token, a phone number or an amount.
+ * Never a token, a phone number or an amount. The health routes are left out: the container, the deploy and the load
+ * balancer probe them every few seconds, and `/health/ready` answers `503` all through the start-up warm-up.
  */
 val RequestLog =
     createApplicationPlugin("CircasoRequestLog") {
@@ -40,13 +44,15 @@ val RequestLog =
             if (call.attributes.contains(Logged)) return@on
             call.attributes.put(Logged, Unit)
             val started = call.attributes.getOrNull(StartedAt) ?: return@on
+            val route = call.attributes.getOrNull(RouteTemplate) ?: UNMATCHED_ROUTE
+            if (route.startsWith(HEALTH_ROUTES)) return@on
             val status = call.response.status()?.value ?: 0
             val client = call.clientFields()
             val line =
                 arrayOf(
                     kv("kind", "request"),
                     kv("http.method", call.request.httpMethod.value),
-                    kv("http.route", call.attributes.getOrNull(RouteTemplate) ?: UNMATCHED_ROUTE),
+                    kv("http.route", route),
                     kv("http.status", status),
                     kv("durationMs", (System.nanoTime() - started) / 1_000_000),
                     kv("userId", call.principalOrNull()?.userId?.toString()),

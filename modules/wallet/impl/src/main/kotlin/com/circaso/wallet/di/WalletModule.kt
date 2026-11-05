@@ -6,6 +6,7 @@ import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.shared.RealtimeModule
 import com.circaso.wallet.api.WalletFrames
@@ -142,6 +143,7 @@ import com.circaso.wallet.presentation.services.WalletAgentService
 import com.circaso.wallet.presentation.services.WalletDirectoryService
 import com.circaso.wallet.presentation.services.WalletJobsService
 import com.circaso.wallet.presentation.services.WalletService
+import com.circaso.wallet.presentation.warmup.WalletWarmUp
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -404,4 +406,7 @@ fun walletModule(config: Config): Module =
         single(named("wallet.deletion-guard")) { WalletDeletionGuard(get()) } bind DeletionGuard::class
         single<CustodyNotifications> { WalletCustodyNotifications(get()) }
         single(named("wallet.replay")) { RealtimeModule(WalletFrames.MODULE, WalletRealtimeReplay(get())) }
+
+        // read-only and database-only (never Circle), run at start-up before the app reports ready
+        single<WarmUp>(named("wallet.warm-up")) { WalletWarmUp(get(), get(), get(), get(), get(), clock) }
     }
