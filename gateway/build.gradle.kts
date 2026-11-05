@@ -18,6 +18,7 @@ dependencies {
     api(project(":modules:chama:api"))
     api(project(":modules:calls:api"))
     api(project(":modules:status:api"))
+    api(project(":modules:spaces:api"))
     api(libs.ktor.server.core)
     api(libs.ktor.server.websockets)
     implementation(libs.ktor.server.compression)

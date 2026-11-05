@@ -4,6 +4,9 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
 
 /**
  * One row per chat. A direct chat carries its pair as `direct_low` < `direct_high`, and the partial unique index on
@@ -26,9 +29,24 @@ object ChatsTable : Table("messaging.chats") {
     val createdBy = javaUUID("created_by")
     val createdAt = timestamp("created_at")
     val version = long("version").default(0)
+
+    /** A private chat with a space's owner (V4): the space it came from; null for every other chat. */
+    val viaSpaceId = javaUUID("via_space_id").nullable()
     override val primaryKey = PrimaryKey(chatId)
 
     init {
-        uniqueIndex("chats_direct_pair_key", directLow, directHigh, filterCondition = { kind eq "DIRECT" })
+        uniqueIndex(
+            "chats_direct_pair_key",
+            directLow,
+            directHigh,
+            filterCondition = { (kind eq "DIRECT") and viaSpaceId.isNull() },
+        )
+        uniqueIndex(
+            "chats_direct_via_key",
+            directLow,
+            directHigh,
+            viaSpaceId,
+            filterCondition = { (kind eq "DIRECT") and viaSpaceId.isNotNull() },
+        )
     }
 }

@@ -28,6 +28,9 @@ class TransferEvents(private val bus: EventBus) {
                 toGroupId = transfer.toGroupId,
                 payoutRequestId = transfer.payoutRequestId?.toString(),
                 signerId = transfer.signer,
+                fromSpaceId = transfer.fromSpaceId?.toString(),
+                toSpaceId = transfer.toSpaceId?.toString(),
+                spacePaymentId = transfer.spacePaymentId?.toString(),
             ),
         )
 
@@ -39,6 +42,7 @@ class TransferEvents(private val bus: EventBus) {
                 reason ?: FAILED_WITHOUT_REASON,
                 fromGroupId = transfer.fromGroupId,
                 payoutRequestId = transfer.payoutRequestId?.toString(),
+                spacePaymentId = transfer.spacePaymentId?.toString(),
             ),
         )
 

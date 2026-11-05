@@ -18,6 +18,8 @@ data class WalletCreated(
     val blockchain: String,
     /** Set for a group wallet (added 2026-11-03). */
     val groupId: ChatId? = null,
+    /** Set for a space wallet: spaces' id (added 2026-11-04, Spaces phase 3). */
+    val spaceId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 
@@ -50,6 +52,12 @@ data class TransferConfirmed(
     val payoutRequestId: String? = null,
     /** The person who signed it. */
     val signerId: UserId? = null,
+    /** Set when it left a space wallet; [senderId] is then that wallet's id (added 2026-11-04, Spaces phase 3). */
+    val fromSpaceId: String? = null,
+    /** Set when it paid a space wallet; [recipientId] is then that wallet's id. */
+    val toSpaceId: String? = null,
+    /** The membership payment (SP13) it paid, when it was one. */
+    val spacePaymentId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 
@@ -69,6 +77,8 @@ data class TransferFailed(
     val fromGroupId: ChatId? = null,
     /** The approved payout request it was to pay; the request stays `APPROVED` and can be paid again. */
     val payoutRequestId: String? = null,
+    /** The membership payment (SP13) it was to pay (added 2026-11-04). */
+    val spacePaymentId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 

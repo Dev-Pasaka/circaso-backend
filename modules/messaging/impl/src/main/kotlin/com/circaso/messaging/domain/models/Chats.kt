@@ -44,6 +44,11 @@ data class Chat(
     val avatarMediaId: UUID? = null,
     /** A direct chat's two people, in any order; null for a group. Unique per pair: the claim behind M4. */
     val directPair: Pair<UserId, UserId>? = null,
+    /**
+     * A private chat with a space's owner (Spaces phase 3): the space it came from. Unique per pair and space, and
+     * separate from the pair's own direct chat.
+     */
+    val viaSpaceId: UUID? = null,
 ) {
     /**
      * [member]'s role as the chat sees it: the owner is whoever [ownerId] names, and a member row still saying OWNER

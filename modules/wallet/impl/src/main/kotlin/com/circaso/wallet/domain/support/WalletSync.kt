@@ -6,6 +6,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.envelope
 import com.circaso.wallet.api.WalletCreated
 import com.circaso.wallet.api.WalletId
+import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
@@ -72,8 +73,10 @@ class WalletSync(
     data class Synced(val recorded: List<ChainWallet>, val atCircle: List<ChainWallet>)
 
     private suspend fun record(fresh: List<ChainWallet>, isFirst: Boolean) {
-        val groupId = owners.find(WalletId(fresh.first().userId.value))?.chatId
-        val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain, groupId)) }
+        val owner = owners.find(WalletId(fresh.first().userId.value))
+        val groupId = (owner as? WalletOwner.Group)?.chatId
+        val spaceId = (owner as? WalletOwner.Space)?.spaceId?.toString()
+        val announced = fresh.associateWith { bus.envelope(WalletCreated(it.userId, it.blockchain, groupId, spaceId)) }
         val inserted =
             transactor.run("wallets.record") {
                 val won = fresh.filter { wallets.insertWallet(it) }

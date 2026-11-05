@@ -15,6 +15,15 @@ interface ReachPolicy {
     suspend fun blockedEitherWay(a: UserId, b: UserId): Boolean
 }
 
+/**
+ * The Circaso people in someone's address book (their active contacts), for spaces' "Juma and 2 other contacts
+ * follow" and its suggestions (decision 2026-11-04). Only ids: nothing about the address book itself leaves users.
+ */
+interface ContactBook {
+    /** At most [limit] of [userId]'s active contacts. */
+    suspend fun contactsOf(userId: UserId, limit: Int = 5_000): Set<UserId>
+}
+
 /** Display data for other modules. */
 interface Profiles {
     suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile>

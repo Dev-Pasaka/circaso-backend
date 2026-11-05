@@ -196,4 +196,36 @@ sealed class WalletError(
         "This payout is already being paid.",
         ErrorKind.CONFLICT,
     )
+
+    // ---- space wallets (Spaces phase 3, decision 2026-11-04) ----
+
+    data object SpaceNotFound : WalletError(
+        "wallet.space_not_found",
+        "We couldn't find that space.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    data object NotSpaceOwner : WalletError(
+        "wallet.not_space_owner",
+        "Only the space's owner can set up its wallet.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object SpaceNotMember : WalletError(
+        "wallet.space_not_member",
+        "Only people in this space can pay it.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object SpacePaymentInvalid : WalletError(
+        "wallet.space_payment_invalid",
+        "This membership payment is no longer valid. Start again.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object SpacePaymentPersonalOnly : WalletError(
+        "wallet.space_payment_personal_only",
+        "A membership is paid from your personal wallet.",
+        ErrorKind.INVALID,
+    )
 }

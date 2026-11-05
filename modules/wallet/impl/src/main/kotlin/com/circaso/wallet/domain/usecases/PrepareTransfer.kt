@@ -7,6 +7,7 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.PayoutApprovals
+import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Direction
@@ -63,6 +64,8 @@ class PrepareTransfer(
     private val clock: Clock,
     private val holders: Holders,
     private val approvals: PayoutApprovals,
+    /** Spaces' guard (Spaces phase 3): what a membership payment must be. */
+    private val spaces: SpaceWalletPolicy? = null,
 ) {
     suspend operator fun invoke(command: TransferCommand): Resource<PreparedTransfer> {
         // The wallet it leaves (decision 2026-11-03): the caller's own, or a group wallet they sign for.
@@ -75,6 +78,11 @@ class PrepareTransfer(
         transfers.byKey(holder, command.idempotencyKey)?.let { return resume(it) }
 
         payout(owner, command).let { if (it is Resource.Error) return it }
+        val membership =
+            when (val checked = spacePayment(owner, command)) {
+                is Resource.Success -> checked.data
+                is Resource.Error -> return checked
+            }
         val sender =
             when (val checked = check(holder, command)) {
                 is Resource.Success -> checked.data
@@ -83,7 +91,14 @@ class PrepareTransfer(
         val destination =
             when (
                 val resolved =
-                    payees.resolve(holder, command.payee, command.blockchain, command.chatId, actor = command.senderId)
+                    payees.resolve(
+                        holder,
+                        command.payee,
+                        command.blockchain,
+                        command.chatId,
+                        actor = command.senderId,
+                        membership = membership,
+                    )
             ) {
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
@@ -121,7 +136,7 @@ class PrepareTransfer(
                     approved.payeeAddress?.let { Addresses.normalise(it.trim()) } == Addresses.normalise(payee.address)
                 }
 
-                is Payee.Group -> {
+                is Payee.Group, is Payee.Space -> {
                     false
                 }
             }
@@ -135,6 +150,23 @@ class PrepareTransfer(
                     (it.state == TransferState.AWAITING_SIGNATURE && now < it.expiresAt)
             }
         return if (live) Resource.error(WalletError.PayoutInProgress) else Resource.success(Unit)
+    }
+
+    /**
+     * A membership payment (SP13, Spaces phase 3) is paid from the personal wallet, into exactly its space and for
+     * exactly its amount, while spaces still holds it (15 minutes). True when this payment is one, so the payee check
+     * lets someone who isn't yet a member pay it.
+     */
+    private suspend fun spacePayment(owner: WalletOwner, command: TransferCommand): Resource<Boolean> {
+        val paymentId = command.spacePaymentId ?: return Resource.success(false)
+        if (owner !is WalletOwner.Person) return Resource.error(WalletError.SpacePaymentPersonalOnly)
+        val payee = command.payee as? Payee.Space ?: return Resource.error(WalletError.SpacePaymentInvalid)
+        val charge =
+            spaces?.membershipCharge(paymentId, command.senderId) ?: return Resource.error(WalletError.SpacePaymentInvalid)
+        val exact =
+            charge.spaceId == payee.spaceId && command.amount.asset == Asset.USDC &&
+                command.amount.amountMinor == charge.amountMinor
+        return if (exact) Resource.success(true) else Resource.error(WalletError.SpacePaymentInvalid)
     }
 
     /** The rules about the sender, before the payee is looked at (Wallet → W4's order). */
@@ -238,6 +270,9 @@ class PrepareTransfer(
             payoutRequestId = command.payoutRequestId,
             fromGroupId = (owner as? WalletOwner.Group)?.chatId,
             toGroupId = destination.toGroupId,
+            fromSpaceId = (owner as? WalletOwner.Space)?.spaceId,
+            toSpaceId = destination.toSpaceId,
+            spacePaymentId = command.spacePaymentId,
         )
     }
 

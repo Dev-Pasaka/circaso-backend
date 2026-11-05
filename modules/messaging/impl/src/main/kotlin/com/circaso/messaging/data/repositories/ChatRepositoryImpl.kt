@@ -76,6 +76,7 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
                     it[kind] = chat.kind.name
                     it[directLow] = pair?.first
                     it[directHigh] = pair?.second
+                    it[viaSpaceId] = chat.viaSpaceId
                     it[ownerId] = chat.ownerId?.value
                     it[createdBy] = chat.createdBy.value
                     it[createdAt] = chat.createdAt
@@ -85,15 +86,16 @@ class ChatRepositoryImpl(private val database: Database) : ChatRepository {
             statement.insertedCount > 0
         }
 
-    override suspend fun directChat(a: UserId, b: UserId): Chat? {
+    override suspend fun directChat(a: UserId, b: UserId, viaSpaceId: UUID?): Chat? {
         val (low, high) = ordered(a, b)
         return database.tx("chats.find-direct") {
             ChatsTable
                 .selectAll()
                 .where {
+                    val via = if (viaSpaceId == null) ChatsTable.viaSpaceId.isNull() else ChatsTable.viaSpaceId eq viaSpaceId
                     (ChatsTable.kind eq ChatKind.DIRECT.name) and
                         (ChatsTable.directLow eq low) and
-                        (ChatsTable.directHigh eq high)
+                        (ChatsTable.directHigh eq high) and via
                 }.map { it.toChat() }
                 .singleOrNull()
         }
@@ -327,6 +329,7 @@ private fun ResultRow.toChat(): Chat {
         ownerId = this[ChatsTable.ownerId]?.let(::UserId),
         avatarMediaId = this[ChatsTable.avatarMediaId],
         directPair = if (low != null && high != null) UserId(low) to UserId(high) else null,
+        viaSpaceId = this[ChatsTable.viaSpaceId],
     )
 }
 

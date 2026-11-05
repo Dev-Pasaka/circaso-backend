@@ -59,6 +59,9 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[payoutRequestId] = transfer.payoutRequestId
                     it[fromGroupId] = transfer.fromGroupId?.value
                     it[toGroupId] = transfer.toGroupId?.value
+                    it[fromSpaceId] = transfer.fromSpaceId
+                    it[toSpaceId] = transfer.toSpaceId
+                    it[spacePaymentId] = transfer.spacePaymentId
                 }
             statement.insertedCount > 0
         }
@@ -156,5 +159,8 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             payoutRequestId = this[TransfersTable.payoutRequestId],
             fromGroupId = this[TransfersTable.fromGroupId]?.let(::ChatId),
             toGroupId = this[TransfersTable.toGroupId]?.let(::ChatId),
+            fromSpaceId = this[TransfersTable.fromSpaceId],
+            toSpaceId = this[TransfersTable.toSpaceId],
+            spacePaymentId = this[TransfersTable.spacePaymentId],
         )
 }

@@ -2,6 +2,7 @@ package com.circaso.messaging.domain.usecases
 
 import com.circaso.messaging.api.ChatCreated
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.SpacePrivateChats
 import com.circaso.messaging.domain.errors.MessagingError
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatKind
@@ -21,6 +22,7 @@ import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.ReachPolicy
 import java.time.Clock
+import java.util.UUID
 
 /**
  * M4 `POST /chats/direct`: the one chat between two people, made on first open. The chat row is inserted with
@@ -37,13 +39,22 @@ class OpenDirectChat(
     private val views: ChatViews,
     private val bus: EventBus,
     private val clock: Clock,
+    /** Spaces' guard for private chats with a space's owner (Spaces phase 3); without it, none can be opened. */
+    private val spaceChats: SpacePrivateChats? = null,
 ) {
-    suspend operator fun invoke(caller: UserId, other: UserId): Resource<ChatView> {
+    suspend operator fun invoke(caller: UserId, other: UserId, viaSpaceId: UUID? = null): Resource<ChatView> {
         if (caller == other) return Resource.error(SharedError.Malformed("userId", "is you"))
-        if (!reach.canReach(caller, other)) return Resource.error(MessagingError.NotReachable)
+        // A private chat via a space stands in for reach (a shop's visitor needn't be a contact), never for a block.
+        val allowed =
+            if (viaSpaceId == null) {
+                reach.canReach(caller, other)
+            } else {
+                spaceChats?.allowed(viaSpaceId, caller, other) == true && !reach.blockedEitherWay(caller, other)
+            }
+        if (!allowed) return Resource.error(MessagingError.NotReachable)
 
-        chats.directChat(caller, other)?.let { return Resource.success(existing(it)) }
-        val chat = newChat(caller, other)
+        chats.directChat(caller, other, viaSpaceId)?.let { return Resource.success(existing(it)) }
+        val chat = newChat(caller, other).copy(viaSpaceId = viaSpaceId)
         val created = bus.envelope(ChatCreated(chat.chatId, ChatKind.DIRECT.name, memberIds = listOf(caller, other)))
         val event = created.oncePerChat(chat.chatId)
         val opened =
@@ -53,7 +64,7 @@ class OpenDirectChat(
                     outbox.write(listOf(event))
                     chat
                 } else {
-                    chats.directChat(caller, other)
+                    chats.directChat(caller, other, viaSpaceId)
                 }
             }
         if (opened == null) return Resource.error(MessagingError.ChatNotFound)

@@ -1,6 +1,7 @@
 package com.circaso.wallet.api
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import java.util.UUID
 
@@ -17,6 +18,60 @@ interface Wallets {
      * when the group never set one up.
      */
     suspend fun groupWallet(chatId: ChatId): GroupWalletSummary?
+
+    /**
+     * The space's own wallet (Spaces phase 3), for spaces: a space goes live once it is `ACTIVE`. Null when the owner
+     * never started one. [spaceId] is spaces' id (spaces' api depends on nothing, so it is a UUID here).
+     */
+    suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = null
+
+    /**
+     * Whether the space's wallet still holds money (read from Circle, as the deletion guard does), for spaces: a space
+     * is deleted only once its wallet is empty. An error when Circle can't say; false when it has no wallet.
+     */
+    suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> = Resource.success(false)
+}
+
+/** A space's wallet as spaces needs it: `SETTING_UP` until its owner's PIN and Circle made it, then `ACTIVE`. */
+data class SpaceWalletSummary(
+    val walletId: WalletId,
+    val spaceId: UUID,
+    val status: String,
+    val signerId: UserId,
+    /** The chains it can be paid on now. */
+    val blockchains: List<String> = emptyList(),
+) {
+    val isActive: Boolean get() = status == "ACTIVE"
+}
+
+/**
+ * Asked by the wallet about a space's wallet (Spaces phase 3): who may see it, sign for it and pay it, and what a
+ * membership costs. Spaces implements it and its Koin module binds it, as chama does [PayoutApprovals]; spaces' ids
+ * are UUIDs here, since spaces' api can't be named by this one.
+ */
+interface SpaceWalletPolicy {
+    /** What [userId] is to the space: its owner, an admin (sees the wallet), a member (may pay it) or nothing. */
+    suspend fun access(spaceId: UUID, userId: UserId): SpaceAccess
+
+    /** The spaces whose wallet [userId] may see without signing for it (they are an admin), for W16. */
+    suspend fun administered(userId: UserId): List<UUID>
+
+    /** The space's owner and admins: who hears that its wallet is ready. */
+    suspend fun team(spaceId: UUID): Set<UserId>
+
+    /** The membership payment [paymentId] made for [payer] (SP13), while it can still be paid; null otherwise. */
+    suspend fun membershipCharge(paymentId: UUID, payer: UserId): MembershipCharge?
+}
+
+/**
+ * [MEMBER] only while the space is live and the person is in it with a membership that hasn't ended, not banned;
+ * [OWNER] and [ADMIN] whatever the space's state (its wallet is set up before it goes live).
+ */
+enum class SpaceAccess { OWNER, ADMIN, MEMBER, NONE }
+
+/** What a membership payment must be: exactly this, into this space's wallet. Never logged. */
+data class MembershipCharge(val paymentId: UUID, val spaceId: UUID, val amountMinor: Long) {
+    override fun toString(): String = "MembershipCharge($paymentId)"
 }
 
 /** A transfer's facts for another module: who sent what to whom, from which chat, and where it stands. */

@@ -25,6 +25,7 @@ import com.circaso.users.domain.usecases.CheckBlockedEitherWay
 import com.circaso.users.domain.usecases.CheckSupportHandle
 import com.circaso.users.domain.usecases.FilterReachable
 import com.circaso.users.domain.usecases.GetProfiles
+import com.circaso.users.domain.usecases.ListContactIds
 import com.circaso.users.presentation.api.ReachPolicyImpl
 import com.circaso.users.presentation.services.DirectoryService
 import kotlinx.coroutines.test.runTest
@@ -310,6 +311,7 @@ class UsersTest {
                     h.replay,
                     CheckBlockedEitherWay(down),
                     CheckSupportHandle(h.users),
+                    ListContactIds(h.users),
                 )
 
             assertTrue(ReachPolicyImpl(directory).blockedEitherWay(UserId.new(), UserId.new()))

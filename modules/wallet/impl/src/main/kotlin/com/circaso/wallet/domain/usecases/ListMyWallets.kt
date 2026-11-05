@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.usecases
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.domain.models.WalletListing
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
@@ -17,6 +18,8 @@ class ListMyWallets(
     private val chats: ChatDirectory,
     private val owners: WalletOwnerRepository,
     private val listings: WalletListings,
+    /** Spaces' guard (Spaces phase 3): the spaces whose wallets the caller administers. */
+    private val spaces: SpaceWalletPolicy? = null,
 ) {
     suspend operator fun invoke(userId: UserId): Resource<List<WalletListing>> {
         val own = listings.of(WalletOwner.Person(userId), userId)
@@ -25,6 +28,11 @@ class ListMyWallets(
                 .byChats(chats.groupsOf(userId))
                 .sortedWith(compareBy<WalletOwner.Group> { it.signerId != userId }.thenBy { it.createdAt })
                 .map { listings.of(it, userId) }
-        return Resource.success(listOf(own) + groups)
+        // Space wallets (SW1b): the ones the caller signs for (owns), then those of spaces they're an admin of.
+        val signed = owners.bySigner(userId).filterIsInstance<WalletOwner.Space>().sortedBy { it.createdAt }
+        val administered =
+            spaces?.let { policy -> owners.bySpaces(policy.administered(userId)).filter { it.signerId != userId } }.orEmpty()
+        val spaceWallets = (signed + administered.sortedBy { it.createdAt }).map { listings.of(it, userId) }
+        return Resource.success(listOf(own) + groups + spaceWallets)
     }
 }

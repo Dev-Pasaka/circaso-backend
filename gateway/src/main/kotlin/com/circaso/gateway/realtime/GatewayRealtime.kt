@@ -19,6 +19,13 @@ import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
+import com.circaso.spaces.api.InvitedFrame
+import com.circaso.spaces.api.MembershipUpdatedFrame
+import com.circaso.spaces.api.PostNewFrame
+import com.circaso.spaces.api.PriceChangedFrame
+import com.circaso.spaces.api.ReportResolvedFrame
+import com.circaso.spaces.api.RequestNewFrame
+import com.circaso.spaces.api.SpacesFrames
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
 import com.circaso.users.api.ConnectionAddedFrame
@@ -171,9 +178,99 @@ class GatewayRealtime(
             }
 
             else -> {
+                if (frame.module == SpacesFrames.MODULE) spacePush(frame, recipient) else null
+            }
+        }
+
+    /**
+     * Spaces' pushes (Spaces API → Pushes). Space content isn't end-to-end encrypted, so the text may name the space
+     * and the people in it; a payment amount never shows. Each carries `kind` and `spaceId` for the tap.
+     */
+    private fun spacePush(frame: RealtimeEnvelope, recipient: UserId): PushMessage? =
+        when (frame.type) {
+            SpacesFrames.POST_NEW -> {
+                decode(PostNewFrame.serializer(), frame)?.takeIf { it.notify && it.post.author.userId != recipient }?.let {
+                    val what = it.post.text?.take(POST_PREVIEW) ?: mediaWord(it.post.media.firstOrNull()?.kind)
+                    spaceMessage(it.spaceName, "${it.post.author.displayName}: $what", "space.post", it.spaceId.toString())
+                }
+            }
+
+            SpacesFrames.INVITED -> {
+                decode(InvitedFrame.serializer(), frame)?.let {
+                    spaceMessage("Circaso", "${it.inviterName} invited you to ${it.spaceName}", "space.invited", it.spaceId.toString())
+                }
+            }
+
+            SpacesFrames.REQUEST_NEW -> {
+                decode(RequestNewFrame.serializer(), frame)?.let {
+                    spaceMessage(it.spaceName, "${it.name} asked to join ${it.spaceName}", "space.request", it.spaceId.toString())
+                }
+            }
+
+            SpacesFrames.MEMBERSHIP_UPDATED -> {
+                decode(MembershipUpdatedFrame.serializer(), frame)?.let(::membershipPush)
+            }
+
+            SpacesFrames.PRICE_CHANGED -> {
+                decode(PriceChangedFrame.serializer(), frame)?.let {
+                    val text = "${it.spaceName}'s price changes to ${it.price.amount} USDC from your next period"
+                    spaceMessage(it.spaceName, text, "space.price", it.spaceId.toString())
+                }
+            }
+
+            SpacesFrames.REPORT_RESOLVED -> {
+                decode(ReportResolvedFrame.serializer(), frame)?.let {
+                    val text = "Thanks for your report. ${it.spaceName}'s moderators looked at it"
+                    spaceMessage("Circaso", text, "space.report", it.spaceId.toString())
+                }
+            }
+
+            else -> {
                 null
             }
         }
+
+    private fun membershipPush(frame: MembershipUpdatedFrame): PushMessage? {
+        val space = frame.spaceName
+        val date = frame.until?.let(::shortDate)
+        val (kind, text) =
+            when (frame.reason) {
+                "JOINED" -> "space.joined" to "You're in $space"
+                "RENEWED" -> "space.joined" to "Your $space membership is renewed"
+                "RENEWAL_DUE" -> "space.renewal" to "Your $space membership ends${date?.let { " on $it" }.orEmpty()}. Renew"
+                "GRACE_STARTED" -> "space.grace" to "Your $space membership ended. You can still take part${date?.let { " until $it" }.orEmpty()}"
+                "ENDED" -> "space.ended" to "Your $space membership has ended"
+                "ROLE_CHANGED" ->
+                    when (frame.role) {
+                        "ADMIN" -> "space.role" to "You're now an admin of $space"
+                        "MODERATOR" -> "space.role" to "You're now a moderator of $space"
+                        else -> return null
+                    }
+                "MUTED" -> "space.moderation" to "An admin muted you in $space"
+                "REMOVED" -> "space.moderation" to "You were removed from $space"
+                "BANNED" -> "space.moderation" to "You can't take part in $space any more"
+                else -> return null
+            }
+        return spaceMessage(space, text, kind, frame.spaceId.toString())
+    }
+
+    private fun spaceMessage(
+        title: String,
+        body: String,
+        kind: String,
+        spaceId: String,
+    ) = PushMessage(title, body, PushPayload(kind = kind, spaceId = spaceId))
+
+    private fun mediaWord(kind: String?): String =
+        when (kind) {
+            "VIDEO" -> "Video"
+            "VOICE" -> "Voice note"
+            else -> "Photo"
+        }
+
+    /** "4 Dec", in UTC: the app words exact times itself. */
+    private fun shortDate(iso: String): String? =
+        runCatching { DATE.format(java.time.Instant.parse(iso)) }.getOrNull()
 
     /**
      * Only when the sender marked it `pushable`; a frame without the field wakes nobody (Messaging → Frame data), so
@@ -309,3 +406,9 @@ private const val PAYMENT_RECEIVED_KIND = "payment.received"
 /** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
 private const val MOMENT_LOVED_KIND = "moment.loved"
 private const val MONEY_SOUND = "money_received.wav"
+
+/** A space post's push shows at most this much of its text. */
+private const val POST_PREVIEW = 80
+
+private val DATE: java.time.format.DateTimeFormatter =
+    java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.ENGLISH).withZone(java.time.ZoneOffset.UTC)

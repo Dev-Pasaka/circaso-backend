@@ -137,6 +137,7 @@ fun WalletOwner.toDto() =
     when (this) {
         is WalletOwner.Person -> WalletOwnerDto(type.name, userId = userId.toString(), signerUserId = "$signerId")
         is WalletOwner.Group -> WalletOwnerDto(type.name, chatId = chatId.toString(), signerUserId = "$signerId")
+        is WalletOwner.Space -> WalletOwnerDto(type.name, spaceId = spaceId.toString(), signerUserId = "$signerId")
     }
 
 fun GroupWalletSetup.toResponse() =

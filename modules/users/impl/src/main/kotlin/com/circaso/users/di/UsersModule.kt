@@ -11,6 +11,7 @@ import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
+import com.circaso.users.api.ContactBook
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.ReachPolicy
 import com.circaso.users.data.cache.KeyedPhoneHasher
@@ -72,6 +73,7 @@ import com.circaso.users.domain.usecases.GetMyProfile
 import com.circaso.users.domain.usecases.GetProfiles
 import com.circaso.users.domain.usecases.GetPublicProfile
 import com.circaso.users.domain.usecases.ListBlocks
+import com.circaso.users.domain.usecases.ListContactIds
 import com.circaso.users.domain.usecases.ListContacts
 import com.circaso.users.domain.usecases.LookupHandle
 import com.circaso.users.domain.usecases.PrepareAvatarUpload
@@ -86,6 +88,7 @@ import com.circaso.users.domain.usecases.SyncContacts
 import com.circaso.users.domain.usecases.UnblockUser
 import com.circaso.users.domain.usecases.UpdateProfile
 import com.circaso.users.presentation.agent.agentController
+import com.circaso.users.presentation.api.ContactBookImpl
 import com.circaso.users.presentation.api.ProfilesImpl
 import com.circaso.users.presentation.api.ReachPolicyImpl
 import com.circaso.users.presentation.api.SupportProfilesImpl
@@ -214,7 +217,8 @@ fun usersModule(config: Config): Module =
         single { ContactService(get(), get(), get(), get(), get(), get(), get()) }
         single { BlockService(get(), get(), get(), get()) }
         single { UsersAgentService(get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get(), get()) }
+        single { ListContactIds(get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
             val profiles = get<ProfileService>()
@@ -235,6 +239,7 @@ fun usersModule(config: Config): Module =
         // users:api, for messaging, wallet and calls, and the replay the gateway asks for
         single<ReachPolicy> { ReachPolicyImpl(get()) }
         single<Profiles> { ProfilesImpl(get()) }
+        single<ContactBook> { ContactBookImpl(get()) }
 
         // identity:api's SupportProfiles, which identity's ops routes ask (decision 2026-10-31)
         single<SupportProfiles> { SupportProfilesImpl(get()) }

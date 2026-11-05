@@ -36,11 +36,13 @@ data class WalletResponse(
  */
 @Serializable
 data class WalletOwnerDto(
-    /** `PERSON` or `GROUP` (`SPACE` with Spaces, phase 3). */
+    /** `PERSON`, `GROUP` or `SPACE` (Spaces phase 3). */
     val type: String,
     val userId: String? = null,
     val chatId: String? = null,
     val signerUserId: String,
+    /** For a space wallet: spaces' id. */
+    val spaceId: String? = null,
 )
 
 /** W14 `POST /wallet/groups/{chatId}`. */

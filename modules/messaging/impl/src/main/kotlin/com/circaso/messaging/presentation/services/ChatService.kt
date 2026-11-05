@@ -21,6 +21,7 @@ import com.circaso.messaging.domain.usecases.SetRole
 import com.circaso.messaging.domain.usecases.UpdateGroup
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import java.util.UUID
 
 /** Chats and membership, M4 to M11, and the member lookup behind `ChatDirectory`. */
 class ChatService(
@@ -39,7 +40,8 @@ class ChatService(
     private val listGroupIds: ListGroupIds,
     private val getOwner: GetOwner,
 ) {
-    suspend fun openDirect(caller: UserId, other: UserId): Resource<ChatView> = openDirectChat(caller, other)
+    suspend fun openDirect(caller: UserId, other: UserId, viaSpaceId: UUID? = null): Resource<ChatView> =
+        openDirectChat(caller, other, viaSpaceId)
 
     suspend fun createGroup(command: CreateGroupCommand): Resource<ChatView> = createGroup.invoke(command)
 

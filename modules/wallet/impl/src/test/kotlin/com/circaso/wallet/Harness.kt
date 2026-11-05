@@ -101,15 +101,16 @@ class Harness(
 
     val owners = MemoryWalletOwners()
     val approvals = FakePayoutApprovals()
-    val holders = Holders(owners, chats)
+    val spaces = FakeSpaces()
+    val holders = Holders(owners, chats, spaces)
 
     /** What reached people: [frames] records them per person, after [HolderFrames] fans a group wallet's out. */
-    private val sent = HolderFrames(holders, chats, frames)
+    private val sent = HolderFrames(holders, chats, frames, spaces)
     val sync = WalletSync(wallets, transactor, outbox, bus, custody, adding, sent, clock, owners)
     val warnings = RecordingWarnings()
     private val holdings = HoldingsReader(custody, cache, warnings)
     private val support = SupportAccountRule(accounts)
-    private val payees = Payees(wallets, owners, reach, chats, custody, support)
+    private val payees = Payees(wallets, owners, reach, chats, custody, support, spaces)
     private val listings = WalletListings(wallets, payees)
     private val events = TransferEvents(bus)
     val rules = SenderRules(wallets, accounts, holds, holdings, spend, custody, TEST_LIMITS, support, clock)
@@ -119,7 +120,12 @@ class Harness(
     val createWallet = CreateWallet(creation, support)
     val createGroupWallet = CreateGroupWallet(chats, owners, accounts, support, creation, clock)
     val getGroupWallet = GetGroupWallet(chats, owners, listings)
-    val listMyWallets = ListMyWallets(chats, owners, listings)
+    val listMyWallets = ListMyWallets(chats, owners, listings, spaces)
+    val createSpaceWallet =
+        com.circaso.wallet.domain.usecases
+            .CreateSpaceWallet(owners, accounts, support, creation, listings, spaces, clock)
+    val getSpaceWallet = com.circaso.wallet.domain.usecases.GetSpaceWallet(owners, listings, spaces)
+    val findSpaceWallet = com.circaso.wallet.domain.usecases.FindSpaceWallet(owners, listings)
     val findGroupWallet = FindGroupWallet(owners, listings)
     val openSession = OpenSession(wallets, custody, active, holders)
     val listChains = ListChains(wallets, sync, adding, custody, holders)
@@ -145,8 +151,9 @@ class Harness(
             clock,
             holders,
             approvals,
+            spaces,
         )
-    val getTransfer = GetTransfer(transfers, chats)
+    val getTransfer = GetTransfer(transfers, chats, spaces)
     val listTransactions = ListTransactions(transactions, Counterparties(profiles, wallets, owners), rates, holders)
     val checkRecipient = CheckRecipient(payees, custody, support)
     val requestSetup = RequestSetup(payees, reminders, profiles, sent, support)
@@ -178,6 +185,11 @@ class Harness(
             ReplayFrames(NoFramesKept),
             LookupTransfer(transfers),
             findGroupWallet,
+            findSpaceWallet,
+            com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds(
+                owners,
+                com.circaso.wallet.domain.support.HeldFunds(wallets, sync, holdings),
+            ),
         )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))

@@ -58,15 +58,20 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
             is Resource.Error -> return read
         }
     val payout = payoutRequestId?.let { Uuid7.parse(it.trim()) ?: return malformed("payoutRequestId", "is not an id") }
+    val spacePayment = spacePaymentId?.let { Uuid7.parse(it.trim()) ?: return malformed("spacePaymentId", "is not an id") }
     val key = circleKey(userId, "wallet.transfer", requestKey)
     return Resource.success(
-        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout),
+        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout, spacePayment),
     )
 }
 
 private fun PayeeRequest.toPayee(): Resource<Payee> {
-    if (listOfNotNull(userId, address, groupId).size != 1) {
-        return malformed("to", "needs exactly one of userId, address and groupId")
+    if (listOfNotNull(userId, address, groupId, spaceId).size != 1) {
+        return malformed("to", "needs exactly one of userId, address, groupId and spaceId")
+    }
+    if (spaceId != null) {
+        val id = Uuid7.parse(spaceId.trim()) ?: return malformed("to.spaceId", "is not an id")
+        return Resource.success(Payee.Space(id))
     }
     if (groupId != null) {
         val id = ChatId.parse(groupId) ?: return malformed("to.groupId", "is not an id")
@@ -166,6 +171,9 @@ fun Transfer.toResponse(viewer: UserId): TransferResponse {
         toGroupId = toGroupId?.toString(),
         signerUserId = signer.toString(),
         payoutRequestId = payoutRequestId?.toString(),
+        fromSpaceId = fromSpaceId?.toString(),
+        toSpaceId = toSpaceId?.toString(),
+        spacePaymentId = spacePaymentId?.toString(),
     )
 }
 

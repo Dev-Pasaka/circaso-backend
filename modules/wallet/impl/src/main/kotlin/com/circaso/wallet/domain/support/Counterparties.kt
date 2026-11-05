@@ -8,6 +8,7 @@ import com.circaso.wallet.domain.models.HistoryEntry
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
+import com.circaso.wallet.domain.models.WalletOwner
 
 /**
  * Names the other side of history rows from users' `Profiles`, asked once for every person in the batch. Someone
@@ -50,7 +51,7 @@ class Counterparties(
     private suspend fun groups(ids: Set<UserId>): Map<UserId, Counterparty> {
         val repository = groupWallets ?: return emptyMap()
         return ids
-            .mapNotNull { id -> repository.find(WalletId(id.value))?.let { id to it } }
+            .mapNotNull { id -> (repository.find(WalletId(id.value)) as? WalletOwner.Group)?.let { id to it } }
             .associate { (id, group) -> id to Counterparty(id, null, null, null, null, group.chatId) }
     }
 

@@ -27,7 +27,13 @@ data class AmountRequest(val asset: String, val amountMinor: String? = null, val
  * must be a member). Exactly one.
  */
 @Serializable
-data class PayeeRequest(val userId: String? = null, val address: String? = null, val groupId: String? = null)
+data class PayeeRequest(
+    val userId: String? = null,
+    val address: String? = null,
+    val groupId: String? = null,
+    /** A space's wallet (Spaces phase 3); you must be in the space, unless this pays its membership. */
+    val spaceId: String? = null,
+)
 
 /** W4 `POST /wallet/transfers`. */
 @Serializable
@@ -44,6 +50,8 @@ data class PrepareTransferRequest(
     val walletId: String? = null,
     /** From a group wallet: the approved payout request this pays (same payee, same amount). */
     val payoutRequestId: String? = null,
+    /** A membership payment from SP13 (Spaces phase 3): `to.spaceId` and the amount must be exactly its own. */
+    val spacePaymentId: String? = null,
 )
 
 @Serializable
@@ -98,6 +106,12 @@ data class TransferResponse(
     val signerUserId: String? = null,
     /** The approved payout request it pays. */
     val payoutRequestId: String? = null,
+    /** Set when it left a space wallet (Spaces phase 3). */
+    val fromSpaceId: String? = null,
+    /** Set when it paid a space wallet (`to.userId` is then that wallet's id). */
+    val toSpaceId: String? = null,
+    /** The membership payment (SP13) it paid. */
+    val spacePaymentId: String? = null,
 )
 
 /** W9 `GET /wallet/recipients/{userId}`. */

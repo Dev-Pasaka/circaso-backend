@@ -14,6 +14,7 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
+import java.time.Instant
 
 /** identity:api for the gateway and the other modules. Every call goes through a service, like any other way in. */
 class TokenVerifierImpl(private val directory: DirectoryService) : TokenVerifier {
@@ -27,6 +28,8 @@ class AccountDirectoryImpl(private val directory: DirectoryService) : AccountDir
 
     override suspend fun resolvePhones(phones: Set<PhoneNumber>): Map<PhoneNumber, UserId> =
         directory.resolve(phones).getOrNull().orEmpty()
+
+    override suspend fun createdAt(userId: UserId): Instant? = directory.createdAt(userId).getOrNull()
 }
 
 class DeviceSignaturesImpl(private val directory: DirectoryService) : DeviceSignatures {

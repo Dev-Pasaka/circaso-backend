@@ -51,6 +51,8 @@ data class PushPayload(
     val kind: String? = null,
     val callerName: String? = null,
     val callKind: String? = null,
+    /** The space a `space.*` push is about (Spaces phase 3): a tap opens it. */
+    val spaceId: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

@@ -11,11 +11,13 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
 import com.circaso.wallet.api.GroupWalletSummary
+import com.circaso.wallet.api.SpaceWalletSummary
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.Wallets
 import com.circaso.wallet.presentation.services.WalletDirectoryService
+import java.util.UUID
 
 /** wallet:api for the assistant later. Every call goes through a service, like any other way in. */
 class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
@@ -24,6 +26,10 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
     override suspend fun transfer(transferId: TransferId): TransferSummary? = directory.transfer(transferId)
 
     override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = directory.groupWallet(chatId)
+
+    override suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = directory.spaceWallet(spaceId)
+
+    override suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> = directory.spaceWalletHoldsMoney(spaceId)
 }
 
 /**
