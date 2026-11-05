@@ -81,6 +81,20 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
     override suspend fun tokens(userId: UserId, day: String): Pair<Long, Long> =
         read(key("in", userId, day)) to read(key("out", userId, day))
 
+    /** As [countTextTurn]: a refused search is given back, so the count settles at the cap. */
+    override suspend fun countWebSearch(
+        userId: UserId,
+        day: String,
+        cap: Int,
+    ): Long {
+        val key = key("search", userId, day)
+        val after = redis.increment(key, TTL)
+        if (after > cap) redis.incrementBy(key, -1, TTL)
+        return after
+    }
+
+    override suspend fun webSearches(userId: UserId, day: String): Long = read(key("search", userId, day))
+
     private suspend fun read(key: String): Long = redis.get(key)?.toLongOrNull() ?: 0
 
     override suspend fun forget(userId: UserId, days: List<String>) {
@@ -91,7 +105,7 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
 
     private companion object {
         val TTL: Duration = Duration.ofDays(2)
-        val KINDS = listOf("text", "voice", "in", "out")
+        val KINDS = listOf("text", "voice", "in", "out", "search")
     }
 }
 

@@ -35,6 +35,7 @@ import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
@@ -79,13 +80,15 @@ class IntegrationsModuleTest {
     @AfterTest
     fun tearDown() = stopKoin()
 
-    private fun koin(vararg values: Pair<String, String>) =
+    private fun koin(vararg values: Pair<String, String>) = koin(emptyMap(), *values)
+
+    private fun koin(secrets: Map<String, String>, vararg values: Pair<String, String>) =
         startKoin {
             modules(
                 integrationsModule(
                     MapConfig(values.toMap()),
                     object : Secrets {
-                        override fun get(name: String): String? = null
+                        override fun get(name: String): String? = secrets[name]
                     },
                 ),
                 module {
@@ -270,6 +273,21 @@ class IntegrationsModuleTest {
         val e = assertFailsWith<Exception> { koin("integrations.search.provider" to "tavily").get<WebSearch>() }
         assertTrue(
             "tavily.api-key" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
+        )
+    }
+
+    @Test
+    fun `web search is brave when its key is set and no provider is named, and brave needs the key`() {
+        assertIs<BraveWebSearch>(koin(mapOf("brave-search.api-key" to "k")).get<WebSearch>())
+        stopKoin()
+        assertIs<FakeWebSearch>(
+            koin(mapOf("brave-search.api-key" to "k"), "integrations.search.provider" to "fake").get<WebSearch>(),
+        )
+        stopKoin()
+        val e = assertFailsWith<Exception> { koin("integrations.search.provider" to "brave").get<WebSearch>() }
+        assertTrue(
+            "brave-search.api-key" in
+                generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
     }
 

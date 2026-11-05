@@ -101,7 +101,14 @@ fun Route.voiceController(voice: VoiceService) {
 
             get("usage") {
                 call.respondDefault(voice.getUsage(call.userId()).toDefaultResponse { it.toResponse() })
-            }.docs<NoBody, UsageResponse>("A7 · Today's allowance used and left, and the plan", TAG, notes = SCOPE)
+            }.docs<NoBody, UsageResponse>(
+                "A7 · Today's allowance used and left, and the plan",
+                TAG,
+                notes =
+                    "$SCOPE The day is UTC, `periodStart` to `periodEnd` (= `resetsAt`). Added 2026-11-05, for " +
+                        "the usage menu: `messages`, `voiceSeconds` and `searches` (Asha's web searches), each " +
+                        "`{ used, limit }`, `limit` null when there is none. The flat fields stay as they were.",
+            )
         }
     }
 }

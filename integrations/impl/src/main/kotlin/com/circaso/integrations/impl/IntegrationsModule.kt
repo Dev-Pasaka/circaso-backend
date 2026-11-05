@@ -28,6 +28,7 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
+import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.circle.CircleSettings
@@ -90,7 +91,7 @@ import java.time.Duration
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
  * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), for calls
  * `calls` (`cloudflare`, the Realtime SFU), for location previews `maps` (`google`), and Asha's web `search`
- * (`tavily`, which defaults to `fake`). Every other one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
+ * (`brave` or `tavily`; unset, `brave` when its key is set, else `fake`). Every other one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
  */
 fun integrationsModule(config: Config, secrets: Secrets) =
@@ -331,16 +332,23 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
-        // Asha's web search (decision 2026-10-31): `tavily` needs the secret `TAVILY_API_KEY`; `fake` (the default,
-        // so nothing breaks without a key) answers two made-up results, `log` none.
+        // Asha's web search (decisions 2026-10-31 and 2026-11-05): `brave` needs the secret `BRAVE_SEARCH_API_KEY`,
+        // `tavily` the secret `TAVILY_API_KEY`. Unset, the provider is `brave` when its key is there and otherwise
+        // `fake` (two made-up results), so nothing breaks without a key; `log` answers none.
         single<WebSearch> {
             pick(
                 "search",
-                default = "fake",
+                default = if (secrets.get(BRAVE_KEY) != null) "brave" else "fake",
                 providers =
                     mapOf(
                         "log" to { LogWebSearch() },
                         "fake" to { FakeWebSearch() },
+                        "brave" to {
+                            BraveWebSearch(
+                                http = get<HttpClients>().named("brave"),
+                                key = secrets.require(BRAVE_KEY),
+                            )
+                        },
                         "tavily" to {
                             TavilyWebSearch(
                                 http = get<HttpClients>().named("tavily"),
@@ -543,6 +551,10 @@ private fun cloudflareRealtime(
 }
 
 // Asha's models on Workers AI, each overridable by its INTEGRATIONS_AI_MODEL_* setting. Ids from developers.cloudflare.com/workers-ai/models/.
+
+/** Brave Search's key, `BRAVE_SEARCH_API_KEY`; its presence also picks `brave` when no provider is named. */
+private const val BRAVE_KEY = "brave-search.api-key"
+
 private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 
 // Built by Pipecat/Daily for voice agents: replies quickly and calls tools mid-conversation (Workers AI, 2026-10-15).

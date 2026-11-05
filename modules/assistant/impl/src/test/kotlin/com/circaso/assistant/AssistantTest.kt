@@ -521,7 +521,7 @@ class AssistantTest {
             assertEquals("what is my balance", text.text)
             assertEquals(7, h.usage(me).data().voiceSecondsUsed)
             assertEquals(
-                listOf<Number>(0, 7, 0L, 0L),
+                listOf<Number>(0, 7, 0L, 0L, 0),
                 h.memory.usage["$me:${Clock.systemUTC().today()}"],
                 "the day's totals are stored with the clip, not at the next text turn",
             )
@@ -596,7 +596,7 @@ class AssistantTest {
             val h = Harness(smallLimits(), owner = me)
             assertEquals("audio/mpeg", h.speak(me, "Habari yako", "sw").data().contentType)
             assertEquals(
-                listOf<Number>(0, 1, 0L, 0L),
+                listOf<Number>(0, 1, 0L, 0L, 0),
                 h.memory.usage["$me:${Clock.systemUTC().today()}"],
                 "the day's totals are stored with the speech, not at the next text turn",
             )
@@ -745,9 +745,9 @@ class AssistantTest {
             assertTrue("never ask for, accept or repeat a PIN" in system)
             assertTrue("- Mode: voice." in system)
             assertTrue("- Display currency: UGX." in system)
-            assertEquals("asha-2026-11-04-v1", AshaPrompt.VERSION)
+            assertEquals("asha-2026-11-05-v1", AshaPrompt.VERSION)
             assertTrue(
-                "prompt=asha-2026-11-04-v1" in
+                "prompt=asha-2026-11-05-v1" in
                     h.memory.audit
                         .single()
                         .detail,

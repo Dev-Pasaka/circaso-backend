@@ -11,14 +11,18 @@ import com.circaso.integrations.api.ToolSpec
 import com.circaso.messaging.api.AgentChatsResponse
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
+import com.circaso.status.api.AgentMomentsResponse
 import com.circaso.users.api.AgentBlocksResponse
 import com.circaso.users.api.AgentContactDto
 import com.circaso.users.api.AgentContactsResponse
 import com.circaso.users.api.AgentProfileResponse
+import com.circaso.wallet.api.AgentAssetValuesResponse
+import com.circaso.wallet.api.AgentFeeQuoteResponse
 import com.circaso.wallet.api.AgentSummaryResponse
 import com.circaso.wallet.api.AgentTransactionResponse
 import com.circaso.wallet.api.AgentTransactionsResponse
 import com.circaso.wallet.api.AgentWalletResponse
+import com.circaso.wallet.api.AgentWalletsResponse
 import com.circaso.web.DefaultResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.request.HttpRequestBuilder
@@ -58,11 +62,15 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
                 AshaPrompt.getSecurityOverview,
                 AshaPrompt.listChats,
                 AshaPrompt.getWallet,
+                AshaPrompt.listWallets,
+                AshaPrompt.getAssetValues,
+                AshaPrompt.getFeeQuote,
                 AshaPrompt.listTransactions,
                 AshaPrompt.summarizeTransactions,
                 AshaPrompt.getTransaction,
                 AshaPrompt.listChamas,
                 AshaPrompt.getChama,
+                AshaPrompt.getMyMoments,
             )
         } else {
             emptyList()
@@ -79,6 +87,10 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
             GET_SECURITY -> "Checking your account security…"
             LIST_CHATS -> "Looking at your chats…"
             GET_WALLET -> "Checking your balance…"
+            LIST_WALLETS -> "Looking at your wallets…"
+            GET_ASSET_VALUES -> "Checking today's rate…"
+            GET_FEE_QUOTE -> "Working out the fee…"
+            GET_MY_MOMENTS -> "Looking at your moments…"
             LIST_TRANSACTIONS -> "Checking your payments${about(arguments(argumentsJson, HistoryArgs()))}…"
             SUMMARIZE_TRANSACTIONS -> "Adding up your payments${about(arguments(argumentsJson, HistoryArgs()))}…"
             GET_TRANSACTION -> "Opening that payment…"
@@ -100,7 +112,11 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
                 LIST_BLOCKED -> listBlocked(token)
                 GET_SECURITY -> getSecurity(token)
                 LIST_CHATS -> listChats(arguments(argumentsJson, LimitArgs()), token)
-                GET_WALLET -> getWallet(context, token)
+                GET_WALLET -> getWallet(arguments(argumentsJson, WalletArgs()), context, token)
+                LIST_WALLETS -> listWallets(token)
+                GET_ASSET_VALUES -> getAssetValues(arguments(argumentsJson, ValueArgs()), context, token)
+                GET_FEE_QUOTE -> getFeeQuote(arguments(argumentsJson, FeeArgs()), context, token)
+                GET_MY_MOMENTS -> getMyMoments(token)
                 LIST_TRANSACTIONS -> listTransactions(arguments(argumentsJson, HistoryArgs()), context, token)
                 SUMMARIZE_TRANSACTIONS -> summarize(arguments(argumentsJson, HistoryArgs()), context, token)
                 GET_TRANSACTION -> getTransaction(arguments(argumentsJson, IdArgs()), context, token)
@@ -163,9 +179,79 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
 
     // ---- wallet ----
 
-    private suspend fun getWallet(context: ToolContext, token: String): Resource<String> =
-        dataOf(get("/v1/agent/wallet", token) { currency(context) }, AgentWalletResponse.serializer())
-            .encoded(AgentWalletResponse.serializer()) { null }
+    private suspend fun getWallet(
+        arguments: WalletArgs,
+        context: ToolContext,
+        token: String,
+    ): Resource<String> {
+        val walletId = arguments.walletId?.trim()?.takeIf { it.isNotEmpty() }
+        if (walletId != null && !ID.matches(walletId)) return ToolOutput.message(NO_SUCH_WALLET)
+        val response =
+            get("/v1/agent/wallet", token) {
+                currency(context)
+                walletId?.let { parameter("walletId", it) }
+            }
+        return dataOf(response, AgentWalletResponse.serializer()).encoded(AgentWalletResponse.serializer()) { null }
+    }
+
+    private suspend fun listWallets(token: String): Resource<String> =
+        dataOf(get("/v1/agent/wallet/wallets", token) {}, AgentWalletsResponse.serializer())
+            .encoded(AgentWalletsResponse.serializer()) { it.wallets.half()?.let { fewer -> it.copy(wallets = fewer) } }
+
+    /** The wallet's own rate (decision 2026-11-05): never a market price, so Asha's numbers match the app's. */
+    private suspend fun getAssetValues(
+        arguments: ValueArgs,
+        context: ToolContext,
+        token: String,
+    ): Resource<String> {
+        val response =
+            get("/v1/agent/wallet/values", token) {
+                arguments.assets
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { parameter("assets", it.take(MAX_ASSETS).joinToString(",")) }
+                arguments.amount
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let { parameter("amount", it) }
+                (arguments.currency?.trim()?.takeIf { it.isNotEmpty() } ?: context.currency)
+                    ?.let { parameter("currency", it) }
+            }
+        return dataOf(response, AgentAssetValuesResponse.serializer())
+            .encoded(AgentAssetValuesResponse.serializer()) { null }
+    }
+
+    /**
+     * The fee for a payment the user is thinking of (decision 2026-11-05). A person named by the model becomes their
+     * user id as in [counterparty]; nothing is held or written, and the user sees the real fee when they pay.
+     */
+    private suspend fun getFeeQuote(
+        arguments: FeeArgs,
+        context: ToolContext,
+        token: String,
+    ): Resource<String> {
+        val history = HistoryArgs(counterpartyName = arguments.counterpartyName, counterparty = arguments.toUserId)
+        val person =
+            when (val resolved = counterparty(history, token)) {
+                is Counterparty.Chosen -> resolved.value
+                is Counterparty.Answer -> return resolved.answer
+            }
+        val response =
+            get("/v1/agent/wallet/fee", token) {
+                parameter("amount", arguments.amount.trim())
+                arguments.asset?.let { parameter("asset", it) }
+                arguments.blockchain?.let { parameter("blockchain", it) }
+                when {
+                    person != null -> parameter("toUserId", person)
+                    arguments.toGroupId != null -> parameter("toGroupId", arguments.toGroupId)
+                    arguments.toAddress != null -> parameter("toAddress", arguments.toAddress)
+                }
+                arguments.walletId?.let { parameter("walletId", it) }
+                currency(context)
+            }
+        return dataOf(response, AgentFeeQuoteResponse.serializer()).encoded(AgentFeeQuoteResponse.serializer()) { null }
+    }
 
     private suspend fun listTransactions(
         arguments: HistoryArgs,
@@ -295,6 +381,12 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         }
     }
 
+    // ---- status ----
+
+    private suspend fun getMyMoments(token: String): Resource<String> =
+        dataOf(get("/v1/agent/status/moments", token) {}, AgentMomentsResponse.serializer())
+            .encoded(AgentMomentsResponse.serializer()) { it.moments.half()?.let { fewer -> it.copy(moments = fewer) } }
+
     // ---- the route call ----
 
     private suspend fun get(
@@ -369,6 +461,10 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         const val GET_TRANSACTION = "getTransaction"
         const val LIST_CHAMAS = "listChamas"
         const val GET_CHAMA = "getChama"
+        const val LIST_WALLETS = "listWallets"
+        const val GET_ASSET_VALUES = "getAssetValues"
+        const val GET_FEE_QUOTE = "getFeeQuote"
+        const val GET_MY_MOMENTS = "getMyMoments"
         val NAMES =
             setOf(
                 GET_PROFILE,
@@ -383,11 +479,17 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
                 GET_TRANSACTION,
                 LIST_CHAMAS,
                 GET_CHAMA,
+                LIST_WALLETS,
+                GET_ASSET_VALUES,
+                GET_FEE_QUOTE,
+                GET_MY_MOMENTS,
             )
 
         const val LOOKUP = "the lookup"
         const val NO_SUCH_PAYMENT = "That is not a payment id from listTransactions."
         const val NO_SUCH_CHAMA = "That is not a chatId from listChamas."
+        const val NO_SUCH_WALLET = "That is not a walletId from listWallets."
+        const val MAX_ASSETS = 10
         const val SEARCH_LIMIT = 5
         const val LIST_LIMIT = 20
         const val MAX_LIST_LIMIT = 50
@@ -420,6 +522,31 @@ private data class HistoryArgs(
     val cursor: String? = null,
     val limit: Int? = null,
     val top: Int? = null,
+)
+
+/** `getWallet`: absent for the user's own wallet, or a walletId from `listWallets`. */
+@Serializable
+private data class WalletArgs(val walletId: String? = null)
+
+/** `getAssetValues`: assets by name (default every supported one), an amount in whole units, a currency. */
+@Serializable
+private data class ValueArgs(
+    val assets: List<String> = emptyList(),
+    val amount: String? = null,
+    val currency: String? = null,
+)
+
+/** `getFeeQuote`: the payment the user is thinking of; one payee (a contact by name or id, a group, an address). */
+@Serializable
+private data class FeeArgs(
+    val amount: String = "",
+    val asset: String? = null,
+    val blockchain: String? = null,
+    val counterpartyName: String? = null,
+    val toUserId: String? = null,
+    val toGroupId: String? = null,
+    val toAddress: String? = null,
+    val walletId: String? = null,
 )
 
 /** `getTransaction`. */

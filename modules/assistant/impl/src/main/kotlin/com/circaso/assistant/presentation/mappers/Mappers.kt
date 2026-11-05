@@ -22,6 +22,7 @@ import com.circaso.assistant.presentation.dto.DoneEvent
 import com.circaso.assistant.presentation.dto.ReadNoteDto
 import com.circaso.assistant.presentation.dto.SendMessageRequest
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
+import com.circaso.assistant.presentation.dto.UsageMeterDto
 import com.circaso.assistant.presentation.dto.UsageResponse
 import com.circaso.assistant.presentation.dto.VoiceDto
 import com.circaso.assistant.presentation.dto.VoicesResponse
@@ -122,15 +123,22 @@ fun ConversationPage.toResponse() = ConversationsResponse(conversations.map { it
 
 fun TurnResult.Answer.toDoneEvent() = DoneEvent(message.toDto(), conversationId.toString(), conversation?.toDto())
 
-fun Usage.toResponse() =
-    UsageResponse(
-        plan.name,
-        textTurnsUsed,
-        textTurnsLeft,
-        voiceSecondsUsed,
-        voiceSecondsLeft,
-        resetsAt,
+fun Usage.toResponse(): UsageResponse {
+    val day = limits.takeUnless { isUnlimited }
+    return UsageResponse(
+        plan = plan.name,
+        textTurnsUsed = textTurnsUsed,
+        textTurnsLeft = textTurnsLeft,
+        voiceSecondsUsed = voiceSecondsUsed,
+        voiceSecondsLeft = voiceSecondsLeft,
+        resetsAt = resetsAt,
+        periodStart = periodStart,
+        periodEnd = resetsAt,
+        messages = UsageMeterDto(textTurnsUsed, day?.textTurnsPerDay),
+        voiceSeconds = UsageMeterDto(voiceSecondsUsed, day?.voiceSecondsPerDay),
+        searches = UsageMeterDto(webSearchesUsed, day?.webSearchesPerDay),
     )
+}
 
 fun AshaVoices.toResponse() = VoicesResponse(all.map { it.toDto(isDefault = it.id == default.id) })
 

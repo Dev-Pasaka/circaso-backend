@@ -89,6 +89,7 @@ import com.circaso.wallet.domain.support.SetupProgress
 import com.circaso.wallet.domain.support.SplitPayments
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.TransferEvents
+import com.circaso.wallet.domain.support.TransferQuoter
 import com.circaso.wallet.domain.support.WalletCreation
 import com.circaso.wallet.domain.support.WalletListings
 import com.circaso.wallet.domain.support.WalletSync
@@ -103,6 +104,7 @@ import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CreateGroupWallet
 import com.circaso.wallet.domain.usecases.CreateSpaceWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
+import com.circaso.wallet.domain.usecases.EstimateFee
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.FindGroupWallet
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
@@ -126,6 +128,7 @@ import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.SweepWalletSetups
 import com.circaso.wallet.domain.usecases.ValidateAddress
+import com.circaso.wallet.domain.usecases.ValueAssets
 import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
@@ -372,7 +375,8 @@ fun walletModule(config: Config): Module =
                 get(),
             )
         }
-        single { QuoteTransfer(get(), get(), get(), clock) }
+        single { TransferQuoter(get(), get(), get(), clock) }
+        single { QuoteTransfer(get()) }
         single { GetTransfer(get(), get(), getOrNull()) }
         single { Counterparties(get(), get(), get()) }
         single { ListTransactions(get(), get(), get(), get()) }
@@ -394,7 +398,9 @@ fun walletModule(config: Config): Module =
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
-        single { WalletAgentService(get(), get(), get(), get()) }
+        single { ValueAssets(get()) }
+        single { EstimateFee(get(), get()) }
+        single { WalletAgentService(get(), get(), get(), get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
         single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         if (spacesEnabled) single { SpaceWalletService(get(), get()) }

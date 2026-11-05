@@ -38,7 +38,13 @@ interface AgentTools {
 }
 
 /** Who a tool acts for: the user, their agent token (null when the app sent none), and their display currency. */
-data class ToolContext(val userId: UserId, val agentToken: String?, val currency: String?) {
+data class ToolContext(
+    val userId: UserId,
+    val agentToken: String?,
+    val currency: String?,
+    /** The tools already called this turn, in order (decision 2026-11-05: a tool may cap its calls per turn). */
+    val calledBefore: List<String> = emptyList(),
+) {
     override fun toString(): String = "ToolContext($userId, currency=$currency)"
 }
 
@@ -139,6 +145,18 @@ interface QuotaCounters {
     )
 
     suspend fun tokens(userId: UserId, day: String): Pair<Long, Long>
+
+    /**
+     * Counts one web search unless the day already holds [cap] (decision 2026-11-05), as [countTextTurn] counts a
+     * turn: the count with this one, and above [cap] means refused and given back.
+     */
+    suspend fun countWebSearch(
+        userId: UserId,
+        day: String,
+        cap: Int,
+    ): Long
+
+    suspend fun webSearches(userId: UserId, day: String): Long
 
     /** Removes the user's counters for [days] (a deleted account). */
     suspend fun forget(userId: UserId, days: List<String>)

@@ -154,7 +154,7 @@ class AshaAgent(
                 if (specs.none { it.name == call.name }) {
                     NOT_AVAILABLE
                 } else {
-                    runServerTool(call, turn, context, listener, mascot)
+                    runServerTool(call, turn, context.copy(calledBefore = used.dropLast(1)), listener, mascot)
                 }
             messages += ModelMessage.ToolResult(call.id, call.name, answer)
             skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }

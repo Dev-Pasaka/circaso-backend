@@ -2,6 +2,7 @@ package com.circaso.assistant.domain.models
 
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.UserId
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -52,8 +53,14 @@ data class Limits(
     val voiceSecondsPerDay: Int,
     /** How many earlier messages Asha is given as context. */
     val contextMessages: Int,
+    /** Web searches Asha may run for the user in a day (decision 2026-11-05); each costs Circaso a vendor call. */
+    val webSearchesPerDay: Int = 10,
 )
 
+/**
+ * Today's allowance (A7). The day runs from [periodStart] to [resetsAt], midnight to midnight UTC; [limits] are the
+ * plan's, and [isUnlimited] says they are lifted (testing), when the app shows no limit.
+ */
 data class Usage(
     val plan: Plan,
     val textTurnsUsed: Int,
@@ -61,6 +68,11 @@ data class Usage(
     val voiceSecondsUsed: Int,
     val voiceSecondsLeft: Int,
     val resetsAt: Instant,
+    val webSearchesUsed: Int = 0,
+    val webSearchesLeft: Int = 0,
+    val periodStart: Instant = resetsAt.minus(Duration.ofDays(1)),
+    val limits: Limits? = null,
+    val isUnlimited: Boolean = false,
 )
 
 data class AskedFrom(val chatId: String, val chatName: String?)

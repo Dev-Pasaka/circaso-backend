@@ -55,6 +55,10 @@ object Valuation {
     private fun inCurrency(dollars: BigDecimal, rate: UsdRate): BigDecimal =
         (dollars * rate.rate).setScale(fractionDigits(rate.currency), RoundingMode.HALF_UP)
 
+    /** [dollars] in the rate's currency, or in US dollars to the cent when there is no rate (Asha's values). */
+    fun fiatOrDollars(dollars: BigDecimal, rate: UsdRate?): BigDecimal =
+        if (rate == null) dollars.setScale(2, RoundingMode.HALF_UP) else inCurrency(dollars, rate)
+
     /** The currency's minor unit (2 for KES, 0 for UGX); 2 for the few codes with none defined. */
     private fun fractionDigits(currency: String): Int =
         runCatching { Currency.getInstance(currency).defaultFractionDigits }

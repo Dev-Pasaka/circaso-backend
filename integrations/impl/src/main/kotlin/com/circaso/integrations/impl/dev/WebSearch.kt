@@ -6,6 +6,7 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.net.URLEncoder
+import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -22,10 +23,20 @@ class FakeWebSearch : WebSearch {
         val slug = URLEncoder.encode(query.trim(), Charsets.UTF_8)
         val results =
             listOf(
-                WebResult("About $query", "https://example.com/search?q=$slug", "What the web says about $query."),
+                WebResult(
+                    "About $query",
+                    "https://example.com/search?q=$slug",
+                    "What the web says about $query.",
+                    PUBLISHED,
+                ),
                 WebResult("$query explained", "https://example.org/guide?q=$slug", "A short guide to $query."),
             )
         return Resource.success(results.take(limit.coerceAtLeast(1)))
+    }
+
+    private companion object {
+        /** A fixed date, so a test can see the published date reach the model. */
+        val PUBLISHED: Instant = Instant.parse("2026-11-01T08:00:00Z")
     }
 }
 
