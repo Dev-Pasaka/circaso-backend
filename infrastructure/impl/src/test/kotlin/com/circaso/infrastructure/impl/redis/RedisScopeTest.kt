@@ -107,6 +107,15 @@ class RedisScopeTest {
         }
 
     @Test
+    fun `scripts go by their SHA and still run after the server forgets them`() =
+        runBlocking<Unit> {
+            assertEquals(1, idn.increment("rate:$id", Duration.ofSeconds(30)))
+            redis.commands.scriptFlush()
+            assertEquals(2, idn.increment("rate:$id", Duration.ofSeconds(30)), "NOSCRIPT falls back to EVAL")
+            assertEquals(3, idn.increment("rate:$id", Duration.ofSeconds(30)))
+        }
+
+    @Test
     fun `a counter always has an expiry`() =
         runBlocking<Unit> {
             idn.increment("rate:$id", Duration.ofSeconds(30))

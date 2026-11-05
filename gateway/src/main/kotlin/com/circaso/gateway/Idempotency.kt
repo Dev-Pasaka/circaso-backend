@@ -20,6 +20,11 @@ class Idempotency(private val redis: RedisScope) {
     /** True if the caller may run the request; false if the key is already taken (see [state]). */
     suspend fun begin(key: String): Boolean = redis.setIfAbsent(key, MARKER, MARKER_TTL)
 
+    /** Gives back a key [begin] took for a request that was then refused before its route ran. */
+    suspend fun abandon(key: String) {
+        redis.delete(key)
+    }
+
     suspend fun state(key: String): IdempotencyState? {
         val raw = redis.get(key) ?: return null
         if (raw == MARKER) return IdempotencyState.InProgress

@@ -19,6 +19,11 @@ import java.time.Instant
 /** identity:api for the gateway and the other modules. Every call goes through a service, like any other way in. */
 class TokenVerifierImpl(private val directory: DirectoryService) : TokenVerifier {
     override suspend fun verify(accessToken: String): Resource<Principal> = directory.verifyToken(accessToken)
+
+    override suspend fun <T> verifyAlongside(
+        accessToken: String,
+        alongside: suspend (Principal) -> T,
+    ): Pair<Resource<Principal>, T?> = directory.verifyTokenAlongside(accessToken, alongside)
 }
 
 class AccountDirectoryImpl(private val directory: DirectoryService) : AccountDirectory {

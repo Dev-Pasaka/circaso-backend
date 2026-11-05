@@ -10,6 +10,7 @@ import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.ResolvePhones
 import com.circaso.identity.domain.usecases.VerifyAccessToken
+import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyDeviceSignature
 import com.circaso.shared.DeviceId
 import com.circaso.shared.PhoneNumber
@@ -26,8 +27,14 @@ class DirectoryService(
     private val getPushTarget: GetPushTarget,
     private val getAccountKind: GetAccountKind,
     private val getAccountCreatedAt: GetAccountCreatedAt,
+    private val verifyAccessTokenAlongside: VerifyAccessTokenAlongside,
 ) {
     suspend fun verifyToken(token: String): Resource<Principal> = verifyAccessToken(token)
+
+    suspend fun <T> verifyTokenAlongside(
+        token: String,
+        work: suspend (Principal) -> T,
+    ): Pair<Resource<Principal>, T?> = verifyAccessTokenAlongside(token, work)
 
     suspend fun status(userId: UserId): Resource<AccountStatus?> = getAccountStatus(userId)
 
