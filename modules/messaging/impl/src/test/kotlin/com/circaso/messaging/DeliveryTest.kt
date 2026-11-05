@@ -83,6 +83,23 @@ class DeliveryTest {
         }
 
     @Test
+    fun `with Spaces archived, a chat opened via a space is an ordinary direct chat`() =
+        runBlocking<Unit> {
+            // no SpacePrivateChats guard is bound while SPACES_ENABLED is off (decision 2026-11-05)
+            val chat = h.direct(amina, brian)
+            val rows = h.chats.chats.chats
+            rows[chat] = rows.getValue(chat).copy(viaSpaceId = UUID.randomUUID())
+
+            val sent = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
+            h.chats.reach.pairs
+                .remove(brian to amina)
+            val oneWay = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
+
+            assertNotNull(sent.data())
+            assertEquals("users.not_reachable", oneWay.errorCode())
+        }
+
+    @Test
     fun `someone outside a chat can't send to it, and it looks like no chat at all`() =
         runBlocking<Unit> {
             val group = h.group(amina, listOf(brian))

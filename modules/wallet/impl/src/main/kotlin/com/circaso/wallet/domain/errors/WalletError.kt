@@ -232,6 +232,16 @@ sealed class WalletError(
 
     // ---- space wallets (Spaces phase 3, decision 2026-11-04) ----
 
+    /**
+     * Spaces is archived (decision 2026-11-05): with `SPACES_ENABLED` off, W18 and W19 answer this. Spaces' own code on
+     * purpose, so the app sees one code for the whole archived feature.
+     */
+    data object SpacesUnavailable : WalletError(
+        "spaces.unavailable",
+        "Spaces isn't available.",
+        ErrorKind.NOT_FOUND,
+    )
+
     data object SpaceNotFound : WalletError(
         "wallet.space_not_found",
         "We couldn't find that space.",

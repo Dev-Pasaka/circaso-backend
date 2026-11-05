@@ -36,6 +36,7 @@ import com.circaso.spaces.data.tables.RealtimeTable
 import com.circaso.spaces.data.tables.ReportsTable
 import com.circaso.spaces.data.tables.RequestsTable
 import com.circaso.spaces.data.tables.SpacesTable
+import com.circaso.spaces.domain.errors.SpacesError
 import com.circaso.spaces.domain.ports.FrameSender
 import com.circaso.spaces.domain.ports.MediaStorage
 import com.circaso.spaces.domain.ports.RealtimeLog
@@ -127,6 +128,7 @@ import com.circaso.spaces.presentation.services.ReportService
 import com.circaso.spaces.presentation.services.SpaceService
 import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.web.RouteContributor
+import com.circaso.web.unavailable
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -160,13 +162,40 @@ private const val REDIS_PREFIX = "spc"
 private val MEMBERSHIPS_INTERVAL: Duration = Duration.ofMinutes(10)
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(30)
 
+/** `SPACES_ENABLED`: Spaces is archived (decision 2026-11-05) and off unless this is `true`. The wallet reads it too. */
+const val SPACES_ENABLED_KEY = "spaces.enabled"
+
+/** Every path Spaces serves under `/v1`: the app's (SP1-SP37) and Circaso ops' (SPO1-SPO2). */
+internal val SPACES_PATHS = listOf("/spaces", "/ops/spaces")
+
 /**
- * Spaces' Koin bindings: its database spec, jobs (`spaces.memberships`, `spaces.purge-expired`), routes (SP1-SP37,
+ * Spaces' Koin bindings. Spaces is archived (decision 2026-11-05): unless `SPACES_ENABLED=true` it is
+ * [archivedSpacesModule], otherwise [liveSpacesModule].
+ */
+fun spacesModule(config: Config): Module =
+    if (config.boolean(SPACES_ENABLED_KEY, false)) liveSpacesModule() else archivedSpacesModule()
+
+/**
+ * Spaces switched off. Only its database spec stays, so its tables are kept and still migrated (nothing is dropped),
+ * and one route answers `spaces.unavailable` (404) for every Spaces path. No jobs, no `events:wallet` or
+ * `events:identity` consumers, no replay and so no frames or pushes; and no `SpaceWalletPolicy` or
+ * `SpacePrivateChats`, so the wallet offers no space wallet and messaging treats a chat opened via a space as an
+ * ordinary direct chat.
+ */
+internal fun archivedSpacesModule(): Module =
+    module {
+        single(named("spaces.spec")) { spacesDatabaseSpec }
+        single<RouteContributor>(named("spaces.routes")) {
+            RouteContributor { route -> SPACES_PATHS.forEach { route.unavailable(it, SpacesError.Unavailable) } }
+        }
+    }
+
+/**
+ * Spaces switched on: its database spec, jobs (`spaces.memberships`, `spaces.purge-expired`), routes (SP1-SP37,
  * SPO1-SPO2), its `events:wallet` and `events:identity` subscriptions, its replay, and the guards it implements for
  * the wallet (`SpaceWalletPolicy`) and messaging (`SpacePrivateChats`).
  */
-@Suppress("UNUSED_PARAMETER")
-fun spacesModule(config: Config): Module =
+internal fun liveSpacesModule(): Module =
     module {
         val clock = Clock.systemUTC()
         val spaces = SpacesConfig()

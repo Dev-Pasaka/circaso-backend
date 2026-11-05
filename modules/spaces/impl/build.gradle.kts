@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.logback.classic)
     // PostgreSQL for data tests, as infrastructure:api types (the one test-only exception in DependencyRules)
     testImplementation(testFixtures(project(":infrastructure:impl")))

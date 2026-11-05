@@ -60,7 +60,10 @@ class SendMessage(
     private val background: CoroutineScope,
     private val config: MessagingConfig,
     private val clock: Clock,
-    /** Spaces' guard (Spaces phase 3): a private chat via a space closes once either side is banned from it. */
+    /**
+     * Spaces' guard (Spaces phase 3): a private chat via a space closes once either side is banned from it. Null while
+     * Spaces is archived: such a chat then follows the direct-chat rule.
+     */
     private val spaceChats: SpacePrivateChats? = null,
 ) {
     suspend operator fun invoke(command: SendMessageCommand): Resource<SentMessage> {
@@ -201,6 +204,7 @@ class SendMessage(
     /**
      * A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways, from
      * [early] when that read was made for this pair (`recipientsMatch` has checked that [other] is the recipient).
+     * Without spaces' guard (Spaces archived 2026-11-05, `SPACES_ENABLED` off) a chat via a space is an ordinary one.
      */
     private suspend fun canWrite(
         chat: Chat,
@@ -208,9 +212,10 @@ class SendMessage(
         other: UserId,
         early: Deferred<Boolean?>,
     ): Boolean {
-        val via = chat.viaSpaceId ?: return early.await() ?: reachableBothWays(sender, other)
+        val via = chat.viaSpaceId
+        val spaces = spaceChats
+        if (via == null || spaces == null) return early.await() ?: reachableBothWays(sender, other)
         early.cancel()
-        val spaces = spaceChats ?: return false
         return bothTrue({ spaces.allowed(via, sender, other) }, { !reach.blockedEitherWay(sender, other) })
     }
 
