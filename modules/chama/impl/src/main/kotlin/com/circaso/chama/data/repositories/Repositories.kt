@@ -217,7 +217,8 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                 .selectAll()
                 .where {
                     RequestsTable.requestId eq requestId.value
-                }.map { it.toRequest(approvalsOf(it[RequestsTable.requestId])) }
+                }.toList()
+                .let { withApprovals(it) }
                 .singleOrNull()
         }
 
@@ -227,7 +228,8 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                 .selectAll()
                 .where {
                     RequestsTable.transferId eq transferId.value
-                }.map { it.toRequest(approvalsOf(it[RequestsTable.requestId])) }
+                }.toList()
+                .let { withApprovals(it) }
                 .singleOrNull()
         }
 
@@ -239,7 +241,8 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                     (RequestsTable.chatId eq chatId.value) and
                         (RequestsTable.state inList listOf(RequestState.PENDING.name, RequestState.APPROVED.name))
                 }.orderBy(RequestsTable.createdAt to SortOrder.DESC)
-                .map { it.toRequest(approvalsOf(it[RequestsTable.requestId])) }
+                .toList()
+                .let { withApprovals(it) }
                 .toList()
         }
 
@@ -256,7 +259,8 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                         .let { c -> if (before != null) c and (RequestsTable.updatedAt less before) else c }
                 }.orderBy(RequestsTable.updatedAt to SortOrder.DESC)
                 .limit(limit)
-                .map { it.toRequest(approvalsOf(it[RequestsTable.requestId])) }
+                .toList()
+                .let { withApprovals(it) }
                 .toList()
         }
 
@@ -295,7 +299,8 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                     .selectAll()
                     .where {
                         RequestsTable.requestId eq requestId.value
-                    }.map { it.toRequest(approvalsOf(it[RequestsTable.requestId])) }
+                    }.toList()
+                    .let { withApprovals(it) }
                     .singleOrNull()
             }
         }
@@ -321,18 +326,28 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
                 .sum()
         }
 
-    private suspend fun approvalsOf(requestId: java.util.UUID): List<Approval> =
-        ApprovalsTable
-            .selectAll()
-            .where { ApprovalsTable.requestId eq requestId }
-            .orderBy(ApprovalsTable.at to SortOrder.ASC)
-            .map {
-                Approval(
-                    UserId(it[ApprovalsTable.userId]),
-                    Decision.valueOf(it[ApprovalsTable.decision]),
-                    it[ApprovalsTable.at],
-                )
-            }.toList()
+    /**
+     * The requests on [rows] with their approvals, in two queries and never one inside another: with R2DBC a query
+     * issued while another's rows are still streaming on the same connection waits for it forever (it hung every
+     * open-requests read for 10 s and dropped the connection, SQLSTATE 08006, once a group had an open request).
+     */
+    private suspend fun withApprovals(rows: List<ResultRow>): List<Payout> {
+        if (rows.isEmpty()) return emptyList()
+        val byRequest =
+            ApprovalsTable
+                .selectAll()
+                .where { ApprovalsTable.requestId inList rows.map { it[RequestsTable.requestId] } }
+                .orderBy(ApprovalsTable.at to SortOrder.ASC)
+                .toList()
+                .groupBy({ it[ApprovalsTable.requestId] }) {
+                    Approval(
+                        UserId(it[ApprovalsTable.userId]),
+                        Decision.valueOf(it[ApprovalsTable.decision]),
+                        it[ApprovalsTable.at],
+                    )
+                }
+        return rows.map { it.toRequest(byRequest[it[RequestsTable.requestId]].orEmpty()) }
+    }
 
     private fun ResultRow.toRequest(approvals: List<Approval>) =
         Payout(
