@@ -1,11 +1,13 @@
 package com.circaso.messaging.presentation.mappers
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.domain.models.AvatarChange
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
 import com.circaso.messaging.domain.models.MemberView
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.UpdateGroupCommand
+import com.circaso.messaging.presentation.dto.AvatarField
 import com.circaso.messaging.presentation.dto.ChatDto
 import com.circaso.messaging.presentation.dto.ChatMemberDto
 import com.circaso.messaging.presentation.dto.ChatProfileDto
@@ -15,6 +17,7 @@ import com.circaso.messaging.presentation.dto.UpdateGroupRequest
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 
 // ---- request → command: shape checks answer `request.malformed`; the sealed name is the use case's to judge ----
 
@@ -51,14 +54,40 @@ fun CreateGroupRequest.toCommand(creator: UserId, requestKey: String?): Resource
     return Resource.success(command)
 }
 
-fun UpdateGroupRequest.toCommand(caller: UserId, chatId: ChatId) =
-    UpdateGroupCommand(
-        caller,
-        chatId,
-        sealedMeta,
-        settings?.membersCanAdd,
-        version,
-    )
+fun UpdateGroupRequest.toCommand(caller: UserId, chatId: ChatId): Resource<UpdateGroupCommand> {
+    val avatar =
+        when (val parsed = avatarChange()) {
+            is Resource.Error -> return parsed
+            is Resource.Success -> parsed.data
+        }
+    val command =
+        UpdateGroupCommand(
+            caller,
+            chatId,
+            sealedMeta,
+            settings?.membersCanAdd,
+            version,
+            avatar,
+        )
+    return Resource.success(command)
+}
+
+/** An id sets the photo, an explicit `null` clears it, no `avatarMediaId` leaves it. */
+private fun UpdateGroupRequest.avatarChange(): Resource<AvatarChange?> =
+    when (val field = avatarMediaId) {
+        AvatarField.Absent -> {
+            Resource.success(null)
+        }
+
+        AvatarField.Null -> {
+            Resource.success(AvatarChange.Remove)
+        }
+
+        is AvatarField.Value -> {
+            Uuid7.parse(field.attachmentId)?.let { Resource.success(AvatarChange.Set(it)) }
+                ?: malformed("avatarMediaId")
+        }
+    }
 
 // ---- model → response ----
 
@@ -75,6 +104,7 @@ fun ChatView.toDto() =
         created = created,
         notAdded = notAdded?.map { it.toString() },
         viaSpaceId = chat.viaSpaceId?.toString(),
+        avatarMediaId = chat.avatarMediaId?.toString(),
     )
 
 private fun MemberView.toDto() =

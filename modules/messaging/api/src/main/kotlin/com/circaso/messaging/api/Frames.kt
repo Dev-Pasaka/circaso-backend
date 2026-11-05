@@ -126,8 +126,17 @@ data class MemberRemovedFrame(val chatId: ChatId, val userId: UserId, val byUser
     }
 }
 
+/**
+ * The group changed: its sealed name, photo, settings or roles. [avatarMediaId] is the group's photo as it now is
+ * (null when it has none), so a phone that missed the change can fetch it (decision 2026-11-05).
+ */
 @Serializable
-data class ChatUpdatedFrame(val chatId: ChatId, val metaVersion: Int, val version: Long) : MessagingFrame {
+data class ChatUpdatedFrame(
+    val chatId: ChatId,
+    val metaVersion: Int,
+    val version: Long,
+    val avatarMediaId: UUID? = null,
+) : MessagingFrame {
     override val type: String get() = TYPE
 
     companion object {
