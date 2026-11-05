@@ -224,7 +224,10 @@ data class CounterpartyDto(
 data class TransactionDto(
     /** The history row's id; stable, use it as the list key. */
     val id: String,
-    /** Set on payments you sent through Circaso: open them with W5. Null on money received. */
+    /**
+     * Set on payments you sent through Circaso, and on money received from one (open it with W5; on `IN` rows since
+     * 2026-11-05, when the server could tell which payment it was). Null on money from an outside address.
+     */
     val transferId: TransferId? = null,
     /** `OUT` when you sent it, `IN` when it paid you. */
     val direction: String,
@@ -233,6 +236,7 @@ data class TransactionDto(
     val blockchain: String,
     val amount: AmountDto,
     val counterparty: CounterpartyDto,
+    /** The chat the payment was made in; on `IN` rows the sender's chat, set with [transferId] (2026-11-05). */
     val chatId: String? = null,
     /** `APP` or `ASHA`; only on `OUT`. */
     val origin: String? = null,

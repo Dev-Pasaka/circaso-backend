@@ -298,7 +298,7 @@ fun walletModule(config: Config): Module =
         single { FeeSettlement(get(), get(), get()) }
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { IncomingUpdates(get(), get(), get(), get(), get(), get()) }
+        single { IncomingUpdates(get(), get(), get(), get(), get(), get(), get()) }
         single { SplitPayments(get(), get(), get(), clock) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }

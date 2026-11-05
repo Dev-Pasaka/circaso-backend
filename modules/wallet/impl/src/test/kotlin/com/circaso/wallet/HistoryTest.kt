@@ -254,6 +254,28 @@ class HistoryTest {
             assertNull(item.transferId)
         }
 
+    @Test
+    fun `money received from a Circaso payment names its transfer and chat, and a payment sent is as before`() =
+        runBlocking<Unit> {
+            val paying = TransferId.new()
+            val chat = ChatId.new()
+            val received =
+                row("2026-10-21T10:00:00Z", direction = Direction.IN).copy(paidByTransferId = paying, chatId = chat)
+            val sent = row("2026-10-20T10:00:00Z")
+            add(received, sent)
+
+            val (inItem, outItem) = page().toResponse().transactions
+
+            assertEquals("IN", inItem.direction)
+            assertEquals(paying, inItem.transferId)
+            assertEquals(chat.toString(), inItem.chatId)
+            assertNull(inItem.origin)
+            assertEquals("OUT", outItem.direction)
+            assertEquals(sent.transferId, outItem.transferId)
+            assertEquals(sent.chatId.toString(), outItem.chatId)
+            assertEquals("ASHA", outItem.origin)
+        }
+
     private fun assertMalformed(result: Resource<*>, field: String) {
         val error = assertIs<Resource.Error>(result)
         assertEquals("request.malformed", error.error.code)

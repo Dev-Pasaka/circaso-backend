@@ -155,6 +155,25 @@ class MemoryTransferRepository : TransferRepository {
             .filter { it.senderId == holder && !it.createdAt.isBefore(since) && it.state in COUNTED }
             .map { CountedTransfer(it.createdAt, it.totalMinor, it.state == TransferState.AWAITING_SIGNATURE) }
 
+    override suspend fun paidTo(
+        recipientId: UserId,
+        senderWalletId: String,
+        blockchain: String,
+        amountMinor: Long,
+        createdAfter: Instant,
+        limit: Int,
+    ): List<Transfer> =
+        rows.values
+            .filter {
+                it.recipientId == recipientId &&
+                    it.senderWalletId == senderWalletId &&
+                    it.blockchain == blockchain &&
+                    it.amount.amountMinor == amountMinor &&
+                    it.state != TransferState.FAILED &&
+                    !it.createdAt.isBefore(createdAfter)
+            }.sortedByDescending { it.createdAt }
+            .take(limit)
+
     private companion object {
         val COUNTED = setOf(TransferState.AWAITING_SIGNATURE, TransferState.SUBMITTED, TransferState.CONFIRMED)
     }
@@ -369,6 +388,21 @@ class MemoryTransactionRepository : TransactionRepository {
 
     override suspend fun find(userId: UserId, id: UUID): WalletTransaction? =
         rows.firstOrNull { it.id == id && it.userId == userId }
+
+    override suspend fun isPaidBy(transferId: TransferId): Boolean = rows.any { it.paidByTransferId == transferId }
+
+    override suspend fun linkPayment(
+        id: UUID,
+        transferId: TransferId,
+        chatId: ChatId?,
+    ): WalletTransaction? =
+        synchronized(rows) {
+            val index = rows.indexOfFirst { it.id == id && it.paidByTransferId == null }
+            if (index < 0) return null
+            val linked = rows[index].copy(paidByTransferId = transferId, chatId = chatId)
+            rows[index] = linked
+            linked
+        }
 
     private fun move(
         to: TransferState,

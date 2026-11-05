@@ -159,6 +159,11 @@ data class WalletTransaction(
     val chatId: ChatId?,
     val origin: TransferOrigin,
     val occurredAt: Instant,
+    /**
+     * On an `IN` row: the Circaso transfer that paid it, once linked (2026-11-05); null on `OUT` rows and on money
+     * from outside Circaso. Never in [transferId], which is the sender's `OUT` row's (`transactions_transfer_key`).
+     */
+    val paidByTransferId: TransferId? = null,
 ) {
     override fun toString(): String = "WalletTransaction($id, $direction, $state)"
 }

@@ -49,6 +49,13 @@ data class PaymentReceivedFrame(
     val ownerType: String? = null,
     /** For a space wallet: the space's name, so the push names it (a group's name is sealed and never here). */
     val spaceName: String? = null,
+    /**
+     * The Circaso transfer that paid it, when the server could tell for certain (added 2026-11-05); open it with W5.
+     * Null for an outside address, and when the server couldn't tell which of the sender's payments it was.
+     */
+    val transferId: TransferId? = null,
+    /** The chat the sender paid from, when [transferId] is set and the payment was made in a chat (added 2026-11-05). */
+    val chatId: String? = null,
 )
 
 /**

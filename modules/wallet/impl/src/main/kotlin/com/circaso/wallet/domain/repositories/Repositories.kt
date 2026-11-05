@@ -142,6 +142,21 @@ interface TransferRepository {
      * confirmed, each with what it takes out, fee included. A failed or expired one doesn't count.
      */
     suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer>
+
+    /**
+     * The transfers that may have paid [recipientId]'s `IN` row (2026-11-05): from the wallet [senderWalletId] on
+     * [blockchain], of exactly [amountMinor], prepared since [createdAfter], in any state but `FAILED` (an
+     * `AWAITING_SIGNATURE` or `EXPIRED` one too: Circle's inbound update can arrive before its outbound one moves the
+     * transfer); newest first, at most [limit] (`transfers_paid_to_idx`).
+     */
+    suspend fun paidTo(
+        recipientId: UserId,
+        senderWalletId: String,
+        blockchain: String,
+        amountMinor: Long,
+        createdAfter: Instant,
+        limit: Int,
+    ): List<Transfer>
 }
 
 /** A transfer counted against a limit; [awaiting] while it still awaits its signature. */
@@ -193,6 +208,19 @@ interface TransactionRepository {
 
     /** [userId]'s own row [id], or null when there is none or it is someone else's. */
     suspend fun find(userId: UserId, id: UUID): WalletTransaction?
+
+    /** True when an `IN` row already names [transferId] as the transfer that paid it (`transactions_paid_by_idx`). */
+    suspend fun isPaidBy(transferId: TransferId): Boolean
+
+    /**
+     * Names [transferId] (and its [chatId]) as what paid the row [id], only while the row names none
+     * (`paid_by_transfer_id IS NULL`); the row as it now is, or null when it was linked already.
+     */
+    suspend fun linkPayment(
+        id: UUID,
+        transferId: TransferId,
+        chatId: ChatId?,
+    ): WalletTransaction?
 }
 
 /** Wallet's outbox rows, written inside the transaction that makes the change. */

@@ -1,5 +1,6 @@
 package com.circaso.wallet.domain.ports
 
+import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
@@ -33,6 +34,10 @@ sealed interface WalletFrame {
         val ownerType: String? = null,
         /** The space's name when it is a space wallet (spaces aren't end-to-end encrypted). */
         val spaceName: String? = null,
+        /** The Circaso transfer that paid it, once linked (added 2026-11-05). */
+        val transferId: TransferId? = null,
+        /** That transfer's chat (added 2026-11-05). */
+        val chatId: ChatId? = null,
     ) : WalletFrame
 
     data class WalletReady(val blockchain: String, val walletId: WalletId? = null) : WalletFrame

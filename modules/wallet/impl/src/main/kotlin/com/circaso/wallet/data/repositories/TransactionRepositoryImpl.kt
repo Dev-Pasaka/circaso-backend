@@ -27,6 +27,7 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
@@ -62,6 +63,7 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                     it[chatId] = transaction.chatId?.value
                     it[origin] = transaction.origin.name
                     it[occurredAt] = transaction.occurredAt
+                    it[paidByTransferId] = transaction.paidByTransferId?.value
                 }
             statement.insertedCount > 0
         }
@@ -152,6 +154,33 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                 .singleOrNull()
         }
 
+    override suspend fun isPaidBy(transferId: TransferId): Boolean =
+        database.tx("transactions.is-paid-by") {
+            TransactionsTable
+                .select(TransactionsTable.id)
+                .where { TransactionsTable.paidByTransferId eq transferId.value }
+                .limit(1)
+                .toList()
+                .isNotEmpty()
+        }
+
+    /** `UPDATE … SET paid_by_transfer_id = ?, chat_id = ? WHERE id = ? AND paid_by_transfer_id IS NULL RETURNING *`. */
+    override suspend fun linkPayment(
+        id: UUID,
+        transferId: TransferId,
+        chatId: ChatId?,
+    ): WalletTransaction? =
+        database.tx("transactions.link-payment") {
+            TransactionsTable
+                .updateReturning(where = {
+                    (TransactionsTable.id eq id) and TransactionsTable.paidByTransferId.isNull()
+                }) {
+                    it[paidByTransferId] = transferId.value
+                    it[TransactionsTable.chatId] = chatId?.value
+                }.map { it.toTransaction() }
+                .singleOrNull()
+        }
+
     /** The filter's parts as one condition, or null when it has none. */
     private fun matching(filter: HistoryFilter): Op<Boolean>? {
         val parts =
@@ -213,5 +242,6 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
             chatId = this[TransactionsTable.chatId]?.let(::ChatId),
             origin = TransferOrigin.valueOf(this[TransactionsTable.origin]),
             occurredAt = this[TransactionsTable.occurredAt],
+            paidByTransferId = this[TransactionsTable.paidByTransferId]?.let(::TransferId),
         )
 }

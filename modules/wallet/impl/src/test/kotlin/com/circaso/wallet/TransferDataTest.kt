@@ -280,6 +280,100 @@ class TransferDataTest {
         }
 
     @Test
+    fun `money from a Circaso payment links its IN row to the transfer once, in paid_by_transfer_id`() =
+        runBlocking<Unit> {
+            val h = harness()
+            val amina = UserId.new()
+            val bob = UserId.new()
+            val chat = ChatId.new()
+            h.fund(amina, 100_000_000)
+            h.walletOn(bob)
+            h.chats.members[chat] = setOf(amina, bob)
+            val prepared = h.pay(amina, Payee.Person(bob), 10_000_000, chatId = chat).data().transfer
+            h
+                .applyUpdate(
+                    h.update(
+                        h.walletOn(amina),
+                        h.circleUserOf(amina),
+                        CustodyDirection.OUT,
+                        CustodyTransactionState.SUBMITTED,
+                        10_000_000,
+                        refId = prepared.transferId.toString(),
+                        circleTxId = "tx-out-1",
+                        destination = prepared.destinationAddress,
+                    ),
+                ).data()
+            val inbound =
+                h.update(
+                    h.walletOn(bob),
+                    h.circleUserOf(bob),
+                    CustodyDirection.IN,
+                    CustodyTransactionState.CONFIRMED,
+                    10_000_000,
+                    circleTxId = "tx-in-1",
+                    source = h.walletOn(amina).address,
+                )
+
+            concurrently(4) { h.applyUpdate(inbound) }
+
+            val linked =
+                "SELECT count(*) FROM wallet.transactions WHERE user_id = ? AND paid_by_transfer_id = ? AND chat_id = ?"
+            assertEquals(1, count(linked, bob.value, prepared.transferId.value, chat.value))
+            assertEquals(
+                1,
+                count("SELECT count(*) FROM wallet.transactions WHERE transfer_id = ?", prepared.transferId.value),
+                "transfer_id stays the sender's OUT row's",
+            )
+            val frame = h.frames.to<WalletFrame.PaymentReceived>(bob).single()
+            assertEquals(prepared.transferId, frame.transferId)
+            assertEquals(chat, frame.chatId)
+            val row = h.transactions.find(bob, frame.transactionId)!!
+            assertEquals(prepared.transferId, row.paidByTransferId)
+            assertEquals(true, h.transactions.isPaidBy(prepared.transferId))
+            assertNull(h.transactions.linkPayment(row.id, TransferId.new(), null), "a linked row is never relinked")
+        }
+
+    @Test
+    fun `paidTo finds unfailed transfers to the recipient from one wallet, of the amount, newest first`() =
+        runBlocking<Unit> {
+            val recipient = UserId.new()
+
+            fun to(
+                created: Instant,
+                state: TransferState = TransferState.SUBMITTED,
+                wallet: String = "w-1",
+                amount: Long = 20_000_000,
+            ) = transfer().copy(
+                recipientId = recipient,
+                createdAt = created,
+                state = state,
+                senderWalletId = wallet,
+                amount = Money(amount, Asset.USDC),
+            )
+            val oldest = to(now.minusSeconds(180), TransferState.EXPIRED)
+            val awaiting = to(now.minusSeconds(120), TransferState.AWAITING_SIGNATURE)
+            val older = to(now.minusSeconds(60), TransferState.CONFIRMED)
+            val newer = to(now)
+            val noise =
+                listOf(
+                    to(now, TransferState.FAILED),
+                    to(now, wallet = "w-2"),
+                    to(now, amount = 1),
+                    to(now.minusSeconds(90_000)),
+                    transfer(),
+                )
+            (listOf(oldest, awaiting, older, newer) + noise).forEach { transfers.insert(it) }
+
+            val found = transfers.paidTo(recipient, "w-1", "BASE-SEPOLIA", 20_000_000, now.minusSeconds(86_400), 5)
+
+            assertEquals(
+                listOf(newer, older, awaiting, oldest).map { it.transferId },
+                found.map { it.transferId },
+                "every state but FAILED, newest first",
+            )
+        }
+
+    @Test
     fun `frames are kept in wallet realtime and replayed in order, or resync after a gap`() =
         runBlocking<Unit> {
             val delivered = CopyOnWriteArrayList<RealtimeEnvelope>()
