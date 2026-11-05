@@ -1,6 +1,8 @@
 package com.circaso.messaging.domain.support
 
+import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.models.Chat
+import com.circaso.messaging.domain.models.ChatListing
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.MemberView
@@ -30,8 +32,17 @@ class ChatViews(private val chats: ChatRepository, private val profiles: Profile
     }
 
     /** Many chats with one profile lookup for every member of all of them. */
-    suspend fun views(chatsWithLast: List<Pair<Chat, UUID?>>): List<ChatView> {
-        val membersByChat = chats.members(chatsWithLast.map { (chat, _) -> chat.chatId })
+    suspend fun views(chatsWithLast: List<Pair<Chat, UUID?>>): List<ChatView> =
+        views(chatsWithLast, chats.members(chatsWithLast.map { (chat, _) -> chat.chatId }))
+
+    /** The chat list (M6), whose members came with it: only the profile lookup is left. */
+    suspend fun views(listing: ChatListing): List<ChatView> =
+        views(listing.lines.map { it.chat to it.lastMessageId }, listing.members)
+
+    private suspend fun views(
+        chatsWithLast: List<Pair<Chat, UUID?>>,
+        membersByChat: Map<ChatId, List<Member>>,
+    ): List<ChatView> {
         val ids =
             membersByChat.values
                 .flatten()

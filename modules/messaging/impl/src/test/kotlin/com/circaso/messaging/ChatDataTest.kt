@@ -12,6 +12,7 @@ import com.circaso.messaging.api.MemberRemoved
 import com.circaso.messaging.api.MessageKind
 import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
+import com.circaso.messaging.domain.models.ChatListing
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.repositories.MessagingOutbox
@@ -19,6 +20,7 @@ import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
 import java.time.LocalDate
@@ -331,6 +333,107 @@ class ChatDataTest {
                     .lastMessageId,
             )
             assertEquals(2, memberRows(chatId), "the chat and its members stay")
+            assertEquals(0, headRows(chatId), "the head went with its record's partition")
+        }
+
+    private fun headRows(chatId: ChatId) =
+        h.count("SELECT count(*) FROM messaging.chat_heads WHERE chat_id = ?", chatId.value)
+
+    /** A `message_records` row written as the superuser, as an older send that commits late would write it. */
+    private fun insertRecord(
+        messageId: UUID,
+        chatId: ChatId,
+        sender: UserId,
+        kind: MessageKind,
+    ) = TestPostgres.superuser { connection ->
+        connection
+            .prepareStatement("INSERT INTO messaging.message_records VALUES (?, ?, ?, ?, now())")
+            .use {
+                it.setObject(1, messageId)
+                it.setObject(2, chatId.value)
+                it.setObject(3, sender.value)
+                it.setString(4, kind.name)
+                it.executeUpdate()
+            }
+    }
+
+    @Test
+    fun `a chat's head only moves forward, only for a MESSAGE, and goes with the chat`() =
+        runBlocking<Unit> {
+            val (amina, brian) = List(2) { UserId.new() }
+            val chatId = h.direct(amina, brian)
+            assertEquals(0, headRows(chatId), "no head before the first message")
+            val last = h.sendMessage(h.directCommand(amina, brian, chatId)).data()
+            assertEquals(last.messageId, h.chats.lastMessageId(chatId))
+
+            val today = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC)
+            val older = UUID.fromString(lowestUuid7(today).replaceRange(30, 36, "000001"))
+            insertRecord(older, chatId, brian, MessageKind.MESSAGE)
+            assertEquals(last.messageId, h.chats.lastMessageId(chatId), "an older send committing late")
+            insertRecord(Uuid7.generate(Instant.now().plusSeconds(1)), chatId, brian, MessageKind.CONTROL)
+            assertEquals(last.messageId, h.chats.lastMessageId(chatId), "a control message is not shown")
+
+            h.chats.deleteChat(chatId)
+            assertEquals(0, headRows(chatId))
+        }
+
+    @Test
+    fun `V5's backfill gives each chat with a MESSAGE its newest one, and no head to the others`() =
+        runBlocking<Unit> {
+            val (amina, brian, chidi) = List(3) { UserId.new() }
+            val direct = h.direct(amina, brian)
+            val group = h.group(amina, listOf(brian, chidi))
+            val quiet = h.group(chidi, listOf(amina))
+            h.sendMessage(h.directCommand(amina, brian, direct)).data()
+            val lastDirect = h.sendMessage(h.directCommand(brian, amina, direct)).data()
+            val lastGroup = h.sendMessage(h.groupCommand(chidi, group)).data()
+            h.sendMessage(h.groupCommand(amina, group, MessageKind.CONTROL)).data()
+            h.sendMessage(h.groupCommand(chidi, quiet, MessageKind.CONTROL)).data()
+            val script = javaClass.getResource("/db/messaging/V5__chat_heads.sql")!!.readText()
+            val backfill = script.substringAfter("-- Backfill").let { it.substring(it.indexOf("INSERT INTO")) }
+
+            TestPostgres.superuser { connection ->
+                connection.createStatement().use {
+                    it.execute("DELETE FROM messaging.chat_heads")
+                    it.execute(backfill)
+                }
+            }
+
+            assertEquals(lastDirect.messageId, h.chats.lastMessageId(direct))
+            assertEquals(lastGroup.messageId, h.chats.lastMessageId(group))
+            assertNull(h.chats.lastMessageId(quiet))
+        }
+
+    @Test
+    fun `the chat list with members holds every member of the user's chats, and nothing of other chats`() =
+        runBlocking<Unit> {
+            val (amina, brian, chidi, dalia) = List(4) { UserId.new() }
+            val direct = h.direct(amina, brian)
+            val group = h.group(amina, listOf(brian, chidi))
+            val elsewhere = h.group(chidi, listOf(dalia))
+            val last = h.sendMessage(h.groupCommand(amina, group)).data()
+
+            val listing = h.chats.chatListWithMembers(brian)
+
+            assertEquals(h.chats.chatList(brian), listing.lines)
+            assertEquals(setOf(direct, group), listing.members.keys)
+            assertEquals(
+                setOf(amina, brian),
+                listing.members
+                    .getValue(direct)
+                    .map { it.userId }
+                    .toSet(),
+            )
+            assertEquals(
+                setOf(amina, brian, chidi),
+                listing.members
+                    .getValue(group)
+                    .map { it.userId }
+                    .toSet(),
+            )
+            assertEquals(last.messageId, listing.lines.single { it.chat.chatId == group }.lastMessageId)
+            assertTrue(elsewhere !in listing.members.keys)
+            assertEquals(ChatListing(emptyList(), emptyMap()), h.chats.chatListWithMembers(UserId.new()))
         }
 
     @Test

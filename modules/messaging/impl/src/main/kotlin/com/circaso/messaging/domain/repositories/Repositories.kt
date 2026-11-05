@@ -3,6 +3,7 @@ package com.circaso.messaging.domain.repositories
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.models.Chat
 import com.circaso.messaging.domain.models.ChatLine
+import com.circaso.messaging.domain.models.ChatListing
 import com.circaso.messaging.domain.models.KeyBundle
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.OneTimePreKey
@@ -103,7 +104,7 @@ interface ChatRepository {
         max: Int,
     ): Chat?
 
-    /** Deletes the chat; its member rows go with it (`ON DELETE CASCADE`). */
+    /** Deletes the chat; its member rows go with it (`ON DELETE CASCADE`), and its head in the same transaction. */
     suspend fun deleteChat(chatId: ChatId)
 
     /** Every member: at most 1,000. */
@@ -124,6 +125,9 @@ interface ChatRepository {
 
     /** The user's chat list (M6) through `members_user_idx`, each chat with its newest `MESSAGE` id. */
     suspend fun chatList(userId: UserId): List<ChatLine>
+
+    /** [chatList] and the members of every chat on it, in one transaction: what `GET /chats` answers from. */
+    suspend fun chatListWithMembers(userId: UserId): ChatListing
 
     /** The ids of every chat the user is in. */
     suspend fun chatIdsOf(userId: UserId): List<ChatId>

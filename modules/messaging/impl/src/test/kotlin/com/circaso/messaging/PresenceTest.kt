@@ -206,4 +206,53 @@ class PresenceTest {
             assertEquals(listOf(Duration.ofMinutes(10)), due.values.toList())
             assertNull(h.presenceRedis.values["presence:$brian"])
         }
+
+    private fun bucket(): Long = clock.instant().toEpochMilli() / 5_000
+
+    @Test
+    fun `a sweep on time takes only the bucket that just ended, and remembers it`() =
+        runBlocking<Unit> {
+            h.sweepPresence()
+            assertEquals(24, h.presenceRedis.taken.size, "with no mark, the whole 2-minute lookback")
+            assertEquals((bucket() - 1).toString(), h.presenceRedis.values["presence-swept"])
+            assertEquals(Duration.ofMinutes(10), h.presenceRedis.ttls["presence-swept"])
+
+            h.presenceRedis.taken.clear()
+            h.sweepPresence()
+            assertTrue(h.presenceRedis.taken.isEmpty(), "nothing new has ended within the same 5 seconds")
+
+            clock.advance(Duration.ofSeconds(5))
+            h.sweepPresence()
+            assertEquals(listOf("presence-due:${bucket() - 1}"), h.presenceRedis.taken)
+
+            h.presenceRedis.taken.clear()
+            clock.advance(Duration.ofSeconds(30))
+            h.sweepPresence()
+            assertEquals(((bucket() - 6) until bucket()).map { "presence-due:$it" }, h.presenceRedis.taken)
+
+            h.presenceRedis.taken.clear()
+            clock.advance(Duration.ofMinutes(10))
+            h.sweepPresence()
+            assertEquals(24, h.presenceRedis.taken.size, "a mark older than the lookback starts at the lookback")
+        }
+
+    @Test
+    fun `a sweep after missed runs still tells the watchers, once`() =
+        runBlocking<Unit> {
+            val chat = h.direct(amina, brian)
+            h.sweepPresence()
+            h.updatePresence(amina, true).data()
+            val activeAt = clock.instant()
+            h.watchPresence(brian, chat).data()
+
+            clock.advance(Duration.ofSeconds(110))
+            h.watchPresence(brian, chat).data()
+            val before = changesTo(brian).size
+            assertEquals(1, h.sweepPresence())
+            assertEquals(PresenceChangedFrame(amina, false, activeAt), changesTo(brian).last())
+            assertEquals(before + 1, changesTo(brian).size)
+
+            clock.advance(Duration.ofSeconds(5))
+            assertEquals(0, h.sweepPresence(), "each lapse is announced once")
+        }
 }

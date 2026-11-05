@@ -28,6 +28,7 @@ import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
 import com.circaso.messaging.data.storage.ObjectStoreAttachments
 import com.circaso.messaging.data.tables.AttachmentsTable
+import com.circaso.messaging.data.tables.ChatHeadsTable
 import com.circaso.messaging.data.tables.ChatsTable
 import com.circaso.messaging.data.tables.ClientMessagesTable
 import com.circaso.messaging.data.tables.GroupMessagesTable
@@ -151,6 +152,7 @@ internal val messagingDatabaseSpec =
             listOf(
                 ChatsTable,
                 MembersTable,
+                ChatHeadsTable,
                 KeyBundlesTable,
                 OneTimePreKeysTable,
                 InboxTable,

@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** One module's Redis in memory, remembering the expiry each key was last given so tests can check it. */
 class MemoryRedis(override val prefix: String = "msg") : RedisScope {
@@ -71,7 +72,13 @@ class MemoryRedis(override val prefix: String = "msg") : RedisScope {
 
     override suspend fun hashGetAll(key: String): Map<String, String> = hashes[key].orEmpty()
 
-    override suspend fun hashTake(key: String): Map<String, String> = hashes.remove(key).orEmpty()
+    /** Every key a [hashTake] was sent for, in order: each one is a script call on the real Redis. */
+    val taken = CopyOnWriteArrayList<String>()
+
+    override suspend fun hashTake(key: String): Map<String, String> {
+        taken += key
+        return hashes.remove(key).orEmpty()
+    }
 
     override suspend fun hashDelete(key: String, field: String): Boolean = hashes[key]?.remove(field) != null
 
