@@ -54,7 +54,9 @@ class ChamaDataTest {
                             statement
                                 .executeQuery(
                                     "SELECT table_name FROM information_schema.tables " +
-                                        "WHERE table_schema = 'chama' AND table_type = 'BASE TABLE'",
+                                        "WHERE table_schema = 'chama' AND table_type = 'BASE TABLE' " +
+                                        // Flyway's own history, which truncate keeps: one row per migration
+                                        "AND table_name <> 'flyway_schema_history'",
                                 ).use { result ->
                                     generateSequence { if (result.next()) result.getString(1) else null }.toList()
                                 }
