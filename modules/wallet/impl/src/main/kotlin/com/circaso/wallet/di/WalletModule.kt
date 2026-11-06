@@ -20,6 +20,7 @@ import com.circaso.wallet.data.cache.RedisPendingSetups
 import com.circaso.wallet.data.cache.RedisReminders
 import com.circaso.wallet.data.cache.RedisSetupChecks
 import com.circaso.wallet.data.cache.RedisStuckNotices
+import com.circaso.wallet.data.repositories.BundledCoinIcons
 import com.circaso.wallet.data.repositories.ConfiguredFees
 import com.circaso.wallet.data.repositories.DatabaseTransactor
 import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
@@ -60,6 +61,7 @@ import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletWarnings
+import com.circaso.wallet.domain.repositories.CoinIconRepository
 import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
@@ -108,6 +110,7 @@ import com.circaso.wallet.domain.usecases.EstimateFee
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.FindGroupWallet
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
+import com.circaso.wallet.domain.usecases.GetCoinIcon
 import com.circaso.wallet.domain.usecases.GetGroupWallet
 import com.circaso.wallet.domain.usecases.GetSpaceWallet
 import com.circaso.wallet.domain.usecases.GetTransaction
@@ -134,11 +137,13 @@ import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
 import com.circaso.wallet.presentation.api.WalletsImpl
+import com.circaso.wallet.presentation.controllers.coinIconController
 import com.circaso.wallet.presentation.controllers.historyController
 import com.circaso.wallet.presentation.controllers.recipientController
 import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
 import com.circaso.wallet.presentation.controllers.walletController
+import com.circaso.wallet.presentation.services.CoinIconService
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.SpaceWalletService
@@ -398,6 +403,9 @@ fun walletModule(config: Config): Module =
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
+        single<CoinIconRepository> { BundledCoinIcons() }
+        single { GetCoinIcon(get()) }
+        single { CoinIconService(get()) }
         single { ValueAssets(get()) }
         single { EstimateFee(get(), get()) }
         single { WalletAgentService(get(), get(), get(), get(), get(), get(), get()) }
@@ -412,6 +420,7 @@ fun walletModule(config: Config): Module =
             val recipients = get<RecipientService>()
             val history = get<HistoryService>()
             val agent = get<WalletAgentService>()
+            val coinIcons = get<CoinIconService>()
             val spaceWallets = if (spacesEnabled) get<SpaceWalletService>() else null
             RouteContributor { route ->
                 route.walletController(wallets)
@@ -424,6 +433,7 @@ fun walletModule(config: Config): Module =
                 route.recipientController(recipients)
                 route.historyController(history)
                 route.agentController(agent)
+                route.coinIconController(coinIcons)
             }
         }
 

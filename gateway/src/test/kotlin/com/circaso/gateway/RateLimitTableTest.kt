@@ -13,4 +13,15 @@ class RateLimitTableTest {
         assertEquals(LimitBy.USER, limit.by)
         assertEquals("user", RateLimitTable.limitFor("GET", "/v1/wallet/transfers/x", signedIn = true)!!.name)
     }
+
+    @Test
+    fun `IC1 coin icons have their own bucket of 600 per IP per minute, signed in or not`() {
+        listOf(true, false).forEach { signedIn ->
+            val limit = RateLimitTable.limitFor("GET", "/v1/assets/icons/USDC", signedIn)!!
+
+            assertEquals("icons", limit.name)
+            assertEquals(600, limit.max)
+            assertEquals(LimitBy.IP, limit.by)
+        }
+    }
 }
