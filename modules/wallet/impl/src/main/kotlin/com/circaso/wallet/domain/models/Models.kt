@@ -32,8 +32,10 @@ data class ChainWallet(
 )
 
 /**
- * What one wallet holds of one offered asset, in the asset's smallest unit, and what that is worth in the currency
- * W1 asked for ([fiatAmount], null when none was asked or the asset has no price). Never logged.
+ * What one wallet holds of one offered asset, in the asset's smallest unit, what one whole unit is worth in US
+ * dollars ([usdPrice]: one for a dollar stablecoin, the price feed's for a coin we trust, else null) and what the
+ * holding is worth in the currency W1 asked for ([fiatAmount], null when none was asked or the asset has no price).
+ * Never logged.
  */
 data class Holding(
     val symbol: String,
@@ -42,6 +44,7 @@ data class Holding(
     val usdPegged: Boolean,
     val amountMinor: BigInteger,
     val fiatAmount: BigDecimal? = null,
+    val usdPrice: BigDecimal? = null,
 ) {
     override fun toString(): String = "Holding($symbol, ***)"
 }
@@ -52,13 +55,21 @@ data class Holding(
  */
 data class ChainHoldings(val wallet: ChainWallet, val holdings: List<Holding>, val receiveEnabled: Boolean = true)
 
-/** The same asset added up over every chain (USDC on Base plus USDC on Solana). */
-data class AssetTotal(val symbol: String, val decimals: Int, val amountMinor: BigInteger)
+/**
+ * The same asset added up over every chain (USDC on Base plus USDC on Solana). [usdPrice] is one unit's price when
+ * every chain's holding of it has the same one, else null.
+ */
+data class AssetTotal(
+    val symbol: String,
+    val decimals: Int,
+    val amountMinor: BigInteger,
+    val usdPrice: BigDecimal? = null,
+)
 
 /**
  * The wallet in [currency]: [amount] is the sum of what the priced assets are worth, rounded to the currency's minor
- * unit. Only US dollar stablecoins are priced for now, at one dollar each; [partial] says that something else held
- * was left out of [amount] because nothing gives it a price yet.
+ * unit. US dollar stablecoins are one dollar each and other coins are at the price feed's price (decision
+ * 2026-11-06); [partial] says that something held was left out of [amount] because it has no price.
  */
 data class FiatValue(
     val currency: String,

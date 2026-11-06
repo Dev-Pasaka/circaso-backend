@@ -152,7 +152,8 @@ data class AgentAssetValueDto(
 
 /**
  * `currency` is the one the values are in: the one asked, or `USD` when none was asked or no rate for it is known.
- * `source` is always `circaso`: these are the wallet's own numbers, never a market feed. `rate` is null in US dollars.
+ * `source` is always `circaso`: these are the wallet's own numbers (the rate and the price feed the app's balances
+ * use, decision 2026-11-06), never a lookup of their own. `rate` is null in US dollars.
  */
 @Serializable
 data class AgentAssetValuesResponse(

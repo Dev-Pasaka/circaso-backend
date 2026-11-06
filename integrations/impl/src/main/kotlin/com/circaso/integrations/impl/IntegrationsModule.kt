@@ -7,6 +7,8 @@ import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CryptoMarkets
+import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
@@ -35,8 +37,12 @@ import com.circaso.integrations.impl.circle.CircleSettings
 import com.circaso.integrations.impl.circle.CircleWebhook
 import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
 import com.circaso.integrations.impl.cloudflare.TurnKey
+import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
+import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeCallMedia
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
+import com.circaso.integrations.impl.dev.FakeCryptoMarkets
+import com.circaso.integrations.impl.dev.FakeCryptoPrices
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeExchangeRates
@@ -52,6 +58,7 @@ import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
+import com.circaso.integrations.impl.dev.LogCryptoPrices
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
@@ -60,6 +67,8 @@ import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
 import com.circaso.integrations.impl.dev.LogWebSearch
+import com.circaso.integrations.impl.dev.NoCryptoMarkets
+import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
@@ -89,7 +98,8 @@ import java.time.Duration
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
  * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
- * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), for calls
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`), `rates` (`open-er-api`) and `prices`
+ * (`coingecko`; unset, `coingecko` when its key is set, else `off`), for calls
  * `calls` (`cloudflare`, the Realtime SFU), for location previews `maps` (`google`), and Asha's web `search`
  * (`brave` or `tavily`; unset, `brave` when its key is set, else `fake`). Every other one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
@@ -307,6 +317,52 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                             OpenErApiRates(
                                 http = get<HttpClients>().named("exchangerate") { baseUrl = OpenErApiRates.BASE_URL },
                                 redis = get<RedisScopes>().scope("fx"),
+                            )
+                        },
+                    ),
+            )
+        }
+        // Coin prices (decision 2026-11-06): `coingecko` needs the secret `COINGECKO_API_KEY` (a Demo key) and is the
+        // default when it is set; without it the default is `off` (only dollar stablecoins priced), so a missing key
+        // never stops startup and never shows a made-up price. `log` has fixed rough prices for local runs. The table
+        // is kept in Redis under `px:` for `INTEGRATIONS_PRICES_FRESH_SECONDS` (default 60).
+        single<CryptoPrices> {
+            pick(
+                "prices",
+                default = if (secrets.get(COINGECKO_KEY) != null) "coingecko" else "off",
+                providers =
+                    mapOf(
+                        "off" to { NoCryptoPrices() },
+                        "log" to { LogCryptoPrices() },
+                        "fake" to { FakeCryptoPrices() },
+                        "coingecko" to {
+                            CoinGeckoPrices(
+                                http = coinGeckoClient(get()),
+                                redis = get<RedisScopes>().scope("px"),
+                                key = secrets.require(COINGECKO_KEY),
+                                freshFor = pricesFreshFor(integrations),
+                            )
+                        },
+                    ),
+            )
+        }
+        // Asha's crypto answers (decision 2026-11-06): the same feed, key and client as the prices; `off` without a key
+        // (she then says she couldn't get the data), `log` is `off` too, since made-up market data is never shown.
+        single<CryptoMarkets> {
+            pick(
+                "prices",
+                default = if (secrets.get(COINGECKO_KEY) != null) "coingecko" else "off",
+                providers =
+                    mapOf(
+                        "off" to { NoCryptoMarkets() },
+                        "log" to { NoCryptoMarkets() },
+                        "fake" to { FakeCryptoMarkets() },
+                        "coingecko" to {
+                            CoinGeckoMarkets(
+                                http = coinGeckoClient(get()),
+                                redis = get<RedisScopes>().scope("px"),
+                                key = secrets.require(COINGECKO_KEY),
+                                freshFor = pricesFreshFor(integrations),
                             )
                         },
                     ),
@@ -554,6 +610,27 @@ private fun cloudflareRealtime(
 
 /** Brave Search's key, `BRAVE_SEARCH_API_KEY`; its presence also picks `brave` when no provider is named. */
 private const val BRAVE_KEY = "brave-search.api-key"
+private const val COINGECKO_KEY = "coingecko.api-key"
+
+/** CoinGecko's one client, for prices and Asha's coin data: short timeouts and no retry, since a reader waits. */
+private fun coinGeckoClient(clients: HttpClients) =
+    clients.named("coingecko") {
+        baseUrl = CoinGeckoPrices.BASE_URL
+        connectTimeout = CoinGeckoPrices.TIMEOUT
+        requestTimeout = CoinGeckoPrices.TIMEOUT
+        maxAttempts = 1
+    }
+
+private fun pricesFreshFor(integrations: Config): Duration =
+    Duration.ofSeconds(
+        integrations
+            .int("prices.fresh-seconds", CoinGeckoPrices.DEFAULT_FRESH_FOR.seconds.toInt())
+            .coerceAtLeast(MIN_FRESH_SECONDS)
+            .toLong(),
+    )
+
+/** The shortest a price table is kept: the Demo plan allows 30 calls a minute and 10,000 a month. */
+private const val MIN_FRESH_SECONDS = 30
 
 private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 

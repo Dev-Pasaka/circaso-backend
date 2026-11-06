@@ -16,6 +16,7 @@ import com.circaso.wallet.domain.ports.ActiveWallets
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.SetupProgress
 import com.circaso.wallet.domain.support.Valuation
@@ -31,6 +32,10 @@ import kotlinx.coroutines.sync.withPermit
  * and, with `currency`, their worth in that currency. While the wallet is being set up or a chain added, Circle's
  * wallet list is read first, so a wallet the user just finished in the SDK shows at once (while setting up, at most
  * once per [SetupProgress] window, since the app polls).
+ *
+ * Each holding carries its US dollar price ([HoldingPrices]; decision 2026-11-06), with or without `currency`, so the
+ * app can turn an amount typed in the person's money into any coin they hold. The price feed is asked only after the
+ * balances, and only when a coin other than a dollar stablecoin is held.
  *
  * The fiat part is never an error: no rate (an unknown currency, the source down too long) leaves it out. A read
  * marks the user active ([ActiveWallets]) for `wallet.reconcile-active`.
@@ -49,6 +54,7 @@ class GetWallet(
     private val active: ActiveWallets,
     private val holders: Holders,
     private val progress: SetupProgress,
+    private val prices: HoldingPrices,
 ) {
     suspend operator fun invoke(query: WalletQuery): Resource<WalletView> {
         val access =
@@ -77,7 +83,7 @@ class GetWallet(
                     is Resource.Error -> return read
                 }
             }
-        return Resource.success(view(chains, rate).copy(access = access))
+        return Resource.success(view(prices.price(chains), rate).copy(access = access))
     }
 
     /** Our rows, after asking Circle when something is still on its way; Circle being down leaves our rows. */

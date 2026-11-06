@@ -76,6 +76,7 @@ import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HeldFunds
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
@@ -334,7 +335,8 @@ fun walletModule(config: Config): Module =
         single { SplitPayments(get(), get(), get(), clock) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
-        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { HoldingPrices(get(), get()) }
+        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get()) }
         single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
         single { GetGroupWallet(get(), get(), get(), get()) }
@@ -398,7 +400,7 @@ fun walletModule(config: Config): Module =
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
-        single { ValueAssets(get()) }
+        single { ValueAssets(get(), get()) }
         single { EstimateFee(get(), get()) }
         single { WalletAgentService(get(), get(), get(), get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }

@@ -69,7 +69,7 @@ class MappersTest {
                             wallet,
                             listOf(
                                 Holding("USDC", "0x1", 6, true, BigInteger.valueOf(20_500_000), BigDecimal("2649.63")),
-                                Holding("ETH", "", 18, false, eth),
+                                Holding("ETH", "", 18, false, eth, usdPrice = BigDecimal("3512.2700")),
                             ),
                         ),
                     ),
@@ -87,6 +87,8 @@ class MappersTest {
         assertEquals("12000000000000000001", assets[1].amountMinor)
         assertEquals("12.000000000000000001", assets[1].amount)
         assertEquals(null, assets[1].fiatAmount)
+        assertEquals(null, assets[0].usdPrice, "no price set on the holding, none sent")
+        assertEquals("3512.27", assets[1].usdPrice, "as the feed wrote it, without trailing zeros")
         assertEquals("0", response.totals.single().amount)
         assertEquals("129.25", response.fiat?.rate)
         assertEquals(true, response.fiat?.partial)

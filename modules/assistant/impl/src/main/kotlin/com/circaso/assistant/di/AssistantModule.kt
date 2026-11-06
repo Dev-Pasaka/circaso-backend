@@ -20,6 +20,7 @@ import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
 import com.circaso.assistant.data.tables.UsageDailyTable
 import com.circaso.assistant.data.tools.AllAgentTools
+import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.OwnTools
 import com.circaso.assistant.domain.models.AshaVoice
@@ -202,7 +203,7 @@ fun assistantModule(config: Config): Module =
                             "http://localhost:" + config.string("port", "8080"),
                         ).trimEnd('/'),
                 )
-            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get(), get())))
+            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get(), get()), CryptoTools(get(), get())))
         }
 
         // domain
