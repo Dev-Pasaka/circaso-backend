@@ -3,6 +3,7 @@ package com.circaso.chama.data.repositories
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.data.tables.ApprovalsTable
 import com.circaso.chama.data.tables.ContributionsTable
+import com.circaso.chama.data.tables.DirectPayoutsTable
 import com.circaso.chama.data.tables.GoalsTable
 import com.circaso.chama.data.tables.GroupSettingsTable
 import com.circaso.chama.data.tables.RequestsTable
@@ -10,12 +11,14 @@ import com.circaso.chama.domain.models.Approval
 import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -85,6 +88,30 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
             updatedAt = this[GoalsTable.updatedAt],
             version = this[GoalsTable.version],
         )
+}
+
+class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutRepository {
+    override suspend fun insert(payout: DirectPayout): Boolean =
+        database.tx("direct-payouts.insert") {
+            DirectPayoutsTable
+                .insertIgnore {
+                    it[transferId] = payout.transferId.value
+                    it[chatId] = payout.chatId.value
+                    it[amountMinor] = payout.amountMinor
+                    it[asset] = USDC
+                    it[at] = payout.at
+                }.insertedCount > 0
+        }
+
+    override suspend fun total(chatId: ChatId): Long =
+        database.tx("direct-payouts.total") {
+            DirectPayoutsTable
+                .selectAll()
+                .where { DirectPayoutsTable.chatId eq chatId.value }
+                .map { it[DirectPayoutsTable.amountMinor] }
+                .toList()
+                .sum()
+        }
 }
 
 class ContributionRepositoryImpl(private val database: Database) : ContributionRepository {

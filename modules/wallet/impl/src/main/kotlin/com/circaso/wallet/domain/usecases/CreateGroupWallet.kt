@@ -18,7 +18,7 @@ import java.time.Clock
  * W14 `POST /wallet/groups/{chatId}` (decision 2026-11-03, Spaces phase 2, option A): the group's owner sets up the
  * group's own wallet, separate from everyone's personal money. The wallet is its own Circle user, filed under a fresh
  * [WalletId], so it has its own PIN (and its own biometrics on the owner's phone); the owner becomes its signer, the
- * one person who can send from it, and only after the admins approve each payout.
+ * one person who can send from it (directly since 2026-11-06; approvals parked behind `WALLET_GROUP_PAYOUT_APPROVALS`).
  *
  * One wallet per group: the owner row is claimed by `wallet_owners_chat_key` before Circle is asked, so two taps at
  * once share one wallet. Asking again while it is `SETTING_UP` gives a fresh challenge (the set-up screen's "Finish

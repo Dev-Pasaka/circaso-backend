@@ -97,6 +97,8 @@ class Harness(
     val ruleRows: RuleRepository = MemoryRules(),
     val quoteRows: FeeQuoteRepository = MemoryFeeQuotes(),
     val ledger: FeeLedgerRepository = MemoryFeeLedger(),
+    /** Option A's approved payouts (parked 2026-11-06); off, a group wallet's owner sends directly. */
+    approvalsRequired: Boolean = false,
 ) {
     val custody = FakeCustody(chains)
     val rates = FakeRates()
@@ -186,6 +188,7 @@ class Harness(
             clock,
             holders,
             approvals,
+            approvalsRequired,
         )
     val getTransfer = GetTransfer(transfers, chats, spaces)
     val listTransactions = ListTransactions(transactions, Counterparties(profiles, wallets, owners), rates, holders)

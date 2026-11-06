@@ -80,6 +80,12 @@ class PrepareTransfer(
     private val clock: Clock,
     private val holders: Holders,
     private val approvals: PayoutApprovals,
+    /**
+     * `WALLET_GROUP_PAYOUT_APPROVALS` (decision 2026-11-06: off). Off, the group wallet's owner (its signer) sends
+     * straight from it, to anyone or any address, with no request; on, option A's rule of 2026-11-03 comes back and
+     * every payment out needs a payout the admins approved.
+     */
+    private val approvalsRequired: Boolean = false,
 ) {
     suspend operator fun invoke(command: TransferCommand): Resource<PreparedTransfer> {
         // The wallet it leaves (decision 2026-11-03): the caller's own, or a group wallet they sign for.
@@ -156,15 +162,19 @@ class PrepareTransfer(
         )
 
     /**
-     * Option A (decision 2026-11-03): money leaves a group wallet only for a payout the group's admins approved, to
-     * exactly its payee and for exactly its amount, and only once at a time; a personal wallet takes no payout.
+     * Who may move a group's money (decision 2026-11-06): its owner, the wallet's signer ([Holders.sign] already
+     * refused anyone else with `wallet.not_signer`), directly, to anyone, themselves included, or to an outside
+     * address. A payment that names a payout request is still held to it: exactly its payee and amount, once at a time.
+     * With [approvalsRequired] (option A, 2026-11-03, parked) every payment out needs such a request. A personal
+     * wallet takes no payout.
      */
     private suspend fun payout(owner: WalletOwner, command: TransferCommand): Resource<Unit> {
         val requestId = command.payoutRequestId
         if (owner !is WalletOwner.Group) {
             return if (requestId == null) Resource.success(Unit) else Resource.error(WalletError.PayoutMismatch)
         }
-        requestId ?: return Resource.error(WalletError.PayoutRequired)
+        requestId
+            ?: return if (approvalsRequired) Resource.error(WalletError.PayoutRequired) else Resource.success(Unit)
         val approved =
             approvals.approved(owner.chatId, requestId) ?: return Resource.error(WalletError.PayoutNotApproved)
         val samePayee =

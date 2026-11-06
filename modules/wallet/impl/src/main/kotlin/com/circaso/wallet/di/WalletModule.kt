@@ -237,6 +237,12 @@ internal fun feeConfig(config: Config): FeeConfig {
  */
 private const val SPACES_ENABLED_KEY = "spaces.enabled"
 
+/**
+ * `WALLET_GROUP_PAYOUT_APPROVALS`: off (decision 2026-11-06), a group wallet's owner sends from it directly; on, every
+ * payment out needs a payout the admins approved (option A, parked).
+ */
+private const val GROUP_PAYOUT_APPROVALS_KEY = "wallet.group-payout-approvals"
+
 /** W18 and W19's path (`spaceWalletController`). */
 private const val SPACE_WALLET_PATH = "/wallet/spaces"
 
@@ -252,6 +258,7 @@ fun walletModule(config: Config): Module =
         val fees = feeConfig(config)
         val jobs = jobSettings(config)
         val spacesEnabled = config.boolean(SPACES_ENABLED_KEY, false)
+        val payoutApprovals = config.boolean(GROUP_PAYOUT_APPROVALS_KEY, false)
 
         // data
         single(named("wallet.spec")) { walletDatabaseSpec }
@@ -373,6 +380,7 @@ fun walletModule(config: Config): Module =
                 clock,
                 get(),
                 get(),
+                approvalsRequired = payoutApprovals,
             )
         }
         single { TransferQuoter(get(), get(), get(), clock) }

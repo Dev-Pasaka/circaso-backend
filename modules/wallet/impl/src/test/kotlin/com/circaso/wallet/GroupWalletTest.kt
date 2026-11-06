@@ -31,8 +31,9 @@ import kotlin.test.assertTrue
 
 /**
  * Group wallets (Spaces phase 2, decision 2026-11-03, option A) over in-memory fakes: W14 set-up by the group's owner,
- * W15 and W16, W1/W3/W6/W12 with `walletId`, paying into a group (`to: { groupId }`), paying out only for an approved
- * payout, the frames each person gets, and the deletion guard.
+ * W15 and W16, W1/W3/W6/W12 with `walletId`, paying into a group (`to: { groupId }`), the owner paying out directly
+ * (decision 2026-11-06; option A's approvals are in [GroupPayoutApprovalsTest]), the frames each person gets, and the
+ * deletion guard.
  */
 class GroupWalletTest {
     private val h = Harness()
@@ -325,16 +326,116 @@ class GroupWalletTest {
             )
         }
 
-    // ---- paying out: option A ----
+    // ---- paying out: the owner sends directly (decision 2026-11-06) ----
 
     @Test
-    fun `money leaves a group wallet only for an approved payout, to its payee, for its amount`() =
+    fun `the group wallet's owner pays a member straight from it, with no request`() =
         runBlocking<Unit> {
             val owner = activeGroupWallet()
             fundGroup(owner, 100_000_000)
             h.walletOn(wanjiru)
 
-            assertEquals("wallet.payout_required", payOut(owner).code())
+            val prepared = payOut(owner).data().transfer
+            assertEquals(owner.holder, prepared.senderId, "it leaves the group wallet, not Amina's")
+            assertEquals(amina, prepared.signerId)
+            assertEquals(chat, prepared.fromGroupId)
+            assertEquals(wanjiru, prepared.recipientId)
+            assertNull(prepared.payoutRequestId)
+            assertEquals(
+                h.circleUserOf(owner.holder),
+                h.custody.transfers
+                    .last()
+                    .first,
+            )
+        }
+
+    @Test
+    fun `only the owner moves the group's money - members get not_signer`() =
+        runBlocking<Unit> {
+            val owner = activeGroupWallet()
+            fundGroup(owner, 100_000_000)
+            h.walletOn(wanjiru)
+            h.walletOn(otieno)
+
+            assertEquals("wallet.not_signer", payOut(owner, by = otieno).code(), "an admin can't")
+            assertEquals("wallet.not_signer", payOut(owner, payee = Payee.Person(otieno), by = wanjiru).code())
+            assertEquals(
+                "wallet.not_signer",
+                payOut(owner, payee = Payee.Address("0xAbCdEf0123456789aBcDeF0123456789AbCdEf01"), by = wanjiru).code(),
+            )
+            assertEquals("wallet.not_found", payOut(owner, by = outsider).code(), "outside the group it isn't there")
+        }
+
+    @Test
+    fun `the owner pays themselves - the group's money to their own wallet`() =
+        runBlocking<Unit> {
+            val owner = activeGroupWallet()
+            fundGroup(owner, 100_000_000)
+            h.walletOn(amina)
+
+            // Without the chat too: paying yourself needs no reach.
+            val prepared =
+                h
+                    .prepareTransfer(
+                        TransferCommand(
+                            amina,
+                            "BASE-SEPOLIA",
+                            Payee.Person(amina),
+                            Money(tenUsdc, Asset.USDC),
+                            null,
+                            null,
+                            UUID.randomUUID(),
+                            walletId = owner.walletId,
+                        ),
+                    ).data()
+                    .transfer
+            assertEquals(owner.holder, prepared.senderId)
+            assertEquals(amina, prepared.recipientId)
+            assertEquals(
+                h.wallets
+                    .wallets(amina)
+                    .single()
+                    .address,
+                prepared.destinationAddress,
+            )
+        }
+
+    @Test
+    fun `the owner pays someone outside the group they can reach, and nobody they can't`() =
+        runBlocking<Unit> {
+            val owner = activeGroupWallet()
+            fundGroup(owner, 100_000_000)
+            h.walletOn(outsider)
+
+            assertEquals("users.not_reachable", payOut(owner, payee = Payee.Person(outsider)).code())
+            h.reach.connect(amina, outsider)
+            val prepared = payOut(owner, payee = Payee.Person(outsider)).data().transfer
+            assertEquals(outsider, prepared.recipientId)
+            assertEquals(chat, prepared.fromGroupId)
+        }
+
+    @Test
+    fun `the owner withdraws to an outside address, checked on its network, with the fee on top`() =
+        runBlocking<Unit> {
+            val owner = activeGroupWallet()
+            fundGroup(owner, 100_000_000)
+            val address = "0xAbCdEf0123456789aBcDeF0123456789AbCdEf01"
+
+            assertEquals("wallet.address_invalid", payOut(owner, payee = Payee.Address("0x1234")).code())
+            val prepared = payOut(owner, payee = Payee.Address(address)).data()
+            assertNull(prepared.transfer.recipientId)
+            assertEquals(address.lowercase(), prepared.transfer.destinationAddress)
+            assertEquals(chat, prepared.transfer.fromGroupId)
+            assertNotNull(prepared.fee, "the same one fee as any payment")
+        }
+
+    @Test
+    fun `a payment that names a payout request is still held to it`() =
+        runBlocking<Unit> {
+            val owner = activeGroupWallet()
+            fundGroup(owner, 100_000_000)
+            h.walletOn(wanjiru)
+
             assertEquals("wallet.payout_not_approved", payOut(owner, requestId = UUID.randomUUID()).code())
             val requestId = approve()
             assertEquals(
@@ -346,18 +447,7 @@ class GroupWalletTest {
                 payOut(owner, payee = Payee.Person(otieno), requestId = requestId).code(),
             )
             assertEquals("wallet.not_signer", payOut(owner, requestId = requestId, by = otieno).code())
-
-            val prepared = payOut(owner, requestId = requestId).data().transfer
-            assertEquals(owner.holder, prepared.senderId, "it leaves the group wallet, not Amina's")
-            assertEquals(amina, prepared.signerId)
-            assertEquals(chat, prepared.fromGroupId)
-            assertEquals(requestId, prepared.payoutRequestId)
-            assertEquals(
-                h.circleUserOf(owner.holder),
-                h.custody.transfers
-                    .last()
-                    .first,
-            )
+            assertEquals(requestId, payOut(owner, requestId = requestId).data().transfer.payoutRequestId)
         }
 
     @Test
