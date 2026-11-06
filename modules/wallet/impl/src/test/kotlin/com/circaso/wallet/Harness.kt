@@ -244,6 +244,8 @@ class Harness(
             ),
             com.circaso.wallet.domain.usecases
                 .ApplyWalletChallenge(progress),
+            com.circaso.wallet.domain.usecases
+                .FindDepositAddress(wallets),
         )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))

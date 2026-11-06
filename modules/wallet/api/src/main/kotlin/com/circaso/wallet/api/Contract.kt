@@ -3,6 +3,7 @@ package com.circaso.wallet.api
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import java.time.Instant
 import java.util.UUID
 
 /** What other modules may ask the wallet. The assistant reads it later, for Asha's payment proposals (Phase B). */
@@ -30,6 +31,12 @@ interface Wallets {
      * is deleted only once its wallet is empty. An error when Circle can't say; false when it has no wallet.
      */
     suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> = Resource.success(false)
+
+    /**
+     * The address [userId]'s own wallet is paid at on [blockchain], for share links (decision 2026-11-06: an address
+     * page is built from the wallet's record, never from what a phone sent). Null when the wallet isn't on that chain.
+     */
+    suspend fun depositAddress(userId: UserId, blockchain: String): String? = null
 }
 
 /** A space's wallet as spaces needs it: `SETTING_UP` until its owner's PIN and Circle made it, then `ACTIVE`. */
@@ -96,6 +103,13 @@ data class TransferSummary(
     val signerId: UserId? = null,
     /** The approved payout request it pays, for a group wallet (W4 `payoutRequestId`). */
     val payoutRequestId: UUID? = null,
+    /** The chain it moves on (added 2026-11-06, for receipts). */
+    val blockchain: String? = null,
+    /** The on-chain hash once Circle reports one. */
+    val txHash: String? = null,
+    val createdAt: Instant? = null,
+    /** When its state last changed: for a `CONFIRMED` or `FAILED` transfer, when it settled. */
+    val updatedAt: Instant? = null,
 )
 
 /**

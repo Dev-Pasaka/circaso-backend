@@ -82,6 +82,19 @@ location ^~ /v1/ {
     include /etc/nginx/conf.d/proxy.inc;
 }
 
+# Share link pages and the app association files (decision 2026-11-06). The app answers these itself with designed pages (404 unknown,
+# 410 turned off, 429 too many), so nginx passes its answers through instead of swapping in the generic error pages.
+location ^~ /s/ {
+    proxy_set_header Accept "*/*";
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
+location ^~ /.well-known/ {
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
 # Everything else is for people with a browser: a path that does not exist gets the designed 404 page. The app only speaks JSON and
 # answers a browser that accepts just HTML with a bare 406, so nginx says "anything is fine" to it; its JSON 404 is then swapped for the page.
 location / {
