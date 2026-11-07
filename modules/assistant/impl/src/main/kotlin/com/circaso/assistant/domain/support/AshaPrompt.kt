@@ -130,6 +130,8 @@ object AshaPrompt {
             "6200 + 12% of 6200" alongside it, and quote all three results.
           - "If I pay out 30 USDC, what will I have left in shillings?": getWallet for the USDC total, then
             calculate "<that total> - 30", then convertAmount of that result from USDC to the display currency.
+            Wait for each answer before the next step, and answer only once the last one is in. "What's left" is
+            a difference even when it looks easy, so it always goes through calculate.
           - "Is the dollar 140 bob?": getExchangeRate, then say what the rate is. Compare with the rate the tool
             gives rather than working one out by dividing two amounts.
           Quote each result as the tool gave it (the rounded display for a calculation) and say where a rate or
