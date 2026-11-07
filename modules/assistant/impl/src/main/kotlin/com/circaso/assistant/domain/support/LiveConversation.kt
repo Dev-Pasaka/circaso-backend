@@ -49,10 +49,18 @@ fun interface LiveOutput {
  *   to the same use case as A2, so tools, limits and audit are exactly a typed turn's. The model call is never cut
  *   off half way: a turn that has started is saved even if the user hangs up or talks over it, but nothing more is
  *   sent once the conversation has ended.
- * - **Barge-in.** Speech from the user while Asha is thinking, speaking or still being heard clears the speech
- *   provider's queue, tells the phone to stop playing, and makes the stale reply silent; the new words become the
- *   next turn. The generation check and the queueing of each sentence happen under the same lock as the barge-in, so
- *   a sentence of a reply the user talked over can't slip through.
+ * - **Barge-in.** The person talking over Asha while she is thinking, waiting for the phone, speaking or still being
+ *   heard clears the speech provider's queue, tells the phone to stop playing, and makes the stale reply silent; the
+ *   new words become the next turn. The generation check and the queueing of each sentence happen under the same lock
+ *   as the barge-in, so a sentence of a reply the user talked over can't slip through.
+ * - **Barge-in needs evidence** (decision 2026-11-07). A cough, a passing car or a transcriber guessing "you" on noise
+ *   must never cut off an answer the person hasn't heard yet. So while Asha is busy, voice activity alone never stops
+ *   her, and words are held until the stretch of speech they belong to ([Held]) has [BARGE_IN_WORDS] words that
+ *   aren't [FILLER_WORDS], counting only settled words (finals, and the leading words two interims in a row agree
+ *   on), is not her echo ([isEcho]), and, while her voice may be coming back from the loudspeaker ([voiceMayEcho]),
+ *   has lasted [BARGE_IN_MILLIS] on the transcriber's clock (on arrival time without one). Words held and never
+ *   crossing that bar are dropped like an echo: not a barge-in, not shown, not charged, never a question. Once the
+ *   bar is crossed, the whole stretch is the person's: its held words lead the next turn and are charged.
  * - **Metering** (decisions 2026-10-26). Voice seconds count only speech. The user's is measured on the transcriber's
  *   own clock, from the first word's start to the last word's end of each stretch of speech, so a burst of late events
  *   can't stretch or shrink it (arrival time is the fallback for a provider without timestamps). Asha's is charged as
@@ -236,6 +244,48 @@ class LiveConversation(
     private var audioFrom = -1.0
     private var audioTo = 0.0
 
+    /**
+     * One stretch of speech heard while Asha is busy, not yet shown to be the person talking over her (see the barge-in
+     * rule above). On the transcriber's clock when it times its words ([from], [to]), on arrival time otherwise.
+     */
+    private class Held {
+        /** Settled words of the stretch, in order. */
+        val finals = mutableListOf<String>()
+        var finalsText = ""
+
+        /** The latest interim's words since the last final: what the next interim must agree with to be stable. */
+        var interim: List<String> = emptyList()
+        var from = -1.0
+        var to = 0.0
+        var firstAt = -1L
+        var lastAt = 0L
+
+        /** Whether speech heard now ([audio], at [now]) belongs to this stretch: no gap of more than a second. */
+        fun continuedBy(audio: AudioSpan?, now: Long): Boolean =
+            if (audio != null && from >= 0) {
+                audio.startSeconds - to <= AUDIO_GAP_SECONDS
+            } else {
+                now - lastAt <= (AUDIO_GAP_SECONDS * 1_000).roundToLong()
+            }
+
+        fun add(audio: AudioSpan?, now: Long) {
+            if (firstAt < 0) firstAt = now
+            lastAt = now
+            if (audio == null) return
+            if (from < 0 || audio.startSeconds < from) from = audio.startSeconds
+            to = max(to, audio.endSeconds)
+        }
+
+        fun span(): AudioSpan? = if (from < 0) null else AudioSpan(from, to)
+
+        fun lastedMillis(): Long = if (from >= 0) ((to - from) * 1_000).roundToLong() else lastAt - firstAt
+    }
+
+    private var held: Held? = null
+
+    /** Words heard and let through: [lead] (held words of the same stretch) comes before them, all charged from [since]. */
+    private class Admitted(val lead: String, val audio: AudioSpan?, val since: Long)
+
     /** Asha's audio sent to the phone and not yet played there; charged as [playingUntil] approaches. */
     private val unplayedMicros = AtomicLong()
 
@@ -364,24 +414,28 @@ class LiveConversation(
     private suspend fun heard(event: TranscriptionEvent) {
         when (event) {
             is TranscriptionEvent.SpeechStarted -> {
-                // voice activity, not words: it resets the silence timer and can stop Asha, but is never charged
-                // (noise trips it too, and an open mic is free). While her voice plays it may be her own voice back
-                // from the loudspeaker, so then only words decide (decision 2026-10-29).
-                if (voiceMayEcho()) lastActivity = nowMillis() else userSpoke(isWord = false)
+                // voice activity, not words: it resets the silence timer but is never charged and never stops Asha
+                // (noise trips it too, an open mic is free, and while her voice plays it may be her own voice back
+                // from the loudspeaker; decisions 2026-10-29 and 2026-11-07). Only words decide.
+                lastActivity = nowMillis()
             }
 
             is TranscriptionEvent.Interim -> {
                 if (isEcho(event.text)) return
-                userSpoke(audio = event.audio)
+                val admitted = admit(event.text, event.audio, isFinal = false) ?: return
+                userSpoke(audio = admitted.audio, since = admitted.since)
+                utterance.append(admitted.lead)
                 emit(LiveEvent.Transcript(joined(event.text), isFinal = false))
             }
 
             is TranscriptionEvent.Final -> {
-                if (event.text.isNotBlank() && !isEcho(event.text)) {
+                val isWords = event.text.isNotBlank() && !isEcho(event.text)
+                val admitted = if (isWords) admit(event.text, event.audio, isFinal = true) else null
+                if (admitted != null) {
                     // a final settles words already heard as interims, after the pause that ended them: it starts
                     // speech only when nothing was heard before it, and never stretches it over that pause
-                    userSpoke(isWord = speechStart < 0, audio = event.audio)
-                    utterance.append(' ').append(event.text.trim())
+                    userSpoke(isWord = speechStart < 0, audio = admitted.audio, since = admitted.since)
+                    utterance.append(admitted.lead).append(' ').append(event.text.trim())
                     emit(LiveEvent.Transcript(utterance.trim().toString(), isFinal = true))
                 }
                 if (event.endOfTurn) endTurn()
@@ -399,7 +453,52 @@ class LiveConversation(
 
     private fun joined(interim: String) = (utterance.toString() + " " + interim).trim()
 
-    private suspend fun userSpoke(isWord: Boolean = true, audio: AudioSpan? = null) {
+    /**
+     * Whether words heard now are the person's (see the barge-in rule in the class doc), barging in if they talk over a
+     * busy Asha; null while they are held or dropped. Called with [state] held.
+     */
+    private suspend fun admit(
+        text: String,
+        audio: AudioSpan?,
+        isFinal: Boolean,
+    ): Admitted? {
+        val now = nowMillis()
+        val stretch = held?.takeIf { it.continuedBy(audio, now) } ?: Held()
+        held = null
+        stretch.add(audio, now)
+        val heard = words(text)
+        if (!isAshaBusy()) {
+            // she has finished: everything is the person's, with what was held of the same stretch leading it
+            return Admitted(stretch.finalsText, stretch.span(), stretch.firstAt)
+        }
+        // settled words only: a first interim is a guess; the leading words two interims in a row agree on are not
+        val counted =
+            stretch.finals +
+                if (isFinal) heard else heard.zip(stretch.interim).takeWhile { (a, b) -> a == b }.map { it.first }
+        val isPerson =
+            counted.count { it !in FILLER_WORDS } >= BARGE_IN_WORDS &&
+                !isEcho("${stretch.finalsText} $text") &&
+                (!voiceMayEcho() || stretch.lastedMillis() >= BARGE_IN_MILLIS)
+        if (!isPerson) {
+            if (isFinal) {
+                stretch.finals += heard
+                stretch.finalsText = "${stretch.finalsText} ${text.trim()}"
+                stretch.interim = emptyList()
+            } else {
+                stretch.interim = heard
+            }
+            held = stretch
+            return null
+        }
+        bargeIn()
+        return Admitted(stretch.finalsText, stretch.span(), stretch.firstAt)
+    }
+
+    private fun userSpoke(
+        isWord: Boolean = true,
+        audio: AudioSpan? = null,
+        since: Long = nowMillis(),
+    ) {
         val now = nowMillis()
         lastActivity = now
         when {
@@ -408,11 +507,10 @@ class LiveConversation(
             }
 
             isWord && !hasAudioClock -> {
-                if (speechStart < 0) speechStart = now
+                if (speechStart < 0) speechStart = since
                 lastSpeechAt = now
             }
         }
-        if (isAshaBusy()) bargeIn()
     }
 
     /** Words on the transcriber's clock. A gap of more than a second starts a new stretch; the gap isn't charged. */
@@ -542,6 +640,8 @@ class LiveConversation(
     /** Called with [state] held. */
     private suspend fun endTurn() {
         val endedAt = nowMillis()
+        // words held while Asha was busy that never showed they were the person end with the stretch: dropped
+        held = null
         closeSpeech()
         val text = utterance.trim().toString()
         utterance.clear()
@@ -859,6 +959,45 @@ class LiveConversation(
         const val ECHO_MATCH = 0.7
 
         const val RECENT_WORDS = 120
+
+        /**
+         * While Asha is busy, a barge-in needs this many settled words that aren't [FILLER_WORDS]. Two, because one
+         * stray word is what noise, a cough or a transcriber guessing on silence produces; "wait, stop" is two.
+         */
+        const val BARGE_IN_WORDS = 2
+
+        /**
+         * While her voice may be heard back ([ECHO_TAIL_MILLIS] included), the person's speech must also have lasted
+         * this long on the transcriber's clock: two short words are about 400 ms, a click or a burst of noise
+         * transcribed as words is shorter.
+         */
+        const val BARGE_IN_MILLIS = 400L
+
+        /**
+         * Words that never count towards [BARGE_IN_WORDS]: hesitations and backchannel sounds, and the short words a
+         * transcriber hallucinates on noise ("you", "the", "a", "and"). Kept small: every word here is one a real
+         * interruption can't start with alone.
+         */
+        val FILLER_WORDS =
+            setOf(
+                "uh",
+                "uhm",
+                "um",
+                "umm",
+                "er",
+                "erm",
+                "hm",
+                "hmm",
+                "mm",
+                "mhm",
+                "ah",
+                "oh",
+                "huh",
+                "you",
+                "the",
+                "a",
+                "and",
+            )
 
         private val wordChars = Regex("[^\\p{L}\\p{N}']+")
 
