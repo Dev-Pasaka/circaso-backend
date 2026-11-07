@@ -146,15 +146,16 @@ class AshaPromptTest {
     @Test
     fun `every price, rate, conversion and sum comes from a tool, in text and in voice`() {
         listOf(text, voice).map(::flat).forEach { flat ->
-            assertTrue("You never do money maths or recall a number yourself, not even an easy one" in flat)
+            assertTrue("Every figure in your answer comes from a tool result in this conversation" in flat)
+            assertTrue("that includes the working you show" in flat)
             assertTrue("an exchange rate between currencies (\"dollar to shilling rate\"): getExchangeRate" in flat)
-            assertTrue("convertAmount, never a rate times an amount worked out in your head" in flat)
             assertTrue(
                 "any other arithmetic" in flat && "calculate, with the numbers exactly as the tools gave" in flat,
             )
-            assertTrue("what the user's own coins and balances are worth: getWallet and getAssetValues" in flat)
+            assertTrue("Write the whole sum as one expression" in flat)
+            assertTrue("A balance with no network named means the totals over all networks" in flat)
             assertTrue("tell the user you couldn't get it right now" in flat)
-            assertTrue("Never estimate, never use a rate or price you remember" in flat)
+            assertTrue("rather than estimating or using a rate you remember" in flat)
             assertTrue("Never search for an exchange rate: that is getExchangeRate" in flat)
         }
         val voiceRules = flat(voice)
