@@ -146,23 +146,21 @@ class AshaPromptTest {
     @Test
     fun `every price, rate, conversion and sum comes from a tool, in text and in voice`() {
         listOf(text, voice).map(::flat).forEach { flat ->
-            assertTrue("You never do money maths or recall a number yourself, not even an easy one" in flat)
+            assertTrue("Every figure in your answer comes from a tool result in this conversation" in flat)
+            assertTrue("that includes the working you show" in flat)
             assertTrue("an exchange rate between currencies (\"dollar to shilling rate\"): getExchangeRate" in flat)
-            assertTrue("convertAmount, never a rate times an amount worked out in your head" in flat)
             assertTrue(
                 "any other arithmetic" in flat && "calculate, with the numbers exactly as the tools gave" in flat,
             )
-            assertTrue("what the user's own coins and balances are worth: getWallet and getAssetValues" in flat)
+            assertTrue("Write the whole sum as one expression" in flat)
+            assertTrue("A balance with no network named means the totals over all networks" in flat)
             assertTrue("tell the user you couldn't get it right now" in flat)
-            assertTrue("Never estimate, never use a rate or price you remember" in flat)
+            assertTrue("rather than estimating or using a rate you remember" in flat)
             assertTrue("Never search for an exchange rate: that is getExchangeRate" in flat)
         }
-        val voiceRules = flat(voice)
-        assertTrue("every number still comes from a tool's result" in voiceRules)
-        assertTrue("Never work a number out in your head because you are speaking" in voiceRules)
         assertFalse("If you must add, double-check" in flat(text))
         assertTrue("never multiply a rate yourself" in AshaPrompt.convertAmount.description)
-        assertTrue("never do maths yourself" in AshaPrompt.calculate.description)
+        assertTrue("including the working you show" in AshaPrompt.calculate.description)
         assertTrue("never for an exchange rate" in AshaPrompt.searchWeb.description)
     }
 
@@ -170,23 +168,42 @@ class AshaPromptTest {
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-07-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-07-v2", AshaPrompt.VERSION)
     }
 
     @Test
-    fun `the sections are these, in this order`() {
+    fun `the sections are these, in this order, and each mode is shown only its own way of answering`() {
+        val shared =
+            listOf("# Who you are", "# What you can see", "# What you never do", "# Money, exactly", "# How you work")
         assertEquals(
-            listOf(
-                "# Who you are",
-                "# What you can see",
-                "# What you never do",
-                "# Money, exactly",
-                "# How you work",
-                "# How you answer in a text chat",
-                "# How you answer in a voice conversation",
-                "# This conversation",
-            ),
+            shared + listOf("# How you answer in a text chat", "# This conversation"),
             text.lines().filter { it.startsWith("# ") },
         )
+        assertEquals(
+            shared + listOf("# How you answer in a voice conversation", "# This conversation"),
+            voice.lines().filter { it.startsWith("# ") },
+        )
+        assertFalse("```chart" in voice, "no markdown blocks are taught to a spoken turn")
+    }
+
+    @Test
+    fun `each mode's fixed prompt is the same on every call, and the shared part is word for word the same`() {
+        assertEquals(AshaPrompt.system(isVoice = true), AshaPrompt.system(isVoice = true))
+        val sharedText = AshaPrompt.system(isVoice = false).substringBefore("# How you answer")
+        val sharedVoice = AshaPrompt.system(isVoice = true).substringBefore("# How you answer")
+        assertEquals(sharedText, sharedVoice)
+        assertTrue(text.startsWith(AshaPrompt.system(isVoice = false)))
+        assertTrue(voice.startsWith(AshaPrompt.system(isVoice = true)))
+        assertFalse("2026-11-05" in AshaPrompt.system(isVoice = true), "the day is in the turn's part only")
+    }
+
+    @Test
+    fun `a spoken answer is one or two short sentences, the headline, with the breakdown offered`() {
+        val rules = flat(voice)
+        assertTrue("Answer in one or two short spoken sentences" in rules)
+        assertTrue("no lists, headings, markdown, symbols, emoji or links" in rules)
+        assertTrue("ask if they want the breakdown" in rules)
+        assertTrue("rounding only a number a tool gave you" in rules)
+        assertTrue("getCryptoMarket is for a coin's market price" in rules)
     }
 }
