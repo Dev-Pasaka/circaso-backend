@@ -5,7 +5,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 ## 1. How to use this file
 
 - **The API reference is the source of truth for exact shapes**: `/docs` on the dev server (behind Cloudflare Access; ask Pasaka for the `openapi.json` file if you cannot open it). This file explains behaviour and order; section 11 repeats every request and response type so you can start offline.
-- **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real vendors: Google and Apple sign-in, SMS (Twilio Verify), email (Resend), push (FCM), file storage (R2) and Asha's model, speech-to-text and voice (Cloudflare Workers AI). Only the Android carrier check and device attestation are faked there (marked **DEV STUB** below).
+- **Build against the real server, not mocks.** `https://sandbox.circaso.com` is a deployed dev server with real vendors: Google and Apple sign-in, SMS (Twilio Verify), email (Resend), push (FCM), file storage (R2) and Asha's model (Claude, with Cloudflare Workers AI as the fallback), speech-to-text and voice (Cloudflare Workers AI). Only the Android carrier check and device attestation are faked there (marked **DEV STUB** below).
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
@@ -177,7 +177,7 @@ Of the **106** routes the phone calls: **78 READY**, **27 PARTIAL**, **1 DEV STU
 | Profile, @handle, avatar | **READY** | |
 | Contacts sync, connections, invites, blocks, reach | **READY** | |
 | Realtime socket | **READY**, few frames | Only the frame types in section 8 exist. |
-| Asha chat (text), voice, speech | **READY** | Real models on dev (Cloudflare Workers AI). Separate conversations (C1–C5), each its own context. The free allowance numbers and the paid plan are not decided: show what the server returns. |
+| Asha chat (text), voice, speech | **READY** | Real models on dev (Claude Haiku 5.5 for Asha's replies, Cloudflare Workers AI for speech and as the fallback). Separate conversations (C1–C5), each its own context. The free allowance numbers and the paid plan are not decided: show what the server returns. |
 | Asha live voice (socket) | **READY** | Section 9. Real speech-to-text (Opus in) and voice (mulaw 8 kHz out) on dev; English only. |
 | Push notifications | **PARTIAL** | FCM sends for new messages (`pushable`), for being added to a group, for wallet payments (sent, failed, received) and wallet reminders, and for calls (an incoming call, data-only and high priority; a missed call). iOS needs the APNs key uploaded in the Firebase console. Nothing else pushes yet. |
 | Account security, linked logins, security log | **READY** | |

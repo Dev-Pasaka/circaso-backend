@@ -1,5 +1,8 @@
 package com.circaso.integrations.impl
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
@@ -48,8 +51,10 @@ import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
+import com.circaso.integrations.impl.llm.RoutedLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -63,6 +68,7 @@ import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
+import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.util.UUID
 import kotlin.test.AfterTest
@@ -187,6 +193,116 @@ class IntegrationsModuleTest {
                 "voice turns default to the fast voice model, whatever the text model is",
             )
         }
+
+    private fun ashaKoin(
+        clients: FakeHttpClients,
+        secrets: Map<String, String>,
+        vararg values: Pair<String, String>,
+    ) = startKoin {
+        modules(
+            integrationsModule(
+                MapConfig(mapOf("cloudflare.account-id" to "acc123", "integrations.ai.gateway" to "asha") + values),
+                object : Secrets {
+                    override fun get(name: String): String? = secrets[name]
+                },
+            ),
+            module { single<HttpClients> { clients } },
+        )
+    }.koin
+
+    private val cloudflare = mapOf("cloudflare.ai-token" to "cf-token")
+    private val keyed = cloudflare + ("anthropic.api-key" to "test-anthropic-key")
+
+    private fun hosts(clients: FakeHttpClients) = clients.requests.map { it.url.host }
+
+    @Test
+    fun `anthropic answers chat and voice, on its own client that never retries, with Workers AI as the fallback`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    keyed,
+                    "integrations.llm.provider" to "anthropic",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+
+            val model = koin.get<LanguageModel>()
+
+            assertIs<RoutedLanguageModel>(model)
+            val config = clients.configs.getValue("anthropic")
+            assertEquals(1, config.maxAttempts)
+            assertEquals("https://api.anthropic.com/", config.baseUrl)
+            // MockEngine can't stream Server-Sent Events, so Claude can't answer here: each turn falls back to Workers AI
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            val logger = LoggerFactory.getLogger(RoutedLanguageModel::class.java) as Logger
+            logger.addAppender(appender)
+            try {
+                for (purpose in ModelPurpose.entries) {
+                    clients.requests.clear()
+                    model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = purpose))
+                    assertEquals(listOf("api.cloudflare.com"), hosts(clients), "$purpose")
+                }
+            } finally {
+                logger.detachAppender(appender)
+            }
+            val lines = appender.list.map { it.formattedMessage }
+            for (purpose in ModelPurpose.entries) {
+                assertTrue(
+                    lines.any { it.startsWith("asha model fallback: purpose=$purpose from=anthropic to=workers-ai") },
+                    "$lines",
+                )
+            }
+        }
+
+    @Test
+    fun `anthropic without its key keeps Workers AI exactly as before`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    cloudflare,
+                    "integrations.llm.provider" to "anthropic",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+
+            assertIs<WorkersAiLanguageModel>(koin.get<LanguageModel>())
+            assertTrue("anthropic" !in clients.names)
+        }
+
+    @Test
+    fun `voice can move to anthropic alone, and typed turns stay where they were`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    keyed,
+                    "integrations.llm.provider" to "workers-ai",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+            val model = koin.get<LanguageModel>()
+
+            model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.CHAT))
+            assertEquals(listOf("api.cloudflare.com"), hosts(clients))
+        }
+
+    @Test
+    fun `Asha's model defaults to the log model, and a wrong provider or effort stops startup`() {
+        assertIs<LogLanguageModel>(koin().get<LanguageModel>())
+        stopKoin()
+        assertFailsWith<Exception> { koin("integrations.llm.voice-provider" to "openai").get<LanguageModel>() }
+        stopKoin()
+        assertFailsWith<Exception> {
+            ashaKoin(
+                FakeHttpClients { _ -> respondOk() },
+                keyed,
+                "integrations.llm.provider" to "anthropic",
+                "integrations.anthropic.effort.text" to "max",
+            ).get<LanguageModel>()
+        }
+    }
 
     @Test
     fun `live voice runs on its own workers-ai-live client, with the WebSockets flag`() {

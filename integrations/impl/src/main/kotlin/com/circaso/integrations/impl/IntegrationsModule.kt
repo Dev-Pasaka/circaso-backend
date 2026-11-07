@@ -46,7 +46,6 @@ import com.circaso.integrations.impl.dev.FakeCryptoPrices
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeExchangeRates
-import com.circaso.integrations.impl.dev.FakeLanguageModel
 import com.circaso.integrations.impl.dev.FakeLiveSpeech
 import com.circaso.integrations.impl.dev.FakeLiveTranscription
 import com.circaso.integrations.impl.dev.FakePush
@@ -62,7 +61,6 @@ import com.circaso.integrations.impl.dev.LogCryptoPrices
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
-import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
@@ -81,7 +79,6 @@ import com.circaso.integrations.impl.social.ProviderSpec
 import com.circaso.integrations.impl.tavily.TavilyWebSearch
 import com.circaso.integrations.impl.twilio.TwilioVerify
 import com.circaso.integrations.impl.workersai.WorkersAiGateway
-import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSocket
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -97,7 +94,8 @@ import java.time.Duration
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
- * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
+ * assistant, `llm` (`workers-ai` or `anthropic`, with `llm.voice-provider` for live voice), `vision`, `stt`, `tts`,
+ * `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
  * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`), `rates` (`open-er-api`) and `prices`
  * (`coingecko`; unset, `coingecko` when its key is set, else `off`), for calls
  * `calls` (`cloudflare`, the Realtime SFU), for location previews `maps` (`google`), and Asha's web `search`
@@ -194,28 +192,7 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
-        single<LanguageModel> {
-            pick<LanguageModel>(
-                "llm",
-                providers =
-                    mapOf(
-                        "log" to ::LogLanguageModel,
-                        "fake" to { FakeLanguageModel() },
-                        "workers-ai" to {
-                            val textModel = ai.string("model.text", WORKERS_AI_TEXT_MODEL)
-                            WorkersAiLanguageModel(
-                                workersAi(config, secrets, get()),
-                                textModel,
-                                maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
-                                // Live voice turns: PhoneLLM Mini (decision 2026-10-31), measured from the sandbox
-                                // on real Asha questions with 8 tools: right tool 3/3 in 0.3–0.5 s and a spoken answer
-                                // 0.3 s after the result, where Kimi took 13 s to pick a tool.
-                                voiceModel = ai.string("model.voice-text", WORKERS_AI_VOICE_TEXT_MODEL),
-                            )
-                        },
-                    ),
-            )
-        }
+        single<LanguageModel> { ashaLanguageModel(config, secrets, get()) }
         single<VisionModel> {
             pick(
                 "vision",
@@ -632,24 +609,24 @@ private fun pricesFreshFor(integrations: Config): Duration =
 /** The shortest a price table is kept: the Demo plan allows 30 calls a minute and 10,000 a month. */
 private const val MIN_FRESH_SECONDS = 30
 
-private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
+internal const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
 
 // Built by Pipecat/Daily for voice agents: replies quickly and calls tools mid-conversation (Workers AI, 2026-10-15).
-private const val WORKERS_AI_VOICE_TEXT_MODEL = "@cf/daily-co/phonellm-mini-alpha-2"
+internal const val WORKERS_AI_VOICE_TEXT_MODEL = "@cf/daily-co/phonellm-mini-alpha-2"
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
 private const val WORKERS_AI_LIVE_STT_MODEL = "@cf/deepgram/nova-3"
 
 // A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
-private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 8192
+internal const val WORKERS_AI_MAX_OUTPUT_TOKENS = 8192
 
 /**
  * Every Workers AI model needs `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY` (the AI Gateway's name) and the secret
  * `CLOUDFLARE_AI_TOKEN` (an API token with Workers AI Read). One shared `workers-ai` client: a reasoning model can take
  * longer than the usual 15 s, so it waits up to a minute.
  */
-private fun workersAi(
+internal fun workersAi(
     config: Config,
     secrets: Secrets,
     clients: HttpClients,

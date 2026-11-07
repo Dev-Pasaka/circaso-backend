@@ -113,7 +113,7 @@ class WorkersAiLanguageModel(
     }
 
     private fun messages(request: ModelRequest): List<ChatMessage> =
-        listOf(ChatMessage(role = "system", content = request.system)) + request.messages.map(::message)
+        listOf(ChatMessage(role = "system", content = request.systemPrompt)) + request.messages.map(::message)
 
     private fun message(message: ModelMessage): ChatMessage =
         when (message) {

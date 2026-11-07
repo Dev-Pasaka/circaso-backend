@@ -20,6 +20,8 @@ spotless = "7.0.4"
 ktlint = "1.8.0"
 testcontainers = "1.21.4"
 grpc = "1.85.1"
+# JetBrains Koog: only its Anthropic client and the Ktor transport it rides on (decision 2026-11-07)
+koog = "1.3.0"
 
 [libraries]
 # build-logic
@@ -96,6 +98,10 @@ ktor-server-routing-openapi = { module = "io.ktor:ktor-server-routing-openapi", 
 ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
 ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.ref = "ktor" }
+
+# Koog (Asha's model client): the Anthropic Messages client, and the transport that runs it on our Ktor client
+koog-anthropic-client = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
+koog-http-client-ktor = { module = "ai.koog:http-client-ktor", version.ref = "koog" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
