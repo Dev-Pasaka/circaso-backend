@@ -78,6 +78,16 @@ interface ProviderRepository {
 
 interface DeviceRepository {
     suspend fun find(userId: UserId, deviceId: DeviceId): Device?
+
+    /**
+     * Moves the active phone's `last_seen_at` forward to [at] (never back, and never on a replaced or removed phone);
+     * true when it moved. What the staff count of active people reads (decision 2026-11-08).
+     */
+    suspend fun touch(
+        userId: UserId,
+        deviceId: DeviceId,
+        at: Instant,
+    ): Boolean
 }
 
 interface SessionRepository {

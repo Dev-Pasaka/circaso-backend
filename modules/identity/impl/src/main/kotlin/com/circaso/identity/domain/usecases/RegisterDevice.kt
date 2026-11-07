@@ -61,6 +61,7 @@ class RegisterDevice(
         }
         val account = accounts.find(userId) ?: return Resource.error(SharedError.TokenInvalid)
         if (account.isSupport) return Resource.error(IdentityError.SupportAccountNotOnMobile)
+        refusal(account.status)?.let { return Resource.error(it) }
         val phone = account.phone
         if (phone == null ||
             !cache.isPhoneVerified(userId, command.deviceId)
@@ -158,6 +159,21 @@ class RegisterDevice(
             ),
         )
     }
+
+    /**
+     * Only a signing-up or active account may register a phone. Without this, an `onboarding` token handed out before a
+     * suspension (it lives 15 minutes and has no session to revoke) and a phone verified in that window could register
+     * the phone and turn the suspended account `ACTIVE` again (decision 2026-11-08). The version check under the lock
+     * below covers a suspension landing between this read and the write.
+     */
+    private fun refusal(status: AccountStatus): IdentityError? =
+        when (status) {
+            AccountStatus.ACTIVE, AccountStatus.PENDING_PHONE -> null
+            AccountStatus.SUSPENDED -> IdentityError.AccountSuspended
+            AccountStatus.BLOCKED -> IdentityError.AccountBlocked
+            AccountStatus.DELETED -> IdentityError.AccountDeleted
+            AccountStatus.RECOVERY_PENDING -> IdentityError.RecoveryPending
+        }
 
     /**
      * Best effort, once: the first time an account becomes active, a person who signed in with Google or Apple (the only way

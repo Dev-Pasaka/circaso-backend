@@ -74,7 +74,7 @@ class SupportAccountTest {
         val profiles = FakeSupportProfiles()
         val create = CreateSupportAccount(h.store, h.store, h.store, profiles, h.bus, Clock.systemUTC())
         val list = ListSupportAccounts(h.store, profiles)
-        val operator = UserId.new()
+        val operator = "staff-0193f2c1"
 
         suspend fun support(handle: String = "circaso"): UserId =
             (create(CreateSupportAccountCommand(operator, "Circaso Support", handle)) as Resource.Success)
@@ -181,8 +181,8 @@ class SupportAccountTest {
             val h = Harness()
             val ops = Ops(h)
             h.signUp("amina", Phone(), number)
-            val first = ops.support("circaso")
-            val second = ops.support("help")
+            // UUIDv7 made in the same millisecond come out in random order: the list is in id order, so take theirs.
+            val (first, second) = listOf(ops.support("circaso"), ops.support("help")).sortedBy { it.value }
             ops.profiles.made[first] = SupportProfile("Circaso Support", "circaso")
 
             val page = ops.list(null, 1).data()

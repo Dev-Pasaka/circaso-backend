@@ -12,8 +12,11 @@ import kotlinx.coroutines.flow.singleOrNull
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.upsert
+import java.time.Instant
 
 class DeviceRepositoryImpl(private val database: Database) : DeviceRepository {
     override suspend fun find(userId: UserId, deviceId: DeviceId): Device? =
@@ -23,6 +26,25 @@ class DeviceRepositoryImpl(private val database: Database) : DeviceRepository {
                 .where { (DevicesTable.userId eq userId.value) and (DevicesTable.deviceId eq deviceId.value) }
                 .map { it.toDevice() }
                 .singleOrNull()
+        }
+
+    override suspend fun touch(
+        userId: UserId,
+        deviceId: DeviceId,
+        at: Instant,
+    ): Boolean =
+        database.tx("devices.touch") {
+            // One column, not the store's upsert of the whole row: a phone removed meanwhile must stay removed.
+            val moved =
+                DevicesTable.update({
+                    (DevicesTable.userId eq userId.value) and
+                        (DevicesTable.deviceId eq deviceId.value) and
+                        (DevicesTable.status eq DeviceStatus.ACTIVE.name) and
+                        (DevicesTable.lastSeenAt less at)
+                }) {
+                    it[lastSeenAt] = at
+                }
+            moved == 1
         }
 
     /** For the store: writes the device as it is now, inside the open transaction. */
@@ -45,7 +67,7 @@ class DeviceRepositoryImpl(private val database: Database) : DeviceRepository {
     }
 }
 
-private fun ResultRow.toDevice() =
+internal fun ResultRow.toDevice() =
     Device(
         userId = UserId(this[DevicesTable.userId]),
         deviceId = DeviceId(this[DevicesTable.deviceId]),
