@@ -2,7 +2,6 @@ package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
-import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
@@ -50,8 +49,11 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[idempotencyKey] = transfer.idempotencyKey
                     it[recipientId] = transfer.recipientId?.value
                     it[destinationAddress] = transfer.destinationAddress
-                    it[amountMinor] = transfer.amount.amountMinor
-                    it[asset] = transfer.amount.asset.name
+                    it[amountMinor] = transfer.amount.amountMinor.toBigDecimal()
+                    it[asset] = transfer.amount.asset.symbol
+                    it[assetDecimals] =
+                        transfer.amount.asset.decimals
+                            .toShort()
                     it[state] = transfer.state.name
                     it[circleTxId] = transfer.circleTxId
                     it[txHash] = transfer.txHash
@@ -68,8 +70,11 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[fromSpaceId] = transfer.fromSpaceId
                     it[toSpaceId] = transfer.toSpaceId
                     it[spacePaymentId] = transfer.spacePaymentId
-                    it[feeMinor] = transfer.feeMinor
+                    it[feeMinor] = transfer.feeMinor.toBigDecimal()
                     it[feeAddress] = transfer.feeAddress
+                    it[tokenAddress] = transfer.tokenAddress
+                    it[usdPrice] = transfer.usdPrice
+                    it[usdTotalMinor] = transfer.usdTotalMinor
                 }
             statement.insertedCount > 0
         }
@@ -187,7 +192,12 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             idempotencyKey = this[TransfersTable.idempotencyKey],
             recipientId = this[TransfersTable.recipientId]?.let(::UserId),
             destinationAddress = this[TransfersTable.destinationAddress],
-            amount = Money(this[TransfersTable.amountMinor], Asset.valueOf(this[TransfersTable.asset])),
+            amount =
+                moneyOf(
+                    this[TransfersTable.amountMinor],
+                    this[TransfersTable.asset],
+                    this[TransfersTable.assetDecimals],
+                ),
             state = TransferState.valueOf(this[TransfersTable.state]),
             circleTxId = this[TransfersTable.circleTxId],
             txHash = this[TransfersTable.txHash],
@@ -204,8 +214,11 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             fromSpaceId = this[TransfersTable.fromSpaceId],
             toSpaceId = this[TransfersTable.toSpaceId],
             spacePaymentId = this[TransfersTable.spacePaymentId],
-            feeMinor = this[TransfersTable.feeMinor],
+            feeMinor = this[TransfersTable.feeMinor].toBigIntegerExact(),
             feeAddress = this[TransfersTable.feeAddress],
+            tokenAddress = this[TransfersTable.tokenAddress],
+            usdPrice = this[TransfersTable.usdPrice]?.stripTrailingZeros(),
+            usdTotalMinor = this[TransfersTable.usdTotalMinor],
         )
 
     override suspend fun lockHolder(holder: UserId) {
@@ -223,8 +236,7 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
             TransfersTable
                 .select(
                     TransfersTable.createdAt,
-                    TransfersTable.amountMinor,
-                    TransfersTable.feeMinor,
+                    TransfersTable.usdTotalMinor,
                     TransfersTable.state,
                 ).where {
                     (TransfersTable.senderId eq holder.value) and
@@ -233,7 +245,7 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                 }.map {
                     CountedTransfer(
                         createdAt = it[TransfersTable.createdAt],
-                        totalMinor = it[TransfersTable.amountMinor] + it[TransfersTable.feeMinor],
+                        usdTotalMinor = it[TransfersTable.usdTotalMinor],
                         awaiting = it[TransfersTable.state] == TransferState.AWAITING_SIGNATURE.name,
                     )
                 }.toList()
@@ -243,7 +255,7 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         recipientId: UserId,
         senderWalletId: String,
         blockchain: String,
-        amountMinor: Long,
+        amount: Money,
         createdAfter: Instant,
         limit: Int,
     ): List<Transfer> =
@@ -255,7 +267,8 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                         (TransfersTable.senderWalletId eq senderWalletId) and
                         (TransfersTable.createdAt greaterEq createdAfter) and
                         (TransfersTable.blockchain eq blockchain) and
-                        (TransfersTable.amountMinor eq amountMinor) and
+                        (TransfersTable.amountMinor eq amount.amountMinor.toBigDecimal()) and
+                        (TransfersTable.asset eq amount.asset.symbol) and
                         (TransfersTable.state inList PAID)
                 }.orderBy(TransfersTable.createdAt to SortOrder.DESC)
                 .limit(limit)

@@ -5,10 +5,11 @@ import java.time.Instant
 
 /**
  * What one whole coin is worth in US dollars (decision 2026-11-06: CoinGecko), for showing a coin other than a dollar
- * stablecoin in the person's own money and for typing an amount in that money. Like [ExchangeRates], a price is a
- * convenience on screen and for converting what someone types, never part of a payment or a fee, so there is no
- * error to handle: a coin with no price (an unknown symbol, the feed off or down for too long) is left out of the
- * answer and its fiat value is left out on screen.
+ * stablecoin in the person's own money and for typing an amount in that money. Since 2026-11-07 a payment in such a
+ * coin also reads it: its fee (priced in dollars) is charged in the coin at this price, and its limits count it at this
+ * price; the quote keeps the price it used. There is still no error to handle: a coin with no price (an unknown
+ * symbol, the feed off or down for too long) is left out of the answer, its fiat value is left out on screen, and a
+ * payment in it is refused by the wallet.
  */
 interface CryptoPrices {
     /**

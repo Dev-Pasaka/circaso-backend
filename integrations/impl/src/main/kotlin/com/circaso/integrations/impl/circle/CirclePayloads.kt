@@ -70,8 +70,10 @@ internal data class TransferBody(
     val walletId: String,
     val destinationAddress: String,
     val amounts: List<String>,
-    val tokenAddress: String,
-    val blockchain: String,
+    /** A token by its contract on [blockchain]; or, for the chain's own coin, Circle's [tokenId] alone. */
+    val tokenAddress: String? = null,
+    val blockchain: String? = null,
+    val tokenId: String? = null,
     val feeLevel: String,
     val refId: String,
 ) : CircleWrite

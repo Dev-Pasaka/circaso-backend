@@ -29,8 +29,34 @@ class MoneyAndPhoneNumberTest {
     }
 
     @Test
-    fun `money overflow fails loudly instead of wrapping`() {
-        assertFailsWith<ArithmeticException> { Money(Long.MAX_VALUE, Asset.USDC) + Money(1, Asset.USDC) }
+    fun `money holds an 18-decimal coin past what a Long can`() {
+        val eth = Asset("ETH", 18)
+        val ten =
+            Money(
+                java.math.BigInteger.TEN
+                    .pow(19),
+                eth,
+            )
+
+        assertEquals(
+            java.math.BigInteger.TEN
+                .pow(19)
+                .add(java.math.BigInteger.ONE),
+            (ten + Money(1, eth)).amountMinor,
+        )
+        assertEquals("10", ten.whole.stripTrailingZeros().toPlainString())
+    }
+
+    @Test
+    fun `an asset is any coin by symbol and decimals, and only USDC and USDT are dollars`() {
+        assertTrue(Asset.USDC.isDollarStablecoin)
+        assertTrue(Asset("USDT", 6).isDollarStablecoin)
+        assertFalse(Asset("EURC", 6).isDollarStablecoin)
+        assertFalse(Asset("USDC", 18).isDollarStablecoin)
+        assertEquals(Asset.USDT, Asset.dollarStablecoin(" usdt "))
+        assertNull(Asset.dollarStablecoin("EURC"))
+        assertFailsWith<IllegalArgumentException> { Asset("eth", 18) }
+        assertFailsWith<IllegalArgumentException> { Asset("ETH", 37) }
     }
 
     @Test

@@ -19,8 +19,11 @@ object TransfersTable : Table("wallet.transfers") {
     val idempotencyKey = javaUUID("idempotency_key")
     val recipientId = javaUUID("recipient_id").nullable()
     val destinationAddress = text("destination_address")
-    val amountMinor = long("amount_minor")
+
+    /** In the coin's minor units: numeric(78,0), since an 18-decimal coin passes a bigint at about 9 coins (V8). */
+    val amountMinor = decimal("amount_minor", 78, 0)
     val asset = text("asset")
+    val assetDecimals = short("asset_decimals").default(6)
     val state = text("state")
     val circleTxId = text("circle_tx_id").nullable()
     val txHash = text("tx_hash").nullable()
@@ -35,8 +38,13 @@ object TransfersTable : Table("wallet.transfers") {
     val payoutRequestId = javaUUID("payout_request_id").nullable()
     val fromGroupId = javaUUID("from_group_id").nullable()
     val toGroupId = javaUUID("to_group_id").nullable()
-    val feeMinor = long("fee_minor").default(0)
+    val feeMinor = decimal("fee_minor", 78, 0).default(java.math.BigDecimal.ZERO)
     val feeAddress = text("fee_address").nullable()
+
+    /** V8 (2026-11-07, any held coin): the coin's contract (empty: the chain's own), its price, its USD weight. */
+    val tokenAddress = text("token_address").nullable()
+    val usdPrice = decimal("usd_price", 38, 18).nullable()
+    val usdTotalMinor = long("usd_total_minor")
 
     /** Spaces (V5): the space wallet on either side, and the membership payment (SP13) it pays. */
     val fromSpaceId = javaUUID("from_space_id").nullable()

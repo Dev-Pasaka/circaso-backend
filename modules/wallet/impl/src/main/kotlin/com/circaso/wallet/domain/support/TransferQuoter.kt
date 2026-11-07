@@ -30,22 +30,34 @@ class TransferQuoter(
                 is Resource.Success -> planned.data
                 is Resource.Error -> return planned
             }
-        val amount = command.amount.amountMinor
+        val amount = plan.amount.amountMinor
         val fee = plan.feeFor(amount)
         val total = amount + fee.amountMinor
+        val totalUsd = plan.usdTotal(amount, fee)
         val allowance = plan.allowance
         val problem =
             when {
-                allowance.perPaymentMaxMinor?.let { amount > it } == true -> QuoteProblem.PER_PAYMENT_LIMIT
-                total > plan.balanceMinor -> QuoteProblem.INSUFFICIENT_FUNDS
-                !allowance.fits(total) -> QuoteProblem.DAILY_LIMIT
-                else -> null
+                allowance.perPaymentMaxMinor?.let { plan.coin.usdMinor(amount) > it } == true -> {
+                    QuoteProblem.PER_PAYMENT_LIMIT
+                }
+
+                total > plan.balanceMinor -> {
+                    QuoteProblem.INSUFFICIENT_FUNDS
+                }
+
+                !allowance.fits(totalUsd) -> {
+                    QuoteProblem.DAILY_LIMIT
+                }
+
+                else -> {
+                    null
+                }
             }
         val held = if (hold && access.canSign) quotes.hold(plan, command, fee) else null
         return Resource.success(
             TransferQuote(
                 blockchain = command.blockchain,
-                amount = command.amount,
+                amount = plan.amount,
                 fee = fee,
                 balanceMinor = plan.balanceMinor,
                 maxAmountMinor = plan.maxAmount(),
@@ -53,6 +65,7 @@ class TransferQuoter(
                 problem = problem,
                 quoteId = held?.quoteId,
                 expiresAt = held?.expiresAt ?: clock.instant().plus(Transfer.SIGNING_WINDOW),
+                totalUsdMinor = totalUsd,
             ),
         )
     }

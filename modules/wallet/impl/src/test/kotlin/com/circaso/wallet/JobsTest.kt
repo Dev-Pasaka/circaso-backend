@@ -97,7 +97,7 @@ class JobsTest {
                 senderFrames = h.frames.to<WalletFrame.TransferUpdated>(amina).map { it.state },
                 received =
                     h.frames.to<WalletFrame.PaymentReceived>(bob).map {
-                        Triple(it.amount.amountMinor, it.fromUserId?.role(), it.blockchain)
+                        Triple(it.amount.amountMinor.toLong(), it.fromUserId?.role(), it.blockchain)
                     },
                 spent = h.used(amina),
             )

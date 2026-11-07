@@ -261,7 +261,7 @@ class SpaceWalletTest {
             fees.fund(visitor, 400_000_000)
 
             val tip = fees.quote(juma, Payee.Space(space), 100_000_000).data()
-            assertEquals(1_000_000L, tip.fee.amountMinor)
+            assertEquals(1_000_000.toBigInteger(), tip.fee.amountMinor)
             assertEquals(com.circaso.wallet.api.WalletOwnerType.SPACE, tip.fee.parties.receiverType)
 
             val paymentId = UUID.randomUUID()
@@ -278,9 +278,9 @@ class SpaceWalletTest {
                     spacePaymentId = paymentId,
                 )
             val quote = fees.quoteTransfer(membership).data()
-            assertEquals(1_000_000L, quote.fee.amountMinor)
+            assertEquals(1_000_000.toBigInteger(), quote.fee.amountMinor)
             val prepared = fees.prepareTransfer(membership.copy(quoteId = quote.quoteId)).data().transfer
-            assertEquals(1_000_000L, prepared.feeMinor)
+            assertEquals(1_000_000.toBigInteger(), prepared.feeMinor)
             assertEquals(paymentId, prepared.spacePaymentId)
         }
 }

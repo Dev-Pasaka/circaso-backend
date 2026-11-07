@@ -173,7 +173,7 @@ class CircleCustody internal constructor(
         walletId: String,
         asset: Asset,
     ): Resource<Money> {
-        if (asset != Asset.USDC) return notOffered(asset)
+        if (asset != Asset.USDC) return Resource.error(IntegrationError.Rejected("$asset is not offered."))
         return asUser(circleUserId) { token ->
             client.get<BalancesData>("/v1/w3s/wallets/$walletId/balances", "get_balance", token)
         }.flatMapReply { _, reply ->
@@ -197,20 +197,35 @@ class CircleCustody internal constructor(
     }
 
     override suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> {
-        if (request.amount.asset != Asset.USDC) return notOffered(request.amount.asset)
-        val usdc = settings.usdcOn(request.blockchain) ?: return notSupported(request.blockchain)
-        val body =
-            TransferBody(
-                idempotencyKey = request.idempotencyKey.toString(),
-                walletId = request.walletId,
-                destinationAddress = request.destinationAddress,
-                amounts = listOf(CircleTransactions.decimalOf(request.amount)),
-                tokenAddress = usdc.tokenAddress,
-                blockchain = request.blockchain,
-                feeLevel = FEE_LEVEL,
-                refId = request.refId,
-            )
+        val chain = request.blockchain
+        settings.supported.find(chain) ?: return notSupported(chain)
+        val coin =
+            settings.coinAddress(chain, request.amount.asset.symbol, request.tokenAddress)
+                ?: return notOffered(request.amount.asset)
         return asUser(circleUserId) { token ->
+            // The chain's own coin has no contract: Circle names it only by its token id, read from the wallet.
+            val tokenId =
+                if (coin.isEmpty()) {
+                    when (val found = nativeTokenId(token, request.walletId, chain)) {
+                        is CircleReply.Ok -> found.data
+                        is CircleReply.Failed -> return@asUser found
+                        is CircleReply.Unreachable -> return@asUser found
+                    } ?: return@asUser CircleReply.Failed(NOT_HELD_STATUS, NOT_HELD_CODE)
+                } else {
+                    null
+                }
+            val body =
+                TransferBody(
+                    idempotencyKey = request.idempotencyKey.toString(),
+                    walletId = request.walletId,
+                    destinationAddress = request.destinationAddress,
+                    amounts = listOf(CircleTransactions.decimalOf(request.amount)),
+                    tokenAddress = coin.takeIf { tokenId == null },
+                    blockchain = chain.takeIf { tokenId == null },
+                    tokenId = tokenId,
+                    feeLevel = FEE_LEVEL,
+                    refId = request.refId,
+                )
             client.write<TransferBody, ChallengeData>(
                 HttpMethod.Post,
                 "/v1/w3s/user/transactions/transfer",
@@ -218,8 +233,39 @@ class CircleCustody internal constructor(
                 body,
                 token,
             )
-        }.flatMapReply { token, reply -> challengeOf(token, reply, "create_transfer") }
+        }.flatMapReply { token, reply ->
+            if (reply is CircleReply.Failed && reply.code == NOT_HELD_CODE) {
+                return@flatMapReply Resource.error(IntegrationError.InsufficientFunds())
+            }
+            challengeOf(token, reply, "create_transfer")
+        }
     }
+
+    /** Circle's token id for [blockchain]'s own coin in the wallet [walletId]; null when the wallet has never held it. */
+    private suspend fun nativeTokenId(
+        userToken: String,
+        walletId: String,
+        blockchain: String,
+    ): CircleReply<String?> =
+        when (val reply = client.get<BalancesData>("/v1/w3s/wallets/$walletId/balances", "get_balances", userToken)) {
+            is CircleReply.Ok -> {
+                CircleReply.Ok(
+                    reply.data.tokenBalances
+                        .firstOrNull { it.token.blockchain == blockchain && it.token.tokenAddress.isEmpty() }
+                        ?.token
+                        ?.id
+                        ?.ifEmpty { null },
+                )
+            }
+
+            is CircleReply.Failed -> {
+                reply
+            }
+
+            is CircleReply.Unreachable -> {
+                reply
+            }
+        }
 
     /** Smart-contract wallets batch calls (`executeBatch`); Solana's EOAs can't (fee spike, 2026-11-03). */
     override fun canSplit(blockchain: String): Boolean =
@@ -285,8 +331,9 @@ class CircleCustody internal constructor(
     }
 
     /**
-     * `executeBatch`'s one argument: per leg `(USDC, 0, transfer(to, amount))`. Every leg is USDC on a chain whose
-     * wallets are smart-contract accounts, to an EVM address.
+     * `executeBatch`'s one argument: per leg, a token's `(token, 0, transfer(to, amount))`, or the chain's own coin
+     * sent as the call's value, `(to, amount, 0x)`. Every leg is on a chain whose wallets are smart-contract accounts,
+     * to an EVM address.
      */
     private fun batchOf(request: SplitTransferRequest): Resource<List<List<List<String>>>> {
         if (!canSplit(request.blockchain)) {
@@ -294,15 +341,23 @@ class CircleCustody internal constructor(
                 IntegrationError.Rejected("${request.blockchain} can't pay several addresses at once."),
             )
         }
-        val usdc = settings.usdcOn(request.blockchain) ?: return notSupported(request.blockchain)
         if (request.legs.isEmpty()) return Resource.error(IntegrationError.Rejected("A payment needs a leg."))
         val calls =
             request.legs.map { leg ->
-                if (leg.amount.asset != Asset.USDC) return notOffered(leg.amount.asset)
-                val data =
-                    Erc20.transfer(leg.destinationAddress, leg.amount.amountMinor)
-                        ?: return Resource.error(IntegrationError.AddressInvalid())
-                listOf(usdc.tokenAddress, "0", data)
+                val coin =
+                    settings.coinAddress(request.blockchain, leg.amount.asset.symbol, leg.tokenAddress)
+                        ?: return notOffered(leg.amount.asset)
+                if (coin.isEmpty()) {
+                    if (!Erc20.isAddress(leg.destinationAddress) || leg.amount.isNegative) {
+                        return Resource.error(IntegrationError.AddressInvalid())
+                    }
+                    listOf(leg.destinationAddress, leg.amount.amountMinor.toString(), NO_DATA)
+                } else {
+                    val data =
+                        Erc20.transfer(leg.destinationAddress, leg.amount.amountMinor)
+                            ?: return Resource.error(IntegrationError.AddressInvalid())
+                    listOf(coin, "0", data)
+                }
             }
         return Resource.success(listOf(calls))
     }
@@ -486,7 +541,7 @@ class CircleCustody internal constructor(
             data.tokenBalances.firstOrNull { settings.isUsdc(it.token.tokenAddress, it.token.blockchain) }
                 ?: return Resource.success(Money(0, Asset.USDC))
         val minor =
-            CircleTransactions.minorUnits(usdc.amount, Asset.USDC)
+            CircleTransactions.minorUnits(usdc.amount, Asset.USDC.decimals)
                 ?: return CircleErrors.failure(CircleReply.Failed(200, null), "get_balance")
         return Resource.success(Money(minor, Asset.USDC))
     }
@@ -524,12 +579,8 @@ class CircleCustody internal constructor(
     /** A held token outside the offered list, or null when Circle didn't describe it or it holds nothing. */
     private fun heldOnly(line: TokenBalanceData): AssetBalance? {
         val decimals = line.token.decimals ?: return null
-        val symbol =
-            line.token.symbol
-                .substringBefore('-')
-                .trim()
-                .uppercase()
-        if (symbol.isEmpty() || decimals !in 0..36) return null
+        val symbol = CircleTransactions.symbolOf(line.token.symbol) ?: return null
+        if (decimals !in 0..Asset.MAX_DECIMALS) return null
         val minor = minorUnits(line.amount, decimals) ?: return null
         if (minor.signum() <= 0) return null
         return AssetBalance(CustodyAsset(symbol, line.token.tokenAddress, decimals, usdPegged = false), minor)
@@ -559,8 +610,8 @@ class CircleCustody internal constructor(
             }
         }
 
-    private fun <T> notOffered(asset: Asset): Resource<T> =
-        Resource.error(IntegrationError.Rejected("$asset is not offered."))
+    /** A coin named only by its symbol that isn't offered on the chain: we can't tell which contract to send. */
+    private fun <T> notOffered(asset: Asset): Resource<T> = Resource.error(IntegrationError.AssetNotSupported())
 
     /** Calls that are harmless to repeat still carry a key: Circle accepts one, and the shared client may retry. */
     private fun freshKey(): String = UUID.randomUUID().toString()
@@ -576,5 +627,12 @@ class CircleCustody internal constructor(
 
         /** The most Circle lists in one page. */
         const val PAGE_SIZE = 50
+
+        /** A call that only sends the chain's own coin carries no data. */
+        const val NO_DATA = "0x"
+
+        /** Ours, never Circle's: the wallet has no token id for the chain's own coin, so it holds none to send. */
+        const val NOT_HELD_STATUS = 400
+        const val NOT_HELD_CODE = -1
     }
 }

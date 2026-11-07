@@ -2,8 +2,8 @@ package com.circaso.wallet.domain.support
 
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountStatus
+import com.circaso.integrations.api.CustodyAsset
 import com.circaso.integrations.api.StablecoinCustody
-import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.wallet.domain.errors.WalletError
@@ -53,26 +53,27 @@ class SenderRules(
         return Resource.success(Sender(user, wallet))
     }
 
-    /** An asset offered on the chain, above zero. */
-    fun checkAmount(blockchain: String, amount: Money): Resource<Unit> {
-        val offered =
-            custody.supported
-                .find(blockchain)
-                ?.assets
-                .orEmpty()
-                .any { it.symbol == amount.asset.name }
-        if (!offered || amount.amountMinor <= 0) return Resource.error(WalletError.AmountInvalid)
-        return Resource.success(Unit)
-    }
+    /** The asset offered on [blockchain] under [symbol], or null. */
+    fun offered(blockchain: String, symbol: String): CustodyAsset? =
+        custody.supported
+            .find(blockchain)
+            ?.assets
+            ?.firstOrNull { it.symbol == symbol }
 
-    /** Circle's balance now (never the cache) of [amount]'s asset on the sender's chain, in minor units. */
-    suspend fun balance(sender: Sender, amount: Money): Resource<Long> {
+    /**
+     * Circle's balance now (never the cache) of [coin] on the sender's chain, in minor units: the line with its symbol
+     * and contract (an offered asset is always listed, zero when not held).
+     */
+    suspend fun balance(sender: Sender, coin: PaymentCoin): Resource<BigInteger> {
         val held =
             when (val read = holdings.fresh(sender.user, sender.wallet)) {
                 is Resource.Success -> read.data
                 is Resource.Error -> return read
             }
-        val balance = held.firstOrNull { it.symbol == amount.asset.name }?.amountMinor ?: BigInteger.ZERO
-        return Resource.success(balance.min(BigInteger.valueOf(Long.MAX_VALUE)).toLong())
+        val line =
+            held.firstOrNull {
+                it.symbol == coin.asset.symbol && CoinTrust.sameAddress(it.tokenAddress.trim(), coin.tokenAddress)
+            }
+        return Resource.success(line?.amountMinor ?: BigInteger.ZERO)
     }
 }

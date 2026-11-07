@@ -156,7 +156,7 @@ fun <E : Enum<E>> parseEnum(
 
 /** USDC only; `amountMinor` or `amount`, and both only if they agree. */
 fun PriceRequest.toPrice(): Resource<Price> {
-    if (asset.uppercase() != Asset.USDC.name) return Resource.error(SpacesError.PriceInvalid)
+    if (asset.uppercase() != Asset.USDC.symbol) return Resource.error(SpacesError.PriceInvalid)
     val period = enumOf<Period>(period) ?: return malformed("price.period")
     val fromMinor = amountMinor?.let { it.trim().toLongOrNull() ?: return malformed("price.amountMinor") }
     val fromWhole =
@@ -275,9 +275,9 @@ fun ReportRequest.toCommand(reporter: UserId, spaceId: SpaceId): Resource<Report
 
 fun PublicProfile.toDto() = PersonDto(userId.toString(), displayName, handle, avatarUrl)
 
-fun Price.toDto() = PriceDto(Asset.USDC.name, amountMinor.toString(), usdcAmount(amountMinor), period.name)
+fun Price.toDto() = PriceDto(Asset.USDC.symbol, amountMinor.toString(), usdcAmount(amountMinor), period.name)
 
-fun money(minor: Long) = MoneyDto(Asset.USDC.name, minor.toString(), usdcAmount(minor))
+fun money(minor: Long) = MoneyDto(Asset.USDC.symbol, minor.toString(), usdcAmount(minor))
 
 fun Known.toDto() = KnownDto(names, count)
 

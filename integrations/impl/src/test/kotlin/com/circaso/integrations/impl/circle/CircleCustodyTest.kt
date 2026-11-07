@@ -276,7 +276,9 @@ class CircleCustodyTest {
         runBlocking<Unit> {
             assertIs<IntegrationError.Rejected>((custody.balance(user, "w-1", Asset.USDT) as Resource.Error).error)
             val transfer = TransferRequest("BASE-SEPOLIA", "w-1", "0x1", Money(1, Asset.USDT), UUID.randomUUID(), "ref")
-            assertIs<IntegrationError.Rejected>((custody.prepareTransfer(user, transfer) as Resource.Error).error)
+            assertIs<IntegrationError.AssetNotSupported>(
+                (custody.prepareTransfer(user, transfer) as Resource.Error).error,
+            )
             assertTrue(circle.clients.requests.isEmpty())
         }
 
@@ -431,10 +433,10 @@ class CircleCustodyTest {
         assertEquals("20.5", CircleTransactions.decimalOf(Money(20_500_000, Asset.USDC)))
         assertEquals("0.000001", CircleTransactions.decimalOf(Money(1, Asset.USDC)))
         assertEquals("100", CircleTransactions.decimalOf(Money(100_000_000, Asset.USDC)))
-        assertEquals(1L, CircleTransactions.minorUnits("0.000001", Asset.USDC))
-        assertEquals(20_500_000L, CircleTransactions.minorUnits("20.50", Asset.USDC))
-        assertNull(CircleTransactions.minorUnits("0.0000001", Asset.USDC), "finer than USDC's 6 decimals")
-        assertNull(CircleTransactions.minorUnits("abc", Asset.USDC))
+        assertEquals(1.toBigInteger(), CircleTransactions.minorUnits("0.000001", Asset.USDC.decimals))
+        assertEquals(20_500_000.toBigInteger(), CircleTransactions.minorUnits("20.50", Asset.USDC.decimals))
+        assertNull(CircleTransactions.minorUnits("0.0000001", Asset.USDC.decimals), "finer than USDC's 6 decimals")
+        assertNull(CircleTransactions.minorUnits("abc", Asset.USDC.decimals))
     }
 
     @Test

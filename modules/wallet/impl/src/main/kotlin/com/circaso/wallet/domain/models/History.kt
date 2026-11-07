@@ -5,6 +5,7 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Asset
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.WalletId
+import java.math.BigInteger
 import java.time.Instant
 import java.time.YearMonth
 import java.util.UUID
@@ -37,7 +38,8 @@ data class HistoryFilter(
     val direction: Direction? = null,
     val counterpartyId: UserId? = null,
     val counterpartyAddress: String? = null,
-    val asset: Asset? = null,
+    /** A coin's symbol (`USDC`, `ETH`). */
+    val asset: String? = null,
     val blockchain: String? = null,
 ) {
     companion object {
@@ -89,8 +91,8 @@ data class SummaryQuery(
 /** In and out of one asset; amounts in its minor units. */
 data class AssetFlow(
     val asset: Asset,
-    val inMinor: Long,
-    val outMinor: Long,
+    val inMinor: BigInteger,
+    val outMinor: BigInteger,
     val inCount: Int,
     val outCount: Int,
 )
@@ -99,8 +101,8 @@ data class AssetFlow(
 data class CounterpartyFlow(
     val counterparty: Counterparty,
     val asset: Asset,
-    val inMinor: Long,
-    val outMinor: Long,
+    val inMinor: BigInteger,
+    val outMinor: BigInteger,
     val count: Int,
 )
 
@@ -111,8 +113,8 @@ data class Party(val userId: UserId?, val address: String?, val asset: Asset)
 data class MonthFlow(
     val month: YearMonth,
     val asset: Asset,
-    val inMinor: Long,
-    val outMinor: Long,
+    val inMinor: BigInteger,
+    val outMinor: BigInteger,
     val count: Int,
 )
 

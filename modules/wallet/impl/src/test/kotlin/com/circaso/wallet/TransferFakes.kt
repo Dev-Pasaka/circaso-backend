@@ -5,6 +5,7 @@ import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Money
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
@@ -156,13 +157,13 @@ class MemoryTransferRepository : TransferRepository {
     override suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer> =
         rows.values
             .filter { it.senderId == holder && !it.createdAt.isBefore(since) && it.state in COUNTED }
-            .map { CountedTransfer(it.createdAt, it.totalMinor, it.state == TransferState.AWAITING_SIGNATURE) }
+            .map { CountedTransfer(it.createdAt, it.usdTotalMinor, it.state == TransferState.AWAITING_SIGNATURE) }
 
     override suspend fun paidTo(
         recipientId: UserId,
         senderWalletId: String,
         blockchain: String,
-        amountMinor: Long,
+        amount: Money,
         createdAfter: Instant,
         limit: Int,
     ): List<Transfer> =
@@ -171,7 +172,7 @@ class MemoryTransferRepository : TransferRepository {
                 it.recipientId == recipientId &&
                     it.senderWalletId == senderWalletId &&
                     it.blockchain == blockchain &&
-                    it.amount.amountMinor == amountMinor &&
+                    it.amount == amount &&
                     it.state != TransferState.FAILED &&
                     !it.createdAt.isBefore(createdAfter)
             }.sortedByDescending { it.createdAt }
@@ -378,7 +379,7 @@ class MemoryTransactionRepository : TransactionRepository {
             .filter { filter.direction == null || it.direction == filter.direction }
             .filter { filter.counterpartyId == null || it.counterpartyId == filter.counterpartyId }
             .filter { filter.counterpartyAddress == null || it.counterpartyAddress == filter.counterpartyAddress }
-            .filter { filter.asset == null || it.amount.asset == filter.asset }
+            .filter { filter.asset == null || it.amount.asset.symbol == filter.asset }
             .filter { filter.blockchain == null || it.blockchain == filter.blockchain }
             .filter { from == null || !it.occurredAt.isBefore(from) }
             .filter { until == null || it.occurredAt.isBefore(until) }

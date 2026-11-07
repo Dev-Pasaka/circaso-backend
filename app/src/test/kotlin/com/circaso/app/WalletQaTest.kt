@@ -651,10 +651,10 @@ class WalletQaTest {
                 "wallet.amount_invalid",
             )
             expect(
-                "an asset that is not offered",
+                "a coin the wallet doesn't hold on the chain (any held coin can be paid since 2026-11-07)",
                 w4(payer, transferBody(toUser(payee), """{"asset":"EURC","amount":"1"}""")),
                 400,
-                "wallet.amount_invalid",
+                "wallet.asset_not_held",
             )
             expect(
                 "zero minor",

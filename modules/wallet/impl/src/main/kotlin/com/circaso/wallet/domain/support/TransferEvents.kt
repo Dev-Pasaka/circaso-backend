@@ -6,6 +6,7 @@ import com.circaso.shared.envelope
 import com.circaso.wallet.api.TransferConfirmed
 import com.circaso.wallet.api.TransferFailed
 import com.circaso.wallet.domain.models.Transfer
+import java.math.BigDecimal
 
 /**
  * The events that end a transfer (Wallet → Events → Published), built before the transaction that writes their
@@ -31,8 +32,22 @@ class TransferEvents(private val bus: EventBus) {
                 fromSpaceId = transfer.fromSpaceId?.toString(),
                 toSpaceId = transfer.toSpaceId?.toString(),
                 spacePaymentId = transfer.spacePaymentId?.toString(),
+                usdValueMinor = usdValueMinor(transfer),
+                assetDecimals = transfer.amount.asset.decimals,
             ),
         )
+
+    /**
+     * The amount in micro-dollars at the price it was paid at (2026-11-07): one dollar for a dollar stablecoin
+     * (and every transfer from before, which were USDC), null for another coin whose price wasn't kept.
+     */
+    private fun usdValueMinor(transfer: Transfer): String? {
+        val price =
+            transfer.usdPrice ?: if (transfer.amount.asset.isDollarStablecoin) BigDecimal.ONE else return null
+        return PaymentCoin(transfer.amount.asset, transfer.tokenAddress.orEmpty(), price)
+            .usdMinor(transfer.amount.amountMinor)
+            .toString()
+    }
 
     fun failed(transfer: Transfer, reason: String?): EventEnvelope =
         bus.envelope(

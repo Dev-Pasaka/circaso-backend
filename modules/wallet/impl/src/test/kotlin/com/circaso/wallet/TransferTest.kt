@@ -169,7 +169,7 @@ class TransferTest {
         }
 
     @Test
-    fun `then the amount - above zero, an offered asset, within the per-payment and daily limits`() =
+    fun `then the amount - above zero, a held coin, within the per-payment and daily limits`() =
         runBlocking<Unit> {
             ready()
             h.fund(amina, 2_000_000_000)
@@ -184,7 +184,8 @@ class TransferTest {
                     null,
                     UUID.randomUUID(),
                 )
-            assertEquals("wallet.amount_invalid", h.prepareTransfer(usdt).code(), "USDT isn't offered on the chain")
+            // Any held coin can be paid since 2026-11-07; one the wallet doesn't hold on the chain has its own code.
+            assertEquals("wallet.asset_not_held", h.prepareTransfer(usdt).code(), "no USDT held on the chain")
             assertEquals("wallet.limit_exceeded", payBob(usdcMinor = TEST_LIMITS.perPaymentMinor + 1).code())
 
             payBob(usdcMinor = 500_000_000).data()
@@ -314,7 +315,11 @@ class TransferTest {
 
             assertEquals(first.transfer.transferId, again.transfer.transferId)
             assertEquals(first.challengeId, again.challengeId)
-            assertEquals(tenUsdc, again.transfer.amount.amountMinor, "the first request's transfer, as it was")
+            assertEquals(
+                tenUsdc.toBigInteger(),
+                again.transfer.amount.amountMinor,
+                "the first request's transfer, as it was",
+            )
             assertEquals(1, (h.transfers as MemoryTransferRepository).rows.size)
             assertEquals(1, (h.transactions as MemoryTransactionRepository).rows.size)
             assertEquals(tenUsdc, h.used(amina))
