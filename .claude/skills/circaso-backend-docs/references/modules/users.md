@@ -174,6 +174,18 @@ Users exposes read-only routes for the assistant under `presentation/agent/` (`G
 
 The answers' types live in `users:api` (`AgentRoutes.kt`), because the assistant reads them over HTTP.
 
+### Staff contract (`ProfileAdmin`)
+
+Decision 2026-11-08. The ops module, behind the separate ops gateway, reads profiles through `users:api`'s `ProfileAdmin`, bound in users' Koin module; nothing of it is mounted on the app gateway.
+
+| Call | Use case | Notes |
+| --- | --- | --- |
+| `profiles(ids)` | `GetAdminProfiles` | Whatever the account's status (hidden profiles too), no privacy filter, the photo as a short-lived signed URL (`AvatarStorage.urlOf`); at most 500 ids |
+| `searchByHandle(prefix, cursor, limit)` | `SearchProfilesByHandle` | The live handle on `profiles.handle`, the prefix lowercased without `@`; handle order, keyset on the handle |
+| `searchByName(prefix, cursor, limit)` | `SearchProfilesByName` | `lower(display_name)` prefix; keyset on `(lower(display_name), user_id)` |
+
+Both searches compare their key in the C collation (byte order), on the two V4 indexes: the prefix is the index range `[prefix, prefix + U+10FFFF)`, with the `LIKE` (`%`, `_` and `\` escaped) on top for an exact answer, so the filter, the keyset and the order are one index range whatever the prefix and however the statement was planned. A blank prefix finds nothing. The cursor is opaque base64url; one that doesn't decode answers `request.malformed`. `limit` is 1–200.
+
 ## Data
 
 Eight PostgreSQL tables in schema `users` (role `users`, Flyway location `db/users`) and four Redis key families. Contacts and blocks are each one table, read from both sides through a second index.
@@ -197,6 +209,8 @@ CREATE TABLE users.profiles (
     support           boolean     NOT NULL DEFAULT false -- V3 (2026-10-31): Circaso's support account; copied on every change
 );
 CREATE UNIQUE INDEX profiles_handle_key ON users.profiles (handle);
+CREATE INDEX profiles_handle_prefix_idx ON users.profiles ((handle COLLATE "C"));          -- staff search (V4)
+CREATE INDEX profiles_name_prefix_idx ON users.profiles ((lower(display_name) COLLATE "C"), user_id);   -- (V4)
 
 CREATE TABLE users.handles (
     handle      text        PRIMARY KEY,                -- lowercase; one owner per handle, live or on hold
