@@ -32,7 +32,7 @@ import kotlin.test.Test
  *
  * ```
  * ./gradlew :app:ashaEval -PashaEval.arms=oracle,workers-ai,haiku-low,haiku-medium \
- *     -PashaEval.envFile=/path/to/.env -PashaEval.judge=sonnet-judge -PashaEval.reps=2
+ *     -PashaEval.envFile=/path/to/.env -PashaEval.judge=haiku-judge -PashaEval.reps=2
  * ```
  *
  * Settings (Gradle properties, all optional but `arms`):
@@ -88,15 +88,17 @@ class AshaEvalTest {
                 ),
             "haiku-low" to haiku("low"),
             "haiku-medium" to haiku("medium"),
-            "sonnet-judge" to
+            // The judge: Haiku 5.5 at `high`, a setting no arm runs at. The provider sends thinking disabled, which
+            // Sonnet 5.5 refuses (400), so a stronger judge needs the provider to allow thinking first.
+            "haiku-judge" to
                 ArmSpec(
                     mapOf(
                         "INTEGRATIONS_LLM_PROVIDER" to "anthropic",
-                        "INTEGRATIONS_ANTHROPIC_MODEL_TEXT" to "claude-sonnet-5-5",
-                        "INTEGRATIONS_ANTHROPIC_EFFORT_TEXT" to "low",
+                        "INTEGRATIONS_ANTHROPIC_MODEL_TEXT" to "claude-haiku-5-5",
+                        "INTEGRATIONS_ANTHROPIC_EFFORT_TEXT" to "high",
                     ),
                     needs = listOf(ANTHROPIC_KEY),
-                    prices = Prices(BigDecimal("2.00"), BigDecimal("10.00")),
+                    prices = haikuPrices,
                 ),
         )
 
@@ -123,8 +125,20 @@ class AshaEvalTest {
                 ?.mapNotNull { pair ->
                     pair.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0].trim() to it[1].trim() }
                 }?.toMap()
+        // a custom arm gets only its provider's keys: Workers AI's next to Claude's would turn on the fallback
         val spec =
-            builtIn[name] ?: custom?.let { ArmSpec(it, needs = SECRET_KEYS.filter { k -> k in secrets }) }
+            builtIn[name]
+                ?: custom?.let {
+                    val keys =
+                        if (it["INTEGRATIONS_LLM_PROVIDER"] ==
+                            "anthropic"
+                        ) {
+                            listOf(ANTHROPIC_KEY)
+                        } else {
+                            WORKERS_AI_KEYS
+                        }
+                    ArmSpec(it, needs = keys)
+                }
                 ?: return null to "$name: unknown arm"
         val missing = spec.needs.filter { it !in secrets }
         if (missing.isNotEmpty()) {
