@@ -357,7 +357,6 @@ class ServeTest {
                     "Money",
                     "Asha",
                     "Account",
-                    "Operations",
                     "Assistant tools",
                 ),
                 groups.map { it["name"]!!.jsonPrimitive.content },
