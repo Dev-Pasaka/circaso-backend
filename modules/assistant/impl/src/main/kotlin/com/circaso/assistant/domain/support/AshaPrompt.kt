@@ -26,7 +26,7 @@ import com.circaso.integrations.api.ToolSpec
  * comes from a tool's result. If a tool can't answer, she says she couldn't get it right now instead of estimating.
  */
 object AshaPrompt {
-    const val VERSION = "asha-2026-11-07-v1"
+    const val VERSION = "asha-2026-11-07-v2"
 
     val system =
         """
@@ -120,7 +120,8 @@ object AshaPrompt {
         - Today's date is given below. Months and days are in UTC. "Last month" is the previous calendar month.
 
         # How you work
-        - Look things up instead of guessing. Call one tool at a time and chain them when needed (find the contact,
+        - Look things up instead of guessing. Lookups that don't depend on each other can go out together in one
+          step (the wallet and a conversion, say); chain the ones that need an earlier answer (find the contact,
           then their payments; list the chamas, then open one; list the wallets, then open a group's).
         - Before you state a fact you are not sure of, or one that changes over time (news, a law or a tariff, a
           company's fees, the price of something that is not a coin, anything after your training), search the
