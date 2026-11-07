@@ -18,6 +18,7 @@ The spec for the Circaso backend, exported from the Claude Docs document "Circas
    - `references/modules/messaging.md` (draft; not to be built until Pasaka approves it)
    - `references/modules/wallet.md` (draft; not to be built until Pasaka approves it)
    - `references/modules/status.md` (Moments, built 2026-11-03)
+   - `references/modules/share.md` (share links, built 2026-11-06)
    - `references/modules/assistant.md` (design only; not to be built until asked)
 5. `references/working-rules.md`: build order (M0–M5), how every endpoint is built, easy-to-get-wrong rules, and what "done" means.
 

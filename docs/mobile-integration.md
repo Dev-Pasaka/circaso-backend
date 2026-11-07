@@ -129,7 +129,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **102** routes the phone calls: **74 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **106** routes the phone calls: **78 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -158,6 +158,7 @@ Of the **102** routes the phone calls: **74 READY**, **27 PARTIAL**, **1 DEV STU
 | Payments (prepare, follow, who can be paid, remind, check an address) | **PARTIAL** | W4, W5, W9–W11 and the wallet frames work against Circle's testnet: complete the payment's challenge in the Circle SDK with the PIN, and `transfer.updated` and `payment.received` arrive as Circle's webhooks report the transaction (testnet USDC from Circle's faucet). Fees and limits are rules in the database (phase 2F, "Fees and limits"): the fee is quoted by W17 and charged by W4 in the same signature; limits run over a rolling 24 hours. |
 | Transaction history (W6) | **PARTIAL** | Your payments, newest first, paged; recent across months or one month. Lists what Circaso recorded: inbound payments appear once Circle reports them (webhook, or the reconcile job within minutes). |
 | Statements, PIN change and restore | **MISSING** | Designed (wallet W7, W8); being built in slices. |
+| Share links (receipts, statements, invites, pay me, addresses) | **READY** | SH1–SH4 and the public page at `<SHARE_BASE_URL>/s/{code}` (sandbox: `https://sandbox.circaso.com`). App Links need the signing certificate's SHA-256 in `SHARE_ANDROID_CERT_SHA256`; Universal Links need the Associated Domains capability on the App ID. |
 | Calls (voice and video, up to 8 people) | **PARTIAL** | CL1–CL9 and the `calls` frames work. On dev the SFU is Cloudflare Realtime once `INTEGRATIONS_CALLS_PROVIDER=cloudflare` is set on the sandbox; with the `log` provider the routes answer with made-up SDP, so no media flows. Show "Secure call", never "end-to-end encrypted" (decision 2026-10-29). |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
 
@@ -672,6 +673,23 @@ The flow for a photo: **ST1** (size of the ciphertext) → `PUT` the ciphertext 
 | `POST /v1/moments/key-copies`<br>**ST10** Send fresh copies | `app` | `{ "copies": [{ "momentId", "userId", "ciphertext" }] }` → `{ "copied": 2 }` | **READY** | Your answer to `status.key_requested`. 1 to 200 copies, one per (moment, person), never yourself; each standard base64, at most 72 KiB decoded. Each replaces that person's `keyCopy` on that moment. Copies for a moment that isn't yours or isn't live, for someone not in its audience, or across a block are skipped. Everyone who got one is sent `status.keys_ready`. Repeating it simply replaces the copies again. Errors: `status.keys_invalid` (400), `request.malformed`. |
 
 **Retention.** `status.purge-expired` runs every 10 minutes and hard-deletes moments past `expiresAt` with their views and files, so reads hide a moment the moment it expires and the rows go within 10 minutes. A deleted account's moments are removed at once (its audiences get `status.deleted`).
+
+### Share links
+
+Every share in the app sends a **short link** instead of plain text (decision 2026-11-06): `<SHARE_BASE_URL>/s/{code}`, a public page showing what the sharer chose. Make the link with **SH1**, then open the system share sheet with the `url` and one short line (`title` is a good subject). The page is built on the server from its own records (the wallet's transfer, the chama's ledger, the profile), never from what the phone sends, so a Circaso receipt can't be forged. It holds only what the sharer chose: names (and a statement's notes) only with `showNames`, and **nothing from any chat** (chats and moments are end-to-end encrypted, so they are never shareable).
+
+**Links open the app.** The page's host serves `/.well-known/assetlinks.json` (Android App Links, package `com.circaso.app`) and `/.well-known/apple-app-site-association` (iOS Universal Links, `985W5Z7984.com.circaso.app`, paths `/s/*`). With the app installed, `https://<host>/s/{code}` opens it; the page's "Open in Circaso" button is `circaso://s/{code}`. Either way the app calls **SH4** and shows the link natively, with what `open` allows. Without the app, the page has "Get Circaso".
+
+**The page** is `noindex`, never cached (`Cache-Control: no-store`), carries Open Graph and Twitter tags for the link preview (title, one-line summary, the Circaso icon), follows light and dark mode, and loads no script. Each caller address may open 60 pages a minute (`429` page after that). A turned-off or ended link answers `410` "This link was turned off"; an unknown code `404`.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/share/links`<br>**SH1** Make a share link | `app` | `{ "kind": "receipt", "transferId", "chatId", "blockchain", "showNames": true, "currency": "KES", "expiresInDays": 30 }` → `{ "code", "url", "kind", "title", "summary", "createdAt", "expiresAt" }` | **READY** | `kind`: `receipt` (`transferId`: a payment you sent, received or signed, once submitted), `statement` (`chatId`: a group you're in with a target), `invite` (a fresh 7-day invite; the link ends with it), `pay_me` (needs your @handle) or `address` (`blockchain`: your own address there). `currency` (ISO 4217) adds the value in it. `expiresInDays` 1 to 365; without it the link opens until turned off. At most 30 an hour. Errors: `share.request_invalid`, `share.source_not_found` (not yours, or doesn't exist: the same answer), `share.not_shareable` (unsigned payment, no target, no handle), `share.unavailable`, `request.rate_limited`, `request.malformed`. |
+| `GET /v1/share/links`<br>**SH2** Your share links | `app` | — → `{ "links": [link], "nextCursor" }` | **READY** | `?cursor=&limit=50` (at most 200). Links that still open, newest first. Errors: `request.malformed`. |
+| `DELETE /v1/share/links/{code}`<br>**SH3** Turn a link off | `app` | — → `{ "revoked": true }` | **READY** | Yours only. What the page showed is deleted at once; the page then says the link was turned off. Errors: `share.link_not_found` (someone else's, unknown or already off). |
+| `GET /v1/share/links/{code}`<br>**SH4** Open a link in the app | `app` | — → `{ "code", "url", "kind", "title", "summary", "createdAt", "expiresAt", "mine", "receipt", "statement", "person", "address", "open" }` | **READY** | One of `receipt` (`direction` sent/received, `amount`, `asset`, `fiat`, `status`, `blockchain`, `txHash`, `explorerUrl`, `at`, `fromName`, `toName`), `statement` (`goalName`, `asset`, `target`, `raised`, `paidOut`, `held`, `fiat` {currency, rate}, `memberCount`, `deadline`, `lines` [{`at`, `direction` in/out, `amount`, `name`, `note`}]), `person` (`displayName`, `handle`) or `address` (`blockchain`, `address`, `asset`, `name`). `open.screen`: `transfer` (`transferId`, your own payment), `chama` (`chatId`, a group you're in), `invite` (`inviteToken`, `userId`, `displayName`: connect with U11 `via: invite`), `pay` (`userId`, `handle`, `displayName`) or `pay_address` (`address`, `blockchain`); null when nowhere. Errors: `share.link_not_found` (unknown, off or ended). |
+
+**Retention.** A turned-off or ended link's row stays 30 days (so its page says it was turned off), then `share.purge-expired` deletes it. A deleted account's links all go at once.
 
 ### Spaces (phase 3, Spaces core; branch `feat/spaces`, not deployed)
 

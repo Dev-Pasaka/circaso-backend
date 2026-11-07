@@ -28,6 +28,9 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
 
     override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = directory.groupWallet(chatId)
 
+    override suspend fun depositAddress(userId: UserId, blockchain: String): String? =
+        directory.depositAddress(userId, blockchain)
+
     override suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = directory.spaceWallet(spaceId)
 
     override suspend fun spaceWalletHoldsMoney(spaceId: UUID): Resource<Boolean> =
