@@ -66,4 +66,29 @@ dependencies {
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.testcontainers)
     testImplementation(testFixtures(project(":infrastructure:impl")))
+    testImplementation(testFixtures(project(":modules:assistant:impl"))) // Asha's eval: cases, fake tools, grader
+    testImplementation(libs.kotlinx.coroutines.core)
+}
+
+// Asha's eval (decision 2026-11-07) is not a test: it calls paid models, so `test` (and CI) leaves it out and
+// `./gradlew :app:ashaEval` runs it on demand. It lives here because only `app` may build the real model providers.
+// Settings are Gradle properties, passed on as system properties: -PashaEval.arms=oracle,workers-ai,haiku-low,...
+// (see AshaEvalTest for the rest). The report lands in app/build/asha-eval/<time>/report.md.
+tasks.named<Test>("test") {
+    useJUnitPlatform { excludeTags("eval") }
+}
+
+tasks.register<Test>("ashaEval") {
+    group = "verification"
+    description = "Runs Asha's eval against the models named in -PashaEval.arms (calls paid models)."
+    val test = project.extensions.getByType<SourceSetContainer>()["test"]
+    testClassesDirs = test.output.classesDirs
+    classpath = test.runtimeClasspath
+    useJUnitPlatform { includeTags("eval") }
+    outputs.upToDateWhen { false }
+    systemProperty("ashaEval.out", layout.buildDirectory.dir("asha-eval").get().asFile.absolutePath)
+    providers.gradlePropertiesPrefixedBy("ashaEval.").get().forEach { (key, value) -> systemProperty(key, value) }
+    testLogging {
+        showStandardStreams = true
+    }
 }
