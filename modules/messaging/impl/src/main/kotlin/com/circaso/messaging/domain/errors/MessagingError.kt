@@ -101,10 +101,10 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
-    /** AT1: an attachment is 1 byte to 32 MiB of ciphertext (decision 2026-10-30). */
+    /** AT1: an attachment is 1 byte to 100 MiB of ciphertext (decision 2026-11-07; `MESSAGING_MAX_ATTACHMENT_BYTES`). */
     data object AttachmentTooLarge : MessagingError(
         "messaging.attachment_too_large",
-        "An attachment can be at most 32 MB.",
+        "An attachment can be at most 100 MB.",
         ErrorKind.INVALID,
     )
 

@@ -65,6 +65,7 @@ import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
 import com.circaso.messaging.domain.support.KeyProofs
+import com.circaso.messaging.domain.support.MAX_ATTACHMENT_BYTES
 import com.circaso.messaging.domain.support.MemberRemoval
 import com.circaso.messaging.domain.support.Membership
 import com.circaso.messaging.domain.support.MessageSenders
@@ -195,6 +196,10 @@ fun messagingModule(config: Config): Module =
                         "messaging.frame-ciphertext-max-chars",
                         FRAME_CIPHERTEXT_MAX_CHARS,
                     ),
+                maxAttachmentBytes =
+                    config.long("messaging.max-attachment-bytes", MAX_ATTACHMENT_BYTES).also {
+                        require(it > 0) { "MESSAGING_MAX_ATTACHMENT_BYTES must be positive (was $it)" }
+                    },
             )
         val background = backgroundScope()
 

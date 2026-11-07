@@ -227,13 +227,13 @@ Signal's model (decision 2026-10-30): the phone encrypts each file with a fresh 
 // AT3 GET /attachments/{attachmentId}   → data { "downloadUrl": "https://…r2…", "expiresAt": "2026-10-30T10:15:00Z", "sizeBytes": 123456 }
 ```
 
-- **AT1** — members of the chat only (`Membership`, the cached member set; anyone else gets `messaging.chat_not_found`). `sizeBytes` is the exact ciphertext size, 1 byte to 32 MiB (`messaging.attachment_too_large`). The PUT URL works 15 minutes and is signed for `Content-Type: application/octet-stream`, which the phone must send exactly (`uploadHeaders`). The URL is signed before the row is written, so a storage outage leaves nothing; the row is `PENDING` with `expires_at = created_at + 30 days`. `attachmentId` is a server-made UUIDv7.
+- **AT1** — members of the chat only (`Membership`, the cached member set; anyone else gets `messaging.chat_not_found`). `sizeBytes` is the exact ciphertext size, 1 byte to 100 MiB (`MESSAGING_MAX_ATTACHMENT_BYTES`, decision 2026-11-07; `messaging.attachment_too_large`). The PUT URL works an hour and is signed for `Content-Type: application/octet-stream`, which the phone must send exactly (`uploadHeaders`). The URL is signed before the row is written, so a storage outage leaves nothing; the row is `PENDING` with `expires_at = created_at + 30 days`. `attachmentId` is a server-made UUIDv7.
 - **AT2** — the uploader only (anyone else, an unknown id or an expired row: `messaging.attachment_not_found`). The object must exist (`ObjectStore.describe`) at exactly `sizeBytes`, else `messaging.attachment_incomplete` and the row stays `PENDING` (upload again within the URL's 15 minutes, or start over with AT1). `PENDING` → `READY` is one conditional update; completing a ready attachment again answers the same.
 - **AT3** — any **current** member of the attachment's chat (someone who left or was removed no longer can), `READY` and not expired. Everything else, non-members included, is `messaging.attachment_not_found` (404), so nobody learns an attachment exists. The GET URL works 15 minutes and is never stored.
 - **Retention** — 30 days from AT1, downloaded or not; there are no download acknowledgements. A group's current photo has no expiry (`expires_at` NULL, V6) until M8 replaces or clears it (then 24 hours) or the group is deleted (then at once; see M4–M5 → Group photo). `messaging.purge-attachments` runs hourly on the scheduler's leader (Redis leader lock): it reads expired rows and `PENDING` rows over a day old in batches of 500, oldest first, deletes each storage object and then its row. An object storage fails to delete keeps its row for the next run, so no blob is ever orphaned by a lost row.
 - **Local runs** — with `STORAGE_PROVIDER=local` the store is in memory: AT1 returns a placeholder `http://localhost/local-upload/…` URL that accepts nothing, so AT2 answers `messaging.attachment_incomplete` (the same limit as avatars). Use `r2` (the sandbox) to try attachments end to end; domain tests use an in-memory `AttachmentStorage`.
 
-Not in v1: multipart or resumable uploads over 32 MiB, per-recipient download tracking, attachments in history (a restored chat shows earlier attachments as "No longer available" once they expire).
+Not in v1: multipart or resumable uploads (one streamed PUT up to 100 MiB), per-recipient download tracking, attachments in history (a restored chat shows earlier attachments as "No longer available" once they expire).
 
 ### M18–M19 History
 
@@ -530,7 +530,7 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 | `messaging.prekey_id_exists` | CONFLICT → 409 | A top-up resends a one-time prekey id that is already stored |
 | `messaging.too_many_prekeys` | INVALID → 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
 | `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without valid `X-Device-Timestamp` / `X-Device-Signature` headers |
-| `messaging.attachment_too_large` | INVALID → 400 | AT1 `sizeBytes` under 1 byte or over 32 MiB |
+| `messaging.attachment_too_large` | INVALID → 400 | AT1 `sizeBytes` under 1 byte or over 100 MiB (`MESSAGING_MAX_ATTACHMENT_BYTES`) |
 | `messaging.attachment_not_found` | NOT_FOUND → 404 | No such attachment, expired, not `READY` (AT3), not the uploader (AT2), or not a current member of its chat (AT3): all look the same |
 | `messaging.avatar_invalid` | INVALID → 400 | M8 `avatarMediaId` that isn't a `READY`, unexpired `IMAGE` attachment of this group of at most 2 MiB |
 | `messaging.attachment_incomplete` | INVALID → 400 | AT2 when the object isn't in storage or isn't the promised size |

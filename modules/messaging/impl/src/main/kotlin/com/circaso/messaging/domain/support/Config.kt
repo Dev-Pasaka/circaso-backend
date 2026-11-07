@@ -41,9 +41,18 @@ data class MessagingConfig(
      * `MESSAGING_FRAME_CIPHERTEXT_MAX_CHARS`.
      */
     val frameCiphertextMaxChars: Int = 16 * 1_024,
-    /** Decision 2026-10-30: an attachment is at most 32 MiB of ciphertext. */
-    val maxAttachmentBytes: Long = 32L * 1_024 * 1_024,
-    /** How long AT1's upload URL and AT3's download URL work. */
+    /**
+     * Decision 2026-11-07 (was 32 MiB, 2026-10-30): an attachment is at most 100 MiB of ciphertext, so people can share
+     * their videos and documents as they are, untrimmed. Set by `MESSAGING_MAX_ATTACHMENT_BYTES`. Group photos keep
+     * their own [maxGroupPhotoBytes]; moments keep the status module's limit.
+     */
+    val maxAttachmentBytes: Long = MAX_ATTACHMENT_BYTES,
+    /**
+     * How long AT1's upload URL works. Storage checks it when the PUT starts, and the phone retries a dropped upload
+     * with the same URL, so a slow 100 MiB upload and its retries need longer than a download link.
+     */
+    val attachmentUploadUrlTtl: Duration = Duration.ofHours(1),
+    /** How long AT3's download URL works (the phone asks for a fresh one for each download). */
     val attachmentUrlTtl: Duration = Duration.ofMinutes(15),
     /** Decision 2026-10-30: an attachment is deleted 30 days after AT1, downloaded or not. */
     val attachmentRetention: Duration = Duration.ofDays(30),
@@ -62,3 +71,6 @@ data class MessagingConfig(
      */
     val groupPhotoGrace: Duration = Duration.ofHours(24),
 )
+
+/** `MESSAGING_MAX_ATTACHMENT_BYTES` when unset: 100 MiB of ciphertext (decision 2026-11-07). */
+const val MAX_ATTACHMENT_BYTES: Long = 100L * 1_024 * 1_024
