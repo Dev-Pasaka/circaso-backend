@@ -65,6 +65,8 @@ data class PushPayload(
     val requestId: String? = null,
     /** The person a push is about (a group contribution's member, a contact who joined), added 2026-11-06. */
     val userId: String? = null,
+    /** The support ticket a `support.ticket` push is about (added 2026-11-08): a tap opens it. */
+    val ticketId: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

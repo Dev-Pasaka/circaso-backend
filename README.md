@@ -62,7 +62,7 @@ set in `.env` or the environment, per service, each `OFF`, `ERROR`, `WARN`, `INF
 | `LOG_LEVEL` | Circaso's own code, every module (default `INFO`) |
 | `LOG_LEVEL_OTHER` | libraries and anything not named below (default `WARN`) |
 | `LOG_LEVEL_REQUESTS` | the one line per HTTP request |
-| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_MESSAGING`, `_WALLET`, `_CALLS`, `_STATUS`, `_ASSISTANT` | the gateway and each module |
+| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_MESSAGING`, `_WALLET`, `_CALLS`, `_STATUS`, `_SHARE`, `_SUPPORT`, `_ASSISTANT` | the gateway and each module |
 | `LOG_LEVEL_OPS` | the ops gateway and the ops module |
 | `LOG_LEVEL_INTEGRATIONS`, `_EVENTS`, `_SCHEDULER` | vendors, the event streams, scheduled jobs |
 | `LOG_LEVEL_CIRCLE` | Circle wallets and its webhook (follows `LOG_LEVEL_INTEGRATIONS` when unset) |

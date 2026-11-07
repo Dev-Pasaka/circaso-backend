@@ -30,6 +30,8 @@ import com.circaso.spaces.api.RequestNewFrame
 import com.circaso.spaces.api.SpacesFrames
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
+import com.circaso.support.api.SupportFrames
+import com.circaso.support.api.TicketRepliedFrame
 import com.circaso.users.api.ConnectionAddedFrame
 import com.circaso.users.api.ContactJoinedFrame
 import com.circaso.users.api.UsersFrames
@@ -50,6 +52,10 @@ private const val PUSH_BATCH = 100
 
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
+
+/** A support reply's push: from the team, as the app shows staff replies; a tap opens the ticket. */
+private const val SUPPORT_TITLE = "Circaso Support"
+private const val SUPPORT_TICKET_KIND = "support.ticket"
 
 /** An incoming call is worth nothing after its 45-second ring, so the vendor may not hold it for longer. */
 private const val RING_TTL_SECONDS = 45L
@@ -206,6 +212,18 @@ class GatewayRealtime(
             "${AssistantFrames.MODULE}.${AssistantFrames.STATUS}" -> {
                 decode(AssistantStatusFrame.serializer(), frame)?.takeIf { it.available }?.let {
                     PushMessage(ASHA_BACK_TITLE, ASHA_BACK_BODY, PushPayload(kind = ASHA_BACK_KIND))
+                }
+            }
+
+            // Support replied on a ticket (decision 2026-11-08): the ticket's number and id only, never its text, which
+            // may hold what the user wrote about their money. `ticket.updated` (a status change) is not worth a push.
+            "${SupportFrames.MODULE}.${SupportFrames.TICKET_REPLIED}" -> {
+                decode(TicketRepliedFrame.serializer(), frame)?.let {
+                    PushMessage(
+                        SUPPORT_TITLE,
+                        "We replied to your ticket ${it.number}.",
+                        PushPayload(kind = SUPPORT_TICKET_KIND, ticketId = it.ticketId.toString()),
+                    )
                 }
             }
 

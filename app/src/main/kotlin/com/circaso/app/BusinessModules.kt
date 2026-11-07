@@ -10,6 +10,7 @@ import com.circaso.ops.di.opsModule
 import com.circaso.share.di.shareModule
 import com.circaso.spaces.di.spacesModule
 import com.circaso.status.di.statusModule
+import com.circaso.support.di.supportModule
 import com.circaso.users.di.usersModule
 import com.circaso.wallet.di.walletModule
 import org.koin.core.module.Module
@@ -29,6 +30,7 @@ fun businessModules(config: Config): List<Module> =
         callsModule(config),
         statusModule(config),
         shareModule(config),
+        supportModule(config),
         spacesModule(config),
         opsModule(config),
         assistantModule(config),

@@ -44,7 +44,11 @@ data class OpenedTicket(val ticketId: TicketId, val number: String)
  * writes the ticket, as the user would from the app.
  */
 interface SupportTickets {
-    /** Errors: `support.subject_invalid`, `support.description_invalid`, `support.rate_limited`. */
+    /**
+     * Errors: `support.subject_invalid`, `support.description_invalid`, `support.context_invalid` (a transfer the user
+     * didn't send, receive or sign, or a chat they aren't in), `support.rate_limited` (the user's daily cap, shared
+     * with the app).
+     */
     suspend fun open(ticket: NewTicket): Resource<OpenedTicket>
 }
 
@@ -145,7 +149,10 @@ interface SupportDesk {
     /** [assigneeId] null unassigns. Error: not found. */
     suspend fun assign(ticketId: TicketId, assigneeId: UUID?): Resource<TicketDetail>
 
-    /** Errors: not found. The user hears `support/ticket.updated`. */
+    /**
+     * Errors: not found; `support.status_invalid` for `PENDING_USER`, which only a staff [reply] sets. The user hears
+     * `support/ticket.updated` when the status changed; setting the one it has answers the ticket as it is.
+     */
     suspend fun changeStatus(ticketId: TicketId, status: TicketStatus): Resource<TicketDetail>
 
     suspend fun counts(): Resource<TicketCounts>

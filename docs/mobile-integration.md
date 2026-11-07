@@ -9,6 +9,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-08, support tickets (new routes SU1–SU4, new frames and push; additive; old apps keep working):**
+> 1. **Users can ask Circaso for help** from the app: SU1 opens a ticket, SU2 lists theirs, SU3 reads one with its replies, SU4 replies. See section 7 → Support tickets. The ticket screens are the app team's to build.
+> 2. **New socket frames** `support` / `ticket.replied` and `support` / `ticket.updated` `{ ticketId, number, status }`, replayed 7 days like `users`; send `{ "module": "support", "seq": … }` in `last`.
+> 3. **New push `kind: "support.ticket"`** with `ticketId`, title "Circaso Support", body "We replied to your ticket CS-000123." (never the reply's text). A tap opens the ticket.
+> 4. **Asha can open a ticket** (new server tool `openSupportTicket`, label "Opening a support ticket…") only after she tried to help and the person agreed; she tells them its number. It appears in SU2 with `source: "ASHA"`.
+
 > **Changed on 2026-11-07, the phone may stop Asha itself (new phone frame `interrupt`; additive; old apps keep working):**
 > 1. **Client barge-in.** A phone that runs its own voice activity detector (Circaso runs Silero VAD on the echo-cancelled microphone) stops her audio the moment it is sure the person has started talking, goes to listening, and sends `{ "type": "interrupt", "at": "<ISO-8601 time of the onset>" }`. The server treats it exactly as a confirmed barge-in: the answer being generated and her speech are cancelled, the cut-off reply gets `reply_done` with `spoken: false`, and the person's following speech is the next `turn`. It answers with `interrupted` (also when she was already listening, so the phone knows the audio after it belongs to the next reply).
 > 2. **The word rule stays** as the backstop for apps without a detector; with one, it should rarely fire first. `interrupt` frames are limited to 5 at once per conversation, then one more every 3 s; one over the limit is ignored (no answer, no error). `at` is only logged.
@@ -179,7 +185,7 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 
 ## 2. Status at a glance
 
-Of the **106** routes the phone calls: **78 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
+Of the **110** routes the phone calls: **82 READY**, **27 PARTIAL**, **1 DEV STUB** (the carrier check).
 
 | Area | Status | What it means for the app |
 | --- | --- | --- |
@@ -209,6 +215,7 @@ Of the **106** routes the phone calls: **78 READY**, **27 PARTIAL**, **1 DEV STU
 | Transaction history (W6) | **PARTIAL** | Your payments, newest first, paged; recent across months or one month. Lists what Circaso recorded: inbound payments appear once Circle reports them (webhook, or the reconcile job within minutes). |
 | Statements, PIN change and restore | **MISSING** | Designed (wallet W7, W8); being built in slices. |
 | Share links (receipts, statements, invites, pay me, addresses) | **READY** | SH1–SH4 and the public page at `<SHARE_BASE_URL>/s/{code}` (sandbox: `https://sandbox.circaso.com`). App Links need the signing certificate's SHA-256 in `SHARE_ANDROID_CERT_SHA256`; Universal Links need the Associated Domains capability on the App ID. |
+| Support tickets (open, list, read, reply) | **READY** | SU1–SU4, the `support` frames and the `support.ticket` push (2026-11-08). Staff answer from the ops dashboard, which is being built; until it is live, replies arrive only from the server side. |
 | Calls (voice and video, up to 8 people) | **PARTIAL** | CL1–CL9 and the `calls` frames work. On dev the SFU is Cloudflare Realtime once `INTEGRATIONS_CALLS_PROVIDER=cloudflare` is set on the sandbox; with the `log` provider the routes answer with made-up SDP, so no media flows. Show "Secure call", never "end-to-end encrypted" (decision 2026-10-29). |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
 
@@ -745,6 +752,57 @@ Every share in the app sends a **short link** instead of plain text (decision 20
 
 **Retention.** A turned-off or ended link's row stays 30 days (so its page says it was turned off), then `share.purge-expired` deletes it. A deleted account's links all go at once.
 
+### Support tickets
+
+A person asks Circaso for help from the app (decision 2026-11-08). A ticket has a short **subject**, a **description** of what happened and a **category**, and may name the one payment or chat it is about. Its **number** (`CS-000123`) is what the person reads out to support; show it on every ticket screen. Staff answer from the ops dashboard: their replies show as **"Circaso Support"** (never a person's name, id or email), and staff's internal notes never reach the app.
+
+**Statuses.** `OPEN` (with us, `waitingOn: "STAFF"`), `PENDING_USER` (we replied: their turn, `waitingOn: "USER"`; badge it), `RESOLVED` and `CLOSED` (`waitingOn: null`). Replying on a `RESOLVED` ticket, or one waiting on the person, opens it again (`OPEN`); a `CLOSED` ticket takes no more replies (`support.ticket_closed`, 409): offer "Open a new ticket" instead.
+
+| Call | Scope | Request → response | Status | What to know |
+| --- | --- | --- | --- | --- |
+| `POST /v1/support/tickets`<br>**SU1** Open a ticket | `app` | `{ "subject", "description", "category", "transferId"?, "chatId"? }` → TicketDetailResponse | **READY** | **Send an `Idempotency-Key`.** `subject` 3 to 120 characters (one line), `description` 10 to 4,000 (both trimmed). `category`: `ACCOUNT`, `PAYMENTS`, `WALLET`, `GROUPS`, `SECURITY`, `ASHA` or `OTHER`. `transferId`: a payment the person sent, received or signed (from W6 or a payment card); `chatId`: a chat they are in; anything else is `support.context_invalid`. **At most 5 new tickets a day** per person, counted from their first (Asha's count too): `support.rate_limited` (429) with `retryAfterSeconds`; the gateway also allows 10 SU1 calls an hour. Errors: `support.subject_invalid`, `support.description_invalid`, `support.category_invalid`, `support.context_invalid`, `support.rate_limited`, `request.malformed` (a missing field, an id that isn't a UUID). |
+| `GET /v1/support/tickets`<br>**SU2** Your tickets | `app` | — → `{ "tickets": [TicketDto], "nextCursor" }` | **READY** | `?cursor=&limit=50` (at most 200). Newest first, all statuses, those Asha opened too (`source: "ASHA"`). Errors: `request.malformed` (a cursor you didn't get from us, a limit out of range). |
+| `GET /v1/support/tickets/{ticketId}`<br>**SU3** Read a ticket | `app` | — → TicketDetailResponse | **READY** | The ticket, what the person wrote first (`description`) and the replies oldest first. Someone else's ticket, or an id that isn't one, answers `support.ticket_not_found` (404). |
+| `POST /v1/support/tickets/{ticketId}/replies`<br>**SU4** Reply | `app` | `{ "body" }` → TicketDetailResponse | **READY** | **Send an `Idempotency-Key`.** `body` 1 to 4,000 characters. Reopens a `RESOLVED` or `PENDING_USER` ticket. Errors: `support.ticket_not_found`, `support.body_invalid`, `support.ticket_closed` (409), `request.malformed`. |
+
+SU1 (the new ticket has no replies yet), SU3 and SU4 answer the same shape:
+```json
+{
+  "ticket": {
+    "ticketId": "0193f2c4-…",
+    "number": "CS-000123",
+    "subject": "Payment to Baraka not received",
+    "category": "PAYMENTS",
+    "status": "PENDING_USER",
+    "source": "APP",
+    "waitingOn": "USER",
+    "transferId": "0193e1aa-…",
+    "chatId": null,
+    "createdAt": "2026-11-08T09:12:03.120Z",
+    "lastMessageAt": "2026-11-08T10:40:51.004Z"
+  },
+  "description": "I sent 20 USDC on Base yesterday. My wallet says confirmed but Baraka has nothing.",
+  "messages": [
+    { "messageId": "0193f30b-…", "author": "STAFF", "authorName": "Circaso Support", "body": "Thanks! We're checking with the network. Did Baraka give you the address himself?", "createdAt": "2026-11-08T10:02:17.551Z" },
+    { "messageId": "0193f32e-…", "author": "USER", "authorName": null, "body": "Yes, he sent it in our chat.", "createdAt": "2026-11-08T10:40:51.004Z" }
+  ]
+}
+```
+`author` is `USER` (the person), `STAFF` or `ASHA`; `authorName` is `"Circaso Support"` for staff, `"Asha"` for Asha and null for the person's own. `lastMessageAt` moves with every reply either way (sort and badge by it).
+
+**Realtime and push.** Module `support`, replayed like `users` (send `{ "module": "support", "seq": … }` in `last`; a `resync` means reload SU2):
+
+| `module` / `type` | `data` | Do |
+| --- | --- | --- |
+| `support` / `ticket.replied` | `ticketId`, `number`, `status` (`PENDING_USER`) | Staff replied: reload the ticket (SU3) if it is open, else mark it in the list. **Pushed** when the app has no socket: title "Circaso Support", body "We replied to your ticket CS-000123.", data `kind: "support.ticket"`, `ticketId`. The push never carries the reply's text; a tap opens the ticket. |
+| `support` / `ticket.updated` | `ticketId`, `number`, `status` (`OPEN` \| `RESOLVED` \| `CLOSED`) | Staff resolved, closed or reopened it: update its status. No push. |
+
+The person's own reply sends no frame (the SU4 answer is the new state). Staff assigning a ticket or writing an internal note sends nothing.
+
+**Asha.** When Asha can't solve something herself, she offers a ticket, says what it will say, and opens it only after the person agrees (server tool `openSupportTicket`, `tool_status` label "Opening a support ticket…", at most once per answer). She tells them the number; the ticket appears in SU2 with `source: "ASHA"` and its replies arrive like any other. Her tickets count toward the same 5 a day.
+
+**Retention.** Tickets stay until the account is deleted for good (`identity.AccountDeleted`, 30 days after the request), then go with their messages.
+
 ### Spaces (phase 3, Spaces core; branch `feat/spaces`, not deployed)
 
 > **Spaces (archived 2026-11-05).** The feature is stopped and archived, not deleted; the apps remove it. The server
@@ -834,6 +892,8 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `calls` / `call.updated` | CallResponse (with `iceServers` empty) | Someone joined, left, declined or muted, or the call turned `ACTIVE`: redraw the tiles, and pull (CL4) the tracks of anyone newly `JOINED`. To everyone the call rang. No push. |
 | `calls` / `call.ended` | CallResponse (with `iceServers` empty) | The call is over (`endReason`): close the peer connection and the call screen. Offline: `MISSED` → data-only since 2026-11-06 (`kind: "call.missed"`, fallback text "Missed call from {name}"): show it yourself; `CANCELLED` while it was still ringing you → data-only (`kind: "call.ended"`), so stop ringing and show the missed call yourself. |
 | `assistant` / `status` | `available` (true), `since` (ISO-8601) | Asha is back after maintenance (decision 2026-11-07): clear the "down for maintenance" state on her screens. Only to people who met her down, once each; not replayed (`seq` 0). Offline: a push, title "Asha is back", body "Ask me anything.", `kind: "asha.back"` (opens Asha), at most one per person per 6 hours. |
+| `support` / `ticket.replied` | `ticketId`, `number`, `status` | Staff replied on one of your support tickets: reload it (SU3). Pushed ("Circaso Support", `kind: "support.ticket"`, `ticketId`), never with the text. |
+| `support` / `ticket.updated` | `ticketId`, `number`, `status` | Staff resolved, closed or reopened a ticket: update it. No push. |
 | `status` / `status.posted` | `momentId`, `posterId` | A moment was shown to you: read ST4 (from your last `after`) and show the poster's ring if they're in your contacts. No push. |
 | `status` / `status.deleted` | `momentId`, `posterId` | The poster deleted it (or their account went): drop it and its file. No push. |
 | `status` / `status.viewed` | `momentId`, `viewerId`, `viewedAt`, `reacted`, `reaction` (the emoji or null), `viewerName` (only when this frame adds or changes a reaction) | To the poster, the first time someone views your moment and whenever they set, change or clear their reaction: update the viewers list, `viewCount` and `reactionCount`. A frame that adds or changes a reaction is pushed when you're offline: "Name reacted 😂 to your moment", `kind` `moment.loved` (open my moments). |
@@ -1098,6 +1158,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **OneTimePreKeyDto** — `keyId`: integer; `publicKey`: string
 - **OneTimePreKeysLeftResponse** — `oneTimePreKeysLeft`: integer
 - **OpenDirectChatRequest** — `userId`: string
+- **OpenTicketRequest** (SU1) — `subject`: string (3 to 120); `description`: string (10 to 4,000); `category`: string (`ACCOUNT` | `PAYMENTS` | `WALLET` | `GROUPS` | `SECURITY` | `ASHA` | `OTHER`); `transferId`?: string|null; `chatId`?: string|null
 - **PayeeDto** — `userId`?: string|null; `address`: string
 - **PayeeRequest** — `userId`?: string; `address`?: string (exactly one)
 - **PhoneVerifiedResponse** — `phoneVerified`: boolean; `maskedPhone`: string; `next`: string
@@ -1130,6 +1191,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **RemindResponse** — `status`: string (`SENT` | `ALREADY_SENT` | `HAS_WALLET`)
 - **RemovedResponse** — `removed`: boolean
 - **ReplacedDeviceDto** — `model`: string; `lastSeenAt`: string
+- **ReplyRequest** (SU4) — `body`: string (1 to 4,000)
 - **SdkDto** — `appId`: string; `userToken`: string; `encryptionKey`: string; `expiresAt`: string
 - **SecurityEventDto** — `eventId`: string; `type`: string; `deviceModel`?: string|null; `detail`?: string|null; `at`: string
 - **SecurityLogResponse** — `events`: [SecurityEventDto]; `nextCursor`?: string|null
@@ -1137,6 +1199,10 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **SendChatMessageRequest** — `clientMessageId`: string; `kind`: string (`MESSAGE` | `SENDER_KEY` | `CONTROL`); `ciphertext`?: string|null (a group's one ciphertext); `recipients`?: [RecipientDto] (direct, and `SENDER_KEY`); `mediaIds`?: [string]; `pushable`?: boolean (default false)
 - **SendMessageRequest** — `text`: string; `conversationId`?: string; `askedFrom`?: AskedFromDto; `chatReading`?: boolean; `currency`?: string (ISO 4217, the user's display currency)
 - **SentMessageResponse** — `messageId`: string; `sentAt`: string
+- **TicketDetailResponse** (SU1, SU3, SU4) — `ticket`: TicketDto; `description`: string; `messages`: [TicketMessageDto]
+- **TicketDto** — `ticketId`: string; `number`: string (`CS-000123`); `subject`: string; `category`: string; `status`: string (`OPEN` | `PENDING_USER` | `RESOLVED` | `CLOSED`); `source`: string (`APP` | `ASHA`); `waitingOn`?: string|null (`STAFF` | `USER`); `transferId`?: string|null; `chatId`?: string|null; `createdAt`: string; `lastMessageAt`: string
+- **TicketMessageDto** — `messageId`: string; `author`: string (`USER` | `STAFF` | `ASHA`); `authorName`?: string|null; `body`: string; `createdAt`: string
+- **TicketsResponse** (SU2) — `tickets`: [TicketDto]; `nextCursor`?: string|null
 - **ToolRequestEvent** (SSE `tool_request`, A2 and A9) — `turnId`: string; `callId`: string; `name`: string; `arguments`: string (JSON); `conversationId`?: string
 - **ToolStatusEvent** (SSE `tool_status`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `label`: string; `scene`?: string; `mood`?: string; `activity`?: string; `reaction`?: string|null; `sensitive`?: boolean
 - **ToolDoneEvent** (SSE `tool_done`, A2 and A9) — `turnId`: string; `callId`: string; `tool`: string; `ok`: boolean; `scene`?: string; `mood`?: string; `activity`?: string; `reaction`?: string|null; `sensitive`?: boolean
