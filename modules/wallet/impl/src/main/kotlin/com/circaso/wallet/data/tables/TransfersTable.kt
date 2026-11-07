@@ -1,6 +1,8 @@
 package com.circaso.wallet.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
 
@@ -54,5 +56,17 @@ object TransfersTable : Table("wallet.transfers") {
 
     init {
         uniqueIndex("transfers_idempotency_key", senderId, idempotencyKey)
+        // V9: staff reports. The SQL orders created_at and transfer_id DESC, which Exposed's index declaration can't say.
+        index("transfers_newest_idx", false, createdAt, transferId)
+        index("transfers_confirmed_idx", false, createdAt, transferId, filterCondition = { state eq "CONFIRMED" })
+        index("transfers_sender_idx", false, senderId, createdAt, transferId)
+        index(
+            "transfers_recipient_idx",
+            false,
+            recipientId,
+            createdAt,
+            transferId,
+            filterCondition = { recipientId.isNotNull() },
+        )
     }
 }
