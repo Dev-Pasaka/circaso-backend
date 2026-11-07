@@ -1,6 +1,7 @@
 package com.circaso.assistant
 
 import com.circaso.assistant.data.tools.AllAgentTools
+import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.OwnTools
 import com.circaso.assistant.domain.support.AshaPrompt
@@ -45,6 +46,7 @@ class AshaPromptTest {
                     UsageReader(plans, quota, config, clock),
                     SearchAllowance(plans, quota, config, clock),
                 ),
+                CryptoTools(FakeMarkets(), FakeUsdRates()),
             ),
         )
     private val text = AshaPrompt.of(PromptContext(isVoice = false, "2026-11-05", "KES", canReadChats = true))
@@ -75,10 +77,15 @@ class AshaPromptTest {
                 "getMyMoments",
                 "getAshaUsage",
                 "searchWeb",
+                "getCryptoMarket",
+                "getTrendingCrypto",
             ),
             tools.specs(hasAgentToken = true).map { it.name },
         )
-        assertEquals(listOf("getAshaUsage", "searchWeb"), tools.specs(hasAgentToken = false).map { it.name })
+        assertEquals(
+            listOf("getAshaUsage", "searchWeb", "getCryptoMarket", "getTrendingCrypto"),
+            tools.specs(hasAgentToken = false).map { it.name },
+        )
     }
 
     @Test
@@ -113,10 +120,21 @@ class AshaPromptTest {
     }
 
     @Test
+    fun `every crypto question goes to the price feed, never to memory or the web`() {
+        val flat = flat(text)
+        assertTrue("call getCryptoMarket or getTrendingCrypto first" in flat)
+        assertTrue("never from memory or the web, even for a coin you think you know" in flat)
+        assertTrue("If the tool has no answer, say you couldn't get it right now; never guess a price" in flat)
+        assertTrue("Never search for a coin's price or market data: that is getCryptoMarket" in flat)
+        assertTrue("never for a coin's price or market data (getCryptoMarket)" in AshaPrompt.searchWeb.description)
+        assertTrue("never answer those from memory" in AshaPrompt.getCryptoMarket.description)
+    }
+
+    @Test
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-05-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-06-v1", AshaPrompt.VERSION)
     }
 
     @Test
