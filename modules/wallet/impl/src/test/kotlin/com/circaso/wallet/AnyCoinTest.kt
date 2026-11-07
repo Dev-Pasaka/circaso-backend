@@ -402,6 +402,58 @@ class AnyCoinTest {
         assertEquals(500_000_000.toBigInteger(), usdcAt.maxWithinUsd(500_000_000))
     }
 
+    @Test
+    fun `EURC is trusted and priced at every address Circle lists for it, as Circle writes it`() {
+        // developers.circle.com/stablecoins/eurc-contract-addresses, 2026-11-07, verbatim (checksummed).
+        val circleList =
+            listOf(
+                "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c", // Ethereum
+                "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", // Base
+                "0xC891EB4cbdEFf6e073e859e987815Ed1505c2ACD", // Avalanche
+                "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1", // Arc
+                "0xA6dE01a2d62C6B5f3525d768f34d276652C554c8", // Cronos
+                "0x3EE196E78d4d4248b849B8E1C7F44C5457FAFD2C", // Plasma
+                "0x1C60ba0A0eD1019e8Eb035E6daF4155A5cE2380B", // World Chain
+                "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", // Solana and Solana Devnet
+                "0x08210F9170F89Ab7658F0B5E3fF39b0E03C594D4", // Ethereum Sepolia
+                "0x808456652fdb597867f38412077A9182bf77359F", // Base Sepolia
+                "0x5E44db7996c682E92a960b65AC713a54AD815c6B", // Avalanche Fuji
+                "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a", // Arc Testnet
+                "0x31f7538adb53cF16350e6B0c89d03D91b7D12c46", // Cronos Testnet
+                "0x98AfA0F93Dd993B736399f9074eDcEBD1985A330", // Plasma Testnet
+                "0xe479EcA5740Ac65d6E1823bea2f1C08Bc14e954F", // World Chain Sepolia
+            )
+        for (chain in listOf("BASE-SEPOLIA", "SOL-DEVNET", "MATIC-AMOY")) {
+            for (address in circleList) {
+                assertEquals(
+                    "EURC",
+                    com.circaso.wallet.domain.support.CoinTrust
+                        .priceKey(TEST_CHAINS, chain, "EURC", address, usdPegged = false),
+                    "$address on $chain",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `W1 prices EURC held on Base Sepolia as Circle writes its address, and it can then be quoted`() =
+        runBlocking<Unit> {
+            ready()
+            h.prices.prices["EURC"] = BigDecimal("1.16")
+            holdToken("EURC", "0x808456652fdb597867f38412077A9182bf77359F", 50_000_000.toBigInteger())
+            h.cache.clear(h.walletOn(amina).circleWalletId) // the 15-second balance cache, read before it came in
+
+            val view =
+                h
+                    .getWallet(
+                        com.circaso.wallet.domain.models
+                            .WalletQuery(amina, null),
+                    ).data()
+            val line = view.chains.flatMap { it.holdings }.single { it.symbol == "EURC" }
+            assertEquals(0, BigDecimal("1.16").compareTo(line.usdPrice), "W1 shows its money value")
+            assertNull(quote(Money(1_000_000, eurc)).let { (it as? Resource.Error)?.error }, "and W17 quotes it")
+        }
+
     private fun field(result: Resource<*>, name: String): String? =
         (result as Resource.Error)
             .error.details

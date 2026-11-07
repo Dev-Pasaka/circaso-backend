@@ -87,13 +87,25 @@ object CoinTrust {
             "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6" to "WBTC",
             // cbBTC: the same address on Base and Ethereum.
             "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf" to "CBBTC",
-            // EURC (Circle): Ethereum, Base, Avalanche, Solana, then Sepolia and Base Sepolia.
+            // EURC, every address on Circle's list (developers.circle.com/stablecoins/eurc-contract-addresses,
+            // read 2026-11-07). Mainnet: Ethereum, Base, Avalanche, Arc, Cronos, Plasma, World Chain, and Solana
+            // (whose devnet mint is the same).
             "0x1abaea1f7c830bd89acc67ec4af516284b1bc33c" to "EURC",
             "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42" to "EURC",
             "0xc891eb4cbdeff6e073e859e987815ed1505c2acd" to "EURC",
+            "0xbef5f6d51cb62b58e6a8f77868681825c6fe21c1" to "EURC",
+            "0xa6de01a2d62c6b5f3525d768f34d276652c554c8" to "EURC",
+            "0x3ee196e78d4d4248b849b8e1c7f44c5457fafd2c" to "EURC",
+            "0x1c60ba0a0ed1019e8eb035e6daf4155a5ce2380b" to "EURC",
             "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr" to "EURC",
+            // Testnets: Ethereum Sepolia, Base Sepolia, Avalanche Fuji, Arc, Cronos, Plasma, World Chain Sepolia.
             "0x08210f9170f89ab7658f0b5e3ff39b0e03c594d4" to "EURC",
             "0x808456652fdb597867f38412077a9182bf77359f" to "EURC",
+            "0x5e44db7996c682e92a960b65ac713a54ad815c6b" to "EURC",
+            "0x89b50855aa3be2f677cd6303cec089b5f319d72a" to "EURC",
+            "0x31f7538adb53cf16350e6b0c89d03d91b7d12c46" to "EURC",
+            "0x98afa0f93dd993b736399f9074edcebd1985a330" to "EURC",
+            "0xe479eca5740ac65d6e1823bea2f1c08bc14e954f" to "EURC",
         )
 }
 
