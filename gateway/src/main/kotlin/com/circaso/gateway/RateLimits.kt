@@ -60,6 +60,11 @@ object RateLimitTable {
                 Limit("maps", 60, Duration.ofHours(1), LimitBy.USER)
             }
 
+            // SH1: each link stores a snapshot and some make an invite; nobody shares more than a few an hour.
+            method == "POST" && path == "/v1/share/links" -> {
+                Limit("share", 30, Duration.ofHours(1), LimitBy.USER)
+            }
+
             // W6 reads a page of history and names everyone on it: its own bucket, like the agent's, so scrolling the
             // history can't use up the rest of the app's budget.
             method == "GET" && path == "/v1/wallet/transactions" -> {

@@ -76,6 +76,7 @@ import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HeldFunds
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
@@ -106,6 +107,7 @@ import com.circaso.wallet.domain.usecases.CreateSpaceWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
 import com.circaso.wallet.domain.usecases.EstimateFee
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
+import com.circaso.wallet.domain.usecases.FindDepositAddress
 import com.circaso.wallet.domain.usecases.FindGroupWallet
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
 import com.circaso.wallet.domain.usecases.GetGroupWallet
@@ -341,7 +343,8 @@ fun walletModule(config: Config): Module =
         single { SplitPayments(get(), get(), get(), clock) }
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
-        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { HoldingPrices(get(), get()) }
+        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CreateWallet(get(), get()) }
         single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
         single { GetGroupWallet(get(), get(), get(), get()) }
@@ -406,11 +409,12 @@ fun walletModule(config: Config): Module =
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
-        single { ValueAssets(get()) }
+        single { ValueAssets(get(), get()) }
         single { EstimateFee(get(), get()) }
         single { WalletAgentService(get(), get(), get(), get(), get(), get(), get()) }
         single { RecipientService(get(), get()) }
-        single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { WalletDirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { FindDepositAddress(get()) }
         if (spacesEnabled) single { SpaceWalletService(get(), get()) }
         single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
         single { WalletJobsService(get(), get(), get(), get(), get()) }

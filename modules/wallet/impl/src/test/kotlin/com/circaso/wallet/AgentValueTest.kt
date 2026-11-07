@@ -24,7 +24,8 @@ import kotlin.test.assertTrue
  */
 class AgentValueTest {
     private val rates = FakeRates().apply { rates["KES"] = BigDecimal("129.50") }
-    private val values = ValueAssets(rates)
+    private val prices = FakePrices()
+    private val values = ValueAssets(rates, prices)
 
     private suspend fun valued(
         assets: String? = null,
@@ -56,13 +57,29 @@ class AgentValueTest {
 
             val btc = valued("BTC,usdt").values
             assertFalse(btc.first().priced)
-            assertNull(btc.first().unitValue, "never priced from anywhere else")
+            assertNull(btc.first().unitValue, "the price feed has no BTC here")
             assertTrue(btc.last().priced)
 
             val unknown = valued("USDC", "3", "UGX")
             assertEquals("USD", unknown.currency, "no UGX rate known: the answer says it is in dollars")
             assertNull(unknown.rate)
             assertEquals("3.00", unknown.values.single().value)
+        }
+
+    @Test
+    fun `another coin is valued at the wallet's price feed, the one W1 shows balances with`() =
+        runBlocking<Unit> {
+            prices.prices["ETH"] = BigDecimal("3500")
+
+            val answer = valued("ETH,usdc", "0.5", "KES")
+
+            val eth = answer.values.first()
+            assertEquals("ETH", eth.asset)
+            assertTrue(eth.priced)
+            assertEquals("3500", eth.usdPrice)
+            assertEquals("453250.00", eth.unitValue, "3500 x 129.50")
+            assertEquals("226625.00", eth.value)
+            assertEquals(listOf(setOf("ETH")), prices.asked, "stablecoins never ask the feed")
         }
 
     @Test

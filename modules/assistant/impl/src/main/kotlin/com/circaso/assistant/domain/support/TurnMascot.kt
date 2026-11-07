@@ -127,7 +127,7 @@ class TurnMascot(before: MascotSceneState, private val turnId: UUID, question: S
         /** What she is doing while [toolName] runs: the work it obviously is, or thinking. */
         fun activityOf(toolName: String): MascotActivity =
             when (toolName) {
-                "searchWeb" -> {
+                "searchWeb", "getCryptoMarket", "getTrendingCrypto" -> {
                     MascotActivity.SEARCHING_WEB
                 }
 

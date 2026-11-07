@@ -13,4 +13,14 @@ class RateLimitTableTest {
         assertEquals(LimitBy.USER, limit.by)
         assertEquals("user", RateLimitTable.limitFor("GET", "/v1/wallet/transfers/x", signedIn = true)!!.name)
     }
+
+    @Test
+    fun `SH1 share links have their own bucket of 30 per user per hour`() {
+        val limit = RateLimitTable.limitFor("POST", "/v1/share/links", signedIn = true)!!
+
+        assertEquals("share", limit.name)
+        assertEquals(30, limit.max)
+        assertEquals(LimitBy.USER, limit.by)
+        assertEquals("user", RateLimitTable.limitFor("GET", "/v1/share/links", signedIn = true)!!.name)
+    }
 }

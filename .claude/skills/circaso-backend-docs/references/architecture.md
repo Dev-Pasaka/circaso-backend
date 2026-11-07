@@ -67,6 +67,7 @@ circaso-backend/
 │     ├─ push/apns/
 │     ├─ circle/
 │     ├─ exchangerate/           open.er-api.com (ExchangeRates)
+│     ├─ coingecko/              api.coingecko.com (CryptoPrices, CryptoMarkets)
 │     ├─ tavily/                 Tavily search API (WebSearch, Asha)
 │     └─ dev/                    log and fake implementations of every contract
 │
@@ -995,6 +996,7 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | `PushGateway` | Push a notification to a device | gateway only (when a user has no open socket) | FCM (Firebase Admin SDK), APNs (HTTP/2) | — |
 | `StablecoinCustody` | Create wallets on the supported chains, move funds, read balances | wallet | Circle (REST) | — |
 | `ExchangeRates` | What one US dollar is worth in a currency, for fiat balances (no rate is null, never an error) | wallet | open.er-api.com (REST, no key; the table kept in Redis under `fx:`), chosen by `INTEGRATIONS_RATES_PROVIDER` | Another rates source |
+| `CryptoPrices` / `CryptoMarkets` | A coin's US dollar price (display and typing only, never a payment or fee), and any coin's market data and trending coins for Asha (no answer is null, never an error) | wallet, assistant | CoinGecko Demo API (`x-cg-demo-api-key`, secret `COINGECKO_API_KEY`; tables kept in Redis under `px:`), chosen by `INTEGRATIONS_PRICES_PROVIDER` (`coingecko`, `off`, `log`, `fake`; default `coingecko` with a key, else `off`) | CoinMarketCap, Chainlink |
 | `WebSearch` | Search the public web for Asha's answers about public facts (fees, how USDC or M-Pesa work); only the query is sent | assistant | Tavily (`POST https://api.tavily.com/search`, Bearer key, secret `TAVILY_API_KEY`), chosen by `INTEGRATIONS_SEARCH_PROVIDER` (`tavily`, `log`, `fake`; default `fake`) | Brave Search API |
 | `CallMedia` | Create call sessions and join tokens | calls (later) | Cloudflare Realtime (REST) | LiveKit |
 | Later: `MobileMoney`, `KycProvider` | Cash-out to M-PESA; identity checks | cash-out, compliance | Daraja; a KYC vendor | — |

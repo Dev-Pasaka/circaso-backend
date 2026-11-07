@@ -43,6 +43,7 @@ import com.circaso.wallet.presentation.dto.WalletListingDto
 import com.circaso.wallet.presentation.dto.WalletOwnerDto
 import com.circaso.wallet.presentation.dto.WalletResponse
 import com.circaso.wallet.presentation.dto.WalletsResponse
+import java.math.BigDecimal
 import java.util.Currency
 import java.util.UUID
 
@@ -184,9 +185,19 @@ private fun Holding.toDto() =
         amountMinor = amountMinor.toString(),
         amount = Amounts.whole(amountMinor, decimals),
         fiatAmount = fiatAmount?.toPlainString(),
+        usdPrice = usdPrice?.priceString(),
     )
 
 private fun AssetTotal.toDto() =
-    AssetTotalDto(symbol, decimals, amountMinor.toString(), Amounts.whole(amountMinor, decimals))
+    AssetTotalDto(
+        symbol = symbol,
+        decimals = decimals,
+        amountMinor = amountMinor.toString(),
+        amount = Amounts.whole(amountMinor, decimals),
+        usdPrice = usdPrice?.priceString(),
+    )
+
+/** `1`, `3512.27`, `0.4`: as the feed wrote it, without trailing zeros or an exponent. */
+private fun BigDecimal.priceString(): String = stripTrailingZeros().toPlainString()
 
 private fun FiatValue.toDto() = FiatDto(currency, amount.toPlainString(), rate.toPlainString(), asOf, partial)

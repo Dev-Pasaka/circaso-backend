@@ -13,6 +13,7 @@ import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.users.api.ContactBook
+import com.circaso.users.api.Invites
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.ReachPolicy
 import com.circaso.users.data.cache.KeyedPhoneHasher
@@ -90,6 +91,7 @@ import com.circaso.users.domain.usecases.UnblockUser
 import com.circaso.users.domain.usecases.UpdateProfile
 import com.circaso.users.presentation.agent.agentController
 import com.circaso.users.presentation.api.ContactBookImpl
+import com.circaso.users.presentation.api.InvitesImpl
 import com.circaso.users.presentation.api.ProfilesImpl
 import com.circaso.users.presentation.api.ReachPolicyImpl
 import com.circaso.users.presentation.api.SupportProfilesImpl
@@ -242,6 +244,7 @@ fun usersModule(config: Config): Module =
         single<ReachPolicy> { ReachPolicyImpl(get()) }
         single<Profiles> { ProfilesImpl(get()) }
         single<ContactBook> { ContactBookImpl(get()) }
+        single<Invites> { InvitesImpl(get()) }
 
         // identity:api's SupportProfiles, which identity's ops routes ask (decision 2026-10-31)
         single<SupportProfiles> { SupportProfilesImpl(get()) }

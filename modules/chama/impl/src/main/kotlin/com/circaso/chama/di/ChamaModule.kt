@@ -36,6 +36,7 @@ import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.FindApprovedPayout
 import com.circaso.chama.domain.usecases.GetChama
 import com.circaso.chama.domain.usecases.GetChamaDigest
+import com.circaso.chama.domain.usecases.GetChamaStatement
 import com.circaso.chama.domain.usecases.GetGroupMoney
 import com.circaso.chama.domain.usecases.HasGoal
 import com.circaso.chama.domain.usecases.ListLedger
@@ -135,6 +136,7 @@ fun chamaModule(config: Config): Module =
         single { ListLedger(get(), get()) }
         single { ListMyChamas(get(), get(), get()) }
         single { GetChamaDigest(get(), get()) }
+        single { GetChamaStatement(get(), get()) }
         single { AskPayout(get(), get(), get(), clock, get(), get()) }
         single { DecidePayout(get(), get(), get(), clock) }
         single { AttachPayment(get(), get(), get(), get(), clock) }
@@ -149,7 +151,7 @@ fun chamaModule(config: Config): Module =
 
         // presentation
         single { ChamaService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { ChamaEventsService(get(), get(), get(), get(), get()) }
+        single { ChamaEventsService(get(), get(), get(), get(), get(), get()) }
         single { ChamaAgentService(get(), get()) }
         single<RouteContributor>(named("chama.routes")) {
             val chamas = get<ChamaService>()

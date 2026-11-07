@@ -1,6 +1,7 @@
 package com.circaso.users.api
 
 import com.circaso.shared.UserId
+import java.time.Instant
 
 /** Messaging, wallet and calls check this before one person touches another. */
 interface ReachPolicy {
@@ -39,3 +40,17 @@ data class PublicProfile(
     /** Circaso's own support account (decision 2026-10-31), which the app shows as verified support. */
     val support: Boolean = false,
 )
+
+/**
+ * Invites made on someone's behalf by another module (decision 2026-11-06: an invite share link carries one), the
+ * same as U12: whoever connects with the token is connected to [IssuedInvite]'s owner both ways.
+ */
+interface Invites {
+    /** A fresh invite for [owner], valid 7 days and revocable like any other; null when users can't make one now. */
+    suspend fun create(owner: UserId): IssuedInvite?
+}
+
+/** An invite's secret [token] and when it ends. The token is never logged. */
+data class IssuedInvite(val token: String, val expiresAt: Instant) {
+    override fun toString(): String = "IssuedInvite(***, $expiresAt)"
+}
