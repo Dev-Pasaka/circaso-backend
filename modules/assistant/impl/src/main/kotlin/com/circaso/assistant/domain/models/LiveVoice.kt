@@ -123,6 +123,9 @@ sealed interface LiveEnd {
     /** The transcription or speech provider dropped the session. */
     data object ProviderFailed : LiveEnd
 
+    /** Asha's model is down for maintenance (decision 2026-11-07): she said so, and the call ends. */
+    data object AssistantUnavailable : LiveEnd
+
     /** The user's session was revoked (signed out, phone replaced, account deleted), or its token can't be checked. */
     data object SessionRevoked : LiveEnd
 

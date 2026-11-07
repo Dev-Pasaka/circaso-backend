@@ -84,6 +84,7 @@ fun Route.chatController(chat: ChatService) {
                     listOf(
                         "assistant.quota_exceeded",
                         "assistant.model_unavailable",
+                        "assistant.unavailable",
                         "assistant.conversation_not_found",
                         "auth.token_invalid",
                         "request.malformed",
@@ -102,7 +103,9 @@ fun Route.chatController(chat: ChatService) {
                             "the envelope): `message` events carry `{delta}`, each piece as the model writes it; " +
                             "a `tool_request` event `{turnId, callId, name, arguments}` asks the phone to run a " +
                             "device tool and answer with A9; `done` carries the saved reply; an `error` event " +
-                            "`{code, message}` means the model failed after text had gone out (nothing is saved).",
+                            "`{code, message}` means the model failed after text had gone out (nothing is saved). " +
+                            "`assistant.unavailable` (envelope or `error` event) is Asha down for maintenance: keep " +
+                            "the question, and read A14 for when she is back.",
                 )
 
                 route("/{messageId}") {
@@ -136,6 +139,7 @@ fun Route.chatController(chat: ChatService) {
                         listOf(
                             "assistant.turn_not_found",
                             "assistant.model_unavailable",
+                            "assistant.unavailable",
                             "auth.token_invalid",
                             "request.malformed",
                         ),

@@ -11,6 +11,7 @@ import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AgentTurn
 import com.circaso.assistant.domain.support.AshaAgent
+import com.circaso.assistant.domain.support.AshaOutage
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.ConversationResolver
 import com.circaso.assistant.domain.support.OrderedIds
@@ -46,6 +47,7 @@ class StartTurn(
     private val config: AssistantConfig,
     private val ids: OrderedIds,
     private val clock: Clock,
+    private val outage: AshaOutage,
 ) {
     suspend operator fun invoke(
         command: TurnCommand,
@@ -95,7 +97,7 @@ class StartTurn(
         val outcome =
             when (val r = agent.run(history, turn, listener = listener)) {
                 is Resource.Success -> r.data
-                is Resource.Error -> return r
+                is Resource.Error -> return outage.failure(userId, r)
             }
         return recorder.conclude(
             userId,

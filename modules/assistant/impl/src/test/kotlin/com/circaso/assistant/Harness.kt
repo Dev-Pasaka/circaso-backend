@@ -1,6 +1,7 @@
 package com.circaso.assistant
 
 import com.circaso.assistant.data.blocks.JsonReplyBlocks
+import com.circaso.assistant.domain.models.AshaStatus
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Conversation
@@ -8,11 +9,14 @@ import com.circaso.assistant.domain.models.ConversationCursor
 import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.Plan
+import com.circaso.assistant.domain.models.ProbeState
 import com.circaso.assistant.domain.ports.AgentTools
+import com.circaso.assistant.domain.ports.AshaHealth
 import com.circaso.assistant.domain.ports.MascotScenes
 import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.ports.QuotaCounters
+import com.circaso.assistant.domain.ports.StatusFrames
 import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.ports.VoiceFallbacks
@@ -24,6 +28,7 @@ import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.ConversationRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AshaAgent
+import com.circaso.assistant.domain.support.AshaOutage
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.ConversationResolver
@@ -32,6 +37,7 @@ import com.circaso.assistant.domain.support.DailyUsage
 import com.circaso.assistant.domain.support.OrderedIds
 import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.UsageReader
+import com.circaso.assistant.domain.support.WatchedLanguageModel
 import com.circaso.assistant.domain.usecases.ContinueTurn
 import com.circaso.assistant.domain.usecases.CreateConversation
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
@@ -65,6 +71,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import kotlinx.coroutines.CompletableDeferred
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.util.ArrayDeque
 import java.util.UUID
@@ -444,6 +451,18 @@ class ScriptedModel : LanguageModel {
 
     fun fail() = then { Resource.error(IntegrationError.Unavailable("model")) }
 
+    /** The model refuses this request: not an outage, so Asha stays available. */
+    fun reject() = then { Resource.error(IntegrationError.Rejected("The model declined to answer.")) }
+
+    /** Answers to [probe], in order; an empty list is a probe that answers. */
+    val probes = java.util.ArrayDeque<Resource<Unit>>()
+    var probed = 0
+
+    override suspend fun probe(): Resource<Unit> {
+        probed++
+        return probes.pollFirst() ?: Resource.success(Unit)
+    }
+
     override suspend fun stream(request: ModelRequest): Resource<ModelStream> {
         requests += request
         return steps.pollFirst()?.invoke(request)
@@ -543,6 +562,71 @@ class RecordingFallbacks : VoiceFallbacks {
     }
 }
 
+/** Asha's health in memory, as Redis keeps it for every node. */
+class MemoryHealth : AshaHealth {
+    private val lock = Any()
+
+    @Volatile var down: Instant? = null
+
+    @Volatile var up: Instant? = null
+    val affected =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet<UserId>()
+    val notices = java.util.concurrent.ConcurrentHashMap<UserId, Instant>()
+
+    @Volatile var probeState: ProbeState? = null
+    var now: () -> Instant = { Instant.now() }
+
+    override suspend fun status() = down?.let { AshaStatus(false, it) } ?: AshaStatus(true, up)
+
+    override suspend fun markDown(at: Instant): Boolean =
+        synchronized(lock) {
+            if (down != null) return@synchronized false
+            down = at
+            probeState = null
+            true
+        }
+
+    override suspend fun markUp(at: Instant): Boolean =
+        synchronized(lock) {
+            if (down == null) return@synchronized false
+            down = null
+            up = at
+            probeState = null
+            true
+        }
+
+    override suspend fun recordAffected(userId: UserId) {
+        affected += userId
+    }
+
+    override suspend fun takeAffected(): List<UserId> =
+        synchronized(lock) { affected.toList().also { affected.clear() } }
+
+    override suspend fun claimNotice(userId: UserId, window: Duration): Boolean =
+        synchronized(lock) {
+            val last = notices[userId]
+            if (last != null && last.plus(window).isAfter(now())) return@synchronized false
+            notices[userId] = now()
+            true
+        }
+
+    override suspend fun probe() = probeState
+
+    override suspend fun saveProbe(state: ProbeState) {
+        probeState = state
+    }
+}
+
+/** The status frames sent, as (users, status). */
+class RecordingStatusFrames : StatusFrames {
+    val sent = CopyOnWriteArrayList<Pair<List<UserId>, AshaStatus>>()
+
+    override suspend fun send(userIds: Collection<UserId>, status: AshaStatus) {
+        sent += userIds.toList() to status
+    }
+}
+
 class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = UserId.new()) {
     /** Knows [owner]'s tokens (see [TestVerifier]); A2, A9 and A11 check the agent token with it. */
     val verifier = TestVerifier(owner)
@@ -559,18 +643,21 @@ class Harness(config: AssistantConfig = AssistantConfig(), val owner: UserId = U
     private val clock = Clock.systemUTC()
     val config = config
 
-    private val agent = AshaAgent(model, tools, config, JsonReplyBlocks(), scenes)
+    val health = MemoryHealth()
+    val outage = AshaOutage(health)
+    private val agent = AshaAgent(WatchedLanguageModel(model, health, clock), tools, config, JsonReplyBlocks(), scenes)
     private val ids = OrderedIds(clock)
     val resolver = ConversationResolver(memory, ids, clock)
     private val titler = ConversationTitler(memory, memory)
     private val recorder = TurnRecorder(memory, memory, titler, pending, quota, config, ids, memory, clock)
     val dailyUsage = DailyUsage(quota, memory, memory, clock)
 
-    val start = StartTurn(verifier, memory, resolver, plans, quota, agent, recorder, config, ids, clock)
-    val resume = ContinueTurn(verifier, pending, resolver, agent, recorder, config, clock)
+    val start = StartTurn(verifier, memory, resolver, plans, quota, agent, recorder, config, ids, clock, outage)
+    val resume = ContinueTurn(verifier, pending, resolver, agent, recorder, config, clock, outage)
 
     /** A9 over another store of waiting turns, for races. */
-    fun resumeWith(turns: PendingTurns) = ContinueTurn(verifier, turns, resolver, agent, recorder, config, clock)
+    fun resumeWith(turns: PendingTurns) =
+        ContinueTurn(verifier, turns, resolver, agent, recorder, config, clock, outage)
 
     val list = ListChat(memory)
     val listConversations = ListConversations(memory, titler)

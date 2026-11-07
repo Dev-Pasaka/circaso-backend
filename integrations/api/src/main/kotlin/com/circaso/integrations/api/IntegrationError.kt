@@ -1,6 +1,7 @@
 package com.circaso.integrations.api
 
 import com.circaso.shared.DomainError
+import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
 
 /**
@@ -9,9 +10,18 @@ import com.circaso.shared.ErrorKind
  */
 sealed class IntegrationError(override val code: String, override val message: String, override val kind: ErrorKind) :
     DomainError {
-    /** The vendor is down, slow, refused us or its circuit is open; trying again later may work. */
-    class Unavailable(vendor: String) :
-        IntegrationError("integrations.unavailable", "$vendor is unavailable.", ErrorKind.UPSTREAM)
+    /**
+     * The vendor is down, slow, refused us or its circuit is open; trying again later may work.
+     *
+     * [isTransient] says whether trying again at once may work (a dropped connection, an overloaded or failing
+     * server, a rate limit), as opposed to a fault that waits for us (a key it no longer accepts, an open circuit).
+     * [retryAfterSeconds] is the vendor's own `Retry-After`, when it sent one.
+     */
+    class Unavailable(vendor: String, val isTransient: Boolean = true, val retryAfterSeconds: Long? = null) :
+        IntegrationError("integrations.unavailable", "$vendor is unavailable.", ErrorKind.UPSTREAM) {
+        override val details: ErrorDetails?
+            get() = retryAfterSeconds?.let { ErrorDetails(retryAfterSeconds = it) }
+    }
 
     /** The vendor looked at what we sent and refused it (a number it can't reach, a token it doesn't accept). */
     class Rejected(message: String) : IntegrationError("integrations.rejected", message, ErrorKind.INVALID)

@@ -413,12 +413,12 @@ class AssistantTest {
         }
 
     @Test
-    fun `a model outage is reported and leaves no half-saved chat`() =
+    fun `a model outage is Asha down for maintenance and leaves no half-saved chat`() =
         runTest {
             val h = Harness(owner = me)
             h.model.fail()
 
-            assertEquals("assistant.model_unavailable", h.start(ask("hello")).errorCode())
+            assertEquals("assistant.unavailable", h.start(ask("hello")).errorCode())
             assertTrue(h.memory.messages.isEmpty())
         }
 

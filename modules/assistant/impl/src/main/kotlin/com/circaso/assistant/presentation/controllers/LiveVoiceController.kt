@@ -276,5 +276,6 @@ private fun LiveEnd.closeCode(): CloseReason.Codes =
     when (this) {
         is LiveEnd.OutOfAllowance -> CloseReason.Codes.VIOLATED_POLICY
         is LiveEnd.ProviderFailed -> CloseReason.Codes.INTERNAL_ERROR
+        is LiveEnd.AssistantUnavailable -> CloseReason.Codes.TRY_AGAIN_LATER
         else -> CloseReason.Codes.NORMAL
     }

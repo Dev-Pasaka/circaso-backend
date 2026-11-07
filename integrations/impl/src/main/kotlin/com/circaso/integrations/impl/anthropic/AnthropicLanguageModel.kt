@@ -153,8 +153,29 @@ class AnthropicLanguageModel(
      * Opens the answer. A failure before Anthropic's first event (refused, unreachable, overloaded) is the
      * [Resource.Error]; after it, a [ModelStreamEvent.Failed].
      */
-    override suspend fun stream(request: ModelRequest): Resource<ModelStream> {
-        val route = routes.getValue(request.purpose)
+    override suspend fun stream(request: ModelRequest): Resource<ModelStream> =
+        open(request, routes.getValue(request.purpose))
+
+    /**
+     * A one-token question on the typed turns' model (decision 2026-11-07): Claude is serving once its answer opens
+     * (the first event of a `200`), so the probe stops there. It costs a few input tokens and one output token.
+     */
+    override suspend fun probe(): Resource<Unit> {
+        val chatRoute = routes.getValue(ModelPurpose.CHAT)
+        val route = Route(chatRoute.mode.copy(maxTokens = 1), chatRoute.llm)
+        return when (val opened = open(LanguageModel.PROBE_REQUEST, route)) {
+            is Resource.Success -> {
+                opened.data.close()
+                Resource.success(Unit)
+            }
+
+            is Resource.Error -> {
+                opened
+            }
+        }
+    }
+
+    private suspend fun open(request: ModelRequest, route: Route): Resource<ModelStream> {
         val tools =
             when (val built = AnthropicTools.descriptors(request.tools)) {
                 is Resource.Success -> built.data

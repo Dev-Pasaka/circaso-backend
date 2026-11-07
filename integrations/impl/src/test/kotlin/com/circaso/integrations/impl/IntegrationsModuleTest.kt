@@ -1,8 +1,5 @@
 package com.circaso.integrations.impl
 
-import ch.qos.logback.classic.Logger
-import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.read.ListAppender
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
@@ -54,7 +51,9 @@ import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
+import com.circaso.integrations.impl.llm.RetryingLanguageModel
 import com.circaso.integrations.impl.llm.RoutedLanguageModel
+import com.circaso.integrations.impl.llm.UnavailableLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -68,7 +67,6 @@ import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
-import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.util.UUID
 import kotlin.test.AfterTest
@@ -80,12 +78,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IntegrationsModuleTest {
-    private class MapConfig(private val values: Map<String, String>, private val prefix: String = "") : Config {
-        override val environment = Environment.LOCAL
-
+    private class MapConfig(
+        private val values: Map<String, String>,
+        private val prefix: String = "",
+        override val environment: Environment = Environment.LOCAL,
+    ) : Config {
         override fun string(key: String): String? = values[prefix + key]
 
-        override fun section(prefix: String): Config = MapConfig(values, this.prefix + prefix + ".")
+        override fun section(prefix: String): Config = MapConfig(values, this.prefix + prefix + ".", environment)
     }
 
     private val phone = PhoneNumber.parse("+254712345678")!!
@@ -216,7 +216,7 @@ class IntegrationsModuleTest {
     private fun hosts(clients: FakeHttpClients) = clients.requests.map { it.url.host }
 
     @Test
-    fun `anthropic answers chat and voice, on its own client that never retries, with Workers AI as the fallback`() =
+    fun `anthropic answers chat and voice on its own client, retries once and never falls back to Workers AI`() =
         runTest {
             val clients = FakeHttpClients { _ -> respondOk() }
             val koin =
@@ -229,34 +229,24 @@ class IntegrationsModuleTest {
 
             val model = koin.get<LanguageModel>()
 
-            assertIs<RoutedLanguageModel>(model)
+            assertIs<RetryingLanguageModel>(model)
             val config = clients.configs.getValue("anthropic")
             assertEquals(1, config.maxAttempts)
             assertEquals("https://api.anthropic.com/", config.baseUrl)
-            // MockEngine can't stream Server-Sent Events, so Claude can't answer here: each turn falls back to Workers AI
-            val appender = ListAppender<ILoggingEvent>().apply { start() }
-            val logger = LoggerFactory.getLogger(RoutedLanguageModel::class.java) as Logger
-            logger.addAppender(appender)
-            try {
-                for (purpose in ModelPurpose.entries) {
-                    clients.requests.clear()
-                    model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = purpose))
-                    assertEquals(listOf("api.cloudflare.com"), hosts(clients), "$purpose")
-                }
-            } finally {
-                logger.detachAppender(appender)
-            }
-            val lines = appender.list.map { it.formattedMessage }
+            // MockEngine can't stream Server-Sent Events, so Claude can't answer here: each turn fails, and nothing
+            // else is ever asked (decision 2026-11-07: no fallback model; the retry itself is RetryingLanguageModelTest's)
             for (purpose in ModelPurpose.entries) {
-                assertTrue(
-                    lines.any { it.startsWith("asha model fallback: purpose=$purpose from=anthropic to=workers-ai") },
-                    "$lines",
-                )
+                clients.requests.clear()
+                val answer = model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = purpose))
+                assertIs<IntegrationError.Unavailable>((answer as Resource.Error).error, "$purpose")
+                assertTrue("api.cloudflare.com" !in hosts(clients), "$purpose")
             }
+            assertIs<Resource.Error>(model.probe())
+            assertTrue("workers-ai" !in clients.names)
         }
 
     @Test
-    fun `anthropic without its key keeps Workers AI exactly as before`() =
+    fun `anthropic without its key is the log model locally and never Workers AI`() =
         runTest {
             val clients = FakeHttpClients { _ -> respondOk() }
             val koin =
@@ -267,25 +257,47 @@ class IntegrationsModuleTest {
                     "integrations.llm.voice-provider" to "anthropic",
                 )
 
-            assertIs<WorkersAiLanguageModel>(koin.get<LanguageModel>())
+            assertIs<LogLanguageModel>(koin.get<LanguageModel>())
             assertTrue("anthropic" !in clients.names)
+            assertTrue("workers-ai" !in clients.names)
         }
 
     @Test
-    fun `voice can move to anthropic alone, and typed turns stay where they were`() =
+    fun `anthropic without its key is always unavailable outside a local server`() =
+        runTest {
+            val model =
+                ashaLanguageModel(
+                    MapConfig(mapOf("integrations.llm.provider" to "anthropic"), environment = Environment.PRODUCTION),
+                    object : Secrets {
+                        override fun get(name: String): String? = null
+                    },
+                    FakeHttpClients { _ -> respondOk() },
+                )
+
+            assertIs<UnavailableLanguageModel>(model)
+            val error = (model.complete(ModelRequest("s", emptyList())) as Resource.Error).error
+            assertEquals(false, (error as IntegrationError.Unavailable).isTransient)
+            assertIs<Resource.Error>(model.probe())
+        }
+
+    @Test
+    fun `voice can be on anthropic alone, and typed turns stay where they were`() =
         runTest {
             val clients = FakeHttpClients { _ -> respondOk() }
             val koin =
                 ashaKoin(
                     clients,
                     keyed,
-                    "integrations.llm.provider" to "workers-ai",
+                    "integrations.llm.provider" to "log",
                     "integrations.llm.voice-provider" to "anthropic",
                 )
             val model = koin.get<LanguageModel>()
 
-            model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.CHAT))
-            assertEquals(listOf("api.cloudflare.com"), hosts(clients))
+            assertIs<RoutedLanguageModel>(model)
+            assertIs<Resource.Success<*>>(
+                model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.CHAT)),
+            )
+            assertTrue(clients.requests.isEmpty())
         }
 
     @Test

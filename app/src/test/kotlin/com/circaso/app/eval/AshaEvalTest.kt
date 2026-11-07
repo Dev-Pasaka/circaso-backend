@@ -38,7 +38,7 @@ import kotlin.test.Test
  * Settings (Gradle properties, all optional but `arms`):
  * - `ashaEval.arms`: the models under test, in order from cheapest. Stubs: `oracle`, `null`, `guesser`. Real:
  *   `workers-ai` (Kimi K2.6 for chat, PhoneLLM Mini for voice), `haiku-low`, `haiku-medium` (Claude Haiku 5.5 through
- *   the `anthropic` provider, Workers AI fallback off). An arm whose keys or provider are missing is skipped and named.
+ *   the `anthropic` provider; there is no fallback model). An arm whose keys or provider are missing is skipped and named.
  * - `ashaEval.arm.<name>`: `KEY=value;KEY=value` settings for an arm, over the built-in ones (or a new arm).
  * - `ashaEval.price.<name>`: `input,output` US dollars per million tokens, for an arm's cost.
  * - `ashaEval.judge`: the arm that judges tone (should not be a model under test); none skips the judged checks.
@@ -73,7 +73,7 @@ class AshaEvalTest {
             needs = listOf(ANTHROPIC_KEY),
             prices = haikuPrices,
             expectedModel = "claude-haiku-5-5",
-            note = "Claude Haiku 5.5, effort `$effort` in chat and voice; no Workers AI fallback.",
+            note = "Claude Haiku 5.5, effort `$effort` in chat and voice; no fallback model.",
         )
 
     private val builtIn: Map<String, ArmSpec> =
@@ -125,7 +125,7 @@ class AshaEvalTest {
                 ?.mapNotNull { pair ->
                     pair.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0].trim() to it[1].trim() }
                 }?.toMap()
-        // a custom arm gets only its provider's keys: Workers AI's next to Claude's would turn on the fallback
+        // a custom arm gets only its provider's keys, so each arm is exactly one provider
         val spec =
             builtIn[name]
                 ?: custom?.let {

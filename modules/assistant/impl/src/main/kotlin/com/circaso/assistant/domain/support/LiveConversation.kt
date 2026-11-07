@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -729,7 +730,7 @@ class LiveConversation(
         reply: SpokenReply,
     ) {
         when (result) {
-            is Resource.Error -> failed(result, reply)
+            is Resource.Error -> failed(asked, result, reply)
             is Resource.Success -> answered(asked, result.data, reply)
         }
         lastActivity = nowMillis()
@@ -742,9 +743,17 @@ class LiveConversation(
         }
     }
 
-    private suspend fun failed(result: Resource.Error, reply: SpokenReply) {
+    private suspend fun failed(
+        asked: Int,
+        result: Resource.Error,
+        reply: SpokenReply,
+    ) {
         // the sentences already spoken are let out; the half-written one is dropped
         reply.finish(done = null, speakRest = false)
+        if (result.error === AssistantError.Unavailable) {
+            signOff(asked)
+            return
+        }
         if (result.error is AssistantError.QuotaExceeded) {
             hangUp(LiveEnd.OutOfAllowance(result.error))
             return
@@ -756,6 +765,19 @@ class LiveConversation(
             return
         }
         emit(LiveEvent.TurnFailed(result.error))
+    }
+
+    /**
+     * Asha's model is down for maintenance (decision 2026-11-07): she says so in her own voice, which doesn't need the
+     * model, and once that has played (or after [SIGN_OFF_MILLIS] at most) the call ends with `assistant.unavailable`.
+     */
+    private suspend fun signOff(asked: Int) {
+        queueSentence(asked, MAINTENANCE_LINE)
+        flushReply(asked, done = null)
+        withTimeoutOrNull(SIGN_OFF_MILLIS) {
+            while (state.withLock { speaking != null || nowMillis() < playingUntil }) delay(SIGN_OFF_POLL_MILLIS)
+        }
+        hangUp(LiveEnd.AssistantUnavailable)
     }
 
     private suspend fun answered(
@@ -977,6 +999,13 @@ class LiveConversation(
     }
 
     private companion object {
+        /** What Asha says when her model is down (decision 2026-11-07), before the call ends. */
+        const val MAINTENANCE_LINE = "I'm down for maintenance at the moment. I'll let you know as soon as I'm back."
+
+        /** The longest the call waits for that line to play before it ends anyway. */
+        const val SIGN_OFF_MILLIS = 8_000L
+        const val SIGN_OFF_POLL_MILLIS = 100L
+
         const val TICK_MILLIS = 250L
         const val MICROS = 1_000_000L
 

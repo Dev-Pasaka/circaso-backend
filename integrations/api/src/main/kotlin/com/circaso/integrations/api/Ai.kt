@@ -21,6 +21,24 @@ interface LanguageModel {
             is Resource.Success -> Resource.success(CompletedStream(answer.data))
             is Resource.Error -> answer
         }
+
+    /**
+     * Whether the model answers at all, as cheaply as the provider allows (decision 2026-11-07): Asha's health monitor
+     * asks while she is down for maintenance, and marks her back on the first success. Never retried.
+     *
+     * The default asks [complete] for a one-word answer, for providers without anything cheaper.
+     */
+    suspend fun probe(): Resource<Unit> =
+        when (val answer = complete(PROBE_REQUEST)) {
+            is Resource.Success -> Resource.success(Unit)
+            is Resource.Error -> answer
+        }
+
+    companion object {
+        /** The question a probe asks: no tools, no history, a one-word answer. */
+        val PROBE_REQUEST: ModelRequest =
+            ModelRequest(system = "Answer with one word.", messages = listOf(ModelMessage.User("Ping")))
+    }
 }
 
 /**
