@@ -314,10 +314,10 @@ class CircleWebhookTest {
             webhook.translate(notification("transactions.inbound", CircleRecords.FEE_INBOUND).toByteArray()).data()
 
             val (payee, fee) = received
-            assertEquals(7_699_911L, payee.amount.amountMinor)
+            assertEquals(7_699_911.toBigInteger(), payee.amount.amountMinor)
             assertFalse(payee.developerWallet)
             assertEquals(CustodyOperation.TRANSFER, payee.operation)
-            assertEquals(100_000L, fee.amount.amountMinor)
+            assertEquals(100_000.toBigInteger(), fee.amount.amountMinor)
             assertTrue(fee.developerWallet)
         }
 

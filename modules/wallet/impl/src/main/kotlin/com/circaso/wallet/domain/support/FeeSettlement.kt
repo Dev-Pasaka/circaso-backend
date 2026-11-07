@@ -42,7 +42,8 @@ class FeeSettlement(
                 ).movePointRight(MICRO).setScale(0, RoundingMode.CEILING).toLong()
             }
         val entry = ledger.settle(transfer.transferId, state, change.txHash, native, gasMinor, change.at) ?: return
-        val fee = entry.fee.amountMinor
+        // Both in micro-dollars: the fee as the rule priced it, whatever coin it was charged in (2026-11-07).
+        val fee = entry.fee.usdMinor
         if (gasMinor != null && fee > 0 && gasMinor * BPS > fee * entry.fee.gasShareMaxBps) {
             warnings.gasAboveShare(transfer.transferId.toString(), transfer.blockchain, (gasMinor * BPS / fee).toInt())
         }

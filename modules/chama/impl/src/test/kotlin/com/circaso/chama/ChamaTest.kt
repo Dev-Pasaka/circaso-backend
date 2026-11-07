@@ -421,6 +421,70 @@ class ChamaTest {
         }
 
     @Test
+    fun `a contribution in any coin counts its dollar value, and the coin paid is kept beside it`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            val handler =
+                com.circaso.chama.presentation.events.WalletEventHandler(
+                    ChamaEventsService(
+                        h.recordTransfer,
+                        ReplayFrames(NoFrames),
+                        h.expireRequests,
+                        HasGoal(h.goals),
+                        h.findApproved,
+                        h.getChamaStatement,
+                    ),
+                )
+
+            fun confirmed(
+                amount: WalletAmount,
+                usdValueMinor: String?,
+                decimals: Int?,
+            ) = EventEnvelope.of(
+                com.circaso.wallet.api.TransferConfirmed(
+                    transferId = TransferId.new(),
+                    senderId = h.wanjiru,
+                    recipientId = h.wallet,
+                    blockchain = "BASE-SEPOLIA",
+                    amount = amount,
+                    origin = "APP",
+                    chatId = h.chat,
+                    toGroupId = h.chat,
+                    usdValueMinor = usdValueMinor,
+                    assetDecimals = decimals,
+                ),
+                com.circaso.wallet.api.TransferConfirmed
+                    .serializer(),
+            )
+            val handle = handler.subscription().handlers.getValue("wallet.TransferConfirmed")
+
+            // 0.01 ETH at 3 000 dollars: 30 dollars towards the goal, the ETH itself kept.
+            handle.handle(confirmed(WalletAmount("ETH", "10000000000000000", "0.01"), "30000000", 18))
+            // USDC counts its own amount, as it always did.
+            handle.handle(confirmed(WalletAmount("USDC", "5000000", "5"), "5000000", 6))
+            // A coin the wallet couldn't price is not counted at a made-up value.
+            handle.handle(confirmed(WalletAmount("EURC", "1000000", "1"), null, 6))
+
+            val rows =
+                h.contributions.rows.values
+                    .sortedBy { it.amountMinor }
+            assertEquals(listOf(5_000_000L, 30_000_000L), rows.map { it.amountMinor })
+            assertEquals(
+                com.circaso.chama.domain.models
+                    .PaidCoin(
+                        "ETH",
+                        18,
+                        java.math.BigInteger.TEN
+                            .pow(16),
+                    ),
+                rows.last().paid,
+            )
+            assertEquals("USDC", rows.first().paid?.symbol)
+        }
+
+    @Test
     fun `a member's confirmed payment into the group wallet is a contribution, once`() =
         runTest {
             val h = Harness()

@@ -22,7 +22,7 @@ class ValueAssets(private val rates: ExchangeRates, private val prices: CryptoPr
     suspend operator fun invoke(query: AssetValueQuery): Resource<AssetValues> {
         val rate = query.currency?.takeIf { it != USD }?.let { rates.usdRate(it) }
         val currency = rate?.currency ?: USD
-        val names = query.assets.ifEmpty { Asset.entries.map { it.name } }.distinct()
+        val names = query.assets.ifEmpty { Asset.DOLLAR_STABLECOINS.map { it.symbol } }.distinct()
         val coins = names.filter { assetOf(it) == null }.toSet()
         val priced = if (coins.isEmpty()) emptyMap() else prices.usdPrices(coins)
         val values = names.map { valueOf(it, priced[it], query.amount, rate) }
@@ -42,7 +42,7 @@ class ValueAssets(private val rates: ExchangeRates, private val prices: CryptoPr
         return AssetValue(name, asset, usdPrice, unit, value)
     }
 
-    private fun assetOf(name: String): Asset? = Asset.entries.firstOrNull { it.name == name }
+    private fun assetOf(name: String): Asset? = Asset.DOLLAR_STABLECOINS.firstOrNull { it.symbol == name }
 
     private companion object {
         const val USD = "USD"

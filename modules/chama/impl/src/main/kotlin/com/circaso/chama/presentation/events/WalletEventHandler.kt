@@ -1,5 +1,6 @@
 package com.circaso.chama.presentation.events
 
+import com.circaso.chama.domain.models.PaidCoin
 import com.circaso.chama.domain.models.WalletTransfer
 import com.circaso.chama.presentation.services.ChamaEventsService
 import com.circaso.shared.DomainException
@@ -16,6 +17,11 @@ import com.circaso.wallet.api.TransferConfirmed
  * payment of an approved request from it. Safe to run twice (a contribution is recorded once per transfer; a request moves once).
  */
 class WalletEventHandler(private val events: ChamaEventsService) {
+    private companion object {
+        val DOLLAR_STABLECOINS = setOf("USDC", "USDT")
+        const val USD_DECIMALS = 6
+    }
+
     fun subscription() =
         EventSubscription(
             group = "chama",
@@ -25,7 +31,28 @@ class WalletEventHandler(private val events: ChamaEventsService) {
 
     private suspend fun transferConfirmed(envelope: EventEnvelope) {
         val event = envelope.decode<TransferConfirmed>()
-        val minor = event.amount.amountMinor.toLongOrNull() ?: return
+        // The group counts dollars (2026-11-07: any held coin can be paid): a dollar stablecoin's own minor units, any
+        // other coin's value at the price it was paid at. One the wallet couldn't price isn't counted.
+        val symbol = event.amount.asset
+        val dollars = symbol in DOLLAR_STABLECOINS
+        val minor = (if (dollars) event.amount.amountMinor else event.usdValueMinor)?.toLongOrNull() ?: return
+        val paid =
+            event.assetDecimals?.let { decimals ->
+                event.amount.amountMinor
+                    .toBigIntegerOrNull()
+                    ?.let { PaidCoin(symbol, decimals, it) }
+            }
+                ?: if (dollars) {
+                    event.amount.amountMinor.toBigIntegerOrNull()?.let {
+                        PaidCoin(
+                            symbol,
+                            USD_DECIMALS,
+                            it,
+                        )
+                    }
+                } else {
+                    null
+                }
         val transfer =
             WalletTransfer(
                 transferId = event.transferId,
@@ -35,6 +62,7 @@ class WalletEventHandler(private val events: ChamaEventsService) {
                 fromGroupId = event.fromGroupId,
                 toGroupId = event.toGroupId,
                 payoutRequestId = event.payoutRequestId?.let { Uuid7.parse(it) },
+                paid = paid,
             )
         val result = events.transferConfirmed(transfer)
         if (result is Resource.Error) throw DomainException(result.error, result.cause)

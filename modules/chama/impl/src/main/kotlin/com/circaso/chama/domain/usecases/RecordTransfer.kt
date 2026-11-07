@@ -60,7 +60,14 @@ class RecordTransfer(
         if (transfer.senderId !in everyone) return Resource.success(Unit)
         val now = clock.instant()
         if (!contributions.insert(
-                Contribution(transfer.transferId, chat, transfer.senderId, transfer.amountMinor, now),
+                Contribution(
+                    transfer.transferId,
+                    chat,
+                    transfer.senderId,
+                    transfer.amountMinor,
+                    now,
+                    paid = transfer.paid,
+                ),
             )
         ) {
             return Resource.success(Unit)
@@ -104,7 +111,10 @@ class RecordTransfer(
      * so the group's paid out and held stay true, and every member hears `money.updated` to reload the balance.
      */
     private suspend fun sentStraight(group: com.circaso.messaging.api.ChatId, transfer: WalletTransfer) {
-        val recorded = payouts.insert(DirectPayout(transfer.transferId, group, transfer.amountMinor, clock.instant()))
+        val recorded =
+            payouts.insert(
+                DirectPayout(transfer.transferId, group, transfer.amountMinor, clock.instant(), transfer.paid),
+            )
         if (!recorded) return
         frames.send(
             members.members(group),

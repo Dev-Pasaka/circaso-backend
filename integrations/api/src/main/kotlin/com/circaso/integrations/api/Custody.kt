@@ -73,7 +73,7 @@ interface StablecoinCustody {
     /** The user's wallets, one per chain they are on. */
     suspend fun wallets(circleUserId: String): Resource<List<CustodyWallet>>
 
-    /** The [asset] balance of one wallet, zero if it holds none. Only USDC is offered. */
+    /** The [asset] balance of one wallet, zero if it holds none. Only USDC is answered here; see [balances]. */
     suspend fun balance(
         circleUserId: String,
         walletId: String,
@@ -82,7 +82,8 @@ interface StablecoinCustody {
 
     /**
      * Every asset offered on [blockchain], as held by the wallet [walletId] on that chain: one line per offered asset,
-     * zero for one it doesn't hold, and nothing for tokens that aren't offered (anyone can send a wallet any token).
+     * zero for one it doesn't hold, then every other coin it holds above zero, as the vendor names it (anyone can send
+     * a wallet any token, so a symbol there is only a claim; the contract says which coin it is).
      */
     suspend fun balances(
         circleUserId: String,
@@ -90,7 +91,10 @@ interface StablecoinCustody {
         blockchain: String,
     ): Resource<List<AssetBalance>>
 
-    /** The challenge the user signs to send [TransferRequest.amount]; nothing moves until they do. */
+    /**
+     * The challenge the user signs to send [TransferRequest.amount], in any coin the wallet holds on the chain (its
+     * contract in [TransferRequest.tokenAddress]); nothing moves until they do.
+     */
     suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge>
 
     /**
@@ -225,10 +229,15 @@ data class TransferRequest(
     val idempotencyKey: UUID,
     /** Ours (the wallet's `transferId`), echoed back on every update so the update finds its transfer. */
     val refId: String,
+    /**
+     * The coin's contract on [blockchain] (an EVM address, a Solana mint), empty for the chain's own coin (ETH, POL,
+     * SOL), or null for the asset offered there under [amount]'s symbol (decision 2026-11-07: any held coin is sent).
+     */
+    val tokenAddress: String? = null,
 )
 
-/** One leg of a split payment: [amount] to [destinationAddress]. */
-data class PaymentLeg(val destinationAddress: String, val amount: Money) {
+/** One leg of a split payment: [amount] to [destinationAddress], in the coin [tokenAddress] names as in [TransferRequest]. */
+data class PaymentLeg(val destinationAddress: String, val amount: Money, val tokenAddress: String? = null) {
     override fun toString(): String = "PaymentLeg(***)"
 }
 
@@ -258,7 +267,10 @@ enum class PinChallenge {
     RESTORE,
 }
 
-/** One transaction as the vendor reports it, in our words. Empty text stands for a value the vendor hasn't given. */
+/**
+ * One transaction as the vendor reports it, in our words, in whatever coin it moved (2026-11-07; USDC only before).
+ * Empty text stands for a value the vendor hasn't given.
+ */
 data class CustodyTransaction(
     val circleTxId: String,
     val circleUserId: String,
@@ -280,6 +292,11 @@ data class CustodyTransaction(
     val operation: CustodyOperation = CustodyOperation.TRANSFER,
     /** The wallet is one the developer controls (Circaso's fee wallets), not a user's. */
     val developerWallet: Boolean = false,
+    /**
+     * The coin's contract on [blockchain], empty for the chain's own coin; null when there is no token (a contract
+     * call). With [amount]'s symbol it says which coin moved: a symbol alone can be anyone's token.
+     */
+    val tokenAddress: String? = null,
 )
 
 enum class CustodyOperation { TRANSFER, CONTRACT_EXECUTION }

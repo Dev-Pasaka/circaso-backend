@@ -6,6 +6,8 @@ import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -102,12 +104,21 @@ data class Transfer(
     /** The membership payment (SP13) it pays. */
     val spacePaymentId: UUID? = null,
     /** Circaso's fee, in [amount]'s asset, locked when it was prepared (phase 2F); the sender pays it on top. */
-    val feeMinor: Long = 0,
+    val feeMinor: BigInteger = BigInteger.ZERO,
     /** Circaso's fee wallet the fee goes to, in the same signature; null when there is no fee leg. */
     val feeAddress: String? = null,
+    /**
+     * The coin's contract on [blockchain], empty for the chain's own coin (2026-11-07); null on transfers prepared
+     * before, which were always the asset offered there under [amount]'s symbol.
+     */
+    val tokenAddress: String? = null,
+    /** What one whole coin was worth in US dollars when it was priced; null on transfers before 2026-11-07 (USDC, 1). */
+    val usdPrice: BigDecimal? = null,
+    /** The amount and the fee in micro-dollars at [usdPrice]: what it counts against the wallet's limits. */
+    val usdTotalMinor: Long = (amount.amountMinor + feeMinor).toLong(),
 ) {
     /** What leaves the sender's wallet: the amount and the fee. The payee gets exactly [amount]. */
-    val totalMinor: Long get() = amount.amountMinor + feeMinor
+    val totalMinor: BigInteger get() = amount.amountMinor + feeMinor
 
     /** The person who signed it. */
     val signer: UserId get() = signerId ?: senderId
@@ -177,7 +188,8 @@ data class TransferCommand(
     val senderId: UserId,
     val blockchain: String,
     val payee: Payee,
-    val amount: Money,
+    /** As the request named it; the coin and its decimals are found on the chain ([PaymentPlan.amount]). */
+    val amount: RequestedAmount,
     val chatId: ChatId?,
     val proposalId: UUID?,
     val idempotencyKey: UUID,
@@ -187,7 +199,56 @@ data class TransferCommand(
     val quoteId: UUID? = null,
     /** A membership payment (SP13) this pays: the amount and the space must be exactly its own. */
     val spacePaymentId: UUID? = null,
-)
+) {
+    constructor(
+        senderId: UserId,
+        blockchain: String,
+        payee: Payee,
+        amount: Money,
+        chatId: ChatId?,
+        proposalId: UUID?,
+        idempotencyKey: UUID,
+        walletId: WalletId? = null,
+        payoutRequestId: UUID? = null,
+        quoteId: UUID? = null,
+        spacePaymentId: UUID? = null,
+    ) : this(
+        senderId,
+        blockchain,
+        payee,
+        RequestedAmount.of(amount),
+        chatId,
+        proposalId,
+        idempotencyKey,
+        walletId,
+        payoutRequestId,
+        quoteId,
+        spacePaymentId,
+    )
+}
+
+/**
+ * An amount as a payment request names it (W4, W17): a coin by its [symbol] (upper case), and its [minor] units or
+ * [whole] coins, or both when they agree. Which coin it is, and so its decimals, the wallet finds on the chain.
+ */
+data class RequestedAmount(val symbol: String, val minor: BigInteger?, val whole: BigDecimal?) {
+    /** The amount in a coin of [decimals] minor-unit digits; null when [whole] has more, or the two disagree. */
+    fun minorIn(decimals: Int): BigInteger? {
+        val fromWhole =
+            whole?.let {
+                runCatching { it.movePointRight(decimals).stripTrailingZeros().toBigIntegerExact() }.getOrNull()
+                    ?: return null
+            }
+        if (minor != null && fromWhole != null && minor != fromWhole) return null
+        return minor ?: fromWhole
+    }
+
+    override fun toString(): String = "RequestedAmount($symbol, ***)"
+
+    companion object {
+        fun of(money: Money) = RequestedAmount(money.asset.symbol, money.amountMinor, null)
+    }
+}
 
 /**
  * W4's answer: the transfer, and the challenge to sign while it awaits a signature. [challengeId] is null once the

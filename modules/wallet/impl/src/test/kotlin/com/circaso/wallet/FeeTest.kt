@@ -82,11 +82,11 @@ class FeeTest {
             ready()
             val quote = quoteBob(100 * usdc)
 
-            assertEquals(500_000L, quote.fee.amountMinor, "0.5 % of 100 USDC")
+            assertEquals(500_000.toBigInteger(), quote.fee.amountMinor, "0.5 % of 100 USDC")
             assertEquals(50, quote.fee.rateBps)
             assertFalse(quote.fee.minimum)
             assertEquals(FeeKind.INTERNAL, quote.fee.parties.kind)
-            assertEquals(100_500_000L, quote.totalMinor, "the sender pays on top")
+            assertEquals(100_500_000.toBigInteger(), quote.totalMinor, "the sender pays on top")
             assertNotNull(quote.quoteId, "the person who signs gets a hold")
             assertEquals(h.clock.instant().plus(Duration.ofMinutes(15)), quote.expiresAt)
             assertNull(quote.problem)
@@ -99,10 +99,10 @@ class FeeTest {
             ready()
             val quote = quoteBob(usdc)
 
-            assertEquals(50_000L, quote.fee.amountMinor, "5 cents, not the 0.5 cent the rate gives")
+            assertEquals(50_000.toBigInteger(), quote.fee.amountMinor, "5 cents, not the 0.5 cent the rate gives")
             assertTrue(quote.fee.minimum)
             assertEquals(10_000L, quote.fee.gasMinor, "one cent of gas, booked for the reports")
-            assertTrue(quote.fee.gasMinor!! * 4 <= quote.fee.amountMinor)
+            assertTrue((quote.fee.gasMinor!! * 4).toBigInteger() <= quote.fee.amountMinor)
         }
 
     @Test
@@ -110,7 +110,7 @@ class FeeTest {
         runBlocking<Unit> {
             ready()
             val outside = h.quote(amina, Payee.Address("0x" + "1234567890".repeat(4)), 100 * usdc).data()
-            assertEquals(2_000_000L, outside.fee.amountMinor)
+            assertEquals(2_000_000.toBigInteger(), outside.fee.amountMinor)
             assertEquals(FeeKind.EXTERNAL, outside.fee.parties.kind)
             assertNull(outside.fee.parties.receiverType)
 
@@ -125,7 +125,7 @@ class FeeTest {
             h.custody.sign(h.circleUserOf(group.holder))
             h.sync.sync(h.wallets.circleUser(group.holder)!!).data()
             val contribution = h.quote(amina, Payee.Group(chat), 100 * usdc).data()
-            assertEquals(1_000_000L, contribution.fee.amountMinor)
+            assertEquals(1_000_000.toBigInteger(), contribution.fee.amountMinor)
             assertEquals(WalletOwnerType.GROUP, contribution.fee.parties.receiverType)
         }
 
@@ -142,7 +142,7 @@ class FeeTest {
 
             val quote = quoteBob(usdc)
 
-            assertEquals(0L, quote.fee.amountMinor)
+            assertEquals(0.toBigInteger(), quote.fee.amountMinor)
             assertFalse(quote.fee.minimum)
             assertEquals(0, h.custody.count("estimateSplit"), "nothing to estimate for a free payment")
         }
@@ -162,7 +162,7 @@ class FeeTest {
 
             rules.fees.replaceAll { it.copy(effectiveTo = h.clock.instant()) }
             val none = quoteBob(100 * usdc).fee
-            assertEquals(0L, none.amountMinor)
+            assertEquals(0.toBigInteger(), none.amountMinor)
             assertEquals(NoFeeReason.NO_RULE, none.reason)
         }
 
@@ -175,7 +175,7 @@ class FeeTest {
             rules.fees.removeIf { it.blockchain == "SOL-DEVNET" }
 
             val quote = quoteBob(10 * usdc, "SOL-DEVNET")
-            assertEquals(0L, quote.fee.amountMinor)
+            assertEquals(0.toBigInteger(), quote.fee.amountMinor)
             assertEquals(NoFeeReason.NO_SPLIT, quote.fee.reason)
             assertEquals(listOf("SOL-DEVNET" to "NO_SPLIT"), h.warnings.feesNotTaken, "a rule asked for a fee there")
 
@@ -192,7 +192,7 @@ class FeeTest {
 
             val quote = quoteBob(100 * usdc)
 
-            assertEquals(0L, quote.fee.amountMinor)
+            assertEquals(0.toBigInteger(), quote.fee.amountMinor)
             assertEquals(NoFeeReason.NO_FEE_WALLET, quote.fee.reason)
         }
 
@@ -206,8 +206,8 @@ class FeeTest {
 
             val prepared = payBob(100 * usdc, quote.quoteId).data()
 
-            assertEquals(500_000L, prepared.transfer.feeMinor)
-            assertEquals(100_500_000L, prepared.transfer.totalMinor)
+            assertEquals(500_000.toBigInteger(), prepared.transfer.feeMinor)
+            assertEquals(100_500_000.toBigInteger(), prepared.transfer.totalMinor)
             assertNotNull(prepared.challengeId)
             assertEquals(50, prepared.fee?.rateBps)
             assertTrue(h.custody.transfers.isEmpty(), "not a plain transfer")
@@ -218,7 +218,7 @@ class FeeTest {
                 listOf(bobs to 100 * usdc, FakeFeeConfig.FEE_WALLET to 500_000L),
                 batch.legs.map {
                     it.destinationAddress to
-                        it.amount.amountMinor
+                        it.amount.amountMinor.toLong()
                 },
             )
             assertEquals(h.walletOn(amina).address, batch.walletAddress, "the batch runs on the sender's own wallet")
@@ -238,7 +238,7 @@ class FeeTest {
 
             val prepared = payBob(100 * usdc, quote.quoteId).data()
 
-            assertEquals(500_000L, prepared.transfer.feeMinor, "the fee the person saw")
+            assertEquals(500_000.toBigInteger(), prepared.transfer.feeMinor, "the fee the person saw")
         }
 
     @Test
@@ -254,7 +254,7 @@ class FeeTest {
             assertTrue((h.transfers as MemoryTransferRepository).rows.isEmpty(), "nothing was prepared")
 
             val again = payBob(100 * usdc, UUID.fromString(refused.field("quoteId"))).data()
-            assertEquals(500_000L, again.transfer.feeMinor)
+            assertEquals(500_000.toBigInteger(), again.transfer.feeMinor)
         }
 
     @Test
@@ -298,10 +298,10 @@ class FeeTest {
             val quote = quoteBob(100 * usdc)
 
             assertEquals(QuoteProblem.INSUFFICIENT_FUNDS, quote.problem)
-            val max = quote.maxAmountMinor
+            val max = quote.maxAmountMinor.toLong()
             assertTrue(max in 99 * usdc..100 * usdc)
-            assertTrue(max + quoteBob(max).fee.amountMinor <= 100 * usdc, "the largest whose total fits")
-            assertTrue(max + 1 + quoteBob(max + 1).fee.amountMinor > 100 * usdc)
+            assertTrue(max + quoteBob(max).fee.amountMinor.toLong() <= 100 * usdc, "the largest whose total fits")
+            assertTrue(max + 1 + quoteBob(max + 1).fee.amountMinor.toLong() > 100 * usdc)
 
             val refused = payBob(100 * usdc, quote.quoteId)
             assertEquals("wallet.insufficient_funds", refused.code())
@@ -395,7 +395,8 @@ class FeeTest {
                 h
                     .quote(amina, outside, 100 * usdc)
                     .data()
-                    .fee.amountMinor,
+                    .fee.amountMinor
+                    .toLong(),
             )
             assertEquals(200 * usdc, h.fees.pricingFor(h, amina, outside, 20_000 * usdc), "at most 200 dollars")
         }
@@ -420,5 +421,5 @@ private suspend fun com.circaso.wallet.domain.support.FeeCalculator.pricingFor(
                 .Destination(null, payee.address.lowercase()),
             com.circaso.shared.Money(amount, com.circaso.shared.Asset.USDC),
         ).data()
-    return pricing.feeFor(amount).amountMinor
+    return pricing.feeFor(amount).amountMinor.toLong()
 }

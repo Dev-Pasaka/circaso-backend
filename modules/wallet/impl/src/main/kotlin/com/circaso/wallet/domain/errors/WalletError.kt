@@ -74,6 +74,36 @@ sealed class WalletError(
         ErrorKind.INVALID,
     )
 
+    /**
+     * The coin named isn't one the wallet holds above zero on the payment's chain (2026-11-07: any held coin can be
+     * paid, on the chain that holds it). Not used for an asset offered on the chain, which is just a zero balance.
+     */
+    data object AssetNotHeld : WalletError(
+        "wallet.asset_not_held",
+        "Your wallet doesn't hold that coin on this blockchain.",
+        ErrorKind.INVALID,
+    )
+
+    /**
+     * The coin has no price right now (the price feed is off or down, or it is a token we can't vouch for), so its fee
+     * and limits, which are in US dollars, can't be worked out; nothing is sent (2026-11-07).
+     */
+    data object AssetUnpriced : WalletError(
+        "wallet.asset_unpriced",
+        "That coin can't be sent right now because we can't get its price. Try again in a little while.",
+        ErrorKind.CONFLICT,
+    )
+
+    /**
+     * The coin is held and priced, but the custody provider can't send it on this chain (for example, the chain's own
+     * coin where it can't be paid with the fee in one signature).
+     */
+    data object AssetNotSupported : WalletError(
+        "wallet.asset_not_supported",
+        "That coin can't be sent from Circaso on this blockchain yet.",
+        ErrorKind.INVALID,
+    )
+
     data object InsufficientFunds : WalletError(
         "wallet.insufficient_funds",
         "Your wallet doesn't hold enough on that blockchain.",
@@ -84,7 +114,8 @@ sealed class WalletError(
      * Over a limit rule (§7a). `details.fields` carries the numbers, each `{field, problem}` pair a name and its
      * value: `limit` (`PER_PAYMENT` or `DAILY`), `limitMinor`, `usedMinor`, `leftMinor`, `maxAmountMinor` (the most
      * that fits with its fee), `resetsAt` (when this payment fits; absent when it never can) and `moreAt` (when more
-     * becomes available), amounts in USDC minor units.
+     * becomes available). The limit amounts (`limitMinor`, `usedMinor`, `leftMinor`) are micro-dollars (USD, 6
+     * decimals) whatever the coin (2026-11-07); `maxAmountMinor` is in the payment's coin, as before for USDC.
      */
     class LimitExceeded(details: ErrorDetails? = null) :
         WalletError(

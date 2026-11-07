@@ -102,9 +102,30 @@ class MappersTest {
 
     @Test
     fun `W4 amounts are strings - amountMinor exact, amount in whole units, or both when they agree`() {
-        assertEquals(20_000_000, transfer(AmountRequest("USDC", amountMinor = "20000000")).data().amount.amountMinor)
-        assertEquals(20_500_000, transfer(AmountRequest("usdc", amount = "20.5")).data().amount.amountMinor)
-        assertEquals(1, transfer(AmountRequest("USDC", "1", "0.000001")).data().amount.amountMinor)
+        assertEquals(
+            20_000_000L,
+            transfer(AmountRequest("USDC", amountMinor = "20000000"))
+                .data()
+                .amount
+                .minorIn(6)
+                ?.toLong(),
+        )
+        assertEquals(
+            20_500_000L,
+            transfer(AmountRequest("usdc", amount = "20.5"))
+                .data()
+                .amount
+                .minorIn(6)
+                ?.toLong(),
+        )
+        assertEquals(
+            1L,
+            transfer(AmountRequest("USDC", "1", "0.000001"))
+                .data()
+                .amount
+                .minorIn(6)
+                ?.toLong(),
+        )
 
         assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", "2", "0.000001")).code(), "disagree")
         assertEquals("wallet.amount_invalid", transfer(AmountRequest("USDC", amount = "0.0000001")).code())
@@ -114,7 +135,12 @@ class MappersTest {
             "wallet.amount_invalid",
             transfer(AmountRequest("USDC", amountMinor = "99999999999999999999")).code(),
         )
-        assertEquals("wallet.amount_invalid", transfer(AmountRequest("DOGE", amountMinor = "1")).code())
+        // Any coin by its symbol (2026-11-07): which one it is, and whether it is held, is found on the chain.
+        assertEquals("DOGE", transfer(AmountRequest("doge", amountMinor = "1")).data().amount.symbol)
+        assertEquals(
+            BigInteger.TEN.pow(19),
+            transfer(AmountRequest("ETH", amountMinor = "10000000000000000000")).data().amount.minor,
+        )
         assertEquals("request.malformed", transfer(AmountRequest("USDC")).code())
     }
 

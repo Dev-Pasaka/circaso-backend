@@ -117,10 +117,13 @@ class SplitSettlementTest {
         if (payeeOnCircle) {
             h.custody.recordLeg(
                 txHash,
-                leg(transfer.destinationAddress, transfer.amount.amountMinor, h.walletOn(bob).circleWalletId),
+                leg(transfer.destinationAddress, transfer.amount.amountMinor.toLong(), h.walletOn(bob).circleWalletId),
             )
         }
-        h.custody.recordLeg(txHash, leg(FakeFeeConfig.FEE_WALLET, transfer.feeMinor, "d4eac6e0-fee", developer = true))
+        h.custody.recordLeg(
+            txHash,
+            leg(FakeFeeConfig.FEE_WALLET, transfer.feeMinor.toLong(), "d4eac6e0-fee", developer = true),
+        )
     }
 
     private fun stored(transfer: Transfer) =
@@ -216,7 +219,10 @@ class SplitSettlementTest {
             ready()
             val transfer = pay(Payee.Person(bob), 7_699_911)
 
-            h.applyUpdate(leg(FakeFeeConfig.FEE_WALLET, transfer.feeMinor, "d4eac6e0-fee", developer = true)).data()
+            h
+                .applyUpdate(
+                    leg(FakeFeeConfig.FEE_WALLET, transfer.feeMinor.toLong(), "d4eac6e0-fee", developer = true),
+                ).data()
 
             assertTrue(h.warnings.unknownWallets.isEmpty())
             assertEquals(TransferState.AWAITING_SIGNATURE, stored(transfer).state)

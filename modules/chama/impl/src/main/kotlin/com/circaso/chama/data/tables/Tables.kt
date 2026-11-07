@@ -33,6 +33,11 @@ object ContributionsTable : Table("chama.contributions") {
     val asset = text("asset")
     val at = timestamp("at")
     val legacy = bool("legacy").default(false)
+
+    /** V4 (2026-11-07): the coin actually paid; [amountMinor] is its value in dollars. */
+    val paidAsset = text("paid_asset").nullable()
+    val paidDecimals = short("paid_decimals").nullable()
+    val paidAmountMinor = decimal("paid_amount_minor", 78, 0).nullable()
     override val primaryKey = PrimaryKey(transferId)
 }
 
@@ -46,6 +51,11 @@ object DirectPayoutsTable : Table("chama.direct_payouts") {
     val amountMinor = long("amount_minor")
     val asset = text("asset")
     val at = timestamp("at")
+
+    /** V4 (2026-11-07): the coin actually sent; [amountMinor] is its value in dollars. */
+    val paidAsset = text("paid_asset").nullable()
+    val paidDecimals = short("paid_decimals").nullable()
+    val paidAmountMinor = decimal("paid_amount_minor", 78, 0).nullable()
     override val primaryKey = PrimaryKey(transferId)
 }
 

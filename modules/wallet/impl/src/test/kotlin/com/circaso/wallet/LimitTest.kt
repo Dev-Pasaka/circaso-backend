@@ -93,7 +93,7 @@ class LimitTest {
         runBlocking<Unit> {
             val owner = group()
             val first = signed(payOut(owner, 10 * usdc))
-            assertEquals(100_000L, first.feeMinor, "1 % from a group wallet")
+            assertEquals(100_000.toBigInteger(), first.feeMinor, "1 % from a group wallet")
             h.clock.advance(Duration.ofHours(1))
             signed(payOut(owner, 10 * usdc))
 
