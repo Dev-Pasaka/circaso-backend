@@ -35,6 +35,11 @@ interface Config {
             it.toIntOrNull() ?: throw IllegalStateException("Configuration '$key' must be a number (was '$it')")
         } ?: default
 
+    fun long(key: String, default: Long): Long =
+        string(key)?.let {
+            it.toLongOrNull() ?: throw IllegalStateException("Configuration '$key' must be a number (was '$it')")
+        } ?: default
+
     fun boolean(key: String, default: Boolean): Boolean =
         string(key)?.let {
             when (it.lowercase()) {

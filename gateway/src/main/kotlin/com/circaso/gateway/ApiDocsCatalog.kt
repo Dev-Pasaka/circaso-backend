@@ -258,7 +258,7 @@ internal object ApiDocsCatalog {
                             "its own AES-256-GCM key and uploads the ciphertext straight to storage through a " +
                             "pre-signed URL. The key and digest travel only inside the end-to-end encrypted " +
                             "message, so the server never sees what a file holds.\n\n" +
-                            "- **Start** an upload (up to 32 MiB of ciphertext), PUT it, then **complete** it; " +
+                            "- **Start** an upload (up to 100 MiB of ciphertext), PUT it, then **complete** it; " +
                             "the server checks the size.\n" +
                             "- Anyone currently in the chat can **download** it through a 15-minute link.\n" +
                             "- Files are deleted 30 days after the upload started, or after a day if never " +

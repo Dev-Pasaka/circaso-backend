@@ -62,8 +62,9 @@ private fun Route.prepareRoute(attachments: AttachmentService) {
         listOf("messaging.chat_not_found", "messaging.attachment_too_large", MALFORMED),
         notes =
             "$SCOPE Members of the chat only. `kind` is `image`, `voice`, `video` or `file`; `sizeBytes` is the " +
-                "exact size of the ciphertext, 1 byte to 32 MiB. PUT the ciphertext to `uploadUrl` with exactly " +
-                "`uploadHeaders` before `expiresAt` (15 minutes), then call AT2. The file is deleted 30 days " +
+                "exact size of the ciphertext, 1 byte to 100 MiB. PUT the ciphertext to `uploadUrl` with exactly " +
+                "`uploadHeaders` (one PUT, streamed from a file) starting before `expiresAt` (an hour), " +
+                "then call AT2. The file is deleted 30 days " +
                 "after this call, or after a day if never completed.",
     )
 }
