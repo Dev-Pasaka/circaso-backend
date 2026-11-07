@@ -36,6 +36,19 @@ object ContributionsTable : Table("chama.contributions") {
     override val primaryKey = PrimaryKey(transferId)
 }
 
+/**
+ * Money the group wallet's owner sent straight from it (decision 2026-11-06: no request), once per transfer, so what
+ * the group paid out and still holds stays true. A payout for a request is counted on its request instead.
+ */
+object DirectPayoutsTable : Table("chama.direct_payouts") {
+    val transferId = javaUUID("transfer_id")
+    val chatId = javaUUID("chat_id")
+    val amountMinor = long("amount_minor")
+    val asset = text("asset")
+    val at = timestamp("at")
+    override val primaryKey = PrimaryKey(transferId)
+}
+
 /** Who approves the group's payouts (decision 2026-11-03); no row means the default, two admins. */
 object GroupSettingsTable : Table("chama.group_settings") {
     val chatId = javaUUID("chat_id")

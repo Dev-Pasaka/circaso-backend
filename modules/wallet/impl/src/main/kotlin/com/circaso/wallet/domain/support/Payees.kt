@@ -145,8 +145,9 @@ class Payees(
     ): Resource<Destination> {
         if (recipient == sender) return Resource.error(WalletError.SelfTransfer)
         support.refusal(recipient)?.let { return it }
-        // A group wallet's payee was approved by the group's admins; the signer still has to be able to reach them.
-        if (!canReach(actor, recipient, chatId)) return Resource.error(WalletError.NotReachable)
+        // From a group wallet the signer pays whoever they choose (decision 2026-11-06), but still only someone they
+        // can reach; themselves always (the group's money to their own wallet).
+        if (recipient != actor && !canReach(actor, recipient, chatId)) return Resource.error(WalletError.NotReachable)
         val receiving = receiving(recipient)
         if (receiving.active.isEmpty()) return Resource.error(WalletError.RecipientNoWallet)
         val wallet =

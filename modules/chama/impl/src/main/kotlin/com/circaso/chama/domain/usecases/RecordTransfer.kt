@@ -5,6 +5,7 @@ import com.circaso.chama.api.MoneyUpdatedFrame
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.api.RequestPaid
 import com.circaso.chama.domain.models.Contribution
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.models.WalletTransfer
@@ -12,6 +13,7 @@ import com.circaso.chama.domain.ports.ChamaFrame
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.support.Amounts
@@ -29,7 +31,8 @@ import java.time.Clock
  * has a target); a payment out of the group's wallet for an approved request (W4 `payoutRequestId`, or one linked by
  * CH6) moves that request to `PAID`. Either way every member gets `money.updated` (2026-11-04), target or not, so the
  * group's balance and target move live on every phone. Safe to run twice: a contribution is recorded once per transfer, and a request
- * moves only from `APPROVED`.
+ * moves only from `APPROVED`. Money the wallet's owner sent straight from it (decision 2026-11-06, no request) is
+ * recorded once as a direct payout, and every member hears `money.updated` with `PAYOUT`.
  */
 class RecordTransfer(
     private val members: Members,
@@ -40,6 +43,7 @@ class RecordTransfer(
     private val requestFrames: RequestFrames,
     private val outbox: ChamaOutbox,
     private val bus: EventBus,
+    private val payouts: DirectPayoutRepository,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(transfer: WalletTransfer): Resource<Unit> {
@@ -47,9 +51,11 @@ class RecordTransfer(
             paid(request, transfer)
             return Resource.success(Unit)
         }
+        transfer.fromGroupId?.let { group ->
+            sentStraight(group, transfer)
+            return Resource.success(Unit)
+        }
         val chat = transfer.toGroupId ?: return Resource.success(Unit)
-        // A payment between two group wallets is no member's contribution.
-        if (transfer.fromGroupId != null) return Resource.success(Unit)
         val everyone = members.members(chat)
         if (transfer.senderId !in everyone) return Resource.success(Unit)
         val now = clock.instant()
@@ -90,6 +96,25 @@ class RecordTransfer(
             ),
         )
         return Resource.success(Unit)
+    }
+
+    /**
+     * Decision 2026-11-06: the wallet's owner sent money straight from the group's wallet (to a member, themselves,
+     * anyone, or an outside address; to another group's wallet too, which is no member's contribution). Recorded once,
+     * so the group's paid out and held stay true, and every member hears `money.updated` to reload the balance.
+     */
+    private suspend fun sentStraight(group: com.circaso.messaging.api.ChatId, transfer: WalletTransfer) {
+        val recorded = payouts.insert(DirectPayout(transfer.transferId, group, transfer.amountMinor, clock.instant()))
+        if (!recorded) return
+        frames.send(
+            members.members(group),
+            ChamaFrame.MoneyUpdated(
+                group,
+                transfer.transferId.value.toString(),
+                MoneyUpdatedFrame.PAYOUT,
+                Amounts.usdc(transfer.amountMinor),
+            ),
+        )
     }
 
     /** The request this transfer pays: the one W4 named, if it leaves that request's group, or one CH6 linked. */

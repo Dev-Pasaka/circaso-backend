@@ -5,6 +5,7 @@ import com.circaso.chama.domain.models.ChamaView
 import com.circaso.chama.domain.models.GroupMoney
 import com.circaso.chama.domain.models.LedgerEntry
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -26,7 +27,11 @@ class ChamaViews(
     private val requests: RequestRepository,
     private val wallets: Wallets,
     private val settings: SettingsRepository,
+    private val payouts: DirectPayoutRepository,
 ) {
+    /** Paid out for approved requests, and sent straight by the wallet's owner (decision 2026-11-06). */
+    private suspend fun paidOut(chatId: ChatId): Long = requests.paidOutTotal(chatId) + payouts.total(chatId)
+
     suspend fun view(userId: UserId, chatId: ChatId): Resource<ChamaView> {
         val everyone =
             when (val r = members.requireMember(chatId, userId)) {
@@ -36,7 +41,7 @@ class ChamaViews(
         val goal = goals.find(chatId) ?: return Resource.error(ChamaError.NoGoal)
         val towards = contributions.totals(chatId, since = goal.createdAt)
         val all = contributions.totals(chatId).values.sum()
-        val paidOut = requests.paidOutTotal(chatId)
+        val paidOut = paidOut(chatId)
         val admins = members.admins(chatId)
         val wallet = wallets.groupWallet(chatId)
         return Resource.success(
@@ -77,7 +82,7 @@ class ChamaViews(
                 contributedMinor = towards.values.sum(),
                 myContributedMinor = towards[userId] ?: 0,
                 contributorsMinor = towards,
-                paidOutMinor = requests.paidOutTotal(chatId),
+                paidOutMinor = paidOut(chatId),
                 openRequests = requests.open(chatId),
                 isAdmin = userId in members.admins(chatId),
                 isOwner = members.owner(chatId) == userId,
