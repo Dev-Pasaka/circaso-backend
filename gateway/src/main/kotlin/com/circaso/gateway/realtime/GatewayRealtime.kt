@@ -70,7 +70,10 @@ class GatewayRealtime(
     private val voip: VoipPushGateway,
 ) : Realtime {
     override suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope): Resource<Unit> {
-        if (hub.deliver(userId, envelope)) return Resource.success(Unit)
+        if (hub.deliver(userId, envelope)) {
+            ringIphoneWithSocket(userId, envelope)
+            return Resource.success(Unit)
+        }
         val message = pushFor(envelope, userId) ?: return Resource.success(Unit)
         pushTo(userId, message)
         return Resource.success(Unit)
@@ -83,6 +86,10 @@ class GatewayRealtime(
         if (candidates.isEmpty()) return Resource.success(Unit)
         val offline = hub.withoutSocket(candidates.map { it.first }).toSet()
         val pushes = candidates.filter { (userId, _) -> userId in offline }
+        candidates
+            .filter { (userId, _) ->
+                userId !in offline
+            }.forEach { (userId, _) -> ringIphoneWithSocket(userId, envelope) }
         pushes.chunked(PUSH_BATCH).forEach { batch ->
             coroutineScope {
                 batch.map { (userId, message) -> async { pushTo(userId, message) } }.awaitAll()
@@ -98,6 +105,23 @@ class GatewayRealtime(
         val token = target.token ?: return
         val result = push.send(PushTarget(platform, token), message)
         if (result is Resource.Error) log.warn("push failed: code={}", result.error.code)
+    }
+
+    /**
+     * A ring also goes as a VoIP push to an iPhone that still has a socket open (decision 2026-11-08): iOS suspends
+     * an app seconds after it leaves the screen, but its socket can look open here until the ping times out, so the
+     * frame alone would ring nothing. The app reports the push to CallKit and treats the frame for the same call as
+     * the same ring. Android keeps ringing from the frame, and from FCM only when offline.
+     */
+    private suspend fun ringIphoneWithSocket(userId: UserId, envelope: RealtimeEnvelope) {
+        if ("${envelope.module}.${envelope.type}" != "${CallFrames.MODULE}.${CallFrames.RINGING}" ||
+            !voip.enabled
+        ) {
+            return
+        }
+        val message = pushFor(envelope, userId) ?: return
+        val target = registrations.pushTarget(userId) ?: return
+        if (target.platform.equals("ios", ignoreCase = true)) rangByVoip(userId, target.voipToken, message)
     }
 
     /**

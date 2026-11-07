@@ -1019,6 +1019,28 @@ class SocketHubTest {
         }
 
     @Test
+    fun `an iPhone whose socket still looks open rings through VoIP too, since iOS may have suspended it`() =
+        testApplication {
+            val push = RecordingPush()
+            val voip = RecordingVoip(VoipPushResult.SENT)
+            val hub = hub()
+            serve(hub)
+            val realtime = GatewayRealtime(hub, push, IphoneRegistrations(), voip)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                realtime.deliver(user, ringing(CallId.new(), UserId.new()))
+
+                assertEquals(1, voip.rang.size, "a VoIP ring alongside the frame")
+                assertTrue(push.sent.isEmpty(), "no FCM push to a phone with a socket")
+                // Anything that isn't a ring is the frame alone.
+                realtime.deliver(user, frame(5))
+                assertEquals(1, voip.rang.size)
+            }
+        }
+
+    @Test
     fun `a PushKit token APNs refuses is forgotten and the ring falls back to FCM`() =
         runBlocking {
             val push = RecordingPush()
