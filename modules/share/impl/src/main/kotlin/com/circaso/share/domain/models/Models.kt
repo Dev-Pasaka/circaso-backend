@@ -138,8 +138,8 @@ data class LinkCursor(val createdAt: Instant, val code: ShareCode)
 sealed interface PageLookup {
     data class Live(val link: ShareLink) : PageLookup
 
-    /** Revoked or past its end. */
-    data object Gone : PageLookup
+    /** Revoked by its sharer ([isRevoked]) or past the end they set; the page says which. */
+    data class Gone(val isRevoked: Boolean) : PageLookup
 
     data object Missing : PageLookup
 

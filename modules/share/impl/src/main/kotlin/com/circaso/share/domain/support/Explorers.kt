@@ -21,6 +21,20 @@ object Explorers {
         }
     }
 
+    /** The explorer's own name for [transactionUrl]'s page ("Basescan"), or null for a chain without one. */
+    fun explorerName(blockchain: String): String? {
+        val up = blockchain.uppercase()
+        return when {
+            up.startsWith("BASE") -> "Basescan"
+            up.startsWith("ETH") -> "Etherscan"
+            up.startsWith("MATIC") -> "Polygonscan"
+            up.startsWith("ARB") -> "Arbiscan"
+            up.startsWith("AVAX") -> "Snowtrace"
+            up.startsWith("SOL") -> "Solana Explorer"
+            else -> null
+        }
+    }
+
     /** "Base", "Base (testnet)": the name people know a chain by. */
     fun chainName(blockchain: String): String {
         val up = blockchain.uppercase()
