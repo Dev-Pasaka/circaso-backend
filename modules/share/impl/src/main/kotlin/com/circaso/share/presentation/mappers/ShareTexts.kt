@@ -72,6 +72,14 @@ object ShareTexts {
     /** USDC with thousands separators and at least two decimals: "1,250.50". */
     fun usdc(amount: BigDecimal): String = USDC_FORMAT.get().format(amount)
 
+    /** A fiat amount as the app's money cards round it: whole units from 100 up ("25,865"), else cents ("6.45"). */
+    fun fiatRounded(amount: BigDecimal): String =
+        if (amount.abs() >= HUNDRED) {
+            WHOLE.get().format(amount.setScale(0, java.math.RoundingMode.HALF_UP))
+        } else {
+            MONEY.get().format(amount)
+        }
+
     /** "2,000.00": a fiat amount without its currency, for pages that set the code apart. */
     fun moneyNumber(amount: BigDecimal): String = MONEY.get().format(amount)
 
@@ -89,6 +97,8 @@ object ShareTexts {
 
     private val SYMBOLS = DecimalFormatSymbols(Locale.US)
     private val MONEY = ThreadLocal.withInitial { DecimalFormat("#,##0.00", SYMBOLS) }
+    private val WHOLE = ThreadLocal.withInitial { DecimalFormat("#,##0", SYMBOLS) }
+    private val HUNDRED = BigDecimal(100)
     private val USDC_FORMAT = ThreadLocal.withInitial { DecimalFormat("#,##0.00####", SYMBOLS) }
     private val DATE_TIME =
         DateTimeFormatter

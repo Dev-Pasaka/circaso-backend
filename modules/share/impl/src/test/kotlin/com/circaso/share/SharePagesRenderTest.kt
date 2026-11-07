@@ -13,6 +13,7 @@ import com.circaso.share.domain.support.ShareConfig
 import com.circaso.share.presentation.controllers.sharePageController
 import com.circaso.share.presentation.mappers.Platform
 import com.circaso.share.presentation.mappers.SharePages
+import com.circaso.share.presentation.mappers.ShareTexts
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
@@ -171,14 +172,35 @@ class SharePagesRenderTest {
         assertTrue("Holiday Fund" in html && "8 members" in html && "Ends 20 Dec 2026" in html)
         assertTrue("role=\"progressbar\"" in html && "aria-valuenow=\"65\"" in html && "65% of the target" in html)
         assertTrue("stroke-dashoffset:114.36" in html, "the ring stops at 65%")
-        assertTrue("325.50 USDC" in html && "of 500.00 USDC" in html && "≈ KES 41,989.50" in html)
-        assertTrue("Paid out" in html && "In the wallet" in html)
+        assertTrue("KES 41,990" in html, "raised in fiat first, whole units from 100 up")
+        assertTrue("of KES 64,500" in html && "325.50 of 500.00 USDC" in html, "the coin under it")
+        assertTrue("Paid out" in html && "KES 6,450" in html && "50.00 USDC" in html)
+        assertTrue("In the wallet" in html && "KES 35,540" in html && "275.50 USDC" in html)
+        assertTrue("<span class=\"amount-code\">KES</span> 3,225" in html && "25.00 USDC · 12:41 UTC" in html)
+        assertFalse("≈" in html, "no approximately sign")
+        assertFalse(Regex("[+−]\\d").containsMatchIn(html.substringAfter("<body>")), "no signs on amounts")
         assertTrue("money mini in" in html && "money mini out" in html, "each line is a money card")
         assertTrue("Paid to Juma" in html && "Contribution" in html && "Food for the trip" in html)
-        val oldest = html.indexOf("+100.00")
-        val newest = html.indexOf("+25.00")
+        val oldest = html.indexOf("100.00 USDC")
+        val newest = html.indexOf("25.00 USDC ·")
         assertTrue(oldest in 0 until newest, "a chat reads oldest first")
         assertEquals(3, Regex("<li class=\"day").findAll(html).count(), "a day line where the day changes")
+    }
+
+    @Test
+    fun `without a fiat value the coin is the large figure, and fiat rounds like the app's cards`() {
+        val bare = (
+            statement(
+                listOf(StatementLine(at, true, 25_000_000, "Wanjiru", null)),
+            ).content as ShareContent.Statement
+        )
+        val html = render(link(ShareKind.STATEMENT, bare.copy(fiat = null)))
+        assertTrue("325.50 USDC" in html && "of 500.00 USDC" in html)
+        assertTrue("25.00 <span class=\"amount-code\">USDC</span>" in html)
+        assertFalse("KES" in html)
+        assertEquals("99.50", ShareTexts.fiatRounded(BigDecimal("99.5")))
+        assertEquals("100", ShareTexts.fiatRounded(BigDecimal("100.4")))
+        assertEquals("25,865", ShareTexts.fiatRounded(BigDecimal("25864.5")))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.circaso.share.presentation.mappers
 
+import com.circaso.share.domain.models.FiatRate
 import com.circaso.share.domain.models.ShareContent
 import com.circaso.share.domain.models.ShareKind
 import com.circaso.share.domain.models.ShareLink
@@ -227,27 +228,25 @@ object SharePages {
                 (s.contributedMinor.toDouble() / s.targetMinor * 100).toInt().coerceIn(0, 100)
             }
         val members = if (s.memberCount == 1) "1 member" else "${s.memberCount} members"
-        val fiat = s.fiat?.takeIf { it.currency != "USD" }
-        val inFiat: (Long) -> String? = { minor ->
-            fiat?.let { "≈ " + esc(ShareTexts.money(it.currency, Amounts.fiat(Amounts.usdc(minor), it.rate))) }
-        }
+        val shown: (Long) -> Shown = { minor -> shown(minor, s.fiat) }
         val sub = listOfNotNull(esc(members), s.deadline?.let { "Ends ${esc(ShareTexts.date(it))}" })
         val offset = String.format(Locale.US, "%.2f", RING * (100 - percent) / 100.0)
         val stats =
-            listOf(
-                Triple("Paid out", s.paidOutMinor, inFiat(s.paidOutMinor)),
-                Triple("In the wallet", s.heldMinor, inFiat(s.heldMinor)),
-            ).joinToString("") { (label, minor, approx) ->
-                "<div class=\"stat\"><dt>${esc(label)}</dt><dd><span class=\"stat-num\">${usdc(minor)} USDC</span>" +
-                    (approx?.let { "<span class=\"stat-sub\">$it</span>" }.orEmpty()) + "</dd></div>"
+            listOf("Paid out" to s.paidOutMinor, "In the wallet" to s.heldMinor).joinToString("") { (label, minor) ->
+                val money = shown(minor)
+                "<div class=\"stat\"><dt>${esc(label)}</dt><dd><span class=\"stat-num\">${esc(money.text)}</span>" +
+                    (money.coin?.let { "<span class=\"stat-sub\">${esc(it)}</span>" }.orEmpty()) + "</dd></div>"
             }
         val thread =
             if (s.lines.isEmpty()) {
                 "<li class=\"msg sys rise\"><p class=\"bubble ghost\">No money has moved yet.</p></li>"
             } else {
-                thread(s.lines, inFiat)
+                thread(s.lines, shown)
             }
-        val approx = inFiat(s.contributedMinor)?.let { "<br>$it" }.orEmpty()
+        val raised = shown(s.contributedMinor)
+        val target = shown(s.targetMinor)
+        val coinTarget = "${usdc(s.contributedMinor)} of ${usdc(s.targetMinor)} USDC"
+        val foot = if (raised.coin != null) "of ${esc(target.text)}<br>$coinTarget" else "of ${usdc(s.targetMinor)} USDC"
         return """
             <section class="group-head rise">
               <span class="avatar avatar-lg group-avatar" aria-hidden="true">${initials(s.goalName)}</span>
@@ -261,8 +260,8 @@ object SharePages {
               </div>
               <div class="goal-text">
                 <p class="money-head">Raised</p>
-                ${amount("USDC", ShareTexts.usdc(Amounts.usdc(s.contributedMinor)), prefix = false, size = "amount-m")}
-                <p class="money-foot">of ${usdc(s.targetMinor)} USDC$approx</p>
+                ${amount(raised.code, raised.number, raised.prefix, size = "amount-m")}
+                <p class="money-foot">$foot</p>
               </div>
             </article>
             <dl class="stats rise">$stats</dl>
@@ -272,8 +271,27 @@ object SharePages {
             """.trimIndent()
     }
 
+    /**
+     * A statement amount as the app's money cards show it: the sharer's fiat large ([code] [number], rounded like the
+     * cards) with the coin under it ([coin]); without a fiat value, the coin itself large and nothing under it. Never
+     * signed: the card's side and words say which way the money went.
+     */
+    private class Shown(val code: String, val number: String, val prefix: Boolean, val coin: String?) {
+        val text: String get() = if (prefix) "$code $number" else "$number $code"
+    }
+
+    private fun shown(minor: Long, fiat: FiatRate?): Shown {
+        val coin = ShareTexts.usdc(Amounts.usdc(minor))
+        return if (fiat == null) {
+            Shown("USDC", coin, prefix = false, coin = null)
+        } else {
+            val number = ShareTexts.fiatRounded(Amounts.fiat(Amounts.usdc(minor), fiat.rate))
+            Shown(fiat.currency, number, prefix = true, coin = "$coin USDC")
+        }
+    }
+
     /** Oldest first, as a chat reads, with a day line where the day changes. */
-    private fun thread(lines: List<StatementLine>, inFiat: (Long) -> String?): String {
+    private fun thread(lines: List<StatementLine>, shown: (Long) -> Shown): String {
         var day: LocalDate? = null
         return lines.sortedBy { it.at }.joinToString("") { l ->
             val today = l.at.atZone(ZoneOffset.UTC).toLocalDate()
@@ -284,23 +302,28 @@ object SharePages {
                 } else {
                     ""
                 }
-            separator + line(l, inFiat)
+            separator + line(l, shown(l.amountMinor))
         }
     }
 
     /** One line as the chat's money card: money in on titanium from its payer, a payout on the quiet card. */
-    private fun line(l: StatementLine, inFiat: (Long) -> String?): String {
-        val sign = if (l.isIncoming) "+" else "−"
-        val who = if (l.isIncoming) l.name?.let(::esc) ?: "Contribution" else l.name?.let { "Paid to ${esc(it)}" } ?: "Payout"
+    private fun line(l: StatementLine, money: Shown): String {
+        val who =
+            if (l.isIncoming) {
+                l.name?.let(::esc) ?: "Contribution"
+            } else {
+                l.name?.let { "Paid to ${esc(it)}" } ?: "Payout"
+            }
         val note = l.note?.let { "<p class=\"money-note\">${esc(it)}</p>" }.orEmpty()
-        val foot = listOfNotNull(inFiat(l.amountMinor), esc(ShareTexts.time(l.at))).joinToString(" · ")
+        val foot = listOfNotNull(money.coin?.let(::esc), esc(ShareTexts.time(l.at))).joinToString(" · ")
+        val code = "<span class=\"amount-code\">${esc(money.code)}</span>"
+        val figure = if (money.prefix) "$code ${esc(money.number)}" else "${esc(money.number)} $code"
         val card =
             "<div class=\"money mini ${if (l.isIncoming) "in" else "out"}\"><p class=\"money-head\">$who</p>" +
-                "<p class=\"mini-amount\">$sign${usdc(l.amountMinor)} <span class=\"amount-code\">USDC</span></p>" +
-                "$note<p class=\"money-foot\">$foot</p></div>"
+                "<p class=\"mini-amount\">$figure</p>$note<p class=\"money-foot\">$foot</p></div>"
         return if (l.isIncoming) {
-            "<li class=\"msg in rise\"><span class=\"avatar avatar-sm\" aria-hidden=\"true\">${initials(l.name)}</span>" +
-                "$card</li>"
+            "<li class=\"msg in rise\"><span class=\"avatar avatar-sm\" aria-hidden=\"true\">" +
+                "${initials(l.name)}</span>$card</li>"
         } else {
             "<li class=\"msg out rise\">$card</li>"
         }
