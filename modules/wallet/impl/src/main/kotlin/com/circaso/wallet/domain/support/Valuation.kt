@@ -44,11 +44,11 @@ object Valuation {
     fun fiatOf(holding: Holding, rate: UsdRate): BigDecimal? = holding.dollars()?.let { inCurrency(it, rate) }
 
     /**
-     * What an amount of a history asset is worth in the rate's currency. Every [Asset] the history records is a US
-     * dollar stablecoin, so each is priced at one dollar.
+     * What an amount of a history asset is worth in the rate's currency: a US dollar stablecoin at one dollar; any
+     * other coin (2026-11-07: any held coin is paid) has no price here, so null.
      */
-    fun fiatOf(amount: Money, rate: UsdRate): BigDecimal =
-        inCurrency(BigDecimal(BigInteger.valueOf(amount.amountMinor), amount.asset.decimals), rate)
+    fun fiatOf(amount: Money, rate: UsdRate): BigDecimal? =
+        if (amount.asset.isDollarStablecoin) inCurrency(amount.whole, rate) else null
 
     /** Rounded half up, as a person rounds: the value is shown, never paid, so there is nothing to balance. */
     private fun inCurrency(dollars: BigDecimal, rate: UsdRate): BigDecimal =

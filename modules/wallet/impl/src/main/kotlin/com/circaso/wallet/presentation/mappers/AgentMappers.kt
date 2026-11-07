@@ -32,6 +32,7 @@ import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.domain.support.Addresses
 import com.circaso.wallet.domain.support.Amounts
 import com.circaso.wallet.domain.support.Valuation
+import java.math.BigInteger
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -129,9 +130,10 @@ private fun AgentHistoryParams.filter(): Resource<HistoryFilter> {
         direction?.trim()?.uppercase()?.let { raw ->
             Direction.entries.firstOrNull { it.name == raw } ?: return malformed("direction", "is not IN or OUT")
         }
+    // Any coin the history may hold (2026-11-07), by its symbol.
     val coin =
         asset?.trim()?.uppercase()?.let { raw ->
-            Asset.entries.firstOrNull { it.name == raw } ?: return malformed("asset", "is not an asset Circaso holds")
+            raw.takeIf { SYMBOL.matches(it) } ?: return malformed("asset", "is not a coin's symbol")
         }
     val chain = blockchain?.let { chainOf(it) ?: return malformed("blockchain", "is not a blockchain name") }
     val other = counterparty?.trim()?.takeIf { it.isNotEmpty() }
@@ -198,21 +200,21 @@ fun TransactionSummary.toAgentResponse(): AgentSummaryResponse =
         totals =
             assets.map {
                 AgentFlowDto(
-                    asset = it.asset.name,
+                    asset = it.asset.symbol,
                     totalIn = whole(it.inMinor, it.asset),
                     totalOut = whole(it.outMinor, it.asset),
                     net = whole(it.inMinor - it.outMinor, it.asset),
                     countIn = it.inCount,
                     countOut = it.outCount,
-                    fiatIn = rate?.let { r -> Valuation.fiatOf(Money(it.inMinor, it.asset), r).toPlainString() },
-                    fiatOut = rate?.let { r -> Valuation.fiatOf(Money(it.outMinor, it.asset), r).toPlainString() },
+                    fiatIn = rate?.let { r -> Valuation.fiatOf(Money(it.inMinor, it.asset), r)?.toPlainString() },
+                    fiatOut = rate?.let { r -> Valuation.fiatOf(Money(it.outMinor, it.asset), r)?.toPlainString() },
                 )
             },
         topCounterparties =
             topCounterparties.map {
                 AgentCounterpartyFlowDto(
                     counterparty = it.counterparty.toAgentDto(),
-                    asset = it.asset.name,
+                    asset = it.asset.symbol,
                     totalIn = whole(it.inMinor, it.asset),
                     totalOut = whole(it.outMinor, it.asset),
                     count = it.count,
@@ -222,7 +224,7 @@ fun TransactionSummary.toAgentResponse(): AgentSummaryResponse =
             months.map {
                 AgentMonthFlowDto(
                     month = it.month.toString(),
-                    asset = it.asset.name,
+                    asset = it.asset.symbol,
                     totalIn = whole(it.inMinor, it.asset),
                     totalOut = whole(it.outMinor, it.asset),
                     count = it.count,
@@ -233,20 +235,20 @@ fun TransactionSummary.toAgentResponse(): AgentSummaryResponse =
     )
 
 /** Whole units of [asset], exact; a negative net keeps its sign. */
-private fun whole(minor: Long, asset: Asset): String =
-    if (minor < 0) "-" + Amounts.whole(Money(-minor, asset)) else Amounts.whole(Money(minor, asset))
+private fun whole(minor: BigInteger, asset: Asset): String =
+    if (minor.signum() < 0) "-" + Amounts.whole(Money(-minor, asset)) else Amounts.whole(Money(minor, asset))
 
 private fun HistoryEntry.toAgentDto(rate: UsdRate?): AgentTransactionDto =
     AgentTransactionDto(
         id = transaction.id.toString(),
         direction = transaction.direction.name,
         state = transaction.state.name,
-        asset = transaction.amount.asset.name,
+        asset = transaction.amount.asset.symbol,
         amount = Amounts.whole(transaction.amount),
         blockchain = transaction.blockchain,
         counterparty = counterparty.toAgentDto(),
         at = transaction.occurredAt.toString(),
-        fiat = rate?.let { Valuation.fiatOf(transaction.amount, it).toPlainString() },
+        fiat = rate?.let { Valuation.fiatOf(transaction.amount, it)?.toPlainString() },
         chatId = transaction.chatId?.toString(),
         transferId = transaction.transferId?.toString(),
         origin = transaction.origin.name.takeIf { transaction.direction == Direction.OUT },
@@ -256,3 +258,6 @@ private fun HistoryEntry.toAgentDto(rate: UsdRate?): AgentTransactionDto =
 private fun Counterparty.toAgentDto() = AgentCounterpartyDto(userId?.toString(), displayName, handle, address)
 
 private fun UsdRate.toAgentDto() = AgentRateDto(currency, rate.toPlainString(), asOf.toString())
+
+/** A coin's symbol as the wallet keeps it: upper case letters, digits and dots, at most 32. */
+private val SYMBOL = Regex("^[A-Z0-9.]{1,32}$")

@@ -44,6 +44,14 @@ sealed class IntegrationError(override val code: String, override val message: S
             ErrorKind.INVALID,
         )
 
+    /** Custody: the provider can't send this coin on this chain (a coin it doesn't know there). */
+    class AssetNotSupported :
+        IntegrationError(
+            "integrations.custody_asset_not_supported",
+            "The custody provider can't send this coin on this chain.",
+            ErrorKind.INVALID,
+        )
+
     /** The configured provider has no implementation yet; only placeholders return this. */
     class NotImplemented(contract: String, provider: String) :
         IntegrationError(

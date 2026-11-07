@@ -143,7 +143,12 @@ class Harness(
     val feeConfig = FakeFeeConfig()
     val limits = Limits(ruleRows, transfers, clock)
     val fees = FeeCalculator(ruleRows, custody, feeConfig, wallets, owners, warnings, clock)
-    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces)
+
+    /** Finds the coin a payment names, as in production: offered assets from configuration, others from Circle. */
+    val coins =
+        com.circaso.wallet.domain.support
+            .PaymentCoins(custody, holdings, prices)
+    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces, coins)
     private val quotes = FeeQuotes(quoteRows, clock)
     val quoter = TransferQuoter(holders, planner, quotes, clock)
     val quoteTransfer = QuoteTransfer(quoter)
@@ -233,6 +238,7 @@ class Harness(
             clock,
             feeConfig,
             SplitPayments(transfers, custody, warnings, clock),
+            custody,
         )
     val applyUpdate = ApplyCustodyUpdate(updates)
     val expireUnsigned = ExpireUnsignedTransfers(transfers, outgoing, jobs, clock)

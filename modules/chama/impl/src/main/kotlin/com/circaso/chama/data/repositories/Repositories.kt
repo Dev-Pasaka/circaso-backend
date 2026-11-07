@@ -14,6 +14,7 @@ import com.circaso.chama.domain.models.Decision
 import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
+import com.circaso.chama.domain.models.PaidCoin
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.ports.ChamaOutbox
@@ -44,7 +45,19 @@ import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.time.Instant
 
+/** The dollar unit chama counts in: `amount_minor` is micro-dollars, USDC's minor units, whatever coin was paid. */
 private const val USDC = "USDC"
+
+private fun paidOf(
+    symbol: String?,
+    decimals: Short?,
+    amountMinor: java.math.BigDecimal?,
+): PaidCoin? =
+    if (symbol == null || decimals == null || amountMinor == null) {
+        null
+    } else {
+        PaidCoin(symbol, decimals.toInt(), amountMinor.toBigIntegerExact())
+    }
 
 class GoalRepositoryImpl(private val database: Database) : GoalRepository {
     override suspend fun find(chatId: ChatId): Goal? =
@@ -100,6 +113,9 @@ class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutR
                     it[amountMinor] = payout.amountMinor
                     it[asset] = USDC
                     it[at] = payout.at
+                    it[paidAsset] = payout.paid?.symbol
+                    it[paidDecimals] = payout.paid?.decimals?.toShort()
+                    it[paidAmountMinor] = payout.paid?.amountMinor?.toBigDecimal()
                 }.insertedCount > 0
         }
 
@@ -126,6 +142,9 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
                     it[asset] = USDC
                     it[at] = contribution.at
                     it[legacy] = contribution.legacy
+                    it[paidAsset] = contribution.paid?.symbol
+                    it[paidDecimals] = contribution.paid?.decimals?.toShort()
+                    it[paidAmountMinor] = contribution.paid?.amountMinor?.toBigDecimal()
                 }.insertedCount > 0
         }
 
@@ -174,6 +193,12 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
             amountMinor = this[ContributionsTable.amountMinor],
             at = this[ContributionsTable.at],
             legacy = this[ContributionsTable.legacy],
+            paid =
+                paidOf(
+                    this[ContributionsTable.paidAsset],
+                    this[ContributionsTable.paidDecimals],
+                    this[ContributionsTable.paidAmountMinor],
+                ),
         )
 }
 

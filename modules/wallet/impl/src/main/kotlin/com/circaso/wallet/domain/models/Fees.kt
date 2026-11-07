@@ -6,13 +6,17 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.WalletOwnerType
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-// Phase 2F, fees and limits (spaces-plan §7a, §7b, decided 2026-11-03). Every asset the wallet sends is a US dollar
-// stablecoin with 6 decimals, so an amount's minor units are also micro-dollars: limits and fees in dollars are kept
-// in those units here ("…Minor").
+// Phase 2F, fees and limits (spaces-plan §7a, §7b, decided 2026-11-03). Fees and limits are priced in US dollars, kept
+// in micro-dollars ("…UsdMinor", or "…Minor" where only dollars are meant: a rule's caps and floors, the gas). A
+// payment may be in any coin the wallet holds (decision 2026-11-07): its amount and its fee are in that coin's minor
+// units, and the fee is the dollar fee converted at the coin's price, rounded up ([PaymentCoin]). For a US dollar
+// stablecoin (USDC, USDT: 6 decimals, one dollar) a minor unit is a micro-dollar, so nothing changed for them.
 
 /** Between two Circaso wallets (any owner), or to an address outside Circaso. Money arriving from outside is free. */
 enum class FeeKind { INTERNAL, EXTERNAL }
@@ -43,7 +47,8 @@ data class FeeRule(
     val senderType: WalletOwnerType?,
     val receiverType: WalletOwnerType?,
     val blockchain: String?,
-    val asset: Asset?,
+    /** A coin's symbol (`USDC`); null matches any. */
+    val asset: String?,
     val walletId: WalletId?,
     val rateBps: Int,
     val capBaseMinor: Long,
@@ -60,7 +65,7 @@ data class FeeRule(
             (senderType == null || senderType == parties.senderType) &&
             (receiverType == null || receiverType == parties.receiverType) &&
             (blockchain == null || blockchain == parties.blockchain) &&
-            (asset == null || asset == parties.asset) &&
+            (asset == null || asset == parties.asset.symbol) &&
             (walletId == null || walletId == parties.walletId)
 
     /** The most specific rule wins: a wallet override above a chain, above an asset, above owner types, above kind. */
@@ -78,7 +83,8 @@ data class FeeRule(
  * fee is zero when a rule didn't decide it.
  */
 data class Fee(
-    val amountMinor: Long,
+    /** In the payment's coin: [usdMinor] converted at [usdPrice], rounded up to the coin's minor unit. */
+    val amountMinor: BigInteger,
     val rateBps: Int,
     val minimum: Boolean,
     val ruleId: UUID?,
@@ -88,8 +94,12 @@ data class Fee(
     val parties: FeeParties,
     val feeAddress: String?,
     val reason: NoFeeReason? = null,
+    /** The fee in micro-dollars as the rule priced it; the same number as [amountMinor] for USDC and USDT. */
+    val usdMinor: Long = amountMinor.toLong(),
+    /** What one whole coin of the payment was worth in US dollars when it was priced; one for a dollar stablecoin. */
+    val usdPrice: BigDecimal = BigDecimal.ONE,
 ) {
-    val charged: Boolean get() = amountMinor > 0 && feeAddress != null
+    val charged: Boolean get() = amountMinor.signum() > 0 && feeAddress != null
 
     override fun toString(): String = "Fee(rule=$ruleId v$ruleVersion, $rateBps bps, minimum=$minimum)"
 }
@@ -134,7 +144,8 @@ data class LimitRule(
     val version: Int,
     val ownerType: WalletOwnerType?,
     val walletId: WalletId?,
-    val asset: Asset?,
+    /** A coin's symbol; null matches any. The caps are in micro-dollars whatever the coin (2026-11-07). */
+    val asset: String?,
     val perPaymentMaxMinor: Long?,
     val dailyMaxMinor: Long?,
     val window: Duration,
@@ -150,19 +161,19 @@ data class LimitRule(
     ): Boolean =
         (this.ownerType == null || this.ownerType == ownerType) &&
             (this.walletId == null || this.walletId == walletId) &&
-            (this.asset == null || this.asset == asset)
+            (this.asset == null || this.asset == asset.symbol)
 
     val specificity: Int
         get() = (if (walletId != null) 4 else 0) + (if (ownerType != null) 2 else 0) + (if (asset != null) 1 else 0)
 }
 
-/** One payment counted in a wallet's window: when it was prepared and what it takes out, fee included. */
+/** One payment counted in a wallet's window: when it was prepared and what it takes out, fee included, in micro-dollars. */
 data class Spent(val at: Instant, val totalMinor: Long)
 
 /**
- * Where a wallet stands against its limits now: what has left in the window ([usedMinor]), what may still leave
- * ([leftMinor], null without a daily cap) and when more becomes available ([moreAt], the oldest counted payment's
- * end of window).
+ * Where a wallet stands against its limits now, in micro-dollars whatever the coin (2026-11-07): what has left in the
+ * window ([usedMinor]), what may still leave ([leftMinor], null without a daily cap) and when more becomes available
+ * ([moreAt], the oldest counted payment's end of window).
  */
 data class Allowance(
     val perPaymentMaxMinor: Long?,
@@ -227,17 +238,19 @@ data class TransferQuote(
     val blockchain: String,
     val amount: Money,
     val fee: Fee,
-    val balanceMinor: Long,
-    val maxAmountMinor: Long,
+    val balanceMinor: BigInteger,
+    val maxAmountMinor: BigInteger,
     val allowance: Allowance,
     val problem: QuoteProblem?,
     val quoteId: UUID?,
     val expiresAt: Instant,
+    /** The amount and the fee in micro-dollars at [Fee.usdPrice]: what the payment counts against the limits. */
+    val totalUsdMinor: Long = (amount.amountMinor + fee.amountMinor).toLong(),
 ) {
-    val totalMinor: Long get() = amount.amountMinor + fee.amountMinor
+    val totalMinor: BigInteger get() = amount.amountMinor + fee.amountMinor
 
     /** When this payment fits the window, if it doesn't now (GW14b's "from 14:30"); null if it fits or never can. */
-    val fitsAt: Instant? get() = allowance.fitsAt(totalMinor)
+    val fitsAt: Instant? get() = allowance.fitsAt(totalUsdMinor)
 
     override fun toString(): String = "TransferQuote($blockchain, $problem)"
 }

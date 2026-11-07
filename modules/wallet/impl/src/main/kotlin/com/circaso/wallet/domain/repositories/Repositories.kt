@@ -2,6 +2,7 @@ package com.circaso.wallet.domain.repositories
 
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.EventEnvelope
+import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
@@ -145,7 +146,7 @@ interface TransferRepository {
 
     /**
      * The transfers that may have paid [recipientId]'s `IN` row (2026-11-05): from the wallet [senderWalletId] on
-     * [blockchain], of exactly [amountMinor], prepared since [createdAfter], in any state but `FAILED` (an
+     * [blockchain], of exactly [amount] (its coin and minor units), prepared since [createdAfter], in any state but `FAILED` (an
      * `AWAITING_SIGNATURE` or `EXPIRED` one too: Circle's inbound update can arrive before its outbound one moves the
      * transfer); newest first, at most [limit] (`transfers_paid_to_idx`).
      */
@@ -153,14 +154,17 @@ interface TransferRepository {
         recipientId: UserId,
         senderWalletId: String,
         blockchain: String,
-        amountMinor: Long,
+        amount: Money,
         createdAfter: Instant,
         limit: Int,
     ): List<Transfer>
 }
 
-/** A transfer counted against a limit; [awaiting] while it still awaits its signature. */
-data class CountedTransfer(val createdAt: Instant, val totalMinor: Long, val awaiting: Boolean)
+/**
+ * A transfer counted against a limit: what it takes out, fee included, in micro-dollars at its price (2026-11-07);
+ * [awaiting] while it still awaits its signature.
+ */
+data class CountedTransfer(val createdAt: Instant, val usdTotalMinor: Long, val awaiting: Boolean)
 
 /** `transactions`: the history rows, the sender's `OUT` and the recipient's `IN`. */
 interface TransactionRepository {

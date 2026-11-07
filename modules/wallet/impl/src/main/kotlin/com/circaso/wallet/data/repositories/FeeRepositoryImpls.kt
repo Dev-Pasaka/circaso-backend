@@ -1,8 +1,6 @@
 package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
-import com.circaso.shared.Asset
-import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
@@ -46,7 +44,7 @@ private const val MICRO = 6
 
 private fun ownerType(text: String?): WalletOwnerType? = text?.let { WalletOwnerType.valueOf(it) }
 
-private fun asset(text: String?): Asset? = text?.let { Asset.valueOf(it) }
+private fun asset(text: String?): String? = text?.trim()?.uppercase()?.ifEmpty { null }
 
 /** `fee_rules` and `limit_rules`: small tables read whole; the domain picks the versions in force. */
 class RuleRepositoryImpl(private val database: Database) : RuleRepository {
@@ -105,9 +103,14 @@ class FeeQuoteRepositoryImpl(private val database: Database) : FeeQuoteRepositor
                 it[signerId] = quote.signerId.value
                 it[blockchain] = quote.blockchain
                 it[payeeKey] = quote.payeeKey
-                it[amountMinor] = quote.amount.amountMinor
-                it[asset] = quote.amount.asset.name
-                it[feeMinor] = fee.amountMinor
+                it[amountMinor] = quote.amount.amountMinor.toBigDecimal()
+                it[asset] = quote.amount.asset.symbol
+                it[assetDecimals] =
+                    quote.amount.asset.decimals
+                        .toShort()
+                it[feeMinor] = fee.amountMinor.toBigDecimal()
+                it[feeUsdMinor] = fee.usdMinor
+                it[usdPrice] = fee.usdPrice
                 it[rateBps] = fee.rateBps
                 it[minimum] = fee.minimum
                 it[ruleId] = fee.ruleId
@@ -136,7 +139,8 @@ class FeeQuoteRepositoryImpl(private val database: Database) : FeeQuoteRepositor
 
     private fun ResultRow.toQuote(): FeeQuote {
         val holder = UserId(this[FeeQuotesTable.holderId])
-        val money = Money(this[FeeQuotesTable.amountMinor], Asset.valueOf(this[FeeQuotesTable.asset]))
+        val money =
+            moneyOf(this[FeeQuotesTable.amountMinor], this[FeeQuotesTable.asset], this[FeeQuotesTable.assetDecimals])
         val parties =
             FeeParties(
                 kind = FeeKind.valueOf(this[FeeQuotesTable.kind]),
@@ -155,7 +159,9 @@ class FeeQuoteRepositoryImpl(private val database: Database) : FeeQuoteRepositor
             amount = money,
             fee =
                 Fee(
-                    amountMinor = this[FeeQuotesTable.feeMinor],
+                    amountMinor = this[FeeQuotesTable.feeMinor].toBigIntegerExact(),
+                    usdMinor = this[FeeQuotesTable.feeUsdMinor],
+                    usdPrice = this[FeeQuotesTable.usdPrice].stripTrailingZeros(),
                     rateBps = this[FeeQuotesTable.rateBps],
                     minimum = this[FeeQuotesTable.minimum],
                     ruleId = this[FeeQuotesTable.ruleId],
@@ -181,9 +187,14 @@ class FeeLedgerRepositoryImpl(private val database: Database) : FeeLedgerReposit
                 it[transferId] = entry.transferId.value
                 it[holderId] = entry.holder.value
                 it[blockchain] = fee.parties.blockchain
-                it[asset] = entry.amount.asset.name
-                it[amountMinor] = entry.amount.amountMinor
-                it[feeMinor] = if (fee.charged) fee.amountMinor else 0
+                it[asset] = entry.amount.asset.symbol
+                it[assetDecimals] =
+                    entry.amount.asset.decimals
+                        .toShort()
+                it[amountMinor] = entry.amount.amountMinor.toBigDecimal()
+                it[feeMinor] = if (fee.charged) fee.amountMinor.toBigDecimal() else java.math.BigDecimal.ZERO
+                it[feeUsdMinor] = if (fee.charged) fee.usdMinor else 0
+                it[usdPrice] = fee.usdPrice
                 it[rateBps] = fee.rateBps
                 it[minimum] = fee.minimum
                 it[ruleId] = fee.ruleId
@@ -234,14 +245,17 @@ class FeeLedgerRepositoryImpl(private val database: Database) : FeeLedgerReposit
 
     private fun ResultRow.toEntry(): FeeEntry {
         val holder = UserId(this[FeeLedgerTable.holderId])
-        val money = Money(this[FeeLedgerTable.amountMinor], Asset.valueOf(this[FeeLedgerTable.asset]))
+        val money =
+            moneyOf(this[FeeLedgerTable.amountMinor], this[FeeLedgerTable.asset], this[FeeLedgerTable.assetDecimals])
         return FeeEntry(
             transferId = TransferId(this[FeeLedgerTable.transferId]),
             holder = holder,
             amount = money,
             fee =
                 Fee(
-                    amountMinor = this[FeeLedgerTable.feeMinor],
+                    amountMinor = this[FeeLedgerTable.feeMinor].toBigIntegerExact(),
+                    usdMinor = this[FeeLedgerTable.feeUsdMinor],
+                    usdPrice = this[FeeLedgerTable.usdPrice].stripTrailingZeros(),
                     rateBps = this[FeeLedgerTable.rateBps],
                     minimum = this[FeeLedgerTable.minimum],
                     ruleId = this[FeeLedgerTable.ruleId],

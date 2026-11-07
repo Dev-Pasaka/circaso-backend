@@ -85,7 +85,7 @@ class IncomingUpdates(
                     recipientId = row.userId,
                     senderWalletId = sender.circleWalletId,
                     blockchain = row.blockchain,
-                    amountMinor = row.amount.amountMinor,
+                    amount = row.amount,
                     createdAfter = change.at.minus(LOOKBACK),
                     limit = CANDIDATES,
                 ).filter { it.amount == row.amount }

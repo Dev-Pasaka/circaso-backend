@@ -97,7 +97,7 @@ class AgentValueTest {
         )
         assertMalformed(AgentFeeParams(blockchain = "BASE", toAddress = "0xabc").toCommand(amina), "amount")
         val command = AgentFeeParams(amount = "2.5", blockchain = "base", toAddress = " 0xabc ").toCommand(amina).data()
-        assertEquals(2_500_000L, command.amount.amountMinor)
+        assertEquals(2_500_000.toBigInteger(), command.amount.minorIn(6))
         assertEquals("BASE", command.blockchain)
         assertEquals(Payee.Address("0xabc"), command.payee)
     }

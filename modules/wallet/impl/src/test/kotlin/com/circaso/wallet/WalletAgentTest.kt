@@ -115,7 +115,14 @@ class WalletAgentTest {
             assertMalformed(AgentHistoryParams(from = "last week").toHistoryQuery(amina), "from")
             assertMalformed(AgentHistoryParams(month = "2026-13").toHistoryQuery(amina), "month")
             assertMalformed(AgentHistoryParams(direction = "sideways").toHistoryQuery(amina), "direction")
-            assertMalformed(AgentHistoryParams(asset = "BTC").toHistoryQuery(amina), "asset")
+            assertMalformed(AgentHistoryParams(asset = "not a coin").toHistoryQuery(amina), "asset")
+            assertEquals(
+                "ETH",
+                AgentHistoryParams(asset = "eth")
+                    .toHistoryQuery(amina)
+                    .data()
+                    .filter.asset,
+            )
             assertMalformed(AgentHistoryParams(currency = "XXXX").toHistoryQuery(amina), "currency")
             assertMalformed(AgentHistoryParams(top = "-1").toSummaryQuery(amina), "top")
             assertEquals(20, AgentHistoryParams(top = "99").toSummaryQuery(amina).data().topCounterparties)

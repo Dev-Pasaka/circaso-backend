@@ -85,6 +85,7 @@ import com.circaso.wallet.domain.support.Limits
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
+import com.circaso.wallet.domain.support.PaymentCoins
 import com.circaso.wallet.domain.support.PaymentPlanner
 import com.circaso.wallet.domain.support.Reconciler
 import com.circaso.wallet.domain.support.SenderRules
@@ -339,14 +340,15 @@ fun walletModule(config: Config): Module =
         single { SenderRules(get(), get(), get(), get(), get(), get()) }
         single { Limits(get(), get(), clock) }
         single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock) }
-        single { PaymentPlanner(get(), get(), get(), get(), getOrNull()) }
+        single { PaymentCoins(get(), get(), get()) }
+        single { PaymentPlanner(get(), get(), get(), get(), getOrNull(), get()) }
         single { FeeQuotes(get(), clock) }
         single { FeeSettlement(get(), get(), get()) }
         single { TransferEvents(get()) }
         single { OutgoingUpdates(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IncomingUpdates(get(), get(), get(), get(), get(), get(), get()) }
         single { SplitPayments(get(), get(), get(), clock) }
-        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get()) }
+        single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
         single { HoldingPrices(get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }

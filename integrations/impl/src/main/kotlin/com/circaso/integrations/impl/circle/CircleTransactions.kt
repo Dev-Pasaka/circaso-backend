@@ -10,12 +10,16 @@ import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.RoundingMode
 import java.time.Instant
 
 /**
- * Circle's transaction (the API's and the webhook's, which share most of a shape) in our words. Only USDC on a
- * supported chain is followed, so a transaction in any other token translates to null and is left alone.
+ * Circle's transaction (the API's and the webhook's, which share most of a shape) in our words, in whatever coin it
+ * moved (decision 2026-11-07, any held coin is sent; only USDC before): an offered asset by its configured symbol and
+ * decimals, any other token by Circle's symbol (a testnet's `ETH-SEPOLIA` is `ETH`) and decimals, with its contract,
+ * so the wallet can tell a real coin from someone's token of the same name. A token Circle doesn't describe (no
+ * symbol or decimals) translates to null and is left alone.
  */
 internal class CircleTransactions(private val tokens: CircleTokens, private val settings: CircleSettings) {
     private val log = LoggerFactory.getLogger(CircleTransactions::class.java)
@@ -32,14 +36,22 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
-        // TODO(decision: how a transaction in an offered asset other than USDC is reported; Money holds only Asset)
-        if (!settings.isUsdc(token.tokenAddress, token.blockchain)) return Resource.success(null)
-
+        val asset = assetOf(token) ?: return Resource.success(null)
         val amountMinor =
-            transaction.amounts.firstOrNull()?.let { minorUnits(it, Asset.USDC) } ?: return unreadable("amount")
+            transaction.amounts.firstOrNull()?.let { minorUnits(it, asset.decimals) } ?: return unreadable("amount")
         return Resource.success(
-            transaction.toCustody(direction, Money(amountMinor, Asset.USDC), CustodyOperation.TRANSFER),
+            transaction
+                .toCustody(direction, Money(amountMinor, asset), CustodyOperation.TRANSFER)
+                .copy(tokenAddress = token.tokenAddress.trim()),
         )
+    }
+
+    /** The offered asset [token] is, else the coin as Circle describes it; null when it doesn't. */
+    private fun assetOf(token: TokenData): Asset? {
+        settings.offered(token.tokenAddress, token.blockchain)?.let { return Asset(it.symbol, it.decimals) }
+        val decimals = token.decimals?.takeIf { it in 0..Asset.MAX_DECIMALS } ?: return null
+        val symbol = symbolOf(token.symbol) ?: return null
+        return Asset(symbol, decimals)
     }
 
     /**
@@ -121,21 +133,25 @@ internal class CircleTransactions(private val tokens: CircleTokens, private val 
     companion object {
         private const val DEVELOPER = "DEVELOPER"
 
-        /** "20.5" USDC as 20 500 000 minor units; null if it isn't a number or has more decimals than [asset]. */
-        fun minorUnits(decimal: String, asset: Asset): Long? =
+        /** "20.5" of a 6-decimal coin as 20 500 000 minor units; null if it isn't a number or has more decimals. */
+        fun minorUnits(decimal: String, decimals: Int): BigInteger? =
             runCatching {
                 BigDecimal(decimal)
-                    .movePointRight(asset.decimals)
+                    .movePointRight(decimals)
                     .setScale(0, RoundingMode.UNNECESSARY)
-                    .longValueExact()
+                    .toBigIntegerExact()
             }.getOrNull()
 
         /** [money] as the decimal string Circle expects ("20.5"). */
-        fun decimalOf(money: Money): String =
-            BigDecimal
-                .valueOf(money.amountMinor, money.asset.decimals)
-                .stripTrailingZeros()
-                .toPlainString()
+        fun decimalOf(money: Money): String = money.whole.stripTrailingZeros().toPlainString()
+
+        /** Circle's symbol as ours: upper case, without a testnet suffix (`ETH-SEPOLIA` is `ETH`); null when empty. */
+        fun symbolOf(circle: String): String? =
+            circle
+                .substringBefore('-')
+                .trim()
+                .uppercase()
+                .ifEmpty { null }
 
         private fun instantOf(text: String): Instant? = runCatching { Instant.parse(text) }.getOrNull()
     }

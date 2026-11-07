@@ -77,4 +77,4 @@ fun usdcAmount(minor: Long): String =
     BigDecimal.valueOf(minor, Asset.USDC.decimals).stripTrailingZeros().toPlainString()
 
 fun framePrice(price: Price): FramePrice =
-    FramePrice(Asset.USDC.name, price.amountMinor.toString(), usdcAmount(price.amountMinor), price.period.name)
+    FramePrice(Asset.USDC.symbol, price.amountMinor.toString(), usdcAmount(price.amountMinor), price.period.name)

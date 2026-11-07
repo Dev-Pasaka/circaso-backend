@@ -122,7 +122,7 @@ class FeeDataTest {
                     ).data()
                     .transfer
 
-            assertEquals(500_000L, transfers.find(prepared.transferId)?.feeMinor)
+            assertEquals(500_000.toBigInteger(), transfers.find(prepared.transferId)?.feeMinor)
             assertEquals(FakeFeeConfig.FEE_WALLET, transfers.find(prepared.transferId)?.feeAddress)
             assertEquals(100_500_000L, h.used(amina), "the window counts the fee")
             val id = prepared.transferId

@@ -25,11 +25,13 @@ import com.circaso.wallet.data.repositories.WalletExpiry
 import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.di.walletDatabaseSpec
+import com.circaso.wallet.domain.models.Direction
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferChange
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.ports.WalletFrame
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +47,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Transfers on PostgreSQL (infrastructure's test container, migrated by wallet's own Flyway scripts): the key claim,
@@ -107,7 +110,12 @@ class TransferDataTest {
     fun `split payments no Circle transaction has moved are found, and once moved by Circle's id instead`() =
         runBlocking<Unit> {
             fun split(created: Instant, wallet: String = "w-1") =
-                transfer().copy(createdAt = created, senderWalletId = wallet, feeMinor = 100_000, feeAddress = "0xfee")
+                transfer().copy(
+                    createdAt = created,
+                    senderWalletId = wallet,
+                    feeMinor = 100_000.toBigInteger(),
+                    feeAddress = "0xfee",
+                )
             val awaiting = split(now.minusSeconds(600))
             val expired = split(now.minusSeconds(1_200))
             val otherWallet = split(now.minusSeconds(300), wallet = "w-2")
@@ -193,6 +201,70 @@ class TransferDataTest {
             assertEquals(later, confirmed?.updatedAt)
             assertNull(transfers.move(first.transferId, TransferState.SUBMITTED, TransferChange(at = later)))
             assertNull(transfers.move(first.transferId, TransferState.FAILED, TransferChange(at = later)))
+        }
+
+    @Test
+    fun `an 18-decimal coin past a bigint is stored exactly, with its contract, price and dollar weight`() =
+        runBlocking<Unit> {
+            val eth = Asset("ETH", 18)
+            val twenty =
+                java.math.BigInteger.TEN
+                    .pow(18) * java.math.BigInteger.valueOf(20)
+            val fee = java.math.BigInteger.valueOf(16_666_666_666_666_667)
+            val written =
+                transfer().copy(
+                    amount = Money(twenty, eth),
+                    feeMinor = fee,
+                    feeAddress = "0xfee",
+                    tokenAddress = "",
+                    usdPrice = java.math.BigDecimal("2999.99"),
+                    usdTotalMinor = 60_049_800_000L,
+                )
+
+            assertEquals(true, transfers.insert(written))
+            val read = transfers.find(written.transferId)!!
+            assertEquals(Money(twenty, eth), read.amount)
+            assertEquals(fee, read.feeMinor)
+            assertEquals("", read.tokenAddress)
+            assertEquals(java.math.BigDecimal("2999.99"), read.usdPrice)
+            assertEquals(60_049_800_000L, read.usdTotalMinor)
+            assertEquals(
+                60_049_800_000L,
+                transfers.spentSince(written.senderId, now.minusSeconds(60)).single().usdTotalMinor,
+                "the window counts dollars",
+            )
+            assertEquals(
+                listOf(written.transferId),
+                transfers
+                    .paidTo(written.recipientId!!, "w-1", "BASE-SEPOLIA", Money(twenty, eth), now.minusSeconds(60), 5)
+                    .map { it.transferId },
+            )
+            val weth = Money(twenty, Asset("WETH", 18))
+            assertTrue(
+                transfers.paidTo(written.recipientId!!, "w-1", "BASE-SEPOLIA", weth, now.minusSeconds(60), 5).isEmpty(),
+                "the same digits in another coin are another payment",
+            )
+
+            val row =
+                WalletTransaction(
+                    id = UUID.randomUUID(),
+                    userId = written.senderId,
+                    direction = Direction.OUT,
+                    state = TransferState.AWAITING_SIGNATURE,
+                    amount = Money(twenty, eth),
+                    blockchain = "BASE-SEPOLIA",
+                    counterpartyId = written.recipientId,
+                    counterpartyAddress = "0xabc",
+                    transferId = written.transferId,
+                    circleTxId = null,
+                    txHash = null,
+                    chatId = null,
+                    origin = TransferOrigin.APP,
+                    occurredAt = now,
+                )
+            val transactions = TransactionRepositoryImpl(database)
+            assertTrue(transactions.insert(row))
+            assertEquals(Money(twenty, eth), transactions.find(written.senderId, row.id)?.amount)
         }
 
     @Test
@@ -364,7 +436,15 @@ class TransferDataTest {
                 )
             (listOf(oldest, awaiting, older, newer) + noise).forEach { transfers.insert(it) }
 
-            val found = transfers.paidTo(recipient, "w-1", "BASE-SEPOLIA", 20_000_000, now.minusSeconds(86_400), 5)
+            val found =
+                transfers.paidTo(
+                    recipient,
+                    "w-1",
+                    "BASE-SEPOLIA",
+                    Money(20_000_000, Asset.USDC),
+                    now.minusSeconds(86_400),
+                    5,
+                )
 
             assertEquals(
                 listOf(newer, older, awaiting, oldest).map { it.transferId },

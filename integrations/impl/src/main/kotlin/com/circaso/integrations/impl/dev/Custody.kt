@@ -42,6 +42,9 @@ class FakeCustody(
 
     /** Held amounts by wallet id and asset symbol, in minor units; anything not set is zero. */
     val assetBalances = ConcurrentHashMap<String, Map<String, BigInteger>>()
+
+    /** Coins held beyond the offered assets, by wallet id, as Circle lists a token we don't offer (above zero only). */
+    val otherCoins = ConcurrentHashMap<String, List<AssetBalance>>()
     val transactions = ConcurrentHashMap<String, CustodyTransaction>()
     val transfers: MutableList<Pair<String, TransferRequest>> = CopyOnWriteArrayList()
     val pinRequests: MutableList<PinRequest> = CopyOnWriteArrayList()
@@ -138,7 +141,8 @@ class FakeCustody(
                 supported.find(blockchain)
                     ?: return@guarded Resource.error(IntegrationError.Rejected("$blockchain is not a supported chain."))
             val held = assetBalances[walletId].orEmpty()
-            Resource.success(chain.assets.map { AssetBalance(it, held[it.symbol] ?: BigInteger.ZERO) })
+            val offered = chain.assets.map { AssetBalance(it, held[it.symbol] ?: BigInteger.ZERO) }
+            Resource.success(offered + otherCoins[walletId].orEmpty().filter { it.amountMinor.signum() > 0 })
         }
 
     override suspend fun prepareTransfer(circleUserId: String, request: TransferRequest): Resource<Challenge> =
