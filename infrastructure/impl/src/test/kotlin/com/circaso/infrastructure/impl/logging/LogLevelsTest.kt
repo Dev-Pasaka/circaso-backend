@@ -26,6 +26,7 @@ class LogLevelsTest {
             "LOG_LEVEL_STATUS",
             "LOG_LEVEL_SHARE",
             "LOG_LEVEL_ASSISTANT",
+            "LOG_LEVEL_OPS",
             "LOG_LEVEL_INTEGRATIONS",
             "LOG_LEVEL_CIRCLE",
             "LOG_LEVEL_EXCHANGERATE",
@@ -171,6 +172,14 @@ class LogLevelsTest {
         configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_STATUS" to "DEBUG")
         assertEquals(Level.DEBUG, levelOf("com.circaso.status.domain.usecases.PostMoment"))
         assertEquals(Level.WARN, levelOf("com.circaso.calls.domain.usecases.JoinCall"))
+    }
+
+    @Test
+    fun `LOG_LEVEL_OPS moves the ops gateway and the ops module alone`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_OPS" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.opsgateway.OpsGateway"))
+        assertEquals(Level.DEBUG, levelOf("com.circaso.ops.domain.usecases.SuspendUser"))
+        assertEquals(Level.WARN, levelOf("com.circaso.share.domain.usecases.CreateShareLink"))
     }
 
     @Test
