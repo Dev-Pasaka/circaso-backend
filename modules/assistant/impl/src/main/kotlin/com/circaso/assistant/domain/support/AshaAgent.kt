@@ -107,7 +107,8 @@ class AshaAgent(
         deviceDone?.let { listener.toolFinished(it.copy(mascot = mascot.toolFinished()), isOk = true) }
         val messages = history.toMutableList()
         val specs = specs(turn)
-        val system = AshaPrompt.of(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
+        // The fixed prompt and this turn's part travel apart, so a provider's prompt cache keeps the fixed part.
+        val turnPart = AshaPrompt.turn(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
         val context = ToolContext(turn.userId, turn.agentToken, turn.currency)
         val used = usedBefore.toMutableList()
         val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice), mascot, turn.isVoice)
@@ -118,8 +119,9 @@ class AshaAgent(
         while (steps < config.maxToolSteps) {
             steps++
             reply.newStep()
+            val request = ModelRequest(AshaPrompt.system, messages, specs, turn.purpose, systemTail = turnPart)
             val response =
-                when (val r = step(ModelRequest(system, messages, specs, turn.purpose), reply)) {
+                when (val r = step(request, reply)) {
                     is Resource.Success -> r.data
                     is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
                 }

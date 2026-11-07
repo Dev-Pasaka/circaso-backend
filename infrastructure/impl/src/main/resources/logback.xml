@@ -52,6 +52,9 @@
     <appender-ref ref="${LOG_FORMAT:-JSON}"/>
   </root>
 
+  <!-- JetBrains Koog (Asha's Claude client) logs whole prompts at DEBUG: held at WARN whatever LOG_LEVEL_OTHER says, so
+       nothing of a conversation reaches a log (decision 2026-11-07). -->
+  <logger name="ai.koog" level="WARN"/>
   <logger name="com.circaso" level="${LOG_LEVEL:-INFO}"/>
 
   <logger name="com.circaso.gateway.RequestLog" level="${LOG_LEVEL_REQUESTS:-${LOG_LEVEL:-INFO}}"/>

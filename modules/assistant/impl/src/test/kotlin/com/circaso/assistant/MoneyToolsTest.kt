@@ -327,7 +327,7 @@ class MoneyToolsTest {
             assertEquals(purpose, request.purpose)
             val names = request.tools.map { it.name }
             assertTrue(names.containsAll(listOf("getExchangeRate", "convertAmount", "calculate")), "$purpose: $names")
-            val flat = request.system.replace('\n', ' ').replace(Regex(" +"), " ")
+            val flat = request.systemPrompt.replace('\n', ' ').replace(Regex(" +"), " ")
             assertTrue("You never do money maths or recall a number yourself" in flat, "$purpose")
         }
     }

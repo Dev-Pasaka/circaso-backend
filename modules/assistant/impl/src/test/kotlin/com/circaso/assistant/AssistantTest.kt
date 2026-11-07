@@ -261,7 +261,7 @@ class AssistantTest {
                 "untrusted" in
                     h.model.requests
                         .first()
-                        .system,
+                        .systemPrompt,
                 "the prompt tells the model what the marker means",
             )
         }
@@ -740,7 +740,7 @@ class AssistantTest {
             val system =
                 h.model.requests
                     .single()
-                    .system
+                    .systemPrompt
             assertTrue("You are Asha" in system)
             assertTrue("never ask for, accept or repeat a PIN" in system)
             assertTrue("- Mode: voice." in system)
