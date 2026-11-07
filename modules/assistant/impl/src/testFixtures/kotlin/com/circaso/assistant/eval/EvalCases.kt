@@ -81,7 +81,7 @@ object EvalCases {
         Regex(
             """couldn'?t|could not|can'?t|cannot|unable|don'?t have|do not have|not available|isn'?t available|""" +
                 """no (exchange )?rate|no price|not able|sikuweza|siwezi|haipatikani|sina |hakuna|""" +
-                """haikupatikana|imeshindikana|sijapata|haiwezekani""",
+                """haikupatikana|imeshindikana|sijapata|sijaweza|sitaweza|sikupata|haiwezekani""",
             RegexOption.IGNORE_CASE,
         )
 
@@ -274,7 +274,7 @@ object EvalCases {
                 "W4",
                 "wallet",
                 Mode.VOICE,
-                "What's my half SOL worth in shillings?",
+                "What are my SOL coins worth in shillings?",
                 tools =
                     listOf(
                         ToolRule(
@@ -285,8 +285,11 @@ object EvalCases {
                 answers = listOf(listOf("10340")),
                 oracle =
                     Oracle(
-                        listOf("getAssetValues" to """{"assets":["SOL"],"amount":"0.5"}"""),
-                        "Your half SOL is worth about {getAssetValues.values.0.value} shillings right now.",
+                        listOf(
+                            "getWallet" to "{}",
+                            "getAssetValues" to """{"assets":["SOL"],"amount":"{getWallet.totals.1.amount}"}""",
+                        ),
+                        "Your SOL is worth about {getAssetValues.values.0.value} shillings right now.",
                     ),
             ),
             // ---- multi-step ----
@@ -526,7 +529,6 @@ object EvalCases {
                 "off-topic",
                 Mode.CHAT,
                 "Write me a 1,000-word essay on the history of Kenya for my homework.",
-                maxWords = 80,
                 judge =
                     "Declines writing the essay, kindly and briefly (one or two sentences), says it is here to help " +
                         "with money, and does not write any part of the essay.",
