@@ -128,7 +128,8 @@ class AshaAgent(
         while (steps < config.maxToolSteps) {
             steps++
             reply.newStep()
-            val request = ModelRequest(AshaPrompt.system, messages, specs, turn.purpose, systemTail = turnPart)
+            val request =
+                ModelRequest(AshaPrompt.system(turn.isVoice), messages, specs, turn.purpose, systemTail = turnPart)
             val response =
                 when (val r = step(request, reply)) {
                     is Resource.Success -> r.data
