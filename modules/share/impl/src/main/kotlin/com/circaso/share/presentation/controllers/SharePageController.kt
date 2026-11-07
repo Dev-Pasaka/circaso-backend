@@ -49,7 +49,7 @@ fun Route.sharePageController(pages: SharePageService, config: ShareConfig) {
                 }
 
                 is PageLookup.Gone -> {
-                    call.respondPage(SharePages.gone(config, platform), HttpStatusCode.Gone)
+                    call.respondPage(SharePages.gone(config, platform, found.isRevoked), HttpStatusCode.Gone)
                 }
 
                 is PageLookup.Throttled -> {

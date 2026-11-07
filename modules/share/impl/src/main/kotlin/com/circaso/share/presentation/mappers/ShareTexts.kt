@@ -72,7 +72,16 @@ object ShareTexts {
     /** USDC with thousands separators and at least two decimals: "1,250.50". */
     fun usdc(amount: BigDecimal): String = USDC_FORMAT.get().format(amount)
 
+    /** "2,000.00": a fiat amount without its currency, for pages that set the code apart. */
+    fun moneyNumber(amount: BigDecimal): String = MONEY.get().format(amount)
+
     fun dateTime(at: Instant): String = DATE_TIME.format(at)
+
+    /** "Thursday, 6 Nov 2026": the day line above a chat-style card. */
+    fun day(at: Instant): String = DAY.format(at)
+
+    /** "12:41 UTC". */
+    fun time(at: Instant): String = TIME.format(at)
 
     fun date(at: Instant): String = DATE.format(at)
 
@@ -87,5 +96,7 @@ object ShareTexts {
                 "d MMM yyyy, HH:mm 'UTC'",
                 Locale.ENGLISH,
             ).withZone(ZoneOffset.UTC)
+    private val DAY = DateTimeFormatter.ofPattern("EEEE, d MMM yyyy", Locale.ENGLISH).withZone(ZoneOffset.UTC)
+    private val TIME = DateTimeFormatter.ofPattern("HH:mm 'UTC'", Locale.ENGLISH).withZone(ZoneOffset.UTC)
     private val DATE = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH).withZone(ZoneOffset.UTC)
 }

@@ -31,7 +31,7 @@ class ViewSharePage(
         val code = ShareCode.parse(rawCode) ?: return Resource.success(PageLookup.Missing)
         val now = clock.instant()
         val link = links.find(code, now) ?: return Resource.success(PageLookup.Missing)
-        if (!link.isLive(now)) return Resource.success(PageLookup.Gone)
+        if (!link.isLive(now)) return Resource.success(PageLookup.Gone(isRevoked = link.revokedAt != null))
         val receipt = link.content as? ShareContent.Receipt ?: return Resource.success(PageLookup.Live(link))
         val fresh = snapshots.refresh(receipt) ?: return Resource.success(PageLookup.Live(link))
         links.updateContent(link.code, fresh)

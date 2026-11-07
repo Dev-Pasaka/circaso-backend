@@ -60,7 +60,11 @@ class SharePageTest {
         val h = ShareHarness()
         val link = h.make(ShareKind.RECEIPT, currency = "KES")
         page(h) {
-            val response = client.get("/s/${link.code.value}") { header("CF-Connecting-IP", "1.2.3.4") }
+            val response =
+                client.get("/s/${link.code.value}") {
+                    header("CF-Connecting-IP", "1.2.3.4")
+                    header(HttpHeaders.UserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)")
+                }
             val html = response.bodyAsText()
             assertEquals(HttpStatusCode.OK, response.status)
             assertTrue(response.headers[HttpHeaders.ContentType]!!.startsWith("text/html"))
