@@ -139,6 +139,11 @@ class FcmPush(
                 ids.callerName,
                 ids.callKind,
                 spaceId = ids.spaceId,
+                transferId = ids.transferId,
+                transactionId = ids.transactionId,
+                walletId = ids.walletId,
+                requestId = ids.requestId,
+                userId = ids.userId,
                 title = message.title.takeIf { message.dataOnly && ids.kind != null },
                 body = message.body.takeIf { message.dataOnly && ids.kind != null },
             ).takeIf { it != FcmData() }
@@ -243,6 +248,11 @@ private data class FcmData(
     val callerName: String? = null,
     val callKind: String? = null,
     val spaceId: String? = null,
+    val transferId: String? = null,
+    val transactionId: String? = null,
+    val walletId: String? = null,
+    val requestId: String? = null,
+    val userId: String? = null,
     val title: String? = null,
     val body: String? = null,
 )
