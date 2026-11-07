@@ -545,8 +545,19 @@ object Rules {
     private val ktorClientConstructor = Regex("""(^|[^.\w])HttpClient\(""")
 
     /**
+     * The one file allowed the JDK's `java.net.http` (decision 2026-11-08): APNs speaks only HTTP/2, which Ktor's CIO
+     * engine lacks, and Ktor's Java engine isn't a dependency. It sends incoming-call VoIP pushes and nothing else;
+     * its own KDoc says how it keeps the shared clients' timeouts. No other file may join it without a decision.
+     */
+    private const val APNS_HTTP2_FILE =
+        "integrations/impl/src/main/kotlin/com/circaso/integrations/impl/apns/ApnsHttp2.kt"
+
+    private fun isApnsHttp2(file: KoFileDeclaration) = file.path.replace('\\', '/').endsWith(APNS_HTTP2_FILE)
+
+    /**
      * Outbound HTTP is Ktor's client and nothing else, and only `infrastructure:impl` builds one: everything else asks `HttpClients.named("<vendor>")`
      * for the vendor's client, which comes with the timeouts, retries, circuit breaker, tracing and log redaction the architecture promises.
+     * The one exception is [APNS_HTTP2_FILE].
      */
     fun httpOnlyThroughKtor(files: List<KoFileDeclaration>): List<String> =
         files.flatMap { file ->
@@ -554,10 +565,11 @@ object Rules {
                 file
                     .importNames()
                     .filter { import ->
-                        otherHttpClients.any {
-                            import == it ||
-                                import.startsWith("$it.")
-                        }
+                        !(isApnsHttp2(file) && import.startsWith("java.net.http.")) &&
+                            otherHttpClients.any {
+                                import == it ||
+                                    import.startsWith("$it.")
+                            }
                     }.map {
                         violation(
                             file,

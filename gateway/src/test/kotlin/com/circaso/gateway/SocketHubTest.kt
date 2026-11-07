@@ -24,8 +24,12 @@ import com.circaso.infrastructure.api.RedisScope
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.PushMessage
 import com.circaso.integrations.api.PushPayload
+import com.circaso.integrations.api.PushPlatform
 import com.circaso.integrations.api.PushReceipt
 import com.circaso.integrations.api.PushTarget
+import com.circaso.integrations.api.VoipPushGateway
+import com.circaso.integrations.api.VoipPushResult
+import com.circaso.integrations.api.VoipRing
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageKind
@@ -219,7 +223,40 @@ class SocketHubTest {
     private val registrations =
         object : PushRegistrations {
             override suspend fun pushTarget(userId: UserId) = PushRegistration("android", "token-$userId")
+
+            override suspend fun forgetVoipToken(userId: UserId, voipToken: String) = Unit
         }
+
+    /** APNs not configured: rings go through FCM. */
+    private object NoVoip : VoipPushGateway {
+        override val enabled = false
+
+        override suspend fun ring(voipToken: String, ring: VoipRing) = VoipPushResult.FAILED
+    }
+
+    /** A fake APNs: records each ring and answers [result]. */
+    private class RecordingVoip(var result: VoipPushResult = VoipPushResult.SENT) : VoipPushGateway {
+        val rang = CopyOnWriteArrayList<Pair<String, VoipRing>>()
+
+        override val enabled = true
+
+        override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult {
+            rang += voipToken to ring
+            return result
+        }
+    }
+
+    /** An iPhone with an FCM token and, unless [voipToken] is null, a PushKit token; remembers what was forgotten. */
+    private class IphoneRegistrations(var voipToken: String? = "ab12cd34ef56ab12cd34") : PushRegistrations {
+        val forgotten = CopyOnWriteArrayList<String>()
+
+        override suspend fun pushTarget(userId: UserId) = PushRegistration("ios", "fcm-$userId", voipToken)
+
+        override suspend fun forgetVoipToken(userId: UserId, voipToken: String) {
+            forgotten += voipToken
+            if (this.voipToken == voipToken) this.voipToken = null
+        }
+    }
 
     /** Counts what the hub reports, by metric name and labels. */
     private class RecordingTelemetry : Telemetry by NoopTelemetry {
@@ -440,7 +477,7 @@ class SocketHubTest {
         runBlocking {
             val redis = MemoryRedis()
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
             val members = List(50) { UserId.new() }
 
             realtime.deliverMany(members, frame(1, "messaging", "typing", mapOf("chatId" to "c1", "on" to true)))
@@ -504,7 +541,7 @@ class SocketHubTest {
         runBlocking {
             val redis = MemoryRedis()
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
             val (online, offline, alsoOffline) = List(3) { UserId.new() }
             redis.values["conn:$online"] = "node-2"
 
@@ -528,7 +565,7 @@ class SocketHubTest {
         runBlocking {
             val redis = MemoryRedis()
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
             val (online, offline) = List(2) { UserId.new() }
             redis.values["conn:$online"] = "node-2"
 
@@ -557,7 +594,7 @@ class SocketHubTest {
         runBlocking {
             val redis = MemoryRedis()
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
 
             realtime.deliverMany(
                 List(3) { UserId.new() },
@@ -572,7 +609,7 @@ class SocketHubTest {
     fun `a new-message frame without pushable wakes nobody`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
 
             realtime.deliverMany(
                 List(3) { UserId.new() },
@@ -587,7 +624,7 @@ class SocketHubTest {
     fun `only the people added to a group are pushed for member added`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val (first, second, member) = List(3) { UserId.new() }
 
             realtime.deliverMany(
@@ -610,7 +647,7 @@ class SocketHubTest {
     fun `a member added frame without userIds wakes nobody`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val added = UserId.new()
 
             realtime.deliverMany(
@@ -625,7 +662,7 @@ class SocketHubTest {
     fun `frames that are not push-worthy are not pushed to offline users`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
 
             realtime.deliverMany(List(3) { UserId.new() }, frame(1, "messaging", "receipt"))
             realtime.deliver(UserId.new(), frame(2, "messaging", "typing"))
@@ -898,7 +935,7 @@ class SocketHubTest {
     fun `an incoming call wakes the phone data-only for the ring, and a missed call is an alert`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val (caller, callee) = List(2) { UserId.new() }
             val callId = CallId.new()
 
@@ -953,11 +990,155 @@ class SocketHubTest {
             assertTrue(cancelled.dataOnly, "the phone stops ringing and words it itself")
         }
 
+    private fun ringing(callId: CallId, caller: UserId) =
+        RealtimeEnvelope.of(
+            CallFrames.MODULE,
+            CallFrames.RINGING,
+            1,
+            CallRingingFrame(callId, chat, "VIDEO", caller, "Wanjiru"),
+            CallRingingFrame.serializer(),
+        )
+
+    @Test
+    fun `an offline iPhone with a PushKit token rings through APNs VoIP, not FCM too`() =
+        runBlocking {
+            val push = RecordingPush()
+            val voip = RecordingVoip(VoipPushResult.SENT)
+            val iphone = IphoneRegistrations()
+            val realtime = GatewayRealtime(hub(), push, iphone, voip)
+            val (caller, callee) = List(2) { UserId.new() }
+            val callId = CallId.new()
+
+            realtime.deliver(callee, ringing(callId, caller))
+
+            val (token, ring) = voip.rang.single()
+            assertEquals("ab12cd34ef56ab12cd34", token)
+            assertEquals(VoipRing(callId.toString(), chat.toString(), "VIDEO", "Wanjiru"), ring)
+            assertTrue(push.sent.isEmpty(), "no FCM ring as well, or the phone would ring twice")
+            assertTrue(iphone.forgotten.isEmpty())
+        }
+
+    @Test
+    fun `a PushKit token APNs refuses is forgotten and the ring falls back to FCM`() =
+        runBlocking {
+            val push = RecordingPush()
+            val voip = RecordingVoip(VoipPushResult.TOKEN_INVALID)
+            val iphone = IphoneRegistrations()
+            val realtime = GatewayRealtime(hub(), push, iphone, voip)
+            val (caller, callee) = List(2) { UserId.new() }
+
+            realtime.deliver(callee, ringing(CallId.new(), caller))
+
+            assertEquals(1, voip.rang.size)
+            assertEquals(listOf("ab12cd34ef56ab12cd34"), iphone.forgotten)
+            val (target, message) = push.sent.single()
+            assertEquals(PushPlatform.IOS, target.platform)
+            assertEquals("fcm-$callee", target.token)
+            assertEquals("call.ringing", message.data.kind)
+
+            // the next ring has no PushKit token left, so it goes straight to FCM
+            realtime.deliver(callee, ringing(CallId.new(), caller))
+            assertEquals(1, voip.rang.size)
+            assertEquals(2, push.sent.size)
+        }
+
+    @Test
+    fun `a VoIP send that fails for another reason keeps the token and falls back to FCM`() =
+        runBlocking {
+            val push = RecordingPush()
+            val voip = RecordingVoip(VoipPushResult.FAILED)
+            val iphone = IphoneRegistrations()
+            val realtime = GatewayRealtime(hub(), push, iphone, voip)
+            val (caller, callee) = List(2) { UserId.new() }
+
+            realtime.deliver(callee, ringing(CallId.new(), caller))
+
+            assertEquals(1, voip.rang.size)
+            assertTrue(iphone.forgotten.isEmpty())
+            assertEquals(
+                "call.ringing",
+                push.sent
+                    .single()
+                    .second.data.kind,
+            )
+        }
+
+    @Test
+    fun `without a PushKit token, with APNs off, or for anything but a ring, iPhones get FCM as before`() =
+        runBlocking {
+            val (caller, callee) = List(2) { UserId.new() }
+
+            // no PushKit token
+            val push = RecordingPush()
+            val voip = RecordingVoip()
+            GatewayRealtime(hub(), push, IphoneRegistrations(voipToken = null), voip).deliver(
+                callee,
+                ringing(CallId.new(), caller),
+            )
+            assertTrue(voip.rang.isEmpty())
+            assertEquals(
+                "call.ringing",
+                push.sent
+                    .single()
+                    .second.data.kind,
+            )
+
+            // APNs not configured
+            val offPush = RecordingPush()
+            GatewayRealtime(
+                hub(),
+                offPush,
+                IphoneRegistrations(),
+                NoVoip,
+            ).deliver(callee, ringing(CallId.new(), caller))
+            assertEquals(
+                "call.ringing",
+                offPush.sent
+                    .single()
+                    .second.data.kind,
+            )
+
+            // a missed call is FCM's, token or not
+            val missedPush = RecordingPush()
+            val missedVoip = RecordingVoip()
+            val callId = CallId.new()
+            GatewayRealtime(hub(), missedPush, IphoneRegistrations(), missedVoip).deliver(
+                callee,
+                RealtimeEnvelope.of(
+                    CallFrames.MODULE,
+                    CallFrames.ENDED,
+                    2,
+                    CallSnapshot(
+                        callId = callId,
+                        chatId = chat,
+                        kind = "VOICE",
+                        state = "ENDED",
+                        startedBy = caller,
+                        createdAt = "2026-10-29T10:00:00Z",
+                        endReason = "MISSED",
+                        participants =
+                            listOf(
+                                CallParticipantSnapshot(caller, "Wanjiru", "LEFT", true, false, emptyList()),
+                                CallParticipantSnapshot(callee, "Otieno", "MISSED", true, false, emptyList()),
+                            ),
+                    ),
+                    CallSnapshot.serializer(),
+                ),
+            )
+            assertTrue(missedVoip.rang.isEmpty())
+            assertEquals(
+                "call.missed",
+                missedPush.sent
+                    .single()
+                    .second.data.kind,
+            )
+        }
+
     @Test
     fun `wallet frames push the end of a payment, money received and a setup request, never an amount`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val user = UserId.new()
             val amount = WalletAmount("USDC", "20000000", "20")
             val paidBy = TransferId.new()
@@ -1041,7 +1222,7 @@ class SocketHubTest {
     fun `group money pushes are data-only with ids, so the phone names the group and the amount`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val member = UserId.new()
             val contributor = UserId.new()
             val chat = ChatId.new()
@@ -1105,7 +1286,7 @@ class SocketHubTest {
     fun `a reaction on my moment pushes the emoji and the name, a plain view or a cleared reaction never`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val poster = UserId.new()
             val momentId = MomentId.new()
             val at = Instant.parse("2026-11-03T09:00:00Z")
@@ -1138,7 +1319,7 @@ class SocketHubTest {
     fun `space pushes - post text only for public spaces, and money into a space wallet names the space`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val member = UserId.new()
             val spaceId =
                 com.circaso.spaces.api.SpaceId

@@ -14,6 +14,7 @@ object DevicesTable : Table("identity.devices") {
     val publicKey = text("public_key")
     val keyAlgorithm = text("key_algorithm")
     val pushToken = text("push_token").nullable()
+    val voipToken = text("voip_token").nullable()
     val status = text("status")
     val registeredAt = timestamp("registered_at")
     val lastSeenAt = timestamp("last_seen_at")

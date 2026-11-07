@@ -51,6 +51,8 @@ data class Device(
     val publicKey: String,
     val keyAlgorithm: String,
     val pushToken: String?,
+    /** The iPhone's PushKit token, for incoming-call rings sent straight to APNs; null elsewhere. */
+    val voipToken: String?,
     val status: DeviceStatus,
     val registeredAt: Instant,
     val lastSeenAt: Instant,

@@ -8,6 +8,7 @@ import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.integrations.api.PushGateway
+import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.observability.api.Telemetry
 import com.circaso.shared.EventSubscription
@@ -37,7 +38,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The gateway's Koin bindings: the socket hub, `Realtime` for every module to call, and the gateway's consumer
- * group on `events:identity`. Needs `TokenVerifier` and `PushRegistrations` (identity) and `PushGateway`.
+ * group on `events:identity`. Needs `TokenVerifier` and `PushRegistrations` (identity), `PushGateway` and `VoipPushGateway`.
  */
 fun gatewayModule(config: Config) =
     module {
@@ -54,7 +55,14 @@ fun gatewayModule(config: Config) =
                 get<Telemetry>(),
             )
         }
-        single<Realtime> { GatewayRealtime(get(), get<PushGateway>(), get<PushRegistrations>()) }
+        single<Realtime> {
+            GatewayRealtime(
+                get(),
+                get<PushGateway>(),
+                get<PushRegistrations>(),
+                get<VoipPushGateway>(),
+            )
+        }
         single<EventSubscription>(
             org.koin.core.qualifier
                 .named("gateway.identity"),

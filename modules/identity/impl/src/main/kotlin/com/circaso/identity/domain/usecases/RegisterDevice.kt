@@ -86,6 +86,8 @@ class RegisterDevice(
                 command.publicKey,
                 command.keyAlgorithm,
                 command.pushToken,
+                // A fresh registration starts without one; the iPhone sends its PushKit token after (I9b).
+                null,
                 DeviceStatus.ACTIVE,
                 now,
                 now,

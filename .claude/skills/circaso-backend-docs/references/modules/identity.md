@@ -86,6 +86,7 @@ Seventeen app routes and two ops routes: seven take a person from Google/Apple s
 | I7 | `POST /auth/refresh` | none (device-signed) | `RefreshSession` | New token pair; old refresh token dies |
 | I8 | `POST /auth/signout` | app | `SignOut` | Ends the session; the phone stays registered; the gateway closes that session's open socket (decision 2026-10-25) |
 | I9 | `PUT /devices/current/push-token` | app | `UpdatePushToken` | Stores the FCM/APNs token |
+| I9b | `PUT /devices/current/voip-token` | app | `UpdateVoipToken` | Stores the iPhone's PushKit token; incoming-call rings go to it as APNs VoIP pushes (2026-11-08). Cleared by sign-out, I10, a new registration, and APNs refusing it (`ClearVoipToken` via `PushRegistrations.forgetVoipToken`) |
 | I10 | `DELETE /devices/current` | app | `RemoveDevice` | Forgets this phone; next sign-in anywhere re-verifies the number |
 | I11 | `GET /account/security` | app | `GetSecurityOverview` | Phone, linked providers, this phone, verification status |
 | I12 | `POST /account/providers` / `DELETE /account/providers/{provider}` | app | `LinkProvider` / `UnlinkProvider` | Link Google or Apple; unlink only if the other stays |
@@ -289,6 +290,7 @@ CREATE TABLE identity.devices (
     public_key    text        NOT NULL,
     key_algorithm text        NOT NULL,
     push_token    text,
+    voip_token    text,                                 -- iPhone PushKit token (V3, 2026-11-08)
     status        text        NOT NULL,                 -- ACTIVE | REPLACED | REMOVED
     registered_at timestamptz NOT NULL,
     last_seen_at  timestamptz NOT NULL,

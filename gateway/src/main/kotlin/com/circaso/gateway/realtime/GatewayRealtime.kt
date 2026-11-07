@@ -14,6 +14,9 @@ import com.circaso.integrations.api.PushMessage
 import com.circaso.integrations.api.PushPayload
 import com.circaso.integrations.api.PushPlatform
 import com.circaso.integrations.api.PushTarget
+import com.circaso.integrations.api.VoipPushGateway
+import com.circaso.integrations.api.VoipPushResult
+import com.circaso.integrations.api.VoipRing
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.shared.Realtime
@@ -57,12 +60,14 @@ private const val RING_TTL_SECONDS = 45L
 /**
  * What modules call to tell a user something now: to the socket when the user has one open, otherwise to push
  * when the frame is marked push-worthy. A frame that reaches neither is recovered by the module's replay when
- * the phone reconnects.
+ * the phone reconnects. An incoming call to an iPhone with a PushKit token rings through [voip] instead (decision
+ * 2026-11-08), and through [push] only when that is off or fails.
  */
 class GatewayRealtime(
     private val hub: SocketHub,
     private val push: PushGateway,
     private val registrations: PushRegistrations,
+    private val voip: VoipPushGateway,
 ) : Realtime {
     override suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope): Resource<Unit> {
         if (hub.deliver(userId, envelope)) return Resource.success(Unit)
@@ -89,8 +94,46 @@ class GatewayRealtime(
     private suspend fun pushTo(userId: UserId, message: PushMessage) {
         val target = registrations.pushTarget(userId) ?: return
         val platform = if (target.platform.equals("ios", ignoreCase = true)) PushPlatform.IOS else PushPlatform.ANDROID
-        val result = push.send(PushTarget(platform, target.token), message)
+        if (platform == PushPlatform.IOS && rangByVoip(userId, target.voipToken, message)) return
+        val token = target.token ?: return
+        val result = push.send(PushTarget(platform, token), message)
         if (result is Resource.Error) log.warn("push failed: code={}", result.error.code)
+    }
+
+    /**
+     * A ring to an iPhone goes as a PushKit VoIP push when it registered a token and APNs is configured; true when
+     * APNs took it, so the FCM ring isn't sent too (the phone would ring twice). A token APNs refuses is forgotten;
+     * either failure falls back to the FCM ring. Every other push, `call.missed` and `call.ended` included, is FCM's.
+     */
+    private suspend fun rangByVoip(
+        userId: UserId,
+        voipToken: String?,
+        message: PushMessage,
+    ): Boolean {
+        if (voipToken == null || !voip.enabled) return false
+        val ids = message.data
+        if (ids.kind != RINGING_KIND) return false
+        val ring =
+            VoipRing(
+                callId = ids.callId ?: return false,
+                chatId = ids.chatId ?: return false,
+                callKind = ids.callKind ?: return false,
+                callerName = ids.callerName ?: return false,
+            )
+        return when (voip.ring(voipToken, ring)) {
+            VoipPushResult.SENT -> {
+                true
+            }
+
+            VoipPushResult.TOKEN_INVALID -> {
+                registrations.forgetVoipToken(userId, voipToken)
+                false
+            }
+
+            VoipPushResult.FAILED -> {
+                false
+            }
+        }
     }
 
     /**
@@ -464,7 +507,7 @@ class GatewayRealtime(
             PushPayload(
                 chatId = frame.chatId.toString(),
                 callId = frame.callId.toString(),
-                kind = "call.ringing",
+                kind = RINGING_KIND,
                 callerName = frame.callerName,
                 callKind = frame.kind,
             )
@@ -519,6 +562,9 @@ class GatewayRealtime(
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
 }
+
+/** An incoming call's push; to an iPhone with a PushKit token it goes through APNs as a VoIP push. */
+private const val RINGING_KIND = "call.ringing"
 
 /** The one push that says Asha is back after maintenance; the app opens Asha for any `asha*` kind. */
 private const val ASHA_BACK_TITLE = "Asha is back"

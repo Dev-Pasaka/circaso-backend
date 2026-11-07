@@ -36,6 +36,7 @@ import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.brave.BraveWebSearch
@@ -68,11 +69,14 @@ import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
 import java.math.BigDecimal
+import java.security.KeyPairGenerator
+import java.util.Base64
 import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -397,6 +401,35 @@ class IntegrationsModuleTest {
                 stopKoin()
             }
         }
+
+    @Test
+    fun `APNs VoIP is off without its key, on with it, and the key without its ids stops startup`() {
+        assertFalse(koin().get<VoipPushGateway>().enabled)
+        stopKoin()
+
+        val key =
+            KeyPairGenerator
+                .getInstance("EC")
+                .apply { initialize(256) }
+                .generateKeyPair()
+                .private
+        val pem = "-----BEGIN PRIVATE KEY-----\n${Base64.getEncoder().encodeToString(
+            key.encoded,
+        )}\n-----END PRIVATE KEY-----"
+        val secret = mapOf("integrations.apns.key" to Base64.getEncoder().encodeToString(pem.toByteArray()))
+        val on =
+            koin(
+                secret,
+                "integrations.apns.key-id" to "ABC123DEFG",
+                "integrations.apns.team-id" to "TEAM123456",
+                "integrations.apns.sandbox" to "true",
+            )
+        assertTrue(on.get<VoipPushGateway>().enabled)
+        stopKoin()
+
+        assertFailsWith<Exception> { koin(secret).get<VoipPushGateway>() }
+        stopKoin()
+    }
 
     @Test
     fun `fcm refuses to start without its service account`() {

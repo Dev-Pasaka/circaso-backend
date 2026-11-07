@@ -26,10 +26,14 @@ import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.StaticMaps
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
+import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
+import com.circaso.integrations.impl.apns.ApnsProviderToken
+import com.circaso.integrations.impl.apns.ApnsVoipPush
+import com.circaso.integrations.impl.apns.JdkApnsTransport
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
@@ -67,6 +71,7 @@ import com.circaso.integrations.impl.dev.LogStaticMaps
 import com.circaso.integrations.impl.dev.LogWebSearch
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
+import com.circaso.integrations.impl.dev.NoVoipPush
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
@@ -88,6 +93,7 @@ import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
 import org.koin.core.module.Module
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 
@@ -192,6 +198,9 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Incoming-call rings to iPhones straight through APNs (decision 2026-11-08); off, and every ring through
+        // `PushGateway`, until the key is configured. Created at start so its one line says which.
+        single<VoipPushGateway>(createdAtStart = true) { apnsVoipPush(integrations.section("apns"), secrets) }
         single<LanguageModel> { ashaLanguageModel(config, secrets, get()) }
         single<VisionModel> {
             pick(
@@ -561,6 +570,29 @@ private fun fcmPush(
     http = clients.named("fcm") { baseUrl = push.string("base-url", "https://fcm.googleapis.com") },
     oauth = clients.named("google-oauth"),
 )
+
+/**
+ * APNs VoIP pushes for incoming calls on iPhones (decision 2026-11-08), on when the secret `INTEGRATIONS_APNS_KEY` is
+ * set: base64 of the `.p8` file (Apple Developer > Keys, with Apple Push Notifications service), or its PEM text. It
+ * then needs `INTEGRATIONS_APNS_KEY_ID` (the key's 10-character id) and `INTEGRATIONS_APNS_TEAM_ID`; optional are
+ * `INTEGRATIONS_APNS_TOPIC`, the app's bundle id (default `com.circaso.app`; pushes go to `<topic>.voip`), and
+ * `INTEGRATIONS_APNS_SANDBOX` (`true` for development-signed builds, default `false`). The key never prints.
+ */
+private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
+    val log = LoggerFactory.getLogger("com.circaso.integrations.impl.apns")
+    val key = secrets.get("integrations.apns.key")?.takeIf { it.isNotBlank() }
+    if (key == null) {
+        log.info("APNs VoIP pushes: off (INTEGRATIONS_APNS_KEY not set); iPhone rings go through FCM")
+        return NoVoipPush()
+    }
+    val sandbox = apns.boolean("sandbox", false)
+    val topic = apns.string("topic", "com.circaso.app")
+    val keyId = apns.requireString("key-id")
+    val tokens = ApnsProviderToken(keyId, apns.requireString("team-id"), ApnsProviderToken.parseKey(key))
+    val host = if (sandbox) "https://api.sandbox.push.apple.com" else "https://api.push.apple.com"
+    log.info("APNs VoIP pushes: on (host={}, topic={}.voip, keyId={})", host, topic, keyId)
+    return ApnsVoipPush(tokens, JdkApnsTransport(host), topic)
+}
 
 /**
  * Cloudflare Realtime needs `CLOUDFLARE_REALTIME_APP_ID` and the secret `CLOUDFLARE_REALTIME_APP_TOKEN` (dashboard >

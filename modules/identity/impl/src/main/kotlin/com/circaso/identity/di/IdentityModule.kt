@@ -44,6 +44,7 @@ import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
+import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.CompleteDeletions
 import com.circaso.identity.domain.usecases.CreateSupportAccount
 import com.circaso.identity.domain.usecases.GetAccountCreatedAt
@@ -71,6 +72,7 @@ import com.circaso.identity.domain.usecases.StartPhoneVerification
 import com.circaso.identity.domain.usecases.SweepPendingAccounts
 import com.circaso.identity.domain.usecases.UnlinkProvider
 import com.circaso.identity.domain.usecases.UpdatePushToken
+import com.circaso.identity.domain.usecases.UpdateVoipToken
 import com.circaso.identity.domain.usecases.VerifyAccessToken
 import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
@@ -217,8 +219,10 @@ fun identityModule(config: Config): Module =
             )
         }
         single { RefreshSession(get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { SignOut(get(), get(), get(), get(), get()) }
+        single { SignOut(get(), get(), get(), get(), get(), get(), get()) }
         single { UpdatePushToken(get(), get(), get(), get()) }
+        single { UpdateVoipToken(get(), get(), get(), get()) }
+        single { ClearVoipToken(get(), get(), get(), get()) }
         single { RemoveDevice(get(), get(), get(), get(), get(), get()) }
         single { GetSecurityOverview(get(), get(), get()) }
         single { LinkProvider(get(), get(), get(), get(), get(), get(), clock) }
@@ -249,11 +253,11 @@ fun identityModule(config: Config): Module =
         // presentation
         single { AuthService(get(), get(), get(), get(), get()) }
         single { PhoneService(get(), get(), get(), get()) }
-        single { DeviceService(get(), get(), get()) }
+        single { DeviceService(get(), get(), get(), get()) }
         single { AccountService(get(), get(), get(), get(), get()) }
         single { IdentityAgentService(get()) }
         single { RecoveryService(get(), get()) }
-        single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
