@@ -3,6 +3,7 @@ package com.circaso.assistant
 import com.circaso.assistant.data.tools.AllAgentTools
 import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
+import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
@@ -47,6 +48,7 @@ class AshaPromptTest {
                     SearchAllowance(plans, quota, config, clock),
                 ),
                 CryptoTools(FakeMarkets(), FakeUsdRates()),
+                MoneyTools(FakeUsdRates(), FakePrices(), FakeMarkets()),
             ),
         )
     private val text = AshaPrompt.of(PromptContext(isVoice = false, "2026-11-05", "KES", canReadChats = true))
@@ -79,11 +81,22 @@ class AshaPromptTest {
                 "searchWeb",
                 "getCryptoMarket",
                 "getTrendingCrypto",
+                "getExchangeRate",
+                "convertAmount",
+                "calculate",
             ),
             tools.specs(hasAgentToken = true).map { it.name },
         )
         assertEquals(
-            listOf("getAshaUsage", "searchWeb", "getCryptoMarket", "getTrendingCrypto"),
+            listOf(
+                "getAshaUsage",
+                "searchWeb",
+                "getCryptoMarket",
+                "getTrendingCrypto",
+                "getExchangeRate",
+                "convertAmount",
+                "calculate",
+            ),
             tools.specs(hasAgentToken = false).map { it.name },
         )
     }
@@ -131,10 +144,33 @@ class AshaPromptTest {
     }
 
     @Test
+    fun `every price, rate, conversion and sum comes from a tool, in text and in voice`() {
+        listOf(text, voice).map(::flat).forEach { flat ->
+            assertTrue("You never do money maths or recall a number yourself, not even an easy one" in flat)
+            assertTrue("an exchange rate between currencies (\"dollar to shilling rate\"): getExchangeRate" in flat)
+            assertTrue("convertAmount, never a rate times an amount worked out in your head" in flat)
+            assertTrue(
+                "any other arithmetic" in flat && "calculate, with the numbers exactly as the tools gave" in flat,
+            )
+            assertTrue("what the user's own coins and balances are worth: getWallet and getAssetValues" in flat)
+            assertTrue("tell the user you couldn't get it right now" in flat)
+            assertTrue("Never estimate, never use a rate or price you remember" in flat)
+            assertTrue("Never search for an exchange rate: that is getExchangeRate" in flat)
+        }
+        val voiceRules = flat(voice)
+        assertTrue("every number still comes from a tool's result" in voiceRules)
+        assertTrue("Never work a number out in your head because you are speaking" in voiceRules)
+        assertFalse("If you must add, double-check" in flat(text))
+        assertTrue("never multiply a rate yourself" in AshaPrompt.convertAmount.description)
+        assertTrue("never do maths yourself" in AshaPrompt.calculate.description)
+        assertTrue("never for an exchange rate" in AshaPrompt.searchWeb.description)
+    }
+
+    @Test
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-06-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-07-v1", AshaPrompt.VERSION)
     }
 
     @Test

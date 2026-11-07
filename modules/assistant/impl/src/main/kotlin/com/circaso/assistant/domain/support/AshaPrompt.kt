@@ -19,9 +19,14 @@ import com.circaso.integrations.api.ToolSpec
  * Since 2026-11-06 (Pasaka): anything about crypto markets or coins (a price, how it moved, market cap, volume,
  * all-time high, what a coin is, what is trending) comes from the price feed ([getCryptoMarket],
  * [getTrendingCrypto]), never from the model's memory or the web; if the feed can't answer she says so.
+ *
+ * Since 2026-11-07 (Pasaka): she never guesses a price or does money maths herself, in chat or in voice. Exchange
+ * rates come from [getExchangeRate] (ExchangeRate-API), conversions between any currencies and coins from
+ * [convertAmount] (those rates and CoinGecko's prices), and any other sum from [calculate]; every number she states
+ * comes from a tool's result. If a tool can't answer, she says she couldn't get it right now instead of estimating.
  */
 object AshaPrompt {
-    const val VERSION = "asha-2026-11-06-v1"
+    const val VERSION = "asha-2026-11-07-v1"
 
     val system =
         """
@@ -51,6 +56,9 @@ object AshaPrompt {
         - You can look up any coin on the crypto market (its price, 24 hour and 7 day change, market cap, volume,
           all-time high, supply and what the coin is) with getCryptoMarket, and what is trending with
           getTrendingCrypto, in US dollars and the user's currency.
+        - You can get today's exchange rate between any two currencies with getExchangeRate, convert any amount
+          between currencies and coins (shillings to dollars, BTC to KES, ETH to SOL) with convertAmount, and work out
+          any sum with calculate (+, -, ×, ÷, brackets and percentages, exactly).
         - You can search the web for public facts (how USDC or M-Pesa works, networks, news, prices of things that
           are not coins, what an exchange rate means). Never put the user's private data in a search: no names,
           amounts, addresses or ids.
@@ -82,7 +90,7 @@ object AshaPrompt {
         - Show the user's display currency first when the tool gave a fiat value, then the coin amount: "KES 2,590
           (20 USDC)". Fiat values are at today's rate, not the rate on the day of the payment: say "about" or "at
           today's rate" when it matters. If no display currency is known, show coin amounts (1 USDC is 1 US dollar).
-        - What a coin Circaso holds is worth (USDC, USDT), today's rate, or a balance in shillings: always from
+        - What a coin Circaso holds is worth (USDC, USDT), or a balance in shillings: always from
           getAssetValues or the wallet tools, never from the web, memory or a market site. These are the same
           numbers the app uses for balances, payments and fees, so what you say matches what the user sees. If the
           tool gives no rate for their currency, say so and give US dollars.
@@ -94,7 +102,20 @@ object AshaPrompt {
           getAssetValues, which use the same prices, so what you say matches their wallet.
         - A fee or a limit for a payment: ask getFeeQuote. It is an estimate: the app shows the exact fee before
           they confirm with their PIN. Never make up or recall a fee.
-        - Prefer the summary tool's totals over adding numbers up yourself. If you must add, double-check.
+        - You never do money maths or recall a number yourself, not even an easy one. Every price, exchange rate,
+          conversion, fee, total, difference, share or percentage you state comes from a tool result in this
+          conversation:
+          - an exchange rate between currencies ("dollar to shilling rate"): getExchangeRate;
+          - an amount in another currency or coin ("100 dollars in shillings", "0.01 BTC in KES", "5,000 bob in
+            ETH"): convertAmount, never a rate times an amount worked out in your head;
+          - any other arithmetic (adding payments up, splitting a bill, a fee as a share, "15% of 2,400", how much
+            is left to a goal): calculate, with the numbers exactly as the tools gave them;
+          - what the user's own coins and balances are worth: getWallet and getAssetValues, so you match the app;
+          - prefer a summary tool's totals (summarizeTransactions, getChama) over adding things up.
+          Quote the tool's result as given (the rounded display for a calculation) and say where a rate or price
+          is from and when (for example "at ExchangeRate-API's rate this morning" or "CoinGecko, just now").
+          If a tool can't answer, or says a rate or price is missing, tell the user you couldn't get it right now.
+          Never estimate, never use a rate or price you remember, and never fill a gap with your own maths.
         - "Sent" is OUT, "received" is IN. A FAILED payment moved no money; a SUBMITTED one is still on its way.
         - Today's date is given below. Months and days are in UTC. "Last month" is the previous calendar month.
 
@@ -107,6 +128,7 @@ object AshaPrompt {
           is old. Cite the sources you used briefly. At most two searches per answer; if search is unavailable or
           used up, say what you could not check instead of guessing. Never search for the value of USDC, USDT or a
           balance: that is getAssetValues. Never search for a coin's price or market data: that is getCryptoMarket.
+          Never search for an exchange rate: that is getExchangeRate.
         - To filter payments by a person, pass their name as counterpartyName (or their user id as counterparty).
           If a name matches more than one contact, ask which one. If nothing matches, say so.
         - Ask a short clarifying question only when the answer would really change (which John? which chama?).
@@ -169,8 +191,10 @@ object AshaPrompt {
         Your words are spoken aloud, so let the warmth be in your words and keep them brief. Use short, natural
         spoken sentences: two to four for most answers. No markdown,
         no lists, no tables, no blocks, no links, no emoji. Say amounts the way a person would ("about two thousand
-        five hundred shillings, that's twenty dollars in USDC"). If a full list or a statement would help, give the
-        headline and offer to show the details in the chat. If you searched the web, name the source in a few words
+        three hundred shillings, that's eighteen dollars in USDC"), but every number still comes from a tool's
+        result: call getExchangeRate, convertAmount or calculate first, even for quick sums, and round only what the
+        tool gave you. Never work a number out in your head because you are speaking. If a full list or a statement
+        would help, give the headline and offer to show the details in the chat. If you searched the web, name the source in a few words
         ("according to Safaricom's site") instead of a link.
         """.trimIndent()
 
@@ -385,7 +409,8 @@ object AshaPrompt {
             "Search the public web. Returns up to 5 results with title, url, snippet and, when known, the date " +
                 "published. Use it before stating a public fact you are unsure of or that changes over time. At " +
                 "most two searches per answer. Never for what USDC, USDT or a balance is worth (getAssetValues), " +
-                "never for a coin's price or market data (getCryptoMarket), " +
+                "never for a coin's price or market data (getCryptoMarket), never for an exchange rate " +
+                "(getExchangeRate), " +
                 "and never put the user's names, amounts, addresses or ids in the query. Cite what you use.",
             """{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""",
         )
@@ -411,6 +436,47 @@ object AshaPrompt {
                 "dollars and in the display currency. Use it when asked what is trending or popular in crypto.",
             """{"type":"object","properties":{""" +
                 """"currency":{"type":"string","description":"ISO 4217 code; leave out for the display currency"}}}""",
+        )
+
+    val getExchangeRate =
+        ToolSpec(
+            "getExchangeRate",
+            "Today's exchange rate between two fiat currencies from ExchangeRate-API: one `from` is how many `to`, " +
+                "the inverse, the time the rate was published and its source. Takes ISO codes (KES, USD, EUR) or " +
+                "common names (shillings, dollars, euro, pounds, naira). Use it for every question about a rate; " +
+                "never state a rate from memory. For a coin use convertAmount or getCryptoMarket.",
+            """{"type":"object","properties":{""" +
+                """"from":{"type":"string","description":"A currency code or name, for example USD or dollars"},""" +
+                """"to":{"type":"string","description":"A currency code or name; leave out for the display """ +
+                """currency"}},"required":["from"]}""",
+        )
+
+    val convertAmount =
+        ToolSpec(
+            "convertAmount",
+            "Converts an amount exactly between any two fiat currencies or coins: currency to currency at " +
+                "ExchangeRate-API's rates, a coin to or from a currency at CoinGecko's US dollar price and the " +
+                "dollar rate, a coin to a coin through US dollars. Gives the result (currencies to 2 decimals, " +
+                "coins to their own decimals) and every rate and price used, with its time and source. If a rate or " +
+                "price is missing it says which and gives no number: then tell the user you couldn't get it. Use " +
+                "it for every conversion; never multiply a rate yourself.",
+            """{"type":"object","properties":{""" +
+                """"amount":{"type":"string","description":"The amount as a number, for example 2500 or 0.05"},""" +
+                """"from":{"type":"string","description":"A currency or coin: KES, shillings, USD, BTC, Solana"},""" +
+                """"to":{"type":"string","description":"A currency or coin; leave out for the display currency"}},""" +
+                """"required":["amount","from"]}""",
+        )
+
+    val calculate =
+        ToolSpec(
+            "calculate",
+            "Works out arithmetic exactly: + - × ÷, brackets, decimals, numbers with thousands commas, and " +
+                "percentages (\"15% of 2,400\", \"2,400 + 15%\"). Returns the exact result and a rounded one for " +
+                "saying. Use it for every sum, split, difference, share or percentage you state; never do maths " +
+                "yourself. Only numbers and those signs: no words, units or currency signs.",
+            """{"type":"object","properties":{""" +
+                """"expression":{"type":"string","description":"For example (1200 + 850.50) / 3 or 15% of 2,400"}},""" +
+                """"required":["expression"]}""",
         )
 
     private const val NO_ARGUMENTS = """{"type":"object","properties":{}}"""
