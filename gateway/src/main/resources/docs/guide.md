@@ -228,11 +228,12 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). Each sentence is spoken as soon as the model has written it. |
 | `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
 | `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
-| `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
+| `interrupted` | server | The user talked over Asha (heard by the server, or the phone's `interrupt`): stop playing, and drop audio and `reply` frames that arrived since your own `interrupt`. Their new words become the next turn. |
 | `error` `{code, message}` | server | One answer failed; keep talking. |
 | `timing` `{turn, modelFirstTextMs, firstSentenceMs, firstAudioMs}` | server | Once per turn: milliseconds from the end of the user's speech to the model's first words, the first sentence sent to the voice, and the first audio sent; `null` for a step the turn never reached. For latency logs; safe to ignore. |
 | `closing` `{reason, message?, retryAfterSeconds?}` | server | The server is about to close; `reason` is also the close reason. |
 | `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
+| `interrupt` `{at?}` | phone | The phone's own voice activity detector heard the user start talking over Asha and has stopped her audio: the server cancels her answer and speech exactly as for a barge-in it heard (`reply_done` with `spoken: false`), and the user's next words are the next turn. Always answered with `interrupted`. `at` is the onset on the phone's clock (ISO-8601), for latency logs only. At most 5 at once per conversation, then one every 3 seconds; extra ones are ignored. |
 | `end` | phone | Hang up. |
 
 A frame with a `type` the phone doesn't know is ignored: new types are added without a new version.

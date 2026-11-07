@@ -5,6 +5,7 @@ import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
+import com.circaso.assistant.domain.models.LiveInterrupt
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.MascotHints
 import com.circaso.assistant.domain.models.ToolStatus
@@ -67,6 +68,12 @@ fun interface LiveOutput {
  *   whole time and leaves the deciding to this rule. Words held and never crossing the bar are dropped like an echo:
  *   not a barge-in, not shown, not charged, never a question. Once the bar is crossed, the whole stretch is the
  *   person's: its held words lead the next turn and are charged.
+ * - **The phone may decide first** (decision 2026-11-07, client barge-in). A phone with its own voice activity detector
+ *   stops her audio the moment the person starts talking and sends `interrupt` ([interrupt]): that is a confirmed
+ *   barge-in, handled exactly like one from words (generation and speech cancelled, the reply `spoken: false`), and the
+ *   person's speech that follows (with any words held from the same stretch leading it) is the next turn. The word rule
+ *   above stays as the backstop for phones without one. Interrupts are rate-limited per conversation
+ *   ([INTERRUPT_BURST], one more each [INTERRUPT_REFILL_MILLIS]); one over the limit is ignored.
  * - **Metering** (decisions 2026-10-26). Voice seconds count only speech. The user's is measured on the transcriber's
  *   own clock, from the first word's start to the last word's end of each stretch of speech, so a burst of late events
  *   can't stretch or shrink it (arrival time is the fallback for a provider without timestamps). Asha's is charged as
@@ -341,6 +348,38 @@ class LiveConversation(
     suspend fun audio(frame: ByteArray) {
         if (ended.isCompleted) return
         line.transcription.send(frame)
+    }
+
+    /** Interrupts still allowed now, and when the last one was given back ([INTERRUPT_REFILL_MILLIS] each). */
+    private var interruptsLeft = INTERRUPT_BURST
+    private var interruptsRefilledAt = 0L
+
+    /**
+     * The phone heard the person talk over Asha and has stopped her already: barge in as if the words had crossed the
+     * bar. Words held from the same stretch stay held, so they lead the next turn. Always answered with `interrupted`
+     * unless [LiveInterrupt.LIMITED], so the phone knows from when her audio is the next reply's.
+     */
+    suspend fun interrupt(): LiveInterrupt {
+        if (ended.isCompleted) return LiveInterrupt.ALREADY_LISTENING
+        return state.withLock {
+            val now = nowMillis()
+            if (interruptsRefilledAt == 0L) interruptsRefilledAt = now
+            val refills = (now - interruptsRefilledAt) / INTERRUPT_REFILL_MILLIS
+            if (refills > 0) {
+                interruptsLeft = minOf(INTERRUPT_BURST, interruptsLeft + refills.toInt())
+                interruptsRefilledAt += refills * INTERRUPT_REFILL_MILLIS
+            }
+            if (interruptsLeft == 0) return@withLock LiveInterrupt.LIMITED
+            interruptsLeft--
+            lastActivity = now
+            if (isAshaBusy()) {
+                bargeIn()
+                LiveInterrupt.BARGED_IN
+            } else {
+                emit(LiveEvent.Interrupted)
+                LiveInterrupt.ALREADY_LISTENING
+            }
+        }
     }
 
     /** The phone's answer to a device tool; the turn it belongs to carries on. */
@@ -963,6 +1002,10 @@ class LiveConversation(
         const val ECHO_MATCH = 0.7
 
         const val RECENT_WORDS = 120
+
+        /** The phone's `interrupt` frames: this many at once, then one more each [INTERRUPT_REFILL_MILLIS]. */
+        const val INTERRUPT_BURST = 5
+        const val INTERRUPT_REFILL_MILLIS = 3_000L
 
         /**
          * While Asha is busy, a barge-in needs this many settled words that aren't [FILLER_WORDS]. One (decision

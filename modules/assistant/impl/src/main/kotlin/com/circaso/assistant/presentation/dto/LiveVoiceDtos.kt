@@ -44,6 +44,15 @@ sealed interface LivePhoneFrame {
     @Serializable
     @SerialName("end")
     data object End : LivePhoneFrame
+
+    /**
+     * The phone heard the person start talking over Asha (its own voice activity detector, decision 2026-11-07) and
+     * has already stopped her audio: a confirmed barge-in. [at] is when the phone heard the onset (ISO-8601), for the
+     * latency log only; the server's clock decides everything else.
+     */
+    @Serializable
+    @SerialName("interrupt")
+    data class Interrupt(val at: String? = null) : LivePhoneFrame
 }
 
 /** Only a frame's `type`: what a frame that didn't decode meant to be, so a bad `tool_results` can be answered. */
