@@ -65,6 +65,12 @@ object RateLimitTable {
                 Limit("share", 30, Duration.ofHours(1), LimitBy.USER)
             }
 
+            // SU1: support's own cap is 5 new tickets a day (support.rate_limited); this bucket only stops a script
+            // hammering the route before that check runs.
+            method == "POST" && path == "/v1/support/tickets" -> {
+                Limit("support", 10, Duration.ofHours(1), LimitBy.USER)
+            }
+
             // W6 reads a page of history and names everyone on it: its own bucket, like the agent's, so scrolling the
             // history can't use up the rest of the app's budget.
             method == "GET" && path == "/v1/wallet/transactions" -> {

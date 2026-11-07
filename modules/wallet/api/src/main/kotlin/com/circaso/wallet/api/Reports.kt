@@ -13,7 +13,12 @@ import java.util.UUID
 // keeps (`usd_total_minor`, `fee_usd_minor`); coin amounts are exact integers in the coin's minor units.
 
 /** What a wallet holds of one coin on one chain. [usdMicros] null when the coin has no price. */
-data class OpsBalance(val asset: String, val amountMinor: BigInteger, val decimals: Int, val usdMicros: Long?)
+data class OpsBalance(
+    val asset: String,
+    val amountMinor: BigInteger,
+    val decimals: Int,
+    val usdMicros: Long?,
+)
 
 /** [state] is `ACTIVE`, `FROZEN` or `CLOSED`. */
 data class OpsChainWallet(
@@ -74,7 +79,12 @@ data class TransferPage(val items: List<OpsTransfer>, val nextCursor: String?)
 enum class ReportBucket { DAY, WEEK, MONTH }
 
 /** One period (its first UTC day) of confirmed transfers: how many, their dollar weight, and the fees collected. */
-data class PeriodTotals(val period: LocalDate, val count: Long, val volumeUsdMicros: Long, val feesUsdMicros: Long)
+data class PeriodTotals(
+    val period: LocalDate,
+    val count: Long,
+    val volumeUsdMicros: Long,
+    val feesUsdMicros: Long,
+)
 
 /** Confirmed transfers of one coin on one chain over the range. */
 data class ChainAssetTotals(
@@ -101,7 +111,12 @@ data class FinanceReport(
 )
 
 /** A group's wallet: [walletId] is also its holder id for [WalletReports.holdings]; [signerId] the one who signs. */
-data class GroupWalletRef(val chatId: ChatId, val walletId: UUID, val signerId: UserId, val createdAt: Instant)
+data class GroupWalletRef(
+    val chatId: ChatId,
+    val walletId: UUID,
+    val signerId: UserId,
+    val createdAt: Instant,
+)
 
 data class GroupWalletPage(val items: List<GroupWalletRef>, val nextCursor: String?)
 
@@ -110,18 +125,30 @@ interface WalletReports {
     suspend fun holdings(holderId: UUID): Resource<OpsHoldings>
 
     /** Transfers [userId] sent or received, newest first. Error: `request.malformed` for a bad cursor. [limit] 1-200. */
-    suspend fun transfersOf(userId: UserId, cursor: String?, limit: Int): Resource<TransferPage>
+    suspend fun transfersOf(
+        userId: UserId,
+        cursor: String?,
+        limit: Int,
+    ): Resource<TransferPage>
 
     /** Fees [userId] paid on collected fee legs, all time, in micro-dollars. */
     suspend fun feesPaidBy(userId: UserId): Long
 
     /** Every transfer matching [filter], newest first. Same paging. */
-    suspend fun transfers(filter: TransferFilter, cursor: String?, limit: Int): Resource<TransferPage>
+    suspend fun transfers(
+        filter: TransferFilter,
+        cursor: String?,
+        limit: Int,
+    ): Resource<TransferPage>
 
     suspend fun transfer(transferId: TransferId): OpsTransfer?
 
     /** [from] inclusive, [to] exclusive; at most 366 days. */
-    suspend fun report(from: Instant, to: Instant, bucket: ReportBucket): FinanceReport
+    suspend fun report(
+        from: Instant,
+        to: Instant,
+        bucket: ReportBucket,
+    ): FinanceReport
 
     suspend fun groupWalletCount(): Long
 

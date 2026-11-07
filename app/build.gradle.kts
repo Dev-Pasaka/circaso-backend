@@ -50,6 +50,8 @@ dependencies {
     implementation(project(":modules:status:impl"))
     implementation(project(":modules:share:api"))
     implementation(project(":modules:share:impl"))
+    implementation(project(":modules:support:api"))
+    implementation(project(":modules:support:impl"))
     implementation(project(":modules:spaces:api"))
     implementation(project(":modules:spaces:impl"))
     implementation(project(":modules:assistant:api"))
