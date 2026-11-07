@@ -1,7 +1,7 @@
 package com.circaso.support.api
 
-import com.circaso.shared.UuidIdSerializer
 import com.circaso.shared.Uuid7
+import com.circaso.shared.UuidIdSerializer
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
