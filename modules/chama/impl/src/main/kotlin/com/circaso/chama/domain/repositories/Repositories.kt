@@ -3,6 +3,7 @@ package com.circaso.chama.domain.repositories
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.domain.models.Approval
 import com.circaso.chama.domain.models.Contribution
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
@@ -28,6 +29,15 @@ interface SettingsRepository {
     suspend fun find(chatId: ChatId): GroupSettings
 
     suspend fun save(settings: GroupSettings)
+}
+
+/** `direct_payouts`: what the group wallet's owner sent straight from it (decision 2026-11-06). */
+interface DirectPayoutRepository {
+    /** Records it unless the transfer was recorded before; true if this call recorded it. */
+    suspend fun insert(payout: DirectPayout): Boolean
+
+    /** Everything the group's wallet sent without a request. */
+    suspend fun total(chatId: ChatId): Long
 }
 
 interface ContributionRepository {

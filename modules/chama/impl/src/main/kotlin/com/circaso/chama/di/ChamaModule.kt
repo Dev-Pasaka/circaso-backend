@@ -6,11 +6,13 @@ import com.circaso.chama.data.cache.ChamaExpiry
 import com.circaso.chama.data.cache.RealtimeFramesImpl
 import com.circaso.chama.data.repositories.ChamaOutboxImpl
 import com.circaso.chama.data.repositories.ContributionRepositoryImpl
+import com.circaso.chama.data.repositories.DirectPayoutRepositoryImpl
 import com.circaso.chama.data.repositories.GoalRepositoryImpl
 import com.circaso.chama.data.repositories.RequestRepositoryImpl
 import com.circaso.chama.data.repositories.SettingsRepositoryImpl
 import com.circaso.chama.data.tables.ApprovalsTable
 import com.circaso.chama.data.tables.ContributionsTable
+import com.circaso.chama.data.tables.DirectPayoutsTable
 import com.circaso.chama.data.tables.GoalsTable
 import com.circaso.chama.data.tables.GroupSettingsTable
 import com.circaso.chama.data.tables.RealtimeTable
@@ -19,6 +21,7 @@ import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -79,6 +82,7 @@ internal val chamaDatabaseSpec =
                 ApprovalsTable,
                 RealtimeTable,
                 GroupSettingsTable,
+                DirectPayoutsTable,
             ),
         migrationsLocation = "classpath:db/chama",
         outbox = true,
@@ -99,6 +103,7 @@ fun chamaModule(config: Config): Module =
         single(named("chama.database")) { get<Databases>().scope(chamaDatabaseSpec.schema) }
         single<GoalRepository> { GoalRepositoryImpl(get(named("chama.database"))) }
         single<ContributionRepository> { ContributionRepositoryImpl(get(named("chama.database"))) }
+        single<DirectPayoutRepository> { DirectPayoutRepositoryImpl(get(named("chama.database"))) }
         single<RequestRepository> { RequestRepositoryImpl(get(named("chama.database"))) }
         single<SettingsRepository> { SettingsRepositoryImpl(get(named("chama.database"))) }
         single<ChamaOutbox> { ChamaOutboxImpl(get(named("chama.database"))) }
@@ -125,7 +130,7 @@ fun chamaModule(config: Config): Module =
         single { Members(get(), get()) }
         single { RequestFrames(get(), get(), get(), get()) }
         single { SetGoal(get(), get(), get(), get(), clock, get()) }
-        single { ChamaViews(get(), get(), get(), get(), get(), get()) }
+        single { ChamaViews(get(), get(), get(), get(), get(), get(), get()) }
         single { ChamaNames(get()) }
         single { GetChama(get()) }
         single { ListLedger(get(), get()) }
@@ -135,7 +140,7 @@ fun chamaModule(config: Config): Module =
         single { AskPayout(get(), get(), get(), clock, get(), get()) }
         single { DecidePayout(get(), get(), get(), clock) }
         single { AttachPayment(get(), get(), get(), get(), clock) }
-        single { RecordTransfer(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { RecordTransfer(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { ExpireRequests(get(), clock) }
         single { ReplayFrames(get()) }
         single { HasGoal(get()) }

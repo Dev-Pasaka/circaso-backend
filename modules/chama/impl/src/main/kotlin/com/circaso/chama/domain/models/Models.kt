@@ -39,6 +39,14 @@ data class Contribution(
     val legacy: Boolean = false,
 )
 
+/** A payment the group wallet's owner sent straight from it, with no request (decision 2026-11-06). */
+data class DirectPayout(
+    val transferId: TransferId,
+    val chatId: ChatId,
+    val amountMinor: Long,
+    val at: Instant,
+)
+
 /**
  * Who approves a group's payouts (GW1, decision 2026-11-03): two admins (every admin when there are fewer; an admin
  * asking counts as one), or any one admin.

@@ -9,6 +9,7 @@ import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.AskPayoutCommand
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
@@ -22,6 +23,7 @@ import com.circaso.chama.domain.ports.FrameSender
 import com.circaso.chama.domain.ports.LoggedFrame
 import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -113,6 +115,14 @@ private class MemoryContributions : ContributionRepository {
             .filter { it.chatId == chatId && !it.legacy && (since == null || it.at >= since) }
             .groupBy { it.userId }
             .mapValues { (_, c) -> c.sumOf { it.amountMinor } }
+}
+
+private class MemoryDirectPayouts : DirectPayoutRepository {
+    val rows = mutableMapOf<TransferId, DirectPayout>()
+
+    override suspend fun insert(payout: DirectPayout) = rows.putIfAbsent(payout.transferId, payout) == null
+
+    override suspend fun total(chatId: ChatId) = rows.values.filter { it.chatId == chatId }.sumOf { it.amountMinor }
 }
 
 private class MemorySettings : SettingsRepository {
@@ -263,6 +273,7 @@ private class Harness {
     val contributions = MemoryContributions()
     val requests = MemoryRequests()
     val settings = MemorySettings()
+    val directPayouts = MemoryDirectPayouts()
     val chats = FakeChats()
     val profiles = FakeProfiles()
     val frames = RecordingFrames()
@@ -281,7 +292,7 @@ private class Harness {
     val members = Members(chats, profiles)
     val requestFrames = RequestFrames(goals, members, frames, wallets)
     val setGoal = SetGoal(members, goals, contributions, frames, clock, wallets)
-    val views = ChamaViews(members, goals, contributions, requests, wallets, settings)
+    val views = ChamaViews(members, goals, contributions, requests, wallets, settings, directPayouts)
     val getChama = GetChama(views)
     val getMoney = GetGroupMoney(views)
     val removeGoal = RemoveGoal(members, goals, frames)
@@ -295,7 +306,18 @@ private class Harness {
     val decideRequest = DecidePayout(members, requests, requestFrames, clock)
     val attachPayment = AttachPayment(members, requests, wallets, requestFrames, clock)
     val recordTransfer =
-        RecordTransfer(members, goals, contributions, requests, frames, requestFrames, outbox, bus, clock)
+        RecordTransfer(
+            members,
+            goals,
+            contributions,
+            requests,
+            frames,
+            requestFrames,
+            outbox,
+            bus,
+            directPayouts,
+            clock,
+        )
     val expireRequests = ExpireRequests(requests, clock)
 
     val chat = ChatId.new()
@@ -642,6 +664,50 @@ class ChamaTest {
                     h.getMoney(h.otieno, h.chat),
                 ).data
             assertEquals(500_000_000, view.paidOutMinor)
+        }
+
+    @Test
+    fun `the owner's payment straight from the group wallet is a direct payout, once, and every member hears it`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.contribute(h.juma, 900_000_000)
+            h.frames.sent.clear()
+            val t = TransferId.new()
+
+            // To anyone (here outside the group: no recipient on the event), with no request.
+            h.recordTransfer(WalletTransfer(t, h.wallet, 300_000_000, h.chat, h.chat, null, null))
+            h.recordTransfer(WalletTransfer(t, h.wallet, 300_000_000, h.chat, h.chat, null, null))
+
+            assertEquals(1, h.directPayouts.rows.size, "once, even when the event arrives twice")
+            val sent = h.frames.sent.filter { it.second is ChamaFrame.MoneyUpdated }
+            assertEquals(setOf(h.otieno, h.wanjiru, h.achieng, h.juma), sent.single().first)
+            val frame = sent.single().second as ChamaFrame.MoneyUpdated
+            assertEquals(com.circaso.chama.api.MoneyUpdatedFrame.PAYOUT, frame.kind)
+            assertNull(frame.requestId)
+            assertEquals(1, h.contributions.rows.size, "never a contribution")
+            assertEquals(0, h.bus.published.count { it.type == RequestPaid.TYPE })
+            val view =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.wanjiru, h.chat),
+                ).data
+            assertEquals(300_000_000, view.paidOutMinor)
+        }
+
+    @Test
+    fun `money from one group's wallet into another's is the sender's payout, no member's contribution`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            val other = ChatId.new()
+            h.recordTransfer(WalletTransfer(TransferId.new(), UserId.new(), 5, null, other, h.chat, null))
+            assertEquals(0, h.contributions.rows.size)
+            assertEquals(
+                other,
+                h.directPayouts.rows.values
+                    .single()
+                    .chatId,
+            )
         }
 
     @Test
