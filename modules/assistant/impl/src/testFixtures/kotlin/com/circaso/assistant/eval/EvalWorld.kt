@@ -5,6 +5,7 @@ import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.data.tools.SupportTools
 import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.Plan
@@ -29,6 +30,10 @@ import com.circaso.messaging.api.AgentChatsResponse
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.support.api.NewTicket
+import com.circaso.support.api.OpenedTicket
+import com.circaso.support.api.SupportTickets
+import com.circaso.support.api.TicketId
 import com.circaso.users.api.AgentContactDto
 import com.circaso.users.api.AgentContactsResponse
 import com.circaso.users.api.AgentProfileResponse
@@ -69,10 +74,10 @@ import java.util.UUID
  * The eval's whole world, fixed so every run sees the same numbers: one user in Nairobi (display currency KES) with a
  * wallet, five weeks of payments, four chats on the phone, and the day's rates and prices.
  *
- * Asha's real tools run unchanged ([HttpAgentTools], [MoneyTools], [CryptoTools], [OwnTools], wired as the module
- * wires them), so their specs, labels, arguments and output are production's. Only what they read is fake: the rate
- * and price ports, a stand-in for the other modules' `/v1/agent/` routes (Ktor's mock engine), and the phone that
- * answers `searchChats` and `readChat`. Nothing reaches a wallet, a vendor or the network.
+ * Asha's real tools run unchanged ([HttpAgentTools], [MoneyTools], [CryptoTools], [OwnTools], [SupportTools], wired
+ * as the module wires them), so their specs, labels, arguments and output are production's. Only what they read is
+ * fake: the rate and price ports, support's tickets, a stand-in for the other modules' `/v1/agent/` routes (Ktor's
+ * mock engine), and the phone that answers `searchChats` and `readChat`. Nothing reaches a wallet, a vendor or the network.
  *
  * A fresh world per case and repetition, so no case sees another's calls.
  */
@@ -101,6 +106,7 @@ class EvalWorld {
                 ),
                 CryptoTools(EvalMarkets, EvalRates),
                 MoneyTools(EvalRates, EvalPrices, EvalMarkets, clock),
+                SupportTools(EvalTickets),
             ),
         )
 
@@ -691,6 +697,14 @@ object EvalMarkets : CryptoMarkets {
             .take(
                 3,
             ).map { TrendingCoin(it.id, it.symbol, it.name, it.marketCapRank, it.usdPrice, it.change24hPercent) }
+}
+
+/** Support in the eval: every ticket is opened, with one fixed id and number, and nothing is kept. */
+object EvalTickets : SupportTickets {
+    private val ticketId = TicketId(UUID.fromString("0190f0c0-0000-7000-8000-00000000c500"))
+
+    override suspend fun open(ticket: NewTicket): Resource<OpenedTicket> =
+        Resource.success(OpenedTicket(ticketId, "CS-000042"))
 }
 
 /** The web: a few fixed results whatever the query, dated, so a search never reaches out. */

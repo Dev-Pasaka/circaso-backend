@@ -12,7 +12,8 @@ import java.util.UUID
 
 /**
  * Asha's server-side tools: the other modules' read-only `/v1/agent/` routes, called with the user's agent token, and
- * the few that need no token (web search, her own allowance). All of them only read (decision 2026-10-31).
+ * the few that need no token (web search, her own allowance). All of them only read (decision 2026-10-31), but one:
+ * `openSupportTicket` writes a support ticket the user agreed to (decision 2026-11-08).
  */
 interface AgentTools {
     /** The tools available to this turn, for the model; the token-bound ones only when [hasAgentToken]. */

@@ -5,6 +5,7 @@ import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.data.tools.SupportTools
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.PromptContext
@@ -49,6 +50,7 @@ class AshaPromptTest {
                 ),
                 CryptoTools(FakeMarkets(), FakeUsdRates()),
                 MoneyTools(FakeUsdRates(), FakePrices(), FakeMarkets()),
+                SupportTools(RecordingTickets()),
             ),
         )
     private val text = AshaPrompt.of(PromptContext(isVoice = false, "2026-11-05", "KES", canReadChats = true))
@@ -84,6 +86,7 @@ class AshaPromptTest {
                 "getExchangeRate",
                 "convertAmount",
                 "calculate",
+                "openSupportTicket",
             ),
             tools.specs(hasAgentToken = true).map { it.name },
         )
@@ -96,6 +99,7 @@ class AshaPromptTest {
                 "getExchangeRate",
                 "convertAmount",
                 "calculate",
+                "openSupportTicket",
             ),
             tools.specs(hasAgentToken = false).map { it.name },
         )
@@ -165,10 +169,24 @@ class AshaPromptTest {
     }
 
     @Test
+    fun `a support ticket is offered only when she can't help, opened only once the user says yes`() {
+        listOf(text, voice).map(::flat).forEach { flat ->
+            assertTrue("the one exception is a support ticket the user agreed to" in flat)
+            assertTrue("offer a support ticket and say what it will say" in flat)
+            assertTrue("Open it with openSupportTicket only after the user says yes" in flat)
+        }
+        val description = AshaPrompt.openSupportTicket.description
+        assertTrue("only after you have tried to help yourself" in description)
+        assertTrue("ALWAYS ask the user first" in description)
+        assertTrue("Never put a PIN" in description)
+        assertTrue("At most once per answer" in description)
+    }
+
+    @Test
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-07-v2", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-08-v1", AshaPrompt.VERSION)
     }
 
     @Test
