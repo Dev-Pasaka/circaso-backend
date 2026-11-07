@@ -14,6 +14,17 @@ application {
 // `./gradlew :app:run` serves locally. Settings come from environment variables, and for local development from `.env`
 // at the repository root (copy `.env.example`); nothing is passed here, so the log format, levels and colors are yours to set there.
 
+// `./gradlew :app:runOps` serves the ops gateway (decision 2026-11-08): its own process and port (OPS_PORT, default 8081)
+// from the same build, with the same `.env`.
+tasks.register<JavaExec>("runOps") {
+    group = "application"
+    description = "Serves the ops gateway (the staff API) locally."
+    mainClass = "com.circaso.app.OpsMain"
+    classpath = project.extensions.getByType<SourceSetContainer>()["main"].runtimeClasspath
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    workingDir = rootDir
+}
+
 // `./gradlew :app:migrate` runs the migrations once, with the same settings.
 tasks.register<JavaExec>("migrate") {
     group = "application"
@@ -33,6 +44,7 @@ dependencies {
     implementation(project(":observability:api"))
     implementation(project(":observability:impl"))
     implementation(project(":gateway"))
+    implementation(project(":ops-gateway"))
     implementation(project(":grpc"))
     implementation(project(":modules:identity:api"))
     implementation(project(":modules:identity:impl"))
@@ -52,6 +64,8 @@ dependencies {
     implementation(project(":modules:share:impl"))
     implementation(project(":modules:spaces:api"))
     implementation(project(":modules:spaces:impl"))
+    implementation(project(":modules:ops:api"))
+    implementation(project(":modules:ops:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
 

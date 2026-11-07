@@ -67,7 +67,7 @@ val RequestLog =
     }
 
 /** The route as it was declared: path constants and `{parameter}` names from the root down, nothing the caller sent. */
-internal fun RoutingNode.template(): String {
+fun RoutingNode.template(): String {
     val segments =
         generateSequence(this) { it.parent }
             .mapNotNull { node ->

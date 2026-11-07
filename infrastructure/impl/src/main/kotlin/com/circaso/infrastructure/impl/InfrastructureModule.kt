@@ -119,3 +119,18 @@ fun Application.startInfrastructure() {
 internal fun Scheduler.registerAll(jobs: Collection<ScheduledJob>) {
     jobs.forEach { every(it.name, it.interval, it.job) }
 }
+
+/**
+ * The ops gateway's process (decision 2026-11-08): the same connections, but no event consumers, no outbox relay and
+ * no scheduled jobs, which the app's processes run. What the staff routes write still reaches the streams: a module
+ * publishes right after its commit (`XADD`), and an event that misses it is swept by the app's single-leader relay
+ * from the module's outbox. Only the clients are closed when it stops.
+ */
+fun Application.startOpsInfrastructure() {
+    val koin = getKoin()
+    monitor.subscribe(ApplicationStopped) {
+        koin.get<VendorHttpClients>().close()
+        koin.get<PeerGrpcClients>().close()
+        koin.get<RedisConnection>().close()
+    }
+}
