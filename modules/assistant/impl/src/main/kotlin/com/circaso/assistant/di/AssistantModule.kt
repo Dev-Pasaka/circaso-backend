@@ -22,6 +22,7 @@ import com.circaso.assistant.data.tables.UsageDailyTable
 import com.circaso.assistant.data.tools.AllAgentTools
 import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
+import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.Limits
@@ -203,7 +204,15 @@ fun assistantModule(config: Config): Module =
                             "http://localhost:" + config.string("port", "8080"),
                         ).trimEnd('/'),
                 )
-            AllAgentTools(listOf(routes, OwnTools(get<WebSearch>(), get(), get()), CryptoTools(get(), get())))
+            // Money maths (decision 2026-11-07): rates, conversions and sums through tools, never the model's own.
+            AllAgentTools(
+                listOf(
+                    routes,
+                    OwnTools(get<WebSearch>(), get(), get()),
+                    CryptoTools(get(), get()),
+                    MoneyTools(get(), get(), get(), clock),
+                ),
+            )
         }
 
         // domain
