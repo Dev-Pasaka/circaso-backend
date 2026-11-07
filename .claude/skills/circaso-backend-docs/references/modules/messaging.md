@@ -75,6 +75,16 @@ interface ChatDirectory {            // read by wallet (pay-in-chat) and calls (
 
 Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below), and supplies the push wording for its frames.
 
+**Staff contract `GroupReports`** (decision 2026-11-08), bound in messaging's Koin module for the ops module on the separate ops gateway, never mounted on the app gateway. A group's name and photo are sealed on the phones, so staff see ids, counts and roles only.
+
+| Call | Use case | Notes |
+| --- | --- | --- |
+| `groups(cursor, limit)` | `ListGroups` | Every group newest first, keyset on `(created_at, chat_id) DESC` (`chats_groups_newest_idx`, V7), opaque base64url cursor; `request.malformed` for a bad one; `limit` 1–200 |
+| `groupsByIds(ids)` | `GetGroupsByIds` | Only groups that exist; a direct chat's id finds nothing |
+| `members(chatId, limit)` | `ListGroupMembers` | The owner first (whoever the chat names), then by `joined_at`; roles as `Chat.roleOf` gives them; empty for a direct chat |
+| `groupsOf(userId, limit)` | `ListGroupsOf` | Through `members_user_idx`, newest first |
+| `groupCount()` | `CountGroups` | On the partial index of groups |
+
 ### Depends on
 
 `shared`, `infrastructure:api`, `identity:api` (`DeviceSignatures`, account status) and `users:api` (`ReachPolicy`, `Profiles`). Reach is checked when a 1:1 chat is opened, on every 1:1 send (cached by users), and when someone adds a person to a group. Inside a group, members message each other through the group without needing a contact connection, which is the "separate rule owned by messaging" that users leaves to this module.
@@ -329,6 +339,8 @@ CREATE TABLE messaging.chats (
 );
 CREATE UNIQUE INDEX chats_direct_pair_key ON messaging.chats (direct_low, direct_high) WHERE kind = 'DIRECT';
                                                         -- one direct chat per pair
+CREATE INDEX chats_groups_newest_idx ON messaging.chats (created_at DESC, chat_id DESC) WHERE kind = 'GROUP';
+                                                        -- staff: groups newest first, and their count (V7)
 
 CREATE TABLE messaging.members (
     chat_id    uuid        NOT NULL REFERENCES messaging.chats ON DELETE CASCADE,

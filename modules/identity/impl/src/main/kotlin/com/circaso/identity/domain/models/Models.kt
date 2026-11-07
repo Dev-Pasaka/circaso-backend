@@ -83,6 +83,12 @@ enum class SecurityEventType {
     PHONE_RELEASE_REQUESTED,
     SESSION_REUSE,
     SUPPORT_ACCOUNT_CREATED,
+
+    /** Staff suspended the account on the ops gateway (decision 2026-11-08); every session ended with it. */
+    SUSPENDED,
+
+    /** Staff gave a suspended account back; the person signs in again. */
+    UNSUSPENDED,
 }
 
 data class SecurityEvent(

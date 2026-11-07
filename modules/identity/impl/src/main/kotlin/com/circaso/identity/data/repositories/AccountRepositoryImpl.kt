@@ -224,7 +224,7 @@ private fun AccountsTable.write(
     row[updatedAt] = now
 }
 
-private fun ResultRow.toAccount() =
+internal fun ResultRow.toAccount() =
     Account(
         userId = UserId(this[AccountsTable.userId]),
         phone = this[AccountsTable.phone]?.let(PhoneNumber::parse),

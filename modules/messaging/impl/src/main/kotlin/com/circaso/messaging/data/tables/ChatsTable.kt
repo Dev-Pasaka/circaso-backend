@@ -48,5 +48,8 @@ object ChatsTable : Table("messaging.chats") {
             viaSpaceId,
             filterCondition = { (kind eq "DIRECT") and viaSpaceId.isNotNull() },
         )
+        // V7: staff's newest-first list of groups and their count. The SQL orders both columns DESC, which Exposed's
+        // index declaration can't say.
+        index("chats_groups_newest_idx", false, createdAt, chatId, filterCondition = { kind eq "GROUP" })
     }
 }

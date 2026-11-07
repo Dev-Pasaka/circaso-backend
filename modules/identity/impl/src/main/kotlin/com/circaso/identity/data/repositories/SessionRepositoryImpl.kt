@@ -87,7 +87,7 @@ class SessionRepositoryImpl(private val database: Database, private val clock: C
     }
 }
 
-private fun ResultRow.toSession() =
+internal fun ResultRow.toSession() =
     Session(
         sessionId = SessionId(this[SessionsTable.sessionId]),
         userId = UserId(this[SessionsTable.userId]),

@@ -21,8 +21,9 @@ import com.circaso.shared.envelope
 import java.time.Clock
 
 /**
- * OPS1 `POST /ops/support-accounts`: a Circaso support account (decision 2026-10-31). It is `ACTIVE` at once, with
- * no phone, device or Google/Apple login, so no sign-in path can ever find it, and each of them refuses it anyway.
+ * OPS1, served by the ops module on the ops gateway (decision 2026-11-08): a Circaso support account (decision
+ * 2026-10-31). It is `ACTIVE` at once, with no phone, device or Google/Apple login, so no sign-in path can ever find
+ * it, and each of them refuses it anyway.
  * Users is asked first whether the handle may be taken (reserved names such as `circaso` are allowed only here), then
  * makes the profile and claims the handle from `identity.SupportAccountCreated`.
  *
@@ -69,13 +70,13 @@ class CreateSupportAccount(
         return Resource.success(SupportAccount(account, command.displayName, handle))
     }
 
-    /** Who made it, in the support account's own security log. */
+    /** Which staff member made it, in the support account's own security log. */
     private fun audit(account: Account, command: CreateSupportAccountCommand) =
         SecurityEvent(
             account.userId,
             null,
             SecurityEventType.SUPPORT_ACCOUNT_CREATED,
             null,
-            "by ${command.operatorId}",
+            "by ${command.createdBy}",
         )
 }

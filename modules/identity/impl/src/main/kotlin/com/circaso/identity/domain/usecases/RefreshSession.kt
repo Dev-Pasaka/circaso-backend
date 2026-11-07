@@ -2,6 +2,7 @@ package com.circaso.identity.domain.usecases
 
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.domain.errors.IdentityError
+import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.RefreshCommand
 import com.circaso.identity.domain.models.RefreshedSession
 import com.circaso.identity.domain.models.SecurityEvent
@@ -21,6 +22,8 @@ import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.support.sha256Hex
 import com.circaso.shared.Resource
 import java.security.MessageDigest
+import java.time.Duration
+import java.time.Instant
 
 /**
  * I7: a new token pair for a signed refresh request. The old refresh token dies; presenting an old one again
@@ -99,6 +102,20 @@ class RefreshSession(
 
         val issued = opener.rotate(account, session)
         store.write(Changes(sessions = listOf(issued.session)))
+        markSeen(device, issued.session.rotatedAt)
         return RefreshOutcome.Rotated(issued)
+    }
+
+    /**
+     * The phone is in use: its `last_seen_at` moves on, at most once an hour, which is what staff count as an active
+     * person (decision 2026-11-08). Before, nothing moved it after I6, so every phone looked last seen when registered.
+     */
+    private suspend fun markSeen(device: Device?, at: Instant) {
+        if (device == null || device.lastSeenAt.isAfter(at.minus(SEEN_EVERY))) return
+        devices.touch(device.userId, device.deviceId, at)
+    }
+
+    private companion object {
+        val SEEN_EVERY: Duration = Duration.ofHours(1)
     }
 }
