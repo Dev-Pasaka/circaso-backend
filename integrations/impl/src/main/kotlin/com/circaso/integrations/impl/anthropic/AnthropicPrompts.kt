@@ -22,7 +22,7 @@ import kotlinx.serialization.json.Json
  * - A tool call the model made goes back as an assistant `tool_use` block, after any text it wrote first; empty text is
  *   left out (Anthropic refuses an empty text block).
  * - Tool results that follow one another go back in **one** user message, one `tool_result` block each: Anthropic
- *   wants every result of an assistant turn's calls together (Asha answers extra calls as skipped).
+ *   wants every result of an assistant turn's calls together (Asha runs every call of a step).
  * - Thinking is off ([AnthropicThinking.Disabled]): Koog 1.3.0 doesn't stream a thinking block's signature, and our
  *   conversation can't carry one through a tool round trip or a pause for the phone. Effort is the dial instead,
  *   sent as `output_config.effort`, which Koog doesn't model, through its additional properties.
