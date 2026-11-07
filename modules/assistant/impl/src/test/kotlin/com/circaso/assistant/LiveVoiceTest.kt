@@ -1690,8 +1690,9 @@ class LiveVoiceTest {
         testApplication {
             val live = LiveHarness(Harness())
             live.serve(this)
+            // a refusal, not an outage: Asha is still available
             live.h.model
-                .fail()
+                .reject()
                 .say("Back again.")
             val got = Received()
 
@@ -1707,6 +1708,39 @@ class LiveVoiceTest {
             }
             assertEquals("assistant.model_unavailable", got.ofType("error").single().text("code"))
             assertEquals("Back again.", got.ofType("reply").single().text("text"))
+        }
+
+    @Test
+    fun `Asha down for maintenance says so in her own voice, then the call closes with assistant_unavailable`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.fail()
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("what's my balance", endOfTurn = true))
+                val closed = readToClose(got)
+
+                assertEquals(CloseReason.Codes.TRY_AGAIN_LATER.code, closed?.code)
+                assertEquals("assistant.unavailable", closed?.message)
+            }
+            val line = "I'm down for maintenance at the moment. I'll let you know as soon as I'm back."
+            assertEquals(
+                listOf(line),
+                live.voice.sessions
+                    .single()
+                    .spoken,
+                "spoken by the voice, not the model",
+            )
+            assertEquals(line, got.ofType("reply").single().text("text"))
+            assertTrue(got.frames.any { it is ByteArray }, "its audio reached the phone")
+            val closing = got.ofType("closing").single()
+            assertEquals("assistant.unavailable", closing.text("reason"))
+            assertTrue(got.ofType("error").isEmpty(), "no error frame: the closing says it")
+            assertEquals(setOf(live.userId), live.h.health.affected, "told once she is back")
         }
 
     @Test

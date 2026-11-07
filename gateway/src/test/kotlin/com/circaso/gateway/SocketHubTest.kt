@@ -1,5 +1,7 @@
 package com.circaso.gateway
 
+import com.circaso.assistant.api.AssistantFrames
+import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.CallId
 import com.circaso.calls.api.CallParticipantSnapshot
@@ -519,6 +521,35 @@ class SocketHubTest {
                 assertEquals("New message", message.body, "no text from the chat")
                 assertTrue(message.dataOnly, "the app fetches, decrypts and words it")
             }
+        }
+
+    @Test
+    fun `Asha back after maintenance pushes offline people once each, opening Asha, and online ones get the frame`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val (online, offline) = List(2) { UserId.new() }
+            redis.values["conn:$online"] = "node-2"
+
+            fun status(available: Boolean) =
+                RealtimeEnvelope.of(
+                    AssistantFrames.MODULE,
+                    AssistantFrames.STATUS,
+                    0,
+                    AssistantStatusFrame(available, "2026-11-07T12:00:00Z"),
+                    AssistantStatusFrame.serializer(),
+                )
+
+            realtime.deliverMany(listOf(online, offline), status(available = true))
+            realtime.deliverMany(listOf(offline), status(available = false))
+
+            val (target, message) = push.sent.single()
+            assertEquals("token-$offline", target.token)
+            assertEquals("Asha is back", message.title)
+            assertEquals("Ask me anything.", message.body)
+            assertEquals(PushPayload(kind = "asha.back"), message.data)
+            assertTrue(!message.dataOnly, "no personal data: the phone shows it as it is")
         }
 
     @Test

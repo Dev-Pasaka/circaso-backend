@@ -39,6 +39,17 @@ sealed class AssistantError(
         ErrorKind.UPSTREAM,
     )
 
+    /**
+     * Asha's model is down (decision 2026-11-07: Claude only, no fallback model): the turn failed after its one quick
+     * retry. The app shows Asha as down for maintenance, keeps the question, and clears it when A14 (or the socket's
+     * `assistant` `status` frame) says she is available again; the user also gets one "Asha is back" push.
+     */
+    data object Unavailable : AssistantError(
+        "assistant.unavailable",
+        "Asha is down for maintenance at the moment. We'll let you know as soon as she's back.",
+        ErrorKind.UPSTREAM,
+    )
+
     /** A4 asked for speech in a language the server voice doesn't speak; the phone speaks it with its own voice. */
     data object LanguageNotSupported : AssistantError(
         "assistant.language_not_supported",

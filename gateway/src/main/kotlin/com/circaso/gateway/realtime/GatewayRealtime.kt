@@ -1,5 +1,7 @@
 package com.circaso.gateway.realtime
 
+import com.circaso.assistant.api.AssistantFrames
+import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.CallRingingFrame
 import com.circaso.calls.api.CallSnapshot
@@ -197,6 +199,14 @@ class GatewayRealtime(
                     dataOnly = true,
                     sound = MONEY_SOUND,
                 )
+            }
+
+            // Asha is back after maintenance (decision 2026-11-07): once per person who met her down. No personal
+            // data, so the same words show with Notification privacy on; `asha.back` opens Asha.
+            "${AssistantFrames.MODULE}.${AssistantFrames.STATUS}" -> {
+                decode(AssistantStatusFrame.serializer(), frame)?.takeIf { it.available }?.let {
+                    PushMessage(ASHA_BACK_TITLE, ASHA_BACK_BODY, PushPayload(kind = ASHA_BACK_KIND))
+                }
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.SETUP_REQUESTED}" -> {
@@ -509,6 +519,11 @@ class GatewayRealtime(
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
 }
+
+/** The one push that says Asha is back after maintenance; the app opens Asha for any `asha*` kind. */
+private const val ASHA_BACK_TITLE = "Asha is back"
+private const val ASHA_BACK_BODY = "Ask me anything."
+private const val ASHA_BACK_KIND = "asha.back"
 
 /** What wakes the app for money received, and the sound it ships for it. */
 private const val PAYMENT_RECEIVED_KIND = "payment.received"

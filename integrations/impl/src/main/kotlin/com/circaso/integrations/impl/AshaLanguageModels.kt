@@ -11,22 +11,28 @@ import com.circaso.integrations.impl.anthropic.AnthropicPrices
 import com.circaso.integrations.impl.dev.FakeLanguageModel
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.llm.ModelRoute
+import com.circaso.integrations.impl.llm.RetryingLanguageModel
 import com.circaso.integrations.impl.llm.RoutedLanguageModel
+import com.circaso.integrations.impl.llm.UnavailableLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import org.slf4j.LoggerFactory
 import java.time.Duration
 
 /**
  * Asha's text model for typed turns (`INTEGRATIONS_LLM_PROVIDER`) and for live voice
- * (`INTEGRATIONS_LLM_VOICE_PROVIDER`, the same as the first unless set): `log`, `fake`, `workers-ai` or `anthropic`
- * (Claude through Koog, decision 2026-11-07).
+ * (`INTEGRATIONS_LLM_VOICE_PROVIDER`, the same as the first unless set): `anthropic` (Claude through Koog, decision
+ * 2026-11-07), or `log` and `fake` for development. `workers-ai` is still accepted for the eval's comparison arm only.
  *
- * `anthropic` needs the secret `ANTHROPIC_API_KEY`. Without it that purpose keeps Workers AI (when its settings are
- * there, else `log`) and says why once at startup, so setting the provider before the key changes nothing. With it,
- * Workers AI (when configured) answers any turn Claude can't before its first word ([RoutedLanguageModel]). Settings,
- * all optional: `INTEGRATIONS_ANTHROPIC_MODEL_TEXT` / `_MODEL_VOICE` (`claude-haiku-5-5`), `_EFFORT_TEXT` / `_EFFORT_VOICE`
- * (`low`), `_MAX_TOKENS_TEXT` (4096) / `_MAX_TOKENS_VOICE` (1024), `_BASE_URL`, `_PRICE_INPUT_PER_MTOK` /
- * `_PRICE_OUTPUT_PER_MTOK` (for the cost on each call's log line). An unknown provider name stops startup.
+ * Claude only, no fallback model (decision 2026-11-07, "full-blown on Claude"): a turn Claude can't answer is retried
+ * once, quickly ([RetryingLanguageModel]), and then fails; the assistant tells the person Asha is down for maintenance
+ * and tells them again when she is back.
+ *
+ * `anthropic` needs the secret `ANTHROPIC_API_KEY`. Without it, a local server uses the `log` model and says why once
+ * at startup; any other environment gets a model that is always unavailable, and says so at ERROR, so a missing key
+ * shows as maintenance rather than as canned answers. Settings, all optional: `INTEGRATIONS_ANTHROPIC_MODEL_TEXT` /
+ * `_MODEL_VOICE` (`claude-haiku-5-5`), `_EFFORT_TEXT` / `_EFFORT_VOICE` (`low`), `_MAX_TOKENS_TEXT` (4096) /
+ * `_MAX_TOKENS_VOICE` (1024), `_BASE_URL`, `_PRICE_INPUT_PER_MTOK` / `_PRICE_OUTPUT_PER_MTOK` (for the cost on each
+ * call's log line). An unknown provider name stops startup.
  */
 internal fun ashaLanguageModel(
     config: Config,
@@ -40,31 +46,32 @@ internal fun ashaLanguageModel(
     val voiceProvider =
         provider(integrations.string("llm.voice-provider", chatProvider), "integrations.llm.voice-provider")
     val key = secrets.get(ANTHROPIC_KEY)?.takeIf { it.isNotBlank() }
-    val hasWorkersAi = !config.string("cloudflare.account-id").isNullOrBlank()
 
+    // Only for the eval's comparison arm (`workers-ai`); never a fallback.
     val workersAi by lazy {
         val textModel = ai.string("model.text", WORKERS_AI_TEXT_MODEL)
         WorkersAiLanguageModel(
             workersAi(config, secrets, clients),
             textModel,
             maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
-            // Workers AI is only the fallback now (Claude answers both modes). No PhoneLLM anywhere (Pasaka,
-            // 2026-11-07): spoken turns fall back to the text model unless a voice model is set.
             voiceModel = ai.string("model.voice-text", textModel),
         )
     }
     val logModel by lazy { LogLanguageModel() }
     val fakeModel by lazy { FakeLanguageModel() }
-    val claude by lazy { anthropic(integrations.section("anthropic"), key!!, clients) }
+    val claude by lazy {
+        RetryingLanguageModel(
+            anthropic(integrations.section("anthropic"), key!!, clients),
+            ANTHROPIC,
+        )
+    }
+    val noKey by lazy { UnavailableLanguageModel(ANTHROPIC) }
 
     fun without(purpose: String, provider: String): String {
         if (provider != ANTHROPIC || key != null) return provider
-        val instead = if (hasWorkersAi) WORKERS_AI else "log"
-        log.warn(
-            "asha {} model stays on {}: the provider is anthropic but ANTHROPIC_API_KEY is not set",
-            purpose,
-            instead,
-        )
+        val instead = if (config.environment.isLocal) "log" else NO_KEY
+        val line = "asha {} model is {}: the provider is anthropic but ANTHROPIC_API_KEY is not set"
+        if (instead == NO_KEY) log.error(line, purpose, "unavailable") else log.warn(line, purpose, instead)
         return instead
     }
     val chatName = without("chat", chatProvider)
@@ -74,31 +81,16 @@ internal fun ashaLanguageModel(
         when (name) {
             WORKERS_AI -> workersAi
             ANTHROPIC -> claude
+            NO_KEY -> noKey
             "fake" -> fakeModel
             else -> logModel
         }
 
-    fun route(name: String): ModelRoute =
-        if (name == ANTHROPIC && hasWorkersAi) {
-            ModelRoute(model(name), name, workersAi, WORKERS_AI)
-        } else {
-            ModelRoute(model(name), name)
-        }
-
-    val chat = route(chatName)
-    val voice = route(voiceName)
-    log.info(
-        "asha models: chat={} voice={} fallback={}",
-        chatName,
-        voiceName,
-        (chat.fallbackName ?: voice.fallbackName) ?: "none",
-    )
-    // One provider and no fallback: the provider itself, exactly as before the routing existed.
-    return if (chat.model === voice.model && chat.fallback == null && voice.fallback == null) {
-        chat.model
-    } else {
-        RoutedLanguageModel(chat, voice)
-    }
+    log.info("asha models: chat={} voice={} fallback=none", chatName, voiceName)
+    val chat = model(chatName)
+    val voice = model(voiceName)
+    // One model for both purposes: the model itself, with nothing to route.
+    return if (chat === voice) chat else RoutedLanguageModel(ModelRoute(chat, chatName), ModelRoute(voice, voiceName))
 }
 
 private fun provider(name: String, key: String): String {
@@ -108,7 +100,10 @@ private fun provider(name: String, key: String): String {
     return name
 }
 
-/** Claude for both purposes on `HttpClients.named("anthropic")`, which never retries: the fallback is quicker. */
+/**
+ * Claude for both purposes on `HttpClients.named("anthropic")`, which never retries itself: [RetryingLanguageModel]
+ * makes the one quick retry a turn can afford.
+ */
 private fun anthropic(
     settings: Config,
     key: String,
@@ -162,6 +157,9 @@ private fun price(
 
 private const val ANTHROPIC = "anthropic"
 private const val WORKERS_AI = "workers-ai"
+
+/** What `anthropic` becomes outside a local server when its key is missing: always unavailable, never canned answers. */
+private const val NO_KEY = "anthropic-without-key"
 private val PROVIDERS = listOf("log", "fake", WORKERS_AI, ANTHROPIC)
 
 /** The secret `ANTHROPIC_API_KEY`: sent as `x-api-key` to Anthropic, never logged. */

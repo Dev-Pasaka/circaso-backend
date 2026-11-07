@@ -155,7 +155,8 @@ data class LiveErrorFrame(val code: String, val message: String, val type: Strin
 
 /**
  * Sent just before the server closes the socket. [reason] is also the close reason: `silence`, `ended`, or an error
- * code (`assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`).
+ * code (`assistant.quota_exceeded`, `assistant.language_not_supported`, `assistant.model_unavailable`, or
+ * `assistant.unavailable` after Asha has said she is down for maintenance).
  */
 @Serializable
 data class LiveClosingFrame(

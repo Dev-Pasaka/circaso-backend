@@ -130,6 +130,7 @@ fun LiveEnd.toClosing(): LiveClosingFrame? =
         is LiveEnd.Silence -> LiveClosingFrame("silence")
         is LiveEnd.OutOfAllowance -> error.toClosing()
         is LiveEnd.ProviderFailed -> AssistantError.ModelUnavailable.toClosing()
+        is LiveEnd.AssistantUnavailable -> AssistantError.Unavailable.toClosing()
         is LiveEnd.SessionRevoked -> null
         is LiveEnd.FrameTooBig -> null
     }

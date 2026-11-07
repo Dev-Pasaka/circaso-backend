@@ -59,7 +59,7 @@ Asha's runtime (the Koog agent, prompts, tools and memory of the conversation) l
 
 | Contract (`integrations:api`) | Used for | Provider to start | Can swap to |
 | --- | --- | --- | --- |
-| `LanguageModel` | Asha's reasoning and tool calls (text model), typed and spoken (`ModelRequest.purpose`, decision 2026-10-30) | **Claude Haiku 5.5** (`claude-haiku-5-5`) for both, through JetBrains Koog's Anthropic client, called directly (decision 2026-11-07); Workers AI `kimi-k2.6` (typed) and `phonellm-mini-alpha-2` (voice) through AI Gateway as the per-turn fallback | Another Claude model per purpose (setting), or Workers AI again (`INTEGRATIONS_LLM_PROVIDER` / `_VOICE_PROVIDER`) |
+| `LanguageModel` | Asha's reasoning and tool calls (text model), typed and spoken (`ModelRequest.purpose`, decision 2026-10-30) | **Claude Haiku 5.5** (`claude-haiku-5-5`) for both, through JetBrains Koog's Anthropic client, called directly (decision 2026-11-07). **No fallback model** (decision 2026-11-07): one quick retry, then Asha is down for maintenance (below) | Another Claude model per purpose (setting) |
 | `VisionModel` | Reading a photo the user sends (image model) | Workers AI `llama-4-scout-17b-16e-instruct` | Another Workers AI vision model (setting) |
 | `SpeechToText` | A voice clip to text | On-device first; Workers AI `whisper-large-v3-turbo` on the server (the only Workers AI model that handles Swahili) | — |
 | `LiveTranscription` | Live voice in, with end-of-turn detection | Workers AI `@cf/deepgram/nova-3` over a WebSocket through AI Gateway, Opus audio, end of turn from `endpointing` / `utterance_end_ms` / `vad_events` (`flux` as the setting's alternative: better turn detection but PCM only, about ten times the mobile data) | — |
@@ -174,11 +174,11 @@ All six are Deepgram Aura 2 speakers listed for `@cf/deepgram/aura-2-en` on Work
 | server → phone | `reply_done` | `message` (as A1), `spoken` | Sent once the reply's audio has finished playing on the phone (or at once when it is talked over). The reply as saved in the Asha chat; `spoken` false if the user talked over it |
 | server → phone | `tool_request` | `turnId`, `callId`, `name`, `arguments` (a JSON string, as on A2) | A device tool; unanswered after 30 s, the turn ends with an `error` frame `assistant.turn_not_found` |
 | server → phone | `interrupted` | | Barge-in (heard by the server, or the phone's `interrupt`): stop playing what is buffered; also the end of the old reply's frames after a phone `interrupt` |
-| server → phone | `error` | `code`, `message` | One turn failed (`assistant.model_unavailable`, `assistant.turn_not_found`, `assistant.conversation_not_found`, `request.malformed` for a bad `tool_results`); the conversation goes on |
+| server → phone | `error` | `code`, `message` | One turn failed (`assistant.model_unavailable` (a refusal, or a failure after the first words while Asha is up), `assistant.turn_not_found`, `assistant.conversation_not_found`, `request.malformed` for a bad `tool_results`); the conversation goes on |
 | server → phone | `timing` | `turn`, `modelFirstTextMs`, `firstSentenceMs`, `firstAudioMs` | Once per turn (decision 2026-10-30): milliseconds from the transcriber's end of turn to the model's first text, the first sentence queued with the voice and the first audio sent; `null` for a step never reached (barge-in, failure). Also one log line of the durations and the `circaso_assistant_live_first_audio_seconds` histogram. The phone ignores unknown types |
 | server → phone | `closing` | `reason`, `message`?, `retryAfterSeconds`? | Sent before the server closes; `reason` is also the close reason |
 
-Closing: a bad, expired, revoked or agent token, or no auth frame, closes with 1008 `unauthorized` / `auth required` and no frame, as the main socket does. The session is re-checked at each turn and every 60 s; once it is revoked (sign-out, replaced phone, account deletion) or its token has expired without a fresh `auth` frame, the socket closes the same way, 1008 `unauthorized`, no frame. A frame over 64 KB closes with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size), no frame. Otherwise a `closing` frame comes first: `assistant.language_not_supported` (1008, the phone uses A3 and its own voice), `assistant.quota_exceeded` (1008, with `retryAfterSeconds`; voice allowance at the start or reached during the conversation, or the text allowance on a turn), `assistant.model_unavailable` (1011, a provider is down at the start or dropped the session), `silence` (1000, nobody spoke for 30 s) or `ended` (1000, after the phone's `end`).
+Closing: a bad, expired, revoked or agent token, or no auth frame, closes with 1008 `unauthorized` / `auth required` and no frame, as the main socket does. The session is re-checked at each turn and every 60 s; once it is revoked (sign-out, replaced phone, account deletion) or its token has expired without a fresh `auth` frame, the socket closes the same way, 1008 `unauthorized`, no frame. A frame over 64 KB closes with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size), no frame. Otherwise a `closing` frame comes first: `assistant.language_not_supported` (1008, the phone uses A3 and its own voice), `assistant.quota_exceeded` (1008, with `retryAfterSeconds`; voice allowance at the start or reached during the conversation, or the text allowance on a turn), `assistant.model_unavailable` (1011, a provider is down at the start or dropped the session), `assistant.unavailable` (1013, Asha's model is down for maintenance: she has just said so in her voice), `silence` (1000, nobody spoke for 30 s) or `ended` (1000, after the phone's `end`).
 
 Metering (decisions 2026-10-26): voice seconds count only speech. The user's is measured on the transcriber's clock: Nova-3's word timestamps (each result's `start`/`duration` when it has no words), from the first word's start to the last word's end of each stretch of speech (a gap over 1 s starts a new stretch), so a burst of late events can't stretch or shrink it; arrival time is only the fallback for a provider without timestamps. Asha's is charged as it plays on the phone, so what a barge-in or hang-up cuts off is never charged. An open mic, silence and pauses are free. Seconds are metered against the day's voice allowance as they gather, atomically, never past it even with two sockets open.
 
@@ -225,6 +225,15 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 - Grafana: proposals per user per hour, confirm rate, amounts proposed, declined-after-edit rate. Alerts on bursts of proposals or unusual amounts.
 - **Prompt injection:** contact names, profile text and anything quoted from a chat are untrusted text to the model. They can make Asha say something wrong, but never act: her tools are read-only, and a proposal does nothing until the user confirms it.
 
+### Asha down for maintenance (decision 2026-11-07)
+
+Claude only, no fallback model. A turn whose Claude call fails before its first word with a transient error is retried once after 300 ms (voice) or 1 s (chat) (`RetryingLanguageModel` in integrations); if that fails too, the turn fails and Asha is **down**:
+
+- **What the person gets.** Chat (A2, A9): `assistant.unavailable`, the envelope (502) or the stream's `error` event; nothing is saved and the app keeps the question. Voice (A11): Asha says "I'm down for maintenance at the moment. I'll let you know as soon as I'm back." in her voice (TTS doesn't need Claude), then the `closing` frame `assistant.unavailable` and close code 1013.
+- **Health.** `WatchedLanguageModel` (around the agent's model) marks her down on such a failure and up on any answer; `AshaOutage` maps the turn's `assistant.model_unavailable` to `assistant.unavailable` while she is down and records the user. State in Redis: `ast:health:down` / `ast:health:up` (epoch ms, 7 days), `ast:health:affected` (a hash of user ids, nothing else, 24 h), `ast:health:notice:{userId}` (6 h), `ast:health:probe` (failed probes and when the next is due).
+- **Monitor.** The job `assistant.model-health` (every 10 s, one node): while she is down, probes Claude (`LanguageModel.probe`, a one-token request) 30 s after she went down, then 30 s, 1 min and 2 min apart, capped at 2 min; the first answer marks her up. While she is up, everyone recorded gets one `assistant`/`status` frame `{available: true, since}` (seq 0, not replayed), which the gateway pushes as "Asha is back" / "Ask me anything." (`kind` `asha.back`) when the phone has no socket. Taking the list empties it, and each person gets at most one notice per 6 h, so a flapping outage can't spam.
+- **A14** `GET /v1/assistant/status` → `{available, since}`: the app reads it when Asha's screens open or resume, and while it shows her as down.
+
 ## Endpoints (draft)
 
 | # | Route | Scope | Does |
@@ -242,6 +251,7 @@ Asha never gets write power. The agent token stays read-only; the only thing she
 | A11 | `GET /v1/assistant/voice/live` (WebSocket) | app | Live voice conversation (Phase 1) |
 | A12 | `GET /v1/assistant/voices` | app | The voices Asha can speak in, the default marked |
 | A13 | `GET /v1/assistant/voices/{voiceId}/sample` | app | A voice's preview clip (MP3), not counted against the allowance |
+| A14 | `GET /v1/assistant/status` | app | Whether Asha can answer now: `{available, since}` (decision 2026-11-07) |
 | C1 | `GET /v1/assistant/conversations` | app | The user's conversations, newest first by last message, paged (`cursor`, `limit` ≤ 100) |
 | C2 | `POST /v1/assistant/conversations` | app | Start an empty conversation (optional `title`, 1 to 80 characters); it becomes the most recent |
 | C3 | `PATCH /v1/assistant/conversations/{conversationId}` | app | Rename (`title`, 1 to 80 characters) |
@@ -343,7 +353,8 @@ All three are deleted for a user on `identity.AccountDeleted`, after its transac
 | `assistant.plus_required` | FORBIDDEN → 403 | A Plus-only feature on the free plan |
 | `assistant.voice_too_long` | INVALID → 400 | Clip over 60 s |
 | `assistant.proposal_expired` | CONFLICT → 409 | Confirming after 10 minutes |
-| `assistant.model_unavailable` | UPSTREAM → 502 | The model provider is down |
+| `assistant.model_unavailable` | UPSTREAM → 502 | The model refused the request, or failed after its first words while Asha is up; a speech provider is down |
+| `assistant.unavailable` | UPSTREAM → 502 | Asha is down for maintenance: her model (Claude) can't answer after its one quick retry (decision 2026-11-07). On the live socket: spoken, then the `closing` reason |
 | `assistant.conversation_not_found` | NOT_FOUND → 404 | No conversation of this user has that id (C3–C5, A2 with `conversationId`, an A11 turn) |
 | `assistant.language_not_supported` | INVALID → 400 | A4 asked for speech in a language the server voice doesn't speak (Swahili: the phone speaks it) |
 | `assistant.voice_not_found` | NOT_FOUND → 404 | A13 asked for a voice not on Asha's list (fetch A12 again) |
