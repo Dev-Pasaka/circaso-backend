@@ -271,4 +271,16 @@ sealed class WalletError(
         "A membership is paid from your personal wallet.",
         ErrorKind.INVALID,
     )
+
+    data object IconSymbolInvalid : WalletError(
+        "wallet.icon_symbol_invalid",
+        "A coin symbol is 1 to 15 letters, digits or dots.",
+        ErrorKind.INVALID,
+    )
+
+    data object IconNotFound : WalletError(
+        "wallet.icon_not_found",
+        "We don't have an icon for that coin.",
+        ErrorKind.NOT_FOUND,
+    )
 }

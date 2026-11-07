@@ -71,6 +71,12 @@ object RateLimitTable {
                 Limit("wallet-history", 60, minute, LimitBy.USER)
             }
 
+            // IC1 coin icons are public and cached for a week; a first wallet screen may ask for a dozen. Their own bucket,
+            // so phones sharing a carrier's IP can't use up each other's sign-in budget with them.
+            method == "GET" && path.startsWith("/v1/assets/icons/") -> {
+                Limit("icons", 600, minute, LimitBy.IP)
+            }
+
             signedIn -> {
                 Limit("user", 120, minute, LimitBy.USER)
             }
