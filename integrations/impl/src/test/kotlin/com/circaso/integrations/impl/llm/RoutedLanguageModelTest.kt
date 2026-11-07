@@ -111,13 +111,13 @@ class RoutedLanguageModelTest {
     fun `a model that can't be reached falls back once, with the very same request`() =
         runBlocking<Unit> {
             val claude = Scripted("claude", Resource.error(IntegrationError.Unavailable("Anthropic")))
-            val workers = Scripted("workers", answer("Hello from PhoneLLM"))
+            val workers = Scripted("workers", answer("Hello from Workers AI"))
             val routed =
                 RoutedLanguageModel(ModelRoute(claude, "x"), ModelRoute(claude, "anthropic", workers, "workers-ai"))
 
             val events = routed.events(request)
 
-            assertEquals(ModelStreamEvent.Text("Hello from PhoneLLM"), events.first())
+            assertEquals(ModelStreamEvent.Text("Hello from Workers AI"), events.first())
             assertIs<ModelStreamEvent.Done>(events.last())
             assertEquals(listOf(request), workers.requests)
         }
