@@ -13,9 +13,10 @@ import java.math.RoundingMode
 import java.util.Currency
 
 /**
- * Adding up a wallet over its chains and putting it in the person's own currency (decision 2026-10-28). Only US
- * dollar stablecoins have a price, one dollar each, times the exchange rate; any other asset is left out of the fiat
- * sum and the sum says it is partial.
+ * Adding up a wallet over its chains and putting it in the person's own currency (decisions 2026-10-28 and
+ * 2026-11-06). Each holding is priced by its [Holding.usdPrice] (one dollar for a US dollar stablecoin, the price
+ * feed's for another coin we trust, see [HoldingPrices]) times the exchange rate; an asset with no price is left out
+ * of the fiat sum and the sum says it is partial. Prices are for showing and typing only, never for a payment or fee.
  */
 object Valuation {
     /** Each asset over every chain, in the order first seen. Amounts in different decimals meet at the larger. */
@@ -28,9 +29,8 @@ object Valuation {
     /** The fiat value of everything priced; [rate] is what one US dollar is in the currency. */
     fun fiat(chains: List<ChainHoldings>, rate: UsdRate): FiatValue {
         val holdings = chains.flatMap { it.holdings }
-        val dollars = holdings.filter { it.usdPegged }.fold(BigDecimal.ZERO) { sum, it -> sum + it.whole() }
-        // TODO(decision: crypto price source) assets other than US dollar stablecoins have no price yet.
-        val partial = holdings.any { !it.usdPegged && it.amountMinor.signum() > 0 }
+        val dollars = holdings.fold(BigDecimal.ZERO) { sum, it -> sum + (it.dollars() ?: BigDecimal.ZERO) }
+        val partial = holdings.any { it.price() == null && it.amountMinor.signum() > 0 }
         return FiatValue(
             currency = rate.currency,
             amount = inCurrency(dollars, rate),
@@ -41,8 +41,7 @@ object Valuation {
     }
 
     /** What one holding is worth in the rate's currency, or null when it has no price. */
-    fun fiatOf(holding: Holding, rate: UsdRate): BigDecimal? =
-        if (holding.usdPegged) inCurrency(holding.whole(), rate) else null
+    fun fiatOf(holding: Holding, rate: UsdRate): BigDecimal? = holding.dollars()?.let { inCurrency(it, rate) }
 
     /**
      * What an amount of a history asset is worth in the rate's currency. Every [Asset] the history records is a US
@@ -73,8 +72,13 @@ object Valuation {
                 acc +
                     it.amountMinor * BigInteger.TEN.pow(decimals - it.decimals)
             }
-        return AssetTotal(symbol, decimals, sum)
+        val price = holdings.map { it.price() }.distinct().singleOrNull()
+        return AssetTotal(symbol, decimals, sum, price)
     }
 
-    private fun Holding.whole(): BigDecimal = BigDecimal(amountMinor, decimals)
+    /** One unit in US dollars, as [HoldingPrices] set it; null is unpriced (it never falls back to [Holding.usdPegged]). */
+    private fun Holding.price(): BigDecimal? = usdPrice
+
+    /** The holding in US dollars, unrounded, or null when it has no price. */
+    private fun Holding.dollars(): BigDecimal? = price()?.let { BigDecimal(amountMinor, decimals) * it }
 }

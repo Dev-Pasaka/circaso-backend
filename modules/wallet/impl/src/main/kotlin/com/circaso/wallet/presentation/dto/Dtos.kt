@@ -104,8 +104,14 @@ data class AssetDto(
     val decimals: Int,
     val amountMinor: String,
     val amount: String,
-    /** With `?currency=`: this asset's worth in it; null for an asset with no price (only USD stablecoins have one). */
+    /** With `?currency=`: this asset's worth in it; null for an asset with no price. */
     val fiatAmount: String? = null,
+    /**
+     * One whole unit in US dollars, with or without `?currency=`: `1` for a dollar stablecoin, the price feed's for
+     * another coin we trust (decision 2026-11-06), null when it has no price. For showing and for turning an amount
+     * typed in the person's money into this coin; never what a payment or fee is worked out from.
+     */
+    val usdPrice: String? = null,
 )
 
 @Serializable
@@ -114,6 +120,8 @@ data class AssetTotalDto(
     val decimals: Int,
     val amountMinor: String,
     val amount: String,
+    /** One whole unit in US dollars, as on each chain's asset; null when it has none or the chains disagree. */
+    val usdPrice: String? = null,
 )
 
 @Serializable
@@ -122,10 +130,10 @@ data class FiatDto(
     val currency: String,
     /** What the priced assets are worth, rounded to the currency's minor unit. */
     val amount: String,
-    /** One US dollar in [currency]; USDC counts as one dollar. */
+    /** One US dollar in [currency]; USDC counts as one dollar, other coins are at their `usdPrice`. */
     val rate: String,
     @Serializable(with = InstantSerializer::class) val asOf: Instant,
-    /** True when the wallet holds something that has no price yet and is left out of [amount]. */
+    /** True when the wallet holds something that has no price and is left out of [amount]. */
     val partial: Boolean,
 )
 

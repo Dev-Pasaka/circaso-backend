@@ -53,6 +53,18 @@ data class PushPayload(
     val callKind: String? = null,
     /** The space a `space.*` push is about (Spaces phase 3): a tap opens it. */
     val spaceId: String? = null,
+    /**
+     * Money (added 2026-11-06): the Circaso transfer and the wallet history row a `payment.received` or
+     * `transfer.updated` is about, and the group wallet it moved in. Ids only: the phone looks up the amount and words
+     * it in the person's own currency, and a tap opens the chat at the payment's card (or its details).
+     */
+    val transferId: String? = null,
+    val transactionId: String? = null,
+    val walletId: String? = null,
+    /** A group payout request (`chama.request.*`), added 2026-11-06. */
+    val requestId: String? = null,
+    /** The person a push is about (a group contribution's member, a contact who joined), added 2026-11-06. */
+    val userId: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

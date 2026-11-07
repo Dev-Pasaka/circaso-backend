@@ -75,3 +75,13 @@ fun Route.authenticate(vararg scopes: Scope, build: Route.() -> Unit): Route {
 fun interface RouteContributor {
     fun install(route: Route)
 }
+
+/**
+ * What a module hands the gateway for the few public pages outside `/v1` (share link pages and the well-known app
+ * association files, decision 2026-11-06), mounted at the root. They are for browsers and link previews, not the app:
+ * the gateway's version check, tokens, scopes, rate limits and idempotency don't apply, so a page brings its own
+ * guards (its own rate limit, `noindex`, a strict content security policy) and answers with the page itself.
+ */
+fun interface PageContributor {
+    fun install(route: Route)
+}

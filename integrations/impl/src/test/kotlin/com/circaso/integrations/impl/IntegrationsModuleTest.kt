@@ -3,10 +3,13 @@ package com.circaso.integrations.impl
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
+import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CryptoMarkets
+import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
@@ -37,12 +40,16 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleCustody
+import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
+import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.NoCryptoMarkets
+import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -95,6 +102,11 @@ class IntegrationsModuleTest {
                     single<HttpClients> {
                         FakeHttpClients { _ ->
                             respondOk()
+                        }
+                    }
+                    single<RedisScopes> {
+                        object : RedisScopes {
+                            override fun scope(prefix: String) = MemoryRedis(prefix)
                         }
                     }
                 },
@@ -275,6 +287,35 @@ class IntegrationsModuleTest {
             "tavily.api-key" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
     }
+
+    @Test
+    fun `coin prices and Asha's coin data are off without a CoinGecko key, and coingecko with one`() =
+        runTest {
+            val off = koin()
+            assertIs<NoCryptoPrices>(off.get<CryptoPrices>())
+            assertIs<NoCryptoMarkets>(off.get<CryptoMarkets>())
+            assertEquals(mapOf("USDC" to BigDecimal.ONE), off.get<CryptoPrices>().usdPrices(setOf("USDC", "ETH")))
+            stopKoin()
+
+            val on = koin(mapOf("coingecko.api-key" to "k"))
+            assertIs<CoinGeckoPrices>(on.get<CryptoPrices>())
+            assertIs<CoinGeckoMarkets>(on.get<CryptoMarkets>())
+            stopKoin()
+
+            val local = koin("integrations.prices.provider" to "log")
+            assertEquals(BigDecimal("3500"), local.get<CryptoPrices>().usdPrice("ETH"))
+            assertIs<NoCryptoMarkets>(local.get<CryptoMarkets>(), "made-up market data is never shown")
+            stopKoin()
+
+            val e =
+                assertFailsWith<Exception> { koin("integrations.prices.provider" to "coingecko").get<CryptoPrices>() }
+            assertTrue(
+                "coingecko.api-key" in
+                    generateSequence<Throwable>(
+                        e,
+                    ) { it.cause }.joinToString { it.message.orEmpty() },
+            )
+        }
 
     @Test
     fun `web search is brave when its key is set and no provider is named, and brave needs the key`() {

@@ -19,6 +19,8 @@ import com.circaso.chama.domain.models.WalletTransfer
 import com.circaso.chama.domain.ports.ChamaFrame
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.ports.FrameSender
+import com.circaso.chama.domain.ports.LoggedFrame
+import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.chama.domain.repositories.ContributionRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
@@ -34,14 +36,19 @@ import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.FindApprovedPayout
 import com.circaso.chama.domain.usecases.GetChama
 import com.circaso.chama.domain.usecases.GetChamaDigest
+import com.circaso.chama.domain.usecases.GetChamaStatement
 import com.circaso.chama.domain.usecases.GetGroupMoney
+import com.circaso.chama.domain.usecases.HasGoal
 import com.circaso.chama.domain.usecases.ListLedger
 import com.circaso.chama.domain.usecases.ListMyChamas
 import com.circaso.chama.domain.usecases.RecordTransfer
 import com.circaso.chama.domain.usecases.RemoveGoal
+import com.circaso.chama.domain.usecases.ReplayFrames
 import com.circaso.chama.domain.usecases.SetGoal
 import com.circaso.chama.domain.usecases.SetSettings
+import com.circaso.chama.presentation.api.ChamasImpl
 import com.circaso.chama.presentation.mappers.toAgentResponse
+import com.circaso.chama.presentation.services.ChamaEventsService
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.DomainEvent
@@ -283,6 +290,7 @@ private class Harness {
     val listLedger = ListLedger(members, views)
     val listMyChamas = ListMyChamas(chats, views, ChamaNames(profiles))
     val getChamaDigest = GetChamaDigest(views, ChamaNames(profiles))
+    val getChamaStatement = GetChamaStatement(views, ChamaNames(profiles))
     val createRequest = AskPayout(members, requests, requestFrames, clock, wallets, settings)
     val decideRequest = DecidePayout(members, requests, requestFrames, clock)
     val attachPayment = AttachPayment(members, requests, wallets, requestFrames, clock)
@@ -333,6 +341,38 @@ private class Harness {
 }
 
 class ChamaTest {
+    @Test
+    fun `a statement for a share link has the target, the ledger by name and nothing for a stranger`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            h.contribute(h.wanjiru, 2_500_000_000)
+            h.contribute(h.juma, 1_000_000)
+            val chamas =
+                ChamasImpl(
+                    ChamaEventsService(
+                        h.recordTransfer,
+                        ReplayFrames(NoFrames),
+                        h.expireRequests,
+                        HasGoal(h.goals),
+                        h.findApproved,
+                        h.getChamaStatement,
+                    ),
+                )
+
+            val statement = chamas.statement(h.chat, h.achieng)!!
+            assertEquals("Holiday Fund", statement.goalName)
+            assertEquals(50_000_000_000, statement.targetMinor)
+            assertEquals(2_501_000_000, statement.contributedMinor)
+            assertEquals(4, statement.memberCount)
+            assertEquals(setOf("Wanjiru", "Juma"), statement.lines.map { it.personName }.toSet())
+            assertTrue(statement.lines.all { it.isIncoming })
+            assertEquals(1, chamas.statement(h.chat, h.achieng, lines = 1)!!.lines.size)
+            assertEquals(null, chamas.statement(h.chat, UserId.new()), "a stranger learns nothing")
+            assertEquals(null, chamas.statement(ChatId.new(), h.achieng))
+        }
+
     @Test
     fun `a target needs the group's active wallet, and only an admin sets it`() =
         runTest {
@@ -716,6 +756,16 @@ class ChamaTest {
             assertEquals(listOf("IN"), one.recent.map { it.kind })
             assertEquals("chama.not_a_member", (h.getChamaDigest(h.wanjiru, otherChat) as Resource.Error).error.code)
         }
+}
+
+private object NoFrames : RealtimeLog {
+    override suspend fun since(
+        userId: UserId,
+        seq: Long,
+        limit: Int,
+    ): List<LoggedFrame> = emptyList()
+
+    override suspend fun latest(userId: UserId): Long? = null
 }
 
 private fun <T> Resource<T>.data(): T = (this as Resource.Success).data

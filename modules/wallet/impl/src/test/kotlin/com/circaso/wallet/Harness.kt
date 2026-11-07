@@ -32,6 +32,7 @@ import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
@@ -100,6 +101,7 @@ class Harness(
 ) {
     val custody = FakeCustody(chains)
     val rates = FakeRates()
+    val prices = FakePrices()
     val bus = MemoryBus()
     val cache = MemoryBalanceCache()
     val adding = MemoryAddingChains()
@@ -144,7 +146,19 @@ class Harness(
     val quoter = TransferQuoter(holders, planner, quotes, clock)
     val quoteTransfer = QuoteTransfer(quoter)
 
-    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active, holders, progress)
+    val getWallet =
+        GetWallet(
+            wallets,
+            sync,
+            adding,
+            holdings,
+            rates,
+            custody,
+            active,
+            holders,
+            progress,
+            HoldingPrices(prices, custody),
+        )
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock, pendingSetups)
     val createWallet = CreateWallet(creation, support)
     val createGroupWallet = CreateGroupWallet(chats, owners, accounts, support, creation, clock)
@@ -244,6 +258,8 @@ class Harness(
             ),
             com.circaso.wallet.domain.usecases
                 .ApplyWalletChallenge(progress),
+            com.circaso.wallet.domain.usecases
+                .FindDepositAddress(wallets),
         )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))

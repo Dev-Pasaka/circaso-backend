@@ -351,6 +351,21 @@ internal object ApiDocsCatalog {
                             "someone from the group needs the admins' approval, then the treasurer pays and links " +
                             "the transfer.",
                     ),
+                    DocTag(
+                        "Share links",
+                        "Every share in the app sends a short link, `<SHARE_BASE_URL>/s/{code}`, to a public " +
+                            "page: a payment receipt, a group statement, an invite, a \"pay me\" card or a wallet " +
+                            "address. The page is built from the server's own records, holds only what the sharer " +
+                            "chose (names only with `showNames`), and never anything from a chat.\n\n" +
+                            "- **Codes** are 12 base62 characters from a secure random source (about 71 bits); " +
+                            "pages are `noindex`, never cached, and each caller address may open 60 a minute.\n" +
+                            "- **Opening**: in a browser, the page with \"Open in Circaso\" (`circaso://s/{code}`) " +
+                            "and \"Get Circaso\"; with the app installed, Android App Links " +
+                            "(`/.well-known/assetlinks.json`) and iOS Universal Links " +
+                            "(`/.well-known/apple-app-site-association`) open the app, which calls SH4.\n" +
+                            "- **Turning off** (SH3) deletes what the page showed at once; a deleted account's " +
+                            "links go with it.",
+                    ),
                 ),
             ),
             DocGroup(

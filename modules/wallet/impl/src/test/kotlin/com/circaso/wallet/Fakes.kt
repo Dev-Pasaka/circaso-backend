@@ -2,6 +2,7 @@ package com.circaso.wallet
 
 import com.circaso.integrations.api.AssetBalance
 import com.circaso.integrations.api.Challenge
+import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyAsset
 import com.circaso.integrations.api.CustodyChain
 import com.circaso.integrations.api.CustodyTransaction
@@ -87,6 +88,9 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
 
     /** Held amounts by Circle wallet id and asset symbol, in minor units. */
     val held = ConcurrentHashMap<String, Map<String, BigInteger>>()
+
+    /** Tokens a wallet holds that aren't offered (any contract, any symbol), shown after the offered ones. */
+    val heldOnly = ConcurrentHashMap<String, List<AssetBalance>>()
     val calls: MutableList<String> = CopyOnWriteArrayList()
     val keys: MutableList<UUID> = CopyOnWriteArrayList()
 
@@ -195,7 +199,10 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
         return call("balances") {
             val chain = supported.find(blockchain) ?: return@call Resource.error(IntegrationError.Rejected("chain"))
             val amounts = held[walletId].orEmpty()
-            Resource.success(chain.assets.map { AssetBalance(it, amounts[it.symbol] ?: BigInteger.ZERO) })
+            Resource.success(
+                chain.assets.map { AssetBalance(it, amounts[it.symbol] ?: BigInteger.ZERO) } +
+                    heldOnly[walletId].orEmpty(),
+            )
         }
     }
 
@@ -312,6 +319,21 @@ class FakeCustody(override val supported: SupportedChains = TEST_CHAINS) : Stabl
             if (blockchain.startsWith("SOL")) return "So1" + random.take(29).replace('0', '1').replace('l', 'L')
             return "0xAB" + random.take(32) + "cdef01"
         }
+    }
+}
+
+/** Coin prices set by the test in US dollars by symbol; dollar stablecoins are one. Each ask is recorded. */
+class FakePrices : CryptoPrices {
+    val prices = ConcurrentHashMap<String, BigDecimal>()
+    val asked: MutableList<Set<String>> = CopyOnWriteArrayList()
+
+    override suspend fun usdPrices(symbols: Set<String>): Map<String, BigDecimal> {
+        asked += symbols
+        return symbols
+            .mapNotNull { symbol ->
+                val price = if (symbol in setOf("USDC", "USDT")) BigDecimal.ONE else prices[symbol]
+                price?.let { symbol to it }
+            }.toMap()
     }
 }
 
