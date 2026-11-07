@@ -43,13 +43,14 @@ internal fun ashaLanguageModel(
     val hasWorkersAi = !config.string("cloudflare.account-id").isNullOrBlank()
 
     val workersAi by lazy {
+        val textModel = ai.string("model.text", WORKERS_AI_TEXT_MODEL)
         WorkersAiLanguageModel(
             workersAi(config, secrets, clients),
-            ai.string("model.text", WORKERS_AI_TEXT_MODEL),
+            textModel,
             maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
-            // Live voice turns: PhoneLLM Mini (decision 2026-10-31), measured from the sandbox on real Asha questions
-            // with 8 tools: right tool 3/3 in 0.3–0.5 s and a spoken answer 0.3 s after the result.
-            voiceModel = ai.string("model.voice-text", WORKERS_AI_VOICE_TEXT_MODEL),
+            // Workers AI is only the fallback now (Claude answers both modes). No PhoneLLM anywhere (Pasaka,
+            // 2026-11-07): spoken turns fall back to the text model unless a voice model is set.
+            voiceModel = ai.string("model.voice-text", textModel),
         )
     }
     val logModel by lazy { LogLanguageModel() }

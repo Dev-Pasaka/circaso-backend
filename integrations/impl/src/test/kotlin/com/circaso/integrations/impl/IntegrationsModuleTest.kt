@@ -189,8 +189,8 @@ class IntegrationsModuleTest {
                 .get<LanguageModel>()
                 .complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
             assertTrue(
-                "@cf/daily-co/phonellm-mini-alpha-2" in clients.last.text(),
-                "voice turns default to the fast voice model, whatever the text model is",
+                "glm-5.2" in clients.last.text() && "phonellm" !in clients.last.text(),
+                "voice turns fall back to the text model unless a voice model is set (no PhoneLLM, 2026-11-07)",
             )
         }
 
