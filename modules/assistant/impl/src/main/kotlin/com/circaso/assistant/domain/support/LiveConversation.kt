@@ -53,14 +53,20 @@ fun interface LiveOutput {
  *   heard clears the speech provider's queue, tells the phone to stop playing, and makes the stale reply silent; the
  *   new words become the next turn. The generation check and the queueing of each sentence happen under the same lock
  *   as the barge-in, so a sentence of a reply the user talked over can't slip through.
- * - **Barge-in needs evidence** (decision 2026-11-07). A cough, a passing car or a transcriber guessing "you" on noise
- *   must never cut off an answer the person hasn't heard yet. So while Asha is busy, voice activity alone never stops
- *   her, and words are held until the stretch of speech they belong to ([Held]) has [BARGE_IN_WORDS] words that
- *   aren't [FILLER_WORDS], counting only settled words (finals, and the leading words two interims in a row agree
- *   on), is not her echo ([isEcho]), and, while her voice may be coming back from the loudspeaker ([voiceMayEcho]),
- *   has lasted [BARGE_IN_MILLIS] on the transcriber's clock (on arrival time without one). Words held and never
- *   crossing that bar are dropped like an echo: not a barge-in, not shown, not charged, never a question. Once the
- *   bar is crossed, the whole stretch is the person's: its held words lead the next turn and are charged.
+ * - **Barge-in needs evidence, and is quick** (decisions 2026-11-07). A cough, a passing car or a transcriber guessing
+ *   "you" on noise must never cut off an answer the person hasn't heard yet, but a real "wait" must stop her at once,
+ *   as people expect of a voice assistant. So while Asha is busy, voice activity alone never stops her, and words are
+ *   held until the stretch of speech they belong to ([Held]) has [BARGE_IN_WORDS] word that isn't a [FILLER_WORDS]
+ *   (hesitations, backchannel "mm", "yeah", "right", and words a transcriber invents on noise). Only settled words
+ *   count: finals, and interim words stable for one update ([stableWords]: the previous interim had the word at the
+ *   same place, or the transcriber has already written a word after it). The stretch must not be her echo ([isEcho]),
+ *   and while her voice may be coming back from the loudspeaker ([voiceMayEcho]: playing, or in its echo tail) it must
+ *   also have lasted [BARGE_IN_MILLIS] on the transcriber's clock (on arrival time without one). While she is only
+ *   thinking (nothing of hers is playing) one settled word that isn't a filler is enough. The phone ducks her voice
+ *   as soon as it hears the person, so the wait for this confirmation is never silent; it streams the microphone the
+ *   whole time and leaves the deciding to this rule. Words held and never crossing the bar are dropped like an echo:
+ *   not a barge-in, not shown, not charged, never a question. Once the bar is crossed, the whole stretch is the
+ *   person's: its held words lead the next turn and are charged.
  * - **Metering** (decisions 2026-10-26). Voice seconds count only speech. The user's is measured on the transcriber's
  *   own clock, from the first word's start to the last word's end of each stretch of speech, so a burst of late events
  *   can't stretch or shrink it (arrival time is the fallback for a provider without timestamps). Asha's is charged as
@@ -471,10 +477,8 @@ class LiveConversation(
             // she has finished: everything is the person's, with what was held of the same stretch leading it
             return Admitted(stretch.finalsText, stretch.span(), stretch.firstAt)
         }
-        // settled words only: a first interim is a guess; the leading words two interims in a row agree on are not
-        val counted =
-            stretch.finals +
-                if (isFinal) heard else heard.zip(stretch.interim).takeWhile { (a, b) -> a == b }.map { it.first }
+        // settled words only: a lone first guess at a word is not; a word kept for one update, or a final, is
+        val counted = stretch.finals + if (isFinal) heard else stableWords(heard, stretch.interim)
         val isPerson =
             counted.count { it !in FILLER_WORDS } >= BARGE_IN_WORDS &&
                 !isEcho("${stretch.finalsText} $text") &&
@@ -961,22 +965,29 @@ class LiveConversation(
         const val RECENT_WORDS = 120
 
         /**
-         * While Asha is busy, a barge-in needs this many settled words that aren't [FILLER_WORDS]. Two, because one
-         * stray word is what noise, a cough or a transcriber guessing on silence produces; "wait, stop" is two.
+         * While Asha is busy, a barge-in needs this many settled words that aren't [FILLER_WORDS]. One (decision
+         * 2026-11-07, second pass): "wait" or "stop" alone must stop her. Noise is kept out by the settling, the
+         * fillers, the echo match and, while her voice plays, [BARGE_IN_MILLIS]; not by a word count.
          */
-        const val BARGE_IN_WORDS = 2
+        const val BARGE_IN_WORDS = 1
 
         /**
          * While her voice may be heard back ([ECHO_TAIL_MILLIS] included), the person's speech must also have lasted
-         * this long on the transcriber's clock: two short words are about 400 ms, a click or a burst of noise
-         * transcribed as words is shorter.
+         * this long on the transcriber's clock: one short spoken word is about 300 ms, a click or a burst of noise
+         * transcribed as a word is shorter. While she is only thinking there is no echo to tell apart, and no minimum.
          */
-        const val BARGE_IN_MILLIS = 400L
+        const val BARGE_IN_MILLIS = 300L
 
         /**
-         * Words that never count towards [BARGE_IN_WORDS]: hesitations and backchannel sounds, and the short words a
-         * transcriber hallucinates on noise ("you", "the", "a", "and"). Kept small: every word here is one a real
-         * interruption can't start with alone.
+         * Updates an interim word must survive to count towards [BARGE_IN_WORDS]: one. A word the next interim keeps,
+         * or one the transcriber has already written past, is no longer a first guess. Finals always count.
+         */
+        const val INTERIM_STABLE_UPDATES = 1
+
+        /**
+         * Words that never count towards [BARGE_IN_WORDS]: hesitations and backchannel sounds ("mm", "yeah", "right":
+         * listening, not interrupting), and the short words a transcriber hallucinates on noise ("you", "the", "a",
+         * "and"). Kept small: every word here is one a real interruption can't start with alone.
          */
         val FILLER_WORDS =
             setOf(
@@ -997,9 +1008,26 @@ class LiveConversation(
                 "the",
                 "a",
                 "and",
+                "yeah",
+                "yep",
+                "ok",
+                "okay",
+                "right",
+                "sure",
             )
 
         private val wordChars = Regex("[^\\p{L}\\p{N}']+")
+
+        /**
+         * The words of an interim that are stable for [INTERIM_STABLE_UPDATES] update: the leading words the previous
+         * interim ([previous]) agrees on, then any word the transcriber has already written past (every word but the
+         * last). The last word of a first guess is the one still being made up, so it never counts on its own.
+         */
+        fun stableWords(heard: List<String>, previous: List<String>): List<String> {
+            val agreed = heard.zip(previous).takeWhile { (a, b) -> a == b }.size
+            val writtenPast = heard.size - INTERIM_STABLE_UPDATES
+            return heard.take(maxOf(agreed, writtenPast))
+        }
 
         private fun words(text: String): List<String> = text.lowercase().split(wordChars).filter { it.isNotEmpty() }
     }
