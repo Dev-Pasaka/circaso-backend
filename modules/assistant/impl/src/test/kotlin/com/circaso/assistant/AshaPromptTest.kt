@@ -160,7 +160,7 @@ class AshaPromptTest {
         }
         assertFalse("If you must add, double-check" in flat(text))
         assertTrue("never multiply a rate yourself" in AshaPrompt.convertAmount.description)
-        assertTrue("never do maths yourself" in AshaPrompt.calculate.description)
+        assertTrue("including the working you show" in AshaPrompt.calculate.description)
         assertTrue("never for an exchange rate" in AshaPrompt.searchWeb.description)
     }
 

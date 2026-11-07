@@ -502,8 +502,11 @@ object AshaPrompt {
             "calculate",
             "Works out arithmetic exactly: + - × ÷, brackets, decimals, numbers with thousands commas, and " +
                 "percentages (\"15% of 2,400\", \"2,400 + 15%\"). Returns the exact result and a rounded one for " +
-                "saying. Use it for every sum, split, difference, share or percentage you state; never do maths " +
-                "yourself. Only numbers and those signs: no words, units or currency signs.",
+                "saying. Use it for every figure you state that is not straight from another tool, including the " +
+                "working you show: write the whole sum as one expression, and add one call per part you will " +
+                "mention (a tip, a subtotal, what is left), all in the same step, where they run together. Take " +
+                "numbers from other tools' results as they are, for example a convertAmount result. Only numbers " +
+                "and those signs: no words, units or currency signs.",
             """{"type":"object","properties":{""" +
                 """"expression":{"type":"string","description":"For example (1200 + 850.50) / 3 or 15% of 2,400"}},""" +
                 """"required":["expression"]}""",
