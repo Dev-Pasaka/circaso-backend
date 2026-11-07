@@ -3,7 +3,7 @@ package com.circaso.ops.presentation.dto
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class UserRowDto(
+data class UserSummaryDto(
     val userId: String,
     val displayName: String? = null,
     val handle: String? = null,
@@ -14,7 +14,7 @@ data class UserRowDto(
 )
 
 @Serializable
-data class UserPageResponse(val items: List<UserRowDto>, val nextCursor: String? = null)
+data class UserPageResponse(val items: List<UserSummaryDto>, val nextCursor: String? = null)
 
 @Serializable
 data class SignInDto(val provider: String, val maskedEmail: String? = null, val linkedAt: String)

@@ -1,8 +1,8 @@
 package com.circaso.ops.presentation.services
 
 import com.circaso.ops.domain.models.Actor
-import com.circaso.ops.domain.models.GroupRow
-import com.circaso.ops.domain.models.TicketRow
+import com.circaso.ops.domain.models.GroupSummary
+import com.circaso.ops.domain.models.TicketLine
 import com.circaso.ops.domain.models.UserAccount
 import com.circaso.ops.domain.models.UserDevices
 import com.circaso.ops.domain.models.UserPage
@@ -36,9 +36,9 @@ class UserService(
 
     suspend fun devices(userId: UserId): Resource<UserDevices> = getUserDevices(userId)
 
-    suspend fun groups(userId: UserId): Resource<List<GroupRow>> = listUserGroups(userId)
+    suspend fun groups(userId: UserId): Resource<List<GroupSummary>> = listUserGroups(userId)
 
-    suspend fun tickets(userId: UserId): Resource<List<TicketRow>> = listUserTickets(userId)
+    suspend fun tickets(userId: UserId): Resource<List<TicketLine>> = listUserTickets(userId)
 
     suspend fun suspend(
         actor: Actor,

@@ -2,7 +2,7 @@ package com.circaso.ops.presentation.services
 
 import com.circaso.messaging.api.ChatId
 import com.circaso.ops.domain.models.GroupDetail
-import com.circaso.ops.domain.models.GroupRowPage
+import com.circaso.ops.domain.models.GroupSummaryPage
 import com.circaso.ops.domain.models.WalletFilter
 import com.circaso.ops.domain.usecases.GetGroup
 import com.circaso.ops.domain.usecases.ListGroups
@@ -13,7 +13,7 @@ class GroupService(private val listGroups: ListGroups, private val getGroup: Get
         filter: WalletFilter,
         cursor: String?,
         limit: Int,
-    ): Resource<GroupRowPage> = listGroups(filter, cursor, limit)
+    ): Resource<GroupSummaryPage> = listGroups(filter, cursor, limit)
 
     suspend fun get(chatId: ChatId, withMoney: Boolean): Resource<GroupDetail> = getGroup(chatId, withMoney)
 }

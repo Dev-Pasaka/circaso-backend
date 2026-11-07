@@ -3,7 +3,7 @@ package com.circaso.ops.presentation.dto
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class GroupRowDto(
+data class GroupSummaryDto(
     val chatId: String,
     val memberCount: Int,
     val ownerId: String? = null,
@@ -13,10 +13,10 @@ data class GroupRowDto(
 )
 
 @Serializable
-data class GroupPageResponse(val items: List<GroupRowDto>, val nextCursor: String? = null)
+data class GroupPageResponse(val items: List<GroupSummaryDto>, val nextCursor: String? = null)
 
 @Serializable
-data class GroupListResponse(val items: List<GroupRowDto>)
+data class GroupListResponse(val items: List<GroupSummaryDto>)
 
 @Serializable
 data class GroupMemberDto(val userId: String, val displayName: String? = null, val role: String)
@@ -33,7 +33,7 @@ data class GroupWalletDto(
 
 @Serializable
 data class GroupDetailResponse(
-    val group: GroupRowDto,
+    val group: GroupSummaryDto,
     val members: List<GroupMemberDto>,
     val wallet: GroupWalletDto? = null,
 )

@@ -3,7 +3,7 @@ package com.circaso.ops.presentation.dto
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class TicketRowDto(
+data class TicketLineDto(
     val ticketId: String,
     val number: String,
     val userId: String,
@@ -21,10 +21,10 @@ data class TicketRowDto(
 )
 
 @Serializable
-data class TicketPageResponse(val items: List<TicketRowDto>, val nextCursor: String? = null)
+data class TicketPageResponse(val items: List<TicketLineDto>, val nextCursor: String? = null)
 
 @Serializable
-data class TicketListResponse(val items: List<TicketRowDto>)
+data class TicketListResponse(val items: List<TicketLineDto>)
 
 @Serializable
 data class TicketContextDto(val transferId: String? = null, val chatId: String? = null)
@@ -42,7 +42,7 @@ data class TicketMessageDto(
 
 @Serializable
 data class TicketDetailResponse(
-    val ticket: TicketRowDto,
+    val ticket: TicketLineDto,
     val description: String,
     val context: TicketContextDto,
     val messages: List<TicketMessageDto>,

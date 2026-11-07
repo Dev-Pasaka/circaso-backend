@@ -62,7 +62,7 @@ fun Route.moneyController(money: MoneyService, settings: OpsSettings) {
             )
 
             get("{transferId}") {
-                val result = parseTransferId(call.parameters["transferId"]).flatMap { money.transaction(it) }
+                val result = parseTransferId(call.parameters["transferId"]).flatMap { money.transfer(it) }
                 call.respondDefault(result.toDefaultResponse { it.toDto() })
             }.docs<NoBody, TransferDto>(
                 "OPS · One transaction",
@@ -116,14 +116,12 @@ private fun ApplicationCall.transferFilter(): Resource<TransferFilter> =
         }
     }
 
-private data class FinanceQuery(val from: Instant, val to: Instant, val bucket: ReportBucket)
-
-private fun ApplicationCall.financeQuery(): Resource<FinanceQuery> =
+private fun ApplicationCall.financeQuery(): Resource<Triple<Instant, Instant, ReportBucket>> =
     parseInstant(query("to"), "to", endOfDay = true).flatMap { to ->
         parseInstant(query("from"), "from").flatMap { from ->
             parseEnum<ReportBucket>(query("bucket"), "bucket").map { bucket ->
                 val end = to ?: Instant.now()
-                FinanceQuery(from ?: end.minus(Duration.ofDays(DEFAULT_RANGE_DAYS)), end, bucket ?: ReportBucket.DAY)
+                Triple(from ?: end.minus(Duration.ofDays(DEFAULT_RANGE_DAYS)), end, bucket ?: ReportBucket.DAY)
             }
         }
     }

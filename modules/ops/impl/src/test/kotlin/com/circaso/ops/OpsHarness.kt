@@ -2,7 +2,8 @@ package com.circaso.ops
 
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.identity.api.SupportAccounts
-import com.circaso.infrastructure.impl.config.EnvConfig
+import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.Environment
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.di.opsModule
 import com.circaso.ops.domain.repositories.AuditRepository
@@ -44,7 +45,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
         koinApplication {
             allowOverride(true)
             modules(
-                opsModule(EnvConfig(env)),
+                opsModule(MapConfig(env)),
                 module {
                     single<AccountAdmin> { accounts }
                     single<ProfileAdmin> { profiles }
@@ -81,4 +82,13 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
         const val ROLE_HEADER = "X-Test-Role"
         const val BOOTSTRAP = "founder@circaso.com"
     }
+}
+
+/** Settings from a map, as the environment-backed config reads them. */
+class MapConfig(private val values: Map<String, String>, private val prefix: String = "") : Config {
+    override val environment: Environment = Environment.LOCAL
+
+    override fun string(key: String): String? = values[(prefix + key).uppercase().replace('.', '_').replace('-', '_')]
+
+    override fun section(prefix: String): Config = MapConfig(values, "${this.prefix}$prefix.")
 }

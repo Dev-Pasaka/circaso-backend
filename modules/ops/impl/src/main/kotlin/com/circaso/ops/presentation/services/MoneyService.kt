@@ -39,7 +39,7 @@ class MoneyService(
         limit: Int,
     ): Resource<TransferViewPage> = listTransactions(filter, cursor, limit)
 
-    suspend fun transaction(transferId: TransferId): Resource<TransferView> = getTransaction(transferId)
+    suspend fun transfer(transferId: TransferId): Resource<TransferView> = getTransaction(transferId)
 
     suspend fun finance(
         from: Instant,

@@ -25,7 +25,7 @@ import java.util.UUID
 // profiles; staff emails from the staff list. Nothing here is stored by ops.
 
 /** One search result: the account and, when it has one, its profile. */
-data class UserRow(
+data class UserSummary(
     val userId: UserId,
     val displayName: String?,
     val handle: String?,
@@ -35,7 +35,7 @@ data class UserRow(
     val createdAt: Instant,
 )
 
-data class UserPage(val items: List<UserRow>, val nextCursor: String?)
+data class UserPage(val items: List<UserSummary>, val nextCursor: String?)
 
 /** The latest suspension's audit line, while the account is suspended: since when, why and by whom. */
 data class Suspension(val since: Instant, val reason: String?, val byEmail: String)
@@ -52,9 +52,9 @@ data class TransferViewPage(val items: List<TransferView>, val nextCursor: Strin
 /** A user's transfers page and, on the first page only, the fees they paid in all. */
 data class UserTransfers(val page: TransferViewPage, val feesPaidUsdMicros: Long)
 
-data class GroupRow(val group: OpsGroup, val ownerName: String?, val hasWallet: Boolean)
+data class GroupSummary(val group: OpsGroup, val ownerName: String?, val hasWallet: Boolean)
 
-data class GroupRowPage(val items: List<GroupRow>, val nextCursor: String?)
+data class GroupSummaryPage(val items: List<GroupSummary>, val nextCursor: String?)
 
 /** Which groups a list shows. */
 enum class WalletFilter { ANY, WITH, WITHOUT }
@@ -63,19 +63,19 @@ data class GroupMemberView(val userId: UserId, val displayName: String?, val rol
 
 /** [holdings] only for a role that may see money ([Permission.GROUPS_MONEY]), else null. */
 data class GroupDetail(
-    val row: GroupRow,
+    val row: GroupSummary,
     val members: List<GroupMemberView>,
     val wallet: GroupWalletRef?,
     val holdings: OpsHoldings?,
 )
 
 /** A ticket line with the user's name and the assignee's email. */
-data class TicketRow(val summary: TicketSummary, val userName: String?, val assigneeEmail: String?)
+data class TicketLine(val summary: TicketSummary, val userName: String?, val assigneeEmail: String?)
 
-data class TicketRowPage(val items: List<TicketRow>, val nextCursor: String?)
+data class TicketLinePage(val items: List<TicketLine>, val nextCursor: String?)
 
 /** A whole ticket for staff, with the email of every staff member who wrote in it. */
-data class TicketView(val detail: TicketDetail, val row: TicketRow, val staffEmails: Map<UUID, String>)
+data class TicketView(val detail: TicketDetail, val row: TicketLine, val staffEmails: Map<UUID, String>)
 
 data class GroupTotals(val total: Long, val withWallet: Long)
 
@@ -92,14 +92,14 @@ data class Dashboard(
 )
 
 /** A support account (OPS1, OPS2) as the portal lists it. */
-data class SupportAccountRow(
+data class SupportAccountEntry(
     val userId: UserId,
     val displayName: String,
     val handle: String?,
     val createdAt: Instant,
 )
 
-data class SupportAccountRows(val accounts: List<SupportAccountRow>, val nextCursor: String?)
+data class SupportAccountList(val accounts: List<SupportAccountEntry>, val nextCursor: String?)
 
 /** The finance page: the wallet's report and how many group wallets there are. */
 data class Finance(val report: FinanceReport, val groupWallets: Long)

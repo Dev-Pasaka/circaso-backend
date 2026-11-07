@@ -5,7 +5,7 @@ import com.circaso.identity.api.AccountStatus
 import com.circaso.ops.domain.models.AuditAction
 import com.circaso.ops.domain.models.Suspension
 import com.circaso.ops.domain.models.UserAccount
-import com.circaso.ops.domain.models.UserRow
+import com.circaso.ops.domain.models.UserSummary
 import com.circaso.ops.domain.repositories.AuditRepository
 import com.circaso.shared.UserId
 import com.circaso.users.api.ProfileAdmin
@@ -34,7 +34,7 @@ class UserViews(
     }
 
     /** Rows for [ids] in the order given; ids with no account are left out. */
-    suspend fun rows(ids: List<UserId>): List<UserRow> {
+    suspend fun rows(ids: List<UserId>): List<UserSummary> {
         if (ids.isEmpty()) return emptyList()
         val unique = ids.toSet()
         val found = accounts.accounts(unique)
@@ -42,7 +42,7 @@ class UserViews(
         return ids.distinct().mapNotNull { id ->
             val account = found[id] ?: return@mapNotNull null
             val profile = named[id]
-            UserRow(
+            UserSummary(
                 userId = id,
                 displayName = profile?.displayName,
                 handle = profile?.handle,

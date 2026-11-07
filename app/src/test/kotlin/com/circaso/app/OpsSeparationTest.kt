@@ -6,11 +6,11 @@ import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.web.OpsRouteContributor
+import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
-import io.ktor.client.request.get
-import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
@@ -70,6 +70,7 @@ class OpsSeparationTest {
             application {
                 routing { route("/v1") { contributors.forEach { it.install(this) } } }
                 val root = pluginOrNull(RoutingRoot)!!
+
                 fun walk(node: RoutingNode) {
                     (node.selector as? HttpMethodRouteSelector)?.let {
                         routes += it.method to node.template().replace(Regex("\\{[^}]+}"), UUID.randomUUID().toString())

@@ -5,8 +5,8 @@ import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Actor
 import com.circaso.ops.domain.models.AuditAction
-import com.circaso.ops.domain.models.GroupRow
-import com.circaso.ops.domain.models.TicketRow
+import com.circaso.ops.domain.models.GroupSummary
+import com.circaso.ops.domain.models.TicketLine
 import com.circaso.ops.domain.models.UserAccount
 import com.circaso.ops.domain.models.UserDevices
 import com.circaso.ops.domain.models.UserPage
@@ -102,12 +102,12 @@ class ListUserGroups(
     private val wallets: WalletReports,
     private val views: UserViews,
 ) {
-    suspend operator fun invoke(userId: UserId): Resource<List<GroupRow>> {
+    suspend operator fun invoke(userId: UserId): Resource<List<GroupSummary>> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
         val found = groups.groupsOf(userId, MAX_GROUPS)
         val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet())
         val owners = views.names(found.mapNotNull { it.ownerId }.toSet())
-        return Resource.success(found.map { GroupRow(it, it.ownerId?.let(owners::get), it.chatId in withWallet) })
+        return Resource.success(found.map { GroupSummary(it, it.ownerId?.let(owners::get), it.chatId in withWallet) })
     }
 
     private companion object {
@@ -120,7 +120,7 @@ class ListUserTickets(
     private val desk: SupportDesk,
     private val tickets: TicketViews,
 ) {
-    suspend operator fun invoke(userId: UserId): Resource<List<TicketRow>> {
+    suspend operator fun invoke(userId: UserId): Resource<List<TicketLine>> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
         return desk.ofUser(userId, MAX_TICKETS).map { tickets.rows(it) }
     }

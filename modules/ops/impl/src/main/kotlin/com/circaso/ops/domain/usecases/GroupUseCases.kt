@@ -6,8 +6,8 @@ import com.circaso.messaging.api.OpsGroup
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.GroupDetail
 import com.circaso.ops.domain.models.GroupMemberView
-import com.circaso.ops.domain.models.GroupRow
-import com.circaso.ops.domain.models.GroupRowPage
+import com.circaso.ops.domain.models.GroupSummary
+import com.circaso.ops.domain.models.GroupSummaryPage
 import com.circaso.ops.domain.models.WalletFilter
 import com.circaso.ops.domain.support.UserViews
 import com.circaso.shared.Resource
@@ -22,10 +22,10 @@ private suspend fun rowsOf(
     found: List<OpsGroup>,
     wallets: WalletReports,
     views: UserViews,
-): List<GroupRow> {
+): List<GroupSummary> {
     val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet())
     val owners = views.names(found.mapNotNull { it.ownerId }.toSet())
-    return found.map { GroupRow(it, it.ownerId?.let(owners::get), it.chatId in withWallet) }
+    return found.map { GroupSummary(it, it.ownerId?.let(owners::get), it.chatId in withWallet) }
 }
 
 /**
@@ -37,13 +37,13 @@ class ListGroups(private val groups: GroupReports, private val wallets: WalletRe
         filter: WalletFilter,
         cursor: String?,
         limit: Int,
-    ): Resource<GroupRowPage> =
+    ): Resource<GroupSummaryPage> =
         when (filter) {
             WalletFilter.WITH -> {
                 wallets.groupWallets(cursor, limit).flatMap { page ->
                     val found = groups.groupsByIds(page.items.map { it.chatId }.toSet())
                     val ordered = page.items.mapNotNull { found[it.chatId] }
-                    Resource.success(GroupRowPage(rowsOf(ordered, wallets, views), page.nextCursor))
+                    Resource.success(GroupSummaryPage(rowsOf(ordered, wallets, views), page.nextCursor))
                 }
             }
 
@@ -51,7 +51,7 @@ class ListGroups(private val groups: GroupReports, private val wallets: WalletRe
                 groups.groups(cursor, limit).flatMap { page ->
                     val rows = rowsOf(page.items, wallets, views)
                     val shown = if (filter == WalletFilter.WITHOUT) rows.filterNot { it.hasWallet } else rows
-                    Resource.success(GroupRowPage(shown, page.nextCursor))
+                    Resource.success(GroupSummaryPage(shown, page.nextCursor))
                 }
             }
         }
@@ -65,7 +65,7 @@ class GetGroup(private val groups: GroupReports, private val wallets: WalletRepo
         val names = views.names(members.map { it.userId }.toSet() + listOfNotNull(group.ownerId))
         val wallet = wallets.groupWalletsOf(setOf(chatId))[chatId]
         val holdings = if (withMoney && wallet != null) wallets.holdings(wallet.walletId).getOrNull() else null
-        val row = GroupRow(group, group.ownerId?.let(names::get), wallet != null)
+        val row = GroupSummary(group, group.ownerId?.let(names::get), wallet != null)
         return Resource.success(
             GroupDetail(
                 row = row,

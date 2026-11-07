@@ -6,15 +6,15 @@ import com.circaso.ops.domain.models.AuditEntry
 import com.circaso.ops.domain.models.AuditPage
 import com.circaso.ops.domain.models.Dashboard
 import com.circaso.ops.domain.models.GroupDetail
-import com.circaso.ops.domain.models.GroupRow
+import com.circaso.ops.domain.models.GroupSummary
 import com.circaso.ops.domain.models.Staff
-import com.circaso.ops.domain.models.SupportAccountRow
-import com.circaso.ops.domain.models.TicketRow
+import com.circaso.ops.domain.models.SupportAccountEntry
+import com.circaso.ops.domain.models.TicketLine
 import com.circaso.ops.domain.models.TicketView
 import com.circaso.ops.domain.models.TransferView
 import com.circaso.ops.domain.models.UserAccount
 import com.circaso.ops.domain.models.UserDevices
-import com.circaso.ops.domain.models.UserRow
+import com.circaso.ops.domain.models.UserSummary
 import com.circaso.ops.presentation.dto.ActiveTileDto
 import com.circaso.ops.presentation.dto.AuditEntryDto
 import com.circaso.ops.presentation.dto.AuditPageResponse
@@ -30,7 +30,7 @@ import com.circaso.ops.presentation.dto.FinanceResponse
 import com.circaso.ops.presentation.dto.FinanceTotalsDto
 import com.circaso.ops.presentation.dto.GroupDetailResponse
 import com.circaso.ops.presentation.dto.GroupMemberDto
-import com.circaso.ops.presentation.dto.GroupRowDto
+import com.circaso.ops.presentation.dto.GroupSummaryDto
 import com.circaso.ops.presentation.dto.GroupWalletDto
 import com.circaso.ops.presentation.dto.GroupWalletsDto
 import com.circaso.ops.presentation.dto.GroupsTileDto
@@ -44,14 +44,14 @@ import com.circaso.ops.presentation.dto.SupportAccountDto
 import com.circaso.ops.presentation.dto.SuspensionDto
 import com.circaso.ops.presentation.dto.TicketContextDto
 import com.circaso.ops.presentation.dto.TicketDetailResponse
+import com.circaso.ops.presentation.dto.TicketLineDto
 import com.circaso.ops.presentation.dto.TicketMessageDto
-import com.circaso.ops.presentation.dto.TicketRowDto
 import com.circaso.ops.presentation.dto.TicketsTileDto
 import com.circaso.ops.presentation.dto.TransactionsTileDto
 import com.circaso.ops.presentation.dto.TransferDto
 import com.circaso.ops.presentation.dto.UserAccountResponse
 import com.circaso.ops.presentation.dto.UserDevicesResponse
-import com.circaso.ops.presentation.dto.UserRowDto
+import com.circaso.ops.presentation.dto.UserSummaryDto
 import com.circaso.ops.presentation.dto.UsersTileDto
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.OpsBalance
@@ -70,8 +70,8 @@ fun Staff.toDto() =
         updatedAt = updatedAt.toString(),
     )
 
-fun UserRow.toDto() =
-    UserRowDto(
+fun UserSummary.toDto() =
+    UserSummaryDto(
         userId = userId.toString(),
         displayName = displayName,
         handle = handle,
@@ -190,8 +190,8 @@ fun FinanceReport.toResponse(
     groupWallets = GroupWalletsDto(groupWallets),
 )
 
-fun GroupRow.toDto() =
-    GroupRowDto(
+fun GroupSummary.toDto() =
+    GroupSummaryDto(
         chatId = group.chatId.value.toString(),
         memberCount = group.memberCount,
         ownerId = group.ownerId?.toString(),
@@ -216,9 +216,9 @@ fun GroupDetail.toResponse() =
             },
     )
 
-fun TicketRow.toDto(): TicketRowDto {
+fun TicketLine.toDto(): TicketLineDto {
     val s = summary
-    return TicketRowDto(
+    return TicketLineDto(
         ticketId = s.ticketId.toString(),
         number = s.number,
         userId = s.userId.toString(),
@@ -308,4 +308,4 @@ fun AuditEntry.toDto() =
 
 fun AuditPage.toResponse() = AuditPageResponse(items.map { it.toDto() }, nextCursor)
 
-fun SupportAccountRow.toDto() = SupportAccountDto(userId.toString(), displayName, handle, createdAt.toString())
+fun SupportAccountEntry.toDto() = SupportAccountDto(userId.toString(), displayName, handle, createdAt.toString())

@@ -4,7 +4,7 @@ import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Actor
 import com.circaso.ops.domain.models.AuditAction
 import com.circaso.ops.domain.models.Permission
-import com.circaso.ops.domain.models.TicketRowPage
+import com.circaso.ops.domain.models.TicketLinePage
 import com.circaso.ops.domain.models.TicketView
 import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.StaffRoster
@@ -26,8 +26,8 @@ class ListTickets(private val desk: SupportDesk, private val tickets: TicketView
         filter: TicketQueueFilter,
         cursor: String?,
         limit: Int,
-    ): Resource<TicketRowPage> =
-        desk.queue(filter, cursor, limit).map { TicketRowPage(tickets.rows(it.items), it.nextCursor) }
+    ): Resource<TicketLinePage> =
+        desk.queue(filter, cursor, limit).map { TicketLinePage(tickets.rows(it.items), it.nextCursor) }
 }
 
 class GetTicket(private val desk: SupportDesk, private val tickets: TicketViews) {

@@ -1,7 +1,7 @@
 package com.circaso.ops.presentation.services
 
 import com.circaso.ops.domain.models.Actor
-import com.circaso.ops.domain.models.TicketRowPage
+import com.circaso.ops.domain.models.TicketLinePage
 import com.circaso.ops.domain.models.TicketView
 import com.circaso.ops.domain.usecases.AssignTicket
 import com.circaso.ops.domain.usecases.ChangeTicketStatus
@@ -27,7 +27,7 @@ class TicketService(
         filter: TicketQueueFilter,
         cursor: String?,
         limit: Int,
-    ): Resource<TicketRowPage> = listTickets(filter, cursor, limit)
+    ): Resource<TicketLinePage> = listTickets(filter, cursor, limit)
 
     suspend fun get(ticketId: TicketId): Resource<TicketView> = getTicket(ticketId)
 
