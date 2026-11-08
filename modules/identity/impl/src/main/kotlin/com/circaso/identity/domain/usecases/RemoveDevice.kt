@@ -34,7 +34,7 @@ class RemoveDevice(
                 store.write(
                     Changes(
                         accounts = listOf(account.copy(activeDeviceId = activeDeviceId)),
-                        devices = listOf(device.copy(status = DeviceStatus.REMOVED)),
+                        devices = listOf(device.copy(status = DeviceStatus.REMOVED, voipToken = null)),
                         sessions = listOfNotNull(session?.copy(status = SessionStatus.REVOKED)),
                         securityEvents =
                             listOf(

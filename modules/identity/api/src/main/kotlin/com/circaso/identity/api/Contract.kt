@@ -103,12 +103,22 @@ interface DeletionGuard {
 
 /** Where to push a notification for a user; the gateway's fallback when the user has no open socket. */
 interface PushRegistrations {
-    /** The active phone's push token, or null when there is none. */
+    /** The active phone's push tokens, or null when it has neither. */
     suspend fun pushTarget(userId: UserId): PushRegistration?
+
+    /**
+     * Forgets the active phone's PushKit token after APNs refused it (decision 2026-11-08); a newer token the phone
+     * sent meanwhile is kept. The next ring goes through [PushRegistration.token] until the phone sends another.
+     */
+    suspend fun forgetVoipToken(userId: UserId, voipToken: String)
 }
 
-/** [platform] is `android` or `ios`; [token] is the FCM or APNs token. */
-data class PushRegistration(val platform: String, val token: String)
+/**
+ * [platform] is `android` or `ios`; [token] is the FCM or APNs token, null when the phone has only a [voipToken]. An
+ * iPhone's [voipToken] is its PushKit token, which incoming-call rings go to straight through APNs (decision
+ * 2026-11-08); null on Android and on an iPhone that hasn't sent one.
+ */
+data class PushRegistration(val platform: String, val token: String?, val voipToken: String? = null)
 
 /**
  * Implemented by users, wired in `app`. Identity's ops routes create support accounts (decision 2026-10-31), but the

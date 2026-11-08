@@ -68,7 +68,20 @@ class DataLayerTest {
     ) = ProviderLink(userId, provider, subject, "$subject@example.com", now)
 
     private fun device(userId: UserId) =
-        Device(userId, DeviceId.new(), "android", "Pixel", "1.0.0", "key", "ES256", null, DeviceStatus.ACTIVE, now, now)
+        Device(
+            userId,
+            DeviceId.new(),
+            "android",
+            "Pixel",
+            "1.0.0",
+            "key",
+            "ES256",
+            null,
+            null,
+            DeviceStatus.ACTIVE,
+            now,
+            now,
+        )
 
     private fun session(userId: UserId, rotatedAt: Instant = now) =
         Session(SessionId.new(), userId, DeviceId.new(), "hash", Scope.APP, SessionStatus.ACTIVE, rotatedAt, rotatedAt)
@@ -245,10 +258,17 @@ class DataLayerTest {
             val amina = created()
             val pixel = device(amina.userId)
             pg.store.commit(Changes(devices = listOf(pixel)))
-            pg.store.commit(Changes(devices = listOf(pixel.copy(pushToken = "fcm:1", status = DeviceStatus.REPLACED))))
+            pg.store.commit(
+                Changes(
+                    devices =
+                        listOf(
+                            pixel.copy(pushToken = "fcm:1", voipToken = "ab12", status = DeviceStatus.REPLACED),
+                        ),
+                ),
+            )
 
             assertEquals(
-                pixel.copy(pushToken = "fcm:1", status = DeviceStatus.REPLACED),
+                pixel.copy(pushToken = "fcm:1", voipToken = "ab12", status = DeviceStatus.REPLACED),
                 pg.devices.find(amina.userId, pixel.deviceId),
             )
             assertNull(pg.devices.find(amina.userId, DeviceId.new()))

@@ -7,11 +7,12 @@ import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
-/** Where to push a notification for a user: the active phone's token, if it has one. */
+/** Where to push a notification for a user: the active phone's token, if it has one, and its PushKit token for rings. */
 class GetPushTarget(private val accounts: AccountRepository, private val devices: DeviceRepository) {
     suspend operator fun invoke(userId: UserId): Resource<PushRegistration?> {
         val deviceId = accounts.find(userId)?.activeDeviceId ?: return Resource.success(null)
         val device = devices.find(userId, deviceId)?.takeIf { it.status == DeviceStatus.ACTIVE }
-        return Resource.success(device?.pushToken?.let { PushRegistration(device.platform, it) })
+        if (device == null || (device.pushToken == null && device.voipToken == null)) return Resource.success(null)
+        return Resource.success(PushRegistration(device.platform, device.pushToken, device.voipToken))
     }
 }
