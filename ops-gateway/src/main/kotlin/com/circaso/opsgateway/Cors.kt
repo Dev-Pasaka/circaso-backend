@@ -18,7 +18,7 @@ import io.ktor.server.response.respond
 internal object Cors {
     private const val METHODS = "GET, POST, PATCH, OPTIONS"
     private const val HEADERS = "Content-Type, Idempotency-Key, Authorization"
-    private const val EXPOSED = "Retry-After, Idempotent-Replayed, X-Request-Id"
+    private const val EXPOSED = "Retry-After, Idempotent-Replayed, X-Request-Id, $ENVIRONMENT_HEADER"
     private const val MAX_AGE_SECONDS = "600"
 
     /** Adds the headers an allowed origin needs; true when the call was a preflight and has been answered. */

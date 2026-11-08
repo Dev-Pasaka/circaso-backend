@@ -60,6 +60,14 @@ private val MINUTE: Duration = Duration.ofMinutes(1)
 /** Cloudflare Access puts the application token in this header on every request it lets through. */
 const val ACCESS_HEADER = "Cf-Access-Jwt-Assertion"
 
+/**
+ * Which environment answered (`staging`, `production` or `local`), on every response. One host serves both
+ * (admin-api.circaso.com/sandbox/… and /prod/…, decision 2026-11-08), so the portal checks this against the
+ * environment it chose and refuses to show data when they differ: a mis-pointed route can never pass sandbox off as
+ * production or the other way round.
+ */
+const val ENVIRONMENT_HEADER = "Circaso-Environment"
+
 /** …and in this cookie in the browser, which the portal's cross-origin calls carry with `credentials: "include"`. */
 const val ACCESS_COOKIE = "CF_Authorization"
 
@@ -82,6 +90,11 @@ fun Application.installOpsGateway(deps: OpsGatewayDeps, contributors: List<OpsRo
 
     intercept(ApplicationCallPipeline.Plugins) {
         secureHeaders(call)
+        call.response.header(
+            ENVIRONMENT_HEADER,
+            deps.config.environment.name
+                .lowercase(),
+        )
         if (Cors.handle(call, deps.config.allowedOrigins)) return@intercept finish()
         val path = call.request.path()
         if (!path.startsWith("/v1/")) return@intercept

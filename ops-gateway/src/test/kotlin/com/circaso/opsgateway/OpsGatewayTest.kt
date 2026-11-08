@@ -316,6 +316,16 @@ class OpsGatewayTest {
             assertEquals("DENY", response.headers["X-Frame-Options"])
         }
 
+    @Test
+    fun `every answer names the environment, and the portal may read it`() =
+        testApplication {
+            ops(environment = Environment.PRODUCTION, devLogin = false)
+            val response = client.get("/v1/ops/auth/config") { header(HttpHeaders.Origin, PORTAL) }
+
+            assertEquals("production", response.headers[ENVIRONMENT_HEADER])
+            assertTrue(response.headers[HttpHeaders.AccessControlExposeHeaders]!!.contains(ENVIRONMENT_HEADER))
+        }
+
     private suspend fun ApplicationTestBuilder.devLogin(email: String, secret: String): HttpResponse =
         client.post("/v1/ops/auth/dev-login") {
             contentType(ContentType.Application.Json)
