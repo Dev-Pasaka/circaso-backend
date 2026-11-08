@@ -89,6 +89,7 @@ import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
+import com.circaso.wallet.domain.support.NetworkCosts
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
@@ -370,7 +371,8 @@ fun walletModule(config: Config): Module =
         single { Payees(get(), get(), get(), get(), get(), get(), getOrNull()) }
         single { SenderRules(get(), get(), get(), get(), get(), get()) }
         single { Limits(get(), get(), clock) }
-        single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock) }
+        single { NetworkCosts(get(), get(), clock) }
+        single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock, get()) }
         single { PaymentCoins(get(), get(), get()) }
         single { PaymentPlanner(get(), get(), get(), get(), getOrNull(), get()) }
         single { FeeQuotes(get(), clock) }
@@ -503,7 +505,7 @@ fun walletModule(config: Config): Module =
 
         // wallet:api's fees-and-limits staff contract (decision 2026-11-08): versioned rule edits, ops gateway only
         single<RuleAdminRepository> { RuleAdminRepositoryImpl(get(named("wallet.database"))) }
-        single { ListFeeRules(get(), get(), get(), clock) }
+        single { ListFeeRules(get(), get(), get(), clock, get()) }
         single { CreateFeeRule(get(), get(), get(), clock) }
         single { ChangeFeeRule(get(), get(), clock) }
         single { EndFeeRule(get(), get(), clock) }

@@ -22,6 +22,7 @@ import com.circaso.wallet.data.repositories.TransferRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.di.walletDatabaseSpec
+import com.circaso.wallet.domain.models.GasSource
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.support.RuleTimeline
@@ -248,8 +249,9 @@ class FeeAdminDataTest {
             change(BETWEEN_PEOPLE, 1, terms(100), null, "1 % between people").data()
             val next = h.quote(amina, Payee.Person(bob), 100_000_000).data()
 
-            assertEquals(BigInteger.valueOf(500_000), shown.fee.amountMinor, "0.5 % when it was shown")
-            assertEquals(BigInteger.valueOf(1_000_000), next.fee.amountMinor, "1 % from the next quote on")
+            // Gas inclusive: 1 cent of network cost with the 20 % margin is 2 cents, on top of the rate.
+            assertEquals(BigInteger.valueOf(520_000), shown.fee.amountMinor, "0.5 % when it was shown")
+            assertEquals(BigInteger.valueOf(1_020_000), next.fee.amountMinor, "1 % from the next quote on")
             assertEquals(2, next.fee.ruleVersion)
             val paid =
                 h
@@ -266,12 +268,76 @@ class FeeAdminDataTest {
                         ),
                     ).data()
                     .transfer
-            assertEquals(BigInteger.valueOf(500_000), paid.feeMinor, "the quote shown is the fee charged")
+            assertEquals(BigInteger.valueOf(520_000), paid.feeMinor, "the quote shown is the fee charged")
         }
+
+    @Test
+    fun `after a change to 0 percent with no margin the next quote charges the network cost alone`() =
+        runBlocking<Unit> {
+            val h = quoting()
+            val (amina, bob) = UserId.new() to UserId.new()
+            h.fund(amina, 300_000_000)
+            h.walletOn(bob)
+            h.reach.connect(amina, bob)
+
+            change(BETWEEN_PEOPLE, 1, FeeRuleTerms(0, 100_000_000, null, 2_500, 0), null, "promotion").data()
+            val quote = h.quote(amina, Payee.Person(bob), 7_700_000).data()
+
+            assertEquals(BigInteger.valueOf(10_000), quote.fee.amountMinor, "the 1 cent network cost, passed through")
+            assertEquals(0, quote.fee.rateBps)
+            assertEquals(false, quote.fee.minimum)
+            assertEquals(2, quote.fee.ruleVersion)
+            assertEquals(GasSource.ESTIMATE, quote.fee.gasSource, "no history in an empty ledger")
+        }
+
+    @Test
+    fun `the space rules are ended by the migration and a new space rule is refused`() =
+        runBlocking<Unit> {
+            FeeDataTest.statements("V10__fee_gas_inclusive.sql", "UPDATE").forEach(::sql)
+            val spaces = listOf(SPACE_FROM, SPACE_TO)
+            assertTrue(spaces.all { inForce(it, Instant.now().plusSeconds(1)) == null }, "no space rule in force")
+            assertEquals(1, admin.feeVersions(SPACE_FROM).size, "the version is kept, only ended")
+            val refused =
+                create(
+                    FeeRuleScope(FeeRuleKind.INTERNAL, WalletOwnerType.SPACE, null, null, null, null),
+                    terms(100),
+                    null,
+                    "space pricing",
+                )
+            assertEquals("wallet.rule_invalid", (refused as Resource.Error).error.code)
+            assertEquals(
+                listOf("senderType"),
+                refused.error.details
+                    ?.fields
+                    ?.map { it.field },
+            )
+            val people =
+                create(
+                    FeeRuleScope(FeeRuleKind.INTERNAL, WalletOwnerType.PERSON, null, null, null, null),
+                    terms(20),
+                    null,
+                    "people",
+                )
+            assertIs<Resource.Success<*>>(people)
+        }
+
+    private fun quoting() =
+        Harness(
+            WalletRepositoryImpl(database),
+            transactor,
+            WalletOutboxImpl(database),
+            TransferRepositoryImpl(database),
+            TransactionRepositoryImpl(database),
+            ruleRows = rules,
+            quoteRows = FeeQuoteRepositoryImpl(database),
+            ledger = FeeLedgerRepositoryImpl(database),
+        ).also { it.clock.now = clock.instant() }
 
     private companion object {
         val BETWEEN_PEOPLE: UUID = UUID.fromString("0195f2f0-0000-7000-8000-000000000001")
         val EXTERNAL: UUID = UUID.fromString("0195f2f0-0000-7000-8000-000000000006")
+        val SPACE_FROM: UUID = UUID.fromString("0195f2f0-0000-7000-8000-000000000004")
+        val SPACE_TO: UUID = UUID.fromString("0195f2f0-0000-7000-8000-000000000005")
         val PERSON_LIMITS: UUID = UUID.fromString("0195f2f0-0000-7000-8000-000000000101")
     }
 }

@@ -14,6 +14,7 @@ import com.circaso.ops.presentation.dto.LimitRuleVersionDto
 import com.circaso.ops.presentation.dto.LimitRulesResponse
 import com.circaso.ops.presentation.dto.LimitScopeDto
 import com.circaso.ops.presentation.dto.LimitTermsDto
+import com.circaso.ops.presentation.dto.NetworkCostDto
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
@@ -46,6 +47,7 @@ fun FeeScopeDto.toScope(): Resource<FeeRuleScope> =
         }
     }
 
+@Suppress("DEPRECATION")
 fun FeeTermsDto.toTerms() = FeeRuleTerms(rateBps, capBaseUsdMicros, minFeeUsdMicros, gasShareMaxBps, gasMarginBps)
 
 fun LimitScopeDto.toScope(): Resource<LimitRuleScope> =
@@ -71,6 +73,7 @@ private fun walletIdOf(raw: String?): Resource<WalletId?> {
 
 fun FeeRateBounds.toDto() = FeeBoundsDto(minRateBps, maxRateBps, updatedAt.toString())
 
+@Suppress("DEPRECATION")
 fun FeeRuleVersion.toDto() =
     FeeRuleVersionDto(
         ruleId = ruleId.toString(),
@@ -105,6 +108,10 @@ fun FeeRuleBook.toResponse() =
         rules =
             rules.map { rule ->
                 FeeRuleDto(rule.ruleId.toString(), rule.status.name, rule.current, rule.versions.map { it.toDto() })
+            },
+        networkCosts =
+            networkCosts.map {
+                NetworkCostDto(it.blockchain, it.asset, it.gasUsdMicros, it.source.name, it.samples, it.at.toString())
             },
     )
 

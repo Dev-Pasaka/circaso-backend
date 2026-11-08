@@ -181,7 +181,7 @@ data class AgentLimitDto(
 
 /**
  * The fee for a payment that may never be made (`/agent/wallet/fee`, decision 2026-11-05): W17's numbers, no quote
- * held. `fee` is Circaso's one fee, network cost included (`rateBps` its rate, `minimum` true when a floor set it,
+ * held. `fee` is Circaso's one fee, network cost included (`rateBps` its rate, `minimum` true when the minimum fee set it,
  * `noFeeReason` why none is charged); `total` is amount plus fee; `maxAmount` the most that can be sent with its fee.
  * `problem` is `INSUFFICIENT_FUNDS`, `PER_PAYMENT_LIMIT` or `DAILY_LIMIT` (then `fitsAt`, when it would fit). The
  * `fiat*` values are in `rate.currency` at today's rate, when a currency was asked.

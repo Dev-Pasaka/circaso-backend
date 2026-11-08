@@ -11,6 +11,8 @@ import com.circaso.wallet.api.LimitRuleBook
 import com.circaso.wallet.api.LimitRuleChange
 import com.circaso.wallet.api.LimitRuleHistory
 import com.circaso.wallet.api.LimitRuleVersion
+import com.circaso.wallet.api.NetworkCostNow
+import com.circaso.wallet.api.NetworkCostSource
 import com.circaso.wallet.domain.models.BoundsChange
 import com.circaso.wallet.domain.models.FeeBounds
 import com.circaso.wallet.domain.models.FeeRule
@@ -45,7 +47,21 @@ fun FeeRuleSet.toOps(): FeeRuleBook {
             val (status, current) = RuleTimeline.status(versions, at)
             FeeRuleHistory(ruleId, status, current, versions.sortedByDescending { it.version }.map { it.toOps() })
         }
-    return FeeRuleBook(at, bounds.toOps(), histories.sortedWith(compareBy({ it.status }, { it.ruleId })))
+    val recent =
+        networkCosts.map {
+            NetworkCostNow(it.blockchain, it.asset, it.gasMinor, NetworkCostSource.RECENT, it.samples, it.at)
+        }
+    val pooled = recent.filter { it.asset == null }.map { it.blockchain }.toSet()
+    val estimated =
+        estimates.filter { it.blockchain !in pooled }.map {
+            NetworkCostNow(it.blockchain, null, it.gasMinor, NetworkCostSource.ESTIMATE, 0, it.at)
+        }
+    return FeeRuleBook(
+        at,
+        bounds.toOps(),
+        histories.sortedWith(compareBy({ it.status }, { it.ruleId })),
+        (recent + estimated).sortedWith(compareBy({ it.blockchain }, { it.asset ?: "" })),
+    )
 }
 
 fun RuleChange<FeeRule>.toFeeOps() = FeeRuleChange(before?.toOps(), after.toOps())

@@ -26,15 +26,35 @@ data class FeeRuleScope(
 )
 
 /**
- * What a fee rule charges: `max(rate × min(amount, capBase), minFee, gas floor)`, the gas floor being the estimated
- * network cost plus [gasMarginBps], over [gasShareMaxBps] of the fee.
+ * What a fee rule charges, gas inclusive (decision 2026-11-08): `ceil_cent(network cost × (1 + gasMargin)) +
+ * half_up_cent(rate × min(amount, capBase))`, raised to [minFeeUsdMicros] when set. The network cost always passes
+ * through, so a 0 % rule charges it alone.
  */
 data class FeeRuleTerms(
     val rateBps: Int,
     val capBaseUsdMicros: Long,
     val minFeeUsdMicros: Long?,
+    /** Deprecated (2026-11-08): stored for compatibility, no longer prices anything. */
     val gasShareMaxBps: Int,
     val gasMarginBps: Int,
+)
+
+/** Where a chain's network cost figure comes from: recent confirmed transfers, or Circle's last estimate quoted. */
+enum class NetworkCostSource { RECENT, ESTIMATE }
+
+/**
+ * What one payment's network cost is priced on now on [blockchain], before a rule's margin, in micro-dollars: for
+ * [NetworkCostSource.RECENT] the 75th percentile of the last [samples] confirmed transfers ([asset] null pools every
+ * coin), for [NetworkCostSource.ESTIMATE] the last estimate a quote was priced on ([samples] 0). [at] is when it was
+ * worked out.
+ */
+data class NetworkCostNow(
+    val blockchain: String,
+    val asset: String?,
+    val gasUsdMicros: Long,
+    val source: NetworkCostSource,
+    val samples: Int,
+    val at: Instant,
 )
 
 data class FeeRuleVersion(
@@ -59,7 +79,13 @@ data class FeeRuleHistory(
 /** The bounds every fee rate must stay within (`wallet.fee_bounds`). */
 data class FeeRateBounds(val minRateBps: Int, val maxRateBps: Int, val updatedAt: Instant)
 
-data class FeeRuleBook(val at: Instant, val bounds: FeeRateBounds, val rules: List<FeeRuleHistory>)
+data class FeeRuleBook(
+    val at: Instant,
+    val bounds: FeeRateBounds,
+    val rules: List<FeeRuleHistory>,
+    /** Each chain's network cost now, for showing the real fee. */
+    val networkCosts: List<NetworkCostNow> = emptyList(),
+)
 
 /** A change as it landed: [before] is the version it superseded or ended (null for a new rule), [after] the result. */
 data class FeeRuleChange(val before: FeeRuleVersion?, val after: FeeRuleVersion)

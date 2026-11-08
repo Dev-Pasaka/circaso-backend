@@ -29,8 +29,17 @@ data class RuleChange<T : VersionedRule>(val before: T?, val after: T)
 
 data class BoundsChange(val before: FeeBounds, val after: FeeBounds)
 
-/** Every version of every fee rule, with the bounds, read at [at]. */
-data class FeeRuleSet(val at: Instant, val bounds: FeeBounds, val rules: List<FeeRule>)
+/**
+ * Every fee rule version, the bounds, and what the network costs now on each chain (decision 2026-11-08): [networkCosts]
+ * where there is recent history, [estimates] (the last Circle estimate quoted) for chains without it.
+ */
+data class FeeRuleSet(
+    val at: Instant,
+    val bounds: FeeBounds,
+    val rules: List<FeeRule>,
+    val networkCosts: List<RecentGas> = emptyList(),
+    val estimates: List<GasEstimate> = emptyList(),
+)
 
 data class LimitRuleSet(val at: Instant, val rules: List<LimitRule>)
 

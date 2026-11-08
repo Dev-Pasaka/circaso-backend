@@ -77,8 +77,9 @@ private fun Route.feeReads(fees: FeeService) {
         TAG_FEES,
         listOf(FORBIDDEN),
         "${roles("FINANCE", "ADMIN")} Each rule with its status (ACTIVE, SCHEDULED, ENDED), the version in force " +
-            "(`current`) and every version newest first; and the bounds every rate stays within. Rates in basis " +
-            "points, dollars in micro-dollars.",
+            "(`current`) and every version newest first; the bounds every rate stays within; and `networkCosts`, " +
+            "what one payment's network cost is priced on now per chain (fees are gas inclusive since 2026-11-08: " +
+            "network cost with the rule's margin, plus the rate). Rates in basis points, dollars in micro-dollars.",
     )
 
     get("bounds") {

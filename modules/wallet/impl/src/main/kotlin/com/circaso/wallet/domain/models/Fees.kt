@@ -35,10 +35,10 @@ data class FeeParties(
 )
 
 /**
- * One version of a fee rule (`wallet.fee_rules`). A null match field matches anything. [rateBps] (0..200 by the
- * database's bounds) applies to at most [capBaseMinor] of a payment; [minFeeMinor] is a floor on top of the gas floor;
- * [gasShareMaxBps] is the most of the fee the network cost may be (2 500: 25 %), estimated with [gasMarginBps] on top.
- * A change is a new version: history is never overwritten.
+ * One version of a fee rule (`wallet.fee_rules`). A null match field matches anything. The fee is the network cost
+ * with [gasMarginBps] on top, plus [rateBps] (0..200 by the database's bounds) of at most [capBaseMinor] of the
+ * payment, raised to [minFeeMinor] when one is set (decision 2026-11-08, gas inclusive). [gasShareMaxBps] is kept for
+ * compatibility only and no longer prices anything. A change is a new version: history is never overwritten.
  */
 data class FeeRule(
     override val ruleId: UUID,
@@ -77,11 +77,11 @@ data class FeeRule(
 }
 
 /**
- * The one Circaso fee for a payment, network cost included (§7b): [amountMinor] in the payment's asset, from rule
- * [ruleId] v[ruleVersion] at [rateBps]; [minimum] when the floor (gas or `min_fee_usd`) made it more than the rate
- * did. [gasMinor] is the network cost estimated for this exact call (Circaso sponsors it; null when none was
- * estimated). [feeAddress] is Circaso's fee wallet on the chain, null when there is no fee leg. [reason] says why a
- * fee is zero when a rule didn't decide it.
+ * The one Circaso fee for a payment, network cost included (§7b, decision 2026-11-08): [amountMinor] in the
+ * payment's asset, from rule [ruleId] v[ruleVersion] at [rateBps]; [minimum] when the rule's `min_fee_usd` raised it
+ * above the network cost plus the rate. [gasMinor] is the network cost it was priced on, before the margin (null when
+ * none was), and [gasSource] where that figure came from. [feeAddress] is Circaso's fee wallet on the chain, null when
+ * there is no fee leg. [reason] says why a fee is zero when a rule didn't decide it.
  */
 data class Fee(
     /** In the payment's coin: [usdMinor] converted at [usdPrice], rounded up to the coin's minor unit. */
@@ -99,13 +99,46 @@ data class Fee(
     val usdMinor: Long = amountMinor.toLong(),
     /** What one whole coin of the payment was worth in US dollars when it was priced; one for a dollar stablecoin. */
     val usdPrice: BigDecimal = BigDecimal.ONE,
+    val gasSource: GasSource? = null,
 ) {
     val charged: Boolean get() = amountMinor.signum() > 0 && feeAddress != null
 
     override fun toString(): String = "Fee(rule=$ruleId v$ruleVersion, $rateBps bps, minimum=$minimum)"
 }
 
-/** Why a payment carries no fee though no 0 % rule said so. */
+/** Where the network cost a fee was priced on came from (decision 2026-11-08). */
+enum class GasSource {
+    /** What recent confirmed transfers on the chain actually cost (the 75th percentile, [NetworkCosts]). */
+    RECENT,
+
+    /** Circle's estimate for this exact call, used while the chain has too little history. */
+    ESTIMATE,
+}
+
+/**
+ * The network cost of a payment on [blockchain] in micro-dollars, as [NetworkCosts] prices it: the 75th percentile of
+ * the last [samples] confirmed transfers ([asset] null when it pools every coin on the chain), as of [at].
+ */
+data class RecentGas(
+    val blockchain: String,
+    val asset: String?,
+    val gasMinor: Long,
+    val samples: Int,
+    val at: Instant,
+)
+
+/** What one confirmed transfer cost on the chain, in micro-dollars. */
+data class GasSample(
+    val blockchain: String,
+    val asset: String,
+    val gasMinor: Long,
+    val at: Instant,
+)
+
+/** The last Circle estimate a quote was priced on, for a chain with too little history. */
+data class GasEstimate(val blockchain: String, val gasMinor: Long, val at: Instant)
+
+/** Why a payment carries no fee: no rule matched, or the chain can't carry a fee leg yet. */
 enum class NoFeeReason {
     /** No rule matches the payment. */
     NO_RULE,

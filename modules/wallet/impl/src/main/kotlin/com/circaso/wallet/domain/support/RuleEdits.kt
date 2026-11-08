@@ -8,6 +8,7 @@ import com.circaso.wallet.api.FeeRuleTerms
 import com.circaso.wallet.api.LimitRuleScope
 import com.circaso.wallet.api.LimitRuleTerms
 import com.circaso.wallet.api.RuleStatus
+import com.circaso.wallet.api.WalletOwnerType
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.FeeBounds
 import com.circaso.wallet.domain.models.FeeKind
@@ -132,6 +133,7 @@ object RuleChecks {
     private const val NOTE_MAX = 500
     private val CHAIN = Regex("[A-Z0-9][A-Z0-9-]{0,39}")
     private val ASSET = Regex("[A-Z0-9][A-Z0-9.]{0,14}")
+    private const val SPACES_CLOSED = "spaces are closed; a rule can't be for a space wallet"
 
     fun note(raw: String): Resource<String> {
         val note = raw.trim()
@@ -151,6 +153,7 @@ object RuleChecks {
                 terms.minFeeUsdMicros?.let { min ->
                     if (min !in 0..USD_MICROS_MAX) add(FieldError("minFeeUsdMicros", "can't be negative"))
                 }
+                // Deprecated (2026-11-08): kept and stored, but no longer prices anything.
                 if (terms.gasShareMaxBps !in 1..BPS_MAX) add(FieldError("gasShareMaxBps", "must be 1 to $BPS_MAX"))
                 if (terms.gasMarginBps !in 0..BPS_MAX) add(FieldError("gasMarginBps", "must be 0 to $BPS_MAX"))
             }
@@ -180,6 +183,9 @@ object RuleChecks {
             buildList {
                 if (chain != null && !CHAIN.matches(chain)) add(FieldError("blockchain", "isn't a chain name"))
                 if (asset != null && !ASSET.matches(asset)) add(FieldError("asset", "isn't a coin symbol"))
+                // Spaces were archived on 2026-11-05: no new rule may price a space wallet.
+                if (scope.senderType == WalletOwnerType.SPACE) add(FieldError("senderType", SPACES_CLOSED))
+                if (scope.receiverType == WalletOwnerType.SPACE) add(FieldError("receiverType", SPACES_CLOSED))
                 if (scope.kind == FeeRuleKind.EXTERNAL && scope.receiverType != null) {
                     add(FieldError("receiverType", "an outside address has no receiver type"))
                 }
