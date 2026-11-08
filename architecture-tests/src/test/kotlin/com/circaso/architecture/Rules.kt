@@ -578,13 +578,17 @@ object Rules {
     /**
      * Outbound HTTP is Ktor's client and nothing else, and only `infrastructure:impl` builds one: everything else asks `HttpClients.named("<vendor>")`
      * for the vendor's client, which comes with the timeouts, retries, circuit breaker, tracing and log redaction the architecture promises.
-     * The one exception is [APNS_HTTP2_FILE].
+     * Two files may use the JDK's client: the engine under Ktor's (`infrastructure:impl`'s `http/JdkHttpEngine.kt`, decision
+     * 2026-11-05), so every call still goes through Ktor's client and its plugins; and [APNS_HTTP2_FILE].
      */
     fun httpOnlyThroughKtor(files: List<KoFileDeclaration>): List<String> =
         files.flatMap { file ->
+            val ktorEngine =
+                projectOf(file)?.kind == "infrastructure-impl" && file.path.endsWith("/http/JdkHttpEngine.kt")
             val other =
                 file
                     .importNames()
+                    .filterNot { ktorEngine }
                     .filter { import ->
                         !(isApnsHttp2(file) && import.startsWith("java.net.http.")) &&
                             otherHttpClients.any {

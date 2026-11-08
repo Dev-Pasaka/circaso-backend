@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
@@ -40,6 +41,7 @@ import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.circle.CircleSettings
+import com.circaso.integrations.impl.circle.CircleWarmUp
 import com.circaso.integrations.impl.circle.CircleWebhook
 import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
 import com.circaso.integrations.impl.cloudflare.TurnKey
@@ -94,6 +96,7 @@ import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
@@ -484,6 +487,7 @@ private fun Module.circle(custody: Config, secrets: Secrets) {
     }
     single { CircleWebhook(get(), get(), notifications = { getOrNull<CustodyNotifications>() }) } bind
         WebhookVendor::class
+    single<WarmUp>(named("circle.warm-up")) { CircleWarmUp(get()) }
 }
 
 /**

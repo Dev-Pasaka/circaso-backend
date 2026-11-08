@@ -13,6 +13,8 @@ import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.math.BigInteger
 import java.time.Clock
 import java.util.UUID
@@ -111,17 +113,31 @@ class PaymentPlanner(
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
-        val pricing =
-            when (val priced = fees.pricing(owner, sender, destination, coin)) {
-                is Resource.Success -> priced.data
-                is Resource.Error -> return priced
-            }
-        val balance =
-            coin.heldMinor ?: when (val read = rules.balance(sender, coin)) {
-                is Resource.Success -> read.data
-                is Resource.Error -> return read
-            }
-        return Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance, amount))
+        // The price (Circle's gas estimate, the slow one) and the balance (Circle's live read) are asked at once:
+        // neither needs the other (perf, 2026-11-05). A pricing error wins over a balance error, as asking them in
+        // turn gave, and a balance read whose answer isn't needed is cancelled. A coin whose holding is already known
+        // needs no read at all.
+        return coroutineScope {
+            val priced = async { fees.pricing(owner, sender, destination, coin) }
+            val read = if (coin.heldMinor == null) async { rules.balance(sender, coin) } else null
+            val pricing =
+                when (val answer = priced.await()) {
+                    is Resource.Success -> {
+                        answer.data
+                    }
+
+                    is Resource.Error -> {
+                        read?.cancel()
+                        return@coroutineScope answer
+                    }
+                }
+            val balance =
+                coin.heldMinor ?: when (val answer = read!!.await()) {
+                    is Resource.Success -> answer.data
+                    is Resource.Error -> return@coroutineScope answer
+                }
+            Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance, amount))
+        }
     }
 
     /**

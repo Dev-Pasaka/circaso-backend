@@ -55,11 +55,13 @@ import com.circaso.chama.presentation.events.WalletEventHandler
 import com.circaso.chama.presentation.services.ChamaAgentService
 import com.circaso.chama.presentation.services.ChamaEventsService
 import com.circaso.chama.presentation.services.ChamaService
+import com.circaso.chama.presentation.warmup.ChamaWarmUp
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
+import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.wallet.api.PayoutApprovals
@@ -166,4 +168,5 @@ fun chamaModule(config: Config): Module =
         // wallet:api's guard: the wallet asks before it pays from a group wallet (decision 2026-11-03, option A).
         single<PayoutApprovals> { ChamaPayoutApprovals(get()) }
         single(named("chama.replay")) { RealtimeModule(ChamaFrames.MODULE, ChamaRealtimeReplay(get())) }
+        single<WarmUp>(named("chama.warm-up")) { ChamaWarmUp(get(), get(), get(), get()) }
     }

@@ -3,6 +3,7 @@ package com.circaso.chama
 import com.circaso.chama.data.repositories.ContributionRepositoryImpl
 import com.circaso.chama.data.repositories.DirectPayoutRepositoryImpl
 import com.circaso.chama.data.repositories.GoalRepositoryImpl
+import com.circaso.chama.data.repositories.RequestRepositoryImpl
 import com.circaso.chama.data.repositories.SettingsRepositoryImpl
 import com.circaso.chama.di.chamaDatabaseSpec
 import com.circaso.chama.domain.models.ApprovalPolicy
@@ -10,6 +11,7 @@ import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
+import com.circaso.chama.presentation.warmup.ChamaWarmUp
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.ChatId
@@ -41,6 +43,38 @@ class ChamaDataTest {
     fun clean() =
         runBlocking<Unit> {
             TestPostgres.truncate("chama")
+        }
+
+    @Test
+    fun `the warm-up runs every chama read against the real tables and writes nothing`() =
+        runBlocking<Unit> {
+            ChamaWarmUp(goals, settings, contributions, RequestRepositoryImpl(database)).run()
+
+            val rows =
+                TestPostgres.superuser { connection ->
+                    val tables =
+                        connection.createStatement().use { statement ->
+                            statement
+                                .executeQuery(
+                                    "SELECT table_name FROM information_schema.tables " +
+                                        "WHERE table_schema = 'chama' AND table_type = 'BASE TABLE' " +
+                                        // Flyway's own history, which truncate keeps: one row per migration
+                                        "AND table_name <> 'flyway_schema_history'",
+                                ).use { result ->
+                                    generateSequence { if (result.next()) result.getString(1) else null }.toList()
+                                }
+                        }
+                    tables.sumOf { table ->
+                        connection.createStatement().use { statement ->
+                            statement.executeQuery("SELECT count(*) FROM chama.\"$table\"").use {
+                                it.next()
+                                it.getLong(1)
+                            }
+                        }
+                    }
+                }
+            assertEquals(0L, rows, "read-only: every chama table is still empty")
+            assertNull(goals.find(ChatId.new()))
         }
 
     @Test

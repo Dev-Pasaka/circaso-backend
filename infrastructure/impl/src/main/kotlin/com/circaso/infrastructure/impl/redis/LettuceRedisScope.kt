@@ -5,6 +5,8 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.impl.database.requireOutsideTransaction
 import com.circaso.infrastructure.impl.logging.kv
 import com.circaso.infrastructure.impl.logging.shortenIds
+import com.circaso.infrastructure.impl.logging.slow
+import com.circaso.infrastructure.impl.logging.warmingUp
 import io.lettuce.core.ExperimentalLettuceCoroutinesApi
 import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.SetArgs
@@ -70,6 +72,7 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
         block: suspend () -> T,
     ): T {
         requireOutsideTransaction("Redis $command")
+        val warming = warmingUp()
         val start = System.nanoTime()
         try {
             return block()
@@ -82,7 +85,7 @@ class LettuceRedisScope(override val prefix: String, private val redis: RedisCon
                     kv("key", shortenIds(key(key))),
                     kv("durationMs", millis),
                 )
-            if (millis > SLOW_REDIS_MILLIS) log.warn("slow", *fields) else log.debug("redis", *fields)
+            if (millis > SLOW_REDIS_MILLIS) log.slow(warming, "slow", *fields) else log.debug("redis", *fields)
         }
     }
 

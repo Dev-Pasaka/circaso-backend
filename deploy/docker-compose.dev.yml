@@ -12,9 +12,13 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      LOG_FORMAT: JSON
-      LOG_COLOR: "false"
+      # The colored console format, read with `docker compose logs`. No TTY: with one, Docker's log driver writes every line
+      # through a pseudo-terminal, and the app can't tell it apart from a person. LOG_COLOR=true keeps the colors without it
+      # (Palette). Switch to JSON with LOG_COLOR=false once the logs go to Loki.
+      LOG_FORMAT: PRETTY
+      LOG_COLOR: "true"
       APP_VERSION: ${APP_VERSION:-dev}
+    tty: false
     depends_on:
       valkey:
         condition: service_healthy
@@ -72,9 +76,13 @@ services:
     volumes: [valkey-data:/data]
     healthcheck:
       test: ["CMD-SHELL", "valkey-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
-      interval: 10s
+      # A probe every 30 s: each one is a process in the container, and 4 vCPUs run everything. A deploy waits on the app's own
+      # /health/ready, not on these.
+      interval: 30s
       timeout: 3s
-      retries: 5
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     networks: [data]
@@ -123,9 +131,13 @@ services:
       - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d circaso"]
-      interval: 10s
+      # A probe every 30 s: each one is a process in the container, and 4 vCPUs run everything. A deploy waits on the app's own
+      # /health/ready, not on these.
+      interval: 30s
       timeout: 3s
-      retries: 5
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks: [data]
     shm_size: 256m
     mem_limit: 1536m

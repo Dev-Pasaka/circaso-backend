@@ -1,6 +1,7 @@
 package com.circaso.gateway
 
 import com.circaso.web.principalOrNull
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.hooks.ResponseSent
 import io.ktor.server.request.httpMethod
@@ -29,7 +30,8 @@ private const val HEALTH_ROUTES = "/health/"
  * through the MDC. The route is the matched route's template (`/v1/handles/{handle}/availability`), never the
  * concrete path or the query string, because a path parameter can be a handle, an invite token or a phone number.
  * Never a token, a phone number or an amount. The health routes are left out: the container, the deploy and the load
- * balancer probe them every few seconds, and `/health/ready` answers `503` all through the start-up warm-up.
+ * balancer probe them every few seconds, and `/health/ready` answers `503` all through the start-up warm-up. So is a
+ * WebSocket that opened (`101`): its lines are the socket hub's `ws.open` and `ws.close`.
  */
 val RequestLog =
     createApplicationPlugin("CircasoRequestLog") {
@@ -47,6 +49,9 @@ val RequestLog =
             val route = call.attributes.getOrNull(RouteTemplate) ?: UNMATCHED_ROUTE
             if (route.startsWith(HEALTH_ROUTES)) return@on
             val status = call.response.status()?.value ?: 0
+            // A socket's `101` is sent when it opens, but this fires when it closes: its "duration" would be the
+            // socket's whole life. The socket hub writes `ws.open` and `ws.close` instead.
+            if (status == HttpStatusCode.SwitchingProtocols.value) return@on
             val client = call.clientFields()
             val line =
                 arrayOf(

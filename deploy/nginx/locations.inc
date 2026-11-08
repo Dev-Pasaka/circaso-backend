@@ -1,6 +1,7 @@
 # Shared by the port 80 and port 443 servers (included inside each `server` block).
 
 server_tokens off;
+access_log /var/log/nginx/access.log timed; # replaces the image's `main` format (default.conf)
 
 # Only Cloudflare may talk to this server. Anyone who finds its address and connects directly is dropped without an answer. (The host firewall cannot
 # do this: Docker publishes ports around it.)

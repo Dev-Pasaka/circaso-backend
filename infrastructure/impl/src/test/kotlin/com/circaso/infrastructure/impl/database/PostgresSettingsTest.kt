@@ -32,7 +32,7 @@ class PostgresSettingsTest {
         assertEquals(listOf(10, 10, 10), defaults.app.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
         assertEquals(listOf(3, 3, 3), defaults.jobs.let { listOf(it.maxSize, it.initialSize, it.minIdle) })
         assertNull(defaults.timings.maxIdleTime, "an idle connection is never closed")
-        assertEquals(Duration.ofMinutes(30), defaults.timings.maxLifeTime)
+        assertEquals(Duration.ofHours(6), defaults.timings.maxLifeTime, "long-lived: a new backend has a cold catalog")
         assertEquals(Duration.ofSeconds(5), defaults.timings.maintenanceInterval)
 
         val tuned =

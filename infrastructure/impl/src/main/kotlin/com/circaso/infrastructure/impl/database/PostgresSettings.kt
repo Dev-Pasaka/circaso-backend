@@ -51,9 +51,13 @@ data class PoolTimings(
     /**
      * A connection's longest life, so none outlives a server-side change or a half-open socket for long. Each
      * connection's own limit is up to [LIFETIME_SPREAD] of this shorter, so the connections opened together at start
-     * don't all retire in the same sweep.
+     * don't all retire in the same sweep. Six hours (`DATABASE_POOL_MAX_LIFE_MS`): a new connection is a new backend
+     * with a cold catalog cache, and at 30 min one request in each retirement window paid for it (audit 2026-11-05,
+     * Q8). The pools reach Postgres over the internal Docker network, where nothing cuts a socket; a half-open one is
+     * caught sooner by `tcpKeepAlive` and the borrow's socket check. Behind a pooler that recycles its own backends,
+     * set it below that pooler's lifetime.
      */
-    val maxLifeTime: Duration = Duration.ofMinutes(30),
+    val maxLifeTime: Duration = Duration.ofHours(6),
     /**
      * How often each pool, in the background, closes the idle connections past their life and opens new ones up to its
      * `minIdle`.

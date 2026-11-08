@@ -38,22 +38,23 @@ class OutgoingUpdates(
     private val ids: OrderedIds,
 ) {
     /**
-     * False when the update isn't about a transfer prepared here (no or unknown `refId`). An update whose wallet isn't
-     * the transfer's sending wallet is not applied: Circle's `refId` must never move another wallet's transfer.
+     * [UpdateOutcome.NOT_OURS] when the update isn't about a transfer prepared here (no or unknown `refId`). An update
+     * whose wallet isn't the transfer's sending wallet is not applied: Circle's `refId` must never move another
+     * wallet's transfer. [UpdateOutcome.CHANGED] only when the transfer moved.
      */
     suspend fun applyToTransfer(
         update: CustodyTransaction,
         next: TransferState,
         change: TransferChange,
-    ): Boolean {
-        val transfer = TransferId.parse(update.refId)?.let { transfers.find(it) } ?: return false
+    ): UpdateOutcome {
+        val transfer = TransferId.parse(update.refId)?.let { transfers.find(it) } ?: return UpdateOutcome.NOT_OURS
         if (update.walletId != transfer.senderWalletId) {
             warnings.refIdOfAnotherWallet(transfer.transferId.toString(), update.walletId)
-            return true
+            return UpdateOutcome.UNCHANGED
         }
-        val moved = move(transfer, next, change) ?: return true
+        val moved = move(transfer, next, change) ?: return UpdateOutcome.UNCHANGED
         announce(moved)
-        return true
+        return UpdateOutcome.CHANGED
     }
 
     /**
@@ -109,14 +110,15 @@ class OutgoingUpdates(
 
     /**
      * An outgoing transaction of one of our wallets that wasn't prepared here (no `refId` of ours): recorded in the
-     * history so it isn't missing there; nothing else to tell.
+     * history so it isn't missing there; nothing else to tell. True when the history changed: a new row, or the row
+     * moved on.
      */
     suspend fun applyUntracked(
         wallet: ChainWallet,
         update: CustodyTransaction,
         next: TransferState,
         change: TransferChange,
-    ) {
+    ): Boolean {
         val row =
             WalletTransaction(
                 id = ids.next(),
@@ -134,8 +136,9 @@ class OutgoingUpdates(
                 origin = TransferOrigin.APP,
                 occurredAt = change.at,
             )
-        transactor.run("transactions.apply-untracked") {
-            if (!transactions.insert(row)) transactions.moveByCircle(update.circleTxId, wallet.userId, next, change)
+        return transactor.run("transactions.apply-untracked") {
+            transactions.insert(row) ||
+                transactions.moveByCircle(update.circleTxId, wallet.userId, next, change) != null
         }
     }
 
@@ -153,3 +156,6 @@ class OutgoingUpdates(
     private fun Transfer.toFrame() =
         WalletFrame.TransferUpdated(transferId, state.name, blockchain, amount, txHash, failureReason)
 }
+
+/** What a Circle update did to one of our transfers: not ours, ours but nothing moved (late or repeated), or moved. */
+enum class UpdateOutcome { NOT_OURS, UNCHANGED, CHANGED }

@@ -236,7 +236,7 @@ class CustodyUpdateTest {
         }
 
     @Test
-    fun `any update clears the wallet's cached balance`() =
+    fun `an update that moves the transfer clears the wallet's cached balance`() =
         runBlocking<Unit> {
             val prepared = prepared()
             val base = h.walletOn(amina)
@@ -245,6 +245,37 @@ class CustodyUpdateTest {
             outbound(prepared, CustodyTransactionState.SUBMITTED).data()
 
             assertTrue(!h.cache.values.containsKey(base.circleWalletId))
+        }
+
+    @Test
+    fun `an update that changes nothing keeps the cached balance, as a reconcile replaying it does`() =
+        runBlocking<Unit> {
+            val prepared = prepared()
+            val base = h.walletOn(amina)
+            outbound(prepared, CustodyTransactionState.CONFIRMED).data()
+            val held = listOf(Holding("USDC", USDC_BASE, 6, true, BigInteger.ONE))
+            h.cache.put(base.circleWalletId, held)
+
+            outbound(prepared, CustodyTransactionState.CONFIRMED).data() // the same word again
+            outbound(prepared, CustodyTransactionState.SUBMITTED).data() // a late one
+
+            assertEquals(held, h.cache.values[base.circleWalletId], "nothing moved, so nothing to read again")
+        }
+
+    @Test
+    fun `an inbound update clears the receiver's cached balance once, not when Circle repeats it`() =
+        runBlocking<Unit> {
+            prepared()
+            val receiving = h.walletOn(bob)
+            val held = listOf(Holding("USDC", USDC_BASE, 6, true, BigInteger.ONE))
+            h.cache.put(receiving.circleWalletId, held)
+
+            inbound(CustodyTransactionState.CONFIRMED).data()
+            assertTrue(!h.cache.values.containsKey(receiving.circleWalletId), "the money landed")
+
+            h.cache.put(receiving.circleWalletId, held)
+            inbound(CustodyTransactionState.CONFIRMED).data()
+            assertEquals(held, h.cache.values[receiving.circleWalletId])
         }
 
     @Test

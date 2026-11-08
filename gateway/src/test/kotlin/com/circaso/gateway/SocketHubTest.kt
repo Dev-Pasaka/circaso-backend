@@ -1,5 +1,7 @@
 package com.circaso.gateway
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.circaso.assistant.api.AssistantFrames
 import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
@@ -76,6 +78,7 @@ import io.ktor.server.testing.testApplication
 import io.ktor.server.websocket.WebSockets
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +94,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -103,6 +107,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import ch.qos.logback.classic.Logger as LogbackLogger
 import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 
 class SocketHubTest {
@@ -408,6 +413,55 @@ class SocketHubTest {
                 assertEquals(43, nextFrame().seq)
             }
         }
+
+    @Test
+    fun `a socket writes ws open with its auth and replay times, and ws close with its life and frames`() {
+        val captured = ListAppender<ILoggingEvent>().apply { start() }
+        val logger = LoggerFactory.getLogger("com.circaso.gateway.realtime.SocketHub") as LogbackLogger
+        logger.addAppender(captured)
+        try {
+            testApplication {
+                val replay =
+                    RealtimeModule(
+                        "users",
+                        object : RealtimeReplay {
+                            override suspend fun since(userId: UserId, seq: Long) =
+                                Resource.success(listOf(frame(seq + 1), frame(seq + 2)))
+                        },
+                    )
+                val hub = hub(replays = listOf(replay))
+                serve(hub)
+                val client = createClient { install(ClientWebSockets) }
+
+                client.webSocket("/v1/ws") {
+                    send(Frame.Text("""{"type":"auth","accessToken":"good","last":[{"module":"users","seq":41}]}"""))
+                    assertEquals(42, nextFrame().seq)
+                    assertEquals(43, nextFrame().seq)
+                    send(Frame.Text("""{"module":"nobody","type":"typing","data":{}}"""))
+                    close(CloseReason(CloseReason.Codes.NORMAL, "bye"))
+                }
+                withTimeout(3000) { while (captured.list.none { it.message == "ws.close" }) delay(20) }
+            }
+        } finally {
+            logger.detachAppender(captured)
+        }
+
+        fun line(message: String) =
+            captured.list
+                .single { it.message == message }
+                .argumentArray
+                .joinToString(" ") { it.toString() }
+
+        val open = line("ws.open")
+        listOf("kind=ws", "userId=$user", "authMs=", "replayMs=", "replayed=2").forEach {
+            assertTrue(it in open, "$it in: $open")
+        }
+        val close = line("ws.close")
+        listOf("lifetimeMs=", "framesIn=1", "framesOut=2", "closeCode=1000").forEach {
+            assertTrue(it in close, "$it in: $close")
+        }
+        assertTrue("good" !in open + close, "the token never reaches a log line")
+    }
 
     @Test
     fun `a bad token closes the socket and nothing is delivered to it`() =

@@ -42,7 +42,8 @@ private val log = LoggerFactory.getLogger("com.circaso.infrastructure.impl.http.
  */
 class VendorHttpClients(
     private val telemetry: Telemetry = NoopTelemetry,
-    private val engine: () -> HttpClientEngine = { CIO.create() },
+    /** The engine for one vendor's client; by default [defaultEngine]. */
+    private val engine: (VendorHttpConfig) -> HttpClientEngine = ::defaultEngine,
     private val clock: Clock = Clock.systemUTC(),
     private val retryBaseMillis: Long = 200,
 ) : HttpClients,
@@ -61,7 +62,7 @@ class VendorHttpClients(
             mapOf("vendor" to vendor),
         ) { if (breaker.isOpen) 1.0 else 0.0 }
 
-        return HttpClient(engine()) {
+        return HttpClient(engine(config)) {
             expectSuccess = false // vendor errors are answers to translate, not exceptions
             install(outsideTransactions(vendor))
             install(ContentNegotiation) { json(CircasoJson) }
@@ -179,3 +180,10 @@ class VendorHttpClients(
         mapOf("vendor" to vendor, "operation" to operation, "outcome" to outcome),
     )
 }
+
+/**
+ * The JDK's client, which keeps connections open between calls ([JdkHttpEngine]); CIO for a client that opens
+ * WebSockets, which the JDK's client can't upgrade to through Ktor.
+ */
+internal fun defaultEngine(config: VendorHttpConfig): HttpClientEngine =
+    if (config.webSockets) CIO.create() else JdkHttpEngine(config.connectTimeout)

@@ -123,13 +123,14 @@ class ServeTest {
             signUp(sms!!, "Warm Up", "+254722${(100000..999999).random()}")
 
             assertEquals(
-                listOf("identity", "infrastructure", "messaging", "users", "wallet"),
+                listOf("chama", "database.pool", "identity", "infrastructure", "messaging", "users", "wallet"),
                 warmUps.map { it.name }.sorted(),
             )
             // each one directly, so a failure fails here with its exception rather than being logged and skipped
             repeat(3) { warmUps.forEach { it.run() } }
-            val outcome = WarmUpRunner(warmUps, WarmUpSettings(workers = 4, rounds = 5)).run()
-            assertEquals(WarmUpOutcome(passes = 20, timedOut = false, failed = emptyMap()), outcome)
+            val outcome = WarmUpRunner(warmUps, WarmUpSettings(workers = 4, rounds = 5, wideWorkers = 2)).run()
+            // the rounds, plus one wide pass per wide worker
+            assertEquals(WarmUpOutcome(passes = 4 * 5 + 2, timedOut = false, failed = emptyMap()), outcome)
         }
 
     @Test

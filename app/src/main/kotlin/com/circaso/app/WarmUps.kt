@@ -4,11 +4,13 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.WarmUp
+import com.circaso.infrastructure.api.WarmingUp
 import com.circaso.shared.CircasoJson
 import com.circaso.web.DefaultResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.serializer
 import net.logstash.logback.argument.StructuredArguments.kv
@@ -16,6 +18,7 @@ import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
 import java.time.Duration
+import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,25 +40,35 @@ class Readiness(ready: Boolean = false) {
 }
 
 /**
- * How long and how hard the warm-up runs. `WARMUP_ENABLED` (default true), `WARMUP_WORKERS` (how many run at once,
- * default the app pool's size, so every pooled connection is used and warmed), `WARMUP_ROUNDS` (passes per worker,
- * default 100) and `WARMUP_BUDGET_MS` (at most this long in all, default 15 s; past it the process is ready anyway).
+ * How long and how hard the warm-up runs. `WARMUP_ENABLED` (default true); `WARMUP_WORKERS`, how many run the passes
+ * at once (default the CPUs, at least 2 and at most the app pool's size: more than the CPUs only queue behind each other,
+ * deploy log 2026-11-05: 10 workers on 4 vCPUs ran out of time after 190 passes); `WARMUP_WIDE_WORKERS`, how many run
+ * the one wide pass first (default the app pool's size, so every pooled connection runs the hot paths at least once);
+ * `WARMUP_ROUNDS`, passes per worker after it (default 20); and `WARMUP_BUDGET_MS`, at most this long in all (default
+ * 15 s; past it the process is ready anyway).
  */
 data class WarmUpSettings(
     val enabled: Boolean = true,
-    val workers: Int = 10,
-    val rounds: Int = 100,
+    val workers: Int = 4,
+    val wideWorkers: Int = 10,
+    val rounds: Int = 20,
     val budget: Duration = Duration.ofSeconds(15),
 ) {
     companion object {
-        fun from(config: Config): WarmUpSettings {
+        fun from(config: Config, processors: Int = Runtime.getRuntime().availableProcessors()): WarmUpSettings {
             val section = config.section("warmup")
-            // The same setting (and default) as infrastructure's app pool: one worker per pooled connection.
-            val poolSize = config.section("database").section("pool").int("app-size", 10)
+            // The same setting (and default) as infrastructure's app pool.
+            val poolSize =
+                config
+                    .section("database")
+                    .section("pool")
+                    .int("app-size", 10)
+                    .coerceAtLeast(1)
             return WarmUpSettings(
                 enabled = section.boolean("enabled", true),
-                workers = section.int("workers", poolSize).coerceIn(1, 64),
-                rounds = section.int("rounds", 100).coerceAtLeast(1),
+                workers = section.int("workers", processors.coerceIn(2, maxOf(2, poolSize))).coerceIn(1, 64),
+                wideWorkers = section.int("wide-workers", poolSize).coerceIn(0, 64),
+                rounds = section.int("rounds", 20).coerceAtLeast(0),
                 budget = Duration.ofMillis(section.int("budget-ms", 15_000).coerceAtLeast(0).toLong()),
             )
         }
@@ -66,52 +79,43 @@ data class WarmUpSettings(
 data class WarmUpOutcome(val passes: Int, val timedOut: Boolean, val failed: Map<String, String>)
 
 /**
- * Runs every [WarmUp] [WarmUpSettings.rounds] times on each of [WarmUpSettings.workers] coroutines at once, within
- * [WarmUpSettings.budget]. A warm-up that throws is logged once (its exception's class, never its message, which can
- * carry a value) and not called again: a warm-up is never worth a retry loop against a dependency that is down.
+ * Runs the warm-ups within [WarmUpSettings.budget], every call in the [WarmingUp] context (so infrastructure keeps its
+ * slow-call lines at DEBUG while the CPU is busy compiling). First each [WarmUp.once] warm-up, one after the other;
+ * then one wide pass of the others on [WarmUpSettings.wideWorkers] coroutines at once, so every pooled connection runs
+ * the hot paths; then [WarmUpSettings.rounds] passes on each of [WarmUpSettings.workers]. A warm-up that throws is
+ * logged once (its exception's class, never its message, which can carry a value) and not called again: a warm-up is
+ * never worth a retry loop against a dependency that is down. One line at the end: passes, each warm-up's median and
+ * slowest pass, failures, and whether it ran out of time.
  */
 class WarmUpRunner(private val warmUps: List<WarmUp>, private val settings: WarmUpSettings) {
+    private val failed = ConcurrentHashMap<String, String>()
+    private val timings = ConcurrentHashMap<String, MutableList<Long>>()
+
     suspend fun run(): WarmUpOutcome {
         if (!settings.enabled || warmUps.isEmpty()) return WarmUpOutcome(0, timedOut = false, failed = emptyMap())
         val started = System.nanoTime()
         val passes = AtomicInteger()
-        val failed = ConcurrentHashMap<String, String>()
+        val (once, repeated) = warmUps.partition { it.once }
         val finished =
             withTimeoutOrNull(settings.budget.toMillis().milliseconds) {
-                coroutineScope {
-                    repeat(settings.workers) {
-                        launch {
-                            repeat(settings.rounds) {
-                                for (warmUp in warmUps) {
-                                    if (failed.containsKey(warmUp.name)) continue
-                                    try {
-                                        warmUp.run()
-                                    } catch (e: CancellationException) {
-                                        throw e
-                                    } catch (e: Exception) {
-                                        if (failed.putIfAbsent(warmUp.name, e::class.simpleName ?: "Exception") ==
-                                            null
-                                        ) {
-                                            log.warn(
-                                                "Warm-up '${warmUp.name}' failed (${e::class.simpleName}); skipping it",
-                                            )
-                                        }
-                                    }
-                                }
-                                passes.incrementAndGet()
-                            }
-                        }
+                withContext(WarmingUp) {
+                    once.forEach { call(it) }
+                    if (repeated.isNotEmpty()) {
+                        passes(repeated, settings.wideWorkers, rounds = 1, passes)
+                        passes(repeated, settings.workers, settings.rounds, passes)
                     }
                 }
             } != null
         val outcome = WarmUpOutcome(passes.get(), timedOut = !finished, failed = failed.toMap())
         val fields =
             arrayOf(
+                kv("kind", "warmup"),
                 kv("durationMs", (System.nanoTime() - started) / 1_000_000),
                 kv("passes", outcome.passes),
                 kv("workers", settings.workers),
-                kv("warmUps", warmUps.map { it.name }),
+                kv("timings", summary()),
                 kv("failed", outcome.failed.keys.sorted()),
+                kv("outOfTime", outcome.timedOut),
             )
         if (outcome.timedOut) {
             log.warn("Warm-up ran out of time; ready anyway", *fields)
@@ -120,6 +124,47 @@ class WarmUpRunner(private val warmUps: List<WarmUp>, private val settings: Warm
         }
         return outcome
     }
+
+    private suspend fun passes(
+        repeated: List<WarmUp>,
+        workers: Int,
+        rounds: Int,
+        passes: AtomicInteger,
+    ) = coroutineScope {
+        repeat(workers) {
+            launch {
+                repeat(rounds) {
+                    repeated.forEach { call(it) }
+                    passes.incrementAndGet()
+                }
+            }
+        }
+    }
+
+    private suspend fun call(warmUp: WarmUp) {
+        if (failed.containsKey(warmUp.name)) return
+        val start = System.nanoTime()
+        try {
+            warmUp.run()
+            val took = (System.nanoTime() - start) / 1_000_000
+            timings.computeIfAbsent(warmUp.name) { Collections.synchronizedList(mutableListOf()) }.add(took)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (failed.putIfAbsent(warmUp.name, e::class.simpleName ?: "Exception") == null) {
+                log.warn("Warm-up '${warmUp.name}' failed (${e::class.simpleName}); skipping it")
+            }
+        }
+    }
+
+    /** `messaging=p50 12ms max 140ms`, per warm-up, in name order. */
+    private fun summary(): String =
+        timings.entries
+            .sortedBy { it.key }
+            .joinToString(", ") { (name, all) ->
+                val sorted = synchronized(all) { all.sorted() }
+                "$name=p50 ${sorted[sorted.size / 2]}ms max ${sorted.last()}ms"
+            }
 }
 
 /** The app's own warm-up, beside the business modules' (each binds its own in its Koin module). */

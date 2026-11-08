@@ -36,14 +36,16 @@ class IncomingUpdates(
     private val ids: OrderedIds,
     private val transfers: TransferRepository,
 ) {
+    /** True when the history changed: a new row, or the row moved on (a repeated notification changes nothing). */
     suspend fun apply(
         wallet: ChainWallet,
         update: CustodyTransaction,
         next: TransferState,
         change: TransferChange,
-    ) {
+    ): Boolean {
         val sender = wallets.walletAt(Addresses.normalise(update.sourceAddress), update.blockchain)
         val row = rowOf(wallet, update, next, change, sender)
+        var changed = false
         val received =
             transactor.run("transactions.apply-inbound") {
                 val landed =
@@ -52,10 +54,11 @@ class IncomingUpdates(
                     } else {
                         transactions.moveByCircle(update.circleTxId, wallet.userId, next, change)
                     }
+                changed = landed != null
                 landed
                     ?.takeIf { it.state == TransferState.CONFIRMED }
                     ?.let { confirmed -> if (sender == null) confirmed else linked(confirmed, sender, change) }
-            } ?: return
+            } ?: return changed
 
         val name = received.counterpartyId?.let { profiles.get(setOf(it))[it]?.displayName }
         frames.send(
@@ -70,6 +73,7 @@ class IncomingUpdates(
                 chatId = received.chatId,
             ),
         )
+        return true
     }
 
     /** [row] linked to the transfer from [sender]'s wallet that paid it, when one is certain; else [row] as it is. */

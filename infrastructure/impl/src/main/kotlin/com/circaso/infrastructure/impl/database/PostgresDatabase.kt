@@ -6,6 +6,8 @@ import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.PartitionChanges
 import com.circaso.infrastructure.impl.logging.kv
+import com.circaso.infrastructure.impl.logging.slow
+import com.circaso.infrastructure.impl.logging.warmingUp
 import com.circaso.shared.EventEnvelope
 import io.r2dbc.postgresql.api.PostgresqlException
 import io.r2dbc.spi.R2dbcException
@@ -125,6 +127,7 @@ class ModuleDatabase(
         durable: Boolean,
         block: suspend R2dbcTransaction.() -> T,
     ): T {
+        val warming = warmingUp()
         val started = System.nanoTime()
         var transaction: R2dbcTransaction? = null
         var begin: ModuleTransaction? = null
@@ -152,7 +155,7 @@ class ModuleDatabase(
             val totalNanos = System.nanoTime() - started
             // No borrow recorded: the pool never handed one over (the acquire timed out), so it was all waiting.
             val waitNanos = begin?.waitNanos?.takeIf { it >= 0 } ?: if (starved) totalNanos else 0L
-            logLine(pool, operation, durable, transaction?.statementCount ?: 0, totalNanos, waitNanos, outcome)
+            logLine(pool, operation, durable, transaction?.statementCount ?: 0, totalNanos, waitNanos, outcome, warming)
         }
     }
 
@@ -165,6 +168,7 @@ class ModuleDatabase(
         totalNanos: Long,
         waitNanos: Long,
         outcome: String,
+        warming: Boolean,
     ) {
         val durationMs = totalNanos / NANOS_PER_MILLI
         val slow = durationMs > pool.settings.slowAfter.toMillis()
@@ -190,14 +194,11 @@ class ModuleDatabase(
             }
 
             waitNanos >= totalNanos - waitNanos -> {
-                log.warn(
-                    "slow transaction: waiting for a pooled connection",
-                    *fields,
-                )
+                log.slow(warming, "slow transaction: waiting for a pooled connection", *fields)
             }
 
             else -> {
-                log.warn("slow transaction: in the database", *fields)
+                log.slow(warming, "slow transaction: in the database", *fields)
             }
         }
     }

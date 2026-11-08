@@ -47,9 +47,10 @@ class CustodyUpdates(
         val change = changeOf(update)
         val next = stateOf(update.state)
         if (update.operation == CustodyOperation.CONTRACT_EXECUTION) return applyExecution(update, next, change)
-        if (update.direction == CustodyDirection.OUT && outgoing.applyToTransfer(update, next, change)) {
-            cache.clear(update.walletId)
-            return Resource.success(Unit)
+        if (update.direction == CustodyDirection.OUT) {
+            val outcome = outgoing.applyToTransfer(update, next, change)
+            if (outcome == UpdateOutcome.CHANGED) cache.clear(update.walletId)
+            if (outcome != UpdateOutcome.NOT_OURS) return Resource.success(Unit)
         }
 
         // Only a coin we trust is put in anyone's history (2026-11-07: Circle now reports every coin); anyone can
@@ -70,11 +71,14 @@ class CustodyUpdates(
             warnings.unknownWallet(update.blockchain, update.walletId)
             return Resource.success(Unit)
         }
-        when (update.direction) {
-            CustodyDirection.IN -> incoming.apply(wallet, update, next, change)
-            CustodyDirection.OUT -> outgoing.applyUntracked(wallet, update, next, change)
-        }
-        cache.clear(wallet.circleWalletId)
+        val changed =
+            when (update.direction) {
+                CustodyDirection.IN -> incoming.apply(wallet, update, next, change)
+                CustodyDirection.OUT -> outgoing.applyUntracked(wallet, update, next, change)
+            }
+        // Only when something moved: the reconcile jobs replay every recent transaction through here, and clearing on
+        // each of those would send the next balance read to Circle for nothing.
+        if (changed) cache.clear(wallet.circleWalletId)
         return Resource.success(Unit)
     }
 
@@ -97,7 +101,9 @@ class CustodyUpdates(
                     is Resource.Success -> found.data?.transferId?.toString()
                 }
             } ?: return Resource.success(Unit)
-        if (outgoing.applyToTransfer(update.copy(refId = refId), next, change)) cache.clear(update.walletId)
+        if (outgoing.applyToTransfer(update.copy(refId = refId), next, change) == UpdateOutcome.CHANGED) {
+            cache.clear(update.walletId)
+        }
         return Resource.success(Unit)
     }
 
