@@ -1,6 +1,7 @@
 package com.circaso.wallet.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
 
@@ -23,5 +24,7 @@ object WalletOwnersTable : Table("wallet.wallet_owners") {
 
     init {
         index("wallet_owners_signer_idx", false, signerId)
+        // V9: staff's group wallets newest first; the SQL orders both columns DESC.
+        index("wallet_owners_groups_newest_idx", false, createdAt, walletId, filterCondition = { ownerType eq "GROUP" })
     }
 }

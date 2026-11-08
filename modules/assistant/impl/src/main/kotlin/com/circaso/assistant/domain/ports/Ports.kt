@@ -3,6 +3,7 @@ package com.circaso.assistant.domain.ports
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.MascotSceneState
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
@@ -12,7 +13,8 @@ import java.util.UUID
 
 /**
  * Asha's server-side tools: the other modules' read-only `/v1/agent/` routes, called with the user's agent token, and
- * the few that need no token (web search, her own allowance). All of them only read (decision 2026-10-31).
+ * the few that need no token (web search, her own allowance). All of them only read (decision 2026-10-31), but one:
+ * `openSupportTicket` writes a support ticket the user agreed to (decision 2026-11-08).
  */
 interface AgentTools {
     /** The tools available to this turn, for the model; the token-bound ones only when [hasAgentToken]. */
@@ -145,6 +147,19 @@ interface QuotaCounters {
     )
 
     suspend fun tokens(userId: UserId, day: String): Pair<Long, Long>
+
+    /**
+     * Adds a turn's tokens by model, split as the provider prices them (decision 2026-11-08), next to the totals of
+     * [addTokens]; the day's figures per model for the cost report.
+     */
+    suspend fun addModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+    )
+
+    /** The day's tokens by model; empty when there are none. */
+    suspend fun modelTokens(userId: UserId, day: String): Map<String, TokenCounts>
 
     /**
      * Counts one web search unless the day already holds [cap] (decision 2026-11-05), as [countTextTurn] counts a

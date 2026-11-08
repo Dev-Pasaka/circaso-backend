@@ -4,6 +4,7 @@ import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
+import com.circaso.identity.domain.models.DeviceStatus
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
@@ -133,6 +134,17 @@ class MemoryStore :
     override suspend fun links(userId: UserId) = links.filter { it.userId == userId }
 
     override suspend fun find(userId: UserId, deviceId: DeviceId) = devices[userId to deviceId]
+
+    override suspend fun touch(
+        userId: UserId,
+        deviceId: DeviceId,
+        at: Instant,
+    ): Boolean {
+        val device = devices[userId to deviceId] ?: return false
+        if (device.status != DeviceStatus.ACTIVE || !device.lastSeenAt.isBefore(at)) return false
+        devices[userId to deviceId] = device.copy(lastSeenAt = at)
+        return true
+    }
 
     override suspend fun find(sessionId: SessionId) = sessions[sessionId]
 

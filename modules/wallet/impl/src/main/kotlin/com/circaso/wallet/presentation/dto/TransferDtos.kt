@@ -64,9 +64,10 @@ data class PrepareTransferRequest(
 )
 
 /**
- * The one Circaso fee, network cost included (phase 2F): the same fields as an amount, plus how it was priced.
- * [rateBps] (0..200) and [minimum] (the floor that covers the network cost made it more than the rate did) are null
- * on a repeated W4 request, which only knows the amount.
+ * The one Circaso fee, network cost included (phase 2F; since 2026-11-08 the network cost with a safety margin plus
+ * [rateBps] of the amount): the same fields as an amount, plus how it was priced. [rateBps] (0..200) and [minimum]
+ * (the rule's minimum fee raised it above network cost plus rate) are null on a repeated W4 request, which only knows
+ * the amount.
  */
 @Serializable
 data class FeeDto(

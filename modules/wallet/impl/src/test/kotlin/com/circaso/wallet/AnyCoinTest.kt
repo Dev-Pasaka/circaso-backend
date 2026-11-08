@@ -32,7 +32,8 @@ import kotlin.test.assertTrue
  * fee converted into the coin and rounded up; the limits count the payment in dollars; a coin with no price, or not
  * held, is refused with its own code; and USDC is priced exactly as before, without asking the feed.
  *
- * The fake network costs 0.000004 ETH at 2 500 dollars, one cent, so the gas floor is 5 cents.
+ * The fake network costs 0.000004 ETH at 2 500 dollars, one cent: with the 20 % margin the fee's network part is
+ * 1.2 cents, up to 2 cents, on top of the rate (gas inclusive, decision 2026-11-08).
  */
 class AnyCoinTest {
     private val rules = MemoryRules()
@@ -99,12 +100,13 @@ class AnyCoinTest {
 
             val quote = quote(Money(100_000_000, eurc)).data()
 
-            // 100 EURC is 107 dollars; 0.5 % is 0.535, half up to the cent 0.54; 0.54 ÷ 1.07 = 0.504672… EURC → up.
-            assertEquals(540_000L, quote.fee.usdMinor)
-            assertEquals(504_673.toBigInteger(), quote.fee.amountMinor)
+            // 100 EURC is 107 dollars; 0.5 % is 0.535, half up to the cent 0.54, plus 2 cents of network cost: 0.56;
+            // 0.56 ÷ 1.07 = 0.523364… EURC → up.
+            assertEquals(560_000L, quote.fee.usdMinor)
+            assertEquals(523_365.toBigInteger(), quote.fee.amountMinor)
             assertEquals(eurc, quote.amount.asset)
             assertEquals(BigDecimal("1.07"), quote.fee.usdPrice)
-            assertEquals(107_000_000L + 540_000L, quote.totalUsdMinor, "the limits count it in dollars")
+            assertEquals(107_000_000L + 560_000L, quote.totalUsdMinor, "the limits count it in dollars")
             assertEquals(200_000_000.toBigInteger(), quote.balanceMinor)
             assertNull(quote.problem)
         }
@@ -121,20 +123,20 @@ class AnyCoinTest {
 
             val transfer = prepared.transfer
             assertEquals(Money(100_000_000, eurc), transfer.amount)
-            assertEquals(504_673.toBigInteger(), transfer.feeMinor)
+            assertEquals(523_365.toBigInteger(), transfer.feeMinor)
             assertEquals(EURC_BASE_SEPOLIA, transfer.tokenAddress)
             assertEquals(BigDecimal("1.07"), transfer.usdPrice)
-            assertEquals(107_540_000L, transfer.usdTotalMinor)
+            assertEquals(107_560_000L, transfer.usdTotalMinor)
             val (_, batch) = h.custody.splits.single()
             assertEquals(
                 listOf(
                     h.walletOn(bob).address.lowercase() to 100_000_000.toBigInteger(),
-                    FakeFeeConfig.FEE_WALLET to 504_673.toBigInteger(),
+                    FakeFeeConfig.FEE_WALLET to 523_365.toBigInteger(),
                 ),
                 batch.legs.map { it.destinationAddress to it.amount.amountMinor },
             )
             assertTrue(batch.legs.all { it.tokenAddress == EURC_BASE_SEPOLIA && it.amount.asset == eurc })
-            assertEquals(107_540_000L, h.used(amina), "the window counts dollars")
+            assertEquals(107_560_000L, h.used(amina), "the window counts dollars")
         }
 
     @Test
@@ -148,9 +150,9 @@ class AnyCoinTest {
             h.prices.prices["EURC"] = BigDecimal("1.20")
             val transfer = pay(Money(100_000_000, eurc), quote.quoteId).data().transfer
 
-            assertEquals(504_673.toBigInteger(), transfer.feeMinor, "the quote's fee")
+            assertEquals(523_365.toBigInteger(), transfer.feeMinor, "the quote's fee")
             assertEquals(BigDecimal("1.07"), transfer.usdPrice, "at the quote's price")
-            assertEquals(107_540_000L, transfer.usdTotalMinor)
+            assertEquals(107_560_000L, transfer.usdTotalMinor)
         }
 
     @Test
@@ -159,16 +161,16 @@ class AnyCoinTest {
             ready()
             holdToken("EURC", EURC_BASE_SEPOLIA, 200_000_000.toBigInteger())
             h.prices.prices["EURC"] = BigDecimal("1.07")
-            // 1 EURC pays the 5 cent floor: 0.05 ÷ 1.07 = 0.04672897… EURC, up to 46 729 minor units.
-            val quote = quote(Money(1_000_000, eurc)).data()
-            assertEquals(46_729.toBigInteger(), quote.fee.amountMinor)
+            // 10 EURC is 10.70 dollars: 0.0535 → 5 cents, plus 2 cents of network cost; 0.07 ÷ 1.07 → 65 421 units.
+            val quote = quote(Money(10_000_000, eurc)).data()
+            assertEquals(65_421.toBigInteger(), quote.fee.amountMinor)
             h.clock.advance(java.time.Duration.ofMinutes(16))
             h.prices.prices["EURC"] = BigDecimal("0.90")
 
-            // Now the same 5 cents is 0.055556 EURC: more than was shown, so nothing is prepared.
-            val refused = pay(Money(1_000_000, eurc), quote.quoteId)
+            // Now 10 EURC is 9 dollars: 0.045 → 5 cents, the same 7 cents, 0.077778 EURC: more than was shown.
+            val refused = pay(Money(10_000_000, eurc), quote.quoteId)
             assertEquals("wallet.fee_changed", refused.code())
-            assertEquals("55556", field(refused, "feeMinor"))
+            assertEquals("77778", field(refused, "feeMinor"))
             assertTrue(h.custody.splits.isEmpty())
         }
 
@@ -181,9 +183,9 @@ class AnyCoinTest {
             val tenth = oneEth / BigInteger.TEN
 
             val quote = quote(Money(tenth, eth)).data()
-            // 0.1 ETH is 300 dollars; 0.5 % is 1.50; 1.5 ÷ 3 000 = 0.0005 ETH.
-            assertEquals(1_500_000L, quote.fee.usdMinor)
-            assertEquals(BigInteger.valueOf(5).multiply(BigInteger.TEN.pow(14)), quote.fee.amountMinor)
+            // 0.1 ETH is 300 dollars; 0.5 % is 1.50, plus 2 cents of network cost; 1.52 ÷ 3 000 ETH, up to the wei.
+            assertEquals(1_520_000L, quote.fee.usdMinor)
+            assertEquals(BigInteger("506666666666667"), quote.fee.amountMinor)
 
             pay(Money(tenth, eth), quote.quoteId).data()
             val (_, batch) = h.custody.splits.single()
@@ -202,8 +204,8 @@ class AnyCoinTest {
             val transfer = quotedPay(Money(twenty, eth)).data().transfer
 
             assertEquals(twenty, transfer.amount.amountMinor)
-            // 0.5 % of at most 10 000 dollars (the rule's cap on the base): 50 dollars.
-            assertEquals(60_000_000_000L + 50_000_000L, transfer.usdTotalMinor, "60 000 dollars and its fee")
+            // 0.5 % of at most 10 000 dollars (the rule's cap on the base): 50 dollars, plus 2 cents of network cost.
+            assertEquals(60_000_000_000L + 50_020_000L, transfer.usdTotalMinor, "60 000 dollars and its fee")
         }
 
     // ---- the limits, in dollars ----
@@ -229,11 +231,11 @@ class AnyCoinTest {
                     .toBigInteger() - BigInteger.ONE
             assertEquals(most, field(over, "maxAmountMinor")!!.toBigInteger())
 
-            // 0.16 ETH is 480 dollars and its fee 2.40: 482.40 of the 1 000 a day.
+            // 0.16 ETH is 480 dollars and its fee 2.40 + 0.02: 482.42 of the 1 000 a day.
             quotedPay(Money(oneEth * BigInteger.valueOf(16) / BigInteger.valueOf(100), eth)).data()
-            assertEquals(482_400_000L, h.used(amina))
+            assertEquals(482_420_000L, h.used(amina))
             quotedPay(Money(500 * usdc, Asset.USDC)).data()
-            assertEquals(482_400_000L + 502_500_000L, h.used(amina), "USDC counts as it always did")
+            assertEquals(482_420_000L + 502_520_000L, h.used(amina), "USDC counts as it always did")
             val daily = quotedPay(Money(20 * usdc, Asset.USDC))
             assertEquals("wallet.limit_exceeded", daily.code())
             assertEquals("DAILY", field(daily, "limit"))
@@ -323,13 +325,13 @@ class AnyCoinTest {
             ready()
             val quote = h.quote(amina, Payee.Person(bob), 100 * usdc).data()
 
-            assertEquals(500_000.toBigInteger(), quote.fee.amountMinor)
-            assertEquals(500_000L, quote.fee.usdMinor)
+            assertEquals(520_000.toBigInteger(), quote.fee.amountMinor, "0.5 % plus 2 cents of network cost")
+            assertEquals(520_000L, quote.fee.usdMinor)
             assertEquals(BigDecimal.ONE, quote.fee.usdPrice)
-            assertEquals(100_500_000L, quote.totalUsdMinor)
+            assertEquals(100_520_000L, quote.totalUsdMinor)
             val transfer = quotedPay(Money(100 * usdc, Asset.USDC)).data().transfer
             assertEquals(USDC_BASE, transfer.tokenAddress)
-            assertEquals(100_500_000L, transfer.usdTotalMinor)
+            assertEquals(100_520_000L, transfer.usdTotalMinor)
             assertTrue(h.prices.asked.isEmpty(), "a dollar stablecoin needs no price")
         }
 

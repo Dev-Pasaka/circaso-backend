@@ -98,7 +98,7 @@ class ProviderRepositoryImpl(private val database: Database) : ProviderRepositor
     }
 }
 
-private fun ResultRow.toProviderLink() =
+internal fun ResultRow.toProviderLink() =
     ProviderLink(
         userId = UserId(this[ProviderLinksTable.userId]),
         provider = SocialProvider.valueOf(this[ProviderLinksTable.provider]),

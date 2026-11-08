@@ -15,7 +15,17 @@ data class Project(val kind: String, val module: String? = null) {
  */
 object Rules {
     private val reservedPackages =
-        setOf("shared", "web", "infrastructure", "integrations", "observability", "gateway", "grpc", "app")
+        setOf(
+            "shared",
+            "web",
+            "infrastructure",
+            "integrations",
+            "observability",
+            "gateway",
+            "opsgateway",
+            "grpc",
+            "app",
+        )
     private val agentReadPrefixes = listOf("get", "list", "find", "count", "summarise")
 
     // ---- where a file or an import lives -----------------------------------------------------------------
@@ -32,6 +42,7 @@ object Rules {
             dir.endsWith("/shared-web") -> Project("shared-web")
             dir.endsWith("/shared") -> Project("shared")
             dir.endsWith("/gateway") -> Project("gateway")
+            dir.endsWith("/ops-gateway") -> Project("ops-gateway")
             dir.endsWith("/grpc") -> Project("grpc")
             dir.endsWith("/app") -> Project("app")
             else -> null
@@ -55,6 +66,10 @@ object Rules {
 
             "gateway" -> {
                 Project("gateway")
+            }
+
+            "opsgateway" -> {
+                Project("ops-gateway")
             }
 
             "grpc" -> {
@@ -121,6 +136,12 @@ object Rules {
 
             "gateway" -> {
                 to.kind in apis || to.kind == "shared" || to.kind == "shared-web" || to.kind == "module-api"
+            }
+
+            // The staff edge (decision 2026-11-08): what the app gateway may reach, plus the app gateway's edge parts.
+            "ops-gateway" -> {
+                to.kind in apis || to.kind == "shared" || to.kind == "shared-web" || to.kind == "module-api" ||
+                    to.kind == "gateway"
             }
 
             "grpc" -> {

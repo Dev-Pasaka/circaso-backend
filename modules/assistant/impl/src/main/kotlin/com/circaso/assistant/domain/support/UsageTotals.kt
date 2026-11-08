@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.support
 
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.QuotaCounters
 import com.circaso.assistant.domain.ports.Transactor
 import com.circaso.assistant.domain.repositories.AssistantStore
@@ -14,6 +15,8 @@ data class UsageTotals(
     val inputTokens: Long,
     val outputTokens: Long,
     val webSearches: Int = 0,
+    /** The day's tokens by model, priced apart in the staff cost report (decision 2026-11-08). */
+    val byModel: Map<String, TokenCounts> = emptyMap(),
 )
 
 /** Read before the transaction that stores them: a transaction holds database work only. */
@@ -25,25 +28,32 @@ suspend fun QuotaCounters.totals(userId: UserId, day: String): UsageTotals {
         input,
         output,
         webSearches(userId, day).toInt(),
+        modelTokens(userId, day),
     )
 }
 
-/** Through the same `GREATEST` upsert as every writer, so totals read earlier never lower ones stored since. */
+/**
+ * Through the same `GREATEST` upserts as every writer, so totals read earlier never lower ones stored since: the day's
+ * row, then one row per model. Callers run it inside their transaction, so both land together.
+ */
 suspend fun AssistantStore.saveUsage(
     userId: UserId,
     day: String,
     totals: UsageTotals,
     at: Instant,
-) = saveUsage(
-    userId,
-    day,
-    totals.textTurns,
-    totals.voiceSeconds,
-    totals.inputTokens,
-    totals.outputTokens,
-    at,
-    totals.webSearches,
-)
+) {
+    saveUsage(
+        userId,
+        day,
+        totals.textTurns,
+        totals.voiceSeconds,
+        totals.inputTokens,
+        totals.outputTokens,
+        at,
+        totals.webSearches,
+    )
+    saveModelTokens(userId, day, totals.byModel, at)
+}
 
 /**
  * Stores the day's totals when usage changes outside a text turn: a clip transcribed (A3) or spoken (A4), a live

@@ -2,6 +2,7 @@ package com.circaso.identity.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.java.javaUUID
+import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.javatime.timestamp
 
 /** `identity.provider_links`: an account's Google and Apple logins. `(provider, subject)` is unique: the claim. */
@@ -18,5 +19,7 @@ object ProviderLinksTable : Table("identity.provider_links") {
 
     init {
         uniqueIndex(LOGIN_KEY, provider, subject)
+        // V3: staff's search by email, case-insensitive.
+        index("provider_links_email_idx", false, functions = listOf(email.lowerCase()))
     }
 }

@@ -93,21 +93,25 @@ class LimitTest {
         runBlocking<Unit> {
             val owner = group()
             val first = signed(payOut(owner, 10 * usdc))
-            assertEquals(100_000.toBigInteger(), first.feeMinor, "1 % from a group wallet")
+            assertEquals(
+                120_000.toBigInteger(),
+                first.feeMinor,
+                "1 % from a group wallet, plus 2 cents of network cost",
+            )
             h.clock.advance(Duration.ofHours(1))
             signed(payOut(owner, 10 * usdc))
 
             val refused = payOut(owner, 10 * usdc)
 
-            assertEquals("wallet.limit_exceeded", refused.code(), "20.20 has left; 10.10 more would pass 30")
+            assertEquals("wallet.limit_exceeded", refused.code(), "20.24 has left; 10.12 more would pass 30")
             assertEquals("DAILY", refused.field("limit"))
             assertEquals("30000000", refused.field("limitMinor"))
-            assertEquals("20200000", refused.field("usedMinor"))
-            assertEquals("9800000", refused.field("leftMinor"))
+            assertEquals("20240000", refused.field("usedMinor"))
+            assertEquals("9760000", refused.field("leftMinor"))
             assertEquals(first.createdAt.plus(Duration.ofHours(24)).toString(), refused.field("resetsAt"))
             assertEquals(first.createdAt.plus(Duration.ofHours(24)).toString(), refused.field("moreAt"))
             val max = refused.field("maxAmountMinor")!!.toLong()
-            assertEquals(9_700_000L, max, "9.70 with its 10 cent fee fits the 9.80 left")
+            assertEquals(9_640_000L, max, "9.64 with its 12 cent fee fits the 9.76 left")
         }
 
     @Test
@@ -124,7 +128,7 @@ class LimitTest {
             assertEquals("users.not_reachable", quote.code(), "W4's payee rules still apply")
             assertEquals(QuoteProblem.DAILY_LIMIT, seen.problem)
             assertEquals(first.createdAt.plus(Duration.ofHours(24)), seen.fitsAt)
-            assertEquals(4_900_000L, seen.allowance.leftMinor, "15 - 10.10 = 4.90 left")
+            assertEquals(4_880_000L, seen.allowance.leftMinor, "15 - 10.12 = 4.88 left")
             assertNull(seen.quoteId, "only the signer gets a hold")
         }
 

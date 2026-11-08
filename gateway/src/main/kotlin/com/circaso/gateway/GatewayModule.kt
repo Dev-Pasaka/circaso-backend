@@ -1,11 +1,14 @@
 package com.circaso.gateway
 
+import com.circaso.gateway.access.AccessVerifier
+import com.circaso.gateway.access.HttpAccessKeys
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.VoipPushGateway
@@ -102,7 +105,12 @@ fun Application.installGateway() {
             hub.routes(this)
         }
         koin.getAll<PageContributor>().forEach { it.install(this) }
-        apiDocsRoutes(this@installGateway, deps.config.apiDocs)
+        apiDocsRoutes(
+            this@installGateway,
+            deps.config.apiDocs,
+            deps.config.apiDocs.access
+                ?.let { AccessVerifier(it, HttpAccessKeys(koin.get<HttpClients>(), it)) },
+        )
         errorPageRoutes()
     }
 }

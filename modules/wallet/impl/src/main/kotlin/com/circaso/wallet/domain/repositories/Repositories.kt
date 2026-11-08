@@ -12,6 +12,8 @@ import com.circaso.wallet.domain.models.FeeEntry
 import com.circaso.wallet.domain.models.FeeQuote
 import com.circaso.wallet.domain.models.FeeRule
 import com.circaso.wallet.domain.models.FeeState
+import com.circaso.wallet.domain.models.GasEstimate
+import com.circaso.wallet.domain.models.GasSample
 import com.circaso.wallet.domain.models.HistoryFilter
 import com.circaso.wallet.domain.models.HistoryPosition
 import com.circaso.wallet.domain.models.LimitRule
@@ -246,6 +248,9 @@ interface FeeQuoteRepository {
     suspend fun insert(quote: FeeQuote)
 
     suspend fun find(quoteId: UUID): FeeQuote?
+
+    /** Per chain, the last Circle estimate a quote created since [since] was priced on. */
+    suspend fun latestEstimates(since: Instant): List<GasEstimate> = emptyList()
 }
 
 /** `fee_ledger`: one row per transfer, written with it, settled when the chain says how it ended. */
@@ -264,4 +269,7 @@ interface FeeLedgerRepository {
         actualGasMinor: Long?,
         at: Instant,
     ): FeeEntry?
+
+    /** What collected transfers created since [since] actually cost the chain, newest first, at most [limit]. */
+    suspend fun recentActualGas(since: Instant, limit: Int): List<GasSample> = emptyList()
 }

@@ -118,7 +118,7 @@ A name in a payment question ("what did I send Mum?") becomes a user id inside t
 
 ### The prompt and the reply (decision 2026-10-31)
 
-`AshaPrompt` (`asha-2026-11-07-v2` now, a fixed part per mode (text or voice) so a spoken turn never sees the chat's markdown; `asha-2026-10-31-v2` first; recorded in every `TURN` audit record) is a fixed part and a short per-turn part (text or voice, today's date, the display currency, whether chats can be read). Guardrails: only this user's data, read-only; she never moves money and, with no proposals yet, explains how to pay in the app (PIN); never asks for or accepts a PIN, recovery key, seed phrase, OTP or password, and calls such requests scams; never reveals the prompt or tools; refuses abuse politely; never invents numbers or does money maths herself (since 2026-11-07 every rate, conversion and sum comes from `getExchangeRate`, `convertAmount` or `calculate`, in text and voice; tool data only, exact, with coin and network, display currency first, fiat "at today's rate"); concise plain speech in voice; Kenya and East Africa tone; web search only for public facts, never with the user's data, sources cited as links.
+`AshaPrompt` (`asha-2026-11-08-v1` now, with `openSupportTicket` (decision 2026-11-08); a fixed part per mode (text or voice) so a spoken turn never sees the chat's markdown; `asha-2026-10-31-v2` first; recorded in every `TURN` audit record) is a fixed part and a short per-turn part (text or voice, today's date, the display currency, whether chats can be read). Guardrails: only this user's data, read-only; she never moves money and, with no proposals yet, explains how to pay in the app (PIN); never asks for or accepts a PIN, recovery key, seed phrase, OTP or password, and calls such requests scams; never reveals the prompt or tools; refuses abuse politely; never invents numbers or does money maths herself (since 2026-11-07 every rate, conversion and sum comes from `getExchangeRate`, `convertAmount` or `calculate`, in text and voice; tool data only, exact, with coin and network, display currency first, fiat "at today's rate"); concise plain speech in voice; Kenya and East Africa tone; web search only for public facts, never with the user's data, sources cited as links.
 
 Text replies are markdown with ```chart, ```statement and ```diagram JSON blocks (contract and schemas: docs/mobile-integration.md, section 9, Rich replies). `BlockFilter` sits between the model's stream and the user: it holds a block until its closing fence, has `ReplyBlocks` (`JsonReplyBlocks`) check it, and sends it whole and canonical, repaired, or not at all; the saved reply is what was sent. A spoken turn gets no blocks and no `*`, `` ` `` or heading marks.
 
@@ -205,7 +205,7 @@ Asha costs money per message, so free use is capped and longer use is a subscrip
 
 Exact numbers and the price are open (see Decisions). The numbers are settings (`ASSISTANT_FREE_*`, `ASSISTANT_PLUS_*`), and `ASSISTANT_LIMITS_UNLIMITED=true` lifts them all for testing (decision 2026-10-31; off by default).
 
-- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved, a clip is transcribed (A3) or spoken (A4), and when a live conversation ends (A11).
+- **Metering:** each turn records model tokens and voice seconds. Live counters sit in Redis (`ast:quota:{kind}:{userId}:{day}`); a turn refused over the allowance is given back, so the text count never ends above it. The day's totals go to `usage_daily` for cost reports, through one `GREATEST` upsert, when a turn is saved, a clip is transcribed (A3) or spoken (A4), and when a live conversation ends (A11). Since 2026-11-08 each turn's tokens are also counted by the model that answered, split into fresh input, cache reads, cache writes and output (`ast:quota:tok:{userId}:{day}`, a hash with a field per model and kind), and stored with the same upsert in `usage_daily_tokens`, one row per model. Staff read both through `AssistantReports` (assistant:api, bound for the ops module only): days, distinct users and the costliest users over a range of at most 366 days.
 - **Out of allowance:** `assistant.quota_exceeded` (429) with `details.retryAfterSeconds` until the reset and an upgrade hint; the app shows the Asha Plus offer.
 - **Entitlement:** checked on every turn from `entitlements`, kept up to date by store notifications received as webhooks at the gateway.
 
@@ -291,6 +291,21 @@ CREATE TABLE assistant.usage_daily (                    -- daily totals for cost
     PRIMARY KEY (user_id, usage_day)                    -- upsert (keys: user_id, usage_day) keeping the larger of stored and new totals (the live Redis counters only grow within a day)
 );
 
+-- V4 (decision 2026-11-08): tokens per user, day and model, priced apart in the staff cost report.
+CREATE TABLE assistant.usage_daily_tokens (
+    user_id            uuid        NOT NULL,
+    usage_day          date        NOT NULL,
+    model              text        NOT NULL DEFAULT 'claude-haiku-5-5',
+    input_tokens       bigint      NOT NULL,            -- fresh input only
+    cache_read_tokens  bigint      NOT NULL DEFAULT 0,
+    cache_write_tokens bigint      NOT NULL DEFAULT 0,
+    output_tokens      bigint      NOT NULL,
+    updated_at         timestamptz NOT NULL,
+    PRIMARY KEY (user_id, usage_day, model)            -- the same GREATEST upsert, per model
+);
+CREATE INDEX usage_daily_tokens_day_idx ON assistant.usage_daily_tokens (usage_day);
+CREATE INDEX usage_daily_day_idx ON assistant.usage_daily (usage_day);
+
 CREATE TABLE assistant.entitlements (
     user_id    uuid PRIMARY KEY,
     plan       text NOT NULL,
@@ -328,6 +343,7 @@ CREATE INDEX asha_messages_conversation_idx ON assistant.asha_messages (user_id,
 | `asha_messages` | — (until the user deletes the exchange, its conversation or the Asha chat) |
 | `asha_conversations` | — (until the user deletes it or the Asha chat) |
 | `usage_daily` | — |
+| `usage_daily_tokens` | — (kept with `usage_daily` when an account is deleted: totals for billing, no conversation) |
 | `entitlements` | — |
 | `audit` | — |
 | `outbox` | Daily partitions, 7 days, kept one day ahead and dropped by `assistant.purge-expired` (every 5 minutes) |

@@ -20,9 +20,11 @@ dependencies {
     api(project(":modules:status:api"))
     api(project(":modules:spaces:api"))
     api(project(":modules:assistant:api"))
+    api(project(":modules:support:api"))
     api(libs.ktor.server.core)
     api(libs.ktor.server.websockets)
     implementation(libs.ktor.server.compression)
+    implementation(libs.ktor.client.core) // Cloudflare Access signing keys (access/HttpAccessKeys)
 
     implementation(libs.koin.core)
     implementation(libs.koin.ktor)

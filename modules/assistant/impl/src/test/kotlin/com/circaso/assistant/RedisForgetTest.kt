@@ -2,6 +2,7 @@ package com.circaso.assistant
 
 import com.circaso.assistant.data.cache.RedisPendingTurns
 import com.circaso.assistant.data.cache.RedisQuotaCounters
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.PendingMessage
 import com.circaso.assistant.domain.ports.PendingReadNote
 import com.circaso.assistant.domain.ports.PendingTurn
@@ -82,7 +83,10 @@ class RedisForgetTest {
             key: String,
             field: String,
             by: Long,
-        ) = error("not used")
+        ): Long? {
+            val hash = hashes[key] ?: return null // HINCRBY only on a hash that exists, as the real script
+            return hash.merge(field, by.toString()) { old, add -> (old.toLong() + add.toLong()).toString() }!!.toLong()
+        }
 
         override suspend fun ttl(key: String) = error("not used")
 
@@ -152,6 +156,7 @@ class RedisForgetTest {
                 quota.countTextTurn(me, day, 10)
                 quota.addVoiceSeconds(me, day, 5)
                 quota.addTokens(me, day, 100, 20)
+                quota.addModelTokens(me, day, mapOf("claude-haiku-5-5" to TokenCounts(50, 30, 20, 20)))
             }
             quota.countTextTurn(other, "2026-10-28", 10)
 
@@ -159,5 +164,31 @@ class RedisForgetTest {
 
             assertTrue(redis.values.keys.none { me.toString() in it }, redis.values.keys.toString())
             assertEquals(1L, quota.textTurns(other, "2026-10-28"))
+        }
+
+    @Test
+    fun `tokens by model add up per day, kind and model, and a model name may hold the separator`() =
+        runBlocking {
+            val redis = MapRedis()
+            val quota = RedisQuotaCounters(redis)
+            val me = UserId.new()
+            val day = "2026-11-08"
+
+            quota.addModelTokens(me, day, mapOf("claude-haiku-5-5" to TokenCounts(50, 30, 20, 20)))
+            quota.addModelTokens(
+                me,
+                day,
+                mapOf(
+                    "claude-haiku-5-5" to TokenCounts(5, 0, 0, 2),
+                    "@cf/odd|name" to TokenCounts(1, 0, 0, 1),
+                    "nothing" to TokenCounts.ZERO,
+                ),
+            )
+
+            assertEquals(
+                mapOf("claude-haiku-5-5" to TokenCounts(55, 30, 20, 22), "@cf/odd|name" to TokenCounts(1, 0, 0, 1)),
+                quota.modelTokens(me, day),
+            )
+            assertEquals(emptyMap(), quota.modelTokens(me, "2026-11-07"))
         }
 }

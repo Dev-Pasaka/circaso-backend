@@ -1,11 +1,14 @@
 package com.circaso.identity.di
 
+import com.circaso.identity.api.AccountAdmin
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.DeletionGuard
 import com.circaso.identity.api.DeviceSignatures
 import com.circaso.identity.api.PushRegistrations
+import com.circaso.identity.api.SupportAccounts
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.identity.data.cache.RedisIdentityCache
+import com.circaso.identity.data.repositories.AccountAdminRepositoryImpl
 import com.circaso.identity.data.repositories.AccountRepositoryImpl
 import com.circaso.identity.data.repositories.DatabaseTransactor
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
@@ -33,6 +36,7 @@ import com.circaso.identity.domain.ports.IdentityCache
 import com.circaso.identity.domain.ports.PhoneProtection
 import com.circaso.identity.domain.ports.TokenIssuer
 import com.circaso.identity.domain.ports.Transactor
+import com.circaso.identity.domain.repositories.AccountAdminRepository
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
@@ -46,9 +50,14 @@ import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.CompleteDeletions
+import com.circaso.identity.domain.usecases.CountActiveUsers
+import com.circaso.identity.domain.usecases.CountSignUps
 import com.circaso.identity.domain.usecases.CreateSupportAccount
+import com.circaso.identity.domain.usecases.FindAccountByPhone
+import com.circaso.identity.domain.usecases.FindAccountsByEmail
 import com.circaso.identity.domain.usecases.GetAccountCreatedAt
 import com.circaso.identity.domain.usecases.GetAccountKind
+import com.circaso.identity.domain.usecases.GetAccountRecords
 import com.circaso.identity.domain.usecases.GetAccountStatus
 import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
@@ -57,6 +66,9 @@ import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.GetSecuritySummary
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
+import com.circaso.identity.domain.usecases.ListAccountDevices
+import com.circaso.identity.domain.usecases.ListAccountSessions
+import com.circaso.identity.domain.usecases.ListNewestAccounts
 import com.circaso.identity.domain.usecases.ListSecurityEvents
 import com.circaso.identity.domain.usecases.ListSupportAccounts
 import com.circaso.identity.domain.usecases.RefreshSession
@@ -69,8 +81,10 @@ import com.circaso.identity.domain.usecases.ResolvePhones
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
+import com.circaso.identity.domain.usecases.SuspendAccount
 import com.circaso.identity.domain.usecases.SweepPendingAccounts
 import com.circaso.identity.domain.usecases.UnlinkProvider
+import com.circaso.identity.domain.usecases.UnsuspendAccount
 import com.circaso.identity.domain.usecases.UpdatePushToken
 import com.circaso.identity.domain.usecases.UpdateVoipToken
 import com.circaso.identity.domain.usecases.VerifyAccessToken
@@ -79,16 +93,18 @@ import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyDeviceSignature
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
 import com.circaso.identity.presentation.agent.agentController
+import com.circaso.identity.presentation.api.AccountAdminImpl
 import com.circaso.identity.presentation.api.AccountDirectoryImpl
 import com.circaso.identity.presentation.api.DeviceSignaturesImpl
 import com.circaso.identity.presentation.api.PushRegistrationsImpl
+import com.circaso.identity.presentation.api.SupportAccountsImpl
 import com.circaso.identity.presentation.api.TokenVerifierImpl
 import com.circaso.identity.presentation.controllers.accountController
 import com.circaso.identity.presentation.controllers.authController
 import com.circaso.identity.presentation.controllers.deviceController
 import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
-import com.circaso.identity.presentation.controllers.supportAccountController
+import com.circaso.identity.presentation.services.AccountAdminService
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
@@ -187,6 +203,7 @@ fun identityModule(config: Config): Module =
         single<SessionRepository> { get<SessionRepositoryImpl>() }
         single<SecurityLogRepository> { get<SecurityLogRepositoryImpl>() }
         single<RecoveryRepository> { get<RecoveryRepositoryImpl>() }
+        single<AccountAdminRepository> { AccountAdminRepositoryImpl(get(named("identity.database"))) }
         single<IdentityStore> {
             IdentityStoreImpl(get(named("identity.database")), get(), get(), get(), get(), get(), get(), get())
         }
@@ -249,6 +266,17 @@ fun identityModule(config: Config): Module =
         single { GetPushTarget(get(), get()) }
         single { SweepPendingAccounts(get(), identity, clock) }
         single { CompleteDeletions(get(), get(), get(), get(), clock) }
+        // staff, on the ops gateway only (decision 2026-11-08)
+        single { GetAccountRecords(get()) }
+        single { FindAccountByPhone(get()) }
+        single { FindAccountsByEmail(get()) }
+        single { ListNewestAccounts(get()) }
+        single { ListAccountDevices(get(), get()) }
+        single { ListAccountSessions(get(), clock) }
+        single { SuspendAccount(get(), get(), get(), get(), get(), get(), get()) }
+        single { UnsuspendAccount(get(), get(), get(), get(), get()) }
+        single { CountSignUps(get()) }
+        single { CountActiveUsers(get()) }
 
         // presentation
         single { AuthService(get(), get(), get(), get(), get()) }
@@ -260,13 +288,13 @@ fun identityModule(config: Config): Module =
         single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
+        single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
             val phone = get<PhoneService>()
             val devices = get<DeviceService>()
             val account = get<AccountService>()
             val recovery = get<RecoveryService>()
-            val support = get<SupportAccountService>()
             val agent = get<IdentityAgentService>()
             RouteContributor { route ->
                 route.authController(auth)
@@ -274,7 +302,6 @@ fun identityModule(config: Config): Module =
                 route.deviceController(devices)
                 route.accountController(account)
                 route.recoveryController(recovery)
-                route.supportAccountController(support)
                 route.agentController(agent)
             }
         }
@@ -302,6 +329,11 @@ fun identityModule(config: Config): Module =
         single<AccountDirectory> { AccountDirectoryImpl(get()) }
         single<DeviceSignatures> { DeviceSignaturesImpl(get()) }
         single<PushRegistrations> { PushRegistrationsImpl(get()) }
+
+        // identity:api's staff contracts, for the ops module behind the ops gateway; never mounted on the app gateway
+        // (decision 2026-11-08). OPS1 and OPS2 moved there from the app's routes.
+        single<AccountAdmin> { AccountAdminImpl(get()) }
+        single<SupportAccounts> { SupportAccountsImpl(get()) }
 
         // read-only, run at start-up before the app reports ready
         single<WarmUp>(named("identity.warm-up")) { IdentityWarmUp(get(), get(), get(), get(), get()) }

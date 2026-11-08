@@ -54,6 +54,11 @@ import com.circaso.shared.decodeData
 import com.circaso.status.api.MomentId
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
+import com.circaso.support.api.SupportFrames
+import com.circaso.support.api.TicketId
+import com.circaso.support.api.TicketRepliedFrame
+import com.circaso.support.api.TicketStatus
+import com.circaso.support.api.TicketUpdatedFrame
 import com.circaso.wallet.api.PaymentReceivedFrame
 import com.circaso.wallet.api.SetupRequestedFrame
 import com.circaso.wallet.api.TransferId
@@ -587,6 +592,41 @@ class SocketHubTest {
             assertEquals("Ask me anything.", message.body)
             assertEquals(PushPayload(kind = "asha.back"), message.data)
             assertTrue(!message.dataOnly, "no personal data: the phone shows it as it is")
+        }
+
+    @Test
+    fun `a support reply pushes the ticket's number and id from Circaso Support, a status change never`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val user = UserId.new()
+            val ticketId = TicketId.new()
+
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    SupportFrames.MODULE,
+                    SupportFrames.TICKET_REPLIED,
+                    1,
+                    TicketRepliedFrame(ticketId, "CS-000123", TicketStatus.PENDING_USER),
+                    TicketRepliedFrame.serializer(),
+                ),
+            )
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    SupportFrames.MODULE,
+                    SupportFrames.TICKET_UPDATED,
+                    2,
+                    TicketUpdatedFrame(ticketId, "CS-000123", TicketStatus.RESOLVED),
+                    TicketUpdatedFrame.serializer(),
+                ),
+            )
+
+            val (_, message) = push.sent.single()
+            assertEquals("Circaso Support", message.title)
+            assertEquals("We replied to your ticket CS-000123.", message.body)
+            assertEquals(PushPayload(kind = "support.ticket", ticketId = ticketId.toString()), message.data)
         }
 
     @Test
