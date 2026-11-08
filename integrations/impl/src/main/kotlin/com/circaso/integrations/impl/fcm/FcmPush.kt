@@ -145,22 +145,31 @@ class FcmPush(
                 requestId = ids.requestId,
                 userId = ids.userId,
                 ticketId = ids.ticketId,
-                title = message.title.takeIf { message.dataOnly && ids.kind != null },
-                body = message.body.takeIf { message.dataOnly && ids.kind != null },
+                title = message.title.takeIf { message.dataOnly && !message.silent && ids.kind != null },
+                body = message.body.takeIf { message.dataOnly && !message.silent && ids.kind != null },
             ).takeIf { it != FcmData() }
         val sound = message.sound ?: "default"
         val aps =
-            if (message.dataOnly) {
-                FcmAps(sound = sound, alert = text, mutableContent = 1)
-            } else {
-                FcmAps(sound = sound)
+            when {
+                // A background push: no alert, no sound; Apple wants priority 5 and push type `background` for it.
+                message.silent -> FcmAps(sound = null, contentAvailable = 1)
+
+                message.dataOnly -> FcmAps(sound = sound, alert = text, mutableContent = 1)
+
+                else -> FcmAps(sound = sound)
             }
         val ttl = message.ttlSeconds
         val apns =
             FcmApns(
                 headers =
                     FcmApnsHeaders(
-                        pushType = if (message.dataOnly) "alert" else null,
+                        priority = if (message.silent) "5" else "10",
+                        pushType =
+                            when {
+                                message.silent -> "background"
+                                message.dataOnly -> "alert"
+                                else -> null
+                            },
                         expiration = ttl?.let { (clock.instant().epochSecond + it).toString() },
                     ),
                 payload = FcmApnsPayload(aps),
@@ -168,7 +177,7 @@ class FcmPush(
         return FcmRequest(
             FcmMessage(
                 token = target.token,
-                notification = text.takeUnless { message.dataOnly },
+                notification = text.takeUnless { message.dataOnly || message.silent },
                 data = data,
                 android = FcmAndroid(ttl = ttl?.let { "${it}s" }),
                 apns = apns,
@@ -277,9 +286,10 @@ private data class FcmApnsPayload(val aps: FcmAps)
 
 @Serializable
 private data class FcmAps(
-    val sound: String = "default",
+    val sound: String? = "default",
     val alert: FcmNotification? = null,
     @SerialName("mutable-content") val mutableContent: Int? = null,
+    @SerialName("content-available") val contentAvailable: Int? = null,
 )
 
 @Serializable

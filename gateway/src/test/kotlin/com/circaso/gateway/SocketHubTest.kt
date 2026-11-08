@@ -48,6 +48,7 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.decodeData
 import com.circaso.status.api.MomentId
+import com.circaso.status.api.MomentKeyRequestedFrame
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
 import com.circaso.support.api.SupportFrames
@@ -1172,6 +1173,32 @@ class SocketHubTest {
                 push.sent.map { it.second.body },
             )
             assertTrue(push.sent.all { it.second.title == "Circaso" && it.second.data.kind == "moment.loved" })
+        }
+
+    @Test
+    fun `a key request wakes the offline poster silently with the requester's id, and lives an hour`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val poster = UserId.new()
+            val requester = UserId.new()
+
+            realtime.deliver(
+                poster,
+                RealtimeEnvelope.of(
+                    StatusFrames.MODULE,
+                    StatusFrames.KEY_REQUESTED,
+                    1,
+                    MomentKeyRequestedFrame(requester),
+                    MomentKeyRequestedFrame.serializer(),
+                ),
+            )
+
+            val sent = push.sent.single().second
+            assertTrue(sent.silent, "nothing is shown: the phone only seals copies")
+            assertEquals("moment.keys_requested", sent.data.kind)
+            assertEquals(requester.toString(), sent.data.userId)
+            assertEquals(3_600L, sent.ttlSeconds)
         }
 
     @Test

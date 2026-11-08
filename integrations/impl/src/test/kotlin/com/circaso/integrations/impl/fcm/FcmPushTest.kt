@@ -136,6 +136,34 @@ class FcmPushTest {
         }
 
     @Test
+    fun `a silent push shows nothing - data without words on Android, a background push on iOS`() =
+        runBlocking<Unit> {
+            val wake =
+                PushMessage(
+                    "Circaso",
+                    "",
+                    PushPayload(kind = "moment.keys_requested", userId = "u1"),
+                    silent = true,
+                    ttlSeconds = 3_600,
+                )
+
+            push.send(PushTarget(PushPlatform.IOS, "device-token"), wake)
+
+            val body = Json.parseToJsonElement(sends().single().text()).jsonObject["message"]!!.jsonObject
+            assertTrue("notification" !in body)
+            val data = body["data"]!!.jsonObject
+            assertEquals("u1", data["userId"]!!.jsonPrimitive.content)
+            assertTrue("title" !in data && "body" !in data, "no words for the app to show")
+            val apns = body["apns"]!!.jsonObject
+            val headers = apns["headers"]!!.jsonObject
+            assertEquals("background", headers["apns-push-type"]!!.jsonPrimitive.content)
+            assertEquals("5", headers["apns-priority"]!!.jsonPrimitive.content)
+            val aps = apns["payload"]!!.jsonObject["aps"]!!.jsonObject
+            assertEquals(1, aps["content-available"]!!.jsonPrimitive.content.toInt())
+            assertTrue("alert" !in aps && "sound" !in aps && "mutable-content" !in aps)
+        }
+
+    @Test
     fun `money received carries its words for Android and its own sound for iOS`() =
         runBlocking<Unit> {
             val money =

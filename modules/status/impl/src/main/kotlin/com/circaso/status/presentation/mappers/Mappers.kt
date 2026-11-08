@@ -97,6 +97,10 @@ private fun KeyCopyDto.toKeyCopy(): KeyCopy? {
 fun KeyRequestRequest.toPosters(): Resource<List<UserId>> =
     Resource.success(posterIds.map { UserId.parse(it) ?: return malformed("posterIds", "each must be a user id") })
 
+/** [KeyCopiesRequest.answered] as user ids. */
+fun KeyCopiesRequest.toAnswered(): Resource<List<UserId>> =
+    Resource.success(answered.map { UserId.parse(it) ?: return malformed("answered", "each must be a user id") })
+
 fun KeyCopiesRequest.toCopies(): Resource<List<MomentKeyCopy>> =
     Resource.success(
         copies.map {
