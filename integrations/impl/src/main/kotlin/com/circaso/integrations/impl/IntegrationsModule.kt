@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
@@ -30,6 +31,7 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
+import com.circaso.integrations.impl.anthropic.AnthropicAdminBilling
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
@@ -65,6 +67,7 @@ import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
 import com.circaso.integrations.impl.dev.LogWebSearch
+import com.circaso.integrations.impl.dev.NoAiBilling
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
@@ -391,6 +394,28 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Anthropic's own billing, set beside Asha's cost estimate in the staff report (decision 2026-11-08). Off unless
+        // the secret `OPS_ANTHROPIC_ADMIN_KEY` (an Admin API key, `sk-ant-admin…`) is set; `OPS_ANTHROPIC_WORKSPACE_ID`
+        // counts one workspace only (`default` for the default one). Answers are kept in Redis under `aib:`.
+        single<AiBilling> {
+            val adminKey = secrets.get(ANTHROPIC_ADMIN_KEY)
+            if (adminKey == null) {
+                NoAiBilling
+            } else {
+                val baseUrl = config.string("ops.anthropic.admin-base-url", AnthropicAdminBilling.BASE_URL)
+                AnthropicAdminBilling(
+                    http =
+                        get<HttpClients>().named("anthropic-admin") {
+                            this.baseUrl = baseUrl
+                            connectTimeout = AnthropicAdminBilling.TIMEOUT
+                            requestTimeout = AnthropicAdminBilling.TIMEOUT
+                        },
+                    key = adminKey,
+                    cache = get<RedisScopes>().scope("aib"),
+                    workspaceId = config.string("ops.anthropic.workspace-id")?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            }
+        }
         // Calls' SFU (decision 2026-10-29): `log` and `fake` make up sessions and SDP, so calls work without media.
         single<CallMedia> {
             pick(
@@ -587,6 +612,9 @@ private fun cloudflareRealtime(
 
 /** Brave Search's key, `BRAVE_SEARCH_API_KEY`; its presence also picks `brave` when no provider is named. */
 private const val BRAVE_KEY = "brave-search.api-key"
+
+/** Anthropic's Admin API key for the staff cost report, `OPS_ANTHROPIC_ADMIN_KEY`; never logged. */
+private const val ANTHROPIC_ADMIN_KEY = "ops.anthropic-admin-key"
 private const val COINGECKO_KEY = "coingecko.api-key"
 
 /** CoinGecko's one client, for prices and Asha's coin data: short timeouts and no retry, since a reader waits. */

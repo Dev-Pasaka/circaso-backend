@@ -1,5 +1,6 @@
 package com.circaso.assistant.di
 
+import com.circaso.assistant.api.AssistantReports
 import com.circaso.assistant.data.blocks.JsonReplyBlocks
 import com.circaso.assistant.data.cache.AesTextVault
 import com.circaso.assistant.data.cache.RealtimeStatusFrames
@@ -17,11 +18,13 @@ import com.circaso.assistant.data.repositories.ChatRepositoryImpl
 import com.circaso.assistant.data.repositories.ConversationRepositoryImpl
 import com.circaso.assistant.data.repositories.DatabaseTransactor
 import com.circaso.assistant.data.repositories.EntitlementRepositoryImpl
+import com.circaso.assistant.data.repositories.UsageReportRepositoryImpl
 import com.circaso.assistant.data.tables.AshaConversationsTable
 import com.circaso.assistant.data.tables.AshaMessagesTable
 import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
 import com.circaso.assistant.data.tables.UsageDailyTable
+import com.circaso.assistant.data.tables.UsageDailyTokensTable
 import com.circaso.assistant.data.tools.AllAgentTools
 import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
@@ -48,6 +51,7 @@ import com.circaso.assistant.domain.repositories.AssistantStore
 import com.circaso.assistant.domain.repositories.ChatRepository
 import com.circaso.assistant.domain.repositories.ConversationRepository
 import com.circaso.assistant.domain.repositories.EntitlementRepository
+import com.circaso.assistant.domain.repositories.UsageReportRepository
 import com.circaso.assistant.domain.support.AshaAgent
 import com.circaso.assistant.domain.support.AshaOutage
 import com.circaso.assistant.domain.support.AshaVoices
@@ -62,6 +66,7 @@ import com.circaso.assistant.domain.support.UsageReader
 import com.circaso.assistant.domain.support.WatchedLanguageModel
 import com.circaso.assistant.domain.usecases.CheckLiveSession
 import com.circaso.assistant.domain.usecases.ContinueTurn
+import com.circaso.assistant.domain.usecases.CountAshaUsers
 import com.circaso.assistant.domain.usecases.CreateConversation
 import com.circaso.assistant.domain.usecases.DeleteAssistantData
 import com.circaso.assistant.domain.usecases.DeleteChat
@@ -73,16 +78,19 @@ import com.circaso.assistant.domain.usecases.GetVoiceSample
 import com.circaso.assistant.domain.usecases.ListChat
 import com.circaso.assistant.domain.usecases.ListConversationMessages
 import com.circaso.assistant.domain.usecases.ListConversations
+import com.circaso.assistant.domain.usecases.ListUsageDays
 import com.circaso.assistant.domain.usecases.ListVoices
 import com.circaso.assistant.domain.usecases.MeterLiveVoice
 import com.circaso.assistant.domain.usecases.MonitorAshaHealth
 import com.circaso.assistant.domain.usecases.OpenLiveVoice
+import com.circaso.assistant.domain.usecases.RankUsageUsers
 import com.circaso.assistant.domain.usecases.RecordLiveTiming
 import com.circaso.assistant.domain.usecases.RenameConversation
 import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.assistant.domain.usecases.SynthesizeSpeech
 import com.circaso.assistant.domain.usecases.TranscribeVoice
+import com.circaso.assistant.presentation.api.AssistantReportsImpl
 import com.circaso.assistant.presentation.controllers.chatController
 import com.circaso.assistant.presentation.controllers.conversationController
 import com.circaso.assistant.presentation.controllers.liveVoiceController
@@ -94,6 +102,7 @@ import com.circaso.assistant.presentation.services.ConversationService
 import com.circaso.assistant.presentation.services.IdentityEventsService
 import com.circaso.assistant.presentation.services.LiveVoiceService
 import com.circaso.assistant.presentation.services.StatusService
+import com.circaso.assistant.presentation.services.UsageReportService
 import com.circaso.assistant.presentation.services.VoiceService
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
@@ -119,7 +128,15 @@ import java.time.Duration
 internal val assistantDatabaseSpec =
     DatabaseModuleSpec(
         schema = "assistant",
-        tables = listOf(AshaConversationsTable, AshaMessagesTable, UsageDailyTable, EntitlementsTable, AuditTable),
+        tables =
+            listOf(
+                AshaConversationsTable,
+                AshaMessagesTable,
+                UsageDailyTable,
+                UsageDailyTokensTable,
+                EntitlementsTable,
+                AuditTable,
+            ),
         migrationsLocation = "classpath:db/assistant",
         outbox = true,
     )
@@ -213,6 +230,7 @@ fun assistantModule(config: Config): Module =
         single<ChatRepository> { ChatRepositoryImpl(get(named("assistant.database")), get()) }
         single<ConversationRepository> { ConversationRepositoryImpl(get(named("assistant.database")), get()) }
         single<EntitlementRepository> { EntitlementRepositoryImpl(get(named("assistant.database")), clock) }
+        single<UsageReportRepository> { UsageReportRepositoryImpl(get(named("assistant.database"))) }
         single<AssistantStore> { AssistantStoreImpl(get(named("assistant.database")), get(), clock) }
         single(named("assistant.purge-expired")) {
             val expiry = AssistantExpiry(get(named("assistant.database")))
@@ -298,6 +316,12 @@ fun assistantModule(config: Config): Module =
         single { IdentityEventsService(get()) }
         single { LiveVoiceService(get(), get(), get(), get(), get(), get(), get()) }
         single { StatusService(get(), get()) }
+        // Staff reads of Asha's usage (decision 2026-11-08), for the ops module only.
+        single { ListUsageDays(get()) }
+        single { CountAshaUsers(get()) }
+        single { RankUsageUsers(get()) }
+        single { UsageReportService(get(), get(), get()) }
+        single<AssistantReports> { AssistantReportsImpl(get()) }
         single<RouteContributor>(named("assistant.routes")) {
             val chat = get<ChatService>()
             val conversations = get<ConversationService>()

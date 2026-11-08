@@ -22,6 +22,9 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     USERS_SUSPEND("users.suspend", setOf(ADMIN, SUPPORT)),
     TRANSACTIONS_READ("transactions.read", setOf(ADMIN, FINANCE)),
     FINANCE_READ("finance.read", setOf(ADMIN, FINANCE)),
+
+    /** What Asha's model use costs (decision 2026-11-08): a cost report, so money roles only. */
+    AI_USAGE_READ("ai_usage.read", setOf(ADMIN, FINANCE)),
     GROUPS_READ("groups.read", setOf(ADMIN, SUPPORT, FINANCE)),
     GROUPS_MONEY("groups.money", setOf(ADMIN, FINANCE)),
     TICKETS_READ("tickets.read", setOf(ADMIN, SUPPORT)),

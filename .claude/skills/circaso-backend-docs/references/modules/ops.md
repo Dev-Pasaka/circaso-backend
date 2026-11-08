@@ -13,7 +13,7 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
   `OpsRouteContributor`s (shared-web). `OpsSeparationTest` checks both.
 - **Contract (`ops:api`):** `StaffDirectory` (`signIn(email)`, `recordDevLogin`), implemented here, used by the ops gateway.
 - **Depends on:** identity (`AccountAdmin`, `SupportAccounts`), users (`ProfileAdmin`), messaging (`GroupReports`), wallet
-  (`WalletReports`), support (`SupportDesk`). Each is a staff-facing contract next to the module's own, never used by the app.
+  (`WalletReports`), support (`SupportDesk`), assistant (`AssistantReports`), and integrations' `AiBilling`. Each is a staff-facing contract next to the module's own, never used by the app.
 - **Schema** `ops`, no outbox (publishes nothing), no Redis keys of its own (the ops gateway uses `ogw:` for its limits and
   idempotency), no frames.
 
@@ -43,6 +43,7 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
 | users: wallets, transfers, fees paid | ✓ | | ✓ |
 | users: suspend, unsuspend | ✓ | ✓ | |
 | transactions, finance | ✓ | | ✓ |
+| AI usage and cost (`ai_usage.read`) | ✓ | | ✓ |
 | groups (balances only with money) | ✓ | ✓ | ✓ |
 | tickets: queue, reply, note, assign, status | ✓ | ✓ | |
 | staff, audit, support accounts | ✓ | | |
@@ -52,7 +53,7 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
 Public: `GET auth/config`, `GET auth/handoff?return=`, `POST auth/dev-login`. Signed in: `GET me`, `GET dashboard?days=`,
 `GET users?q=&cursor=&limit=`, `GET users/{id}`, `GET users/{id}/devices`, `GET users/{id}/wallets`,
 `GET users/{id}/transfers`, `GET users/{id}/groups`, `GET users/{id}/tickets`, `POST users/{id}/suspend` `{reason}`,
-`POST users/{id}/unsuspend` `{reason}`, `GET transactions`, `GET transactions/{id}`, `GET finance?from=&to=&bucket=`,
+`POST users/{id}/unsuspend` `{reason}`, `GET transactions`, `GET transactions/{id}`, `GET finance?from=&to=&bucket=`, `GET ai-usage?from=&to=&bucket=&limit=`,
 `GET groups?wallet=`, `GET groups/{chatId}`, `GET tickets?status=&category=&assignee=&olderThanHours=`,
 `GET tickets/{id}`, `POST tickets/{id}/replies|notes|assign|status`, `GET|POST staff`, `PATCH staff/{id}`, `GET audit`,
 `GET|POST support-accounts` (OPS1, OPS2, moved here from the app gateway), and `GET openapi.json` outside production.
@@ -73,3 +74,13 @@ Every change needs an `Idempotency-Key`; limits: `OPS_RATE_LIMIT_PER_MINUTE` per
 `ops.return_url_invalid` (400) — the gateway's; `ops.reason_required`, `ops.user_not_found`, `ops.transfer_not_found`,
 `ops.group_not_found`, `ops.staff_not_found`, `ops.staff_exists`, `ops.email_invalid`, `ops.cannot_change_self`,
 `ops.staff_from_config`, `ops.assignee_invalid`, `ops.staff_changed` — the module's.
+
+## AI usage (decision 2026-11-08)
+
+`GET /v1/ops/ai-usage` prices the assistant's daily token totals (`AssistantReports`) with the configured table
+(`OPS_AI_PRICES`, `OPS_AI_CACHE_WRITE_MULTIPLIER`, `OPS_AI_CACHE_READ_MULTIPLIER`, `OPS_AI_WEB_SEARCH_PER_1000_USD`,
+`OPS_AI_PRICES_AS_OF`) over whole UTC days (1 to 366), and returns totals (turns, voice seconds, web searches, the four
+token kinds, active users, cost, cost per active user, unpriced tokens), a series per bucket, the model breakdown, the
+`limit` (default 10, at most 50) costliest users with their names, the price table with its assumptions, and
+`anthropic`: Anthropic's own bill for the same days (`ok`), `off` without `OPS_ANTHROPIC_ADMIN_KEY`, or `unavailable`.
+Money is micro-dollars, computed in `BigDecimal` and rounded once.

@@ -10,6 +10,7 @@ import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.Plan
 import com.circaso.assistant.domain.models.ProbeState
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.AshaHealth
 import com.circaso.assistant.domain.ports.MascotScenes
@@ -91,6 +92,9 @@ class MemoryAssistant :
     val conversations = CopyOnWriteArrayList<Conversation>()
     val audit = CopyOnWriteArrayList<AuditEntry>()
     val usage = ConcurrentHashMap<String, List<Number>>()
+
+    /** `userId:day:model` → the tokens stored for it (the per-model row). */
+    val modelTokens = ConcurrentHashMap<String, TokenCounts>()
     val erased = CopyOnWriteArrayList<UserId>()
 
     override suspend fun <T> run(operation: String, block: suspend () -> T): T {
@@ -258,6 +262,15 @@ class MemoryAssistant :
     ) {
         usage["$userId:$day"] = listOf(textTurns, voiceSeconds, inputTokens, outputTokens, webSearches)
     }
+
+    override suspend fun saveModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+        at: Instant,
+    ) {
+        byModel.forEach { (model, tokens) -> modelTokens["$userId:$day:$model"] = tokens }
+    }
 }
 
 class MemoryQuota : QuotaCounters {
@@ -309,6 +322,19 @@ class MemoryQuota : QuotaCounters {
         add("i:$userId:$day", input.toLong())
         add("o:$userId:$day", output.toLong())
     }
+
+    private val byModel = ConcurrentHashMap<String, TokenCounts>()
+
+    override suspend fun addModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+    ) {
+        byModel.forEach { (model, tokens) -> this.byModel.merge("$userId:$day|$model", tokens, TokenCounts::plus) }
+    }
+
+    override suspend fun modelTokens(userId: UserId, day: String): Map<String, TokenCounts> =
+        byModel.filterKeys { it.startsWith("$userId:$day|") }.mapKeys { it.key.substringAfter('|') }
 
     override suspend fun tokens(userId: UserId, day: String) =
         (counters["i:$userId:$day"] ?: 0) to (counters["o:$userId:$day"] ?: 0)

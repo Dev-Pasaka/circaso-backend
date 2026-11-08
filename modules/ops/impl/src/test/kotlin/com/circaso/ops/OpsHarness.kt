@@ -1,9 +1,11 @@
 package com.circaso.ops
 
+import com.circaso.assistant.api.AssistantReports
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.identity.api.SupportAccounts
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
+import com.circaso.integrations.api.AiBilling
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.di.opsModule
 import com.circaso.ops.domain.repositories.AuditRepository
@@ -40,6 +42,8 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
     val supportAccounts = FakeSupportAccounts()
     val staff = MemoryStaff()
     val audit = MemoryAudit()
+    val usage = FakeAssistantReports()
+    val billing = FakeAiBilling()
 
     val koin: Koin =
         koinApplication {
@@ -55,6 +59,8 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
                     single<SupportAccounts> { supportAccounts }
                     single<StaffRepository> { staff }
                     single<AuditRepository> { audit }
+                    single<AssistantReports> { usage }
+                    single<AiBilling> { billing }
                 },
             )
         }.koin
