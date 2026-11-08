@@ -1,12 +1,13 @@
 package com.circaso.opsgateway
 
+import com.circaso.gateway.access.AccessKeys
+import com.circaso.gateway.access.AccessSettings
+import com.circaso.gateway.access.AccessVerifier
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.ops.api.StaffDirectory
 import com.circaso.ops.api.StaffMember
-import com.circaso.opsgateway.auth.AccessKeys
-import com.circaso.opsgateway.auth.AccessVerifier
 import com.circaso.opsgateway.auth.DevLogin
 import com.circaso.shared.Resource
 import com.circaso.shared.StaffRole

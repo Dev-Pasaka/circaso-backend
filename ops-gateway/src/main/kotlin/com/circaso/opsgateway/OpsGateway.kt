@@ -5,12 +5,12 @@ import com.circaso.gateway.IdempotencyState
 import com.circaso.gateway.Limit
 import com.circaso.gateway.LimitBy
 import com.circaso.gateway.RateLimiter
+import com.circaso.gateway.access.AccessCheck
+import com.circaso.gateway.access.AccessVerifier
 import com.circaso.gateway.clientIp
 import com.circaso.gateway.installRequestDecodingErrors
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.ops.api.StaffDirectory
-import com.circaso.opsgateway.auth.AccessCheck
-import com.circaso.opsgateway.auth.AccessVerifier
 import com.circaso.opsgateway.auth.DevLogin
 import com.circaso.shared.DomainError
 import com.circaso.shared.SharedError

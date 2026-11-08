@@ -1,5 +1,6 @@
 package com.circaso.opsgateway
 
+import com.circaso.gateway.access.AccessSettings
 import com.circaso.infrastructure.api.Environment
 import com.circaso.opsgateway.auth.DevLogin
 import java.time.Clock
