@@ -95,7 +95,6 @@ data class OpsGatewayConfig(
     }
 }
 
-/** Cloudflare Access: the team domain (`circaso.cloudflareaccess.com`) and the application's audience tag. */
 /** Origins compared exactly: scheme, host and port, lowercased, no path. */
 object Origins {
     fun normalise(raw: String): String? =
