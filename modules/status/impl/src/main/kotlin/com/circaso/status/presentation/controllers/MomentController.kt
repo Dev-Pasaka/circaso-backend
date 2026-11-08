@@ -16,6 +16,7 @@ import com.circaso.status.presentation.dto.ViewsResponse
 import com.circaso.status.presentation.mappers.parseMomentId
 import com.circaso.status.presentation.mappers.parseMomentsQuery
 import com.circaso.status.presentation.mappers.parseViewRequest
+import com.circaso.status.presentation.mappers.toAnswered
 import com.circaso.status.presentation.mappers.toCommand
 import com.circaso.status.presentation.mappers.toCopies
 import com.circaso.status.presentation.mappers.toPosters
@@ -134,13 +135,17 @@ private fun Route.keyRoutes(moments: MomentService) {
                 "copies sent before were for the old one). `posterIds` 1 to 100, distinct, never yourself. Each " +
                 "poster with a live moment shown to you gets `status/status.key_requested` with your id, at most " +
                 "once every 10 minutes per poster; anyone else is skipped without a word. `requested` names the " +
-                "posters asked. Never pushed: an offline poster gets it from replay when they reconnect.",
+                "posters asked. A poster without a socket also gets a silent push (`kind` `moment.keys_requested`, " +
+                "`userId` the requester), so their phone answers without being opened; replay brings it otherwise.",
     )
 
     post("key-copies") {
         val caller = call.userId()
         val request = call.receive<KeyCopiesRequest>()
-        val result = request.toCopies().flatMap { moments.shareKeyCopies(caller, it) }
+        val result =
+            request.toCopies().flatMap { copies ->
+                request.toAnswered().flatMap { answered -> moments.shareKeyCopies(caller, copies, answered) }
+            }
         call.respondDefault(result.toDefaultResponse { KeyCopiesResponse(copied = it) })
     }.docs<KeyCopiesRequest, KeyCopiesResponse>(
         "ST10 · Send fresh key copies for your moments",
@@ -149,10 +154,13 @@ private fun Route.keyRoutes(moments: MomentService) {
         notes =
             "$SCOPE $IDEMPOTENT Your answer to `status.key_requested`: for each of your live moments, the body " +
                 "sealed again over your 1:1 session with the person (standard base64, at most 72 KiB decoded). Each " +
-                "replaces that person's `keyCopy` on that moment in ST4. 1 to 200 copies, one per (moment, person), " +
+                "replaces that person's `keyCopy` on that moment in ST4. Up to 200 copies, one per (moment, person), " +
                 "never yourself. Copies for a moment that isn't yours or isn't live, or for someone not in its " +
-                "audience, are skipped. Everyone who got one is sent `status/status.keys_ready`. `copied` counts the " +
-                "copies taken.",
+                "audience, are skipped. `answered` (up to 100 people, optional) names whose request this answers: " +
+                "they are told too when no copy is for them (moments posted from your earlier phone, which this one " +
+                "can't seal again), as long as one of your live moments is shown to them. At least one copy or one " +
+                "person. Everyone who got a copy or is answered is sent `status/status.keys_ready`. `copied` counts " +
+                "the copies taken.",
     )
 }
 

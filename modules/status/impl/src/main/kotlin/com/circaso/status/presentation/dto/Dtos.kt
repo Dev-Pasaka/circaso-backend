@@ -159,9 +159,14 @@ data class KeyRequestResponse(val requested: List<String>)
 @Serializable
 data class MomentKeyCopyDto(val momentId: String, val userId: String, val ciphertext: String)
 
-/** `POST /moments/key-copies`: 1 to 200 copies, one per (moment, person). */
+/**
+ * `POST /moments/key-copies`: up to 200 copies, one per (moment, person), and [answered]: the people whose request this
+ * answers, copies or not (up to 100). Someone in [answered] with no copy is still sent `status.keys_ready`, so their
+ * phone stops waiting for moments this phone can't seal again (posted from the poster's earlier phone). At least one
+ * copy or one person.
+ */
 @Serializable
-data class KeyCopiesRequest(val copies: List<MomentKeyCopyDto>)
+data class KeyCopiesRequest(val copies: List<MomentKeyCopyDto> = emptyList(), val answered: List<String> = emptyList())
 
 @Serializable
 data class KeyCopiesResponse(val copied: Int)

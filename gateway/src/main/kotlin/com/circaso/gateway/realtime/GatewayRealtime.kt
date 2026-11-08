@@ -31,6 +31,7 @@ import com.circaso.spaces.api.PriceChangedFrame
 import com.circaso.spaces.api.ReportResolvedFrame
 import com.circaso.spaces.api.RequestNewFrame
 import com.circaso.spaces.api.SpacesFrames
+import com.circaso.status.api.MomentKeyRequestedFrame
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
 import com.circaso.support.api.SupportFrames
@@ -227,6 +228,12 @@ class GatewayRealtime(
             // plain view or a cleared reaction never pushes; replies are chat messages and push as such.
             "${StatusFrames.MODULE}.${StatusFrames.VIEWED}" -> {
                 decode(MomentViewedFrame.serializer(), frame)?.let(::reactionPush)
+            }
+
+            // Someone's new phone can't open my moments (2026-11-08): wake my phone to seal fresh copies for them, with
+            // nothing shown. Without it the request waited for me to open Circaso, and their list stayed empty.
+            "${StatusFrames.MODULE}.${StatusFrames.KEY_REQUESTED}" -> {
+                decode(MomentKeyRequestedFrame.serializer(), frame)?.let(::keyRequestPush)
             }
 
             "${CallFrames.MODULE}.${CallFrames.RINGING}" -> {
@@ -541,6 +548,19 @@ class GatewayRealtime(
     }
 
     /**
+     * Silent: the phone seals fresh copies of my moments for [MomentKeyRequestedFrame.requesterId] and sends them
+     * (ST10), showing nothing. Lives an hour: after that the requester's phone has asked again or replay brings it.
+     */
+    private fun keyRequestPush(frame: MomentKeyRequestedFrame): PushMessage =
+        PushMessage(
+            "Circaso",
+            "",
+            PushPayload(kind = MOMENT_KEYS_REQUESTED_KIND, userId = frame.requesterId.toString()),
+            silent = true,
+            ttlSeconds = KEY_REQUEST_TTL_SECONDS,
+        )
+
+    /**
      * Data-only and high priority with a short life, so the app wakes and shows its incoming-call screen (Android's
      * full-screen intent, CallKit on iOS); the text shows only if it can't.
      */
@@ -624,6 +644,10 @@ private const val REQUEST_KIND = "chama.request"
 
 /** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
 private const val MOMENT_LOVED_KIND = "moment.loved"
+
+/** Someone's new phone asked for keys to my moments: a silent push, `userId` the requester. */
+private const val MOMENT_KEYS_REQUESTED_KIND = "moment.keys_requested"
+private const val KEY_REQUEST_TTL_SECONDS = 3_600L
 private const val MONEY_SOUND = "money_received.wav"
 
 /** A space post's push shows at most this much of its text. */

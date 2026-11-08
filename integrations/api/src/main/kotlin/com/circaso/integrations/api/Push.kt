@@ -34,6 +34,13 @@ data class PushMessage(
      * push, by its [PushPayload.kind] and the person's setting.
      */
     val sound: String? = null,
+    /**
+     * Shows nothing on either phone, ever (added 2026-11-08): a background job for the app, such as answering a moments
+     * key request. Android gets a data message without its words; iOS a background push (`content-available`, no
+     * alert, no sound), which iOS may hold or drop, so whatever it starts must also happen on the next open. Wins
+     * over [dataOnly].
+     */
+    val silent: Boolean = false,
 )
 
 /**

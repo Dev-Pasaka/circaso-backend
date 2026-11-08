@@ -8,7 +8,8 @@ import java.time.Instant
 /**
  * The `data` of each realtime frame `status` sends (Moments API → Realtime), one class per type (decision
  * 2026-10-27). Every frame is kept 7 days for replay, so a phone without a socket catches up on the next connect
- * (replay) or by reading ST4. Only a `status.viewed` that adds or changes a reaction is pushed (by the gateway).
+ * (replay) or by reading ST4. The gateway pushes a `status.viewed` that adds or changes a reaction, and
+ * `status.key_requested` as a silent push (2026-11-08), so the poster's phone answers without being opened.
  */
 object StatusFrames {
     const val MODULE = "status"
@@ -56,14 +57,20 @@ data class MomentViewedFrame(
 /**
  * To a poster, when someone in the audience of their live moments can't open them (a new phone, a new Signal
  * identity): the poster's phone seals fresh copies for [requesterId] and sends them with `POST /moments/key-copies`.
- * At most one per (requester, poster) every 10 minutes. Never pushed: replay brings it on the poster's next connect.
+ * At most one per (requester, poster) every 10 minutes. A poster without a socket gets a silent push (`kind`
+ * `moment.keys_requested`, `userId` the requester; 2026-11-08), so a phone in a pocket answers too; replay brings it
+ * on the next connect otherwise.
  */
 @Serializable
 data class MomentKeyRequestedFrame(val requesterId: UserId) : StatusFrame {
     override val type: String get() = StatusFrames.KEY_REQUESTED
 }
 
-/** To a viewer, once [posterId] has sent them fresh copies: the phone reads ST4 again and opens what it couldn't. */
+/**
+ * To a viewer, once [posterId] has answered their key request: the phone reads ST4 again and opens what it couldn't.
+ * Also sent with no new copy (the poster named them in `answered`): whatever of [posterId]'s it still can't open was
+ * posted from the poster's earlier phone and never will open here.
+ */
 @Serializable
 data class MomentKeysReadyFrame(val posterId: UserId) : StatusFrame {
     override val type: String get() = StatusFrames.KEYS_READY

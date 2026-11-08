@@ -8,6 +8,7 @@ import com.circaso.status.domain.errors.StatusError
 import com.circaso.status.domain.models.MomentKeyCopy
 import com.circaso.status.presentation.dto.KeyCopiesRequest
 import com.circaso.status.presentation.dto.MomentKeyCopyDto
+import com.circaso.status.presentation.mappers.toAnswered
 import com.circaso.status.presentation.mappers.toCopies
 import kotlinx.coroutines.test.runTest
 import java.time.Duration
@@ -105,7 +106,71 @@ class MomentKeysTest {
         }
 
     @Test
-    fun `copies are 1 to 200, one per moment and person, never for myself, and not too large`() =
+    fun `an answer with no copy for someone still tells them, so their phone stops waiting`() =
+        runTest {
+            // My moment from an earlier phone: this phone has no body to seal again for Amina's new phone.
+            h.posted(poster, amina)
+
+            assertEquals(0, h.shareKeyCopies(poster, emptyList(), answered = listOf(amina)).data())
+
+            assertEquals(
+                listOf<Any>(MomentKeysReadyFrame(poster)),
+                h.frames.to(amina).filterIsInstance<MomentKeysReadyFrame>(),
+            )
+        }
+
+    @Test
+    fun `someone answered and copied is told once`() =
+        runTest {
+            val id = h.posted(poster, amina).momentId
+
+            val copies = listOf(MomentKeyCopy(id, amina, h.base64(40)))
+            assertEquals(1, h.shareKeyCopies(poster, copies, answered = listOf(amina)).data())
+
+            assertEquals(
+                1,
+                h.frames
+                    .to(amina)
+                    .filterIsInstance<MomentKeysReadyFrame>()
+                    .size,
+            )
+        }
+
+    @Test
+    fun `an answer tells nobody who isn't shown my live moments, or across a block`() =
+        runTest {
+            h.posted(poster, amina)
+
+            assertEquals(0, h.shareKeyCopies(poster, emptyList(), answered = listOf(baraka)).data())
+            h.reach.blocked += setOf(poster, amina)
+            assertEquals(0, h.shareKeyCopies(poster, emptyList(), answered = listOf(amina)).data())
+            h.reach.blocked.clear()
+            h.clock.advance(Duration.ofHours(24))
+            assertEquals(0, h.shareKeyCopies(poster, emptyList(), answered = listOf(amina)).data())
+            assertTrue(h.frames.sent.none { it.second is MomentKeysReadyFrame })
+        }
+
+    @Test
+    fun `answered names distinct people, never myself, at most 100, and an answer isn't empty`() =
+        runTest {
+            h.shareKeyCopies(poster, emptyList(), answered = emptyList()).assertError(StatusError.KeysInvalid)
+            h.shareKeyCopies(poster, emptyList(), answered = listOf(poster)).assertError(StatusError.KeysInvalid)
+            h.shareKeyCopies(poster, emptyList(), answered = listOf(amina, amina)).assertError(StatusError.KeysInvalid)
+            h
+                .shareKeyCopies(poster, emptyList(), answered = List(101) { UserId.new() })
+                .assertError(StatusError.KeysInvalid)
+        }
+
+    @Test
+    fun `answered must be user ids`() {
+        val bad = KeyCopiesRequest(answered = listOf("nope"))
+        assertIs<com.circaso.shared.Resource.Error>(bad.toAnswered())
+        val good = KeyCopiesRequest(answered = listOf(UserId.new().toString()))
+        assertEquals(1, good.toAnswered().data().size)
+    }
+
+    @Test
+    fun `copies are at most 200, one per moment and person, never for myself, and not too large`() =
         runTest {
             val id = h.posted(poster, amina).momentId
             h.shareKeyCopies(poster, emptyList()).assertError(StatusError.KeysInvalid)

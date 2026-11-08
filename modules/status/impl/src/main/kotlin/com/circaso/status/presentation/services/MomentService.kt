@@ -49,6 +49,9 @@ class MomentService(
     suspend fun requestKeys(caller: UserId, posters: List<UserId>): Resource<List<UserId>> =
         requestMomentKeys(caller, posters)
 
-    suspend fun shareKeyCopies(caller: UserId, copies: List<MomentKeyCopy>): Resource<Int> =
-        shareMomentKeyCopies(caller, copies)
+    suspend fun shareKeyCopies(
+        caller: UserId,
+        copies: List<MomentKeyCopy>,
+        answered: List<UserId> = emptyList(),
+    ): Resource<Int> = shareMomentKeyCopies(caller, copies, answered)
 }
