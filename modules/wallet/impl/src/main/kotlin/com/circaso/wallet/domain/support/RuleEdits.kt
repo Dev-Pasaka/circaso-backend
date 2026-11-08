@@ -15,8 +15,10 @@ import com.circaso.wallet.domain.models.FeeRule
 import com.circaso.wallet.domain.models.LimitRule
 import com.circaso.wallet.domain.models.VersionWrite
 import com.circaso.wallet.domain.models.VersionedRule
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * A rule's timeline under staff edits (decision 2026-11-08). Versions only ever add to the end: a change supersedes the
@@ -27,13 +29,20 @@ object RuleTimeline {
     /** How far ahead a change may be scheduled. */
     val MAX_AHEAD: Duration = Duration.ofDays(366)
 
-    /** [requested], or now when null; refused in the past or more than [MAX_AHEAD] away. */
+    /**
+     * Now, to the microsecond: what `timestamptz` keeps. PostgreSQL rounds a finer instant to the nearest microsecond,
+     * so a nanosecond "now" (Linux clocks) could be stored a little later than it was compared, and a version written
+     * to start now would not yet be in force. Every instant a rule edit writes or compares goes through here or [at].
+     */
+    fun now(clock: Clock): Instant = clock.instant().truncatedTo(ChronoUnit.MICROS)
+
+    /** [requested] to the microsecond, or now when null; refused in the past or more than [MAX_AHEAD] away. */
     fun at(
         requested: Instant?,
         now: Instant,
         field: String,
     ): Resource<Instant> {
-        val at = requested ?: return Resource.success(now)
+        val at = requested?.truncatedTo(ChronoUnit.MICROS) ?: return Resource.success(now)
         if (at.isBefore(now)) return Resource.error(WalletError.RuleInvalid(field, "can't be in the past"))
         if (at.isAfter(now.plus(MAX_AHEAD))) {
             return Resource.error(WalletError.RuleInvalid(field, "at most 366 days ahead"))

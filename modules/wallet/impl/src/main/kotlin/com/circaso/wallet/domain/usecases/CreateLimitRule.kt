@@ -32,7 +32,7 @@ class CreateLimitRule(
         effectiveFrom: Instant?,
         note: String,
     ): Resource<RuleChange<LimitRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
             RuleChecks.limitScope(scope).flatMap { wanted ->
                 RuleChecks.limit(terms).flatMap {

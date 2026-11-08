@@ -35,7 +35,7 @@ class CreateFeeRule(
         effectiveFrom: Instant?,
         note: String,
     ): Resource<RuleChange<FeeRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
             RuleChecks.feeScope(scope).flatMap { wanted ->
                 RuleChecks.fee(terms).flatMap {

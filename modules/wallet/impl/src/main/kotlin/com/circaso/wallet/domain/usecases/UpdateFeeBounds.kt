@@ -7,6 +7,7 @@ import com.circaso.wallet.domain.models.BoundsChange
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
+import com.circaso.wallet.domain.support.RuleTimeline
 import java.time.Clock
 
 /**
@@ -28,7 +29,7 @@ class UpdateFeeBounds(
                 if (minRateBps > maxRateBps) add(FieldError("maxRateBps", "must be at least the minimum"))
             }
         if (problems.isNotEmpty()) return Resource.error(WalletError.RuleInvalid(problems))
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return transactor.attempt("fee-bounds.update") {
             val before = admin.lockFeeBounds()
             val outside =

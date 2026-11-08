@@ -41,6 +41,7 @@ import kotlinx.coroutines.runBlocking
 import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -59,7 +60,15 @@ class FeeAdminDataTest {
     private val rules = RuleRepositoryImpl(database)
     private val admin = RuleAdminRepositoryImpl(database)
     private val transactor = DatabaseTransactor(database)
-    private val clock = MutableClock(Instant.now())
+
+    /**
+     * Linux clocks give nanoseconds; `timestamptz` keeps microseconds and rounds to the nearest. A "now" whose last
+     * digits round up (…991677 ns → …992 µs) is what broke CI: this clock always has them, so a Mac can't hide it.
+     */
+    private val clock = MutableClock(Instant.now().truncatedTo(ChronoUnit.MILLIS).plusNanos(991_677))
+
+    /** What the database holds for "now". */
+    private fun stored(at: Instant): Instant = at.truncatedTo(ChronoUnit.MICROS)
 
     private val change = ChangeFeeRule(admin, transactor, clock)
     private val end = EndFeeRule(admin, transactor, clock)
@@ -97,8 +106,9 @@ class FeeAdminDataTest {
             val versions = admin.feeVersions(BETWEEN_PEOPLE).sortedBy { it.version }
             assertEquals(listOf(1, 2), versions.map { it.version })
             assertEquals(50, versions[0].rateBps, "the old version is never overwritten")
-            assertEquals(clock.instant(), versions[0].effectiveTo)
-            assertEquals(clock.instant(), versions[1].effectiveFrom)
+            assertEquals(stored(clock.instant()), versions[0].effectiveTo)
+            assertEquals(stored(clock.instant()), versions[1].effectiveFrom)
+            assertEquals(versions[0].effectiveTo, versions[1].effectiveFrom, "no gap, no overlap")
             assertNull(versions[1].effectiveTo)
             assertEquals("Q4 pricing", versions[1].note)
             assertEquals("INTERNAL", versions[1].kind?.name, "the scope stays the rule's")
@@ -178,7 +188,8 @@ class FeeAdminDataTest {
         runBlocking<Unit> {
             val ended = end(EXTERNAL, 1, null).data()
 
-            assertEquals(clock.instant(), ended.after.effectiveTo)
+            assertEquals(stored(clock.instant()), ended.after.effectiveTo)
+            assertEquals(ended.after.effectiveTo, admin.feeVersions(EXTERNAL).single().effectiveTo, "as written")
             assertNull(inForce(EXTERNAL))
             assertEquals(1, admin.feeVersions(EXTERNAL).size)
             val again = change(EXTERNAL, 1, terms(150), null, "Revive")

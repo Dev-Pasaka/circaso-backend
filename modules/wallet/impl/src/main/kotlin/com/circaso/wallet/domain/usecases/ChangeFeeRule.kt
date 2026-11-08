@@ -32,7 +32,7 @@ class ChangeFeeRule(
         effectiveFrom: Instant?,
         note: String,
     ): Resource<RuleChange<FeeRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
             RuleChecks.fee(terms).flatMap {
                 RuleTimeline.at(effectiveFrom, now, "effectiveFrom").flatMap { from ->

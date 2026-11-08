@@ -23,7 +23,7 @@ class EndLimitRule(
         baseVersion: Int,
         effectiveTo: Instant?,
     ): Resource<RuleChange<LimitRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleTimeline.at(effectiveTo, now, "effectiveTo").flatMap { to ->
             transactor.attempt("limit-rules.end") {
                 if (!admin.lockLimitRule(ruleId)) return@attempt Resource.error(WalletError.RuleNotFound)

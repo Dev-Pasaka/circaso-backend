@@ -32,7 +32,7 @@ class ChangeLimitRule(
         effectiveFrom: Instant?,
         note: String,
     ): Resource<RuleChange<LimitRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
             RuleChecks.limit(terms).flatMap {
                 RuleTimeline.at(effectiveFrom, now, "effectiveFrom").flatMap { from ->

@@ -25,7 +25,7 @@ class EndFeeRule(
         baseVersion: Int,
         effectiveTo: Instant?,
     ): Resource<RuleChange<FeeRule>> {
-        val now = clock.instant()
+        val now = RuleTimeline.now(clock)
         return RuleTimeline.at(effectiveTo, now, "effectiveTo").flatMap { to ->
             transactor.attempt("fee-rules.end") {
                 admin.lockFeeBounds()
