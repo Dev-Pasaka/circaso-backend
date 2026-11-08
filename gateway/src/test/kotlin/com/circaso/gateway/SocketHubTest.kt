@@ -598,7 +598,7 @@ class SocketHubTest {
     fun `a support reply pushes the ticket's number and id from Circaso Support, a status change never`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val user = UserId.new()
             val ticketId = TicketId.new()
 
