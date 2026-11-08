@@ -47,7 +47,7 @@ object RuleAudit {
 
     private fun fee(terms: FeeRuleTerms): String =
         "rate ${terms.rateBps} bps, cap ${usd(terms.capBaseUsdMicros)}, min ${usd(terms.minFeeUsdMicros)}, " +
-            "gas share ${terms.gasShareMaxBps} bps, margin ${terms.gasMarginBps} bps"
+            "network cost margin ${terms.gasMarginBps} bps"
 
     private fun limit(terms: LimitRuleTerms): String =
         "per payment ${usd(terms.perPaymentMaxUsdMicros)}, per window ${usd(terms.dailyMaxUsdMicros)}, " +

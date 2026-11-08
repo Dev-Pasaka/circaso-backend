@@ -47,15 +47,7 @@ class PaymentPlan(
      */
     fun atPrice(usdPrice: java.math.BigDecimal): PaymentPlan {
         if (usdPrice.compareTo(coin.usdPrice) == 0) return this
-        val priced =
-            Pricing(
-                pricing.parties,
-                pricing.rule,
-                pricing.gasMinor,
-                pricing.feeAddress,
-                pricing.reason,
-                coin.copy(usdPrice = usdPrice),
-            )
+        val priced = pricing.withCoin(coin.copy(usdPrice = usdPrice))
         return PaymentPlan(owner, sender, destination, priced, allowance, balanceMinor, amount)
     }
 }

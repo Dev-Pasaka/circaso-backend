@@ -5,7 +5,10 @@ import kotlinx.serialization.Serializable
 // Fees and limits (decision 2026-11-08). Dollar figures are integer micro-dollars (`…UsdMicros`, 1 USD = 1_000_000),
 // rates integer basis points (100 bps = 1 %), times ISO-8601 instants. A null scope field matches anything.
 
-/** `kind`: INTERNAL | EXTERNAL; `senderType`, `receiverType`: PERSON | GROUP | SPACE. */
+/**
+ * `kind`: INTERNAL | EXTERNAL; `senderType`, `receiverType`: PERSON | GROUP. SPACE is still read on old rules, but a
+ * new rule naming it is refused with `wallet.rule_invalid` (Spaces archived 2026-11-05).
+ */
 @Serializable
 data class FeeScopeDto(
     val kind: String? = null,
@@ -16,14 +19,34 @@ data class FeeScopeDto(
     val walletId: String? = null,
 )
 
-/** fee = max(rate × min(amount, capBase), minFee, network cost × (1 + margin) ÷ gasShare), in dollars, to the cent. */
+/**
+ * Gas inclusive (decision 2026-11-08): fee = ceil_cent(network cost × (1 + gasMarginBps)) + half_up_cent(rate ×
+ * min(amount, capBase)), raised to minFee when set. The network cost always passes through, so a 0 % rule charges it
+ * alone. `gasShareMaxBps` is deprecated: still accepted and returned, no longer used in pricing.
+ */
 @Serializable
 data class FeeTermsDto(
     val rateBps: Int,
     val capBaseUsdMicros: Long = 10_000_000_000,
     val minFeeUsdMicros: Long? = null,
+    @Deprecated("No longer prices anything (2026-11-08); kept for compatibility.")
     val gasShareMaxBps: Int = 2_500,
     val gasMarginBps: Int = 2_000,
+)
+
+/**
+ * What one payment's network cost is priced on now, before a rule's margin, in micro-dollars. `source`: RECENT (the
+ * 75th percentile of the last `samples` confirmed transfers on the chain; `asset` null pools every coin) or ESTIMATE
+ * (the last Circle estimate a quote was priced on, for a chain with too little history). `at`: when it was worked out.
+ */
+@Serializable
+data class NetworkCostDto(
+    val blockchain: String,
+    val asset: String? = null,
+    val gasUsdMicros: Long,
+    val source: String,
+    val samples: Int,
+    val at: String,
 )
 
 @Serializable
@@ -51,7 +74,12 @@ data class FeeRuleDto(
 data class FeeBoundsDto(val minRateBps: Int, val maxRateBps: Int, val updatedAt: String)
 
 @Serializable
-data class FeeRulesResponse(val at: String, val bounds: FeeBoundsDto, val rules: List<FeeRuleDto>)
+data class FeeRulesResponse(
+    val at: String,
+    val bounds: FeeBoundsDto,
+    val rules: List<FeeRuleDto>,
+    val networkCosts: List<NetworkCostDto> = emptyList(),
+)
 
 @Serializable
 data class FeeRuleChangeResponse(val before: FeeRuleVersionDto? = null, val after: FeeRuleVersionDto)
