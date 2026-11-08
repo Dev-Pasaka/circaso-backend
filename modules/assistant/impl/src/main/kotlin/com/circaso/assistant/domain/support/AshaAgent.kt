@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.ReadNote
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.BlockKind
@@ -38,11 +39,15 @@ sealed interface AgentOutcome {
     val outputTokens: Int
     val toolsUsed: List<String>
 
+    /** The same tokens by the model that used them, split as the provider prices them (decision 2026-11-08). */
+    val tokensByModel: Map<String, TokenCounts>
+
     data class Answered(
         val text: String,
         override val inputTokens: Int,
         override val outputTokens: Int,
         override val toolsUsed: List<String>,
+        override val tokensByModel: Map<String, TokenCounts> = emptyMap(),
     ) : AgentOutcome
 
     data class WaitingForDevice(
@@ -52,7 +57,33 @@ sealed interface AgentOutcome {
         override val inputTokens: Int,
         override val outputTokens: Int,
         override val toolsUsed: List<String>,
+        override val tokensByModel: Map<String, TokenCounts> = emptyMap(),
     ) : AgentOutcome
+}
+
+/**
+ * Adds up a turn's tokens by model. [ModelUsage.inputTokens] is all of a call's input; the fresh part is what is left
+ * after the cache reads and writes (never below zero, should a provider count them differently).
+ */
+internal class TokenTally {
+    private val byModel = LinkedHashMap<String, TokenCounts>()
+
+    fun add(response: ModelResponse) {
+        val usage = response.usage
+        val fresh = (usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens).coerceAtLeast(0)
+        val counts =
+            TokenCounts(
+                fresh.toLong(),
+                usage.cacheReadTokens.coerceAtLeast(0).toLong(),
+                usage.cacheWriteTokens.coerceAtLeast(0).toLong(),
+                usage.outputTokens.coerceAtLeast(0).toLong(),
+            )
+        if (counts.isZero) return
+        val model = response.model?.takeIf { it.isNotBlank() } ?: TokenCounts.UNKNOWN_MODEL
+        byModel[model] = (byModel[model] ?: TokenCounts.ZERO) + counts
+    }
+
+    fun snapshot(): Map<String, TokenCounts> = byModel.toMap()
 }
 
 /** Who and what one turn is for: the tool context, whether the phone's chat tools are on, which model, which day. */
@@ -123,6 +154,7 @@ class AshaAgent(
         val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice), mascot, turn.isVoice)
         var input = 0
         var output = 0
+        val tally = TokenTally()
 
         var steps = startSteps
         while (steps < config.maxToolSteps) {
@@ -137,10 +169,11 @@ class AshaAgent(
                 }
             input += response.usage.inputTokens
             output += response.usage.outputTokens
+            tally.add(response)
 
             if (response.toolCalls.isEmpty()) {
                 finish(turn, mascot, listener)
-                return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
+                return Resource.success(AgentOutcome.Answered(reply.text, input, output, used, tally.snapshot()))
             }
 
             // Every call of the step runs (decision 2026-11-07): the model asks for what it needs at once, and the
@@ -177,14 +210,22 @@ class AshaAgent(
                 )
                 saveScene(turn, mascot.state)
                 return Resource.success(
-                    AgentOutcome.WaitingForDevice(device, messages.toPending(), steps, input, output, used),
+                    AgentOutcome.WaitingForDevice(
+                        device,
+                        messages.toPending(),
+                        steps,
+                        input,
+                        output,
+                        used,
+                        tally.snapshot(),
+                    ),
                 )
             }
         }
         reply.newStep()
         reply.show(GAVE_UP)
         finish(turn, mascot, listener)
-        return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
+        return Resource.success(AgentOutcome.Answered(reply.text, input, output, used, tally.snapshot()))
     }
 
     /** One call to the model, its text passed on as it comes; the whole answer once it is done. */

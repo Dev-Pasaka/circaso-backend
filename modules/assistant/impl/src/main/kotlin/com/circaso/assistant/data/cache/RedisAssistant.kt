@@ -1,5 +1,6 @@
 package com.circaso.assistant.data.cache
 
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.PendingCall
 import com.circaso.assistant.domain.ports.PendingMessage
 import com.circaso.assistant.domain.ports.PendingReadNote
@@ -81,6 +82,49 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
     override suspend fun tokens(userId: UserId, day: String): Pair<Long, Long> =
         read(key("in", userId, day)) to read(key("out", userId, day))
 
+    /**
+     * `quota:tok:{userId}:{day}`, one hash a day with a field per model and kind (`claude-haiku-5-5|in`). The hash is
+     * made (or its expiry renewed) with a marker field first, then each field grows with `HINCRBY`, so two turns ending
+     * together both count: neither overwrites the other's figures.
+     */
+    override suspend fun addModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+    ) {
+        val counts = byModel.filterValues { !it.isZero }
+        if (counts.isEmpty()) return
+        val key = key(TOKENS, userId, day)
+        redis.hashSet(key, mapOf(MARKER to "1"), TTL)
+        for ((model, tokens) in counts) {
+            for ((kind, value) in tokens.byKind()) {
+                if (value > 0) redis.hashIncrement(key, "$model$SEPARATOR$kind", value)
+            }
+        }
+    }
+
+    override suspend fun modelTokens(userId: UserId, day: String): Map<String, TokenCounts> {
+        val byModel = LinkedHashMap<String, TokenCounts>()
+        for ((field, raw) in redis.hashGetAll(key(TOKENS, userId, day))) {
+            val cut = field.lastIndexOf(SEPARATOR)
+            if (cut <= 0) continue
+            val model = field.substring(0, cut)
+            val value = raw.toLongOrNull() ?: continue
+            val add =
+                when (field.substring(cut + 1)) {
+                    "in" -> TokenCounts(input = value)
+                    "cr" -> TokenCounts(cacheRead = value)
+                    "cw" -> TokenCounts(cacheWrite = value)
+                    "out" -> TokenCounts(output = value)
+                    else -> continue
+                }
+            byModel[model] = (byModel[model] ?: TokenCounts.ZERO) + add
+        }
+        return byModel
+    }
+
+    private fun TokenCounts.byKind() = listOf("in" to input, "cr" to cacheRead, "cw" to cacheWrite, "out" to output)
+
     /** As [countTextTurn]: a refused search is given back, so the count settles at the cap. */
     override suspend fun countWebSearch(
         userId: UserId,
@@ -105,7 +149,10 @@ class RedisQuotaCounters(private val redis: RedisScope) : QuotaCounters {
 
     private companion object {
         val TTL: Duration = Duration.ofDays(2)
-        val KINDS = listOf("text", "voice", "in", "out", "search")
+        const val TOKENS = "tok"
+        const val MARKER = "_"
+        const val SEPARATOR = '|'
+        val KINDS = listOf("text", "voice", "in", "out", "search", TOKENS)
     }
 }
 

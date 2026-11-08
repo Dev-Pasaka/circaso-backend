@@ -6,7 +6,9 @@ import com.circaso.assistant.data.tables.AshaMessagesTable
 import com.circaso.assistant.data.tables.AuditTable
 import com.circaso.assistant.data.tables.EntitlementsTable
 import com.circaso.assistant.data.tables.UsageDailyTable
+import com.circaso.assistant.data.tables.UsageDailyTokensTable
 import com.circaso.assistant.domain.models.ChatMessage
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.TextVault
 import com.circaso.assistant.domain.repositories.AssistantChanges
 import com.circaso.assistant.domain.repositories.AssistantStore
@@ -114,6 +116,44 @@ class AssistantStoreImpl(private val database: Database, private val vault: Text
                 it[updatedAt] = at
             }
         }
+    }
+
+    /** One `INSERT … ON CONFLICT (user_id, usage_day, model) DO UPDATE SET … = GREATEST(…)` per model, as above. */
+    override suspend fun saveModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+        at: Instant,
+    ) {
+        val counts = byModel.filterValues { !it.isZero }
+        if (counts.isEmpty()) return
+        database.tx("usage.save-model-tokens") {
+            for ((model, tokens) in counts) {
+                UsageDailyTokensTable.upsert(
+                    UsageDailyTokensTable.userId,
+                    UsageDailyTokensTable.usageDay,
+                    UsageDailyTokensTable.model,
+                    onUpdate = { keepLargerTokens(it) },
+                ) {
+                    it[this.userId] = userId.value
+                    it[usageDay] = LocalDate.parse(day)
+                    it[this.model] = model
+                    it[inputTokens] = tokens.input
+                    it[cacheReadTokens] = tokens.cacheRead
+                    it[cacheWriteTokens] = tokens.cacheWrite
+                    it[outputTokens] = tokens.output
+                    it[updatedAt] = at
+                }
+            }
+        }
+    }
+
+    private fun UpsertBuilder.keepLargerTokens(update: UpdateStatement) {
+        update[UsageDailyTokensTable.inputTokens] = larger(UsageDailyTokensTable.inputTokens)
+        update[UsageDailyTokensTable.cacheReadTokens] = larger(UsageDailyTokensTable.cacheReadTokens)
+        update[UsageDailyTokensTable.cacheWriteTokens] = larger(UsageDailyTokensTable.cacheWriteTokens)
+        update[UsageDailyTokensTable.outputTokens] = larger(UsageDailyTokensTable.outputTokens)
+        update[UsageDailyTokensTable.updatedAt] = insertValue(UsageDailyTokensTable.updatedAt)
     }
 
     private fun UpsertBuilder.keepLarger(update: UpdateStatement) {

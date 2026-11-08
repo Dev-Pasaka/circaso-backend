@@ -3,6 +3,7 @@ package com.circaso.assistant.domain.ports
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.LiveEvent
 import com.circaso.assistant.domain.models.MascotSceneState
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.integrations.api.SpokenAudio
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
@@ -146,6 +147,19 @@ interface QuotaCounters {
     )
 
     suspend fun tokens(userId: UserId, day: String): Pair<Long, Long>
+
+    /**
+     * Adds a turn's tokens by model, split as the provider prices them (decision 2026-11-08), next to the totals of
+     * [addTokens]; the day's figures per model for the cost report.
+     */
+    suspend fun addModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+    )
+
+    /** The day's tokens by model; empty when there are none. */
+    suspend fun modelTokens(userId: UserId, day: String): Map<String, TokenCounts>
 
     /**
      * Counts one web search unless the day already holds [cap] (decision 2026-11-05), as [countTextTurn] counts a

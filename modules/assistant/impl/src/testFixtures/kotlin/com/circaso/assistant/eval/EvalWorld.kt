@@ -9,6 +9,7 @@ import com.circaso.assistant.data.tools.SupportTools
 import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.Plan
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.MascotScenes
 import com.circaso.assistant.domain.ports.QuotaCounters
@@ -785,6 +786,14 @@ private class EvalQuota : QuotaCounters {
     }
 
     override suspend fun tokens(userId: UserId, day: String) = read("i:$userId:$day") to read("o:$userId:$day")
+
+    override suspend fun addModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+    ) = Unit
+
+    override suspend fun modelTokens(userId: UserId, day: String): Map<String, TokenCounts> = emptyMap()
 
     override suspend fun countWebSearch(
         userId: UserId,

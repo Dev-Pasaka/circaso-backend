@@ -63,6 +63,7 @@ class RolesTest {
             Call("GET", "/v1/ops/transactions", Permission.TRANSACTIONS_READ),
             Call("GET", "/v1/ops/transactions/$transfer", Permission.TRANSACTIONS_READ),
             Call("GET", "/v1/ops/finance", Permission.FINANCE_READ),
+            Call("GET", "/v1/ops/ai-usage", Permission.AI_USAGE_READ),
             Call("GET", "/v1/ops/groups", Permission.GROUPS_READ),
             Call("GET", "/v1/ops/groups/${chat.value}", Permission.GROUPS_READ),
             Call("GET", "/v1/ops/tickets", Permission.TICKETS_READ),
@@ -160,7 +161,12 @@ class RolesTest {
         assertTrue(
             support.none {
                 it in
-                    setOf(Permission.USERS_MONEY, Permission.TRANSACTIONS_READ, Permission.FINANCE_READ)
+                    setOf(
+                        Permission.USERS_MONEY,
+                        Permission.TRANSACTIONS_READ,
+                        Permission.FINANCE_READ,
+                        Permission.AI_USAGE_READ,
+                    )
             },
         )
         assertTrue(

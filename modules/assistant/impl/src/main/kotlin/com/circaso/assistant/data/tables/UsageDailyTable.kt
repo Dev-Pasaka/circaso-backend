@@ -18,4 +18,9 @@ object UsageDailyTable : Table("assistant.usage_daily") {
     val webSearches = integer("web_searches").default(0)
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(userId, usageDay)
+
+    init {
+        // The staff cost report reads a range of days across every user (V4).
+        index("usage_daily_day_idx", false, usageDay)
+    }
 }

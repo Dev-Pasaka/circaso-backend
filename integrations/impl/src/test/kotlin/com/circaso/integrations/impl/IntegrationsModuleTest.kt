@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
@@ -38,6 +39,7 @@ import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.integrations.impl.anthropic.AnthropicAdminBilling
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleCustody
 import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
@@ -49,6 +51,7 @@ import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
+import com.circaso.integrations.impl.dev.NoAiBilling
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.llm.RetryingLanguageModel
@@ -444,6 +447,17 @@ class IntegrationsModuleTest {
                     ) { it.cause }.joinToString { it.message.orEmpty() },
             )
         }
+
+    @Test
+    fun `anthropic billing is off without its admin key and on with it`() {
+        val off = koin().get<AiBilling>()
+        assertIs<NoAiBilling>(off)
+        assertTrue(!off.isEnabled)
+        stopKoin()
+        val on = koin(mapOf("ops.anthropic-admin-key" to "sk-ant-admin01-test")).get<AiBilling>()
+        assertIs<AnthropicAdminBilling>(on)
+        assertTrue(on.isEnabled)
+    }
 
     @Test
     fun `web search is brave when its key is set and no provider is named, and brave needs the key`() {
