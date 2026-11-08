@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The suites that take longest, each in a job of its own (measured 2026-11-08). Everything else runs in `rest`,
+  # The suites that take longest, in jobs of their own (measured 2026-11-08; keep every job's suites under ~90 s). Everything else runs in `rest`,
   # so a new module is tested without touching this file.
   HEAVY: >-
     :infrastructure:impl:test
@@ -26,6 +26,11 @@ env:
     :app:test
     :modules:assistant:impl:test
     :modules:identity:impl:test
+    :integrations:impl:test
+    :architecture-tests:test
+    :modules:wallet:impl:test
+    :modules:users:impl:test
+    :gateway:test
 
 jobs:
   static:
@@ -40,6 +45,9 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
         with:
+          # Lets Gradle's configuration cache be saved and restored (about 40 s of every job). Without the secret it
+          # is simply not saved.
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
           # Only this job saves Gradle's caches (on main): it compiles every module, so its build cache serves all
           # the others. Several jobs saving at once only fight over the same cache key.
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
@@ -60,8 +68,14 @@ jobs:
             tasks: ":modules:messaging:impl:test"
           - shard: app
             tasks: ":app:test"
-          - shard: assistant + identity
-            tasks: ":modules:assistant:impl:test :modules:identity:impl:test"
+            # The longest single suite: two test processes, each with its own containers, on this runner of its own.
+            forks: 2
+          - shard: assistant
+            tasks: ":modules:assistant:impl:test"
+          - shard: identity
+            tasks: ":modules:identity:impl:test"
+          - shard: wallet + integrations + edge
+            tasks: ":integrations:impl:test :architecture-tests:test :modules:wallet:impl:test :modules:users:impl:test :gateway:test"
           - shard: rest
             tasks: rest
     steps:
@@ -72,6 +86,7 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
         with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
           cache-read-only: true
       # The tests start PostgreSQL 18 and Valkey in Docker (Testcontainers), which the runner has. Pulled while
       # Gradle compiles, so the first suite doesn't wait for them.
@@ -84,7 +99,7 @@ jobs:
             for t in $HEAVY; do excluded="$excluded -x $t"; done
             ./gradlew test $excluded --console=plain
           else
-            ./gradlew ${{ matrix.tasks }} --console=plain
+            ./gradlew ${{ matrix.tasks }} -Pcircaso.testForks=${{ matrix.forks || 1 }} --console=plain
           fi
 
   docs-ui:

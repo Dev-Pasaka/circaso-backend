@@ -45,6 +45,9 @@ val testLimit = gradle.sharedServices.registerIfAbsent("testLimit", TestLimit::c
 tasks.withType<Test>().configureEach {
     usesService(testLimit)
     useJUnitPlatform()
+    // Test processes per suite: 1 by default (each starts its own PostgreSQL and Valkey). CI raises it with
+    // -Pcircaso.testForks=N for a suite that has a runner to itself.
+    maxParallelForks = providers.gradleProperty("circaso.testForks").map { it.toInt() }.getOrElse(1)
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

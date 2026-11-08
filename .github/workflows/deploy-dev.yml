@@ -25,6 +25,7 @@ concurrency:
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
+    secrets: inherit   # GRADLE_ENCRYPTION_KEY, for Gradle's configuration cache
 
   image:
     name: Build and publish the image
@@ -48,6 +49,7 @@ jobs:
         with:
           # CI's "Compile and lint" job saves the caches on main; this one only reads them (its compile is all cache hits).
           cache-read-only: true
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
       # The server is compiled here, where Gradle's cache works; the Dockerfile only packages the result.
       - run: ./gradlew :app:installDist -x test --console=plain
       - uses: docker/setup-buildx-action@v3
