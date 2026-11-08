@@ -34,6 +34,9 @@ import kotlinx.coroutines.cancel
 import org.koin.dsl.module
 import org.koin.ktor.ext.getKoin
 import kotlin.time.Duration.Companion.seconds
+import com.circaso.infrastructure.api.HttpClients
+import com.circaso.gateway.access.HttpAccessKeys
+import com.circaso.gateway.access.AccessVerifier
 
 /**
  * The gateway's Koin bindings: the socket hub, `Realtime` for every module to call, and the gateway's consumer
@@ -94,7 +97,11 @@ fun Application.installGateway() {
             hub.routes(this)
         }
         koin.getAll<PageContributor>().forEach { it.install(this) }
-        apiDocsRoutes(this@installGateway, deps.config.apiDocs)
+        apiDocsRoutes(
+            this@installGateway,
+            deps.config.apiDocs,
+            deps.config.apiDocs.access?.let { AccessVerifier(it, HttpAccessKeys(koin.get<HttpClients>(), it)) },
+        )
         errorPageRoutes()
     }
 }

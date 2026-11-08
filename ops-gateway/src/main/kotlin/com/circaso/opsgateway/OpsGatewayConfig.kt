@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.Secrets
 import java.net.URI
 import java.time.Duration
+import com.circaso.gateway.access.AccessSettings
 
 /**
  * The ops gateway's settings (decision 2026-11-08), all `OPS_*`, none shared with the app gateway:
@@ -95,10 +96,6 @@ data class OpsGatewayConfig(
 }
 
 /** Cloudflare Access: the team domain (`circaso.cloudflareaccess.com`) and the application's audience tag. */
-data class AccessSettings(val teamDomain: String, val audience: String) {
-    val issuer: String get() = "https://$teamDomain"
-}
-
 /** Origins compared exactly: scheme, host and port, lowercased, no path. */
 object Origins {
     fun normalise(raw: String): String? =

@@ -1,8 +1,7 @@
-package com.circaso.opsgateway.auth
+package com.circaso.gateway.access
 
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.operation
-import com.circaso.opsgateway.AccessSettings
 import com.circaso.shared.CircasoJson
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -15,7 +14,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 
-private val log = LoggerFactory.getLogger("com.circaso.opsgateway.auth.HttpAccessKeys")
+private val log = LoggerFactory.getLogger("com.circaso.gateway.access.HttpAccessKeys")
 
 /**
  * The team's signing keys from `https://<team>/cdn-cgi/access/certs`, through the named `cloudflare-access` client

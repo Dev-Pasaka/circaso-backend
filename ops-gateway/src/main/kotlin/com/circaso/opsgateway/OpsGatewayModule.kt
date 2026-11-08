@@ -1,13 +1,13 @@
 package com.circaso.opsgateway
 
+import com.circaso.gateway.access.AccessVerifier
+import com.circaso.gateway.access.HttpAccessKeys
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.ops.api.StaffDirectory
-import com.circaso.opsgateway.auth.AccessVerifier
 import com.circaso.opsgateway.auth.DevLogin
-import com.circaso.opsgateway.auth.HttpAccessKeys
 import com.circaso.web.OpsRouteContributor
 import io.ktor.server.application.Application
 import org.koin.dsl.module

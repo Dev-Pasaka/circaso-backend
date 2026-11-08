@@ -1,8 +1,8 @@
-package com.circaso.opsgateway
+package com.circaso.gateway.access
 
-import com.circaso.opsgateway.auth.AccessCheck
-import com.circaso.opsgateway.auth.AccessKeys
-import com.circaso.opsgateway.auth.AccessVerifier
+import com.circaso.gateway.access.AccessCheck
+import com.circaso.gateway.access.AccessKeys
+import com.circaso.gateway.access.AccessVerifier
 import kotlinx.coroutines.test.runTest
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
