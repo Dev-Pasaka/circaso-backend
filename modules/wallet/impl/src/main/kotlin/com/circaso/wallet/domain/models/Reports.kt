@@ -48,7 +48,15 @@ data class TransferQuery(
     val until: Instant? = null,
 )
 
-data class TransferResults(val transfers: List<Transfer>, val nextCursor: String?)
+/** [toFeeWallet]: the transfers among [transfers] whose destination is Circaso's own fee wallet on their chain. */
+data class TransferResults(
+    val transfers: List<Transfer>,
+    val nextCursor: String?,
+    val toFeeWallet: Set<TransferId> = emptySet(),
+)
+
+/** One transfer for staff, and whether its destination is Circaso's own fee wallet. */
+data class StaffTransfer(val transfer: Transfer, val toFeeWallet: Boolean)
 
 /** Confirmed transfers in one period: how many and their dollar weight in micro-dollars. */
 data class PeriodSums(val count: Long, val volumeUsdMicros: Long)

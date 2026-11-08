@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.dto
 
+import io.ktor.openapi.JsonSchema
 import kotlinx.serialization.Serializable
 
 // Money: integer micro-dollars (`…UsdMicros`, 1 USD = 1_000_000) and exact coin amounts as strings in the coin's minor
@@ -29,13 +30,47 @@ data class HoldingsResponse(
     val balancesAvailable: Boolean,
 )
 
+/**
+ * One side of a transfer. `kind`: USER (id = user id), GROUP (id = the group's chat id; `name` is always null, a
+ * group's name is end-to-end encrypted, and `memberCount` is null once the group is gone), EXTERNAL (id = the
+ * address, `name` = it shortened) or FEE (Circaso's fee wallet; id = its address, `name` = "Circaso fee").
+ */
+@Serializable
+@JsonSchema.Description(
+    "One side of a transfer: USER (id = user id), GROUP (id = chat id, name always null: group names are " +
+        "end-to-end encrypted), EXTERNAL (id = address, name = it shortened) or FEE (Circaso's fee wallet).",
+)
+data class PartyDto(
+    val kind: String,
+    val id: String,
+    val name: String? = null,
+    val memberCount: Int? = null,
+)
+
+/** The fee leg that went to Circaso's fee wallet in the payment's own signature; its amount is the transfer's fee. */
+@Serializable
+data class FeeLegDto(
+    val amountMinor: String,
+    val decimals: Int,
+    val asset: String,
+    val to: PartyDto,
+)
+
 @Serializable
 data class TransferDto(
     val transferId: String,
     val senderId: String,
+    @JsonSchema.DeprecatedSchema
+    @JsonSchema.Description("Deprecated: use sender.name. The sender's display name when the sender is a person.")
     val senderName: String? = null,
     val recipientId: String? = null,
+    @JsonSchema.DeprecatedSchema
+    @JsonSchema.Description("Deprecated: use recipient.name. The recipient's display name when it is a person.")
     val recipientName: String? = null,
+    val sender: PartyDto,
+    val recipient: PartyDto,
+    /** Null when the payment carried no fee leg. */
+    val fee: FeeLegDto? = null,
     val destinationAddress: String,
     val blockchain: String,
     val asset: String,

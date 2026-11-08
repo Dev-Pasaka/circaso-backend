@@ -24,6 +24,8 @@ class AuditTrail(private val audit: AuditRepository, private val clock: Clock) {
         targetId: String?,
         reason: String? = null,
         detail: String? = null,
+        /** What changed, from the result: replaces [detail] when the action succeeded (a rule's before and after). */
+        outcome: (T) -> String? = { null },
         block: suspend () -> Resource<T>,
     ): Resource<T> {
         val entry =
@@ -53,8 +55,13 @@ class AuditTrail(private val audit: AuditRepository, private val clock: Clock) {
                 throw e
             }
         when (result) {
-            is Resource.Success -> audit.finish(entry.id, AuditOutcome.SUCCEEDED, null, clock.instant())
-            is Resource.Error -> audit.finish(entry.id, AuditOutcome.FAILED, result.error.code, clock.instant())
+            is Resource.Success -> {
+                audit.finish(entry.id, AuditOutcome.SUCCEEDED, null, clock.instant(), outcome(result.data))
+            }
+
+            is Resource.Error -> {
+                audit.finish(entry.id, AuditOutcome.FAILED, result.error.code, clock.instant())
+            }
         }
         return result
     }

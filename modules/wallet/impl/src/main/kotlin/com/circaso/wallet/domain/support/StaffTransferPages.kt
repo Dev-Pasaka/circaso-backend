@@ -17,7 +17,7 @@ import java.util.UUID
  * two columns could use neither index for the order and would sort every transfer the person ever made. Each side
  * reads one more than the page past the cursor, so the merge's first rows are exactly the page.
  */
-class StaffTransferPages(private val reports: WalletReportRepository) {
+class StaffTransferPages(private val reports: WalletReportRepository, private val feeWallets: FeeWallets? = null) {
     suspend fun page(
         query: TransferQuery,
         person: UserId?,
@@ -44,7 +44,15 @@ class StaffTransferPages(private val reports: WalletReportRepository) {
             } else {
                 null
             }
-        return Resource.success(TransferResults(shown, next))
+        val toFeeWallet =
+            feeWallets
+                ?.let { wallets ->
+                    shown
+                        .filter { it.recipientId == null && wallets.isFeeWallet(it.blockchain, it.destinationAddress) }
+                        .map { it.transferId }
+                        .toSet()
+                }.orEmpty()
+        return Resource.success(TransferResults(shown, next, toFeeWallet))
     }
 
     private suspend fun merged(

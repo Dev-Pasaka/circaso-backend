@@ -10,6 +10,7 @@ const val TAG_MONEY = "Ops · Money"
 const val TAG_GROUPS = "Ops · Groups"
 const val TAG_TICKETS = "Ops · Tickets"
 const val TAG_STAFF = "Ops · Staff and audit"
+const val TAG_FEES = "Ops · Fees and limits"
 
 const val MALFORMED = "request.malformed"
 const val FORBIDDEN = "ops.role_forbidden"

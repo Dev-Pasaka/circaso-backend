@@ -16,6 +16,9 @@ enum class AuditTarget(val wire: String) {
     TICKET("ticket"),
     STAFF("staff"),
     SUPPORT_ACCOUNT("support_account"),
+    FEE_RULE("fee_rule"),
+    LIMIT_RULE("limit_rule"),
+    FEE_BOUNDS("fee_bounds"),
     ;
 
     companion object {
@@ -35,6 +38,13 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     STAFF_UPDATE("staff.update", AuditTarget.STAFF),
     STAFF_DEV_LOGIN("staff.dev_login", AuditTarget.STAFF),
     SUPPORT_ACCOUNT_CREATE("support_account.create", AuditTarget.SUPPORT_ACCOUNT),
+    FEE_RULE_CREATE("fee_rule.create", AuditTarget.FEE_RULE),
+    FEE_RULE_CHANGE("fee_rule.change", AuditTarget.FEE_RULE),
+    FEE_RULE_END("fee_rule.end", AuditTarget.FEE_RULE),
+    LIMIT_RULE_CREATE("limit_rule.create", AuditTarget.LIMIT_RULE),
+    LIMIT_RULE_CHANGE("limit_rule.change", AuditTarget.LIMIT_RULE),
+    LIMIT_RULE_END("limit_rule.end", AuditTarget.LIMIT_RULE),
+    FEE_BOUNDS_UPDATE("fee_bounds.update", AuditTarget.FEE_BOUNDS),
     ;
 
     companion object {
@@ -45,7 +55,8 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
 /**
  * One staff action: who ([actorId], their email and role at the time), what ([action]), on what ([targetId]), why
  * ([reason], required for a suspension), when ([at]) and how it ended. [detail] is a short, non-personal note of what
- * changed (`role FINANCE→SUPPORT`, `status RESOLVED`); never a message body.
+ * changed (`role FINANCE→SUPPORT`, `status RESOLVED`; for a fee or limit rule, the version before and after); never a
+ * message body.
  */
 data class AuditEntry(
     val id: UUID,

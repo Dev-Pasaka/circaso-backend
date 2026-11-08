@@ -14,11 +14,18 @@ import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.domain.support.StaffRoster
 import com.circaso.ops.domain.support.TicketViews
+import com.circaso.ops.domain.support.TransferParties
 import com.circaso.ops.domain.support.UserViews
 import com.circaso.ops.domain.usecases.AddStaff
 import com.circaso.ops.domain.usecases.AssignTicket
+import com.circaso.ops.domain.usecases.ChangeFeeRule
+import com.circaso.ops.domain.usecases.ChangeLimitRule
 import com.circaso.ops.domain.usecases.ChangeTicketStatus
+import com.circaso.ops.domain.usecases.CreateFeeRule
+import com.circaso.ops.domain.usecases.CreateLimitRule
 import com.circaso.ops.domain.usecases.CreateSupportAccount
+import com.circaso.ops.domain.usecases.EndFeeRule
+import com.circaso.ops.domain.usecases.EndLimitRule
 import com.circaso.ops.domain.usecases.GetDashboard
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
@@ -28,7 +35,9 @@ import com.circaso.ops.domain.usecases.GetUserAccount
 import com.circaso.ops.domain.usecases.GetUserDevices
 import com.circaso.ops.domain.usecases.GetUserWallets
 import com.circaso.ops.domain.usecases.ListAudit
+import com.circaso.ops.domain.usecases.ListFeeRules
 import com.circaso.ops.domain.usecases.ListGroups
+import com.circaso.ops.domain.usecases.ListLimitRules
 import com.circaso.ops.domain.usecases.ListPermissions
 import com.circaso.ops.domain.usecases.ListStaff
 import com.circaso.ops.domain.usecases.ListSupportAccounts
@@ -44,9 +53,11 @@ import com.circaso.ops.domain.usecases.SearchUsers
 import com.circaso.ops.domain.usecases.SignInStaff
 import com.circaso.ops.domain.usecases.SuspendUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
+import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
 import com.circaso.ops.presentation.controllers.dashboardController
+import com.circaso.ops.presentation.controllers.feeController
 import com.circaso.ops.presentation.controllers.groupController
 import com.circaso.ops.presentation.controllers.meController
 import com.circaso.ops.presentation.controllers.moneyController
@@ -55,6 +66,7 @@ import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
 import com.circaso.ops.presentation.services.AuditService
 import com.circaso.ops.presentation.services.DashboardService
+import com.circaso.ops.presentation.services.FeeService
 import com.circaso.ops.presentation.services.GroupService
 import com.circaso.ops.presentation.services.MeService
 import com.circaso.ops.presentation.services.MoneyService
@@ -114,6 +126,7 @@ fun opsModule(config: Config): Module =
         single { AuditTrail(get(), clock) }
         single { UserViews(get(), get(), get()) }
         single { TicketViews(get(), get()) }
+        single { TransferParties(get(), get()) }
         single { SignInStaff(get()) }
         single { RecordDevLogin(get()) }
         single { ListPermissions() }
@@ -144,6 +157,15 @@ fun opsModule(config: Config): Module =
         single { ListAudit(get()) }
         single { ListSupportAccounts(get()) }
         single { CreateSupportAccount(get(), get()) }
+        single { ListFeeRules(get()) }
+        single { CreateFeeRule(get(), get()) }
+        single { ChangeFeeRule(get(), get()) }
+        single { EndFeeRule(get(), get()) }
+        single { UpdateFeeBounds(get(), get()) }
+        single { ListLimitRules(get()) }
+        single { CreateLimitRule(get(), get()) }
+        single { ChangeLimitRule(get(), get()) }
+        single { EndLimitRule(get(), get()) }
 
         // presentation
         single { StaffDirectoryService(get(), get()) }
@@ -156,6 +178,7 @@ fun opsModule(config: Config): Module =
         single { StaffService(get(), get(), get()) }
         single { AuditService(get()) }
         single { SupportAccountService(get(), get()) }
+        single { FeeService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -167,6 +190,7 @@ fun opsModule(config: Config): Module =
             val staff = get<StaffService>()
             val audit = get<AuditService>()
             val supportAccounts = get<SupportAccountService>()
+            val fees = get<FeeService>()
             OpsRouteContributor { route ->
                 route.meController(me, environment)
                 route.dashboardController(dashboard)
@@ -175,6 +199,7 @@ fun opsModule(config: Config): Module =
                 route.groupController(groups, settings)
                 route.ticketController(tickets, settings)
                 route.staffController(staff, audit, supportAccounts, settings)
+                route.feeController(fees)
             }
         }
     }

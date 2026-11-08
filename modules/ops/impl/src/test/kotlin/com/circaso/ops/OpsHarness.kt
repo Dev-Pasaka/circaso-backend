@@ -11,6 +11,7 @@ import com.circaso.ops.domain.repositories.StaffRepository
 import com.circaso.shared.StaffRole
 import com.circaso.support.api.SupportDesk
 import com.circaso.users.api.ProfileAdmin
+import com.circaso.wallet.api.FeeAdmin
 import com.circaso.wallet.api.WalletReports
 import com.circaso.web.OpsRouteContributor
 import com.circaso.web.StaffPrincipal
@@ -40,6 +41,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
     val supportAccounts = FakeSupportAccounts()
     val staff = MemoryStaff()
     val audit = MemoryAudit()
+    val fees = FakeFeeAdmin()
 
     val koin: Koin =
         koinApplication {
@@ -55,6 +57,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
                     single<SupportAccounts> { supportAccounts }
                     single<StaffRepository> { staff }
                     single<AuditRepository> { audit }
+                    single<FeeAdmin> { fees }
                 },
             )
         }.koin

@@ -76,6 +76,21 @@ class RolesTest {
             Call("PATCH", "/v1/ops/staff/$otherStaff", Permission.STAFF_MANAGE, """{"active":false}"""),
             Call("GET", "/v1/ops/audit", Permission.AUDIT_READ),
             Call("GET", "/v1/ops/support-accounts", Permission.SUPPORT_ACCOUNTS_MANAGE),
+            Call("GET", "/v1/ops/fees/rules", Permission.FEES_READ),
+            Call("GET", "/v1/ops/fees/bounds", Permission.FEES_READ),
+            Call("GET", "/v1/ops/limits/rules", Permission.FEES_READ),
+            Call("POST", "/v1/ops/fees/rules", Permission.FEES_MANAGE, NEW_FEE_RULE),
+            Call("POST", "/v1/ops/fees/rules/$FEE_RULE/versions", Permission.FEES_MANAGE, FEE_CHANGE),
+            Call("POST", "/v1/ops/fees/rules/$FEE_RULE/end", Permission.FEES_MANAGE, RULE_END),
+            Call(
+                "PATCH",
+                "/v1/ops/fees/bounds",
+                Permission.FEES_MANAGE,
+                """{"minRateBps":0,"maxRateBps":250,"reason":"Q4 review"}""",
+            ),
+            Call("POST", "/v1/ops/limits/rules", Permission.FEES_MANAGE, NEW_LIMIT_RULE),
+            Call("POST", "/v1/ops/limits/rules/$LIMIT_RULE/versions", Permission.FEES_MANAGE, LIMIT_CHANGE),
+            Call("POST", "/v1/ops/limits/rules/$LIMIT_RULE/end", Permission.FEES_MANAGE, RULE_END),
             Call(
                 "POST",
                 "/v1/ops/support-accounts",
@@ -174,6 +189,27 @@ class RolesTest {
             assertTrue(body.contains("\"role\":\"FINANCE\""))
         }
 
+    @Test
+    fun `fees are read by FINANCE and ADMIN and changed by ADMIN alone`() {
+        assertEquals(setOf(StaffRole.ADMIN, StaffRole.FINANCE), Permission.FEES_READ.roles)
+        assertEquals(setOf(StaffRole.ADMIN), Permission.FEES_MANAGE.roles)
+    }
+
     @Suppress("unused")
     private val unusedUser: UserId = user
+
+    private companion object {
+        const val FEE_RULE = "0195f2f0-0000-7000-8000-000000000001"
+        const val LIMIT_RULE = "0195f2f0-0000-7000-8000-000000000101"
+        const val TERMS = """{"rateBps":75,"capBaseUsdMicros":10000000000,"gasShareMaxBps":2500,"gasMarginBps":2000}"""
+        const val NEW_FEE_RULE =
+            """{"scope":{"kind":"EXTERNAL","blockchain":"BASE"},"terms":$TERMS,"reason":"Base launch"}"""
+        const val FEE_CHANGE = """{"baseVersion":1,"terms":$TERMS,"reason":"Q4 pricing"}"""
+        const val RULE_END = """{"baseVersion":1,"reason":"Retired"}"""
+        const val LIMIT_TERMS =
+            """{"perPaymentMaxUsdMicros":1000000000,""" + """"dailyMaxUsdMicros":2000000000,"windowHours":24}"""
+        const val NEW_LIMIT_RULE =
+            """{"scope":{"ownerType":"GROUP","asset":"USDC"},"terms":$LIMIT_TERMS,"reason":"Groups"}"""
+        const val LIMIT_CHANGE = """{"baseVersion":1,"terms":$LIMIT_TERMS,"reason":"KYC tier 1"}"""
+    }
 }

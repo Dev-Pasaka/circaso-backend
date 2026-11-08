@@ -7,6 +7,8 @@ import com.circaso.ops.domain.models.AuditPage
 import com.circaso.ops.domain.models.Dashboard
 import com.circaso.ops.domain.models.GroupDetail
 import com.circaso.ops.domain.models.GroupSummary
+import com.circaso.ops.domain.models.Party
+import com.circaso.ops.domain.models.PartyKind
 import com.circaso.ops.domain.models.Staff
 import com.circaso.ops.domain.models.SupportAccountEntry
 import com.circaso.ops.domain.models.TicketLine
@@ -25,6 +27,7 @@ import com.circaso.ops.presentation.dto.DashboardResponse
 import com.circaso.ops.presentation.dto.DayCountDto
 import com.circaso.ops.presentation.dto.DeviceDto
 import com.circaso.ops.presentation.dto.FeeDayDto
+import com.circaso.ops.presentation.dto.FeeLegDto
 import com.circaso.ops.presentation.dto.FeesTileDto
 import com.circaso.ops.presentation.dto.FinanceResponse
 import com.circaso.ops.presentation.dto.FinanceTotalsDto
@@ -36,6 +39,7 @@ import com.circaso.ops.presentation.dto.GroupWalletsDto
 import com.circaso.ops.presentation.dto.GroupsTileDto
 import com.circaso.ops.presentation.dto.HoldingsResponse
 import com.circaso.ops.presentation.dto.MoneyDayDto
+import com.circaso.ops.presentation.dto.PartyDto
 import com.circaso.ops.presentation.dto.PeriodDto
 import com.circaso.ops.presentation.dto.SessionDto
 import com.circaso.ops.presentation.dto.SignInDto
@@ -139,14 +143,19 @@ fun OpsHoldings.toResponse() =
         balancesAvailable = balancesAvailable,
     )
 
+fun Party.toDto() = PartyDto(kind.name, id, name, memberCount)
+
 fun TransferView.toDto(): TransferDto {
     val t = transfer
     return TransferDto(
         transferId = t.transferId.toString(),
         senderId = t.senderId.toString(),
-        senderName = senderName,
+        senderName = sender.name.takeIf { sender.kind == PartyKind.USER },
         recipientId = t.recipientId?.toString(),
-        recipientName = recipientName,
+        recipientName = recipient.name.takeIf { recipient.kind == PartyKind.USER },
+        sender = sender.toDto(),
+        recipient = recipient.toDto(),
+        fee = fee?.let { FeeLegDto(t.feeMinor.toString(), t.decimals, t.asset, it.toDto()) },
         destinationAddress = t.destinationAddress,
         blockchain = t.blockchain,
         asset = t.asset,
@@ -207,6 +216,7 @@ fun GroupDetail.toResponse() =
         wallet =
             wallet?.let { ref ->
                 GroupWalletDto(
+                    walletId = ref.walletId.toString(),
                     signerId = ref.signerId.toString(),
                     createdAt = ref.createdAt.toString(),
                     balances = holdings?.wallets?.flatMap { chain -> chain.balances.map { it.toDto() } }.orEmpty(),

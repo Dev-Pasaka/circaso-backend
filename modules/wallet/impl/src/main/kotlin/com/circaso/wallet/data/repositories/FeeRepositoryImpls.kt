@@ -46,6 +46,45 @@ private fun ownerType(text: String?): WalletOwnerType? = text?.let { WalletOwner
 
 private fun asset(text: String?): String? = text?.trim()?.uppercase()?.ifEmpty { null }
 
+/** A `fee_rules` row as the domain reads it. */
+internal fun ResultRow.toFeeRule() =
+    FeeRule(
+        ruleId = this[FeeRulesTable.ruleId],
+        version = this[FeeRulesTable.version],
+        kind = this[FeeRulesTable.kind]?.let { FeeKind.valueOf(it) },
+        senderType = ownerType(this[FeeRulesTable.senderType]),
+        receiverType = ownerType(this[FeeRulesTable.receiverType]),
+        blockchain = this[FeeRulesTable.blockchain],
+        asset = asset(this[FeeRulesTable.asset]),
+        walletId = this[FeeRulesTable.walletId]?.let(::WalletId),
+        rateBps = this[FeeRulesTable.rateBps],
+        capBaseMinor = this[FeeRulesTable.capBaseUsd].toMicro(),
+        minFeeMinor = this[FeeRulesTable.minFeeUsd]?.toMicro(),
+        gasShareMaxBps = this[FeeRulesTable.gasShareMaxBps],
+        gasMarginBps = this[FeeRulesTable.gasMarginBps],
+        effectiveFrom = this[FeeRulesTable.effectiveFrom],
+        effectiveTo = this[FeeRulesTable.effectiveTo],
+        note = this[FeeRulesTable.note],
+        createdAt = this[FeeRulesTable.createdAt],
+    )
+
+/** A `limit_rules` row as the domain reads it. */
+internal fun ResultRow.toLimitRule() =
+    LimitRule(
+        ruleId = this[LimitRulesTable.ruleId],
+        version = this[LimitRulesTable.version],
+        ownerType = ownerType(this[LimitRulesTable.ownerType]),
+        walletId = this[LimitRulesTable.walletId]?.let(::WalletId),
+        asset = asset(this[LimitRulesTable.asset]),
+        perPaymentMaxMinor = this[LimitRulesTable.perPaymentMaxUsd]?.toMicro(),
+        dailyMaxMinor = this[LimitRulesTable.dailyMaxUsd]?.toMicro(),
+        window = Duration.ofHours(this[LimitRulesTable.windowHours].toLong()),
+        effectiveFrom = this[LimitRulesTable.effectiveFrom],
+        effectiveTo = this[LimitRulesTable.effectiveTo],
+        note = this[LimitRulesTable.note],
+        createdAt = this[LimitRulesTable.createdAt],
+    )
+
 /** `fee_rules` and `limit_rules`: small tables read whole; the domain picks the versions in force. */
 class RuleRepositoryImpl(private val database: Database) : RuleRepository {
     override suspend fun feeRules(): List<FeeRule> =
@@ -57,39 +96,6 @@ class RuleRepositoryImpl(private val database: Database) : RuleRepository {
         database.tx("limit-rules.all") {
             LimitRulesTable.selectAll().map { it.toLimitRule() }.toList()
         }
-
-    private fun ResultRow.toFeeRule() =
-        FeeRule(
-            ruleId = this[FeeRulesTable.ruleId],
-            version = this[FeeRulesTable.version],
-            kind = this[FeeRulesTable.kind]?.let { FeeKind.valueOf(it) },
-            senderType = ownerType(this[FeeRulesTable.senderType]),
-            receiverType = ownerType(this[FeeRulesTable.receiverType]),
-            blockchain = this[FeeRulesTable.blockchain],
-            asset = asset(this[FeeRulesTable.asset]),
-            walletId = this[FeeRulesTable.walletId]?.let(::WalletId),
-            rateBps = this[FeeRulesTable.rateBps],
-            capBaseMinor = this[FeeRulesTable.capBaseUsd].toMicro(),
-            minFeeMinor = this[FeeRulesTable.minFeeUsd]?.toMicro(),
-            gasShareMaxBps = this[FeeRulesTable.gasShareMaxBps],
-            gasMarginBps = this[FeeRulesTable.gasMarginBps],
-            effectiveFrom = this[FeeRulesTable.effectiveFrom],
-            effectiveTo = this[FeeRulesTable.effectiveTo],
-        )
-
-    private fun ResultRow.toLimitRule() =
-        LimitRule(
-            ruleId = this[LimitRulesTable.ruleId],
-            version = this[LimitRulesTable.version],
-            ownerType = ownerType(this[LimitRulesTable.ownerType]),
-            walletId = this[LimitRulesTable.walletId]?.let(::WalletId),
-            asset = asset(this[LimitRulesTable.asset]),
-            perPaymentMaxMinor = this[LimitRulesTable.perPaymentMaxUsd]?.toMicro(),
-            dailyMaxMinor = this[LimitRulesTable.dailyMaxUsd]?.toMicro(),
-            window = Duration.ofHours(this[LimitRulesTable.windowHours].toLong()),
-            effectiveFrom = this[LimitRulesTable.effectiveFrom],
-            effectiveTo = this[LimitRulesTable.effectiveTo],
-        )
 }
 
 /** `fee_quotes`, by its id; `wallet.purge-expired` drops them once they have run out. */
