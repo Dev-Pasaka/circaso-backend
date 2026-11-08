@@ -1,6 +1,6 @@
 package com.circaso.opsgateway
 
-import com.circaso.opsgateway.auth.AccessJwk
+import com.circaso.gateway.access.AccessJwk
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.math.BigInteger

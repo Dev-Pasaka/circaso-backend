@@ -1,5 +1,6 @@
 package com.circaso.opsgateway
 
+import com.circaso.gateway.access.AccessSettings
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.Secrets
@@ -92,11 +93,6 @@ data class OpsGatewayConfig(
             )
         }
     }
-}
-
-/** Cloudflare Access: the team domain (`circaso.cloudflareaccess.com`) and the application's audience tag. */
-data class AccessSettings(val teamDomain: String, val audience: String) {
-    val issuer: String get() = "https://$teamDomain"
 }
 
 /** Origins compared exactly: scheme, host and port, lowercased, no path. */
