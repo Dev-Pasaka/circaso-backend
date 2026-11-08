@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The suites that take longest, each in a job of its own (measured 2026-11-08). Everything else runs in `rest`,
+  # The suites that take longest, in jobs of their own (measured 2026-11-08; keep every job's suites under ~90 s). Everything else runs in `rest`,
   # so a new module is tested without touching this file.
   HEAVY: >-
     :infrastructure:impl:test
@@ -26,6 +26,11 @@ env:
     :app:test
     :modules:assistant:impl:test
     :modules:identity:impl:test
+    :integrations:impl:test
+    :architecture-tests:test
+    :modules:wallet:impl:test
+    :modules:users:impl:test
+    :gateway:test
 
 jobs:
   static:
@@ -60,8 +65,12 @@ jobs:
             tasks: ":modules:messaging:impl:test"
           - shard: app
             tasks: ":app:test"
-          - shard: assistant + identity
-            tasks: ":modules:assistant:impl:test :modules:identity:impl:test"
+          - shard: assistant
+            tasks: ":modules:assistant:impl:test"
+          - shard: identity
+            tasks: ":modules:identity:impl:test"
+          - shard: wallet + integrations + edge
+            tasks: ":integrations:impl:test :architecture-tests:test :modules:wallet:impl:test :modules:users:impl:test :gateway:test"
           - shard: rest
             tasks: rest
     steps:
