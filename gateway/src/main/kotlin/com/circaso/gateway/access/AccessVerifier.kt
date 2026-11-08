@@ -1,6 +1,5 @@
-package com.circaso.opsgateway.auth
+package com.circaso.gateway.access
 
-import com.circaso.opsgateway.AccessSettings
 import com.circaso.shared.CircasoJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.KSerializer
@@ -14,6 +13,14 @@ import java.security.spec.RSAPublicKeySpec
 import java.time.Clock
 import java.time.Duration
 import java.util.Base64
+
+/**
+ * One Cloudflare Access application: the team (`<team>.cloudflareaccess.com`) and the application's audience tag.
+ * Shared by the ops gateway (the admin portal) and the app gateway's API reference (decision 2026-11-08).
+ */
+data class AccessSettings(val teamDomain: String, val audience: String) {
+    val issuer: String get() = "https://$teamDomain"
+}
 
 /** What checking a Cloudflare Access token found. */
 sealed interface AccessCheck {
@@ -78,7 +85,7 @@ private data class Claims(
  * Verifies the Cloudflare Access application token (decision 2026-11-08; the same checks as coinx-web's `access.ts`):
  * RS256 only, a signature by one of the team's published keys, our application's audience tag, the team's issuer,
  * not expired, not before its time (a minute of clock skew allowed). Access does the login itself (one-time PIN,
- * Google, …); this makes sure nothing reaches the ops API around it.
+ * Google, …); this makes sure nothing gets around it.
  */
 class AccessVerifier(
     private val settings: AccessSettings,
