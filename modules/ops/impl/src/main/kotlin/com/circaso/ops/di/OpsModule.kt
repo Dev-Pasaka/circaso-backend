@@ -10,6 +10,7 @@ import com.circaso.ops.data.tables.AuditLogTable
 import com.circaso.ops.data.tables.StaffTable
 import com.circaso.ops.domain.repositories.AuditRepository
 import com.circaso.ops.domain.repositories.StaffRepository
+import com.circaso.ops.domain.support.AiPricing
 import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.domain.support.StaffRoster
@@ -19,6 +20,7 @@ import com.circaso.ops.domain.usecases.AddStaff
 import com.circaso.ops.domain.usecases.AssignTicket
 import com.circaso.ops.domain.usecases.ChangeTicketStatus
 import com.circaso.ops.domain.usecases.CreateSupportAccount
+import com.circaso.ops.domain.usecases.GetAiUsageReport
 import com.circaso.ops.domain.usecases.GetDashboard
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
@@ -46,6 +48,7 @@ import com.circaso.ops.domain.usecases.SuspendUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
+import com.circaso.ops.presentation.controllers.aiUsageController
 import com.circaso.ops.presentation.controllers.dashboardController
 import com.circaso.ops.presentation.controllers.groupController
 import com.circaso.ops.presentation.controllers.meController
@@ -53,6 +56,7 @@ import com.circaso.ops.presentation.controllers.moneyController
 import com.circaso.ops.presentation.controllers.staffController
 import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
+import com.circaso.ops.presentation.services.AiUsageService
 import com.circaso.ops.presentation.services.AuditService
 import com.circaso.ops.presentation.services.DashboardService
 import com.circaso.ops.presentation.services.GroupService
@@ -67,7 +71,9 @@ import com.circaso.web.OpsRouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import java.math.BigDecimal
 import java.time.Clock
+import java.time.LocalDate
 
 /** Schema `ops`: the staff list and the audit log. It publishes no events, so it has no outbox. */
 internal val opsDatabaseSpec =
@@ -76,6 +82,28 @@ internal val opsDatabaseSpec =
         tables = listOf(StaffTable, AuditLogTable),
         migrationsLocation = "classpath:db/ops",
     )
+
+/**
+ * The AI cost estimate's price table (decision 2026-11-08): `OPS_AI_PRICES` (`model=input/output` dollars per million
+ * tokens, comma separated; default `claude-haiku-5-5=0.10/0.50`), `OPS_AI_CACHE_WRITE_MULTIPLIER` (1.25, the 5-minute
+ * cache), `OPS_AI_CACHE_READ_MULTIPLIER` (0.1), `OPS_AI_WEB_SEARCH_PER_1000_USD` (10) and `OPS_AI_PRICES_AS_OF`
+ * (2026-11-08, the day the defaults were Anthropic's list prices). A value that isn't one stops startup.
+ */
+fun aiPricing(config: Config): AiPricing {
+    fun decimal(key: String, default: BigDecimal): BigDecimal =
+        config.string(key)?.let { AiPricing.decimal(key, it.trim()) } ?: default
+    return AiPricing(
+        models = AiPricing.parseModels(config.string("ops.ai.prices", AiPricing.DEFAULT_MODELS)),
+        cacheReadMultiplier = decimal("ops.ai.cache-read-multiplier", AiPricing.DEFAULT_CACHE_READ),
+        cacheWriteMultiplier = decimal("ops.ai.cache-write-multiplier", AiPricing.DEFAULT_CACHE_WRITE),
+        webSearchPer1000 = decimal("ops.ai.web-search-per-1000-usd", AiPricing.DEFAULT_WEB_SEARCH_PER_1000),
+        asOf =
+            config.string("ops.ai.prices-as-of")?.let {
+                runCatching { LocalDate.parse(it.trim()) }.getOrNull()
+                    ?: throw IllegalStateException("Configuration 'ops.ai.prices-as-of' must be a date (was '$it')")
+            } ?: AiPricing.DEFAULT_AS_OF,
+    )
+}
 
 /** `OPS_BOOTSTRAP_ADMINS`: comma-separated emails, lowercased; always active ADMINs. */
 fun opsSettings(config: Config): OpsSettings =
@@ -99,6 +127,7 @@ fun opsModule(config: Config): Module =
     module {
         val clock = Clock.systemUTC()
         val settings = opsSettings(config)
+        val pricing = aiPricing(config)
         val environment = config.environment.name.lowercase()
 
         single { settings }
@@ -132,6 +161,7 @@ fun opsModule(config: Config): Module =
         single { ListTransactions(get(), get()) }
         single { GetTransaction(get(), get()) }
         single { GetFinanceReport(get(), settings) }
+        single { GetAiUsageReport(get(), get(), get(), pricing, settings) }
         single { ListGroups(get(), get(), get()) }
         single { GetGroup(get(), get(), get()) }
         single { ListTickets(get(), get()) }
@@ -151,6 +181,7 @@ fun opsModule(config: Config): Module =
         single { DashboardService(get()) }
         single { UserService(get(), get(), get(), get(), get(), get(), get()) }
         single { MoneyService(get(), get(), get(), get(), get()) }
+        single { AiUsageService(get()) }
         single { GroupService(get(), get()) }
         single { TicketService(get(), get(), get(), get(), get(), get()) }
         single { StaffService(get(), get(), get()) }
@@ -162,6 +193,7 @@ fun opsModule(config: Config): Module =
             val dashboard = get<DashboardService>()
             val users = get<UserService>()
             val money = get<MoneyService>()
+            val aiUsage = get<AiUsageService>()
             val groups = get<GroupService>()
             val tickets = get<TicketService>()
             val staff = get<StaffService>()
@@ -172,6 +204,7 @@ fun opsModule(config: Config): Module =
                 route.dashboardController(dashboard)
                 route.userController(users, money, settings)
                 route.moneyController(money, settings)
+                route.aiUsageController(aiUsage)
                 route.groupController(groups, settings)
                 route.ticketController(tickets, settings)
                 route.staffController(staff, audit, supportAccounts, settings)

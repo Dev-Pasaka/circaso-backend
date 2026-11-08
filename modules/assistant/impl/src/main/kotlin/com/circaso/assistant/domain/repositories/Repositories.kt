@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.models.ChatMessage
 import com.circaso.assistant.domain.models.Conversation
 import com.circaso.assistant.domain.models.ConversationCursor
 import com.circaso.assistant.domain.models.Plan
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.shared.UserId
 import java.time.Instant
 import java.util.UUID
@@ -128,5 +129,16 @@ interface AssistantStore {
         at: Instant,
         /** Added 2026-11-05; a writer that doesn't count them (older totals) stores 0, which never lowers a count. */
         webSearches: Int = 0,
+    )
+
+    /**
+     * A day's tokens by model (`assistant.usage_daily_tokens`, decision 2026-11-08), with the same `GREATEST` upsert per
+     * model: the counters only grow within a day, so an older writer never lowers what a newer one stored.
+     */
+    suspend fun saveModelTokens(
+        userId: UserId,
+        day: String,
+        byModel: Map<String, TokenCounts>,
+        at: Instant,
     )
 }
