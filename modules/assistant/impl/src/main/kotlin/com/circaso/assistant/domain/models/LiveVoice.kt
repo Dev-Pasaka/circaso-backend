@@ -94,6 +94,18 @@ sealed interface LiveEvent {
     ) : LiveEvent
 }
 
+/** What the phone's own `interrupt` frame did (decision 2026-11-07). */
+enum class LiveInterrupt {
+    /** Asha was thinking, waiting for the phone, speaking or still playing: stopped, exactly as a word barge-in. */
+    BARGED_IN,
+
+    /** She was already listening: nothing to stop; `interrupted` still answers it, so the phone stops dropping audio. */
+    ALREADY_LISTENING,
+
+    /** Over the session's allowance of interrupts: ignored, no answer. */
+    LIMITED,
+}
+
 /** Why a live conversation ended. */
 sealed interface LiveEnd {
     /** The phone said goodbye (an `end` frame). */
@@ -110,6 +122,9 @@ sealed interface LiveEnd {
 
     /** The transcription or speech provider dropped the session. */
     data object ProviderFailed : LiveEnd
+
+    /** Asha's model is down for maintenance (decision 2026-11-07): she said so, and the call ends. */
+    data object AssistantUnavailable : LiveEnd
 
     /** The user's session was revoked (signed out, phone replaced, account deleted), or its token can't be checked. */
     data object SessionRevoked : LiveEnd

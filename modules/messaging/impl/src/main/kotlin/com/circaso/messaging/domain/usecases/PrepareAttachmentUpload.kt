@@ -37,7 +37,7 @@ class PrepareAttachmentUpload(
         val now = clock.instant()
         val attachmentId = Uuid7.generate()
         val url =
-            when (val signed = storage.prepareUpload(command.chatId, attachmentId, config.attachmentUrlTtl)) {
+            when (val signed = storage.prepareUpload(command.chatId, attachmentId, config.attachmentUploadUrlTtl)) {
                 is Resource.Success -> signed.data
                 is Resource.Error -> return signed
             }
@@ -59,7 +59,7 @@ class PrepareAttachmentUpload(
                 attachmentId = attachmentId,
                 uploadUrl = url,
                 contentType = ATTACHMENT_CONTENT_TYPE,
-                expiresAt = now.plus(config.attachmentUrlTtl),
+                expiresAt = now.plus(config.attachmentUploadUrlTtl),
             ),
         )
     }

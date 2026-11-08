@@ -4,6 +4,7 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.models.AttachmentKind
 import com.circaso.messaging.domain.models.AttachmentState
 import com.circaso.messaging.domain.models.PrepareAttachmentCommand
+import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.messaging.domain.usecases.CompleteAttachmentUpload
 import com.circaso.messaging.domain.usecases.GetAttachmentDownload
 import com.circaso.messaging.domain.usecases.PrepareAttachmentUpload
@@ -56,15 +57,15 @@ class AttachmentsTest {
     // ---- AT1 ----
 
     @Test
-    fun `a member gets a 15-minute octet-stream upload and a pending row kept 30 days`() =
+    fun `a member gets an hour-long octet-stream upload and a pending row kept 30 days`() =
         runTest {
             val chatId = chat()
 
             val upload = prepare(chatId, kind = AttachmentKind.VOICE).data()
 
             assertEquals("application/octet-stream", upload.contentType)
-            assertEquals(h.clock.instant().plus(Duration.ofMinutes(15)), upload.expiresAt)
-            assertEquals(Duration.ofMinutes(15), storage.signedUploads.single().second)
+            assertEquals(h.clock.instant().plus(Duration.ofHours(1)), upload.expiresAt)
+            assertEquals(Duration.ofHours(1), storage.signedUploads.single().second)
             assertTrue(upload.uploadUrl.endsWith("attachments/$chatId/${upload.attachmentId}"))
             val row = attachments.rows.getValue(upload.attachmentId)
             assertEquals(AttachmentState.PENDING, row.state)
@@ -86,10 +87,11 @@ class AttachmentsTest {
         }
 
     @Test
-    fun `sizes from 1 byte to 32 MiB are accepted and anything else is too large`() =
+    fun `sizes from 1 byte to 100 MiB are accepted and anything else is too large`() =
         runTest {
             val chatId = chat()
-            val max = 32L * 1_024 * 1_024
+            val max = 100L * 1_024 * 1_024
+            assertEquals(max, MessagingConfig().maxAttachmentBytes)
 
             prepare(chatId, sizeBytes = 1).data()
             prepare(chatId, sizeBytes = max).data()
@@ -97,6 +99,42 @@ class AttachmentsTest {
             assertEquals("messaging.attachment_too_large", prepare(chatId, sizeBytes = 0).errorCode())
             assertEquals("messaging.attachment_too_large", prepare(chatId, sizeBytes = -5).errorCode())
             assertEquals(2, attachments.rows.size)
+        }
+
+    @Test
+    fun `the old 32 MiB limit no longer refuses a large video`() =
+        runTest {
+            val chatId = chat()
+
+            val upload = prepare(chatId, sizeBytes = 90L * 1_024 * 1_024, kind = AttachmentKind.VIDEO).data()
+
+            assertEquals(90L * 1_024 * 1_024, attachments.rows.getValue(upload.attachmentId).sizeBytes)
+        }
+
+    @Test
+    fun `the limit is configurable`() =
+        runTest {
+            val small =
+                AttachmentService(
+                    PrepareAttachmentUpload(
+                        attachments,
+                        h.transactor,
+                        h.membership,
+                        storage,
+                        h.config.copy(maxAttachmentBytes = 10),
+                        h.clock,
+                    ),
+                    CompleteAttachmentUpload(attachments, h.transactor, storage, h.clock),
+                    GetAttachmentDownload(attachments, h.membership, storage, h.config, h.clock),
+                    PurgeAttachments(attachments, h.transactor, storage, h.config, h.clock),
+                )
+            val chatId = chat()
+
+            small.prepare(PrepareAttachmentCommand(amina, chatId, 10, AttachmentKind.FILE)).data()
+            assertEquals(
+                "messaging.attachment_too_large",
+                small.prepare(PrepareAttachmentCommand(amina, chatId, 11, AttachmentKind.FILE)).errorCode(),
+            )
         }
 
     // ---- AT2 ----

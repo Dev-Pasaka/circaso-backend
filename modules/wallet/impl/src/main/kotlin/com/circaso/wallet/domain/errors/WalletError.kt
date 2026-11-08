@@ -3,6 +3,9 @@ package com.circaso.wallet.domain.errors
 import com.circaso.shared.DomainError
 import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.FieldError
+import java.time.Instant
+import java.util.UUID
 
 /** Wallet's own codes (Wallet → Error codes), added as their slices arrive. */
 sealed class WalletError(
@@ -74,6 +77,36 @@ sealed class WalletError(
         ErrorKind.INVALID,
     )
 
+    /**
+     * The coin named isn't one the wallet holds above zero on the payment's chain (2026-11-07: any held coin can be
+     * paid, on the chain that holds it). Not used for an asset offered on the chain, which is just a zero balance.
+     */
+    data object AssetNotHeld : WalletError(
+        "wallet.asset_not_held",
+        "Your wallet doesn't hold that coin on this blockchain.",
+        ErrorKind.INVALID,
+    )
+
+    /**
+     * The coin has no price right now (the price feed is off or down, or it is a token we can't vouch for), so its fee
+     * and limits, which are in US dollars, can't be worked out; nothing is sent (2026-11-07).
+     */
+    data object AssetUnpriced : WalletError(
+        "wallet.asset_unpriced",
+        "That coin can't be sent right now because we can't get its price. Try again in a little while.",
+        ErrorKind.CONFLICT,
+    )
+
+    /**
+     * The coin is held and priced, but the custody provider can't send it on this chain (for example, the chain's own
+     * coin where it can't be paid with the fee in one signature).
+     */
+    data object AssetNotSupported : WalletError(
+        "wallet.asset_not_supported",
+        "That coin can't be sent from Circaso on this blockchain yet.",
+        ErrorKind.INVALID,
+    )
+
     data object InsufficientFunds : WalletError(
         "wallet.insufficient_funds",
         "Your wallet doesn't hold enough on that blockchain.",
@@ -84,7 +117,8 @@ sealed class WalletError(
      * Over a limit rule (§7a). `details.fields` carries the numbers, each `{field, problem}` pair a name and its
      * value: `limit` (`PER_PAYMENT` or `DAILY`), `limitMinor`, `usedMinor`, `leftMinor`, `maxAmountMinor` (the most
      * that fits with its fee), `resetsAt` (when this payment fits; absent when it never can) and `moreAt` (when more
-     * becomes available), amounts in USDC minor units.
+     * becomes available). The limit amounts (`limitMinor`, `usedMinor`, `leftMinor`) are micro-dollars (USD, 6
+     * decimals) whatever the coin (2026-11-07); `maxAmountMinor` is in the payment's coin, as before for USDC.
      */
     class LimitExceeded(details: ErrorDetails? = null) :
         WalletError(
@@ -271,4 +305,89 @@ sealed class WalletError(
         "A membership is paid from your personal wallet.",
         ErrorKind.INVALID,
     )
+
+    data object IconSymbolInvalid : WalletError(
+        "wallet.icon_symbol_invalid",
+        "A coin symbol is 1 to 15 letters, digits or dots.",
+        ErrorKind.INVALID,
+    )
+
+    data object IconNotFound : WalletError(
+        "wallet.icon_not_found",
+        "We don't have an icon for that coin.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    // Staff edits of fees and limits (decision 2026-11-08), on the ops gateway only.
+
+    data object RuleNotFound : WalletError(
+        "wallet.rule_not_found",
+        "There is no such rule.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** Someone changed the rule after the caller read it: their version isn't the latest any more. */
+    data object RuleChanged : WalletError(
+        "wallet.rule_changed",
+        "Someone else changed this rule just now. Reload it and try again.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object RuleEnded : WalletError(
+        "wallet.rule_ended",
+        "This rule has ended. Create a new rule instead.",
+        ErrorKind.CONFLICT,
+    )
+
+    /** The latest version starts at [startsAt], later than the change asked for; a change goes after it. */
+    class RuleChangePending(startsAt: Instant) :
+        WalletError(
+            "wallet.rule_change_pending",
+            "This rule already has a change scheduled. Pick a time after it starts.",
+            ErrorKind.CONFLICT,
+            ErrorDetails(fields = listOf(FieldError("startsAt", startsAt.toString()))),
+        )
+
+    /** Another live rule matches exactly the same payments; two would only tie. */
+    class RuleScopeTaken(ruleId: UUID) :
+        WalletError(
+            "wallet.rule_scope_taken",
+            "Another rule already covers exactly these payments. Change that rule instead.",
+            ErrorKind.CONFLICT,
+            ErrorDetails(fields = listOf(FieldError("ruleId", ruleId.toString()))),
+        )
+
+    /** A field of a rule that isn't valid: each named with what is wrong. */
+    class RuleInvalid(fields: List<FieldError>) :
+        WalletError(
+            "wallet.rule_invalid",
+            "Some of these values aren't valid.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = fields),
+        ) {
+        constructor(field: String, problem: String) : this(listOf(FieldError(field, problem)))
+    }
+
+    class FeeRateOutOfBounds(minRateBps: Int, maxRateBps: Int) :
+        WalletError(
+            "wallet.fee_rate_out_of_bounds",
+            "The rate is outside the fee bounds.",
+            ErrorKind.INVALID,
+            ErrorDetails(
+                fields =
+                    listOf(
+                        FieldError("minRateBps", minRateBps.toString()),
+                        FieldError("maxRateBps", maxRateBps.toString()),
+                    ),
+            ),
+        )
+
+    /** New bounds that would leave rules in force (now or scheduled) outside them; the rules are named. */
+    class FeeBoundsExcludeRules(ruleIds: List<UUID>) :
+        WalletError(
+            "wallet.fee_bounds_exclude_rules",
+            "Some rules in force charge a rate outside these bounds. Change those rules first.",
+            ErrorKind.CONFLICT,
+            ErrorDetails(fields = ruleIds.map { FieldError("ruleId", it.toString()) }),
+        )
 }

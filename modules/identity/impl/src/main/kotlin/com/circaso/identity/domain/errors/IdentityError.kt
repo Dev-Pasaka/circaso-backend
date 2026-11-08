@@ -146,4 +146,25 @@ sealed class IdentityError(
         "This is a Circaso support account. It can't be used in the Circaso app.",
         ErrorKind.FORBIDDEN,
     )
+
+    /** Staff asked about an account that doesn't exist (the ops gateway; decision 2026-11-08). */
+    data object AccountNotFound : IdentityError(
+        "identity.account_not_found",
+        "There is no such account.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** Only an `ACTIVE` account can be suspended. */
+    data object AccountNotActive : IdentityError(
+        "identity.account_not_active",
+        "This account isn't active, so it can't be suspended.",
+        ErrorKind.CONFLICT,
+    )
+
+    /** Only a `SUSPENDED` account can be given back. */
+    data object AccountNotSuspended : IdentityError(
+        "identity.account_not_suspended",
+        "This account isn't suspended.",
+        ErrorKind.CONFLICT,
+    )
 }

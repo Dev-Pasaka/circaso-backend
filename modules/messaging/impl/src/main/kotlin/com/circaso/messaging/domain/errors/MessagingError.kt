@@ -101,10 +101,10 @@ sealed class MessagingError(
         ErrorKind.CONFLICT,
     )
 
-    /** AT1: an attachment is 1 byte to 32 MiB of ciphertext (decision 2026-10-30). */
+    /** AT1: an attachment is 1 byte to 100 MiB of ciphertext (decision 2026-11-07; `MESSAGING_MAX_ATTACHMENT_BYTES`). */
     data object AttachmentTooLarge : MessagingError(
         "messaging.attachment_too_large",
-        "An attachment can be at most 32 MB.",
+        "An attachment can be at most 100 MB.",
         ErrorKind.INVALID,
     )
 
@@ -122,6 +122,16 @@ sealed class MessagingError(
     data object AttachmentIncomplete : MessagingError(
         "messaging.attachment_incomplete",
         "The upload isn't complete. Upload the file again, then retry.",
+        ErrorKind.INVALID,
+    )
+
+    /**
+     * M8: the group photo isn't a completed, live image attachment of this group, up to 2 MB of ciphertext. Upload it
+     * to the group (AT1, PUT, AT2) and send its id again.
+     */
+    data object AvatarInvalid : MessagingError(
+        "messaging.avatar_invalid",
+        "That photo can't be the group's photo. Upload it to this group as an image, then try again.",
         ErrorKind.INVALID,
     )
 

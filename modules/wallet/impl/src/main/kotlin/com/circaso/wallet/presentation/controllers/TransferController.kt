@@ -53,6 +53,9 @@ fun Route.transferController(transfers: TransferService) {
                         "wallet.not_on_chain",
                         "wallet.on_hold",
                         "wallet.amount_invalid",
+                        "wallet.asset_not_held",
+                        "wallet.asset_unpriced",
+                        "wallet.asset_not_supported",
                         "wallet.limit_exceeded",
                         "wallet.self_transfer",
                         "wallet.support_account_has_no_wallet",
@@ -89,7 +92,12 @@ fun Route.transferController(transfers: TransferService) {
                             "and paid in the same signature, and `total` is what leaves the wallet. A fee above " +
                             "the one shown answers `wallet.fee_changed` with a new `quoteId` in `details.fields`: " +
                             "show it, then send again with that id and a new key. `wallet.limit_exceeded` and " +
-                            "`wallet.insufficient_funds` carry their numbers in `details.fields` too.",
+                            "`wallet.insufficient_funds` carry their numbers in `details.fields` too. Any held coin " +
+                            "(added 2026-11-07): `asset` is any coin your wallet holds on that chain (`EURC`, " +
+                            "`USDT`, `ETH`, `POL`, `SOL`, …) with `amountMinor` in its own decimals; the fee is the " +
+                            "dollar fee converted into that coin at the price feed's price, rounded up, and the " +
+                            "limits count the payment in dollars at that price. A coin you don't hold there is " +
+                            "`wallet.asset_not_held`; one with no price right now `wallet.asset_unpriced`.",
                 )
 
                 post("quote") {
@@ -108,6 +116,8 @@ fun Route.transferController(transfers: TransferService) {
                         "wallet.not_on_chain",
                         "wallet.on_hold",
                         "wallet.amount_invalid",
+                        "wallet.asset_not_held",
+                        "wallet.asset_unpriced",
                         "wallet.self_transfer",
                         "wallet.support_account_has_no_wallet",
                         "users.not_reachable",
@@ -125,7 +135,11 @@ fun Route.transferController(transfers: TransferService) {
                             "`limit`. A short balance or a limit is reported in `problem` (`INSUFFICIENT_FUNDS`, " +
                             "`PER_PAYMENT_LIMIT`, `DAILY_LIMIT`, with `fitsAt`), not refused. Nothing moves. For the " +
                             "person who signs for the wallet the fee is held until `expiresAt` (15 minutes): pass " +
-                            "`quoteId` to W4. A group's members may quote its wallet (no `quoteId`).",
+                            "`quoteId` to W4. A group's members may quote its wallet (no `quoteId`). Any held coin " +
+                            "(added 2026-11-07): the fee is in the coin, converted from dollars at `usdPrice` and " +
+                            "rounded up; the quote holds that price with the fee. `limit` is in the coin for USDC " +
+                            "and USDT and in `USD` for any other coin; `totalUsd` is what the payment counts " +
+                            "against the limits.",
                 )
 
                 get("{transferId}") {

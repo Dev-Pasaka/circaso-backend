@@ -1,5 +1,7 @@
 package com.circaso.gateway.realtime
 
+import com.circaso.assistant.api.AssistantFrames
+import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.CallRingingFrame
 import com.circaso.calls.api.CallSnapshot
@@ -28,6 +30,8 @@ import com.circaso.spaces.api.RequestNewFrame
 import com.circaso.spaces.api.SpacesFrames
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
+import com.circaso.support.api.SupportFrames
+import com.circaso.support.api.TicketRepliedFrame
 import com.circaso.users.api.ConnectionAddedFrame
 import com.circaso.users.api.ContactJoinedFrame
 import com.circaso.users.api.UsersFrames
@@ -48,6 +52,10 @@ private const val PUSH_BATCH = 100
 
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
+
+/** A support reply's push: from the team, as the app shows staff replies; a tap opens the ticket. */
+private const val SUPPORT_TITLE = "Circaso Support"
+private const val SUPPORT_TICKET_KIND = "support.ticket"
 
 /** An incoming call is worth nothing after its 45-second ring, so the vendor may not hold it for longer. */
 private const val RING_TTL_SECONDS = 45L
@@ -99,17 +107,27 @@ class GatewayRealtime(
     private fun pushFor(frame: RealtimeEnvelope, recipient: UserId): PushMessage? =
         when ("${frame.module}.${frame.type}") {
             "system.session.revoked" -> {
-                PushMessage("Signed out", "Circaso was opened on another phone.")
+                PushMessage("Signed out", "Circaso was opened on another phone.", PushPayload(kind = "session.revoked"))
             }
 
             "${UsersFrames.MODULE}.${UsersFrames.CONTACT_JOINED}" -> {
-                val name = decode(ContactJoinedFrame.serializer(), frame)?.displayName
-                PushMessage("Circaso", "${name ?: "Someone you know"} is on Circaso")
+                val joined = decode(ContactJoinedFrame.serializer(), frame)
+                val name = joined?.displayName
+                PushMessage(
+                    "Circaso",
+                    "${name ?: "Someone you know"} is on Circaso",
+                    PushPayload(kind = "contact.joined", userId = joined?.userId?.toString()),
+                )
             }
 
             "${UsersFrames.MODULE}.${UsersFrames.CONNECTION_ADDED}" -> {
-                val name = decode(ConnectionAddedFrame.serializer(), frame)?.displayName
-                PushMessage("Circaso", "${name ?: "Someone"} connected with you")
+                val added = decode(ConnectionAddedFrame.serializer(), frame)
+                val name = added?.displayName
+                PushMessage(
+                    "Circaso",
+                    "${name ?: "Someone"} connected with you",
+                    PushPayload(kind = "connection.added", userId = added?.userId?.toString()),
+                )
             }
 
             "messaging.${MessageNewFrame.TYPE}" -> {
@@ -121,9 +139,16 @@ class GatewayRealtime(
             }
 
             "${ChamaFrames.MODULE}.${ChamaFrames.CONTRIBUTION_ADDED}" -> {
-                // to the other members; the contributor already knows
+                // to the other members; the contributor already knows. Data-only (2026-11-06): the phone names the group
+                // (sealed, so never here) and the amount, in the person's currency, from the member's card in the chat.
                 decode(ContributionAddedFrame.serializer(), frame)?.takeIf { it.userId != recipient }?.let {
-                    PushMessage(it.goalName, "${it.displayName} added to ${it.goalName}")
+                    val ids =
+                        PushPayload(
+                            kind = CONTRIBUTION_KIND,
+                            chatId = it.chatId.toString(),
+                            userId = it.userId.toString(),
+                        )
+                    PushMessage(it.goalName, "${it.displayName} added to ${it.goalName}", ids, dataOnly = true)
                 }
             }
 
@@ -168,15 +193,47 @@ class GatewayRealtime(
                 PushMessage(
                     "Circaso",
                     text,
-                    PushPayload(kind = PAYMENT_RECEIVED_KIND),
+                    // Ids for the phone (2026-11-06): it reads the amount from the chat's card or the wallet's record and
+                    // words it in the person's currency; a tap opens the chat at the card, or the payment's details.
+                    PushPayload(
+                        kind = PAYMENT_RECEIVED_KIND,
+                        chatId = received?.chatId,
+                        transferId = received?.transferId?.toString(),
+                        transactionId = received?.transactionId,
+                        walletId = received?.walletId?.toString(),
+                    ),
                     dataOnly = true,
                     sound = MONEY_SOUND,
                 )
             }
 
+            // Asha is back after maintenance (decision 2026-11-07): once per person who met her down. No personal
+            // data, so the same words show with Notification privacy on; `asha.back` opens Asha.
+            "${AssistantFrames.MODULE}.${AssistantFrames.STATUS}" -> {
+                decode(AssistantStatusFrame.serializer(), frame)?.takeIf { it.available }?.let {
+                    PushMessage(ASHA_BACK_TITLE, ASHA_BACK_BODY, PushPayload(kind = ASHA_BACK_KIND))
+                }
+            }
+
+            // Support replied on a ticket (decision 2026-11-08): the ticket's number and id only, never its text, which
+            // may hold what the user wrote about their money. `ticket.updated` (a status change) is not worth a push.
+            "${SupportFrames.MODULE}.${SupportFrames.TICKET_REPLIED}" -> {
+                decode(TicketRepliedFrame.serializer(), frame)?.let {
+                    PushMessage(
+                        SUPPORT_TITLE,
+                        "We replied to your ticket ${it.number}.",
+                        PushPayload(kind = SUPPORT_TICKET_KIND, ticketId = it.ticketId.toString()),
+                    )
+                }
+            }
+
             "${WalletFrames.MODULE}.${WalletFrames.SETUP_REQUESTED}" -> {
                 val name = decode(SetupRequestedFrame.serializer(), frame)?.fromName ?: "Someone"
-                PushMessage("Circaso", "$name wants to send you money. Set up your wallet")
+                PushMessage(
+                    "Circaso",
+                    "$name wants to send you money. Set up your wallet",
+                    PushPayload(kind = "wallet.setup"),
+                )
             }
 
             else -> {
@@ -360,10 +417,24 @@ class GatewayRealtime(
     private fun requestPush(frame: RequestUpdatedFrame, recipient: UserId): PushMessage? {
         val title = frame.goalName.ifBlank { "Circaso" }
         val from = frame.goalName.ifBlank { "the group wallet" }
+
+        // Data-only with ids (2026-11-06): the phone names the group and the amount in the person's currency, and a
+        // tap opens the group chat. `kind` says which side of the request this reader is on.
+        fun push(state: String, body: String) =
+            PushMessage(
+                title,
+                body,
+                PushPayload(
+                    kind = "$REQUEST_KIND.$state",
+                    chatId = frame.chatId.toString(),
+                    requestId = frame.requestId.toString(),
+                ),
+                dataOnly = true,
+            )
         return when (frame.state) {
             "PENDING" -> {
                 if (recipient in frame.waitingOn) {
-                    PushMessage(title, "${frame.requesterName} needs your approval to pay from $from")
+                    push("pending", "${frame.requesterName} needs your approval to pay from $from")
                 } else {
                     null
                 }
@@ -371,18 +442,18 @@ class GatewayRealtime(
 
             "APPROVED" -> {
                 when (recipient) {
-                    frame.requestedBy -> PushMessage(title, "Your request was approved")
-                    frame.signerId -> PushMessage(title, "A payout from $from was approved. It's ready for you to pay")
+                    frame.requestedBy -> push("approved", "Your request was approved")
+                    frame.signerId -> push("payable", "A payout from $from was approved. It's ready for you to pay")
                     else -> null
                 }
             }
 
             "DECLINED" -> {
-                if (recipient == frame.requestedBy) PushMessage(title, "Your request was declined") else null
+                if (recipient == frame.requestedBy) push("declined", "Your request was declined") else null
             }
 
             "PAID" -> {
-                if (recipient == frame.requestedBy) PushMessage(title, "Your request was paid") else null
+                if (recipient == frame.requestedBy) push("paid", "Your request was paid") else null
             }
 
             else -> {
@@ -438,26 +509,48 @@ class GatewayRealtime(
         val text = "Missed call from $caller"
         val ids = PushPayload(chatId = frame.chatId.toString(), callId = frame.callId.toString())
         return when (frame.endReason) {
-            "MISSED" -> PushMessage("Missed call", text, ids.copy(kind = "call.missed"))
+            // Data-only (2026-11-06): the phone words it itself, so Notification privacy can say just "Missed call".
+            "MISSED" -> PushMessage("Missed call", text, ids.copy(kind = "call.missed"), dataOnly = true)
+
             "CANCELLED" -> PushMessage("Missed call", text, ids.copy(kind = "call.ended"), dataOnly = true)
+
             else -> null
         }
     }
 
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {
-            "CONFIRMED" -> PushMessage("Circaso", "Payment sent")
-            "FAILED" -> PushMessage("Circaso", "Payment failed")
+            "CONFIRMED" -> PushMessage("Circaso", "Payment sent", transferIds(frame))
+            "FAILED" -> PushMessage("Circaso", "Payment failed", transferIds(frame))
             else -> null
         }
+
+    /** A tap on "Payment sent" or "Payment failed" opens that payment (2026-11-06). */
+    private fun transferIds(frame: TransferUpdatedFrame) =
+        PushPayload(
+            kind = "transfer.updated",
+            transferId = frame.transferId.toString(),
+            walletId = frame.walletId?.toString(),
+        )
 
     /** A frame's `data` as its class, from the module's `api`; null (no push) when it doesn't decode. */
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
 }
 
+/** The one push that says Asha is back after maintenance; the app opens Asha for any `asha*` kind. */
+private const val ASHA_BACK_TITLE = "Asha is back"
+private const val ASHA_BACK_BODY = "Ask me anything."
+private const val ASHA_BACK_KIND = "asha.back"
+
 /** What wakes the app for money received, and the sound it ships for it. */
 private const val PAYMENT_RECEIVED_KIND = "payment.received"
+
+/** A member put money into a group (chama `contribution.added`). */
+private const val CONTRIBUTION_KIND = "chama.contribution"
+
+/** A group payout request moved: `chama.request.pending|approved|payable|declined|paid`. */
+private const val REQUEST_KIND = "chama.request"
 
 /** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
 private const val MOMENT_LOVED_KIND = "moment.loved"

@@ -157,7 +157,7 @@ class CircleSplitTest {
             assertEquals(CustodyDirection.OUT, update.direction)
             assertEquals("transfer-1", update.refId)
             assertEquals("0.00000133", update.networkFee)
-            assertEquals(0L, update.amount.amountMinor, "the transfer knows the amounts")
+            assertEquals(0.toBigInteger(), update.amount.amountMinor, "the transfer knows the amounts")
             assertEquals(CustodyOperation.CONTRACT_EXECUTION, update.operation)
 
             // Circle keeps no refId on a user's contract execution (2026-11-05); the wallet matches it by its legs.
@@ -187,11 +187,11 @@ class CircleSplitTest {
             assertEquals(3, records.size)
             val payee = records.single { it.walletId == "6e62c682-7770-5768-aeed-0b2a59644b24" }
             assertEquals(CustodyDirection.IN, payee.direction)
-            assertEquals(7_699_911L, payee.amount.amountMinor)
+            assertEquals(7_699_911.toBigInteger(), payee.amount.amountMinor)
             assertEquals("0x893a99d22726c28d82469c226efd1a685ca0c570", payee.sourceAddress)
             val fee = records.single { it.walletId == "d4eac6e0-25e4-5fb7-8dc6-deb56bcf9864" }
             assertTrue(fee.developerWallet)
-            assertEquals(100_000L, fee.amount.amountMinor)
+            assertEquals(100_000.toBigInteger(), fee.amount.amountMinor)
             val execution = records.single { it.operation == CustodyOperation.CONTRACT_EXECUTION }
             assertEquals(CustodyDirection.OUT, execution.direction)
             assertEquals(CustodyTransactionState.CONFIRMED, execution.state)

@@ -24,7 +24,8 @@ import kotlin.test.assertTrue
  */
 class AgentValueTest {
     private val rates = FakeRates().apply { rates["KES"] = BigDecimal("129.50") }
-    private val values = ValueAssets(rates)
+    private val prices = FakePrices()
+    private val values = ValueAssets(rates, prices)
 
     private suspend fun valued(
         assets: String? = null,
@@ -56,13 +57,29 @@ class AgentValueTest {
 
             val btc = valued("BTC,usdt").values
             assertFalse(btc.first().priced)
-            assertNull(btc.first().unitValue, "never priced from anywhere else")
+            assertNull(btc.first().unitValue, "the price feed has no BTC here")
             assertTrue(btc.last().priced)
 
             val unknown = valued("USDC", "3", "UGX")
             assertEquals("USD", unknown.currency, "no UGX rate known: the answer says it is in dollars")
             assertNull(unknown.rate)
             assertEquals("3.00", unknown.values.single().value)
+        }
+
+    @Test
+    fun `another coin is valued at the wallet's price feed, the one W1 shows balances with`() =
+        runBlocking<Unit> {
+            prices.prices["ETH"] = BigDecimal("3500")
+
+            val answer = valued("ETH,usdc", "0.5", "KES")
+
+            val eth = answer.values.first()
+            assertEquals("ETH", eth.asset)
+            assertTrue(eth.priced)
+            assertEquals("3500", eth.usdPrice)
+            assertEquals("453250.00", eth.unitValue, "3500 x 129.50")
+            assertEquals("226625.00", eth.value)
+            assertEquals(listOf(setOf("ETH")), prices.asked, "stablecoins never ask the feed")
         }
 
     @Test
@@ -80,7 +97,7 @@ class AgentValueTest {
         )
         assertMalformed(AgentFeeParams(blockchain = "BASE", toAddress = "0xabc").toCommand(amina), "amount")
         val command = AgentFeeParams(amount = "2.5", blockchain = "base", toAddress = " 0xabc ").toCommand(amina).data()
-        assertEquals(2_500_000L, command.amount.amountMinor)
+        assertEquals(2_500_000.toBigInteger(), command.amount.minorIn(6))
         assertEquals("BASE", command.blockchain)
         assertEquals(Payee.Address("0xabc"), command.payee)
     }
@@ -108,13 +125,13 @@ class AgentValueTest {
             val answer = estimate(command, "KES").data().toAgentResponse()
 
             assertEquals("100", answer.amount)
-            assertEquals("0.5", answer.fee, "0.5 % between Circaso people")
+            assertEquals("0.52", answer.fee, "0.5 % between Circaso people, plus 2 cents of network cost")
             assertEquals(50, answer.rateBps)
-            assertEquals("100.5", answer.total)
+            assertEquals("100.52", answer.total)
             assertEquals("400", answer.balance)
             assertNull(answer.problem)
-            assertEquals("13014.75", answer.fiatTotal)
-            assertEquals("64.75", answer.fiatFee)
+            assertEquals("13017.34", answer.fiatTotal)
+            assertEquals("67.34", answer.fiatFee)
             assertTrue(quotes.rows.isEmpty(), "nothing is held for an estimate")
             assertIs<Resource.Success<*>>(estimate(command, null))
             assertTrue(quotes.rows.isEmpty())

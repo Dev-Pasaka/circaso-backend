@@ -14,6 +14,7 @@ import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.ApplyWalletChallenge
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
+import com.circaso.wallet.domain.usecases.FindDepositAddress
 import com.circaso.wallet.domain.usecases.FindGroupWallet
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
 import com.circaso.wallet.domain.usecases.HasWallet
@@ -35,10 +36,13 @@ class WalletDirectoryService(
     private val findSpaceWallet: FindSpaceWallet,
     private val checkSpaceWalletFunds: CheckSpaceWalletFunds,
     private val applyWalletChallenge: ApplyWalletChallenge,
+    private val findDepositAddress: FindDepositAddress,
 ) {
     suspend fun hasWallet(userId: UserId): Boolean = hasWallet.invoke(userId)
 
     suspend fun transfer(transferId: TransferId): TransferSummary? = lookupTransfer(transferId)
+
+    suspend fun depositAddress(userId: UserId, blockchain: String): String? = findDepositAddress(userId, blockchain)
 
     suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = findGroupWallet(chatId)
 

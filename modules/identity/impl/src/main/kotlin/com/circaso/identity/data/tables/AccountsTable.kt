@@ -30,5 +30,8 @@ object AccountsTable : Table("identity.accounts") {
         index("accounts_pending_idx", false, createdAt, filterCondition = { status eq "PENDING_PHONE" })
         index("accounts_deleted_idx", false, deleteAfter, filterCondition = { status eq "DELETED" })
         index("accounts_support_idx", false, userId, filterCondition = { kind eq "SUPPORT" })
+        // V3: staff's newest-first list and sign-up counts. The SQL orders both columns DESC, which Exposed's index
+        // declaration can't say.
+        index("accounts_newest_idx", false, createdAt, userId)
     }
 }

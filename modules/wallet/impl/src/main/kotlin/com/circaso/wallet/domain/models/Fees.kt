@@ -6,13 +6,17 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.WalletOwnerType
+import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
-// Phase 2F, fees and limits (spaces-plan §7a, §7b, decided 2026-11-03). Every asset the wallet sends is a US dollar
-// stablecoin with 6 decimals, so an amount's minor units are also micro-dollars: limits and fees in dollars are kept
-// in those units here ("…Minor").
+// Phase 2F, fees and limits (spaces-plan §7a, §7b, decided 2026-11-03). Fees and limits are priced in US dollars, kept
+// in micro-dollars ("…UsdMinor", or "…Minor" where only dollars are meant: a rule's caps and floors, the gas). A
+// payment may be in any coin the wallet holds (decision 2026-11-07): its amount and its fee are in that coin's minor
+// units, and the fee is the dollar fee converted at the coin's price, rounded up ([PaymentCoin]). For a US dollar
+// stablecoin (USDC, USDT: 6 decimals, one dollar) a minor unit is a micro-dollar, so nothing changed for them.
 
 /** Between two Circaso wallets (any owner), or to an address outside Circaso. Money arriving from outside is free. */
 enum class FeeKind { INTERNAL, EXTERNAL }
@@ -31,36 +35,38 @@ data class FeeParties(
 )
 
 /**
- * One version of a fee rule (`wallet.fee_rules`). A null match field matches anything. [rateBps] (0..200 by the
- * database's bounds) applies to at most [capBaseMinor] of a payment; [minFeeMinor] is a floor on top of the gas floor;
- * [gasShareMaxBps] is the most of the fee the network cost may be (2 500: 25 %), estimated with [gasMarginBps] on top.
- * A change is a new version: history is never overwritten.
+ * One version of a fee rule (`wallet.fee_rules`). A null match field matches anything. The fee is the network cost
+ * with [gasMarginBps] on top, plus [rateBps] (0..200 by the database's bounds) of at most [capBaseMinor] of the
+ * payment, raised to [minFeeMinor] when one is set (decision 2026-11-08, gas inclusive). [gasShareMaxBps] is kept for
+ * compatibility only and no longer prices anything. A change is a new version: history is never overwritten.
  */
 data class FeeRule(
-    val ruleId: UUID,
-    val version: Int,
+    override val ruleId: UUID,
+    override val version: Int,
     val kind: FeeKind?,
     val senderType: WalletOwnerType?,
     val receiverType: WalletOwnerType?,
     val blockchain: String?,
-    val asset: Asset?,
+    /** A coin's symbol (`USDC`); null matches any. */
+    val asset: String?,
     val walletId: WalletId?,
     val rateBps: Int,
     val capBaseMinor: Long,
     val minFeeMinor: Long?,
     val gasShareMaxBps: Int,
     val gasMarginBps: Int,
-    val effectiveFrom: Instant,
-    val effectiveTo: Instant?,
-) {
-    fun inForce(at: Instant): Boolean = !effectiveFrom.isAfter(at) && (effectiveTo == null || at.isBefore(effectiveTo))
-
+    override val effectiveFrom: Instant,
+    override val effectiveTo: Instant?,
+    /** Why this version exists (staff's reason, or the seed's note). */
+    val note: String? = null,
+    val createdAt: Instant? = null,
+) : VersionedRule {
     fun matches(parties: FeeParties): Boolean =
         (kind == null || kind == parties.kind) &&
             (senderType == null || senderType == parties.senderType) &&
             (receiverType == null || receiverType == parties.receiverType) &&
             (blockchain == null || blockchain == parties.blockchain) &&
-            (asset == null || asset == parties.asset) &&
+            (asset == null || asset == parties.asset.symbol) &&
             (walletId == null || walletId == parties.walletId)
 
     /** The most specific rule wins: a wallet override above a chain, above an asset, above owner types, above kind. */
@@ -71,14 +77,15 @@ data class FeeRule(
 }
 
 /**
- * The one Circaso fee for a payment, network cost included (§7b): [amountMinor] in the payment's asset, from rule
- * [ruleId] v[ruleVersion] at [rateBps]; [minimum] when the floor (gas or `min_fee_usd`) made it more than the rate
- * did. [gasMinor] is the network cost estimated for this exact call (Circaso sponsors it; null when none was
- * estimated). [feeAddress] is Circaso's fee wallet on the chain, null when there is no fee leg. [reason] says why a
- * fee is zero when a rule didn't decide it.
+ * The one Circaso fee for a payment, network cost included (§7b, decision 2026-11-08): [amountMinor] in the
+ * payment's asset, from rule [ruleId] v[ruleVersion] at [rateBps]; [minimum] when the rule's `min_fee_usd` raised it
+ * above the network cost plus the rate. [gasMinor] is the network cost it was priced on, before the margin (null when
+ * none was), and [gasSource] where that figure came from. [feeAddress] is Circaso's fee wallet on the chain, null when
+ * there is no fee leg. [reason] says why a fee is zero when a rule didn't decide it.
  */
 data class Fee(
-    val amountMinor: Long,
+    /** In the payment's coin: [usdMinor] converted at [usdPrice], rounded up to the coin's minor unit. */
+    val amountMinor: BigInteger,
     val rateBps: Int,
     val minimum: Boolean,
     val ruleId: UUID?,
@@ -88,13 +95,50 @@ data class Fee(
     val parties: FeeParties,
     val feeAddress: String?,
     val reason: NoFeeReason? = null,
+    /** The fee in micro-dollars as the rule priced it; the same number as [amountMinor] for USDC and USDT. */
+    val usdMinor: Long = amountMinor.toLong(),
+    /** What one whole coin of the payment was worth in US dollars when it was priced; one for a dollar stablecoin. */
+    val usdPrice: BigDecimal = BigDecimal.ONE,
+    val gasSource: GasSource? = null,
 ) {
-    val charged: Boolean get() = amountMinor > 0 && feeAddress != null
+    val charged: Boolean get() = amountMinor.signum() > 0 && feeAddress != null
 
     override fun toString(): String = "Fee(rule=$ruleId v$ruleVersion, $rateBps bps, minimum=$minimum)"
 }
 
-/** Why a payment carries no fee though no 0 % rule said so. */
+/** Where the network cost a fee was priced on came from (decision 2026-11-08). */
+enum class GasSource {
+    /** What recent confirmed transfers on the chain actually cost (the 75th percentile, [NetworkCosts]). */
+    RECENT,
+
+    /** Circle's estimate for this exact call, used while the chain has too little history. */
+    ESTIMATE,
+}
+
+/**
+ * The network cost of a payment on [blockchain] in micro-dollars, as [NetworkCosts] prices it: the 75th percentile of
+ * the last [samples] confirmed transfers ([asset] null when it pools every coin on the chain), as of [at].
+ */
+data class RecentGas(
+    val blockchain: String,
+    val asset: String?,
+    val gasMinor: Long,
+    val samples: Int,
+    val at: Instant,
+)
+
+/** What one confirmed transfer cost on the chain, in micro-dollars. */
+data class GasSample(
+    val blockchain: String,
+    val asset: String,
+    val gasMinor: Long,
+    val at: Instant,
+)
+
+/** The last Circle estimate a quote was priced on, for a chain with too little history. */
+data class GasEstimate(val blockchain: String, val gasMinor: Long, val at: Instant)
+
+/** Why a payment carries no fee: no rule matched, or the chain can't carry a fee leg yet. */
 enum class NoFeeReason {
     /** No rule matches the payment. */
     NO_RULE,
@@ -130,19 +174,20 @@ data class FeeQuote(
  * over a rolling [window]. A null cap is no cap.
  */
 data class LimitRule(
-    val ruleId: UUID,
-    val version: Int,
+    override val ruleId: UUID,
+    override val version: Int,
     val ownerType: WalletOwnerType?,
     val walletId: WalletId?,
-    val asset: Asset?,
+    /** A coin's symbol; null matches any. The caps are in micro-dollars whatever the coin (2026-11-07). */
+    val asset: String?,
     val perPaymentMaxMinor: Long?,
     val dailyMaxMinor: Long?,
     val window: Duration,
-    val effectiveFrom: Instant,
-    val effectiveTo: Instant?,
-) {
-    fun inForce(at: Instant): Boolean = !effectiveFrom.isAfter(at) && (effectiveTo == null || at.isBefore(effectiveTo))
-
+    override val effectiveFrom: Instant,
+    override val effectiveTo: Instant?,
+    val note: String? = null,
+    val createdAt: Instant? = null,
+) : VersionedRule {
     fun matches(
         ownerType: WalletOwnerType,
         walletId: WalletId,
@@ -150,19 +195,19 @@ data class LimitRule(
     ): Boolean =
         (this.ownerType == null || this.ownerType == ownerType) &&
             (this.walletId == null || this.walletId == walletId) &&
-            (this.asset == null || this.asset == asset)
+            (this.asset == null || this.asset == asset.symbol)
 
     val specificity: Int
         get() = (if (walletId != null) 4 else 0) + (if (ownerType != null) 2 else 0) + (if (asset != null) 1 else 0)
 }
 
-/** One payment counted in a wallet's window: when it was prepared and what it takes out, fee included. */
+/** One payment counted in a wallet's window: when it was prepared and what it takes out, fee included, in micro-dollars. */
 data class Spent(val at: Instant, val totalMinor: Long)
 
 /**
- * Where a wallet stands against its limits now: what has left in the window ([usedMinor]), what may still leave
- * ([leftMinor], null without a daily cap) and when more becomes available ([moreAt], the oldest counted payment's
- * end of window).
+ * Where a wallet stands against its limits now, in micro-dollars whatever the coin (2026-11-07): what has left in the
+ * window ([usedMinor]), what may still leave ([leftMinor], null without a daily cap) and when more becomes available
+ * ([moreAt], the oldest counted payment's end of window).
  */
 data class Allowance(
     val perPaymentMaxMinor: Long?,
@@ -227,17 +272,19 @@ data class TransferQuote(
     val blockchain: String,
     val amount: Money,
     val fee: Fee,
-    val balanceMinor: Long,
-    val maxAmountMinor: Long,
+    val balanceMinor: BigInteger,
+    val maxAmountMinor: BigInteger,
     val allowance: Allowance,
     val problem: QuoteProblem?,
     val quoteId: UUID?,
     val expiresAt: Instant,
+    /** The amount and the fee in micro-dollars at [Fee.usdPrice]: what the payment counts against the limits. */
+    val totalUsdMinor: Long = (amount.amountMinor + fee.amountMinor).toLong(),
 ) {
-    val totalMinor: Long get() = amount.amountMinor + fee.amountMinor
+    val totalMinor: BigInteger get() = amount.amountMinor + fee.amountMinor
 
     /** When this payment fits the window, if it doesn't now (GW14b's "from 14:30"); null if it fits or never can. */
-    val fitsAt: Instant? get() = allowance.fitsAt(totalMinor)
+    val fitsAt: Instant? get() = allowance.fitsAt(totalUsdMinor)
 
     override fun toString(): String = "TransferQuote($blockchain, $problem)"
 }

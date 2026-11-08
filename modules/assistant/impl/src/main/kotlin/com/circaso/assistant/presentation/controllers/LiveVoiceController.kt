@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
+import java.time.Instant
 
 private val log = LoggerFactory.getLogger("com.circaso.assistant.presentation.controllers.LiveVoice")
 
@@ -185,8 +186,8 @@ private suspend fun DefaultWebSocketServerSession.readPhone(conversation: LiveCo
 }
 
 /**
- * `end` hangs up; `tool_results` answers a `tool_request`; `auth` replaces the tokens before they expire. Anything else
- * is ignored, as on the main socket.
+ * `end` hangs up; `tool_results` answers a `tool_request`; `auth` replaces the tokens before they expire; `interrupt`
+ * is the phone's own barge-in. Anything else is ignored, as on the main socket.
  */
 private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conversation: LiveConversation) {
     when (val frame = phoneFrame(text)) {
@@ -201,6 +202,21 @@ private suspend fun DefaultWebSocketServerSession.phoneSaid(text: String, conver
 
         is LivePhoneFrame.Auth -> {
             conversation.refresh(frame.accessToken, frame.agentToken?.takeIf { it.isNotBlank() })
+        }
+
+        is LivePhoneFrame.Interrupt -> {
+            val outcome = conversation.interrupt()
+            // the phone's clock is not ours: the lag is only a rough figure for tuning, never used to decide
+            val lagMillis =
+                frame.at?.let { at ->
+                    runCatching { System.currentTimeMillis() - Instant.parse(at).toEpochMilli() }.getOrNull()
+                }
+            log.info(
+                "live voice interrupt: user={} outcome={} lagMs={}",
+                conversation.line.userId,
+                outcome.name.lowercase(),
+                lagMillis,
+            )
         }
 
         is LivePhoneFrame.ToolResults -> {
@@ -260,5 +276,6 @@ private fun LiveEnd.closeCode(): CloseReason.Codes =
     when (this) {
         is LiveEnd.OutOfAllowance -> CloseReason.Codes.VIOLATED_POLICY
         is LiveEnd.ProviderFailed -> CloseReason.Codes.INTERNAL_ERROR
+        is LiveEnd.AssistantUnavailable -> CloseReason.Codes.TRY_AGAIN_LATER
         else -> CloseReason.Codes.NORMAL
     }

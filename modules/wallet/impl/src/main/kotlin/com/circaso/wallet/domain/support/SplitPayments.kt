@@ -8,6 +8,7 @@ import com.circaso.shared.Resource
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.TransferRepository
+import java.math.BigInteger
 import java.time.Clock
 import java.time.Duration
 
@@ -58,7 +59,7 @@ class SplitPayments(
             records
                 .filter { it.direction == CustodyDirection.IN && it.operation == CustodyOperation.TRANSFER }
                 .filter { sender.isEmpty() || Addresses.normalise(it.sourceAddress) == sender }
-                .map { Leg(Addresses.normalise(it.destinationAddress), it.amount.amountMinor) }
+                .map { Leg(Addresses.normalise(it.destinationAddress), it.amount.asset.symbol, it.amount.amountMinor) }
         val matching = candidates.filter { it.isPaidBy(legs) }
         if (matching.size > 1) warnings.splitPaymentAmbiguous(execution.circleTxId, matching.size)
         return Resource.success(matching.maxByOrNull { it.createdAt })
@@ -66,12 +67,14 @@ class SplitPayments(
 
     private fun Transfer.isPaidBy(legs: List<Leg>): Boolean {
         val feeTo = feeAddress?.let(Addresses::normalise) ?: return false
-        if (Leg(feeTo, feeMinor) !in legs) return false
+        val coin = amount.asset.symbol
+        if (Leg(feeTo, coin, feeMinor) !in legs) return false
         val payee = Addresses.normalise(destinationAddress)
-        return Leg(payee, amount.amountMinor) in legs || legs.none { it.address == payee }
+        return Leg(payee, coin, amount.amountMinor) in legs || legs.none { it.address == payee }
     }
 
-    private data class Leg(val address: String, val amountMinor: Long)
+    /** One leg as it landed: where, in which coin (2026-11-07: any coin), how much. */
+    private data class Leg(val address: String, val symbol: String, val amountMinor: BigInteger)
 
     private companion object {
         /** How far back a batch's transfer may have been prepared: as far as `wallet.unsettled-splits` looks. */

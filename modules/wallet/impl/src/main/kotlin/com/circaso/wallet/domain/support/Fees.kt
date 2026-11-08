@@ -13,6 +13,7 @@ import com.circaso.wallet.domain.models.Fee
 import com.circaso.wallet.domain.models.FeeKind
 import com.circaso.wallet.domain.models.FeeParties
 import com.circaso.wallet.domain.models.FeeRule
+import com.circaso.wallet.domain.models.GasSource
 import com.circaso.wallet.domain.models.LimitRule
 import com.circaso.wallet.domain.models.NoFeeReason
 import com.circaso.wallet.domain.models.WalletOwner
@@ -22,6 +23,7 @@ import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
 import com.circaso.wallet.domain.repositories.WalletRepository
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
@@ -45,9 +47,9 @@ object RuleVersions {
 }
 
 /**
- * How one payment is priced (§7b): the rule that applies, the network cost estimated for the exact call that will
- * run, and where the fee goes. [feeFor] gives the fee for any amount of it, so the most that fits a balance can be
- * worked out without asking Circle again.
+ * How one payment is priced (§7b): the rule that applies, the network cost it is priced on ([gasMinor], from
+ * [gasSource]), where the fee goes, and the [coin] it is paid in. [feeFor] gives the fee for any amount of it, so the
+ * most that fits a balance can be worked out without asking Circle again.
  */
 class Pricing(
     val parties: FeeParties,
@@ -55,17 +57,26 @@ class Pricing(
     val gasMinor: Long?,
     val feeAddress: String?,
     val reason: NoFeeReason?,
+    /** The coin it is paid in; a dollar stablecoin unless said (the fee is then the dollar fee itself). */
+    val coin: PaymentCoin = PaymentCoin.dollar(parties.asset),
+    val gasSource: GasSource? = null,
 ) {
     /**
-     * `fee = max(rate × min(amount, cap), min_fee_usd, gas × (1 + margin) ÷ share)`; the rate part rounded half up to
-     * the cent, the floors up to the cent, so the network cost always stays within its share of the fee. A 0 % rule
-     * (a promotion) takes nothing and adds no floor: its gas is booked as promotion cost.
+     * Gas inclusive (decision 2026-11-08): `fee = ceil_cent(gas × (1 + margin)) + half_up_cent(rate × min(amount,
+     * cap))`, raised to `min_fee_usd` when the rule sets one, in dollars. The network cost always passes through, so a
+     * 0 % rule charges the network cost alone; Circaso no longer absorbs gas. Without a network cost (no rule, no fee
+     * leg on the chain, no fee wallet) nothing is charged, as before.
+     *
+     * [amountMinor] is in the [coin]; the dollar fee is worked out on its dollar value and charged in the coin,
+     * converted at the coin's price and rounded up to its minor unit (decision 2026-11-07). For USDC both steps are
+     * the identity.
      */
-    fun feeFor(amountMinor: Long): Fee {
+    fun feeFor(amountMinor: BigInteger): Fee {
         val applied = rule
-        if (applied == null || reason != null || applied.rateBps == 0 || feeAddress == null) {
+        val gas = gasMinor
+        if (applied == null || reason != null || feeAddress == null || gas == null) {
             return Fee(
-                0,
+                BigInteger.ZERO,
                 applied?.rateBps ?: 0,
                 false,
                 applied?.ruleId,
@@ -75,62 +86,87 @@ class Pricing(
                 parties,
                 null,
                 reason,
+                usdMinor = 0,
+                usdPrice = coin.usdPrice,
+                gasSource = gasSource,
             )
         }
-        val base = BigDecimal.valueOf(minOf(amountMinor, applied.capBaseMinor))
-        val rated = cents(base * BigDecimal.valueOf(applied.rateBps.toLong()) / BPS, RoundingMode.HALF_UP)
-        val gasFloor =
-            gasMinor?.let { gas ->
-                cents(
-                    BigDecimal.valueOf(gas) * BigDecimal.valueOf(BPS_LONG + applied.gasMarginBps) /
-                        BigDecimal.valueOf(applied.gasShareMaxBps.toLong()),
-                    RoundingMode.CEILING,
-                )
-            } ?: 0
-        val floor =
-            maxOf(
-                gasFloor,
-                applied.minFeeMinor?.let { cents(BigDecimal.valueOf(it), RoundingMode.CEILING) } ?: 0,
-            )
-        val fee = maxOf(rated, floor)
+        val network = networkPart(applied, gas)
+        val base = BigDecimal.valueOf(minOf(coin.usdMinor(amountMinor), applied.capBaseMinor))
+        val rated = cents((base * BigDecimal.valueOf(applied.rateBps.toLong())).divide(BPS), RoundingMode.HALF_UP)
+        val priced = network + rated
+        val floor = applied.minFeeMinor?.let { cents(BigDecimal.valueOf(it), RoundingMode.CEILING) } ?: 0
+        val fee = maxOf(priced, floor)
         return Fee(
-            fee,
+            coin.minorOf(fee),
             applied.rateBps,
-            fee > rated,
+            fee > priced,
             applied.ruleId,
             applied.version,
             gasMinor,
             share(),
             parties,
             feeAddress,
+            usdMinor = fee,
+            usdPrice = coin.usdPrice,
+            gasSource = gasSource,
         )
     }
 
+    /** The network cost with the rule's margin on top, rounded up to the cent, in micro-dollars. */
+    private fun networkPart(rule: FeeRule, gas: Long): Long =
+        cents(
+            (BigDecimal.valueOf(gas) * BigDecimal.valueOf(BPS_LONG + rule.gasMarginBps)).divide(BPS),
+            RoundingMode.CEILING,
+        )
+
+    fun feeFor(amountMinor: Long): Fee = feeFor(BigInteger.valueOf(amountMinor))
+
     /**
-     * The largest amount whose total (the amount and its fee) fits [budgetMinor] and that is at most [capMinor]; 0
-     * when none does. The total only grows with the amount, so a binary search finds it.
+     * The largest amount (in the coin) whose total, the amount and its fee, fits [budgetMinor] of the coin, and that
+     * is at most [capUsdMinor] (one payment's cap) and, with its fee, at most [leftUsdMinor] (what is left of the
+     * window), both in micro-dollars; 0 when none does. The total only grows with the amount, so a binary search finds
+     * it. For USDC this is the amount within `min(budget, left)` and the cap, as before.
      */
-    fun maxAmount(budgetMinor: Long, capMinor: Long? = null): Long {
-        var low = 0L
-        var high = minOf(budgetMinor, capMinor ?: Long.MAX_VALUE)
-        if (high <= 0) return 0
+    fun maxAmount(
+        budgetMinor: BigInteger,
+        capUsdMinor: Long? = null,
+        leftUsdMinor: Long? = null,
+    ): BigInteger {
+        if (budgetMinor.signum() <= 0) return BigInteger.ZERO
+
+        fun fits(amount: BigInteger): Boolean {
+            if (capUsdMinor != null && coin.usdMinor(amount) > capUsdMinor) return false
+            val fee = feeFor(amount)
+            if (amount + fee.amountMinor > budgetMinor) return false
+            return leftUsdMinor == null || coin.usdMinor(amount) + fee.usdMinor <= leftUsdMinor
+        }
+        var low = BigInteger.ZERO
+        var high = budgetMinor
         while (low < high) {
-            val mid = low + (high - low + 1) / 2
-            if (mid + feeFor(mid).amountMinor <= budgetMinor) low = mid else high = mid - 1
+            val mid = low + (high - low + BigInteger.ONE).shiftRight(1)
+            if (fits(mid)) low = mid else high = mid - BigInteger.ONE
         }
         return low
     }
+
+    /** The legacy form, all in one dollar stablecoin's minor units (the budget already within what is left). */
+    fun maxAmount(budgetMinor: Long, capMinor: Long? = null): Long =
+        maxAmount(BigInteger.valueOf(budgetMinor), capMinor).toLong()
 
     private fun share(): Int = rule?.gasShareMaxBps ?: DEFAULT_SHARE_BPS
 
     private fun cents(value: BigDecimal, rounding: RoundingMode): Long =
         value.divide(CENT, 0, rounding).multiply(CENT).toLong()
 
+    /** This pricing in another coin's price, the rest unchanged. */
+    fun withCoin(coin: PaymentCoin): Pricing = Pricing(parties, rule, gasMinor, feeAddress, reason, coin, gasSource)
+
     private companion object {
         const val BPS_LONG = 10_000L
         val BPS: BigDecimal = BigDecimal.valueOf(BPS_LONG)
 
-        /** One cent in USDC minor units. */
+        /** One cent in micro-dollars. */
         val CENT: BigDecimal = BigDecimal.valueOf(10_000)
         const val DEFAULT_SHARE_BPS = 2_500
     }
@@ -150,43 +186,63 @@ class FeeCalculator(
     private val owners: WalletOwnerRepository,
     private val warnings: WalletWarnings,
     private val clock: Clock,
+    /** What recent transfers actually cost; without it (tests) every payment is priced on Circle's estimate. */
+    private val networkCosts: NetworkCosts? = null,
 ) {
     private val estimates = ConcurrentHashMap<String, Pair<NetworkCost, Instant>>()
 
-    /** The pricing of [amount] from [owner]'s wallet [sender] to [destination]; an error when gas can't be estimated. */
+    /**
+     * The pricing of a payment from [owner]'s wallet [sender] to [destination]; an error when gas can't be estimated.
+     * Circle is still asked for the exact call (it is what checks the call can run), but the network cost is priced
+     * on what the chain's recent transfers cost when there is enough history ([NetworkCosts]).
+     */
     suspend fun pricing(
         owner: WalletOwner,
         sender: Sender,
         destination: Destination,
-        amount: Money,
+        coin: PaymentCoin,
     ): Resource<Pricing> {
         val chain = sender.wallet.blockchain
-        val parties = parties(owner, destination, chain, amount.asset)
+        val parties = parties(owner, destination, chain, coin.asset)
         val rule =
             RuleVersions
                 .currentFees(rules.feeRules(), clock.instant())
                 .filter { it.matches(parties) }
                 .maxWithOrNull(compareBy<FeeRule> { it.specificity }.thenBy { it.effectiveFrom }.thenBy { it.ruleId })
-                ?: return Resource.success(Pricing(parties, null, null, null, NoFeeReason.NO_RULE))
-        if (rule.rateBps == 0) return Resource.success(Pricing(parties, rule, null, null, null))
-        if (!custody.canSplit(chain)) return untaken(parties, rule, NoFeeReason.NO_SPLIT)
+                ?: return Resource.success(Pricing(parties, null, null, null, NoFeeReason.NO_RULE, coin))
+        // A 0 % rule where no fee leg can be carried (Solana) charges nothing, quietly, as it always has.
+        val free = rule.rateBps == 0 && rule.minFeeMinor == null
+        if (!custody.canSplit(chain)) return untaken(parties, rule, NoFeeReason.NO_SPLIT, coin, quiet = free)
         val feeAddress = config.feeAddress(chain)?.let { Addresses.normalise(it) }
-        if (feeAddress.isNullOrEmpty()) return untaken(parties, rule, NoFeeReason.NO_FEE_WALLET)
-        val gas =
-            when (val estimated = gasOf(sender, destination, feeAddress)) {
+        if (feeAddress.isNullOrEmpty()) return untaken(parties, rule, NoFeeReason.NO_FEE_WALLET, coin, quiet = free)
+        val estimate =
+            when (val estimated = gasOf(sender, destination, feeAddress, coin)) {
                 is Resource.Success -> estimated.data
                 is Resource.Error -> return estimated
             }
-        return Resource.success(Pricing(parties, rule, gas, feeAddress, null))
+        val recent = networkCosts?.recent(chain, coin.asset.symbol)
+        val (gas, source) = if (recent != null) recent.gasMinor to GasSource.RECENT else estimate to GasSource.ESTIMATE
+        return Resource.success(Pricing(parties, rule, gas, feeAddress, null, coin, source))
     }
+
+    /** The legacy form for a dollar stablecoin offered on the chain. */
+    suspend fun pricing(
+        owner: WalletOwner,
+        sender: Sender,
+        destination: Destination,
+        amount: Money,
+    ): Resource<Pricing> = pricing(owner, sender, destination, PaymentCoin.dollar(amount.asset))
 
     private fun untaken(
         parties: FeeParties,
         rule: FeeRule,
         reason: NoFeeReason,
+        coin: PaymentCoin,
+        quiet: Boolean,
     ): Resource<Pricing> {
+        if (quiet) return Resource.success(Pricing(parties, rule, null, null, null, coin))
         warnings.feeNotTaken(parties.blockchain, reason.name)
-        return Resource.success(Pricing(parties, rule, null, null, reason))
+        return Resource.success(Pricing(parties, rule, null, null, reason, coin))
     }
 
     /**
@@ -227,9 +283,11 @@ class FeeCalculator(
         sender: Sender,
         destination: Destination,
         feeAddress: String,
+        coin: PaymentCoin,
     ): Resource<Long> {
         val chain = sender.wallet.blockchain
-        val key = "${sender.wallet.circleWalletId}|$chain|${destination.address}"
+        val coinKey = "${coin.asset.symbol}|${coin.tokenAddress}"
+        val key = "${sender.wallet.circleWalletId}|$chain|${destination.address}|$coinKey"
         val now = clock.instant()
         val kept = estimates[key]?.takeIf { (_, at) -> Duration.between(at, now) < ESTIMATE_LIFE }?.first
         val cost =
@@ -241,8 +299,8 @@ class FeeCalculator(
                         walletAddress = sender.wallet.address,
                         legs =
                             listOf(
-                                PaymentLeg(destination.address, Money(1, Asset.USDC)),
-                                PaymentLeg(feeAddress, Money(1, Asset.USDC)),
+                                PaymentLeg(destination.address, Money(1, coin.asset), coin.tokenAddress),
+                                PaymentLeg(feeAddress, Money(1, coin.asset), coin.tokenAddress),
                             ),
                         idempotencyKey = UUID.randomUUID(),
                         refId = "",

@@ -19,5 +19,7 @@ object SessionsTable : Table("identity.sessions") {
 
     init {
         index("sessions_expires_at_idx", false, expiresAt)
+        // V3: staff's list of an account's sessions; the SQL orders created_at DESC.
+        index("sessions_user_idx", false, userId, createdAt)
     }
 }

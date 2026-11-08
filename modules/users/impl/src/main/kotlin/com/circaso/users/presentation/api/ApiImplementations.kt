@@ -9,9 +9,12 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.getOrNull
 import com.circaso.users.api.ContactBook
+import com.circaso.users.api.Invites
+import com.circaso.users.api.IssuedInvite
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
 import com.circaso.users.api.ReachPolicy
+import com.circaso.users.presentation.services.ContactService
 import com.circaso.users.presentation.services.DirectoryService
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -44,6 +47,12 @@ class ReachPolicyImpl(private val directory: DirectoryService) : ReachPolicy {
 class ProfilesImpl(private val directory: DirectoryService) : Profiles {
     override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
         directory.getProfiles(ids).getOrNull().orEmpty()
+}
+
+/** users:api for share links: an invite made as U12 makes one, for the person who shares it. */
+class InvitesImpl(private val contacts: ContactService) : Invites {
+    override suspend fun create(owner: UserId): IssuedInvite? =
+        contacts.createInvite(owner).getOrNull()?.let { IssuedInvite(it.token, it.expiresAt) }
 }
 
 /** users:api for spaces: whose contacts are on Circaso, as ids. */

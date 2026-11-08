@@ -60,10 +60,27 @@ object RateLimitTable {
                 Limit("maps", 60, Duration.ofHours(1), LimitBy.USER)
             }
 
+            // SH1: each link stores a snapshot and some make an invite; nobody shares more than a few an hour.
+            method == "POST" && path == "/v1/share/links" -> {
+                Limit("share", 30, Duration.ofHours(1), LimitBy.USER)
+            }
+
+            // SU1: support's own cap is 5 new tickets a day (support.rate_limited); this bucket only stops a script
+            // hammering the route before that check runs.
+            method == "POST" && path == "/v1/support/tickets" -> {
+                Limit("support", 10, Duration.ofHours(1), LimitBy.USER)
+            }
+
             // W6 reads a page of history and names everyone on it: its own bucket, like the agent's, so scrolling the
             // history can't use up the rest of the app's budget.
             method == "GET" && path == "/v1/wallet/transactions" -> {
                 Limit("wallet-history", 60, minute, LimitBy.USER)
+            }
+
+            // IC1 coin icons are public and cached for a week; a first wallet screen may ask for a dozen. Their own bucket,
+            // so phones sharing a carrier's IP can't use up each other's sign-in budget with them.
+            method == "GET" && path.startsWith("/v1/assets/icons/") -> {
+                Limit("icons", 600, minute, LimitBy.IP)
             }
 
             signedIn -> {

@@ -1,5 +1,7 @@
 package com.circaso.wallet
 
+import com.circaso.integrations.api.AssetBalance
+import com.circaso.integrations.api.CustodyAsset
 import com.circaso.shared.UserId
 import com.circaso.shared.decode
 import com.circaso.wallet.api.WalletCreated
@@ -183,6 +185,88 @@ class WalletTest {
             assertTrue(fiat.partial)
             assertEquals(BigDecimal("3701"), fiat.amount, "UGX has no minor unit")
             assertEquals(BigInteger.TEN.pow(15), wallet.totals.first { it.symbol == "ETH" }.amountMinor)
+        }
+
+    @Test
+    fun `W1 prices a held coin from the feed, so the fiat value includes it and is no longer partial`() =
+        runBlocking<Unit> {
+            h.activeWallet(amina)
+            val base = h.wallets.wallets(amina).single()
+            h.custody.held[base.circleWalletId] = mapOf("USDC" to usdc("1"), "ETH" to BigInteger.TEN.pow(15))
+            h.rates.rates["KES"] = BigDecimal("129.25")
+            h.prices.prices["ETH"] = BigDecimal("3500")
+            h.cache.values.clear()
+
+            val wallet = h.wallet(amina, "KES").data()
+
+            val (usdcLine, ethLine) = wallet.chains[0].holdings
+            assertEquals(BigDecimal.ONE, usdcLine.usdPrice)
+            assertEquals(BigDecimal("3500"), ethLine.usdPrice)
+            assertEquals(BigDecimal("452.38"), ethLine.fiatAmount, "0.001 ETH x 3500 x 129.25 = 452.375")
+            val fiat = assertNotNull(wallet.fiat)
+            assertFalse(fiat.partial)
+            assertEquals(BigDecimal("581.63"), fiat.amount, "129.25 + 452.375, rounded once")
+            assertEquals(BigDecimal("3500"), wallet.totals.first { it.symbol == "ETH" }.usdPrice)
+            assertEquals(listOf(setOf("ETH")), h.prices.asked)
+            assertEquals(
+                BigDecimal("3500"),
+                h
+                    .wallet(amina)
+                    .data()
+                    .chains[0]
+                    .holdings[1]
+                    .usdPrice,
+                "without currency",
+            )
+        }
+
+    @Test
+    fun `a wallet holding only stablecoins never asks the price feed`() =
+        runBlocking<Unit> {
+            h.activeWallet(amina)
+            val base = h.wallets.wallets(amina).single()
+            h.custody.held[base.circleWalletId] = mapOf("USDC" to usdc("5"))
+            h.rates.rates["KES"] = BigDecimal("129.25")
+            h.cache.values.clear()
+
+            val wallet = h.wallet(amina, "KES").data()
+
+            assertTrue(h.prices.asked.isEmpty(), "zero ETH needs no price")
+            assertEquals(BigDecimal.ONE, wallet.chains[0].holdings[0].usdPrice)
+            assertNull(wallet.chains[0].holdings[1].usdPrice)
+            assertFalse(assertNotNull(wallet.fiat).partial)
+        }
+
+    @Test
+    fun `a token that only calls itself ETH is never priced, a known contract is priced as what it is`() =
+        runBlocking<Unit> {
+            h.activeWallet(amina)
+            val base = h.wallets.wallets(amina).single()
+            val fake = CustodyAsset("ETH", "0x1111111111111111111111111111111111111111", 18, usdPegged = false)
+            val weth = CustodyAsset("ETH", "0x4200000000000000000000000000000000000006", 18, usdPegged = false)
+            val fakeUsd = CustodyAsset("USDC", "0x2222222222222222222222222222222222222222", 6, usdPegged = true)
+            h.custody.heldOnly[base.circleWalletId] =
+                listOf(
+                    AssetBalance(fake, BigInteger.TEN.pow(18)),
+                    AssetBalance(weth, BigInteger.TEN.pow(18)),
+                    AssetBalance(fakeUsd, usdc("1000")),
+                )
+            h.prices.prices["ETH"] = BigDecimal("3500")
+            h.prices.prices["WETH"] = BigDecimal("3499")
+            h.rates.rates["KES"] = BigDecimal("129.25")
+            h.cache.values.clear()
+
+            val lines =
+                h
+                    .wallet(amina, "KES")
+                    .data()
+                    .chains[0]
+                    .holdings
+                    .drop(2)
+
+            assertNull(lines[0].usdPrice, "a copycat ETH")
+            assertEquals(BigDecimal("3499"), lines[1].usdPrice, "WETH's contract, priced as WETH whatever it is called")
+            assertNull(lines[2].usdPrice, "a stablecoin we don't offer is not taken at one dollar")
         }
 
     @Test

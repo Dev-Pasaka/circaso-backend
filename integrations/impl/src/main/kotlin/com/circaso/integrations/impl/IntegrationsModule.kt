@@ -5,9 +5,12 @@ import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.api.WarmUp
+import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CryptoMarkets
+import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
@@ -29,6 +32,7 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
+import com.circaso.integrations.impl.anthropic.AnthropicAdminBilling
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
@@ -37,12 +41,15 @@ import com.circaso.integrations.impl.circle.CircleWarmUp
 import com.circaso.integrations.impl.circle.CircleWebhook
 import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
 import com.circaso.integrations.impl.cloudflare.TurnKey
+import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
+import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeCallMedia
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
+import com.circaso.integrations.impl.dev.FakeCryptoMarkets
+import com.circaso.integrations.impl.dev.FakeCryptoPrices
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeExchangeRates
-import com.circaso.integrations.impl.dev.FakeLanguageModel
 import com.circaso.integrations.impl.dev.FakeLiveSpeech
 import com.circaso.integrations.impl.dev.FakeLiveTranscription
 import com.circaso.integrations.impl.dev.FakePush
@@ -54,14 +61,17 @@ import com.circaso.integrations.impl.dev.FakeTextToSpeech
 import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
+import com.circaso.integrations.impl.dev.LogCryptoPrices
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
-import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
 import com.circaso.integrations.impl.dev.LogWebSearch
+import com.circaso.integrations.impl.dev.NoAiBilling
+import com.circaso.integrations.impl.dev.NoCryptoMarkets
+import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
@@ -74,7 +84,6 @@ import com.circaso.integrations.impl.social.ProviderSpec
 import com.circaso.integrations.impl.tavily.TavilyWebSearch
 import com.circaso.integrations.impl.twilio.TwilioVerify
 import com.circaso.integrations.impl.workersai.WorkersAiGateway
-import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSocket
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -91,8 +100,10 @@ import java.time.Duration
 /**
  * Binds each contract to the provider named in config: `integrations.sms.provider = africastalking | log | fake`
  * and likewise `email` (`resend`), `social` (`google-apple`), `carrier` (`firebase`), `push` (`fcm`, for Android and iOS) and, for the
- * assistant, `llm`, `vision`, `stt`, `tts`, `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
- * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`) and `rates` (`open-er-api`), for calls
+ * assistant, `llm` (`workers-ai` or `anthropic`, with `llm.voice-provider` for live voice), `vision`, `stt`, `tts`,
+ * `live-stt` and `live-tts` (`workers-ai`), and for the wallet `custody`
+ * (`circle`, which also serves Circle's webhook at `/v1/hooks/circle`), `rates` (`open-er-api`) and `prices`
+ * (`coingecko`; unset, `coingecko` when its key is set, else `off`), for calls
  * `calls` (`cloudflare`, the Realtime SFU), for location previews `maps` (`google`), and Asha's web `search`
  * (`brave` or `tavily`; unset, `brave` when its key is set, else `fake`). Every other one defaults to `log`, which needs nothing; the vendor names are placeholders until their credentials
  * arrive. An unknown name stops startup.
@@ -187,28 +198,7 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
-        single<LanguageModel> {
-            pick<LanguageModel>(
-                "llm",
-                providers =
-                    mapOf(
-                        "log" to ::LogLanguageModel,
-                        "fake" to { FakeLanguageModel() },
-                        "workers-ai" to {
-                            val textModel = ai.string("model.text", WORKERS_AI_TEXT_MODEL)
-                            WorkersAiLanguageModel(
-                                workersAi(config, secrets, get()),
-                                textModel,
-                                maxOutputTokens = ai.int("max-output-tokens", WORKERS_AI_MAX_OUTPUT_TOKENS),
-                                // Live voice turns: PhoneLLM Mini (decision 2026-10-31), measured from the sandbox
-                                // on real Asha questions with 8 tools: right tool 3/3 in 0.3–0.5 s and a spoken answer
-                                // 0.3 s after the result, where Kimi took 13 s to pick a tool.
-                                voiceModel = ai.string("model.voice-text", WORKERS_AI_VOICE_TEXT_MODEL),
-                            )
-                        },
-                    ),
-            )
-        }
+        single<LanguageModel> { ashaLanguageModel(config, secrets, get()) }
         single<VisionModel> {
             pick(
                 "vision",
@@ -315,6 +305,52 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Coin prices (decision 2026-11-06): `coingecko` needs the secret `COINGECKO_API_KEY` (a Demo key) and is the
+        // default when it is set; without it the default is `off` (only dollar stablecoins priced), so a missing key
+        // never stops startup and never shows a made-up price. `log` has fixed rough prices for local runs. The table
+        // is kept in Redis under `px:` for `INTEGRATIONS_PRICES_FRESH_SECONDS` (default 60).
+        single<CryptoPrices> {
+            pick(
+                "prices",
+                default = if (secrets.get(COINGECKO_KEY) != null) "coingecko" else "off",
+                providers =
+                    mapOf(
+                        "off" to { NoCryptoPrices() },
+                        "log" to { LogCryptoPrices() },
+                        "fake" to { FakeCryptoPrices() },
+                        "coingecko" to {
+                            CoinGeckoPrices(
+                                http = coinGeckoClient(get()),
+                                redis = get<RedisScopes>().scope("px"),
+                                key = secrets.require(COINGECKO_KEY),
+                                freshFor = pricesFreshFor(integrations),
+                            )
+                        },
+                    ),
+            )
+        }
+        // Asha's crypto answers (decision 2026-11-06): the same feed, key and client as the prices; `off` without a key
+        // (she then says she couldn't get the data), `log` is `off` too, since made-up market data is never shown.
+        single<CryptoMarkets> {
+            pick(
+                "prices",
+                default = if (secrets.get(COINGECKO_KEY) != null) "coingecko" else "off",
+                providers =
+                    mapOf(
+                        "off" to { NoCryptoMarkets() },
+                        "log" to { NoCryptoMarkets() },
+                        "fake" to { FakeCryptoMarkets() },
+                        "coingecko" to {
+                            CoinGeckoMarkets(
+                                http = coinGeckoClient(get()),
+                                redis = get<RedisScopes>().scope("px"),
+                                key = secrets.require(COINGECKO_KEY),
+                                freshFor = pricesFreshFor(integrations),
+                            )
+                        },
+                    ),
+            )
+        }
         // Location previews (decision 2026-10-30): `google` needs the secret `GOOGLE_MAPS_API_KEY` (a key allowed only
         // the Maps Static API) and, recommended, `GOOGLE_MAPS_SIGNING_SECRET` (Cloud console > Maps > URL signing
         // secret). `log` answers unavailable and the app keeps its drawn tile.
@@ -360,6 +396,28 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                         },
                     ),
             )
+        }
+        // Anthropic's own billing, set beside Asha's cost estimate in the staff report (decision 2026-11-08). Off unless
+        // the secret `OPS_ANTHROPIC_ADMIN_KEY` (an Admin API key, `sk-ant-admin…`) is set; `OPS_ANTHROPIC_WORKSPACE_ID`
+        // counts one workspace only (`default` for the default one). Answers are kept in Redis under `aib:`.
+        single<AiBilling> {
+            val adminKey = secrets.get(ANTHROPIC_ADMIN_KEY)
+            if (adminKey == null) {
+                NoAiBilling
+            } else {
+                val baseUrl = config.string("ops.anthropic.admin-base-url", AnthropicAdminBilling.BASE_URL)
+                AnthropicAdminBilling(
+                    http =
+                        get<HttpClients>().named("anthropic-admin") {
+                            this.baseUrl = baseUrl
+                            connectTimeout = AnthropicAdminBilling.TIMEOUT
+                            requestTimeout = AnthropicAdminBilling.TIMEOUT
+                        },
+                    key = adminKey,
+                    cache = get<RedisScopes>().scope("aib"),
+                    workspaceId = config.string("ops.anthropic.workspace-id")?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            }
         }
         // Calls' SFU (decision 2026-10-29): `log` and `fake` make up sessions and SDP, so calls work without media.
         single<CallMedia> {
@@ -559,24 +617,46 @@ private fun cloudflareRealtime(
 /** Brave Search's key, `BRAVE_SEARCH_API_KEY`; its presence also picks `brave` when no provider is named. */
 private const val BRAVE_KEY = "brave-search.api-key"
 
-private const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
+/** Anthropic's Admin API key for the staff cost report, `OPS_ANTHROPIC_ADMIN_KEY`; never logged. */
+private const val ANTHROPIC_ADMIN_KEY = "ops.anthropic-admin-key"
+private const val COINGECKO_KEY = "coingecko.api-key"
 
-// Built by Pipecat/Daily for voice agents: replies quickly and calls tools mid-conversation (Workers AI, 2026-10-15).
-private const val WORKERS_AI_VOICE_TEXT_MODEL = "@cf/daily-co/phonellm-mini-alpha-2"
+/** CoinGecko's one client, for prices and Asha's coin data: short timeouts and no retry, since a reader waits. */
+private fun coinGeckoClient(clients: HttpClients) =
+    clients.named("coingecko") {
+        baseUrl = CoinGeckoPrices.BASE_URL
+        connectTimeout = CoinGeckoPrices.TIMEOUT
+        requestTimeout = CoinGeckoPrices.TIMEOUT
+        maxAttempts = 1
+    }
+
+private fun pricesFreshFor(integrations: Config): Duration =
+    Duration.ofSeconds(
+        integrations
+            .int("prices.fresh-seconds", CoinGeckoPrices.DEFAULT_FRESH_FOR.seconds.toInt())
+            .coerceAtLeast(MIN_FRESH_SECONDS)
+            .toLong(),
+    )
+
+/** The shortest a price table is kept: the Demo plan allows 30 calls a minute and 10,000 a month. */
+private const val MIN_FRESH_SECONDS = 30
+
+internal const val WORKERS_AI_TEXT_MODEL = "@cf/moonshotai/kimi-k2.6"
+
 private const val WORKERS_AI_VISION_MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
 private const val WORKERS_AI_STT_MODEL = "@cf/openai/whisper-large-v3-turbo"
 private const val WORKERS_AI_TTS_MODEL = "@cf/deepgram/aura-2-en"
 private const val WORKERS_AI_LIVE_STT_MODEL = "@cf/deepgram/nova-3"
 
 // A reasoning model spends part of its budget thinking before it answers or calls a tool; 4096 leaves room for both.
-private const val WORKERS_AI_MAX_OUTPUT_TOKENS = 8192
+internal const val WORKERS_AI_MAX_OUTPUT_TOKENS = 8192
 
 /**
  * Every Workers AI model needs `CLOUDFLARE_ACCOUNT_ID`, `INTEGRATIONS_AI_GATEWAY` (the AI Gateway's name) and the secret
  * `CLOUDFLARE_AI_TOKEN` (an API token with Workers AI Read). One shared `workers-ai` client: a reasoning model can take
  * longer than the usual 15 s, so it waits up to a minute.
  */
-private fun workersAi(
+internal fun workersAi(
     config: Config,
     secrets: Secrets,
     clients: HttpClients,

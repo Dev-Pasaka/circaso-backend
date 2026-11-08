@@ -12,8 +12,9 @@ import java.math.RoundingMode
 /**
  * The fee ledger follows its transfer (§7b "Fee address and accounting"): collected once the chain confirms it (the
  * fee leg went in the same transaction), void when it failed or expired unsigned. A confirmed payment records the
- * network cost the chain reported; when that came to more of the fee than its rule allows (25 %), it is flagged for
- * the reports. Called inside the transaction that moves the transfer.
+ * network cost the chain reported; when that came to more than the whole fee (the network cost is passed through
+ * since 2026-11-08, so Circaso paid gas out of pocket), it is flagged for the reports. Called inside the transaction
+ * that moves the transfer.
  */
 class FeeSettlement(
     private val ledger: FeeLedgerRepository,
@@ -42,8 +43,9 @@ class FeeSettlement(
                 ).movePointRight(MICRO).setScale(0, RoundingMode.CEILING).toLong()
             }
         val entry = ledger.settle(transfer.transferId, state, change.txHash, native, gasMinor, change.at) ?: return
-        val fee = entry.fee.amountMinor
-        if (gasMinor != null && fee > 0 && gasMinor * BPS > fee * entry.fee.gasShareMaxBps) {
+        // Both in micro-dollars: the fee as the rule priced it, whatever coin it was charged in (2026-11-07).
+        val fee = entry.fee.usdMinor
+        if (gasMinor != null && fee > 0 && gasMinor > fee) {
             warnings.gasAboveShare(transfer.transferId.toString(), transfer.blockchain, (gasMinor * BPS / fee).toInt())
         }
     }

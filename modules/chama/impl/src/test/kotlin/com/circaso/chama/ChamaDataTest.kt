@@ -1,12 +1,14 @@
 package com.circaso.chama
 
 import com.circaso.chama.data.repositories.ContributionRepositoryImpl
+import com.circaso.chama.data.repositories.DirectPayoutRepositoryImpl
 import com.circaso.chama.data.repositories.GoalRepositoryImpl
 import com.circaso.chama.data.repositories.RequestRepositoryImpl
 import com.circaso.chama.data.repositories.SettingsRepositoryImpl
 import com.circaso.chama.di.chamaDatabaseSpec
 import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.Contribution
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.presentation.warmup.ChamaWarmUp
@@ -26,14 +28,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Chama's data layer on PostgreSQL after V2 (group wallets): a target without a treasurer, removing it, the group's
- * approval setting with its default, and totals that skip legacy contributions and count from a target's start.
+ * Chama's data layer on PostgreSQL after V3: a target without a treasurer, removing it, the group's approval setting
+ * with its default, totals that skip legacy contributions and count from a target's start, and direct payouts (V3).
  */
 class ChamaDataTest {
     private val database: Database = TestPostgres.database(chamaDatabaseSpec)
     private val goals = GoalRepositoryImpl(database)
     private val contributions = ContributionRepositoryImpl(database)
     private val settings = SettingsRepositoryImpl(database)
+    private val payouts = DirectPayoutRepositoryImpl(database)
     private val now: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
 
     @BeforeTest
@@ -115,5 +118,19 @@ class ChamaDataTest {
             assertEquals(mapOf(bob to 20L), contributions.totals(chat, since = now))
             assertEquals(3, contributions.list(chat, 10, null).size, "the ledger keeps every line")
             assertTrue(contributions.list(chat, 10, null).any { it.legacy })
+        }
+
+    @Test
+    fun `a direct payout is recorded once per transfer and totalled per group`() =
+        runBlocking<Unit> {
+            val chat = ChatId.new()
+            val t = TransferId.new()
+            assertTrue(payouts.insert(DirectPayout(t, chat, 300, now)))
+            assertFalse(payouts.insert(DirectPayout(t, chat, 300, now)), "the same transfer twice")
+            payouts.insert(DirectPayout(TransferId.new(), chat, 50, now))
+            payouts.insert(DirectPayout(TransferId.new(), ChatId.new(), 7, now))
+
+            assertEquals(350L, payouts.total(chat))
+            assertEquals(0L, payouts.total(ChatId.new()))
         }
 }

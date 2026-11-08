@@ -13,7 +13,7 @@ Status: draft, 2026-10-25. Decisions behind it are the 2026-10-25 rows in the de
 - **Chats** — `DIRECT` (exactly two people, one chat per pair) and `GROUP` (up to 1,000 members, with an owner, admins and members). A group's name and avatar are encrypted on the phone; the server stores them sealed.
 - **Key directory** — each account's public identity key, signed prekey, signed Kyber prekey and one-time prekeys, so anyone who can reach a person can start an encrypted session with them (PQXDH: libsignal 0.106 refuses a bundle without the Kyber prekey; decision 2026-10-28). One phone per account, so one key set per account.
 - **Delivery** — encrypted messages held per recipient until their phone acknowledges them, then deleted; 30 days at the latest.
-- **Attachments** — encrypted blobs in object storage (R2), uploaded and downloaded through pre-signed URLs, deleted 30 days after the upload started (AT1–AT3, decision 2026-10-30; built).
+- **Attachments** — encrypted blobs in object storage (R2), uploaded and downloaded through pre-signed URLs, deleted 30 days after the upload started (AT1–AT3, decision 2026-10-30; built). A group's current photo is the one attachment kept longer: until M8 replaces or clears it, then 24 hours (decision 2026-11-05).
 - **Receipts and typing** — delivered and read receipts, and typing signals, over the gateway WebSocket.
 - **History** — each user's own copy of their chats, sealed on the phone under their history key, so a new phone can restore it. The server stores only ciphertext.
 - **History-key backup** — the history key sealed under a passkey (or a generated recovery key), for when the old phone is gone.
@@ -75,6 +75,16 @@ interface ChatDirectory {            // read by wallet (pay-in-chat) and calls (
 
 Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below), and supplies the push wording for its frames.
 
+**Staff contract `GroupReports`** (decision 2026-11-08), bound in messaging's Koin module for the ops module on the separate ops gateway, never mounted on the app gateway. A group's name and photo are sealed on the phones, so staff see ids, counts and roles only.
+
+| Call | Use case | Notes |
+| --- | --- | --- |
+| `groups(cursor, limit)` | `ListGroups` | Every group newest first, keyset on `(created_at, chat_id) DESC` (`chats_groups_newest_idx`, V7), opaque base64url cursor; `request.malformed` for a bad one; `limit` 1–200 |
+| `groupsByIds(ids)` | `GetGroupsByIds` | Only groups that exist; a direct chat's id finds nothing |
+| `members(chatId, limit)` | `ListGroupMembers` | The owner first (whoever the chat names), then by `joined_at`; roles as `Chat.roleOf` gives them; empty for a direct chat |
+| `groupsOf(userId, limit)` | `ListGroupsOf` | Through `members_user_idx`, newest first |
+| `groupCount()` | `CountGroups` | On the partial index of groups |
+
 ### Depends on
 
 `shared`, `infrastructure:api`, `identity:api` (`DeviceSignatures`, account status) and `users:api` (`ReachPolicy`, `Profiles`). Reach is checked when a 1:1 chat is opened, on every 1:1 send (cached by users), and when someone adds a person to a group. Inside a group, members message each other through the group without needing a contact connection, which is the "separate rule owned by messaging" that users leaves to this module.
@@ -105,7 +115,7 @@ Paths are relative to `https://api.circaso.com/v1`, all with the `app` scope. Ev
 | M5 | `POST /chats/groups` | `CreateGroup` | Creates a group with a name and first members (each must be reachable by the creator) |
 | M6 | `GET /chats` | `ListChats` | Every chat the user is in, with members' public profiles and the last message id (null after 30 days without a message); the app sorts and counts unread |
 | M7 | `GET /chats/{chatId}` | `GetChat` | One chat with members and roles |
-| M8 | `PATCH /chats/{chatId}` | `UpdateGroup` | Sealed name and avatar, who may add members (admins only); optimistic lock on `version` |
+| M8 | `PATCH /chats/{chatId}` | `UpdateGroup` | Sealed name and avatar, the group photo (`avatarMediaId`), who may add members (admins only); optimistic lock on `version` |
 | M9 | `POST /chats/{chatId}/members` | `AddMembers` | Adds members (admins, or anyone if the group allows); each must be reachable by whoever adds them; 1,000 cap |
 | M10 | `DELETE /chats/{chatId}/members/{userId}` | `RemoveMember` / `LeaveGroup` | An admin removes someone, or a member removes themselves (leave) |
 | M11 | `PUT /chats/{chatId}/members/{userId}/role` | `SetRole` | Makes someone an admin or a member; the owner can hand over ownership |
@@ -167,8 +177,12 @@ The one-time prekey comes only from those uploaded by the device that published 
   "sealedMeta": "AAEC…",                         // name and avatar (its R2 key and file key), under the group metadata key; null for direct
   "metaVersion": 3,
   "members": [ { "user": PublicProfile, "role": "OWNER", "joinedAt": "2026-10-25T09:00:00Z" } ],
-  "settings": { "membersCanAdd": false }, "lastMessageId": "0193…", "version": 1
+  "settings": { "membersCanAdd": false }, "lastMessageId": "0193…", "version": 1,
+  "avatarMediaId": "0193…"                       // groups: the group photo, an attachment of the group (AT3); null for none
 }
+
+// PATCH /chats/{chatId} ← { "version": 1, "sealedMeta": "AAEC…", "avatarMediaId": "0193…" }   // null clears, absent keeps
+// → data: Chat
 ```
 
 `lastMessageId` is the newest message the server still holds a record of, so it is `null` for a chat with no message in the last 30 days; the app then keeps the last id it saw.
@@ -177,7 +191,7 @@ A group's id is derived from the creator and the request's `Idempotency-Key`, an
 
 **Leaving and removing (M10)** is one transaction: the member row (which is also the chat-list line) is taken with `deleteReturning`, and only the caller that gets it decrements `member_count`, picks the successor when the owner left, deletes the group when it is empty and writes `MemberRemoved` (event id from chat, user and `joinedAt`) to the outbox; it sends `member.removed` after the commit. A caller that gets no row changed nothing, so either party can retry and a removal is never left half done. **Roles (M11, succession)** are written with `updateReturning … WHERE chat_id = ? AND user_id = ?`, so a role write never brings back a member who left; the chat's `owner_id` is the authority on who owns it.
 
-A group avatar is an encrypted file uploaded through M15 with `"purpose": "GROUP_AVATAR"`: it has no recipients and is never deleted on download, only when the avatar changes or the group is deleted. A phone without the current metadata key shows "Group" and a placeholder until it gets one.
+**Group photo (built 2026-11-05; replaces the M15 `GROUP_AVATAR` draft).** The photo is an ordinary attachment of the group (AT1 `kind: image` → PUT → AT2), its key, digest and a small thumbnail inside `sealedMeta`. M8's `avatarMediaId` makes it the photo: an id sets it, `null` clears it, no field keeps it. Inside M8's transaction, with the chat's row locked first: the attachment must be of this chat, `READY`, `IMAGE`, unexpired and at most 2 MiB of ciphertext (else `messaging.avatar_invalid`), and is kept with `expires_at = NULL` by one conditional `UPDATE … WHERE state = 'READY' AND (expires_at IS NULL OR expires_at > :now)`, so a purge that got there first is never undone; it goes into `chats.avatar_media_id` in the same versioned write. The photo it replaces, or a cleared one, gets `expires_at = now + 24 h` (`… WHERE expires_at IS NULL`), so a member mid-download still gets it; when the last member leaves, the deleted group's photo gets `expires_at = now`. The purge then takes them as any other. Download stays AT3: current members only. M5 doesn't take a photo, because AT1 needs the group to exist; the app creates, uploads, then patches. ChatDto and `chat.updated` carry `avatarMediaId`, so a phone that missed the frame still finds the photo. A phone without the current metadata key shows "Group" and a placeholder until it gets one.
 
 ### M12 Send a message
 
@@ -223,13 +237,13 @@ Signal's model (decision 2026-10-30): the phone encrypts each file with a fresh 
 // AT3 GET /attachments/{attachmentId}   → data { "downloadUrl": "https://…r2…", "expiresAt": "2026-10-30T10:15:00Z", "sizeBytes": 123456 }
 ```
 
-- **AT1** — members of the chat only (`Membership`, the cached member set; anyone else gets `messaging.chat_not_found`). `sizeBytes` is the exact ciphertext size, 1 byte to 32 MiB (`messaging.attachment_too_large`). The PUT URL works 15 minutes and is signed for `Content-Type: application/octet-stream`, which the phone must send exactly (`uploadHeaders`). The URL is signed before the row is written, so a storage outage leaves nothing; the row is `PENDING` with `expires_at = created_at + 30 days`. `attachmentId` is a server-made UUIDv7.
+- **AT1** — members of the chat only (`Membership`, the cached member set; anyone else gets `messaging.chat_not_found`). `sizeBytes` is the exact ciphertext size, 1 byte to 100 MiB (`MESSAGING_MAX_ATTACHMENT_BYTES`, decision 2026-11-07; `messaging.attachment_too_large`). The PUT URL works an hour and is signed for `Content-Type: application/octet-stream`, which the phone must send exactly (`uploadHeaders`). The URL is signed before the row is written, so a storage outage leaves nothing; the row is `PENDING` with `expires_at = created_at + 30 days`. `attachmentId` is a server-made UUIDv7.
 - **AT2** — the uploader only (anyone else, an unknown id or an expired row: `messaging.attachment_not_found`). The object must exist (`ObjectStore.describe`) at exactly `sizeBytes`, else `messaging.attachment_incomplete` and the row stays `PENDING` (upload again within the URL's 15 minutes, or start over with AT1). `PENDING` → `READY` is one conditional update; completing a ready attachment again answers the same.
 - **AT3** — any **current** member of the attachment's chat (someone who left or was removed no longer can), `READY` and not expired. Everything else, non-members included, is `messaging.attachment_not_found` (404), so nobody learns an attachment exists. The GET URL works 15 minutes and is never stored.
-- **Retention** — 30 days from AT1, downloaded or not; there are no download acknowledgements. `messaging.purge-attachments` runs hourly on the scheduler's leader (Redis leader lock): it reads expired rows and `PENDING` rows over a day old in batches of 500, oldest first, deletes each storage object and then its row. An object storage fails to delete keeps its row for the next run, so no blob is ever orphaned by a lost row.
+- **Retention** — 30 days from AT1, downloaded or not; there are no download acknowledgements. A group's current photo has no expiry (`expires_at` NULL, V6) until M8 replaces or clears it (then 24 hours) or the group is deleted (then at once; see M4–M5 → Group photo). `messaging.purge-attachments` runs hourly on the scheduler's leader (Redis leader lock): it reads expired rows and `PENDING` rows over a day old in batches of 500, oldest first, deletes each storage object and then its row. An object storage fails to delete keeps its row for the next run, so no blob is ever orphaned by a lost row.
 - **Local runs** — with `STORAGE_PROVIDER=local` the store is in memory: AT1 returns a placeholder `http://localhost/local-upload/…` URL that accepts nothing, so AT2 answers `messaging.attachment_incomplete` (the same limit as avatars). Use `r2` (the sandbox) to try attachments end to end; domain tests use an in-memory `AttachmentStorage`.
 
-Not in v1: multipart or resumable uploads over 32 MiB, per-recipient download tracking, attachments in history (a restored chat shows earlier attachments as "No longer available" once they expire), group avatars as attachments.
+Not in v1: multipart or resumable uploads (one streamed PUT up to 100 MiB), per-recipient download tracking, attachments in history (a restored chat shows earlier attachments as "No longer available" once they expire).
 
 ### M18–M19 History
 
@@ -267,7 +281,7 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 | `message.undeliverable` | The sender, when a recipient's phone was replaced before delivery | No | Yes |
 | `receipt` | The sender: `delivered` / `read`, by `messageId` and `userId`; in groups batched every 5 seconds | No | Yes |
 | `typing` | Other members while the chat is open; groups up to 50 members only | No | No |
-| `chat.updated` | Members: sealed name or avatar, or settings changed | No | Yes |
+| `chat.updated` | Members: sealed name or avatar, group photo, or settings changed | No | Yes |
 | `member.added` / `member.removed` | Members, and the person themselves; tells phones to send or rotate sender keys | Yes for the person added | Yes |
 | `keys.changed` | Everyone who shares a chat with the person | No | Yes |
 
@@ -280,7 +294,7 @@ Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output o
 | `message.undeliverable` | `chatId`, `messageId`, `recipientId` |
 | `receipt` | `chatId`, `receipts: [{ messageId, userId, status: DELIVERED \| READ, at }]` |
 | `typing` | `chatId`, `userId`, `on` |
-| `chat.updated` | `chatId`, `metaVersion`, `version` |
+| `chat.updated` | `chatId`, `metaVersion`, `version`, `avatarMediaId` (the group photo as it now is, or null) |
 | `member.added` | `chatId`, `userIds` (everyone added in that action, sorted), `byUserId`; one frame per member per action (decision 2026-10-26) |
 | `member.removed` | `chatId`, `userId` (the person removed or who left), `byUserId`; one frame per person |
 | `keys.changed` | `userId` |
@@ -313,7 +327,7 @@ CREATE TABLE messaging.chats (
     direct_high     uuid,                               -- DIRECT: the larger user id of the pair; NULL for groups
     sealed_meta     text,                               -- groups: name and avatar under the group metadata key; NULL for direct
     meta_version    int         NOT NULL DEFAULT 0,
-    avatar_media_id uuid,                               -- the encrypted avatar file, deleted when replaced
+    avatar_media_id uuid,                               -- the group photo: an attachment of this chat, kept (expires_at NULL) while it is
     settings        text        NOT NULL,               -- JSON: membersCanAdd
     member_count    int         NOT NULL,               -- changed in the same transaction as the member rows
     owner_id        uuid,                               -- groups: the owner, the authority on who owns it; NULL for direct
@@ -325,6 +339,8 @@ CREATE TABLE messaging.chats (
 );
 CREATE UNIQUE INDEX chats_direct_pair_key ON messaging.chats (direct_low, direct_high) WHERE kind = 'DIRECT';
                                                         -- one direct chat per pair
+CREATE INDEX chats_groups_newest_idx ON messaging.chats (created_at DESC, chat_id DESC) WHERE kind = 'GROUP';
+                                                        -- staff: groups newest first, and their count (V7)
 
 CREATE TABLE messaging.members (
     chat_id    uuid        NOT NULL REFERENCES messaging.chats ON DELETE CASCADE,
@@ -410,10 +426,15 @@ CREATE TABLE messaging.attachments (
     size_bytes    bigint      NOT NULL CHECK (size_bytes > 0),
     state         text        NOT NULL CHECK (state IN ('PENDING', 'READY')),
     created_at    timestamptz NOT NULL,
-    expires_at    timestamptz NOT NULL                    -- created_at + 30 days
+    expires_at    timestamptz NOT NULL                    -- created_at + 30 days; V6: NULL while a group's photo
 );
 CREATE INDEX attachments_expires_at_idx ON messaging.attachments (expires_at);
 CREATE INDEX attachments_pending_created_at_idx ON messaging.attachments (created_at) WHERE state = 'PENDING';
+
+-- V6__group_photo.sql (decision 2026-11-05): a group's current photo is kept with no expiry
+ALTER TABLE messaging.attachments ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE messaging.attachments
+    ADD CONSTRAINT attachments_kept_only_ready CHECK (expires_at IS NOT NULL OR state = 'READY');
 
 CREATE TABLE messaging.history (
     user_id    uuid NOT NULL,
@@ -521,8 +542,9 @@ Messaging's own codes; `users.not_reachable` is returned as-is when reach fails.
 | `messaging.prekey_id_exists` | CONFLICT → 409 | A top-up resends a one-time prekey id that is already stored |
 | `messaging.too_many_prekeys` | INVALID → 400 | More than 100 one-time prekeys in an upload, or kept after a top-up |
 | `messaging.keys_proof_invalid` | FORBIDDEN → 403 | M1 without valid `X-Device-Timestamp` / `X-Device-Signature` headers |
-| `messaging.attachment_too_large` | INVALID → 400 | AT1 `sizeBytes` under 1 byte or over 32 MiB |
+| `messaging.attachment_too_large` | INVALID → 400 | AT1 `sizeBytes` under 1 byte or over 100 MiB (`MESSAGING_MAX_ATTACHMENT_BYTES`) |
 | `messaging.attachment_not_found` | NOT_FOUND → 404 | No such attachment, expired, not `READY` (AT3), not the uploader (AT2), or not a current member of its chat (AT3): all look the same |
+| `messaging.avatar_invalid` | INVALID → 400 | M8 `avatarMediaId` that isn't a `READY`, unexpired `IMAGE` attachment of this group of at most 2 MiB |
 | `messaging.attachment_incomplete` | INVALID → 400 | AT2 when the object isn't in storage or isn't the promised size |
 | `messaging.history_too_large` | INVALID → 400 | Over 200 entries, or an entry over 64 KB |
 | `messaging.backup_not_found` | NOT_FOUND → 404 | No history-key backup |

@@ -31,6 +31,7 @@ fun <T> Resource<T>.orTransferError(): Resource<T> {
             is IntegrationError.InsufficientFunds -> WalletError.InsufficientFunds
             is IntegrationError.AddressInvalid -> WalletError.AddressInvalid
             is IntegrationError.PinLocked -> WalletError.PinLocked
+            is IntegrationError.AssetNotSupported -> WalletError.AssetNotSupported
             else -> WalletError.CustodyUnavailable
         }
     return Resource.error(mapped, cause)

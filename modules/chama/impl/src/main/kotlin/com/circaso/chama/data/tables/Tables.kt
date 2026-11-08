@@ -33,6 +33,29 @@ object ContributionsTable : Table("chama.contributions") {
     val asset = text("asset")
     val at = timestamp("at")
     val legacy = bool("legacy").default(false)
+
+    /** V4 (2026-11-07): the coin actually paid; [amountMinor] is its value in dollars. */
+    val paidAsset = text("paid_asset").nullable()
+    val paidDecimals = short("paid_decimals").nullable()
+    val paidAmountMinor = decimal("paid_amount_minor", 78, 0).nullable()
+    override val primaryKey = PrimaryKey(transferId)
+}
+
+/**
+ * Money the group wallet's owner sent straight from it (decision 2026-11-06: no request), once per transfer, so what
+ * the group paid out and still holds stays true. A payout for a request is counted on its request instead.
+ */
+object DirectPayoutsTable : Table("chama.direct_payouts") {
+    val transferId = javaUUID("transfer_id")
+    val chatId = javaUUID("chat_id")
+    val amountMinor = long("amount_minor")
+    val asset = text("asset")
+    val at = timestamp("at")
+
+    /** V4 (2026-11-07): the coin actually sent; [amountMinor] is its value in dollars. */
+    val paidAsset = text("paid_asset").nullable()
+    val paidDecimals = short("paid_decimals").nullable()
+    val paidAmountMinor = decimal("paid_amount_minor", 78, 0).nullable()
     override val primaryKey = PrimaryKey(transferId)
 }
 

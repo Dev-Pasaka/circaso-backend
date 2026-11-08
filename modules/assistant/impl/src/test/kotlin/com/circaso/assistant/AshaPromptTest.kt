@@ -1,8 +1,11 @@
 package com.circaso.assistant
 
 import com.circaso.assistant.data.tools.AllAgentTools
+import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
+import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.data.tools.SupportTools
 import com.circaso.assistant.domain.support.AshaPrompt
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.PromptContext
@@ -45,6 +48,9 @@ class AshaPromptTest {
                     UsageReader(plans, quota, config, clock),
                     SearchAllowance(plans, quota, config, clock),
                 ),
+                CryptoTools(FakeMarkets(), FakeUsdRates()),
+                MoneyTools(FakeUsdRates(), FakePrices(), FakeMarkets()),
+                SupportTools(RecordingTickets()),
             ),
         )
     private val text = AshaPrompt.of(PromptContext(isVoice = false, "2026-11-05", "KES", canReadChats = true))
@@ -75,10 +81,28 @@ class AshaPromptTest {
                 "getMyMoments",
                 "getAshaUsage",
                 "searchWeb",
+                "getCryptoMarket",
+                "getTrendingCrypto",
+                "getExchangeRate",
+                "convertAmount",
+                "calculate",
+                "openSupportTicket",
             ),
             tools.specs(hasAgentToken = true).map { it.name },
         )
-        assertEquals(listOf("getAshaUsage", "searchWeb"), tools.specs(hasAgentToken = false).map { it.name })
+        assertEquals(
+            listOf(
+                "getAshaUsage",
+                "searchWeb",
+                "getCryptoMarket",
+                "getTrendingCrypto",
+                "getExchangeRate",
+                "convertAmount",
+                "calculate",
+                "openSupportTicket",
+            ),
+            tools.specs(hasAgentToken = false).map { it.name },
+        )
     }
 
     @Test
@@ -113,26 +137,91 @@ class AshaPromptTest {
     }
 
     @Test
-    fun `the mascot tag is no longer asked for, in text or in voice`() {
-        assertFalse("<mascot" in text)
-        assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-05-v1", AshaPrompt.VERSION)
+    fun `every crypto question goes to the price feed, never to memory or the web`() {
+        val flat = flat(text)
+        assertTrue("call getCryptoMarket or getTrendingCrypto first" in flat)
+        assertTrue("never from memory or the web, even for a coin you think you know" in flat)
+        assertTrue("If the tool has no answer, say you couldn't get it right now; never guess a price" in flat)
+        assertTrue("Never search for a coin's price or market data: that is getCryptoMarket" in flat)
+        assertTrue("never for a coin's price or market data (getCryptoMarket)" in AshaPrompt.searchWeb.description)
+        assertTrue("never answer those from memory" in AshaPrompt.getCryptoMarket.description)
     }
 
     @Test
-    fun `the sections are these, in this order`() {
+    fun `every price, rate, conversion and sum comes from a tool, in text and in voice`() {
+        listOf(text, voice).map(::flat).forEach { flat ->
+            assertTrue("Every figure in your answer comes from a tool result in this conversation" in flat)
+            assertTrue("that includes the working you show" in flat)
+            assertTrue("an exchange rate between currencies (\"dollar to shilling rate\"): getExchangeRate" in flat)
+            assertTrue(
+                "any other arithmetic" in flat && "calculate, with the numbers exactly as the tools gave" in flat,
+            )
+            assertTrue("Write the whole sum as one expression" in flat)
+            assertTrue("A balance with no network named means the totals over all networks" in flat)
+            assertTrue("tell the user you couldn't get it right now" in flat)
+            assertTrue("rather than estimating or using a rate you remember" in flat)
+            assertTrue("Never search for an exchange rate: that is getExchangeRate" in flat)
+        }
+        assertFalse("If you must add, double-check" in flat(text))
+        assertTrue("never multiply a rate yourself" in AshaPrompt.convertAmount.description)
+        assertTrue("including the working you show" in AshaPrompt.calculate.description)
+        assertTrue("never for an exchange rate" in AshaPrompt.searchWeb.description)
+    }
+
+    @Test
+    fun `a support ticket is offered only when she can't help, opened only once the user says yes`() {
+        listOf(text, voice).map(::flat).forEach { flat ->
+            assertTrue("the one exception is a support ticket the user agreed to" in flat)
+            assertTrue("offer a support ticket and say what it will say" in flat)
+            assertTrue("Open it with openSupportTicket only after the user says yes" in flat)
+        }
+        val description = AshaPrompt.openSupportTicket.description
+        assertTrue("only after you have tried to help yourself" in description)
+        assertTrue("ALWAYS ask the user first" in description)
+        assertTrue("Never put a PIN" in description)
+        assertTrue("At most once per answer" in description)
+    }
+
+    @Test
+    fun `the mascot tag is no longer asked for, in text or in voice`() {
+        assertFalse("<mascot" in text)
+        assertFalse("mascot" in voice.lowercase())
+        assertEquals("asha-2026-11-08-v1", AshaPrompt.VERSION)
+    }
+
+    @Test
+    fun `the sections are these, in this order, and each mode is shown only its own way of answering`() {
+        val shared =
+            listOf("# Who you are", "# What you can see", "# What you never do", "# Money, exactly", "# How you work")
         assertEquals(
-            listOf(
-                "# Who you are",
-                "# What you can see",
-                "# What you never do",
-                "# Money, exactly",
-                "# How you work",
-                "# How you answer in a text chat",
-                "# How you answer in a voice conversation",
-                "# This conversation",
-            ),
+            shared + listOf("# How you answer in a text chat", "# This conversation"),
             text.lines().filter { it.startsWith("# ") },
         )
+        assertEquals(
+            shared + listOf("# How you answer in a voice conversation", "# This conversation"),
+            voice.lines().filter { it.startsWith("# ") },
+        )
+        assertFalse("```chart" in voice, "no markdown blocks are taught to a spoken turn")
+    }
+
+    @Test
+    fun `each mode's fixed prompt is the same on every call, and the shared part is word for word the same`() {
+        assertEquals(AshaPrompt.system(isVoice = true), AshaPrompt.system(isVoice = true))
+        val sharedText = AshaPrompt.system(isVoice = false).substringBefore("# How you answer")
+        val sharedVoice = AshaPrompt.system(isVoice = true).substringBefore("# How you answer")
+        assertEquals(sharedText, sharedVoice)
+        assertTrue(text.startsWith(AshaPrompt.system(isVoice = false)))
+        assertTrue(voice.startsWith(AshaPrompt.system(isVoice = true)))
+        assertFalse("2026-11-05" in AshaPrompt.system(isVoice = true), "the day is in the turn's part only")
+    }
+
+    @Test
+    fun `a spoken answer is one or two short sentences, the headline, with the breakdown offered`() {
+        val rules = flat(voice)
+        assertTrue("Answer in one or two short spoken sentences" in rules)
+        assertTrue("no lists, headings, markdown, symbols, emoji or links" in rules)
+        assertTrue("ask if they want the breakdown" in rules)
+        assertTrue("rounding only a number a tool gave you" in rules)
+        assertTrue("getCryptoMarket is for a coin's market price" in rules)
     }
 }

@@ -54,11 +54,10 @@ location = /errors/50x.html {
 location = /health/ready { return 404; }
 location ^~ /dev/ { return 404; }
 
-# The API reference is for people Cloudflare Access has let in (dashboard: Zero Trust > Access > Applications, path /docs). Access puts its signed token in
-# this header on every request it allows, so a request without it did not come through Access: refuse it here as well, in case Access is ever misconfigured.
-# The reader is its own small service (the docs container: static files); only the spec, which the app builds from its routes, comes from the app.
+# The API reference lives at docs.circaso.com (its own repo, circaso-docs: a Cloudflare Worker behind Zero Trust). Its
+# Worker fetches this spec with its visitor's Access token, and the app verifies that token itself (signature, the docs
+# application's AUD, issuer, expiry; GATEWAY_API_DOCS_ACCESS_*), so nothing here checks a header (decision 2026-11-08).
 location = /docs/openapi.json {
-    if ($http_cf_access_jwt_assertion = "") { return 403; }
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
 }
@@ -79,6 +78,19 @@ location ^~ /docs {
 # The API keeps the app's own JSON answers (its 404 is the envelope clients parse). $api_accept is defined in accept.conf.
 location ^~ /v1/ {
     proxy_set_header Accept $api_accept;
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
+# Share link pages and the app association files (decision 2026-11-06). The app answers these itself with designed pages (404 unknown,
+# 410 turned off, 429 too many), so nginx passes its answers through instead of swapping in the generic error pages.
+location ^~ /s/ {
+    proxy_set_header Accept "*/*";
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
+location ^~ /.well-known/ {
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
 }

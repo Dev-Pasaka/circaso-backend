@@ -41,6 +41,7 @@ import com.circaso.wallet.domain.support.Sender
 import com.circaso.wallet.domain.support.TransferEvents
 import com.circaso.wallet.domain.support.isRefusal
 import com.circaso.wallet.domain.support.orTransferError
+import java.math.BigInteger
 import java.time.Clock
 
 /**
@@ -80,6 +81,12 @@ class PrepareTransfer(
     private val clock: Clock,
     private val holders: Holders,
     private val approvals: PayoutApprovals,
+    /**
+     * `WALLET_GROUP_PAYOUT_APPROVALS` (decision 2026-11-06: off). Off, the group wallet's owner (its signer) sends
+     * straight from it, to anyone or any address, with no request; on, option A's rule of 2026-11-03 comes back and
+     * every payment out needs a payout the admins approved.
+     */
+    private val approvalsRequired: Boolean = false,
 ) {
     suspend operator fun invoke(command: TransferCommand): Resource<PreparedTransfer> {
         // The wallet it leaves (decision 2026-11-03): the caller's own, or a group wallet they sign for.
@@ -92,19 +99,22 @@ class PrepareTransfer(
         transfers.byKey(holder, command.idempotencyKey)?.let { return resume(it) }
 
         payout(owner, command).let { if (it is Resource.Error) return it }
-        val plan =
+        val planned =
             when (val planned = planner.plan(owner, command, strict = true)) {
                 is Resource.Success -> planned.data
                 is Resource.Error -> return planned
             }
+        // A held quote's price is this payment's price (decision 2026-11-07), for its fee and its limits alike.
+        val named = quotes.named(planned, command)?.takeIf { quotes.holds(it) }
+        val plan = named?.let { planned.atPrice(it.fee.usdPrice) } ?: planned
         val fee =
             when (val locked = feeOf(plan, command)) {
                 is Resource.Success -> locked.data
                 is Resource.Error -> return locked
             }
-        val amount = command.amount.amountMinor
+        val amount = plan.amount.amountMinor
         if (amount + fee.amountMinor > plan.balanceMinor) return Resource.error(short(plan, fee))
-        limits.check(plan.allowance, amount, fee.amountMinor, plan.maxAmount()).let {
+        limits.check(plan.allowance, plan.coin.usdMinor(amount), fee.usdMinor, plan.maxAmount()).let {
             if (it is Resource.Error) return it
         }
 
@@ -127,8 +137,8 @@ class PrepareTransfer(
     private suspend fun feeOf(plan: PaymentPlan, command: TransferCommand): Resource<Fee> {
         val named = quotes.named(plan, command)
         if (named != null && quotes.holds(named)) return Resource.success(named.fee)
-        val now = plan.feeFor(command.amount.amountMinor)
-        val shown = named?.fee?.amountMinor ?: 0
+        val now = plan.feeFor(plan.amount.amountMinor)
+        val shown = named?.fee?.amountMinor ?: BigInteger.ZERO
         if (now.amountMinor <= shown) return Resource.success(now)
         val fresh = quotes.hold(plan, command, now)
         return Resource.error(
@@ -136,7 +146,7 @@ class PrepareTransfer(
                 Limits.details(
                     "quotedFeeMinor" to shown.toString(),
                     "feeMinor" to now.amountMinor.toString(),
-                    "totalMinor" to (command.amount.amountMinor + now.amountMinor).toString(),
+                    "totalMinor" to (plan.amount.amountMinor + now.amountMinor).toString(),
                     "rateBps" to now.rateBps.toString(),
                     "minimum" to now.minimum.toString(),
                     "quoteId" to fresh.quoteId.toString(),
@@ -156,15 +166,20 @@ class PrepareTransfer(
         )
 
     /**
-     * Option A (decision 2026-11-03): money leaves a group wallet only for a payout the group's admins approved, to
-     * exactly its payee and for exactly its amount, and only once at a time; a personal wallet takes no payout.
+     * Who may move a group's money (decision 2026-11-06): its owner, the wallet's signer ([Holders.sign] already
+     * refused anyone else with `wallet.not_signer`), directly, to anyone, themselves included, or to an outside
+     * address. A payment that names a payout request is still held to it: exactly its payee and amount, once at a time.
+     * With [approvalsRequired] (option A, 2026-11-03, parked) every payment out needs such a request. A personal
+     * wallet takes no payout.
      */
     private suspend fun payout(owner: WalletOwner, command: TransferCommand): Resource<Unit> {
+        val requested = command.amount
         val requestId = command.payoutRequestId
         if (owner !is WalletOwner.Group) {
             return if (requestId == null) Resource.success(Unit) else Resource.error(WalletError.PayoutMismatch)
         }
-        requestId ?: return Resource.error(WalletError.PayoutRequired)
+        requestId
+            ?: return if (approvalsRequired) Resource.error(WalletError.PayoutRequired) else Resource.success(Unit)
         val approved =
             approvals.approved(owner.chatId, requestId) ?: return Resource.error(WalletError.PayoutNotApproved)
         val samePayee =
@@ -181,7 +196,10 @@ class PrepareTransfer(
                     false
                 }
             }
-        val sameAmount = command.amount.asset == Asset.USDC && command.amount.amountMinor == approved.amountMinor
+        // An approved request is in USDC minor units: only exactly that much USDC pays it.
+        val sameAmount =
+            requested.symbol == Asset.USDC.symbol &&
+                requested.minorIn(Asset.USDC.decimals) == BigInteger.valueOf(approved.amountMinor)
         if (!samePayee || !sameAmount) return Resource.error(WalletError.PayoutMismatch)
         val now = clock.instant()
         val live =
@@ -205,7 +223,13 @@ class PrepareTransfer(
         transactor.attempt("transfers.prepare") {
             transfers.lockHolder(transfer.senderId)
             val allowance = limits.allowance(plan.owner, transfer.amount.asset)
-            val fits = limits.check(allowance, transfer.amount.amountMinor, fee.amountMinor, plan.maxAmount())
+            val fits =
+                limits.check(
+                    allowance,
+                    plan.coin.usdMinor(transfer.amount.amountMinor),
+                    fee.usdMinor,
+                    plan.maxAmount(),
+                )
             if (fits is Resource.Error) return@attempt fits
             if (!transfers.insert(transfer)) return@attempt Resource.success(false)
             transactions.insert(outgoingRow(transfer))
@@ -237,7 +261,7 @@ class PrepareTransfer(
     private suspend fun challenge(sender: Sender, transfer: Transfer): Resource<PreparedTransfer> {
         val feeAddress = transfer.feeAddress
         val asked =
-            if (feeAddress != null && transfer.feeMinor > 0) {
+            if (feeAddress != null && transfer.feeMinor.signum() > 0) {
                 custody.prepareSplitTransfer(
                     sender.user.circleUserId.toString(),
                     SplitTransferRequest(
@@ -246,8 +270,12 @@ class PrepareTransfer(
                         walletAddress = sender.wallet.address,
                         legs =
                             listOf(
-                                PaymentLeg(transfer.destinationAddress, transfer.amount),
-                                PaymentLeg(feeAddress, Money(transfer.feeMinor, transfer.amount.asset)),
+                                PaymentLeg(transfer.destinationAddress, transfer.amount, transfer.tokenAddress),
+                                PaymentLeg(
+                                    feeAddress,
+                                    Money(transfer.feeMinor, transfer.amount.asset),
+                                    transfer.tokenAddress,
+                                ),
                             ),
                         idempotencyKey = transfer.idempotencyKey,
                         refId = transfer.transferId.toString(),
@@ -263,6 +291,7 @@ class PrepareTransfer(
                         amount = transfer.amount,
                         idempotencyKey = transfer.idempotencyKey,
                         refId = transfer.transferId.toString(),
+                        tokenAddress = transfer.tokenAddress,
                     ),
                 )
             }
@@ -311,7 +340,7 @@ class PrepareTransfer(
             idempotencyKey = command.idempotencyKey,
             recipientId = destination.recipientId,
             destinationAddress = destination.address,
-            amount = command.amount,
+            amount = plan.amount,
             state = TransferState.AWAITING_SIGNATURE,
             circleTxId = null,
             txHash = null,
@@ -325,8 +354,11 @@ class PrepareTransfer(
             payoutRequestId = command.payoutRequestId,
             fromGroupId = (owner as? WalletOwner.Group)?.chatId,
             toGroupId = destination.toGroupId,
-            feeMinor = if (fee.charged) fee.amountMinor else 0,
+            feeMinor = if (fee.charged) fee.amountMinor else BigInteger.ZERO,
             feeAddress = if (fee.charged) fee.feeAddress else null,
+            tokenAddress = plan.coin.tokenAddress,
+            usdPrice = plan.coin.usdPrice,
+            usdTotalMinor = plan.coin.usdMinor(plan.amount.amountMinor) + (if (fee.charged) fee.usdMinor else 0),
             fromSpaceId = (owner as? WalletOwner.Space)?.spaceId,
             toSpaceId = destination.toSpaceId,
             spacePaymentId = command.spacePaymentId,

@@ -9,6 +9,7 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.messaging.api.ChatDirectory
+import com.circaso.messaging.api.GroupReports
 import com.circaso.messaging.data.cache.LiveFramesImpl
 import com.circaso.messaging.data.cache.REDIS_PREFIX
 import com.circaso.messaging.data.cache.RealtimeFramesImpl
@@ -23,6 +24,7 @@ import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
+import com.circaso.messaging.data.repositories.GroupReportRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingExpiry
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
@@ -56,6 +58,7 @@ import com.circaso.messaging.domain.ports.TypingMarks
 import com.circaso.messaging.domain.repositories.AttachmentRepository
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.DeliveryRepository
+import com.circaso.messaging.domain.repositories.GroupReportRepository
 import com.circaso.messaging.domain.repositories.KeyRepository
 import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.messaging.domain.repositories.SettingsRepository
@@ -65,6 +68,7 @@ import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
 import com.circaso.messaging.domain.support.KeyProofs
+import com.circaso.messaging.domain.support.MAX_ATTACHMENT_BYTES
 import com.circaso.messaging.domain.support.MemberRemoval
 import com.circaso.messaging.domain.support.Membership
 import com.circaso.messaging.domain.support.MessageSenders
@@ -75,12 +79,14 @@ import com.circaso.messaging.domain.usecases.AckDelivered
 import com.circaso.messaging.domain.usecases.AddMembers
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.CompleteAttachmentUpload
+import com.circaso.messaging.domain.usecases.CountGroups
 import com.circaso.messaging.domain.usecases.CreateGroup
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetAttachmentDownload
 import com.circaso.messaging.domain.usecases.GetChat
+import com.circaso.messaging.domain.usecases.GetGroupsByIds
 import com.circaso.messaging.domain.usecases.GetKeyStatus
 import com.circaso.messaging.domain.usecases.GetMembers
 import com.circaso.messaging.domain.usecases.GetOwner
@@ -90,6 +96,9 @@ import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.ListGroupIds
+import com.circaso.messaging.domain.usecases.ListGroupMembers
+import com.circaso.messaging.domain.usecases.ListGroups
+import com.circaso.messaging.domain.usecases.ListGroupsOf
 import com.circaso.messaging.domain.usecases.MarkRead
 import com.circaso.messaging.domain.usecases.OpenDirectChat
 import com.circaso.messaging.domain.usecases.PrepareAttachmentUpload
@@ -109,6 +118,7 @@ import com.circaso.messaging.domain.usecases.UpdateSettings
 import com.circaso.messaging.domain.usecases.WatchPresence
 import com.circaso.messaging.presentation.agent.agentController
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
+import com.circaso.messaging.presentation.api.GroupReportsImpl
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
 import com.circaso.messaging.presentation.controllers.attachmentController
@@ -120,6 +130,7 @@ import com.circaso.messaging.presentation.controllers.presenceController
 import com.circaso.messaging.presentation.events.IdentityEventHandler
 import com.circaso.messaging.presentation.services.AttachmentService
 import com.circaso.messaging.presentation.services.ChatService
+import com.circaso.messaging.presentation.services.GroupReportService
 import com.circaso.messaging.presentation.services.IdentityEventsService
 import com.circaso.messaging.presentation.services.KeyService
 import com.circaso.messaging.presentation.services.MapService
@@ -195,6 +206,10 @@ fun messagingModule(config: Config): Module =
                         "messaging.frame-ciphertext-max-chars",
                         FRAME_CIPHERTEXT_MAX_CHARS,
                     ),
+                maxAttachmentBytes =
+                    config.long("messaging.max-attachment-bytes", MAX_ATTACHMENT_BYTES).also {
+                        require(it > 0) { "MESSAGING_MAX_ATTACHMENT_BYTES must be positive (was $it)" }
+                    },
             )
         val background = backgroundScope()
 
@@ -207,6 +222,7 @@ fun messagingModule(config: Config): Module =
         single<MessagingOutbox> { MessagingOutboxImpl(get(named("messaging.database"))) }
         single<KeyRepository> { KeyRepositoryImpl(get(named("messaging.database"))) }
         single<ChatRepository> { ChatRepositoryImpl(get(named("messaging.database"))) }
+        single<GroupReportRepository> { GroupReportRepositoryImpl(get(named("messaging.database"))) }
         single<DeliveryRepository> { DeliveryRepositoryImpl(get(named("messaging.database")), clock) }
         single<SettingsRepository> { SettingsRepositoryImpl(get(named("messaging.database"))) }
         single(named("messaging.purge-expired")) {
@@ -249,7 +265,7 @@ fun messagingModule(config: Config): Module =
         single { Membership(get(), get()) }
         single { ChatViews(get(), get<Profiles>()) }
         single { ChatNotifier(get()) }
-        single { MemberRemoval(get(), get(), get(), get(), get(), get()) }
+        single { MemberRemoval(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DeliveryNotifier(get(), get(), messaging) }
         single { ReceiptBatcher(get(), get(), background, clock, messaging) }
@@ -267,7 +283,7 @@ fun messagingModule(config: Config): Module =
         single { CreateGroup(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), clock) }
         single { ListChats(get(), get()) }
         single { GetChat(get(), get()) }
-        single { UpdateGroup(get(), get(), get(), get(), get(), get()) }
+        single { UpdateGroup(get(), get(), get(), get(), get(), get(), messaging, clock) }
         single {
             AddMembers(get(), get(), get(), get<ReachPolicy>(), get(), get(), get(), get(), get(), clock)
         }
@@ -363,6 +379,16 @@ fun messagingModule(config: Config): Module =
 
         // messaging:api, for wallet and calls; the replay and phone frames the gateway hands over
         single<ChatDirectory> { ChatDirectoryImpl(get()) }
+
+        // messaging:api's staff contract, for the ops module behind the ops gateway; never mounted on the app gateway
+        // (decision 2026-11-08)
+        single { ListGroups(get()) }
+        single { GetGroupsByIds(get()) }
+        single { ListGroupMembers(get()) }
+        single { ListGroupsOf(get()) }
+        single { CountGroups(get()) }
+        single { GroupReportService(get(), get(), get(), get(), get()) }
+        single<GroupReports> { GroupReportsImpl(get()) }
         single(named("messaging.replay")) { RealtimeModule("messaging", MessagingRealtimeReplay(get())) }
         single(named("messaging.inbound")) {
             RealtimeInboundModule("messaging", MessagingRealtimeInbound(get(), get(), messaging.inboxPageMax))

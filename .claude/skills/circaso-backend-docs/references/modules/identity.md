@@ -73,7 +73,7 @@ Identity owns everything around these calls: generating and hashing codes, expir
 
 ## Endpoints
 
-Seventeen app routes and two ops routes: seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery; OPS1–OPS2 manage Circaso's support accounts. Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
+Seventeen app routes: seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery. OPS1–OPS2 (Circaso's support accounts) are served by the ops module on the separate ops gateway, through identity's `SupportAccounts` contract (decision 2026-11-08; see Staff contracts below). Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
 
 | # | Route | Scope | Use case (domain) | Does |
 | --- | --- | --- | --- | --- |
@@ -94,8 +94,8 @@ Seventeen app routes and two ops routes: seven take a person from Google/Apple s
 | I15 | `POST /recovery/requests` | onboarding | `RequestSupportRecovery` | Opens a support case for a lost Google/Apple login |
 | I16 | `POST /auth/phone/release` | onboarding | `RequestPhoneRelease` | Frees a number held by a lost, unverified account, after a 7-day notice |
 | I17 | `GET /recovery/requests/{requestId}` | onboarding | `GetRecoveryRequest` | Status of the caller's own support case: received, verifying, notice sent (with relink time), relinked, rejected or cancelled |
-| OPS1 | `POST /ops/support-accounts` | ops | `CreateSupportAccount` | Creates a Circaso support account (display name, handle); see Support accounts below |
-| OPS2 | `GET /ops/support-accounts` | ops | `ListSupportAccounts` | Every support account, oldest first, with its name and handle from users; `cursor`, `limit` |
+| OPS1 | ops gateway, ADMIN (the ops module's route) | `SupportAccounts.create` → `CreateSupportAccount` | Creates a Circaso support account (display name, handle, the staff id for the log); see Support accounts below |
+| OPS2 | ops gateway, ADMIN (the ops module's route) | `SupportAccounts.list` → `ListSupportAccounts` | Every support account, oldest first, with its name and handle from users; `cursor`, `limit` |
 | AG1 | `GET /agent/identity/security` | agent | `GetSecuritySummary` | Asha's read of account and security (decision 2026-10-31), `AgentSecurityResponse` in `identity:api`: masked phone, account status, verification, `memberSince`, linked sign-ins (provider, masked email, when), the phone the account is on (platform, model, app version, registered, last seen) and the latest 10 security log lines (type, time, device model). No ids, keys, push tokens or log details |
 
 Plus `GET /.well-known/jwks.json` (public keys for access tokens) and ops-only routes under `/ops/recoveries` for support agents (designed, not built).
@@ -104,12 +104,32 @@ Plus `GET /.well-known/jwks.json` (public keys for access tokens) and ops-only r
 
 Decision 2026-10-31. Circaso support is its own kind of account (`kind = SUPPORT`), never a person's own account.
 
-- **Made only by ops.** OPS1 takes `{ "displayName": "Circaso Support", "handle": "circaso" }` (name 1–40 characters). Identity first asks users, through `SupportProfiles.checkHandle`, whether the handle may be taken: reserved names (`circaso`, `support`, `help`, …) are allowed for a support account and for nobody else. It then writes the account (`ACTIVE`, no phone, no device, no Google/Apple login), a `SUPPORT_ACCOUNT_CREATED` line in its security log naming the operator, and `identity.SupportAccountCreated` in one transaction. Users makes the profile, marked `support`, and claims the handle from the event. The handle is checked, not held: if two creates race for one handle, the second account's profile has none, and OPS2 shows it.
+- **Made only by ops.** OPS1 takes a display name (1–40 characters), a handle and the staff member's id (`createdBy`); the contract checks their shape (`request.malformed`). Identity first asks users, through `SupportProfiles.checkHandle`, whether the handle may be taken: reserved names (`circaso`, `support`, `help`, …) are allowed for a support account and for nobody else. It then writes the account (`ACTIVE`, no phone, no device, no Google/Apple login), a `SUPPORT_ACCOUNT_CREATED` line in its security log naming the staff member (`by <staff id>`), and `identity.SupportAccountCreated` in one transaction. Users makes the profile, marked `support`, and claims the handle from the event. The handle is checked, not held: if two creates race for one handle, the second account's profile has none, and OPS2 shows it.
 - **Never on the app.** Every way into an `app` session refuses a support account with `identity.support_account_not_on_mobile` (403): I2 (with or without a device proof), I3, I4, I5, I6 and I7. `SessionOpener` itself throws the same error if a support account ever reaches it, so a path added later can't forget. A support account has no login to sign in with in the first place; these refusals are the second line.
 - **No wallet.** Wallet asks `AccountDirectory.kind` and refuses (wallet → Support accounts).
 - **The kind never changes.** It is written when the account is created and never updated, so a person's account can't be turned into support (or the reverse) by any route.
-- **How ops reaches these routes.** They sit behind the gateway's `ops` scope, like the API reference outside local runs. No route issues an `ops` token to a person yet: the support dashboard (a later phase) adds ops sign-in. Until then these routes answer `auth.scope_insufficient` to every token the app can hold. `TODO(decision: ops sign-in for the support dashboard)`.
+- **How ops reaches them.** Resolved 2026-11-08: staff sign in to the ops gateway with Cloudflare Access; the ops module serves OPS1–OPS2 to the ADMIN role, audits each call and calls `SupportAccounts`. The app gateway no longer mounts any `/ops/support-accounts` route.
 - **Later phases.** A server-side support service will hold the support account's Signal keys (`org.signal:libsignal-client`) and answer its chats; the support dashboard (Next.js) calls it and these routes with an `ops` token. Neither is built; reach to and from a support account is decided with them.
+
+### Staff contracts (`AccountAdmin`, `SupportAccounts`)
+
+Decision 2026-11-08. Staff reach identity only through these two `identity:api` interfaces, bound in identity's Koin module for the ops module on the ops gateway; nothing of them is mounted on the app gateway. Phones go out as `PhoneNumber.masked()` and emails as the agent route masks them (`am•••@gmail.com`).
+
+| Call | Use case | Notes |
+| --- | --- | --- |
+| `account`, `accounts(ids)` | `GetAccountRecords` | Any status and kind, with the Google/Apple sign-ins; two reads for any number of ids (at most 500) |
+| `findByPhone` | `FindAccountByPhone` | The unique index on the number; any status (unlike contact sync) |
+| `findByEmail` | `FindAccountsByEmail` | `lower(email)` on `provider_links` (`provider_links_email_idx`) |
+| `newest(cursor, limit)` | `ListNewestAccounts` | Keyset on `(created_at, user_id) DESC` (`accounts_newest_idx`), opaque base64url cursor; `request.malformed` for a bad one |
+| `devices` | `ListAccountDevices` | Newest first, the active one marked |
+| `sessions` | `ListAccountSessions` | Not expired, revoked ones included, newest first (`sessions_user_idx`) |
+| `suspend` | `SuspendAccount` | Under the account's lock in one transaction: `ACTIVE` → `SUSPENDED`, every session revoked, a `SUSPENDED` log line, `AccountStatusChanged`; after the commit the event is published and every revoked session is put on the deny-list. Errors `identity.account_not_found`, `identity.account_not_active` |
+| `unsuspend` | `UnsuspendAccount` | `SUSPENDED` → `ACTIVE`, an `UNSUSPENDED` log line, `AccountStatusChanged`; the revoked sessions stay revoked, so the person signs in again. Errors `identity.account_not_found`, `identity.account_not_suspended` |
+| `signUps(from, to)` | `CountSignUps` | Person accounts not `PENDING_PHONE` or `DELETED`, by UTC day of `created_at`, every day of the range (zeros too); at most 366 days, else `request.malformed` (thrown as a `DomainException`, since the contract returns the stats) |
+| `activeUsers(now)` | `CountActiveUsers` | Distinct accounts with an `ACTIVE` device whose `last_seen_at` is within 1, 7 and 30 days (`devices_seen_idx`). I7 moves the phone's `last_seen_at` (at most once an hour), so the count reflects use, not registration |
+| `SupportAccounts.create`, `list` | `CreateSupportAccount`, `ListSupportAccounts` | OPS1–OPS2 |
+
+While an account is suspended every way back in is refused: I2 answers `identity.account_suspended`, I6 the same (an `onboarding` token from before the suspension can't register a phone and reactivate it), I7 answers `identity.session_revoked`, and the deny-list stops the access tokens already handed out. The other modules act on `AccountStatusChanged`: the gateway closes the sockets, users hides the profile, the wallet's sender rule answers `wallet.account_restricted`.
 
 ### I1 Nonce and I2 social sign-in
 
@@ -268,6 +288,8 @@ CREATE INDEX accounts_pending_idx ON identity.accounts (created_at) WHERE status
                                                         -- the 30-day sweep of pending accounts
 CREATE INDEX accounts_deleted_idx ON identity.accounts (delete_after) WHERE status = 'DELETED';
                                                         -- the job that completes deletion after the grace period
+CREATE INDEX accounts_newest_idx ON identity.accounts (created_at DESC, user_id DESC);
+                                                        -- staff: newest first and sign-ups per day (V3)
 
 CREATE TABLE identity.provider_links (
     user_id   uuid        NOT NULL,
@@ -279,6 +301,7 @@ CREATE TABLE identity.provider_links (
 );
 CREATE UNIQUE INDEX provider_links_login_key ON identity.provider_links (provider, subject);
                                                         -- one account per Google/Apple login
+CREATE INDEX provider_links_email_idx ON identity.provider_links (lower(email));   -- staff: search by email (V3)
 
 CREATE TABLE identity.devices (
     user_id       uuid        NOT NULL,
@@ -291,9 +314,11 @@ CREATE TABLE identity.devices (
     push_token    text,
     status        text        NOT NULL,                 -- ACTIVE | REPLACED | REMOVED
     registered_at timestamptz NOT NULL,
-    last_seen_at  timestamptz NOT NULL,
+    last_seen_at  timestamptz NOT NULL,                 -- I6, then I7 at most once an hour (2026-11-08)
     PRIMARY KEY (user_id, device_id)
 );
+CREATE INDEX devices_seen_idx ON identity.devices (last_seen_at) WHERE status = 'ACTIVE';
+                                                        -- staff: people active in a day, a week, 30 days (V3)
 
 CREATE TABLE identity.sessions (
     session_id         uuid        PRIMARY KEY,
@@ -307,11 +332,12 @@ CREATE TABLE identity.sessions (
     expires_at         timestamptz NOT NULL             -- rotated_at + 30 days: unused for 30 days and the session is gone
 );
 CREATE INDEX sessions_expires_at_idx ON identity.sessions (expires_at);   -- for the purge
+CREATE INDEX sessions_user_idx ON identity.sessions (user_id, created_at DESC);   -- staff: an account's sessions (V3)
 
 CREATE TABLE identity.security_log (
     user_id      uuid NOT NULL,
     event_id     uuid NOT NULL,                         -- UUIDv7 made in the app; newest first by id
-    type         text NOT NULL,                         -- SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | …
+    type         text NOT NULL,                         -- SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | SUSPENDED | UNSUSPENDED | …
     device_model text,
     detail       text,
     PRIMARY KEY (user_id, event_id)                     -- I13 pages it by keyset, event_id DESC
@@ -424,3 +450,6 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `identity.recovery_not_eligible` | FORBIDDEN → 403 | Support recovery for an unverified account |
 | `identity.release_not_allowed` | FORBIDDEN → 403 | Phone release for a verified account (recovery applies instead) |
 | `identity.support_account_not_on_mobile` | FORBIDDEN → 403 | A support account on any way into an `app` session: I2, I3, I4, I5, I6, I7 (decision 2026-10-31) |
+| `identity.account_not_found` | NOT_FOUND → 404 | Staff (`AccountAdmin.suspend`/`unsuspend`): no such account (decision 2026-11-08) |
+| `identity.account_not_active` | CONFLICT → 409 | Staff: only an `ACTIVE` account can be suspended |
+| `identity.account_not_suspended` | CONFLICT → 409 | Staff: only a `SUSPENDED` account can be given back |

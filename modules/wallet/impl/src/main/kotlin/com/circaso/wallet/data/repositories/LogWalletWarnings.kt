@@ -57,7 +57,7 @@ class LogWalletWarnings : WalletWarnings {
         shareBps: Int,
     ) {
         log.warn(
-            "network cost above the fee rule's share of the fee: transferId={} blockchain={} shareBps={}",
+            "network cost above the whole fee: transferId={} blockchain={} shareBps={}",
             transferId,
             blockchain,
             shareBps,

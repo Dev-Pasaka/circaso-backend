@@ -13,6 +13,8 @@ import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.users.api.ContactBook
+import com.circaso.users.api.Invites
+import com.circaso.users.api.ProfileAdmin
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.ReachPolicy
 import com.circaso.users.data.cache.KeyedPhoneHasher
@@ -26,6 +28,7 @@ import com.circaso.users.data.repositories.DatabaseTransactor
 import com.circaso.users.data.repositories.HandleRepositoryImpl
 import com.circaso.users.data.repositories.InviteRepositoryImpl
 import com.circaso.users.data.repositories.ProfileRepositoryImpl
+import com.circaso.users.data.repositories.ProfileSearchRepositoryImpl
 import com.circaso.users.data.repositories.UsersExpiry
 import com.circaso.users.data.repositories.UsersStoreImpl
 import com.circaso.users.data.repositories.WaitingContactRepositoryImpl
@@ -48,6 +51,7 @@ import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.HandleRepository
 import com.circaso.users.domain.repositories.InviteRepository
 import com.circaso.users.domain.repositories.ProfileRepository
+import com.circaso.users.domain.repositories.ProfileSearchRepository
 import com.circaso.users.domain.repositories.UsersStore
 import com.circaso.users.domain.repositories.WaitingContactRepository
 import com.circaso.users.domain.support.ProfileProvisioner
@@ -70,6 +74,7 @@ import com.circaso.users.domain.usecases.CreateProfileOnActivation
 import com.circaso.users.domain.usecases.CreateSupportProfile
 import com.circaso.users.domain.usecases.DeleteUserData
 import com.circaso.users.domain.usecases.FilterReachable
+import com.circaso.users.domain.usecases.GetAdminProfiles
 import com.circaso.users.domain.usecases.GetMyProfile
 import com.circaso.users.domain.usecases.GetProfiles
 import com.circaso.users.domain.usecases.GetPublicProfile
@@ -84,12 +89,16 @@ import com.circaso.users.domain.usecases.RemoveContact
 import com.circaso.users.domain.usecases.ReplayFrames
 import com.circaso.users.domain.usecases.RevokeInvite
 import com.circaso.users.domain.usecases.SearchContacts
+import com.circaso.users.domain.usecases.SearchProfilesByHandle
+import com.circaso.users.domain.usecases.SearchProfilesByName
 import com.circaso.users.domain.usecases.SetAvatar
 import com.circaso.users.domain.usecases.SyncContacts
 import com.circaso.users.domain.usecases.UnblockUser
 import com.circaso.users.domain.usecases.UpdateProfile
 import com.circaso.users.presentation.agent.agentController
 import com.circaso.users.presentation.api.ContactBookImpl
+import com.circaso.users.presentation.api.InvitesImpl
+import com.circaso.users.presentation.api.ProfileAdminImpl
 import com.circaso.users.presentation.api.ProfilesImpl
 import com.circaso.users.presentation.api.ReachPolicyImpl
 import com.circaso.users.presentation.api.SupportProfilesImpl
@@ -104,6 +113,7 @@ import com.circaso.users.presentation.services.ContactService
 import com.circaso.users.presentation.services.DirectoryService
 import com.circaso.users.presentation.services.HandleService
 import com.circaso.users.presentation.services.IdentityEventsService
+import com.circaso.users.presentation.services.ProfileAdminService
 import com.circaso.users.presentation.services.ProfileService
 import com.circaso.users.presentation.services.UsersAgentService
 import com.circaso.users.presentation.warmup.UsersWarmUp
@@ -164,6 +174,7 @@ fun usersModule(config: Config): Module =
         single<RealtimeFrames> { get<RealtimeFramesImpl>() }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single<ProfileRepository> { ProfileRepositoryImpl(get(named("users.database")), clock) }
+        single<ProfileSearchRepository> { ProfileSearchRepositoryImpl(get(named("users.database"))) }
         single<HandleRepository> { HandleRepositoryImpl(get(named("users.database")), clock) }
         single<ContactRepository> { ContactRepositoryImpl(get(named("users.database"))) }
         single<WaitingContactRepository> { WaitingContactRepositoryImpl(get(named("users.database")), clock) }
@@ -212,6 +223,10 @@ fun usersModule(config: Config): Module =
         single { DeleteUserData(get(), get(), get(), get(), get(), clock) }
         single { CheckSupportHandle(get()) }
         single { CreateSupportProfile(get(), get(), get(), clock) }
+        // staff, on the ops gateway only (decision 2026-11-08)
+        single { GetAdminProfiles(get(), get()) }
+        single { SearchProfilesByHandle(get()) }
+        single { SearchProfilesByName(get()) }
 
         // presentation
         single { ProfileService(get(), get(), get(), get(), get(), get()) }
@@ -222,6 +237,7 @@ fun usersModule(config: Config): Module =
         single { ListContactIds(get()) }
         single { DirectoryService(get(), get(), get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get(), get(), get(), get(), get()) }
+        single { ProfileAdminService(get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
             val profiles = get<ProfileService>()
             val handles = get<HandleService>()
@@ -242,6 +258,11 @@ fun usersModule(config: Config): Module =
         single<ReachPolicy> { ReachPolicyImpl(get()) }
         single<Profiles> { ProfilesImpl(get()) }
         single<ContactBook> { ContactBookImpl(get()) }
+        single<Invites> { InvitesImpl(get()) }
+
+        // users:api's staff contract, for the ops module behind the ops gateway; never mounted on the app gateway
+        // (decision 2026-11-08)
+        single<ProfileAdmin> { ProfileAdminImpl(get()) }
 
         // identity:api's SupportProfiles, which identity's ops routes ask (decision 2026-10-31)
         single<SupportProfiles> { SupportProfilesImpl(get()) }

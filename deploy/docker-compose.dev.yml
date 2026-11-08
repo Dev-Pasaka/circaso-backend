@@ -33,6 +33,42 @@ services:
     mem_limit: 2g
     pids_limit: 512
 
+  # The ops gateway (decision 2026-11-08): the staff API for the admin portal, its own process from the same image as `app`
+  # (main class com.circaso.app.OpsMain), on :8081, reached only through nginx's admin-api.circaso.com block
+  # (nginx/admin-api.conf). Same .env (its own OPS_* settings, see dev.env.example) and smaller pools: it shares
+  # PostgreSQL's connection budget with the app. It runs no stream consumers or jobs, so one instance is enough.
+  # Reference only: add it to /opt/circaso/docker-compose.yml when the portal goes live.
+  ops:
+    image: ${IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    entrypoint: ["sh", "-c", "exec java $$JAVA_OPTS --enable-native-access=ALL-UNNAMED -cp '/app/lib/*' com.circaso.app.OpsMain"]
+    environment:
+      LOG_FORMAT: JSON
+      LOG_COLOR: "false"
+      APP_VERSION: ${APP_VERSION:-dev}
+      OPS_PORT: "8081"
+      DATABASE_POOL_APP_SIZE: "4"
+      DATABASE_POOL_JOBS_SIZE: "1"
+    # The image's own HEALTHCHECK probes the app's :8080; this process listens on :8081.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/health/live"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      valkey:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks: [backend, data]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    pids_limit: 256
+
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped

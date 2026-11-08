@@ -9,6 +9,7 @@ import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.AskPayoutCommand
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
 import com.circaso.chama.domain.models.Payout
@@ -19,7 +20,10 @@ import com.circaso.chama.domain.models.WalletTransfer
 import com.circaso.chama.domain.ports.ChamaFrame
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.ports.FrameSender
+import com.circaso.chama.domain.ports.LoggedFrame
+import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -34,14 +38,19 @@ import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.FindApprovedPayout
 import com.circaso.chama.domain.usecases.GetChama
 import com.circaso.chama.domain.usecases.GetChamaDigest
+import com.circaso.chama.domain.usecases.GetChamaStatement
 import com.circaso.chama.domain.usecases.GetGroupMoney
+import com.circaso.chama.domain.usecases.HasGoal
 import com.circaso.chama.domain.usecases.ListLedger
 import com.circaso.chama.domain.usecases.ListMyChamas
 import com.circaso.chama.domain.usecases.RecordTransfer
 import com.circaso.chama.domain.usecases.RemoveGoal
+import com.circaso.chama.domain.usecases.ReplayFrames
 import com.circaso.chama.domain.usecases.SetGoal
 import com.circaso.chama.domain.usecases.SetSettings
+import com.circaso.chama.presentation.api.ChamasImpl
 import com.circaso.chama.presentation.mappers.toAgentResponse
+import com.circaso.chama.presentation.services.ChamaEventsService
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.DomainEvent
@@ -106,6 +115,14 @@ private class MemoryContributions : ContributionRepository {
             .filter { it.chatId == chatId && !it.legacy && (since == null || it.at >= since) }
             .groupBy { it.userId }
             .mapValues { (_, c) -> c.sumOf { it.amountMinor } }
+}
+
+private class MemoryDirectPayouts : DirectPayoutRepository {
+    val rows = mutableMapOf<TransferId, DirectPayout>()
+
+    override suspend fun insert(payout: DirectPayout) = rows.putIfAbsent(payout.transferId, payout) == null
+
+    override suspend fun total(chatId: ChatId) = rows.values.filter { it.chatId == chatId }.sumOf { it.amountMinor }
 }
 
 private class MemorySettings : SettingsRepository {
@@ -256,6 +273,7 @@ private class Harness {
     val contributions = MemoryContributions()
     val requests = MemoryRequests()
     val settings = MemorySettings()
+    val directPayouts = MemoryDirectPayouts()
     val chats = FakeChats()
     val profiles = FakeProfiles()
     val frames = RecordingFrames()
@@ -274,7 +292,7 @@ private class Harness {
     val members = Members(chats, profiles)
     val requestFrames = RequestFrames(goals, members, frames, wallets)
     val setGoal = SetGoal(members, goals, contributions, frames, clock, wallets)
-    val views = ChamaViews(members, goals, contributions, requests, wallets, settings)
+    val views = ChamaViews(members, goals, contributions, requests, wallets, settings, directPayouts)
     val getChama = GetChama(views)
     val getMoney = GetGroupMoney(views)
     val removeGoal = RemoveGoal(members, goals, frames)
@@ -283,11 +301,23 @@ private class Harness {
     val listLedger = ListLedger(members, views)
     val listMyChamas = ListMyChamas(chats, views, ChamaNames(profiles))
     val getChamaDigest = GetChamaDigest(views, ChamaNames(profiles))
+    val getChamaStatement = GetChamaStatement(views, ChamaNames(profiles))
     val createRequest = AskPayout(members, requests, requestFrames, clock, wallets, settings)
     val decideRequest = DecidePayout(members, requests, requestFrames, clock)
     val attachPayment = AttachPayment(members, requests, wallets, requestFrames, clock)
     val recordTransfer =
-        RecordTransfer(members, goals, contributions, requests, frames, requestFrames, outbox, bus, clock)
+        RecordTransfer(
+            members,
+            goals,
+            contributions,
+            requests,
+            frames,
+            requestFrames,
+            outbox,
+            bus,
+            directPayouts,
+            clock,
+        )
     val expireRequests = ExpireRequests(requests, clock)
 
     val chat = ChatId.new()
@@ -334,6 +364,38 @@ private class Harness {
 
 class ChamaTest {
     @Test
+    fun `a statement for a share link has the target, the ledger by name and nothing for a stranger`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            h.contribute(h.wanjiru, 2_500_000_000)
+            h.contribute(h.juma, 1_000_000)
+            val chamas =
+                ChamasImpl(
+                    ChamaEventsService(
+                        h.recordTransfer,
+                        ReplayFrames(NoFrames),
+                        h.expireRequests,
+                        HasGoal(h.goals),
+                        h.findApproved,
+                        h.getChamaStatement,
+                    ),
+                )
+
+            val statement = chamas.statement(h.chat, h.achieng)!!
+            assertEquals("Holiday Fund", statement.goalName)
+            assertEquals(50_000_000_000, statement.targetMinor)
+            assertEquals(2_501_000_000, statement.contributedMinor)
+            assertEquals(4, statement.memberCount)
+            assertEquals(setOf("Wanjiru", "Juma"), statement.lines.map { it.personName }.toSet())
+            assertTrue(statement.lines.all { it.isIncoming })
+            assertEquals(1, chamas.statement(h.chat, h.achieng, lines = 1)!!.lines.size)
+            assertEquals(null, chamas.statement(h.chat, UserId.new()), "a stranger learns nothing")
+            assertEquals(null, chamas.statement(ChatId.new(), h.achieng))
+        }
+
+    @Test
     fun `a target needs the group's active wallet, and only an admin sets it`() =
         runTest {
             val h = Harness()
@@ -356,6 +418,70 @@ class ChamaTest {
                 ).data
             assertEquals(2, again.version)
             assertEquals(goal.createdAt, again.createdAt, "changing a target keeps when it started counting")
+        }
+
+    @Test
+    fun `a contribution in any coin counts its dollar value, and the coin paid is kept beside it`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            val handler =
+                com.circaso.chama.presentation.events.WalletEventHandler(
+                    ChamaEventsService(
+                        h.recordTransfer,
+                        ReplayFrames(NoFrames),
+                        h.expireRequests,
+                        HasGoal(h.goals),
+                        h.findApproved,
+                        h.getChamaStatement,
+                    ),
+                )
+
+            fun confirmed(
+                amount: WalletAmount,
+                usdValueMinor: String?,
+                decimals: Int?,
+            ) = EventEnvelope.of(
+                com.circaso.wallet.api.TransferConfirmed(
+                    transferId = TransferId.new(),
+                    senderId = h.wanjiru,
+                    recipientId = h.wallet,
+                    blockchain = "BASE-SEPOLIA",
+                    amount = amount,
+                    origin = "APP",
+                    chatId = h.chat,
+                    toGroupId = h.chat,
+                    usdValueMinor = usdValueMinor,
+                    assetDecimals = decimals,
+                ),
+                com.circaso.wallet.api.TransferConfirmed
+                    .serializer(),
+            )
+            val handle = handler.subscription().handlers.getValue("wallet.TransferConfirmed")
+
+            // 0.01 ETH at 3 000 dollars: 30 dollars towards the goal, the ETH itself kept.
+            handle.handle(confirmed(WalletAmount("ETH", "10000000000000000", "0.01"), "30000000", 18))
+            // USDC counts its own amount, as it always did.
+            handle.handle(confirmed(WalletAmount("USDC", "5000000", "5"), "5000000", 6))
+            // A coin the wallet couldn't price is not counted at a made-up value.
+            handle.handle(confirmed(WalletAmount("EURC", "1000000", "1"), null, 6))
+
+            val rows =
+                h.contributions.rows.values
+                    .sortedBy { it.amountMinor }
+            assertEquals(listOf(5_000_000L, 30_000_000L), rows.map { it.amountMinor })
+            assertEquals(
+                com.circaso.chama.domain.models
+                    .PaidCoin(
+                        "ETH",
+                        18,
+                        java.math.BigInteger.TEN
+                            .pow(16),
+                    ),
+                rows.last().paid,
+            )
+            assertEquals("USDC", rows.first().paid?.symbol)
         }
 
     @Test
@@ -605,6 +731,50 @@ class ChamaTest {
         }
 
     @Test
+    fun `the owner's payment straight from the group wallet is a direct payout, once, and every member hears it`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.contribute(h.juma, 900_000_000)
+            h.frames.sent.clear()
+            val t = TransferId.new()
+
+            // To anyone (here outside the group: no recipient on the event), with no request.
+            h.recordTransfer(WalletTransfer(t, h.wallet, 300_000_000, h.chat, h.chat, null, null))
+            h.recordTransfer(WalletTransfer(t, h.wallet, 300_000_000, h.chat, h.chat, null, null))
+
+            assertEquals(1, h.directPayouts.rows.size, "once, even when the event arrives twice")
+            val sent = h.frames.sent.filter { it.second is ChamaFrame.MoneyUpdated }
+            assertEquals(setOf(h.otieno, h.wanjiru, h.achieng, h.juma), sent.single().first)
+            val frame = sent.single().second as ChamaFrame.MoneyUpdated
+            assertEquals(com.circaso.chama.api.MoneyUpdatedFrame.PAYOUT, frame.kind)
+            assertNull(frame.requestId)
+            assertEquals(1, h.contributions.rows.size, "never a contribution")
+            assertEquals(0, h.bus.published.count { it.type == RequestPaid.TYPE })
+            val view =
+                assertIs<Resource.Success<com.circaso.chama.domain.models.GroupMoney>>(
+                    h.getMoney(h.wanjiru, h.chat),
+                ).data
+            assertEquals(300_000_000, view.paidOutMinor)
+        }
+
+    @Test
+    fun `money from one group's wallet into another's is the sender's payout, no member's contribution`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            val other = ChatId.new()
+            h.recordTransfer(WalletTransfer(TransferId.new(), UserId.new(), 5, null, other, h.chat, null))
+            assertEquals(0, h.contributions.rows.size)
+            assertEquals(
+                other,
+                h.directPayouts.rows.values
+                    .single()
+                    .chatId,
+            )
+        }
+
+    @Test
     fun `CH6 links the group wallet's matching transfer, by its signer only`() =
         runTest {
             val h = Harness()
@@ -716,6 +886,16 @@ class ChamaTest {
             assertEquals(listOf("IN"), one.recent.map { it.kind })
             assertEquals("chama.not_a_member", (h.getChamaDigest(h.wanjiru, otherChat) as Resource.Error).error.code)
         }
+}
+
+private object NoFrames : RealtimeLog {
+    override suspend fun since(
+        userId: UserId,
+        seq: Long,
+        limit: Int,
+    ): List<LoggedFrame> = emptyList()
+
+    override suspend fun latest(userId: UserId): Long? = null
 }
 
 private fun <T> Resource<T>.data(): T = (this as Resource.Success).data

@@ -53,6 +53,7 @@ class TurnRecorder(
     ): Resource<TurnResult> {
         val day = clock.today()
         quota.addTokens(userId, day, outcome.inputTokens, outcome.outputTokens)
+        quota.addModelTokens(userId, day, outcome.tokensByModel)
 
         return when (outcome) {
             is AgentOutcome.WaitingForDevice -> {

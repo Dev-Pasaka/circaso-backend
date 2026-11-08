@@ -2,6 +2,8 @@ package com.circaso.gateway
 
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.circaso.assistant.api.AssistantFrames
+import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.CallId
 import com.circaso.calls.api.CallParticipantSnapshot
@@ -50,6 +52,11 @@ import com.circaso.shared.decodeData
 import com.circaso.status.api.MomentId
 import com.circaso.status.api.MomentViewedFrame
 import com.circaso.status.api.StatusFrames
+import com.circaso.support.api.SupportFrames
+import com.circaso.support.api.TicketId
+import com.circaso.support.api.TicketRepliedFrame
+import com.circaso.support.api.TicketStatus
+import com.circaso.support.api.TicketUpdatedFrame
 import com.circaso.wallet.api.PaymentReceivedFrame
 import com.circaso.wallet.api.SetupRequestedFrame
 import com.circaso.wallet.api.TransferId
@@ -576,6 +583,70 @@ class SocketHubTest {
         }
 
     @Test
+    fun `Asha back after maintenance pushes offline people once each, opening Asha, and online ones get the frame`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations)
+            val (online, offline) = List(2) { UserId.new() }
+            redis.values["conn:$online"] = "node-2"
+
+            fun status(available: Boolean) =
+                RealtimeEnvelope.of(
+                    AssistantFrames.MODULE,
+                    AssistantFrames.STATUS,
+                    0,
+                    AssistantStatusFrame(available, "2026-11-07T12:00:00Z"),
+                    AssistantStatusFrame.serializer(),
+                )
+
+            realtime.deliverMany(listOf(online, offline), status(available = true))
+            realtime.deliverMany(listOf(offline), status(available = false))
+
+            val (target, message) = push.sent.single()
+            assertEquals("token-$offline", target.token)
+            assertEquals("Asha is back", message.title)
+            assertEquals("Ask me anything.", message.body)
+            assertEquals(PushPayload(kind = "asha.back"), message.data)
+            assertTrue(!message.dataOnly, "no personal data: the phone shows it as it is")
+        }
+
+    @Test
+    fun `a support reply pushes the ticket's number and id from Circaso Support, a status change never`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val user = UserId.new()
+            val ticketId = TicketId.new()
+
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    SupportFrames.MODULE,
+                    SupportFrames.TICKET_REPLIED,
+                    1,
+                    TicketRepliedFrame(ticketId, "CS-000123", TicketStatus.PENDING_USER),
+                    TicketRepliedFrame.serializer(),
+                ),
+            )
+            realtime.deliver(
+                user,
+                RealtimeEnvelope.of(
+                    SupportFrames.MODULE,
+                    SupportFrames.TICKET_UPDATED,
+                    2,
+                    TicketUpdatedFrame(ticketId, "CS-000123", TicketStatus.RESOLVED),
+                    TicketUpdatedFrame.serializer(),
+                ),
+            )
+
+            val (_, message) = push.sent.single()
+            assertEquals("Circaso Support", message.title)
+            assertEquals("We replied to your ticket CS-000123.", message.body)
+            assertEquals(PushPayload(kind = "support.ticket", ticketId = ticketId.toString()), message.data)
+        }
+
+    @Test
     fun `a message that is not pushable wakes nobody and looks nobody up`() =
         runBlocking {
             val redis = MemoryRedis()
@@ -970,7 +1041,7 @@ class SocketHubTest {
             assertEquals(callId.toString(), ring.data.callId)
             assertEquals("call.ringing", ring.data.kind)
             assertEquals("Wanjiru", ring.data.callerName)
-            assertEquals(false, missed.dataOnly)
+            assertTrue(missed.dataOnly, "the phone words it, so Notification privacy can hide the name")
             assertEquals("Missed call from Wanjiru", missed.body)
             assertEquals("call.missed", missed.data.kind)
             assertTrue(cancelled.dataOnly, "the phone stops ringing and words it itself")
@@ -983,6 +1054,7 @@ class SocketHubTest {
             val realtime = GatewayRealtime(hub(), push, registrations)
             val user = UserId.new()
             val amount = WalletAmount("USDC", "20000000", "20")
+            val paidBy = TransferId.new()
 
             fun transfer(state: String) =
                 RealtimeEnvelope.of(
@@ -1001,7 +1073,15 @@ class SocketHubTest {
                     WalletFrames.MODULE,
                     WalletFrames.PAYMENT_RECEIVED,
                     2,
-                    PaymentReceivedFrame("t-1", "BASE", amount, UserId.new(), "Amina"),
+                    PaymentReceivedFrame(
+                        "t-1",
+                        "BASE",
+                        amount,
+                        UserId.new(),
+                        "Amina",
+                        transferId = paidBy,
+                        chatId = "c-1",
+                    ),
                     PaymentReceivedFrame.serializer(),
                 ),
             )
@@ -1035,6 +1115,83 @@ class SocketHubTest {
                 ),
                 push.sent.map { it.second.body },
             )
+            assertTrue(push.sent.none { "20" in it.second.body || "20" in it.second.title })
+            // Ids only, for the phone to word the amount itself and open the chat at the card (2026-11-06).
+            val received = push.sent[2].second.data
+            assertEquals("payment.received", received.kind)
+            assertEquals(paidBy.toString(), received.transferId)
+            assertEquals("t-1", received.transactionId)
+            assertEquals("c-1", received.chatId)
+            assertEquals(listOf("transfer.updated", "transfer.updated"), push.sent.take(2).map { it.second.data.kind })
+            assertTrue(push.sent.take(2).all { it.second.data.transferId != null })
+            assertEquals(
+                "wallet.setup",
+                push.sent[3]
+                    .second.data.kind,
+            )
+        }
+
+    @Test
+    fun `group money pushes are data-only with ids, so the phone names the group and the amount`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations)
+            val member = UserId.new()
+            val contributor = UserId.new()
+            val chat = ChatId.new()
+            val requestId =
+                com.circaso.chama.api.RequestId
+                    .new()
+            val amount = WalletAmount("USDC", "20000000", "20")
+            realtime.deliver(
+                member,
+                RealtimeEnvelope.of(
+                    com.circaso.chama.api.ChamaFrames.MODULE,
+                    com.circaso.chama.api.ChamaFrames.CONTRIBUTION_ADDED,
+                    1,
+                    com.circaso.chama.api.ContributionAddedFrame(
+                        chat,
+                        contributor,
+                        "Wanjiru",
+                        "Holiday Fund",
+                        amount,
+                        amount,
+                        amount,
+                    ),
+                    com.circaso.chama.api.ContributionAddedFrame
+                        .serializer(),
+                ),
+            )
+            realtime.deliver(
+                member,
+                RealtimeEnvelope.of(
+                    com.circaso.chama.api.ChamaFrames.MODULE,
+                    com.circaso.chama.api.ChamaFrames.REQUEST_UPDATED,
+                    2,
+                    com.circaso.chama.api.RequestUpdatedFrame(
+                        requestId,
+                        chat,
+                        "PENDING",
+                        contributor,
+                        "Otieno",
+                        "Holiday Fund",
+                        amount,
+                        0,
+                        1,
+                        waitingOn = listOf(member),
+                    ),
+                    com.circaso.chama.api.RequestUpdatedFrame
+                        .serializer(),
+                ),
+            )
+
+            val (contribution, request) = push.sent.map { it.second }
+            assertTrue(contribution.dataOnly && request.dataOnly)
+            assertEquals("chama.contribution", contribution.data.kind)
+            assertEquals(chat.toString(), contribution.data.chatId)
+            assertEquals(contributor.toString(), contribution.data.userId)
+            assertEquals("chama.request.pending", request.data.kind)
+            assertEquals(requestId.toString(), request.data.requestId)
             assertTrue(push.sent.none { "20" in it.second.body || "20" in it.second.title })
         }
 

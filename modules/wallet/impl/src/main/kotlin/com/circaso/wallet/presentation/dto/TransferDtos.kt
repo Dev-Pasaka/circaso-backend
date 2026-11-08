@@ -12,13 +12,17 @@ import java.time.Instant
 /** An amount as the wallet answers it. */
 @Serializable
 data class AmountDto(
-    /** `USDC`; transfers are USDC only for now. */
+    /** The coin's symbol (`USDC`, `EURC`, `ETH`; any held coin since 2026-11-07), or `USD` for a dollar value. */
     val asset: String,
     val amountMinor: String,
     val amount: String,
 )
 
-/** An amount in a request: `amountMinor` or `amount` (at most the asset's decimals), or both when they agree. */
+/**
+ * An amount in a request: any coin the wallet holds on the payment's chain, by its symbol as W1 lists it (2026-11-07),
+ * with `amountMinor` (in the coin's own decimals) or `amount` (whole coins, at most its decimals), or both when they
+ * agree.
+ */
 @Serializable
 data class AmountRequest(val asset: String, val amountMinor: String? = null, val amount: String? = null)
 
@@ -60,9 +64,10 @@ data class PrepareTransferRequest(
 )
 
 /**
- * The one Circaso fee, network cost included (phase 2F): the same fields as an amount, plus how it was priced.
- * [rateBps] (0..200) and [minimum] (the floor that covers the network cost made it more than the rate did) are null
- * on a repeated W4 request, which only knows the amount.
+ * The one Circaso fee, network cost included (phase 2F; since 2026-11-08 the network cost with a safety margin plus
+ * [rateBps] of the amount): the same fields as an amount, plus how it was priced. [rateBps] (0..200) and [minimum]
+ * (the rule's minimum fee raised it above network cost plus rate) are null on a repeated W4 request, which only knows
+ * the amount.
  */
 @Serializable
 data class FeeDto(
@@ -95,7 +100,10 @@ data class PrepareTransferResponse(
     val total: AmountDto? = null,
 )
 
-/** Where a wallet stands against its limits (§7a); amounts in the payment's asset. */
+/**
+ * Where a wallet stands against its limits (§7a). Limits are in US dollars: amounts in the payment's coin for USDC and
+ * USDT (one dollar each), otherwise in `USD` (2026-11-07).
+ */
 @Serializable
 data class LimitDto(
     /** One payment's cap on its amount; null when there is none. */
@@ -121,6 +129,10 @@ data class QuoteTransferResponse(
     val balance: AmountDto,
     /** The most that can be sent now with its fee, within the balance and the limits ("Send all", GW20). */
     val maxAmount: AmountDto,
+    /**
+     * What limits count in: amounts of the coin for USDC and USDT, as before; for any other coin (added 2026-11-07)
+     * amounts of `USD` (6 decimals), the payment counted at [usdPrice].
+     */
     val limit: LimitDto,
     /** Null when it can be paid as it is; else `INSUFFICIENT_FUNDS`, `PER_PAYMENT_LIMIT` or `DAILY_LIMIT`. */
     val problem: String? = null,
@@ -130,6 +142,13 @@ data class QuoteTransferResponse(
     val quoteId: String? = null,
     /** Until when the fee is held. */
     @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
+    /**
+     * What one whole coin of the payment is worth in US dollars, the price the fee was converted at and the limits
+     * count the payment at (added 2026-11-07): `"1"` for USDC and USDT. A held quote keeps it with the fee.
+     */
+    val usdPrice: String? = null,
+    /** The amount and the fee in `USD` at [usdPrice]: what the payment counts against the limits (added 2026-11-07). */
+    val totalUsd: AmountDto? = null,
 )
 
 /** Who a transfer pays: [userId] for a Circaso user (null for an outside address), and the address on chain. */

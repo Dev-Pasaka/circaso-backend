@@ -7,7 +7,7 @@ import com.circaso.identity.domain.usecases.CreateSupportAccount
 import com.circaso.identity.domain.usecases.ListSupportAccounts
 import com.circaso.shared.Resource
 
-/** Ops: Circaso's support accounts (decision 2026-10-31). */
+/** Circaso's support accounts (decision 2026-10-31), for the ops module behind the ops gateway (decision 2026-11-08). */
 class SupportAccountService(
     private val createSupportAccount: CreateSupportAccount,
     private val listSupportAccounts: ListSupportAccounts,

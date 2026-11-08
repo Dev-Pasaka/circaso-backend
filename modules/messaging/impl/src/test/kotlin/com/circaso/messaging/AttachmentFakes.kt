@@ -34,10 +34,22 @@ class MemoryAttachments : AttachmentRepository {
     ): List<Attachment> =
         rows.values
             .filter {
-                !it.expiresAt.isAfter(now) ||
+                !it.isLiveAt(now) ||
                     (it.state == AttachmentState.PENDING && !it.createdAt.isAfter(pendingBefore))
             }.sortedBy { it.createdAt }
             .take(limit)
+
+    override suspend fun keepAsGroupPhoto(attachmentId: UUID, now: Instant): Boolean {
+        val row = rows[attachmentId]?.takeIf { it.state == AttachmentState.READY && it.isLiveAt(now) } ?: return false
+        rows[attachmentId] = row.copy(expiresAt = null)
+        return true
+    }
+
+    override suspend fun releaseGroupPhoto(attachmentId: UUID, purgeAt: Instant): Boolean {
+        val row = rows[attachmentId]?.takeIf { it.expiresAt == null } ?: return false
+        rows[attachmentId] = row.copy(expiresAt = purgeAt)
+        return true
+    }
 
     override suspend fun delete(attachmentId: UUID): Boolean = rows.remove(attachmentId) != null
 }

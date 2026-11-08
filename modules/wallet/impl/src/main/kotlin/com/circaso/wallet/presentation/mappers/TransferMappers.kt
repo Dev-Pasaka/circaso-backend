@@ -17,6 +17,7 @@ import com.circaso.wallet.domain.models.RecipientCheck
 import com.circaso.wallet.domain.models.RecipientQuery
 import com.circaso.wallet.domain.models.RecipientStatus
 import com.circaso.wallet.domain.models.ReminderOutcome
+import com.circaso.wallet.domain.models.RequestedAmount
 import com.circaso.wallet.domain.models.SeenTransfer
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
@@ -36,6 +37,7 @@ import com.circaso.wallet.presentation.dto.RemindResponse
 import com.circaso.wallet.presentation.dto.TransferResponse
 import com.circaso.wallet.presentation.dto.ValidateAddressRequest
 import com.circaso.wallet.presentation.dto.ValidateAddressResponse
+import java.math.BigInteger
 import java.util.UUID
 
 // ---- request → command: shape checks answer `request.malformed`; an amount that can't be sent, the wallet's ----
@@ -52,7 +54,7 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
             is Resource.Error -> return read
         }
     val money =
-        when (val read = amount.toMoney()) {
+        when (val read = amount.toRequested()) {
             is Resource.Success -> read.data
             is Resource.Error -> return read
         }
@@ -107,14 +109,31 @@ private fun PayeeRequest.toPayee(): Resource<Payee> {
     return Resource.success(Payee.Address(trimmed))
 }
 
-/** An asset that isn't offered, or an amount that can't be read exactly in it, is `wallet.amount_invalid`. */
-private fun AmountRequest.toMoney(): Resource<Money> {
+/**
+ * Any coin by its symbol (decision 2026-11-07: a person pays any coin they hold, on the chain that holds it); the
+ * coin itself, and so its decimals, is found on the chain. An amount that can't be read is `wallet.amount_invalid`.
+ */
+private fun AmountRequest.toRequested(): Resource<RequestedAmount> {
     if (amountMinor == null && amount == null) return malformed("amount", "needs amountMinor or amount")
-    val asset = Asset.entries.firstOrNull { it.name == this.asset.trim().uppercase() }
-    val minor = asset?.let { Amounts.parse(it, amountMinor?.trim(), amount?.trim()) }
-    if (asset == null || minor == null) return Resource.error(WalletError.AmountInvalid)
-    return Resource.success(Money(minor, asset))
+    val symbol = asset.trim().uppercase()
+    val (readable, minor, whole) = Amounts.read(amountMinor?.trim(), amount?.trim())
+    if (symbol.isEmpty() || symbol.length > MAX_SYMBOL_LENGTH ||
+        !readable
+    ) {
+        return Resource.error(WalletError.AmountInvalid)
+    }
+    val requested = RequestedAmount(symbol, minor, whole)
+    // USDC and USDT read as they always have: exact in 6 decimals and within a Long (zero is refused after the
+    // chain checks, in W4's order, as before).
+    Asset.dollarStablecoin(symbol)?.let { dollar ->
+        val exact = requested.minorIn(dollar.decimals)
+        if (exact == null || exact.bitLength() >= Long.SIZE_BITS) return Resource.error(WalletError.AmountInvalid)
+    }
+    return Resource.success(requested)
 }
+
+/** No coin's symbol is longer; a longer one is not a coin. */
+private const val MAX_SYMBOL_LENGTH = 32
 
 fun transferIdOf(raw: String?): Resource<TransferId> {
     val id = raw?.let { TransferId.parse(it) } ?: return malformed("transferId", "is not an id")
@@ -184,7 +203,16 @@ private fun Fee.toDto(asset: Asset): FeeDto {
 fun TransferQuote.toResponse(): QuoteTransferResponse {
     val asset = amount.asset
 
-    fun minor(value: Long) = Money(value, asset).toDto()
+    fun minor(value: BigInteger) = Money(value, asset).toDto()
+
+    // Limits are in dollars (2026-11-07): for USDC and USDT the same digits in the coin, as before; for any other coin
+    // an amount of `USD`.
+    fun usd(value: Long) =
+        if (asset.isDollarStablecoin) {
+            minor(value.toBigInteger())
+        } else {
+            Amounts.usd(value).let { AmountDto(it.asset, it.amountMinor, it.amount) }
+        }
     return QuoteTransferResponse(
         blockchain = blockchain,
         amount = amount.toDto(),
@@ -192,12 +220,14 @@ fun TransferQuote.toResponse(): QuoteTransferResponse {
         total = minor(totalMinor),
         balance = minor(balanceMinor),
         maxAmount = minor(maxAmountMinor),
+        usdPrice = fee.usdPrice.stripTrailingZeros().toPlainString(),
+        totalUsd = Amounts.usd(totalUsdMinor).let { AmountDto(it.asset, it.amountMinor, it.amount) },
         limit =
             LimitDto(
-                perPaymentMax = allowance.perPaymentMaxMinor?.let(::minor),
-                dailyMax = allowance.dailyMaxMinor?.let(::minor),
-                used = minor(allowance.usedMinor),
-                left = allowance.leftMinor?.let(::minor),
+                perPaymentMax = allowance.perPaymentMaxMinor?.let(::usd),
+                dailyMax = allowance.dailyMaxMinor?.let(::usd),
+                used = usd(allowance.usedMinor),
+                left = allowance.leftMinor?.let(::usd),
                 windowHours = allowance.window.toHours().toInt(),
                 moreAt = allowance.moreAt,
             ),

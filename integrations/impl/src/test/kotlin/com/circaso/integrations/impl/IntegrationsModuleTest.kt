@@ -3,10 +3,14 @@ package com.circaso.integrations.impl
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
+import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CryptoMarkets
+import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
@@ -35,14 +39,24 @@ import com.circaso.integrations.api.TranscriptionEvent
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.WebSearch
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.integrations.impl.anthropic.AnthropicAdminBilling
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleCustody
+import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
+import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.LogLanguageModel
+import com.circaso.integrations.impl.dev.NoAiBilling
+import com.circaso.integrations.impl.dev.NoCryptoMarkets
+import com.circaso.integrations.impl.dev.NoCryptoPrices
+import com.circaso.integrations.impl.llm.RetryingLanguageModel
+import com.circaso.integrations.impl.llm.RoutedLanguageModel
+import com.circaso.integrations.impl.llm.UnavailableLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
@@ -67,12 +81,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class IntegrationsModuleTest {
-    private class MapConfig(private val values: Map<String, String>, private val prefix: String = "") : Config {
-        override val environment = Environment.LOCAL
-
+    private class MapConfig(
+        private val values: Map<String, String>,
+        private val prefix: String = "",
+        override val environment: Environment = Environment.LOCAL,
+    ) : Config {
         override fun string(key: String): String? = values[prefix + key]
 
-        override fun section(prefix: String): Config = MapConfig(values, this.prefix + prefix + ".")
+        override fun section(prefix: String): Config = MapConfig(values, this.prefix + prefix + ".", environment)
     }
 
     private val phone = PhoneNumber.parse("+254712345678")!!
@@ -95,6 +111,11 @@ class IntegrationsModuleTest {
                     single<HttpClients> {
                         FakeHttpClients { _ ->
                             respondOk()
+                        }
+                    }
+                    single<RedisScopes> {
+                        object : RedisScopes {
+                            override fun scope(prefix: String) = MemoryRedis(prefix)
                         }
                     }
                 },
@@ -171,10 +192,132 @@ class IntegrationsModuleTest {
                 .get<LanguageModel>()
                 .complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.VOICE))
             assertTrue(
-                "@cf/daily-co/phonellm-mini-alpha-2" in clients.last.text(),
-                "voice turns default to the fast voice model, whatever the text model is",
+                "glm-5.2" in clients.last.text() && "phonellm" !in clients.last.text(),
+                "voice turns fall back to the text model unless a voice model is set (no PhoneLLM, 2026-11-07)",
             )
         }
+
+    private fun ashaKoin(
+        clients: FakeHttpClients,
+        secrets: Map<String, String>,
+        vararg values: Pair<String, String>,
+    ) = startKoin {
+        modules(
+            integrationsModule(
+                MapConfig(mapOf("cloudflare.account-id" to "acc123", "integrations.ai.gateway" to "asha") + values),
+                object : Secrets {
+                    override fun get(name: String): String? = secrets[name]
+                },
+            ),
+            module { single<HttpClients> { clients } },
+        )
+    }.koin
+
+    private val cloudflare = mapOf("cloudflare.ai-token" to "cf-token")
+    private val keyed = cloudflare + ("anthropic.api-key" to "test-anthropic-key")
+
+    private fun hosts(clients: FakeHttpClients) = clients.requests.map { it.url.host }
+
+    @Test
+    fun `anthropic answers chat and voice on its own client, retries once and never falls back to Workers AI`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    keyed,
+                    "integrations.llm.provider" to "anthropic",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+
+            val model = koin.get<LanguageModel>()
+
+            assertIs<RetryingLanguageModel>(model)
+            val config = clients.configs.getValue("anthropic")
+            assertEquals(1, config.maxAttempts)
+            assertEquals("https://api.anthropic.com/", config.baseUrl)
+            // MockEngine can't stream Server-Sent Events, so Claude can't answer here: each turn fails, and nothing
+            // else is ever asked (decision 2026-11-07: no fallback model; the retry itself is RetryingLanguageModelTest's)
+            for (purpose in ModelPurpose.entries) {
+                clients.requests.clear()
+                val answer = model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = purpose))
+                assertIs<IntegrationError.Unavailable>((answer as Resource.Error).error, "$purpose")
+                assertTrue("api.cloudflare.com" !in hosts(clients), "$purpose")
+            }
+            assertIs<Resource.Error>(model.probe())
+            assertTrue("workers-ai" !in clients.names)
+        }
+
+    @Test
+    fun `anthropic without its key is the log model locally and never Workers AI`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    cloudflare,
+                    "integrations.llm.provider" to "anthropic",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+
+            assertIs<LogLanguageModel>(koin.get<LanguageModel>())
+            assertTrue("anthropic" !in clients.names)
+            assertTrue("workers-ai" !in clients.names)
+        }
+
+    @Test
+    fun `anthropic without its key is always unavailable outside a local server`() =
+        runTest {
+            val model =
+                ashaLanguageModel(
+                    MapConfig(mapOf("integrations.llm.provider" to "anthropic"), environment = Environment.PRODUCTION),
+                    object : Secrets {
+                        override fun get(name: String): String? = null
+                    },
+                    FakeHttpClients { _ -> respondOk() },
+                )
+
+            assertIs<UnavailableLanguageModel>(model)
+            val error = (model.complete(ModelRequest("s", emptyList())) as Resource.Error).error
+            assertEquals(false, (error as IntegrationError.Unavailable).isTransient)
+            assertIs<Resource.Error>(model.probe())
+        }
+
+    @Test
+    fun `voice can be on anthropic alone, and typed turns stay where they were`() =
+        runTest {
+            val clients = FakeHttpClients { _ -> respondOk() }
+            val koin =
+                ashaKoin(
+                    clients,
+                    keyed,
+                    "integrations.llm.provider" to "log",
+                    "integrations.llm.voice-provider" to "anthropic",
+                )
+            val model = koin.get<LanguageModel>()
+
+            assertIs<RoutedLanguageModel>(model)
+            assertIs<Resource.Success<*>>(
+                model.complete(ModelRequest("s", listOf(ModelMessage.User("u")), purpose = ModelPurpose.CHAT)),
+            )
+            assertTrue(clients.requests.isEmpty())
+        }
+
+    @Test
+    fun `Asha's model defaults to the log model, and a wrong provider or effort stops startup`() {
+        assertIs<LogLanguageModel>(koin().get<LanguageModel>())
+        stopKoin()
+        assertFailsWith<Exception> { koin("integrations.llm.voice-provider" to "openai").get<LanguageModel>() }
+        stopKoin()
+        assertFailsWith<Exception> {
+            ashaKoin(
+                FakeHttpClients { _ -> respondOk() },
+                keyed,
+                "integrations.llm.provider" to "anthropic",
+                "integrations.anthropic.effort.text" to "max",
+            ).get<LanguageModel>()
+        }
+    }
 
     @Test
     fun `live voice runs on its own workers-ai-live client, with the WebSockets flag`() {
@@ -274,6 +417,46 @@ class IntegrationsModuleTest {
         assertTrue(
             "tavily.api-key" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
+    }
+
+    @Test
+    fun `coin prices and Asha's coin data are off without a CoinGecko key, and coingecko with one`() =
+        runTest {
+            val off = koin()
+            assertIs<NoCryptoPrices>(off.get<CryptoPrices>())
+            assertIs<NoCryptoMarkets>(off.get<CryptoMarkets>())
+            assertEquals(mapOf("USDC" to BigDecimal.ONE), off.get<CryptoPrices>().usdPrices(setOf("USDC", "ETH")))
+            stopKoin()
+
+            val on = koin(mapOf("coingecko.api-key" to "k"))
+            assertIs<CoinGeckoPrices>(on.get<CryptoPrices>())
+            assertIs<CoinGeckoMarkets>(on.get<CryptoMarkets>())
+            stopKoin()
+
+            val local = koin("integrations.prices.provider" to "log")
+            assertEquals(BigDecimal("3500"), local.get<CryptoPrices>().usdPrice("ETH"))
+            assertIs<NoCryptoMarkets>(local.get<CryptoMarkets>(), "made-up market data is never shown")
+            stopKoin()
+
+            val e =
+                assertFailsWith<Exception> { koin("integrations.prices.provider" to "coingecko").get<CryptoPrices>() }
+            assertTrue(
+                "coingecko.api-key" in
+                    generateSequence<Throwable>(
+                        e,
+                    ) { it.cause }.joinToString { it.message.orEmpty() },
+            )
+        }
+
+    @Test
+    fun `anthropic billing is off without its admin key and on with it`() {
+        val off = koin().get<AiBilling>()
+        assertIs<NoAiBilling>(off)
+        assertTrue(!off.isEnabled)
+        stopKoin()
+        val on = koin(mapOf("ops.anthropic-admin-key" to "sk-ant-admin01-test")).get<AiBilling>()
+        assertIs<AnthropicAdminBilling>(on)
+        assertTrue(on.isEnabled)
     }
 
     @Test

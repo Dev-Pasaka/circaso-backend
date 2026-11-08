@@ -31,6 +31,22 @@ data class CircleSettings(
     fun offered(tokenAddress: String, onChain: String): CustodyAsset? =
         supported.find(onChain)?.assets?.firstOrNull { CustodyChainsConfig.sameToken(it.tokenAddress, tokenAddress) }
 
+    /**
+     * The contract to send [symbol] by on [blockchain]: [tokenAddress] as the wallet gave it (empty for the chain's own
+     * coin), or, when it gave none, the asset offered there under [symbol]; null when neither names a coin.
+     */
+    fun coinAddress(
+        blockchain: String,
+        symbol: String,
+        tokenAddress: String?,
+    ): String? =
+        tokenAddress?.trim()
+            ?: supported
+                .find(blockchain)
+                ?.assets
+                ?.firstOrNull { it.symbol == symbol }
+                ?.tokenAddress
+
     private companion object {
         const val USDC = "USDC"
     }

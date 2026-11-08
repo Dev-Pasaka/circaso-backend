@@ -142,7 +142,13 @@ class FcmPushTest {
                 PushMessage(
                     "Circaso",
                     "Bob sent you money",
-                    PushPayload(kind = "payment.received"),
+                    PushPayload(
+                        kind = "payment.received",
+                        chatId = "c1",
+                        transferId = "tr1",
+                        transactionId = "tx1",
+                        walletId = "w1",
+                    ),
                     dataOnly = true,
                     sound = "money_received.wav",
                 )
@@ -153,6 +159,11 @@ class FcmPushTest {
             val data = body["data"]!!.jsonObject
             assertEquals("payment.received", data["kind"]!!.jsonPrimitive.content)
             assertEquals("Bob sent you money", data["body"]!!.jsonPrimitive.content, "Android shows it as it is")
+            // Ids, never the amount: the phone words it in the person's currency and opens the chat at the card.
+            assertEquals("tr1", data["transferId"]!!.jsonPrimitive.content)
+            assertEquals("tx1", data["transactionId"]!!.jsonPrimitive.content)
+            assertEquals("w1", data["walletId"]!!.jsonPrimitive.content)
+            assertEquals("c1", data["chatId"]!!.jsonPrimitive.content)
             val aps = body["apns"]!!.jsonObject["payload"]!!.jsonObject["aps"]!!.jsonObject
             assertEquals("money_received.wav", aps["sound"]!!.jsonPrimitive.content)
         }

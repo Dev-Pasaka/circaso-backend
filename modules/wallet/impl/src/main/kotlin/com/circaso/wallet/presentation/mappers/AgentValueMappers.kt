@@ -19,12 +19,14 @@ import com.circaso.wallet.domain.models.AssetValues
 import com.circaso.wallet.domain.models.FeeEstimate
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.QuoteProblem
+import com.circaso.wallet.domain.models.RequestedAmount
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.models.WalletListing
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.support.Amounts
 import com.circaso.wallet.domain.support.Valuation
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.util.UUID
 
 // Asha's value and fee routes (decision 2026-11-05): query strings in, the agent's small answers out. A shape that
@@ -81,15 +83,16 @@ fun AgentFeeParams.toCommand(userId: UserId): Resource<TransferCommand> {
             is Resource.Success -> read.data
             is Resource.Error -> return read
         }
-    val coin = Asset.entries.firstOrNull { it.name == (asset ?: Asset.USDC.name).trim().uppercase() }
-    val minor = coin?.let { Amounts.parse(it, null, amount?.trim() ?: return malformed("amount", "is missing")) }
-    if (coin == null || minor == null) return Resource.error(WalletError.AmountInvalid)
+    // Any coin the wallet holds (2026-11-07), in whole units; which coin it is is found on the chain.
+    val symbol = (asset ?: Asset.USDC.symbol).trim().uppercase()
+    val (readable, _, whole) = Amounts.read(null, amount?.trim() ?: return malformed("amount", "is missing"))
+    if (symbol.isEmpty() || !readable || whole == null) return Resource.error(WalletError.AmountInvalid)
     return walletIdOf(walletId).map { wallet ->
         TransferCommand(
             senderId = userId,
             blockchain = chain,
             payee = payee,
-            amount = Money(minor, coin),
+            amount = RequestedAmount(symbol, null, whole),
             chatId = null,
             proposalId = null,
             idempotencyKey = UUID.randomUUID(),
@@ -138,16 +141,27 @@ fun AssetValues.toAgentResponse(): AgentAssetValuesResponse =
 
 fun FeeEstimate.toAgentResponse(): AgentFeeQuoteResponse {
     val asset = quote.amount.asset
+    val price = quote.fee.usdPrice
 
-    fun whole(minor: Long) = Amounts.whole(Money(minor, asset))
+    fun whole(minor: BigInteger) = Amounts.whole(Money(minor, asset))
 
-    fun fiat(minor: Long): String? =
-        rate?.let { Valuation.fiatOrDollars(BigDecimal(minor.toBigInteger(), asset.decimals), it).toPlainString() }
+    // The limits are in dollars whatever the coin (2026-11-07); for USDC the same digits as before.
+    fun usd(minor: Long) =
+        if (asset.isDollarStablecoin) {
+            whole(
+                minor.toBigInteger(),
+            )
+        } else {
+            Amounts.whole(minor.toBigInteger(), Amounts.USD_DECIMALS)
+        }
+
+    fun fiat(minor: BigInteger): String? =
+        rate?.let { Valuation.fiatOrDollars(BigDecimal(minor, asset.decimals) * price, it).toPlainString() }
 
     val allowance = quote.allowance
     return AgentFeeQuoteResponse(
         blockchain = quote.blockchain,
-        asset = asset.name,
+        asset = asset.symbol,
         amount = whole(quote.amount.amountMinor),
         fee = whole(quote.fee.amountMinor),
         rateBps = quote.fee.rateBps,
@@ -157,10 +171,10 @@ fun FeeEstimate.toAgentResponse(): AgentFeeQuoteResponse {
         maxAmount = whole(quote.maxAmountMinor),
         limit =
             AgentLimitDto(
-                perPaymentMax = allowance.perPaymentMaxMinor?.let(::whole),
-                dailyMax = allowance.dailyMaxMinor?.let(::whole),
-                used = whole(allowance.usedMinor),
-                left = allowance.leftMinor?.let(::whole),
+                perPaymentMax = allowance.perPaymentMaxMinor?.let(::usd),
+                dailyMax = allowance.dailyMaxMinor?.let(::usd),
+                used = usd(allowance.usedMinor),
+                left = allowance.leftMinor?.let(::usd),
                 windowHours = allowance.window.toHours().toInt(),
                 moreAt = allowance.moreAt?.toString(),
             ),

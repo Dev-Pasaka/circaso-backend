@@ -121,22 +121,30 @@ private fun Route.chatRoutes(chats: ChatService) {
     patch {
         val caller = call.userId()
         val request = call.receive<UpdateGroupRequest>()
-        val result = parseChatId(call.parameters["chatId"]).flatMap { chats.update(request.toCommand(caller, it)) }
+        val result =
+            parseChatId(call.parameters["chatId"])
+                .flatMap { request.toCommand(caller, it) }
+                .flatMap { chats.update(it) }
         call.respondDefault(result.toDefaultResponse { it.toDto() })
     }.docs<UpdateGroupRequest, ChatDto>(
-        "M8 · Change a group's sealed name and avatar, or who may add members",
+        "M8 · Change a group's sealed name and avatar, its photo, or who may add members",
         TAG,
         listOf(
             "messaging.chat_not_found",
             "messaging.not_admin",
             "messaging.group_invalid",
+            "messaging.avatar_invalid",
             "messaging.version_conflict",
             "request.malformed",
         ),
         notes =
             "$SCOPE Admins only. Send the `version` you last read; if the group changed since (members " +
                 "included), the change is refused with `messaging.version_conflict`: load it again and retry. " +
-                "$SEALED A new seal raises `metaVersion`. Members get a `chat.updated` frame.",
+                "$SEALED A new seal raises `metaVersion`. `avatarMediaId` makes an `image` attachment of this " +
+                "group, completed with AT2 and at most 2 MB, the group's photo: it is never purged while it is, " +
+                "and the photo it replaces (or one cleared with `\"avatarMediaId\": null`) is deleted 24 hours " +
+                "later. Anything else answers `messaging.avatar_invalid`. Members get a `chat.updated` frame " +
+                "carrying `avatarMediaId`.",
     )
 }
 

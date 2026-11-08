@@ -261,7 +261,7 @@ class AssistantTest {
                 "untrusted" in
                     h.model.requests
                         .first()
-                        .system,
+                        .systemPrompt,
                 "the prompt tells the model what the marker means",
             )
         }
@@ -413,12 +413,12 @@ class AssistantTest {
         }
 
     @Test
-    fun `a model outage is reported and leaves no half-saved chat`() =
+    fun `a model outage is Asha down for maintenance and leaves no half-saved chat`() =
         runTest {
             val h = Harness(owner = me)
             h.model.fail()
 
-            assertEquals("assistant.model_unavailable", h.start(ask("hello")).errorCode())
+            assertEquals("assistant.unavailable", h.start(ask("hello")).errorCode())
             assertTrue(h.memory.messages.isEmpty())
         }
 
@@ -740,14 +740,14 @@ class AssistantTest {
             val system =
                 h.model.requests
                     .single()
-                    .system
+                    .systemPrompt
             assertTrue("You are Asha" in system)
             assertTrue("never ask for, accept or repeat a PIN" in system)
             assertTrue("- Mode: voice." in system)
             assertTrue("- Display currency: UGX." in system)
-            assertEquals("asha-2026-11-05-v1", AshaPrompt.VERSION)
+            assertEquals("asha-2026-11-08-v1", AshaPrompt.VERSION)
             assertTrue(
-                "prompt=asha-2026-11-05-v1" in
+                "prompt=asha-2026-11-08-v1" in
                     h.memory.audit
                         .single()
                         .detail,

@@ -16,6 +16,8 @@ dependencies {
     implementation(libs.ktor.client.websockets) // Workers AI live voice sockets
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.koog.anthropic.client) // Asha's text model, Claude, through JetBrains Koog
+    implementation(libs.koog.http.client.ktor) // Koog's transport, built on our HttpClients.named("anthropic")
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)

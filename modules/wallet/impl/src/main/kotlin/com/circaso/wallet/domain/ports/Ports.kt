@@ -43,7 +43,7 @@ interface WalletWarnings {
     /** A reconciliation job couldn't read Circle and backs off; [skipRuns] runs are skipped before the next try. */
     fun jobBackingOff(job: String, skipRuns: Int)
 
-    /** A confirmed payment's network cost came to more than its rule allows of the fee (25 %: §7b's alert). */
+    /** A confirmed payment's network cost came to more than its whole fee ([shareBps] of it, over 10 000). */
     fun gasAboveShare(
         transferId: String,
         blockchain: String,

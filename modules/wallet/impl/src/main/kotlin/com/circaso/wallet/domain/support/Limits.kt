@@ -12,6 +12,7 @@ import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
+import java.math.BigInteger
 import java.time.Clock
 import java.time.Duration
 
@@ -23,7 +24,10 @@ import java.time.Duration
  * slip past a cap together; the final check runs under a lock on the wallet ([recheck]).
  */
 class Limits(private val rules: RuleRepository, private val transfers: TransferRepository, private val clock: Clock) {
-    /** The rule for [owner]'s wallet and [asset] now, or null when no rule limits it. */
+    /**
+     * The rule for [owner]'s wallet and [asset] now, or null when no rule limits it. Its caps are micro-dollars whatever
+     * the coin (2026-11-07): a payment in another coin counts at its price ([PaymentCoin.usdMinor]).
+     */
     suspend fun rule(owner: WalletOwner, asset: Asset): LimitRule? =
         RuleVersions
             .currentLimits(rules.limitRules(), clock.instant())
@@ -42,7 +46,7 @@ class Limits(private val rules: RuleRepository, private val transfers: TransferR
                     .spentSince(owner.holder, now.minus(rule.window))
                     // One still awaiting its signature whose window has closed is about to expire: it can't go now.
                     .filter { !it.awaiting || now.isBefore(it.createdAt.plus(Transfer.SIGNING_WINDOW)) }
-                    .map { Spent(it.createdAt, it.totalMinor) }
+                    .map { Spent(it.createdAt, it.usdTotalMinor) }
             }
         return Allowance(
             rule.perPaymentMaxMinor,
@@ -54,28 +58,29 @@ class Limits(private val rules: RuleRepository, private val transfers: TransferR
     }
 
     /**
-     * Whether a payment of [amountMinor] with [feeMinor] fits [allowance]: one payment's amount within its cap, and
-     * the total within what is left of the window. [maxAmountMinor] is the most that would fit, for the error.
+     * Whether a payment worth [amountUsdMinor] with a fee worth [feeUsdMinor] (micro-dollars) fits [allowance]: one
+     * payment's amount within its cap, and the total within what is left of the window. [maxAmountMinor] is the most
+     * of the payment's coin that would fit, for the error.
      */
     fun check(
         allowance: Allowance,
-        amountMinor: Long,
-        feeMinor: Long,
-        maxAmountMinor: Long,
+        amountUsdMinor: Long,
+        feeUsdMinor: Long,
+        maxAmountMinor: BigInteger,
     ): Resource<Unit> {
         val perPayment = allowance.perPaymentMaxMinor
-        if (perPayment != null && amountMinor > perPayment) {
+        if (perPayment != null && amountUsdMinor > perPayment) {
             return Resource.error(
                 WalletError.LimitExceeded(
                     details(
                         "limit" to PER_PAYMENT,
                         "limitMinor" to perPayment.toString(),
-                        "maxAmountMinor" to minOf(perPayment, maxAmountMinor).toString(),
+                        "maxAmountMinor" to maxAmountMinor.toString(),
                     ),
                 ),
             )
         }
-        val total = amountMinor + feeMinor
+        val total = amountUsdMinor + feeUsdMinor
         if (allowance.fits(total)) return Resource.success(Unit)
         return Resource.error(WalletError.LimitExceeded(dailyDetails(allowance, total, maxAmountMinor)))
     }
@@ -83,7 +88,7 @@ class Limits(private val rules: RuleRepository, private val transfers: TransferR
     private fun dailyDetails(
         allowance: Allowance,
         totalMinor: Long,
-        maxAmountMinor: Long,
+        maxAmountMinor: BigInteger,
     ): ErrorDetails =
         details(
             "limit" to DAILY,

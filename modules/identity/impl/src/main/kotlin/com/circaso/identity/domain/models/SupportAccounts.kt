@@ -1,9 +1,11 @@
 package com.circaso.identity.domain.models
 
-import com.circaso.shared.UserId
-
-/** Ops asks for a support account (decision 2026-10-31); [operatorId] is whoever holds the `ops` token. */
-data class CreateSupportAccountCommand(val operatorId: UserId, val displayName: String, val handle: String)
+/**
+ * Ops asks for a support account (decision 2026-10-31). [createdBy] is the staff member's id on the ops gateway
+ * (decision 2026-11-08: staff sign in there with Cloudflare Access, not with a Circaso account), kept as text because it
+ * is the ops module's id, not a user id.
+ */
+data class CreateSupportAccountCommand(val createdBy: String, val displayName: String, val handle: String)
 
 /**
  * A support account with the profile users holds for it. [displayName] and [handle] are null when users has no

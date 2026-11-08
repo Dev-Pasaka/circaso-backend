@@ -58,6 +58,14 @@ data class TransferConfirmed(
     val toSpaceId: String? = null,
     /** The membership payment (SP13) it paid, when it was one. */
     val spacePaymentId: String? = null,
+    /**
+     * What [amount] was worth in US dollars, in micro-dollars (6 decimals), at the price the payment was priced at
+     * (added 2026-11-07, when any held coin can be paid): the same digits as `amount.amountMinor` for USDC and USDT.
+     * Null when it can't be said (a coin whose price wasn't kept).
+     */
+    val usdValueMinor: String? = null,
+    /** [amount]'s coin's decimals (added 2026-11-07). */
+    val assetDecimals: Int? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 

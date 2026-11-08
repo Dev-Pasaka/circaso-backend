@@ -2,7 +2,6 @@ package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
-import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
@@ -52,8 +51,11 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                     it[userId] = transaction.userId.value
                     it[direction] = transaction.direction.name
                     it[state] = transaction.state.name
-                    it[amountMinor] = transaction.amount.amountMinor
-                    it[asset] = transaction.amount.asset.name
+                    it[amountMinor] = transaction.amount.amountMinor.toBigDecimal()
+                    it[asset] = transaction.amount.asset.symbol
+                    it[assetDecimals] =
+                        transaction.amount.asset.decimals
+                            .toShort()
                     it[blockchain] = transaction.blockchain
                     it[counterpartyId] = transaction.counterpartyId?.value
                     it[counterpartyAddress] = transaction.counterpartyAddress
@@ -188,7 +190,7 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                 filter.direction?.let { TransactionsTable.direction eq it.name },
                 filter.counterpartyId?.let { TransactionsTable.counterpartyId eq it.value },
                 filter.counterpartyAddress?.let { TransactionsTable.counterpartyAddress eq it },
-                filter.asset?.let { TransactionsTable.asset eq it.name },
+                filter.asset?.let { TransactionsTable.asset eq it },
                 filter.blockchain?.let { TransactionsTable.blockchain eq it },
             )
         return parts.reduceOrNull { all, part -> all and part }
@@ -232,7 +234,12 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
             userId = UserId(this[TransactionsTable.userId]),
             direction = Direction.valueOf(this[TransactionsTable.direction]),
             state = TransferState.valueOf(this[TransactionsTable.state]),
-            amount = Money(this[TransactionsTable.amountMinor], Asset.valueOf(this[TransactionsTable.asset])),
+            amount =
+                moneyOf(
+                    this[TransactionsTable.amountMinor],
+                    this[TransactionsTable.asset],
+                    this[TransactionsTable.assetDecimals],
+                ),
             blockchain = this[TransactionsTable.blockchain],
             counterpartyId = this[TransactionsTable.counterpartyId]?.let(::UserId),
             counterpartyAddress = this[TransactionsTable.counterpartyAddress],

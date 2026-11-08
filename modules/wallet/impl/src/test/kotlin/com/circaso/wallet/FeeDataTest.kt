@@ -15,7 +15,9 @@ import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.di.walletDatabaseSpec
 import com.circaso.wallet.domain.models.FeeKind
 import com.circaso.wallet.domain.models.FeeState
+import com.circaso.wallet.domain.models.GasSource
 import com.circaso.wallet.domain.models.Payee
+import com.circaso.wallet.domain.support.NetworkCosts
 import com.circaso.wallet.domain.support.RuleVersions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -122,13 +124,79 @@ class FeeDataTest {
                     ).data()
                     .transfer
 
-            assertEquals(500_000L, transfers.find(prepared.transferId)?.feeMinor)
+            assertEquals(520_000.toBigInteger(), transfers.find(prepared.transferId)?.feeMinor, "0.5 % plus 2 cents")
             assertEquals(FakeFeeConfig.FEE_WALLET, transfers.find(prepared.transferId)?.feeAddress)
-            assertEquals(100_500_000L, h.used(amina), "the window counts the fee")
+            assertEquals(100_520_000L, h.used(amina), "the window counts the fee")
             val id = prepared.transferId
             assertNotNull(ledger.settle(id, FeeState.COLLECTED, "0xhash", "0.000002", 5_000, Instant.now()))
             assertNull(ledger.settle(id, FeeState.VOID, null, null, null, Instant.now()), "collected stays")
         }
+
+    @Test
+    fun `quotes are priced on what recent transfers cost once the chain has five, and say so`() =
+        runBlocking<Unit> {
+            val quotes = FeeQuoteRepositoryImpl(database)
+            val h = harness()
+            val costs = NetworkCosts(ledger, quotes, h.clock)
+            val (amina, bob) = UserId.new() to UserId.new()
+            h.fund(amina, 300_000_000)
+            h.walletOn(bob)
+            h.reach.connect(amina, bob)
+            val withHistory =
+                com.circaso.wallet.domain.support.FeeCalculator(
+                    rules,
+                    h.custody,
+                    h.feeConfig,
+                    h.wallets,
+                    h.owners,
+                    h.warnings,
+                    h.clock,
+                    costs,
+                )
+
+            assertEquals(
+                GasSource.ESTIMATE,
+                h
+                    .quote(amina, Payee.Person(bob), 7_700_000)
+                    .data()
+                    .fee.gasSource,
+            )
+            assertEquals(listOf("BASE-SEPOLIA"), costs.estimates().map { it.blockchain }, "the quote's estimate")
+
+            // Five settled transfers on Base Sepolia, and one still quoted and one void, which don't count.
+            listOf(7_619, 7_619, 8_311, 9_256, 14_379).forEach { gas -> settled("COLLECTED", gas) }
+            settled("QUOTED", 99_000)
+            settled("VOID", 99_000)
+            val recent = costs.recent("BASE-SEPOLIA", "USDC")
+            assertEquals(9_256L, recent?.gasMinor, "the 75th percentile of five: the fourth")
+            assertEquals(5, recent?.samples)
+
+            val pricing =
+                withHistory
+                    .pricing(
+                        com.circaso.wallet.domain.models.WalletOwner
+                            .Person(amina),
+                        com.circaso.wallet.domain.support
+                            .Sender(h.wallets.circleUser(amina)!!, h.walletOn(amina)),
+                        com.circaso.wallet.domain.support
+                            .Destination(bob, h.walletOn(bob).address),
+                        com.circaso.shared.Money(7_700_000, com.circaso.shared.Asset.USDC),
+                    ).data()
+            val fee = pricing.feeFor(7_700_000)
+            assertEquals(GasSource.RECENT, fee.gasSource)
+            // 9 256 × 1.2 = 11 107 → 2 cents; 0.5 % of 7.70 = 0.0385 → 4 cents.
+            assertEquals(60_000.toBigInteger(), fee.amountMinor)
+        }
+
+    /** A fee ledger row on Base Sepolia in [state], with what the chain charged. */
+    private fun settled(state: String, gasMinor: Int) {
+        sql(
+            "INSERT INTO wallet.fee_ledger (transfer_id, holder_id, blockchain, asset, amount_minor, fee_minor, " +
+                "fee_usd_minor, rate_bps, minimum, kind, sender_type, gas_share_max_bps, state, actual_gas_minor, " +
+                "created_at, updated_at) VALUES (gen_random_uuid(), gen_random_uuid(), 'BASE-SEPOLIA', 'USDC', " +
+                "1000000, 10000, 10000, 50, false, 'INTERNAL', 'PERSON', 2500, '$state', $gasMinor, now(), now())",
+        )
+    }
 
     @Test
     fun `two payments racing for the last of a limit - the lock lets only one through`() =
@@ -171,16 +239,19 @@ class FeeDataTest {
             assertEquals(listOf("wallet.limit_exceeded"), refused)
         }
 
-    private companion object {
+    internal companion object {
         /** The `INSERT`s of the V4 script, so the test reads exactly what the migration seeds. */
-        fun seeds(): List<String> =
-            checkNotNull(FeeDataTest::class.java.getResource("/db/wallet/V4__fees_limits.sql"))
+        fun seeds(): List<String> = statements("V4__fees_limits.sql", "INSERT INTO")
+
+        /** The statements of a wallet migration that start with [prefix]. */
+        fun statements(script: String, prefix: String): List<String> =
+            checkNotNull(FeeDataTest::class.java.getResource("/db/wallet/$script"))
                 .readText()
                 .lines()
                 // Comments first: one may hold a ";" (the seeds' do).
                 .joinToString("\n") { it.substringBefore("--") }
                 .split(";")
                 .map { it.trim() }
-                .filter { it.startsWith("INSERT INTO") }
+                .filter { it.startsWith(prefix) }
     }
 }

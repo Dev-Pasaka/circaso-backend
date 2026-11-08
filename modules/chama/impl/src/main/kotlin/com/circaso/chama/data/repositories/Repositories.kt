@@ -3,6 +3,7 @@ package com.circaso.chama.data.repositories
 import com.circaso.chama.api.RequestId
 import com.circaso.chama.data.tables.ApprovalsTable
 import com.circaso.chama.data.tables.ContributionsTable
+import com.circaso.chama.data.tables.DirectPayoutsTable
 import com.circaso.chama.data.tables.GoalsTable
 import com.circaso.chama.data.tables.GroupSettingsTable
 import com.circaso.chama.data.tables.RequestsTable
@@ -10,12 +11,15 @@ import com.circaso.chama.domain.models.Approval
 import com.circaso.chama.domain.models.ApprovalPolicy
 import com.circaso.chama.domain.models.Contribution
 import com.circaso.chama.domain.models.Decision
+import com.circaso.chama.domain.models.DirectPayout
 import com.circaso.chama.domain.models.Goal
 import com.circaso.chama.domain.models.GroupSettings
+import com.circaso.chama.domain.models.PaidCoin
 import com.circaso.chama.domain.models.Payout
 import com.circaso.chama.domain.models.RequestState
 import com.circaso.chama.domain.ports.ChamaOutbox
 import com.circaso.chama.domain.repositories.ContributionRepository
+import com.circaso.chama.domain.repositories.DirectPayoutRepository
 import com.circaso.chama.domain.repositories.GoalRepository
 import com.circaso.chama.domain.repositories.RequestRepository
 import com.circaso.chama.domain.repositories.SettingsRepository
@@ -41,7 +45,19 @@ import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.time.Instant
 
+/** The dollar unit chama counts in: `amount_minor` is micro-dollars, USDC's minor units, whatever coin was paid. */
 private const val USDC = "USDC"
+
+private fun paidOf(
+    symbol: String?,
+    decimals: Short?,
+    amountMinor: java.math.BigDecimal?,
+): PaidCoin? =
+    if (symbol == null || decimals == null || amountMinor == null) {
+        null
+    } else {
+        PaidCoin(symbol, decimals.toInt(), amountMinor.toBigIntegerExact())
+    }
 
 class GoalRepositoryImpl(private val database: Database) : GoalRepository {
     override suspend fun find(chatId: ChatId): Goal? =
@@ -87,6 +103,33 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
         )
 }
 
+class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutRepository {
+    override suspend fun insert(payout: DirectPayout): Boolean =
+        database.tx("direct-payouts.insert") {
+            DirectPayoutsTable
+                .insertIgnore {
+                    it[transferId] = payout.transferId.value
+                    it[chatId] = payout.chatId.value
+                    it[amountMinor] = payout.amountMinor
+                    it[asset] = USDC
+                    it[at] = payout.at
+                    it[paidAsset] = payout.paid?.symbol
+                    it[paidDecimals] = payout.paid?.decimals?.toShort()
+                    it[paidAmountMinor] = payout.paid?.amountMinor?.toBigDecimal()
+                }.insertedCount > 0
+        }
+
+    override suspend fun total(chatId: ChatId): Long =
+        database.tx("direct-payouts.total") {
+            DirectPayoutsTable
+                .selectAll()
+                .where { DirectPayoutsTable.chatId eq chatId.value }
+                .map { it[DirectPayoutsTable.amountMinor] }
+                .toList()
+                .sum()
+        }
+}
+
 class ContributionRepositoryImpl(private val database: Database) : ContributionRepository {
     override suspend fun insert(contribution: Contribution): Boolean =
         database.tx("contributions.insert") {
@@ -99,6 +142,9 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
                     it[asset] = USDC
                     it[at] = contribution.at
                     it[legacy] = contribution.legacy
+                    it[paidAsset] = contribution.paid?.symbol
+                    it[paidDecimals] = contribution.paid?.decimals?.toShort()
+                    it[paidAmountMinor] = contribution.paid?.amountMinor?.toBigDecimal()
                 }.insertedCount > 0
         }
 
@@ -147,6 +193,12 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
             amountMinor = this[ContributionsTable.amountMinor],
             at = this[ContributionsTable.at],
             legacy = this[ContributionsTable.legacy],
+            paid =
+                paidOf(
+                    this[ContributionsTable.paidAsset],
+                    this[ContributionsTable.paidDecimals],
+                    this[ContributionsTable.paidAmountMinor],
+                ),
         )
 }
 

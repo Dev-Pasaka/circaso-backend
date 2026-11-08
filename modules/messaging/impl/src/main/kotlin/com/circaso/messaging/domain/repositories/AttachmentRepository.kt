@@ -23,6 +23,19 @@ interface AttachmentRepository {
         limit: Int,
     ): List<Attachment>
 
+    /**
+     * Makes [attachmentId] a group's photo: clears its expiry (`SET expires_at = NULL`) if it is `READY` and live at
+     * [now]. False when it isn't (or is gone), so a purge that got there first can't be undone. Inside the M8
+     * transaction, after the chat's row is locked.
+     */
+    suspend fun keepAsGroupPhoto(attachmentId: UUID, now: Instant): Boolean
+
+    /**
+     * A group's former photo: gives it an expiry again, [purgeAt], if it has none. False when it already had one, so a
+     * retried release never moves a deadline.
+     */
+    suspend fun releaseGroupPhoto(attachmentId: UUID, purgeAt: Instant): Boolean
+
     /** True when the row was there and is now deleted. */
     suspend fun delete(attachmentId: UUID): Boolean
 }

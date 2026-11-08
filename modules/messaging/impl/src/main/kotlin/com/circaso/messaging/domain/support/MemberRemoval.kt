@@ -9,6 +9,7 @@ import com.circaso.messaging.domain.models.ChatKind
 import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.Transactor
+import com.circaso.messaging.domain.repositories.AttachmentRepository
 import com.circaso.messaging.domain.repositories.ChatRepository
 import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.shared.EventBus
@@ -17,6 +18,7 @@ import com.circaso.shared.EventId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
+import java.time.Clock
 import java.util.UUID
 
 /**
@@ -29,18 +31,21 @@ import java.util.UUID
  *    changed nothing (`messaging.chat_not_found`), so of a remove and a leave racing, one wins.
  * 3. The winner decrements `member_count` (moving the version on), picks the successor when the owner left (the
  *    longest-serving admin, else member), deletes the group when nobody is left, and writes `MemberRemoved` (its id
- *    made from the chat, the person and when they joined) and `GroupDeleted` to the outbox.
+ *    made from the chat, the person and when they joined) and `GroupDeleted` to the outbox. A deleted group's photo
+ *    is given an expiry of now, so the next `messaging.purge-attachments` removes it (decision 2026-11-05).
  *
  * After the commit, everyone who was in it, the person included, gets `member.removed` so the remaining phones
  * rotate their sender keys; a new owner is announced with `chat.updated`.
  */
 class MemberRemoval(
     private val chats: ChatRepository,
+    private val attachments: AttachmentRepository,
     private val transactor: Transactor,
     private val outbox: MessagingOutbox,
     private val membership: Membership,
     private val notifier: ChatNotifier,
     private val bus: EventBus,
+    private val clock: Clock,
 ) {
     /** What the transaction did, for the frames and events after the commit. */
     private class Removed(
@@ -90,6 +95,7 @@ class MemberRemoval(
         val removedEvent = removedEvent(member, by)
         if (remaining.isEmpty()) {
             chats.deleteChat(chatId)
+            chat.avatarMediaId?.let { attachments.releaseGroupPhoto(it, clock.instant()) }
             val deleted = bus.envelope(GroupDeleted(chatId)).oncePerChat(chatId)
             outbox.write(listOf(removedEvent, deleted))
             return Resource.success(Removed(member, null, remaining, null, listOf(removedEvent, deleted)))

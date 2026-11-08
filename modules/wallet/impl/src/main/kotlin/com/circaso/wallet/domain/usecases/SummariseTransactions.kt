@@ -115,7 +115,7 @@ class SummariseTransactions(
                     outMinor = of.filter { it.direction == Direction.OUT }.sumOf { it.amount.amountMinor },
                     count = of.size,
                 )
-            }.sortedWith(compareBy<MonthFlow> { it.month }.thenBy { it.asset.name })
+            }.sortedWith(compareBy<MonthFlow> { it.month }.thenBy { it.asset.symbol })
 
     /** A person is one party whatever address they paid from; an outside address is a party of its own. */
     private fun WalletTransaction.party() =

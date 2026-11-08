@@ -1,6 +1,7 @@
 package com.circaso.wallet.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
 
@@ -59,15 +60,19 @@ object FeeQuotesTable : Table("wallet.fee_quotes") {
     val signerId = javaUUID("signer_id")
     val blockchain = text("blockchain")
     val payeeKey = text("payee_key")
-    val amountMinor = long("amount_minor")
+    val amountMinor = decimal("amount_minor", 78, 0)
     val asset = text("asset")
-    val feeMinor = long("fee_minor")
+    val assetDecimals = short("asset_decimals").default(6)
+    val feeMinor = decimal("fee_minor", 78, 0)
+    val feeUsdMinor = long("fee_usd_minor")
+    val usdPrice = decimal("usd_price", 38, 18).default(java.math.BigDecimal.ONE)
     val rateBps = integer("rate_bps")
     val minimum = bool("minimum")
     val ruleId = javaUUID("rule_id").nullable()
     val ruleVersion = integer("rule_version").nullable()
     val gasMinor = long("gas_minor").nullable()
     val gasShareMaxBps = integer("gas_share_max_bps")
+    val gasSource = text("gas_source").nullable()
     val kind = text("kind")
     val senderType = text("sender_type")
     val receiverType = text("receiver_type").nullable()
@@ -88,8 +93,11 @@ object FeeLedgerTable : Table("wallet.fee_ledger") {
     val holderId = javaUUID("holder_id")
     val blockchain = text("blockchain")
     val asset = text("asset")
-    val amountMinor = long("amount_minor")
-    val feeMinor = long("fee_minor")
+    val assetDecimals = short("asset_decimals").default(6)
+    val amountMinor = decimal("amount_minor", 78, 0)
+    val feeMinor = decimal("fee_minor", 78, 0)
+    val feeUsdMinor = long("fee_usd_minor")
+    val usdPrice = decimal("usd_price", 38, 18).default(java.math.BigDecimal.ONE)
     val rateBps = integer("rate_bps")
     val minimum = bool("minimum")
     val ruleId = javaUUID("rule_id").nullable()
@@ -101,6 +109,7 @@ object FeeLedgerTable : Table("wallet.fee_ledger") {
     val noFeeReason = text("no_fee_reason").nullable()
     val gasEstimateMinor = long("gas_estimate_minor").nullable()
     val gasShareMaxBps = integer("gas_share_max_bps")
+    val gasSource = text("gas_source").nullable()
     val state = text("state")
     val txHash = text("tx_hash").nullable()
     val actualGasNative = text("actual_gas_native").nullable()
@@ -111,5 +120,7 @@ object FeeLedgerTable : Table("wallet.fee_ledger") {
 
     init {
         index("fee_ledger_report_idx", false, createdAt, blockchain)
+        // V9: staff's fees paid by one holder.
+        index("fee_ledger_collected_idx", false, holderId, filterCondition = { state eq "COLLECTED" })
     }
 }

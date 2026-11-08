@@ -34,10 +34,29 @@ data class Contribution(
     val transferId: TransferId,
     val chatId: ChatId,
     val userId: UserId,
+    /** In US dollars, micro-dollars (USDC minor units): what the group's goal counts, whatever coin was paid. */
     val amountMinor: Long,
     val at: Instant,
     val legacy: Boolean = false,
+    /** The coin that was actually paid (2026-11-07: any held coin); null on contributions recorded before. */
+    val paid: PaidCoin? = null,
 )
+
+/** A payment the group wallet's owner sent straight from it, with no request (decision 2026-11-06). */
+data class DirectPayout(
+    val transferId: TransferId,
+    val chatId: ChatId,
+    /** In US dollars, micro-dollars, as [Contribution.amountMinor]. */
+    val amountMinor: Long,
+    val at: Instant,
+    /** The coin that was actually sent; null on payouts recorded before 2026-11-07. */
+    val paid: PaidCoin? = null,
+)
+
+/** A coin as it moved: its symbol, decimals and amount in its minor units. Never logged. */
+data class PaidCoin(val symbol: String, val decimals: Int, val amountMinor: java.math.BigInteger) {
+    override fun toString(): String = "PaidCoin($symbol, ***)"
+}
 
 /**
  * Who approves a group's payouts (GW1, decision 2026-11-03): two admins (every admin when there are fewer; an admin
@@ -155,11 +174,14 @@ data class WalletTransfer(
     val transferId: TransferId,
     /** The wallet it left: a person, or the group wallet's id when [fromGroupId] is set. */
     val senderId: UserId,
+    /** In US dollars, micro-dollars, at the price it was paid at (2026-11-07; the USDC amount itself before). */
     val amountMinor: Long,
     val chatId: ChatId?,
     val fromGroupId: ChatId?,
     val toGroupId: ChatId?,
     val payoutRequestId: java.util.UUID?,
+    /** The coin that moved, when the wallet said its decimals. */
+    val paid: PaidCoin? = null,
 ) {
     override fun toString(): String = "WalletTransfer($transferId)"
 }

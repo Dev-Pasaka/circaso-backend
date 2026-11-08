@@ -1,11 +1,14 @@
 package com.circaso.gateway
 
+import com.circaso.gateway.access.AccessVerifier
+import com.circaso.gateway.access.HttpAccessKeys
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.WebhookVendor
@@ -14,6 +17,7 @@ import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
+import com.circaso.web.PageContributor
 import com.circaso.web.RouteContributor
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopping
@@ -62,7 +66,7 @@ fun gatewayModule(config: Config) =
 
 /**
  * Installs the edge: the gateway steps and request log on every call, then `/v1` with every module's routes,
- * the webhook receiver and the WebSocket hub.
+ * the webhook receiver and the WebSocket hub; the public pages modules contribute ([PageContributor]) sit at the root.
  */
 fun Application.installGateway() {
     val koin = getKoin()
@@ -92,7 +96,13 @@ fun Application.installGateway() {
             webhookRoutes(koin.getAll<WebhookVendor>(), deps.config, deps.redis.scope("gw"), koin.get())
             hub.routes(this)
         }
-        apiDocsRoutes(this@installGateway, deps.config.apiDocs)
+        koin.getAll<PageContributor>().forEach { it.install(this) }
+        apiDocsRoutes(
+            this@installGateway,
+            deps.config.apiDocs,
+            deps.config.apiDocs.access
+                ?.let { AccessVerifier(it, HttpAccessKeys(koin.get<HttpClients>(), it)) },
+        )
         errorPageRoutes()
     }
 }

@@ -31,6 +31,27 @@ environment wins over `.env`.
 The API reference is our own small TypeScript app (`docs-ui/`, no dependencies, about 25 KB over the wire), its own service rather than part of the server: static files in a tiny nginx image (`pascarl/circaso-docs`, built by the deploy workflow), styled with circaso.com's design tokens and with an Idempotency-Key UUID generator in its top bar. It draws everything from the spec at `/docs/openapi.json`, which the server builds from its routes, so the page changes only when the spec does (both are validated by ETag). In front of both, nginx routes `/docs/openapi.json` to the server and the rest of `/docs` to the docs container. Locally: start the server, then `cd docs-ui && bun run build && bun run serve` and open `http://localhost:8090/docs` (`bun test` runs its tests; the build writes `docs-ui/dist/`, which is not committed). It is off in production and
 behind the `ops` scope outside local runs. Local SMS codes are printed in the console (`INTEGRATIONS_SMS_PROVIDER=log`).
 
+## The ops gateway (the staff API)
+
+The Circaso admin portal talks to its own server process, never to the app's (decision 2026-11-08: "separate endpoint,
+separate management, don't mix them together"). It is the same build started with another main class:
+
+```
+./gradlew :app:runOps        # the ops gateway on :8081 (OPS_PORT), reading the same .env
+```
+
+- **Edge:** `ops-gateway/` (Cloudflare Access sign-in, the sandbox-only dev login, the staff list on every request,
+  CORS for `OPS_ALLOWED_ORIGINS` only, its own rate limits and idempotency, its own request log). Only
+  `OpsRouteContributor`s are mounted there; the app gateway answers `request.not_found` for everything under `/v1/ops`.
+- **Routes and data:** `modules/ops` (staff list, audit log, every staff route) over the other modules' staff-facing
+  contracts. Spec: `.claude/skills/circaso-backend-docs/references/modules/ops.md`; its own OpenAPI at
+  `/v1/ops/openapi.json` outside production.
+- **Process:** no app routes, socket, webhooks, stream consumers or scheduled jobs; readiness covers PostgreSQL and Redis.
+- **Settings:** the `OPS_*` block in `.env.example`. Production refuses to start without Cloudflare Access, or with
+  `OPS_DEV_LOGIN_SECRET` set.
+- **Deploying side by side (reference files only):** the `ops` service in `deploy/docker-compose.dev.yml` (same image,
+  `OpsMain` entrypoint, :8081, small pools) and `deploy/nginx/admin-api.conf` (`admin-api.circaso.com` → `ops:8081`).
+
 ## Logging
 
 Colored and human-readable locally (`LOG_FORMAT=PRETTY`, `LOG_COLOR=true`), JSON in staging and production. Levels are
@@ -41,7 +62,8 @@ set in `.env` or the environment, per service, each `OFF`, `ERROR`, `WARN`, `INF
 | `LOG_LEVEL` | Circaso's own code, every module (default `INFO`) |
 | `LOG_LEVEL_OTHER` | libraries and anything not named below (default `WARN`) |
 | `LOG_LEVEL_REQUESTS` | the one line per HTTP request |
-| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_MESSAGING`, `_WALLET`, `_CALLS`, `_STATUS`, `_ASSISTANT` | the gateway and each module |
+| `LOG_LEVEL_GATEWAY`, `_IDENTITY`, `_USERS`, `_MESSAGING`, `_WALLET`, `_CALLS`, `_STATUS`, `_SHARE`, `_SUPPORT`, `_ASSISTANT` | the gateway and each module |
+| `LOG_LEVEL_OPS` | the ops gateway and the ops module |
 | `LOG_LEVEL_INTEGRATIONS`, `_EVENTS`, `_SCHEDULER` | vendors, the event streams, scheduled jobs |
 | `LOG_LEVEL_CIRCLE` | Circle wallets and its webhook (follows `LOG_LEVEL_INTEGRATIONS` when unset) |
 | `LOG_LEVEL_DATABASE`, `_REDIS`, `_HTTP` | PostgreSQL (pools, transactions, migrations), Redis, the Ktor server and Netty (the libraries' side too) |

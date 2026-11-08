@@ -540,10 +540,10 @@ class LiveVoiceTest {
                 readUntil(got) { it.ofType("turn").isNotEmpty() }
                 awaitLatch(asked) // the model has the first question: Asha is thinking
 
+                // voice activity alone never stops her (noise trips it too); the person's words do
                 ears.push(TranscriptionEvent.SpeechStarted)
-                readUntil(got) { it.ofType("interrupted").isNotEmpty() }
                 ears.push(TranscriptionEvent.Final("never mind, how are you", endOfTurn = true))
-                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
 
                 thinking.countDown()
                 readUntil(got) { it.ofType("reply_done").size == 2 }
@@ -683,6 +683,417 @@ class LiveVoiceTest {
                 voiceSeconds(live),
                 "only the person's own second is charged, not her echo (was ${voiceSeconds(live)})",
             )
+        }
+
+    // ---- barge-in needs evidence of the person (2026-11-07) ----------------------------------------------------
+
+    @Test
+    fun `a filler or a lone guess while Asha is thinking does not cut off her answer`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val asked = CountDownLatch(1)
+            val thinking = CountDownLatch(1)
+            live.h.model.then {
+                asked.countDown()
+                thinking.await(5, TimeUnit.SECONDS)
+                Resource.success(ModelResponse("Your balance is 4,200 shillings.", emptyList(), ModelUsage(10, 5)))
+            }
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("what is my balance", endOfTurn = true))
+                readUntil(got) { it.ofType("turn").isNotEmpty() }
+                awaitLatch(asked) // Asha is thinking
+
+                // a cough, then the transcriber guessing on noise: voice activity, one word, fillers
+                ears.push(
+                    TranscriptionEvent.SpeechStarted,
+                    TranscriptionEvent.Interim("you", AudioSpan(3.0, 3.6)),
+                    TranscriptionEvent.Final("you", endOfTurn = false, audio = AudioSpan(3.0, 3.6)),
+                    TranscriptionEvent.Interim("uh um", AudioSpan(3.7, 4.4)),
+                    TranscriptionEvent.Final("uh um the", endOfTurn = true, audio = AudioSpan(3.7, 4.5)),
+                )
+                // a backchannel, settled and repeated, is listening, not interrupting
+                ears.push(
+                    TranscriptionEvent.Interim("okay", AudioSpan(8.0, 8.6)),
+                    TranscriptionEvent.Interim("okay", AudioSpan(8.0, 8.7)),
+                    TranscriptionEvent.Final("okay", endOfTurn = false, audio = AudioSpan(8.0, 8.7)),
+                    TranscriptionEvent.TurnEnded,
+                )
+                // a lone first guess at a word the transcriber then drops is noise
+                ears.push(
+                    TranscriptionEvent.Interim("hey", AudioSpan(10.0, 10.2)),
+                    TranscriptionEvent.Final("", endOfTurn = true, audio = AudioSpan(10.0, 10.2)),
+                )
+                delay(300)
+                assertTrue(got.ofType("interrupted").isEmpty(), "noise is not a barge-in")
+
+                thinking.countDown()
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+
+            assertTrue(got.ofType("interrupted").isEmpty())
+            assertEquals(
+                listOf("what is my balance"),
+                got.ofType("turn").map { it.text("text") },
+                "noise is no question",
+            )
+            assertTrue(
+                got.ofType("transcript").none { it.text("text") in setOf("you", "uh um", "uh um the", "okay", "hey") },
+                "noise is not shown",
+            )
+            assertEquals(
+                true,
+                got
+                    .ofType("reply_done")
+                    .single()["spoken"]!!
+                    .jsonPrimitive.boolean,
+                "her answer is heard",
+            )
+            assertEquals(
+                listOf("Your balance is 4,200 shillings."),
+                got.frames.filterIsInstance<ByteArray>().map { String(it) },
+                "her answer is spoken",
+            )
+            assertEquals(
+                0,
+                live.voice.sessions
+                    .single()
+                    .clears
+                    .get(),
+                "her voice is never cleared",
+            )
+            assertEquals(0, voiceSeconds(live), "the noise is not charged (was ${voiceSeconds(live)})")
+        }
+
+    @Test
+    fun `a filler, a backchannel or a short burst while Asha speaks does not stop her`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.say("a".repeat(11_999) + ".") // 1.5 s of 8 kHz mulaw
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 12_000 }
+                // her audio is playing on the phone
+                ears.push(
+                    TranscriptionEvent.SpeechStarted,
+                    TranscriptionEvent.Interim("mm", AudioSpan(2.0, 2.5)),
+                    TranscriptionEvent.Interim("mm hmm", AudioSpan(2.0, 2.9)),
+                    TranscriptionEvent.Final("mm hmm", endOfTurn = false, audio = AudioSpan(2.0, 2.9)),
+                    TranscriptionEvent.Interim("right", AudioSpan(4.5, 5.0)),
+                    TranscriptionEvent.Interim("right", AudioSpan(4.5, 5.1)),
+                    TranscriptionEvent.Final("right", endOfTurn = false, audio = AudioSpan(4.5, 5.1)),
+                    // a click transcribed as a real word, settled, but 150 ms long: too short while she plays
+                    TranscriptionEvent.Interim("hey", AudioSpan(7.0, 7.1)),
+                    TranscriptionEvent.Interim("hey", AudioSpan(7.0, 7.15)),
+                    TranscriptionEvent.Final("hey", endOfTurn = true, audio = AudioSpan(7.0, 7.15)),
+                )
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                hangUp(got)
+            }
+
+            assertTrue(got.ofType("interrupted").isEmpty(), "noise is not a barge-in")
+            assertEquals(listOf("tell me a story"), got.ofType("turn").map { it.text("text") }, "noise is no question")
+            assertTrue(got.ofType("transcript").none { it.text("text") == "hey" }, "noise is not shown")
+            assertEquals(
+                true,
+                got
+                    .ofType("reply_done")
+                    .single()["spoken"]!!
+                    .jsonPrimitive.boolean,
+                "played to the end",
+            )
+            assertEquals(
+                0,
+                live.voice.sessions
+                    .single()
+                    .clears
+                    .get(),
+                "her voice is never cleared",
+            )
+            val charged = voiceSeconds(live)
+            assertTrue(charged in 1..2, "only her 1.5 s of playback is charged, not the 2 s of noise (was $charged)")
+        }
+
+    @Test
+    fun `one real word for 300 ms stops her, and the words held before lead the next turn`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .say("a".repeat(79_999) + ".") // 10 s of 8 kHz mulaw
+                .say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 80_000 }
+                // a word in 200 ms while her voice plays: as short as a click or a burst of noise, held
+                ears.push(TranscriptionEvent.Final("stop", endOfTurn = false, audio = AudioSpan(1.0, 1.2)))
+                delay(300)
+                assertTrue(got.ofType("interrupted").isEmpty(), "a word in 200 ms is not enough while she plays")
+                // the stretch goes on: 600 ms of the person's speech, the held word now settled and long enough
+                ears.push(TranscriptionEvent.Interim("please", AudioSpan(1.3, 1.6)))
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
+                ears.push(TranscriptionEvent.Final("please", endOfTurn = true, audio = AudioSpan(1.3, 1.6)))
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+
+            assertEquals(
+                1,
+                live.voice.sessions
+                    .single()
+                    .clears
+                    .get(),
+                "her voice was cleared",
+            )
+            assertEquals(
+                false,
+                got
+                    .ofType("reply_done")
+                    .first()["spoken"]!!
+                    .jsonPrimitive.boolean,
+                "talked over",
+            )
+            assertEquals(
+                listOf("tell me a story", "stop please"),
+                got.ofType("turn").map { it.text("text") },
+                "the held words are the person's once the stretch shows it",
+            )
+        }
+
+    @Test
+    fun `a single real word interrupts as soon as an interim keeps it for one update and it has lasted 300 ms`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .say("a".repeat(79_999) + ".") // 10 s of 8 kHz mulaw
+                .say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 80_000 }
+                // the transcriber's first guess, still being made up: not yet
+                ears.push(TranscriptionEvent.SpeechStarted, TranscriptionEvent.Interim("wait", AudioSpan(1.0, 1.2)))
+                delay(300)
+                assertTrue(got.ofType("interrupted").isEmpty(), "a first guess at a word is not settled")
+                // the next interim keeps it, and the word has lasted 350 ms: the person, no final needed
+                ears.push(TranscriptionEvent.Interim("wait", AudioSpan(1.0, 1.35)))
+                readUntil(got) {
+                    it.ofType("interrupted").isNotEmpty() &&
+                        it.ofType("reply_done").isNotEmpty() &&
+                        it.ofType("transcript").any { t -> t.text("text") == "wait" }
+                }
+                ears.push(TranscriptionEvent.Final("wait", endOfTurn = true, audio = AudioSpan(1.0, 1.4)))
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+
+            assertEquals(
+                1,
+                live.voice.sessions
+                    .single()
+                    .clears
+                    .get(),
+                "her voice was cleared",
+            )
+            assertEquals(
+                false,
+                got
+                    .ofType("reply_done")
+                    .first()["spoken"]!!
+                    .jsonPrimitive.boolean,
+                "talked over: kept as text, unspoken",
+            )
+            assertEquals(listOf("tell me a story", "wait"), got.ofType("turn").map { it.text("text") })
+        }
+
+    @Test
+    fun `while Asha is only thinking one settled real word stops her, however short`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val asked = CountDownLatch(1)
+            val thinking = CountDownLatch(1)
+            live.h.model
+                .then {
+                    asked.countDown()
+                    thinking.await(5, TimeUnit.SECONDS)
+                    Resource.success(ModelResponse("Your balance is 4,200 shillings.", emptyList(), ModelUsage(10, 5)))
+                }.say("Sure.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("what is my balance", endOfTurn = true))
+                readUntil(got) { it.ofType("turn").isNotEmpty() }
+                awaitLatch(asked) // Asha is thinking: nothing of hers is playing, so there is no echo to wait out
+                // "hold" is written past in this first interim, and 150 ms is fine with no voice of hers to hear back
+                ears.push(TranscriptionEvent.Interim("hold on", AudioSpan(3.0, 3.15)))
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() }
+                ears.push(TranscriptionEvent.Final("hold on", endOfTurn = true, audio = AudioSpan(3.0, 3.3)))
+                thinking.countDown()
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+
+            assertEquals(listOf("what is my balance", "hold on"), got.ofType("turn").map { it.text("text") })
+            assertEquals(
+                listOf(false, true),
+                got.ofType("reply_done").map { it["spoken"]!!.jsonPrimitive.boolean }.sorted(),
+                "the answer she was thinking of is kept, unspoken; the next one is heard",
+            )
+            assertEquals(4, live.h.memory.messages.size, "both turns are in the Asha chat")
+        }
+
+    @Test
+    fun `the phone's interrupt stops her at once, unspoken, and the person's next words are the next turn`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model
+                .say("a".repeat(79_999) + ".") // 10 s of 8 kHz mulaw
+                .say("Sure, yesterday was quiet.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("tell me a story", endOfTurn = true))
+                readUntil(got) { it.frames.filterIsInstance<ByteArray>().sumOf { a -> a.size } == 80_000 }
+                // the transcriber's first guess, far below the word rule's bar: alone it would never stop her
+                ears.push(TranscriptionEvent.SpeechStarted, TranscriptionEvent.Interim("what", AudioSpan(1.0, 1.1)))
+                delay(200)
+                assertTrue(got.ofType("interrupted").isEmpty(), "the word rule alone has not stopped her")
+                // the phone's voice activity detector has: it stopped her audio and says so
+                send(Frame.Text("""{"type":"interrupt","at":"2026-11-07T10:00:00.000Z"}"""))
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
+                ears.push(
+                    TranscriptionEvent.Final("what about yesterday", endOfTurn = true, audio = AudioSpan(1.0, 1.9)),
+                )
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+
+            assertEquals(
+                1,
+                live.voice.sessions
+                    .single()
+                    .clears
+                    .get(),
+                "her voice was cleared",
+            )
+            assertEquals(1, got.ofType("interrupted").size)
+            assertEquals(
+                listOf(false, true),
+                got.ofType("reply_done").map { it["spoken"]!!.jsonPrimitive.boolean },
+                "the story is kept unspoken; the next answer is heard",
+            )
+            assertEquals(
+                listOf("tell me a story", "what about yesterday"),
+                got.ofType("turn").map { it.text("text") },
+            )
+            assertTrue(
+                logs.list.any {
+                    it.formattedMessage.startsWith("live voice interrupt:") &&
+                        "outcome=barged_in" in it.formattedMessage
+                },
+            )
+            assertTrue(logs.list.none { "what about" in it.formattedMessage }, "no words in the logs")
+        }
+
+    @Test
+    fun `the phone's interrupt while Asha is thinking cancels her answer before a word of it is spoken`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val asked = CountDownLatch(1)
+            val thinking = CountDownLatch(1)
+            live.h.model
+                .then {
+                    asked.countDown()
+                    thinking.await(5, TimeUnit.SECONDS)
+                    Resource.success(ModelResponse("Your balance is 4,200 shillings.", emptyList(), ModelUsage(10, 5)))
+                }.say("Ok.")
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                val ears = live.ears.session()
+                ears.push(TranscriptionEvent.Final("what is my balance", endOfTurn = true))
+                readUntil(got) { it.ofType("turn").isNotEmpty() }
+                awaitLatch(asked)
+                send(Frame.Text("""{"type":"interrupt"}"""))
+                readUntil(got) { it.ofType("interrupted").isNotEmpty() }
+                thinking.countDown()
+                readUntil(got) { it.ofType("reply_done").isNotEmpty() }
+                ears.push(TranscriptionEvent.Final("actually never mind", endOfTurn = true))
+                readUntil(got) { it.ofType("reply_done").size == 2 }
+                hangUp(got)
+            }
+
+            assertEquals(
+                false,
+                got
+                    .ofType("reply_done")
+                    .first()["spoken"]!!
+                    .jsonPrimitive.boolean,
+            )
+            assertEquals(listOf("Ok."), got.ofType("reply").map { it.text("text") }, "nothing of the first answer")
+            assertEquals(listOf("Ok."), got.frames.filterIsInstance<ByteArray>().map { String(it) })
+            assertEquals(
+                listOf("what is my balance", "actually never mind"),
+                got.ofType("turn").map { it.text("text") },
+            )
+            assertEquals(4, live.h.memory.messages.size, "both turns are still in the Asha chat")
+        }
+
+    @Test
+    fun `interrupts are answered while she listens, and limited per conversation`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                repeat(8) { send(Frame.Text("""{"type":"interrupt","at":"not a time"}""")) }
+                readUntil(got) { it.ofType("interrupted").size == 5 }
+                delay(300)
+                hangUp(got)
+            }
+
+            assertEquals(5, got.ofType("interrupted").size, "five at once, the rest ignored")
+            assertTrue(got.ofType("error").isEmpty(), "never an error: a phone over the limit simply isn't answered")
+            val lines = logs.list.map { it.formattedMessage }.filter { it.startsWith("live voice interrupt:") }
+            assertEquals(5, lines.count { "outcome=already_listening" in it })
+            assertEquals(3, lines.count { "outcome=limited" in it })
+            assertTrue(lines.all { "lagMs=null" in it }, "a timestamp that doesn't parse is only left out")
         }
 
     @Test
@@ -961,6 +1372,7 @@ class LiveVoiceTest {
                     got.ofType("interrupted").isEmpty(),
                     "voice activity alone does not stop her while she plays",
                 )
+                // "wait" is already written past in the first interim: settled, half a second, the person's
                 ears.push(TranscriptionEvent.Interim("wait stop", AudioSpan(1.0, 1.5)))
                 readUntil(got) { it.ofType("interrupted").isNotEmpty() && it.ofType("reply_done").isNotEmpty() }
                 hangUp(got)
@@ -1278,8 +1690,9 @@ class LiveVoiceTest {
         testApplication {
             val live = LiveHarness(Harness())
             live.serve(this)
+            // a refusal, not an outage: Asha is still available
             live.h.model
-                .fail()
+                .reject()
                 .say("Back again.")
             val got = Received()
 
@@ -1295,6 +1708,39 @@ class LiveVoiceTest {
             }
             assertEquals("assistant.model_unavailable", got.ofType("error").single().text("code"))
             assertEquals("Back again.", got.ofType("reply").single().text("text"))
+        }
+
+    @Test
+    fun `Asha down for maintenance says so in her own voice, then the call closes with assistant_unavailable`() =
+        testApplication {
+            val live = LiveHarness(Harness())
+            live.serve(this)
+            live.h.model.fail()
+            val got = Received()
+
+            phone().webSocket("/v1/assistant/voice/live") {
+                auth()
+                readUntil(got) { it.ofType("ready").isNotEmpty() }
+                live.ears.session().push(TranscriptionEvent.Final("what's my balance", endOfTurn = true))
+                val closed = readToClose(got)
+
+                assertEquals(CloseReason.Codes.TRY_AGAIN_LATER.code, closed?.code)
+                assertEquals("assistant.unavailable", closed?.message)
+            }
+            val line = "I'm down for maintenance at the moment. I'll let you know as soon as I'm back."
+            assertEquals(
+                listOf(line),
+                live.voice.sessions
+                    .single()
+                    .spoken,
+                "spoken by the voice, not the model",
+            )
+            assertEquals(line, got.ofType("reply").single().text("text"))
+            assertTrue(got.frames.any { it is ByteArray }, "its audio reached the phone")
+            val closing = got.ofType("closing").single()
+            assertEquals("assistant.unavailable", closing.text("reason"))
+            assertTrue(got.ofType("error").isEmpty(), "no error frame: the closing says it")
+            assertEquals(setOf(live.userId), live.h.health.affected, "told once she is back")
         }
 
     @Test

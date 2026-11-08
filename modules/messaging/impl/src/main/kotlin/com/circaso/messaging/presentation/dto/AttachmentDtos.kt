@@ -5,7 +5,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
-/** AT1. `kind` is `image`, `voice`, `video` or `file`; `sizeBytes` is the ciphertext's exact size, 1 to 32 MiB. */
+/** AT1. `kind` is `image`, `voice`, `video` or `file`; `sizeBytes` is the ciphertext's exact size, 1 to 100 MiB. */
 @Serializable
 data class PrepareAttachmentRequest(val sizeBytes: Long, val kind: String)
 

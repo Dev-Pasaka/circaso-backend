@@ -1,5 +1,8 @@
 plugins {
     id("circaso.impl")
+    // Asha's eval (decision 2026-11-07): the cases, fake tools, grader and runner, shared with `app`, which owns the
+    // `ashaEval` task because only it may build the real model providers
+    `java-test-fixtures`
 }
 
 // Asha: the conversation, the agent loop, usage limits and the audit trail. Phase A (read) only. The domain imports
@@ -14,6 +17,8 @@ dependencies {
     implementation(project(":modules:wallet:api"))
     implementation(project(":modules:chama:api"))
     implementation(project(":modules:status:api"))
+    // Asha's openSupportTicket (decision 2026-11-08): the one tool that writes, a ticket the user agreed to
+    implementation(project(":modules:support:api"))
     // the live voice latency histogram (decision 2026-10-30), through the Telemetry handle
     implementation(project(":observability:api"))
 
@@ -30,4 +35,16 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     // PostgreSQL for data tests, as infrastructure:api types (the one test-only exception in DependencyRules)
     testImplementation(testFixtures(project(":infrastructure:impl")))
+
+    // the eval (src/testFixtures): the real tools over fake ports and a fake agent-route backend, never a vendor
+    testFixturesImplementation(project(":shared"))
+    testFixturesImplementation(project(":integrations:api"))
+    testFixturesImplementation(project(":modules:users:api"))
+    testFixturesImplementation(project(":modules:messaging:api"))
+    testFixturesImplementation(project(":modules:wallet:api"))
+    testFixturesImplementation(project(":modules:support:api"))
+    testFixturesImplementation(libs.ktor.client.core)
+    testFixturesImplementation(libs.ktor.client.mock)
+    testFixturesImplementation(libs.kotlinx.coroutines.core)
+    testFixturesImplementation(libs.kotlinx.serialization.json)
 }

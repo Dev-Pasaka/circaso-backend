@@ -10,6 +10,7 @@ import com.circaso.assistant.domain.ports.PendingTurn
 import com.circaso.assistant.domain.ports.PendingTurns
 import com.circaso.assistant.domain.support.AgentTurn
 import com.circaso.assistant.domain.support.AshaAgent
+import com.circaso.assistant.domain.support.AshaOutage
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.ConversationResolver
 import com.circaso.assistant.domain.support.ReplyListener
@@ -36,6 +37,7 @@ class ContinueTurn(
     private val recorder: TurnRecorder,
     private val config: AssistantConfig,
     private val clock: Clock,
+    private val outage: AshaOutage,
 ) {
     suspend operator fun invoke(
         result: DeviceToolResult,
@@ -76,7 +78,7 @@ class ContinueTurn(
         val outcome =
             when (val r = carryOn(turn, conversation, result.agentToken, listener, purpose, device)) {
                 is Resource.Success -> r.data
-                is Resource.Error -> return r
+                is Resource.Error -> return outage.failure(turn.userId, r)
             }
         // a turn parked before conversations existed goes where an A2 without one would
         val conversationId =

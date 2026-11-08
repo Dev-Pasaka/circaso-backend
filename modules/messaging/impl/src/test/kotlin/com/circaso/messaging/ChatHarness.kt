@@ -1,6 +1,7 @@
 package com.circaso.messaging
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.domain.models.AvatarChange
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
 import com.circaso.messaging.domain.models.Role
@@ -49,12 +50,13 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val reach = FakeReach()
     val keys = MemoryKeys()
     val clock = TestClock()
+    val attachments = MemoryAttachments()
     private val profiles = FakeProfiles()
 
     val membership = Membership(chats, cache)
     private val views = ChatViews(chats, profiles)
     private val notifier = ChatNotifier(frames)
-    private val removal = MemberRemoval(chats, transactor, outbox, membership, notifier, bus)
+    private val removal = MemberRemoval(chats, attachments, transactor, outbox, membership, notifier, bus, clock)
 
     val openDirectChat = OpenDirectChat(chats, transactor, outbox, reach, views, bus, clock)
     val createGroup =
@@ -71,7 +73,17 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
         )
     val listChats = ListChats(chats, views)
     val getChat = GetChat(chats, views)
-    val updateGroup = UpdateGroup(chats, transactor, membership, views, notifier, config)
+    val updateGroup =
+        UpdateGroup(
+            chats,
+            attachments,
+            transactor,
+            membership,
+            views,
+            notifier,
+            config,
+            clock,
+        )
     val addMembers = AddMembers(chats, transactor, outbox, reach, membership, views, notifier, bus, config, clock)
     val removeMember = RemoveMember(removal)
     val leaveGroup = LeaveGroup(removal)
@@ -130,7 +142,8 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
         version: Long,
         sealedMeta: String? = null,
         membersCanAdd: Boolean? = null,
-    ) = updateGroup(UpdateGroupCommand(caller, chatId, sealedMeta, membersCanAdd, version))
+        avatar: AvatarChange? = null,
+    ) = updateGroup(UpdateGroupCommand(caller, chatId, sealedMeta, membersCanAdd, version, avatar))
 
     /** [userId]'s role as the chat sees it (the owner is the chat's `ownerId`), or null when not a member. */
     fun role(chatId: ChatId, userId: UserId): Role? {

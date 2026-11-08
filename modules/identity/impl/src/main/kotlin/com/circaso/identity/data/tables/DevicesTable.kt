@@ -1,6 +1,7 @@
 package com.circaso.identity.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
 
@@ -18,4 +19,9 @@ object DevicesTable : Table("identity.devices") {
     val registeredAt = timestamp("registered_at")
     val lastSeenAt = timestamp("last_seen_at")
     override val primaryKey = PrimaryKey(userId, deviceId)
+
+    init {
+        // V3: staff's count of people seen in the last day, week and 30 days.
+        index("devices_seen_idx", false, lastSeenAt, filterCondition = { status eq "ACTIVE" })
+    }
 }

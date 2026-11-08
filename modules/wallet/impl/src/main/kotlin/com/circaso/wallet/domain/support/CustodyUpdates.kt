@@ -4,6 +4,7 @@ import com.circaso.integrations.api.CustodyDirection
 import com.circaso.integrations.api.CustodyOperation
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.integrations.api.CustodyTransactionState
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.Resource
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.TransferChange
@@ -37,6 +38,8 @@ class CustodyUpdates(
     private val feeConfig: FeeConfig? = null,
     /** Finds a split payment's transfer from its batch, which carries no `refId`. */
     private val splits: SplitPayments? = null,
+    /** The chains and the assets offered on each, for telling a real coin from someone's token of the same name. */
+    private val custody: StablecoinCustody? = null,
 ) {
     suspend fun apply(update: CustodyTransaction): Resource<Unit> {
         // Circaso's own wallets (the fee wallets): their legs are settled by the payment's own update.
@@ -50,6 +53,14 @@ class CustodyUpdates(
             if (outcome != UpdateOutcome.NOT_OURS) return Resource.success(Unit)
         }
 
+        // Only a coin we trust is put in anyone's history (2026-11-07: Circle now reports every coin); anyone can
+        // send a wallet a token that calls itself USDC.
+        val chains = custody?.supported
+        if (chains != null &&
+            !CoinTrust.trusted(chains, update.blockchain, update.amount.asset.symbol, update.tokenAddress)
+        ) {
+            return Resource.success(Unit)
+        }
         val wallet =
             when (val found = walletOf(update)) {
                 is Resource.Success -> found.data

@@ -32,6 +32,7 @@ import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.FeeSettlement
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
+import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
@@ -97,9 +98,12 @@ class Harness(
     val ruleRows: RuleRepository = MemoryRules(),
     val quoteRows: FeeQuoteRepository = MemoryFeeQuotes(),
     val ledger: FeeLedgerRepository = MemoryFeeLedger(),
+    /** Option A's approved payouts (parked 2026-11-06); off, a group wallet's owner sends directly. */
+    approvalsRequired: Boolean = false,
 ) {
     val custody = FakeCustody(chains)
     val rates = FakeRates()
+    val prices = FakePrices()
     val bus = MemoryBus()
     val cache = MemoryBalanceCache()
     val adding = MemoryAddingChains()
@@ -139,12 +143,29 @@ class Harness(
     val feeConfig = FakeFeeConfig()
     val limits = Limits(ruleRows, transfers, clock)
     val fees = FeeCalculator(ruleRows, custody, feeConfig, wallets, owners, warnings, clock)
-    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces)
+
+    /** Finds the coin a payment names, as in production: offered assets from configuration, others from Circle. */
+    val coins =
+        com.circaso.wallet.domain.support
+            .PaymentCoins(custody, holdings, prices)
+    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces, coins)
     private val quotes = FeeQuotes(quoteRows, clock)
     val quoter = TransferQuoter(holders, planner, quotes, clock)
     val quoteTransfer = QuoteTransfer(quoter)
 
-    val getWallet = GetWallet(wallets, sync, adding, holdings, rates, custody, active, holders, progress)
+    val getWallet =
+        GetWallet(
+            wallets,
+            sync,
+            adding,
+            holdings,
+            rates,
+            custody,
+            active,
+            holders,
+            progress,
+            HoldingPrices(prices, custody),
+        )
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock, pendingSetups)
     val createWallet = CreateWallet(creation, support)
     val createGroupWallet = CreateGroupWallet(chats, owners, accounts, support, creation, clock)
@@ -186,6 +207,7 @@ class Harness(
             clock,
             holders,
             approvals,
+            approvalsRequired,
         )
     val getTransfer = GetTransfer(transfers, chats, spaces)
     val listTransactions = ListTransactions(transactions, Counterparties(profiles, wallets, owners), rates, holders)
@@ -216,6 +238,7 @@ class Harness(
             clock,
             feeConfig,
             SplitPayments(transfers, custody, warnings, clock),
+            custody,
         )
     val applyUpdate = ApplyCustodyUpdate(updates)
     val expireUnsigned = ExpireUnsignedTransfers(transfers, outgoing, jobs, clock)
@@ -244,6 +267,8 @@ class Harness(
             ),
             com.circaso.wallet.domain.usecases
                 .ApplyWalletChallenge(progress),
+            com.circaso.wallet.domain.usecases
+                .FindDepositAddress(wallets),
         )
 
     suspend fun wallet(userId: UserId, currency: String? = null) = getWallet(WalletQuery(userId, currency))

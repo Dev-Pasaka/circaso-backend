@@ -4,6 +4,7 @@ import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.ChatSnippet
 import com.circaso.assistant.domain.models.MascotSceneState
 import com.circaso.assistant.domain.models.ReadNote
+import com.circaso.assistant.domain.models.TokenCounts
 import com.circaso.assistant.domain.models.ToolStatus
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.BlockKind
@@ -25,6 +26,11 @@ import com.circaso.integrations.api.ToolCall
 import com.circaso.integrations.api.ToolSpec
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 
 /** Where the model's loop stopped: with an answer, or waiting for the phone. */
@@ -33,11 +39,15 @@ sealed interface AgentOutcome {
     val outputTokens: Int
     val toolsUsed: List<String>
 
+    /** The same tokens by the model that used them, split as the provider prices them (decision 2026-11-08). */
+    val tokensByModel: Map<String, TokenCounts>
+
     data class Answered(
         val text: String,
         override val inputTokens: Int,
         override val outputTokens: Int,
         override val toolsUsed: List<String>,
+        override val tokensByModel: Map<String, TokenCounts> = emptyMap(),
     ) : AgentOutcome
 
     data class WaitingForDevice(
@@ -47,7 +57,33 @@ sealed interface AgentOutcome {
         override val inputTokens: Int,
         override val outputTokens: Int,
         override val toolsUsed: List<String>,
+        override val tokensByModel: Map<String, TokenCounts> = emptyMap(),
     ) : AgentOutcome
+}
+
+/**
+ * Adds up a turn's tokens by model. [ModelUsage.inputTokens] is all of a call's input; the fresh part is what is left
+ * after the cache reads and writes (never below zero, should a provider count them differently).
+ */
+internal class TokenTally {
+    private val byModel = LinkedHashMap<String, TokenCounts>()
+
+    fun add(response: ModelResponse) {
+        val usage = response.usage
+        val fresh = (usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens).coerceAtLeast(0)
+        val counts =
+            TokenCounts(
+                fresh.toLong(),
+                usage.cacheReadTokens.coerceAtLeast(0).toLong(),
+                usage.cacheWriteTokens.coerceAtLeast(0).toLong(),
+                usage.outputTokens.coerceAtLeast(0).toLong(),
+            )
+        if (counts.isZero) return
+        val model = response.model?.takeIf { it.isNotBlank() } ?: TokenCounts.UNKNOWN_MODEL
+        byModel[model] = (byModel[model] ?: TokenCounts.ZERO) + counts
+    }
+
+    fun snapshot(): Map<String, TokenCounts> = byModel.toMap()
 }
 
 /** Who and what one turn is for: the tool context, whether the phone's chat tools are on, which model, which day. */
@@ -81,6 +117,10 @@ data class AgentTurn(
  * or not at all, and a spoken turn carries none. Each tool call is announced to the listener with the server's own
  * label before it runs, and again when it has answered.
  *
+ * A step's tool calls all run, at once (decision 2026-11-07): answering all but the first as skipped made the model
+ * give up on lookups it needed, and running them together keeps voice quick. Their results go back together. A call
+ * to the phone parks the turn after the server's calls of that step have answered; the phone takes one call per pause.
+ *
  * The mascot rides along (decision 2026-11-04): the model's `<mascot/>` tag is taken out of the text by a
  * [MascotTagFilter] and turned by a [TurnMascot] into hints for the listener, the first before any reply text, the
  * tool and block activity on the way, `done` at the end. No extra model call: the tag comes with the answer.
@@ -107,62 +147,85 @@ class AshaAgent(
         deviceDone?.let { listener.toolFinished(it.copy(mascot = mascot.toolFinished()), isOk = true) }
         val messages = history.toMutableList()
         val specs = specs(turn)
-        val system = AshaPrompt.of(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
+        // The fixed prompt and this turn's part travel apart, so a provider's prompt cache keeps the fixed part.
+        val turnPart = AshaPrompt.turn(PromptContext(turn.isVoice, turn.today, turn.currency, turn.deviceTools))
         val context = ToolContext(turn.userId, turn.agentToken, turn.currency)
         val used = usedBefore.toMutableList()
         val reply = ShownReply(shownBefore, listener, BlockFilter(blocks, turn.isVoice), mascot, turn.isVoice)
         var input = 0
         var output = 0
+        val tally = TokenTally()
 
         var steps = startSteps
         while (steps < config.maxToolSteps) {
             steps++
             reply.newStep()
+            val request =
+                ModelRequest(AshaPrompt.system(turn.isVoice), messages, specs, turn.purpose, systemTail = turnPart)
             val response =
-                when (val r = step(ModelRequest(system, messages, specs, turn.purpose), reply)) {
+                when (val r = step(request, reply)) {
                     is Resource.Success -> r.data
                     is Resource.Error -> return Resource.error(AssistantError.ModelUnavailable, r.cause)
                 }
             input += response.usage.inputTokens
             output += response.usage.outputTokens
+            tally.add(response)
 
             if (response.toolCalls.isEmpty()) {
                 finish(turn, mascot, listener)
-                return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
+                return Resource.success(AgentOutcome.Answered(reply.text, input, output, used, tally.snapshot()))
             }
 
-            // One tool at a time keeps the protocol simple: extra calls are answered as skipped.
-            val call = response.toolCalls.first()
-            val skipped = response.toolCalls.drop(1)
-            messages += ModelMessage.Assistant(response.text, listOf(call) + skipped)
-            used += call.name
+            // Every call of the step runs (decision 2026-11-07): the model asks for what it needs at once, and the
+            // results go back together, in one user message, as Anthropic expects.
+            val calls = response.toolCalls
+            messages += ModelMessage.Assistant(response.text, calls)
+            val usedBeforeStep = used.toList()
+            used += calls.map { it.name }
 
-            if (call.name in DeviceTools.names && specs.any { it.name == call.name }) {
-                skipped.forEach {
-                    messages +=
-                        ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.")
+            // A phone tool parks the turn; one at a time, because the phone answers one call per pause.
+            val device =
+                calls.firstOrNull { call ->
+                    call.name in DeviceTools.names &&
+                        specs.any { it.name == call.name }
                 }
-                val label = DeviceTools.label(call.name)
-                listener.toolStarted(ToolStatus(turn.turnId, call.id, call.name, label, mascot.toolStarted(call.name)))
+            val answers =
+                runServerTools(
+                    calls.filter { it !== device },
+                    calls,
+                    specs.mapTo(HashSet()) { it.name },
+                    turn,
+                    context.copy(calledBefore = usedBeforeStep),
+                    listener,
+                    mascot,
+                )
+            calls.forEach { call ->
+                answers[call.id]?.let { messages += ModelMessage.ToolResult(call.id, call.name, it) }
+            }
+
+            if (device != null) {
+                val label = DeviceTools.label(device.name)
+                listener.toolStarted(
+                    ToolStatus(turn.turnId, device.id, device.name, label, mascot.toolStarted(device.name)),
+                )
                 saveScene(turn, mascot.state)
                 return Resource.success(
-                    AgentOutcome.WaitingForDevice(call, messages.toPending(), steps, input, output, used),
+                    AgentOutcome.WaitingForDevice(
+                        device,
+                        messages.toPending(),
+                        steps,
+                        input,
+                        output,
+                        used,
+                        tally.snapshot(),
+                    ),
                 )
             }
-
-            val answer =
-                if (specs.none { it.name == call.name }) {
-                    NOT_AVAILABLE
-                } else {
-                    runServerTool(call, turn, context.copy(calledBefore = used.dropLast(1)), listener, mascot)
-                }
-            messages += ModelMessage.ToolResult(call.id, call.name, answer)
-            skipped.forEach { messages += ModelMessage.ToolResult(it.id, it.name, "Skipped: call one tool at a time.") }
         }
         reply.newStep()
         reply.show(GAVE_UP)
         finish(turn, mascot, listener)
-        return Resource.success(AgentOutcome.Answered(reply.text, input, output, used))
+        return Resource.success(AgentOutcome.Answered(reply.text, input, output, used, tally.snapshot()))
     }
 
     /** One call to the model, its text passed on as it comes; the whole answer once it is done. */
@@ -273,19 +336,57 @@ class AshaAgent(
         tools.specs(turn.agentToken != null) +
             (if (turn.deviceTools) listOf(AshaPrompt.searchChats, AshaPrompt.readChat) else emptyList())
 
+    /**
+     * Runs [toRun] at once, each told the tools called before it in the step's order ([all]), so a per-turn cap counts
+     * the same as one at a time. Answers by call id. The listener and the mascot hear one call at a time.
+     */
+    private suspend fun runServerTools(
+        toRun: List<ToolCall>,
+        all: List<ToolCall>,
+        offered: Set<String>,
+        turn: AgentTurn,
+        context: ToolContext,
+        listener: ReplyListener,
+        mascot: TurnMascot,
+    ): Map<String, String> {
+        val heard = Mutex()
+        return coroutineScope {
+            toRun
+                .map { call ->
+                    val earlier = all.takeWhile { it !== call }.map { it.name }
+                    val callContext = context.copy(calledBefore = context.calledBefore + earlier)
+                    async { call.id to runServerTool(call, turn, callContext, listener, mascot, offered, heard) }
+                }.awaitAll()
+                .toMap()
+        }
+    }
+
     private suspend fun runServerTool(
         call: ToolCall,
         turn: AgentTurn,
         context: ToolContext,
         listener: ReplyListener,
         mascot: TurnMascot,
+        offered: Set<String>,
+        heard: Mutex,
     ): String {
+        if (call.name !in offered) return NOT_AVAILABLE
+        if (call.name in DeviceTools.names) return ONE_PHONE_CALL
         if (!tools.handles(call.name)) return NOT_AVAILABLE
         val label = tools.label(call.name, call.argumentsJson)
-        val status = ToolStatus(turn.turnId, call.id, call.name, label, mascot.toolStarted(call.name))
-        listener.toolStarted(status)
+        val status =
+            heard.withLock {
+                ToolStatus(turn.turnId, call.id, call.name, label, mascot.toolStarted(call.name)).also {
+                    listener.toolStarted(it)
+                }
+            }
         val result = tools.call(call.name, call.argumentsJson, context)
-        listener.toolFinished(status.copy(mascot = mascot.toolFinished()), result is Resource.Success)
+        heard.withLock {
+            listener.toolFinished(
+                status.copy(mascot = mascot.toolFinished()),
+                result is Resource.Success,
+            )
+        }
         return when (result) {
             is Resource.Success -> "<untrusted>${result.data}</untrusted>"
             is Resource.Error -> "The lookup failed (${result.error.message}). Tell the user if it matters."
@@ -294,6 +395,8 @@ class AshaAgent(
 
     companion object {
         private const val NOT_AVAILABLE = "That tool is not available."
+        private const val ONE_PHONE_CALL =
+            "Skipped: the phone answers one chat lookup at a time. Call it again once the other one has answered."
         private const val GAVE_UP = "I couldn't finish looking that up. Please try asking in a simpler way."
         private const val STEP_BREAK = "\n\n"
 

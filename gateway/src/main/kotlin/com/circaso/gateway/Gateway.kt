@@ -43,6 +43,13 @@ private fun String.isWebhook() = startsWith("$API/hooks/")
 
 private fun String.isPublicDoc() = startsWith("$API/.well-known/")
 
+/**
+ * Staff routes live on the ops gateway only (decision 2026-11-08: "separate endpoint, separate management, don't mix
+ * them together"). The app gateway answers `request.not_found` for anything under `/v1/ops`, whatever a module mounts,
+ * so a staff route can't be reached from the app's host even by mistake.
+ */
+internal fun String.isOps() = this == "$API/ops" || startsWith("$API/ops/")
+
 fun ApplicationCall.clientIp(): String =
     request.header("CF-Connecting-IP")?.trim()?.takeIf { it.isNotEmpty() } ?: request.local.remoteHost
 
@@ -64,6 +71,10 @@ fun Application.installGatewayEdge(deps: GatewayDeps) {
     // A plain interceptor rather than a plugin hook: `finish()` is what stops the route from running after a refusal.
     intercept(ApplicationCallPipeline.Plugins) {
         val path = call.apiPath()
+        if (path.isOps()) {
+            call.respondError(SharedError.NotFound)
+            return@intercept finish()
+        }
         if (!path.isApi() || path.isWebhook()) return@intercept
 
         val admitted =

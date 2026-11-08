@@ -21,6 +21,24 @@ interface LanguageModel {
             is Resource.Success -> Resource.success(CompletedStream(answer.data))
             is Resource.Error -> answer
         }
+
+    /**
+     * Whether the model answers at all, as cheaply as the provider allows (decision 2026-11-07): Asha's health monitor
+     * asks while she is down for maintenance, and marks her back on the first success. Never retried.
+     *
+     * The default asks [complete] for a one-word answer, for providers without anything cheaper.
+     */
+    suspend fun probe(): Resource<Unit> =
+        when (val answer = complete(PROBE_REQUEST)) {
+            is Resource.Success -> Resource.success(Unit)
+            is Resource.Error -> answer
+        }
+
+    companion object {
+        /** The question a probe asks: no tools, no history, a one-word answer. */
+        val PROBE_REQUEST: ModelRequest =
+            ModelRequest(system = "Answer with one word.", messages = listOf(ModelMessage.User("Ping")))
+    }
 }
 
 /**
@@ -75,13 +93,21 @@ private class CompletedStream(response: ModelResponse) : ModelStream {
 /**
  * One call to the model. [purpose] lets the provider pick a model for the moment: a spoken turn wants the first words
  * fast, a typed turn can wait for a stronger model. Only the model may differ; the conversation and the tools don't.
+ *
+ * The system prompt is [system], the part that reads the same on every call, then [systemTail], the short part about
+ * this turn (the mode, today's date). A provider that caches a prompt's start caches [system] and not [systemTail];
+ * one that doesn't reads them as one text, a blank line between ([systemPrompt]).
  */
 data class ModelRequest(
     val system: String,
     val messages: List<ModelMessage>,
     val tools: List<ToolSpec> = emptyList(),
     val purpose: ModelPurpose = ModelPurpose.CHAT,
-)
+    val systemTail: String? = null,
+) {
+    /** The whole system prompt as one text. */
+    val systemPrompt: String get() = if (systemTail.isNullOrEmpty()) system else system + "\n\n" + systemTail
+}
 
 /** What a model call is for; a provider with a single model ignores it. */
 enum class ModelPurpose {
@@ -105,9 +131,25 @@ data class ToolSpec(val name: String, val description: String, val parametersJso
 
 data class ToolCall(val id: String, val name: String, val argumentsJson: String)
 
-data class ModelResponse(val text: String?, val toolCalls: List<ToolCall>, val usage: ModelUsage)
+/** [model] names the model that wrote the answer, when the provider says (for the turn's log line). */
+data class ModelResponse(
+    val text: String?,
+    val toolCalls: List<ToolCall>,
+    val usage: ModelUsage,
+    val model: String? = null,
+)
 
-data class ModelUsage(val inputTokens: Int, val outputTokens: Int)
+/**
+ * The tokens one call used. [inputTokens] is all of the input, whether read from the provider's prompt cache or not;
+ * [cacheReadTokens] and [cacheWriteTokens] say how much of it was read from, or written to, that cache (zero for a
+ * provider without one), so a cost report can price them apart.
+ */
+data class ModelUsage(
+    val inputTokens: Int,
+    val outputTokens: Int,
+    val cacheReadTokens: Int = 0,
+    val cacheWriteTokens: Int = 0,
+)
 
 interface SpeechToText {
     /** Turns a short clip into text; the audio is not kept. */

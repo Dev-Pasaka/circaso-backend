@@ -102,6 +102,7 @@ When a limit is hit the answer is `429` with `request.rate_limited`, `details.re
 | Phone release | 1 per number per 7 days |
 | Asha's agent token (all `/v1/agent/` routes) | 60 per user per minute, in its own bucket |
 | Payment history (`GET /v1/wallet/transactions`) | 60 per user per minute, in its own bucket |
+| New support tickets (`POST /v1/support/tickets`) | 5 per user per day, counted from the first, answered with `support.rate_limited` (and 10 per user per hour at the gateway) |
 | Everything else | 120 per user per minute |
 
 ## Lists and pages
@@ -170,8 +171,9 @@ The shared ones, then each area's own. Codes are stable.
 | `messaging.message_too_large` | 400 | A ciphertext over 64 KB once decoded; send files as chat media |
 | `messaging.recipients_mismatch` | 400 | A direct message whose `recipients` isn't exactly the other person, or a `SENDER_KEY` message to someone who isn't another member |
 | `messaging.delete_window_passed` | 409 | Delete for everyone after 48 hours, or by someone other than the sender |
-| `messaging.attachment_too_large` | 400 | An attachment's `sizeBytes` is under 1 byte or over 32 MiB |
+| `messaging.attachment_too_large` | 400 | An attachment's `sizeBytes` is under 1 byte or over 100 MiB |
 | `messaging.attachment_not_found` | 404 | No such attachment, not complete yet, expired, or not yours to see (completing someone else's upload, or a chat you aren't in): all look the same |
+| `messaging.avatar_invalid` | 400 | The group photo (`avatarMediaId`) isn't a completed, unexpired `image` attachment of this group of at most 2 MB: upload it to the group, then send its id again |
 | `messaging.attachment_incomplete` | 400 | Completing an upload that isn't in storage, or not at the size you said: upload again, then complete |
 | `wallet.not_found` | 404 | You have no wallet yet: create one first (`POST /v1/wallet`) |
 | `wallet.already_exists` | 409 | `POST /v1/wallet` when the wallet is already set up |
@@ -192,10 +194,19 @@ The shared ones, then each area's own. Codes are stable.
 | `wallet.funds_remaining` | 409 | Deleting the account while the wallet's US dollar stablecoins (USDC), added up over every chain, come to 0.01 or more, or it holds any amount of any other asset: send it out first |
 | `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer configured; try again |
 | `wallet.support_account_has_no_wallet` | 403 | Circaso support has no wallet: it can't set one up or add a chain, pay, be paid, or be reminded to set one up |
+| `support.ticket_not_found` | 404 | No such ticket, or someone else's (the two look the same on purpose) |
+| `support.subject_invalid` | 400 | A ticket's subject isn't 3 to 120 characters |
+| `support.description_invalid` | 400 | A ticket's description isn't 10 to 4,000 characters |
+| `support.body_invalid` | 400 | A reply isn't 1 to 4,000 characters |
+| `support.category_invalid` | 400 | Not one of `ACCOUNT`, `PAYMENTS`, `WALLET`, `GROUPS`, `SECURITY`, `ASHA`, `OTHER` |
+| `support.context_invalid` | 400 | The `transferId` isn't a payment you sent, received or signed, or the `chatId` a chat you are in |
+| `support.ticket_closed` | 409 | A reply on a closed ticket: open a new one |
+| `support.rate_limited` | 429 | A sixth new ticket in a day; `retryAfterSeconds` says when to try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
-| `assistant.model_unavailable` | 502 | Asha's model is down; try again |
+| `assistant.model_unavailable` | 502 | Asha's model refused the question, or failed after its first words; try again |
+| `assistant.unavailable` | 502 | Asha is down for maintenance: her model (Claude) can't answer. Keep the question and show her as down; *Whether Asha can answer now* (`GET /v1/assistant/status`), the socket's `assistant` `status` frame or the "Asha is back" push says when she is back |
 | `assistant.conversation_not_found` | 404 | No conversation of yours has that id (never yours, or deleted): on C3 to C5, on A2 with a `conversationId`, and as an `error` frame on a live voice turn |
 | `assistant.language_not_supported` | 400 | Speech (A4) asked for a language the server voice doesn't speak, such as Swahili; the phone reads the reply aloud itself. On the live voice socket it is the close reason instead |
 
@@ -227,16 +238,17 @@ Binary frames carry audio both ways: the phone streams Opus (16 kHz mono), and A
 | `reply` `{text}` | server | One sentence of the answer, sent about when the audio reaches it (a caption, not an exact cue). Each sentence is spoken as soon as the model has written it. |
 | `reply_done` `{message, spoken}` | server | The answer as saved in the Asha chat, once its audio has played (`spoken: false` if talked over). |
 | `tool_request` `{turnId, callId, name, arguments}` | server | As on the chat route (`arguments` is a JSON string); answer within 30 seconds with a `tool_results` frame `{turnId, callId, snippets}`. |
-| `interrupted` | server | The user talked over Asha: stop playing. Their new words become the next turn. |
+| `interrupted` | server | The user talked over Asha (heard by the server, or the phone's `interrupt`): stop playing, and drop audio and `reply` frames that arrived since your own `interrupt`. Their new words become the next turn. |
 | `error` `{code, message}` | server | One answer failed; keep talking. |
 | `timing` `{turn, modelFirstTextMs, firstSentenceMs, firstAudioMs}` | server | Once per turn: milliseconds from the end of the user's speech to the model's first words, the first sentence sent to the voice, and the first audio sent; `null` for a step the turn never reached. For latency logs; safe to ignore. |
 | `closing` `{reason, message?, retryAfterSeconds?}` | server | The server is about to close; `reason` is also the close reason. |
 | `auth` `{accessToken, agentToken}` | phone | Fresh tokens, mid-conversation. |
+| `interrupt` `{at?}` | phone | The phone's own voice activity detector heard the user start talking over Asha and has stopped her audio: the server cancels her answer and speech exactly as for a barge-in it heard (`reply_done` with `spoken: false`), and the user's next words are the next turn. Always answered with `interrupted`. `at` is the onset on the phone's clock (ISO-8601), for latency logs only. At most 5 at once per conversation, then one every 3 seconds; extra ones are ignored. |
 | `end` | phone | Hang up. |
 
 A frame with a `type` the phone doesn't know is ignored: new types are added without a new version.
 
-The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
+The server closes after 30 seconds of silence (`silence`), when the day's voice allowance runs out (`assistant.quota_exceeded`), or when a speech provider fails (`assistant.model_unavailable`), each after a `closing` frame. When Asha's model is down she says so in her own voice ("I'm down for maintenance at the moment. I'll let you know as soon as I'm back."), then closes with `assistant.unavailable` (1013). It closes with 1008 `unauthorized` and no frame when the session is signed out or its token expires (checked at each turn and every minute), and with 1009 `Frame is too big: N` (Ktor's reason, N the frame's size) and no frame after a frame over 64 KB. Voice seconds count only speech: the user's, timed by the transcriber from the first word to the last, and Asha's audio as it plays (what a barge-in cuts off is free); an open mic is free. The agent token is checked at every turn and every `auth` frame: another user's closes the socket with 1008 `unauthorized`. A language without a live voice, such as Swahili, is refused at once with `assistant.language_not_supported`: record a clip for *Transcribe a voice clip* and read the reply aloud with the phone's own voice. Audio is never stored.
 
 ## Realtime
 
@@ -249,6 +261,8 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 `seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. Frames that are never replayed (`messaging` / `message.new`, `typing` and `presence.changed`) carry `seq` 0: don't record it as the last you saw; a missed message is in the inbox (`GET /v1/inbox`). When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds. Chat pushes are data-only: they carry `chatId` and `messageId`, the app fetches the inbox, decrypts and shows the notification itself (on iOS in a Notification Service Extension, which receives a placeholder "New message" alert to replace).
 
 The wallet's frames (module `wallet`, replayed like `users`): `transfer.updated` `{transferId, state, blockchain, amount, txHash?, failureReason?}` to the sender each time a payment moves (pushed on `CONFIRMED` and `FAILED`: "Payment sent" / "Payment failed"); `payment.received` `{transactionId, blockchain, amount, fromUserId?, fromName?}` once money reaches you on chain (pushed: "Amina sent you money"); `wallet.ready` `{blockchain}` when your wallet turns `ACTIVE` (no push); `setup.requested` `{fromUserId, fromName}` when a contact wants to pay you (pushed). Amounts are `{asset, amountMinor, amount}` strings; a push never shows an amount.
+
+Support's frames (module `support`, replayed like `users`): `ticket.replied` `{ticketId, number, status}` when staff reply on one of your tickets (pushed: "Circaso Support" / "We replied to your ticket CS-000123.", with `kind` `support.ticket` and `ticketId`, never the reply's text) and `ticket.updated` `{ticketId, number, status}` when staff resolve, close or reopen it (no push). Either way, reload the ticket (`GET /v1/support/tickets/{ticketId}`).
 
 After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped. Messaging takes `ack` `{messageIds}` (delivered: the messages leave the inbox and their senders get a receipt), `read` `{chatId, upToMessageId}` (read up to there; the sender gets a receipt unless you turned read receipts off) and `typing` `{chatId, on}` (relayed to the chat's other members in chats of 50 people or fewer, unless you turned typing off), `presence` `{state}` and `presence.watch` `{chatId}`.
 

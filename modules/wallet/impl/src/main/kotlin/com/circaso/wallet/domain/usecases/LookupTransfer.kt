@@ -21,6 +21,10 @@ class LookupTransfer(private val transfers: TransferRepository) {
                 toGroupId = it.toGroupId,
                 signerId = it.signer,
                 payoutRequestId = it.payoutRequestId,
+                blockchain = it.blockchain,
+                txHash = it.txHash,
+                createdAt = it.createdAt,
+                updatedAt = it.updatedAt,
             )
         }
 }
