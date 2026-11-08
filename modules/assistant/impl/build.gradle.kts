@@ -17,6 +17,8 @@ dependencies {
     implementation(project(":modules:wallet:api"))
     implementation(project(":modules:chama:api"))
     implementation(project(":modules:status:api"))
+    // Asha's openSupportTicket (decision 2026-11-08): the one tool that writes, a ticket the user agreed to
+    implementation(project(":modules:support:api"))
     // the live voice latency histogram (decision 2026-10-30), through the Telemetry handle
     implementation(project(":observability:api"))
 
@@ -40,6 +42,7 @@ dependencies {
     testFixturesImplementation(project(":modules:users:api"))
     testFixturesImplementation(project(":modules:messaging:api"))
     testFixturesImplementation(project(":modules:wallet:api"))
+    testFixturesImplementation(project(":modules:support:api"))
     testFixturesImplementation(libs.ktor.client.core)
     testFixturesImplementation(libs.ktor.client.mock)
     testFixturesImplementation(libs.kotlinx.coroutines.core)

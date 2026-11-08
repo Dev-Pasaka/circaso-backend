@@ -130,13 +130,14 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
                 }
             statement.insertedCount > 0
         }
-
-    private fun ResultRow.toGroup() =
-        WalletOwner.Group(
-            walletId = WalletId(this[WalletOwnersTable.walletId]),
-            chatId = ChatId(checkNotNull(this[WalletOwnersTable.chatId])),
-            signerId = UserId(this[WalletOwnersTable.signerId]),
-            createdBy = UserId(this[WalletOwnersTable.createdBy]),
-            createdAt = this[WalletOwnersTable.createdAt],
-        )
 }
+
+/** A `GROUP` row of `wallet_owners`; the staff reports read the same rows. */
+internal fun ResultRow.toGroup() =
+    WalletOwner.Group(
+        walletId = WalletId(this[WalletOwnersTable.walletId]),
+        chatId = ChatId(checkNotNull(this[WalletOwnersTable.chatId])),
+        signerId = UserId(this[WalletOwnersTable.signerId]),
+        createdBy = UserId(this[WalletOwnersTable.createdBy]),
+        createdAt = this[WalletOwnersTable.createdAt],
+    )

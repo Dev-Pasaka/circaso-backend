@@ -102,6 +102,7 @@ When a limit is hit the answer is `429` with `request.rate_limited`, `details.re
 | Phone release | 1 per number per 7 days |
 | Asha's agent token (all `/v1/agent/` routes) | 60 per user per minute, in its own bucket |
 | Payment history (`GET /v1/wallet/transactions`) | 60 per user per minute, in its own bucket |
+| New support tickets (`POST /v1/support/tickets`) | 5 per user per day, counted from the first, answered with `support.rate_limited` (and 10 per user per hour at the gateway) |
 | Everything else | 120 per user per minute |
 
 ## Lists and pages
@@ -193,6 +194,14 @@ The shared ones, then each area's own. Codes are stable.
 | `wallet.funds_remaining` | 409 | Deleting the account while the wallet's US dollar stablecoins (USDC), added up over every chain, come to 0.01 or more, or it holds any amount of any other asset: send it out first |
 | `wallet.custody_unavailable` | 502 | Circle, which keeps the wallets, is down or refused the call, or (on account deletion) a wallet sits on a chain no longer configured; try again |
 | `wallet.support_account_has_no_wallet` | 403 | Circaso support has no wallet: it can't set one up or add a chain, pay, be paid, or be reminded to set one up |
+| `support.ticket_not_found` | 404 | No such ticket, or someone else's (the two look the same on purpose) |
+| `support.subject_invalid` | 400 | A ticket's subject isn't 3 to 120 characters |
+| `support.description_invalid` | 400 | A ticket's description isn't 10 to 4,000 characters |
+| `support.body_invalid` | 400 | A reply isn't 1 to 4,000 characters |
+| `support.category_invalid` | 400 | Not one of `ACCOUNT`, `PAYMENTS`, `WALLET`, `GROUPS`, `SECURITY`, `ASHA`, `OTHER` |
+| `support.context_invalid` | 400 | The `transferId` isn't a payment you sent, received or signed, or the `chatId` a chat you are in |
+| `support.ticket_closed` | 409 | A reply on a closed ticket: open a new one |
+| `support.rate_limited` | 429 | A sixth new ticket in a day; `retryAfterSeconds` says when to try again |
 | `assistant.quota_exceeded` | 429 | Today's Asha allowance is used up; `retryAfterSeconds` says when it resets |
 | `assistant.voice_too_long` | 400 | A voice clip over 60 seconds (`X-Duration-Seconds` may be a decimal such as `5.5`; it is rounded up) |
 | `assistant.turn_not_found` | 404 | The phone's answer arrived after the question expired (10 minutes) or was already answered |
@@ -252,6 +261,8 @@ While the app is open it keeps one WebSocket to `wss://api.circaso.com/v1/ws`. T
 `seq` rises per user per module, so a gap means a missed frame. A `resync` frame means the gap is older than 7 days: reload that module's data over HTTP. Frames that are never replayed (`messaging` / `message.new`, `typing` and `presence.changed`) carry `seq` 0: don't record it as the last you saw; a missed message is in the inbox (`GET /v1/inbox`). When the app is closed the same news arrives as a push notification, and the socket sends a ping every 25 seconds. Chat pushes are data-only: they carry `chatId` and `messageId`, the app fetches the inbox, decrypts and shows the notification itself (on iOS in a Notification Service Extension, which receives a placeholder "New message" alert to replace).
 
 The wallet's frames (module `wallet`, replayed like `users`): `transfer.updated` `{transferId, state, blockchain, amount, txHash?, failureReason?}` to the sender each time a payment moves (pushed on `CONFIRMED` and `FAILED`: "Payment sent" / "Payment failed"); `payment.received` `{transactionId, blockchain, amount, fromUserId?, fromName?}` once money reaches you on chain (pushed: "Amina sent you money"); `wallet.ready` `{blockchain}` when your wallet turns `ACTIVE` (no push); `setup.requested` `{fromUserId, fromName}` when a contact wants to pay you (pushed). Amounts are `{asset, amountMinor, amount}` strings; a push never shows an amount.
+
+Support's frames (module `support`, replayed like `users`): `ticket.replied` `{ticketId, number, status}` when staff reply on one of your tickets (pushed: "Circaso Support" / "We replied to your ticket CS-000123.", with `kind` `support.ticket` and `ticketId`, never the reply's text) and `ticket.updated` `{ticketId, number, status}` when staff resolve, close or reopen it (no push). Either way, reload the ticket (`GET /v1/support/tickets/{ticketId}`).
 
 After the auth frame the app may send small frames of its own, `{"module":"messaging","type":"ack","data":{…}}`: only acknowledgements, read receipts, typing and presence travel this way, and everything else is an HTTP call. The server passes each to the module it names and does not reply; a frame for a module that takes none is dropped. Messaging takes `ack` `{messageIds}` (delivered: the messages leave the inbox and their senders get a receipt), `read` `{chatId, upToMessageId}` (read up to there; the sender gets a receipt unless you turned read receipts off) and `typing` `{chatId, on}` (relayed to the chat's other members in chats of 50 people or fewer, unless you turned typing off), `presence` `{state}` and `presence.watch` `{chatId}`.
 

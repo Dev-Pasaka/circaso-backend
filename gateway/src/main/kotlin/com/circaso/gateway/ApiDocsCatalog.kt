@@ -380,7 +380,7 @@ internal object ApiDocsCatalog {
                             "phone, " +
                             "your own chats) and explains the app. She cannot send a message, move money or " +
                             "change " +
-                            "anything.\n" +
+                            "anything. The one thing she writes is a support ticket, and only once you agree.\n" +
                             "- **Your chats stay encrypted.** To read one, Asha asks your phone, which decrypts " +
                             "locally and returns a few matching snippets. They are used for that answer and " +
                             "never " +
@@ -440,20 +440,19 @@ internal object ApiDocsCatalog {
                             "access only after a 48-hour notice to the old phone and email, which can cancel it. " +
                             "Uses the `onboarding` token of a new login.",
                     ),
-                ),
-            ),
-            DocGroup(
-                "Operations",
-                listOf(
                     DocTag(
-                        "Support accounts",
-                        "Circaso's own support accounts, behind the `ops` scope. The app never calls these; the " +
-                            "support dashboard will.\n\n" +
-                            "A support account is its own kind of account, never a person's: it can't sign in on " +
-                            "the app (every sign-in path answers `identity.support_account_not_on_mobile`), it " +
-                            "never holds a wallet (`wallet.support_account_has_no_wallet`), and its profile " +
-                            "carries `support: true`, which the app shows as verified Circaso support. Only a " +
-                            "support account can hold a reserved handle such as `@circaso`.",
+                        "Support tickets",
+                        "Ask Circaso for help from the app, behind the `app` token. A ticket has a subject, what " +
+                            "happened and a category, and may name the one payment or chat it is about (only one of " +
+                            "yours). Its `number` (`CS-000123`) is what the person reads out.\n\n" +
+                            "- **Statuses:** `OPEN` (with us), `PENDING_USER` (we replied: your turn), `RESOLVED` " +
+                            "and `CLOSED`. Replying on a resolved ticket, or one waiting on you, opens it again; a " +
+                            "closed one takes no more replies.\n" +
+                            "- **Replies** from staff show as \"Circaso Support\", never a person, and arrive as the " +
+                            "`support/ticket.replied` frame, or a push when the app is closed (the number only, " +
+                            "never the text). A status change is `support/ticket.updated`.\n" +
+                            "- **Asha** can open a ticket for you once you agree; it is listed with `source: ASHA`.\n" +
+                            "- **At most 5 new tickets a day**, counted from your first.",
                     ),
                 ),
             ),

@@ -339,7 +339,7 @@ private data class StoredSettings(val membersCanAdd: Boolean = false) {
 private fun ordered(a: UserId, b: UserId): Pair<UUID, UUID> =
     if (a.toString() < b.toString()) a.value to b.value else b.value to a.value
 
-private fun ResultRow.toChat(): Chat {
+internal fun ResultRow.toChat(): Chat {
     val low = this[ChatsTable.directLow]
     val high = this[ChatsTable.directHigh]
     return Chat(
@@ -359,7 +359,7 @@ private fun ResultRow.toChat(): Chat {
     )
 }
 
-private fun ResultRow.toMember() =
+internal fun ResultRow.toMember() =
     Member(
         chatId = ChatId(this[MembersTable.chatId]),
         userId = UserId(this[MembersTable.userId]),

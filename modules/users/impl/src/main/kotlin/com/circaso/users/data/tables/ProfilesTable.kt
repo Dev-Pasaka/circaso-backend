@@ -33,5 +33,8 @@ object ProfilesTable : Table("users.profiles") {
 
     init {
         uniqueIndex("profiles_handle_key", handle)
+        // V4__admin_search adds profiles_handle_prefix_idx ((handle COLLATE "C")) and profiles_name_prefix_idx
+        // ((lower(display_name) COLLATE "C"), user_id) for staff search. They are not declared here: Exposed's index
+        // declaration can't say a collation, and a near miss would draft a different index.
     }
 }

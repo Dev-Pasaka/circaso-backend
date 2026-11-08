@@ -8,7 +8,10 @@ import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 
-/** OPS2 `GET /ops/support-accounts`: every support account, oldest first, with its name and handle from users. */
+/**
+ * OPS2, served by the ops module on the ops gateway (decision 2026-11-08): every support account, oldest first, with
+ * its name and handle from users.
+ */
 class ListSupportAccounts(private val accounts: AccountRepository, private val profiles: SupportProfiles) {
     suspend operator fun invoke(cursor: String?, limit: Int): Resource<SupportAccountPage> {
         val after =

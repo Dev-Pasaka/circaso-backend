@@ -16,6 +16,7 @@ sealed interface Kind {
     data object ObservabilityApi : Kind
     data object ObservabilityImpl : Kind
     data object Gateway : Kind
+    data object OpsGateway : Kind
     data object Grpc : Kind
     data object App : Kind
     data class ModuleApi(val module: String) : Kind
@@ -45,6 +46,7 @@ object DependencyRules {
             path == ":observability:api" -> Kind.ObservabilityApi
             path == ":observability:impl" -> Kind.ObservabilityImpl
             path == ":gateway" -> Kind.Gateway
+            path == ":ops-gateway" -> Kind.OpsGateway
             path == ":grpc" -> Kind.Grpc
             path == ":app" -> Kind.App
             else -> null
@@ -71,6 +73,15 @@ object DependencyRules {
         }
         Kind.Gateway -> when (to) {
             Kind.Shared, Kind.SharedWeb, Kind.InfrastructureApi, Kind.IntegrationsApi, Kind.ObservabilityApi -> true
+            is Kind.ModuleApi -> true
+            else -> false
+        }
+        // The staff edge (decision 2026-11-08): every `api` like the app gateway, plus the app gateway itself as a
+        // library of edge parts (idempotency, rate limiter, Realtime delivery). It never installs the app gateway's
+        // routes, and nothing but `app` depends on it.
+        Kind.OpsGateway -> when (to) {
+            Kind.Shared, Kind.SharedWeb, Kind.InfrastructureApi, Kind.IntegrationsApi, Kind.ObservabilityApi -> true
+            Kind.Gateway -> true
             is Kind.ModuleApi -> true
             else -> false
         }

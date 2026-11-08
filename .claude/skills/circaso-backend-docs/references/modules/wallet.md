@@ -71,6 +71,20 @@ interface Wallets {                  // read by the assistant later (Phase B pro
 
 Wallet also implements identity's `DeletionGuard` (built in WS2): it refuses with `wallet.funds_remaining` while the US dollar stablecoins it holds, **added up over every chain**, come to 0.01 or more, or while it holds any amount of any other asset (decided 2026-10-28: 0.009 USDC on each of four chains is 0.036, refused). It reads Circle, never the cache, for every wallet Circle lists for the user (a second wallet on a chain, which `wallets_user_chain_key` keeps out of our rows, included) and every open row of ours, retired chains included. When Circle can't answer, or a wallet sits on a chain that is unconfigured anyway (never done while funds are on it: chains are retired instead, above), it refuses with `wallet.custody_unavailable` and, for the chain, logs a WARN with the chain and Circle's wallet id. It also implements `RealtimeReplay` (module `wallet`), and `CustodyNotifications` from integrations (below).
 
+**Staff contract `WalletReports`** (decision 2026-11-08), read-only, bound in the wallet's Koin module for the ops module on the separate ops gateway, never mounted on the app gateway. Dollar figures are micro-dollars (1 USD = 1,000,000), coin amounts exact minor units. Each call is a keyset page or an aggregate bounded by its range, on the V9__staff_reports indexes (the ops process uses the normal pools; there is no read-only pool).
+
+| Call | Use case | Notes |
+| --- | --- | --- |
+| `holdings(holderId)` | `GetStaffHoldings` | A person's or a group's wallet. Our rows say which chains; each open chain's balances through `HoldingsReader.cached` (15 s cache, Circle behind it), priced by `HoldingPrices`; `usdMicros` = amount × price, exact, `HALF_UP` once; the total over priced balances. No Circle wallet sync, no setup progress, no `ActiveWallets.touch`. Circle failing is `balancesAvailable = false` with the wallets listed, never an error; no wallet is `hasWallet = false` |
+| `transfersOf(userId, cursor, limit)` | `ListTransfersOf` | Sent or received: two keyset reads (`transfers_sender_idx`, `transfers_recipient_idx`) merged, a payment to oneself once |
+| `feesPaidBy(userId)` | `SumFeesPaid` | `sum(fee_usd_minor)` of the holder's `COLLECTED` fee legs (`fee_ledger_collected_idx`) |
+| `transfers(filter, cursor, limit)` | `ListStaffTransfers` | Newest first on `transfers_newest_idx` (`transfers_confirmed_idx` for `CONFIRMED`; with a person, as `transfersOf`); an unknown state is `request.malformed` |
+| `transfer(id)` | `GetStaffTransfer` | Any sender |
+| `report(from, to, bucket)` | `BuildFinanceReport` | `CONFIRMED` transfers by `date_trunc(<unit>, created_at AT TIME ZONE 'UTC')` (unit from the enum only; ISO weeks), count and `sum(usd_total_minor)`; collected fees by the same period; by chain and coin with `sum(amount_minor)` exact; every period of the range, zeros too; at most 366 days, else `request.malformed` (thrown as a `DomainException`, since the contract returns the report) |
+| `groupWalletCount`, `groupWallets`, `groupWalletsOf` | `CountGroupWallets`, `ListGroupWallets`, `FindGroupWallets` | `wallet_owners` `GROUP` rows newest first by keyset (`wallet_owners_groups_newest_idx`); by chat through `wallet_owners_chat_key` |
+
+A transfer's `kind`, in this order: `EXTERNAL` (no recipient and no group on the other side), `GROUP_OUT` (`from_group_id`), `GROUP_IN` (`to_group_id`), else `PERSON`. Cursors are opaque base64url; one that doesn't decode answers `request.malformed`.
+
 ### Integrations used
 
 **All Circle setup and configuration lives in integrations, as for every other vendor; the wallet module only calls the contract.** The wallet never sees the Circle API key, the app id, the account types, token ids or a Circle user token's lifetime: `CircleCustody` reads them from its own settings and `Secrets`, and the wallet stores whatever the contract returns (wallet id, address, chain). The supported chains and their assets reach the wallet only through `StablecoinCustody.supported`.
@@ -332,6 +346,15 @@ CREATE TABLE wallet.transfers (
 CREATE UNIQUE INDEX transfers_idempotency_key ON wallet.transfers (sender_id, idempotency_key);
 CREATE INDEX transfers_open_idx ON wallet.transfers (state, created_at)
     WHERE state IN ('AWAITING_SIGNATURE', 'SUBMITTED');                      -- ExpireUnsignedTransfers, StuckTransfers
+-- V9__staff_reports (2026-11-08), WalletReports on the ops gateway:
+CREATE INDEX transfers_newest_idx ON wallet.transfers (created_at DESC, transfer_id DESC);
+CREATE INDEX transfers_confirmed_idx ON wallet.transfers (created_at DESC, transfer_id DESC) WHERE state = 'CONFIRMED';
+CREATE INDEX transfers_sender_idx ON wallet.transfers (sender_id, created_at DESC, transfer_id DESC);
+CREATE INDEX transfers_recipient_idx ON wallet.transfers (recipient_id, created_at DESC, transfer_id DESC)
+    WHERE recipient_id IS NOT NULL;
+CREATE INDEX fee_ledger_collected_idx ON wallet.fee_ledger (holder_id) WHERE state = 'COLLECTED';
+CREATE INDEX wallet_owners_groups_newest_idx ON wallet.wallet_owners (created_at DESC, wallet_id DESC)
+    WHERE owner_type = 'GROUP';
 
 CREATE TABLE wallet.transactions (                      -- history and statements
     id                   uuid        PRIMARY KEY,       -- OrderedIds

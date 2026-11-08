@@ -1,6 +1,7 @@
 package com.circaso.wallet.data.tables
 
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.timestamp
 
@@ -117,5 +118,7 @@ object FeeLedgerTable : Table("wallet.fee_ledger") {
 
     init {
         index("fee_ledger_report_idx", false, createdAt, blockchain)
+        // V9: staff's fees paid by one holder.
+        index("fee_ledger_collected_idx", false, holderId, filterCondition = { state eq "COLLECTED" })
     }
 }

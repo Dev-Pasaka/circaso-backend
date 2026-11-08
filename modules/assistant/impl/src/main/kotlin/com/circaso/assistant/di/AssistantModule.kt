@@ -27,6 +27,7 @@ import com.circaso.assistant.data.tools.CryptoTools
 import com.circaso.assistant.data.tools.HttpAgentTools
 import com.circaso.assistant.data.tools.MoneyTools
 import com.circaso.assistant.data.tools.OwnTools
+import com.circaso.assistant.data.tools.SupportTools
 import com.circaso.assistant.domain.models.AshaVoice
 import com.circaso.assistant.domain.models.Limits
 import com.circaso.assistant.domain.models.VoiceGender
@@ -106,6 +107,7 @@ import com.circaso.integrations.api.WebSearch
 import com.circaso.observability.api.Telemetry
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Resource
+import com.circaso.support.api.SupportTickets
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
@@ -240,6 +242,8 @@ fun assistantModule(config: Config): Module =
                     OwnTools(get<WebSearch>(), get(), get()),
                     CryptoTools(get(), get()),
                     MoneyTools(get(), get(), get(), clock),
+                    // Support tickets (decision 2026-11-08): opened only once the user agreed, through support:api
+                    SupportTools(get<SupportTickets>()),
                 ),
             )
         }
