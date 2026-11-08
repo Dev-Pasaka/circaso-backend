@@ -13,6 +13,7 @@ import com.circaso.wallet.api.TransferPage
 import com.circaso.wallet.domain.models.FinanceTotals
 import com.circaso.wallet.domain.models.GroupWalletResults
 import com.circaso.wallet.domain.models.StaffHoldings
+import com.circaso.wallet.domain.models.StaffTransfer
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferResults
 import com.circaso.wallet.domain.models.WalletOwner
@@ -40,7 +41,7 @@ fun StaffHoldings.toOps() =
         balancesAvailable = balancesAvailable,
     )
 
-fun Transfer.toOps() =
+fun Transfer.toOps(toFeeWallet: Boolean = false) =
     OpsTransfer(
         transferId = transferId,
         senderId = senderId,
@@ -59,9 +60,15 @@ fun Transfer.toOps() =
         failureReason = failureReason,
         createdAt = createdAt,
         updatedAt = updatedAt,
+        fromGroupId = fromGroupId,
+        toGroupId = toGroupId,
+        feeAddress = feeAddress,
+        toFeeWallet = toFeeWallet,
     )
 
-fun TransferResults.toOps() = TransferPage(transfers.map { it.toOps() }, nextCursor)
+fun StaffTransfer.toOps() = transfer.toOps(toFeeWallet)
+
+fun TransferResults.toOps() = TransferPage(transfers.map { it.toOps(it.transferId in toFeeWallet) }, nextCursor)
 
 fun FinanceTotals.toOps() =
     FinanceReport(

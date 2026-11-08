@@ -159,11 +159,16 @@ class FakeProfiles : ProfileAdmin {
 }
 
 class FakeGroups : GroupReports {
+    /** Every `groupsByIds` call, to prove a page asks once. */
+    val lookups = CopyOnWriteArrayList<Set<ChatId>>()
     val groups = ConcurrentHashMap<ChatId, OpsGroup>()
 
     override suspend fun groups(cursor: String?, limit: Int) = Resource.success(GroupPage(groups.values.toList(), null))
 
-    override suspend fun groupsByIds(ids: Set<ChatId>) = groups.filterKeys { it in ids }
+    override suspend fun groupsByIds(ids: Set<ChatId>): Map<ChatId, OpsGroup> {
+        lookups += ids
+        return groups.filterKeys { it in ids }
+    }
 
     override suspend fun members(chatId: ChatId, limit: Int): List<OpsGroupMember> =
         groups[chatId]?.ownerId?.let { listOf(OpsGroupMember(it, "OWNER", EPOCH)) }.orEmpty()
@@ -176,6 +181,7 @@ class FakeGroups : GroupReports {
 class FakeWallets : WalletReports {
     val wallets = ConcurrentHashMap<ChatId, GroupWalletRef>()
     val holdingsAsked = CopyOnWriteArrayList<UUID>()
+    val transfers = CopyOnWriteArrayList<OpsTransfer>()
 
     override suspend fun holdings(holderId: UUID): Resource<OpsHoldings> {
         holdingsAsked += holderId
@@ -186,7 +192,9 @@ class FakeWallets : WalletReports {
         userId: UserId,
         cursor: String?,
         limit: Int,
-    ) = Resource.success(TransferPage(emptyList(), null))
+    ) = Resource.success(
+        TransferPage(transfers.filter { it.senderId == userId || it.recipientId == userId }, null),
+    )
 
     override suspend fun feesPaidBy(userId: UserId) = 0L
 
@@ -194,9 +202,13 @@ class FakeWallets : WalletReports {
         filter: TransferFilter,
         cursor: String?,
         limit: Int,
-    ) = Resource.success(TransferPage(emptyList(), null))
+    ) = Resource.success(TransferPage(transfers.toList(), null))
 
-    override suspend fun transfer(transferId: TransferId): OpsTransfer? = null
+    override suspend fun transfer(transferId: TransferId): OpsTransfer? =
+        transfers.firstOrNull {
+            it.transferId ==
+                transferId
+        }
 
     override suspend fun report(
         from: Instant,
@@ -354,9 +366,11 @@ class MemoryAudit : AuditRepository {
         outcome: AuditOutcome,
         errorCode: String?,
         finishedAt: Instant,
+        detail: String?,
     ) {
         val index = entries.indexOfFirst { it.id == id }
-        entries[index] = entries[index].copy(outcome = outcome, errorCode = errorCode)
+        entries[index] =
+            entries[index].copy(outcome = outcome, errorCode = errorCode, detail = detail ?: entries[index].detail)
     }
 
     override suspend fun list(

@@ -32,11 +32,13 @@ interface StaffRepository {
 interface AuditRepository {
     suspend fun begin(entry: AuditEntry)
 
+    /** [detail], when given, replaces the one written at [begin]: what actually changed, known only after. */
     suspend fun finish(
         id: UUID,
         outcome: AuditOutcome,
         errorCode: String?,
         finishedAt: Instant,
+        detail: String? = null,
     )
 
     /** Newest first; [before] is the last id of the previous page. */

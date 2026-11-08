@@ -41,8 +41,8 @@ data class FeeParties(
  * A change is a new version: history is never overwritten.
  */
 data class FeeRule(
-    val ruleId: UUID,
-    val version: Int,
+    override val ruleId: UUID,
+    override val version: Int,
     val kind: FeeKind?,
     val senderType: WalletOwnerType?,
     val receiverType: WalletOwnerType?,
@@ -55,11 +55,12 @@ data class FeeRule(
     val minFeeMinor: Long?,
     val gasShareMaxBps: Int,
     val gasMarginBps: Int,
-    val effectiveFrom: Instant,
-    val effectiveTo: Instant?,
-) {
-    fun inForce(at: Instant): Boolean = !effectiveFrom.isAfter(at) && (effectiveTo == null || at.isBefore(effectiveTo))
-
+    override val effectiveFrom: Instant,
+    override val effectiveTo: Instant?,
+    /** Why this version exists (staff's reason, or the seed's note). */
+    val note: String? = null,
+    val createdAt: Instant? = null,
+) : VersionedRule {
     fun matches(parties: FeeParties): Boolean =
         (kind == null || kind == parties.kind) &&
             (senderType == null || senderType == parties.senderType) &&
@@ -140,8 +141,8 @@ data class FeeQuote(
  * over a rolling [window]. A null cap is no cap.
  */
 data class LimitRule(
-    val ruleId: UUID,
-    val version: Int,
+    override val ruleId: UUID,
+    override val version: Int,
     val ownerType: WalletOwnerType?,
     val walletId: WalletId?,
     /** A coin's symbol; null matches any. The caps are in micro-dollars whatever the coin (2026-11-07). */
@@ -149,11 +150,11 @@ data class LimitRule(
     val perPaymentMaxMinor: Long?,
     val dailyMaxMinor: Long?,
     val window: Duration,
-    val effectiveFrom: Instant,
-    val effectiveTo: Instant?,
-) {
-    fun inForce(at: Instant): Boolean = !effectiveFrom.isAfter(at) && (effectiveTo == null || at.isBefore(effectiveTo))
-
+    override val effectiveFrom: Instant,
+    override val effectiveTo: Instant?,
+    val note: String? = null,
+    val createdAt: Instant? = null,
+) : VersionedRule {
     fun matches(
         ownerType: WalletOwnerType,
         walletId: WalletId,

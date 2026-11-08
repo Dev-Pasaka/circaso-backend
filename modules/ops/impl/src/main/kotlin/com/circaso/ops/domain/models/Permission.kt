@@ -32,6 +32,8 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     STAFF_MANAGE("staff.manage", setOf(ADMIN)),
     AUDIT_READ("audit.read", setOf(ADMIN)),
     SUPPORT_ACCOUNTS_MANAGE("support_accounts.manage", setOf(ADMIN)),
+    FEES_READ("fees.read", setOf(ADMIN, FINANCE)),
+    FEES_MANAGE("fees.manage", setOf(ADMIN)),
     ;
 
     fun allows(role: StaffRole): Boolean = role in roles

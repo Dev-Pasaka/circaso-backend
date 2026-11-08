@@ -13,10 +13,12 @@ import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferOrigin
 import com.circaso.wallet.domain.models.TransferState
+import com.circaso.wallet.domain.support.FeeWallets
 import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.StaffReports
 import com.circaso.wallet.domain.usecases.GetStaffHoldings
+import com.circaso.wallet.domain.usecases.GetStaffTransfer
 import com.circaso.wallet.presentation.mappers.toOps
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
@@ -91,6 +93,37 @@ class WalletReportsTest {
         assertEquals(OpsTransferKind.GROUP_IN, StaffReports.kindOf(transfer().copy(toGroupId = group)))
         assertEquals(OpsTransferKind.GROUP_OUT, transfer().copy(fromGroupId = group).toOps().kind)
     }
+
+    @Test
+    fun `staff see Circaso's fee wallet by its configured address, and each payment's group and fee leg`() =
+        runBlocking<Unit> {
+            val feeWallets = FeeWallets(FakeFeeConfig())
+            val repository = MemoryTransferRepository()
+            val group = ChatId(UUID.randomUUID())
+            val toFeeWallet =
+                transfer().copy(
+                    recipientId = null,
+                    destinationAddress = FakeFeeConfig.FEE_WALLET.uppercase().replace("0X", "0x"),
+                )
+            val intoGroup =
+                transfer().copy(
+                    toGroupId = group,
+                    feeMinor = BigInteger.valueOf(10_000),
+                    feeAddress = "0xfee",
+                )
+            val outside = transfer().copy(recipientId = null, destinationAddress = "0x" + "b".repeat(40))
+            listOf(toFeeWallet, intoGroup, outside).forEach { repository.insert(it) }
+            val staff = GetStaffTransfer(repository, feeWallets)
+
+            assertTrue(staff(toFeeWallet.transferId).data()!!.toOps().toFeeWallet, "the configured fee address")
+            assertFalse(staff(outside.transferId).data()!!.toOps().toFeeWallet)
+            assertFalse(feeWallets.isFeeWallet("SOL-DEVNET", FakeFeeConfig.FEE_WALLET), "no fee wallet there")
+            val ops = staff(intoGroup.transferId).data()!!.toOps()
+            assertEquals(group, ops.toGroupId)
+            assertEquals("0xfee", ops.feeAddress)
+            assertEquals(BigInteger.valueOf(10_000), ops.feeMinor)
+            assertFalse(ops.toFeeWallet, "a person's payment is never Circaso's because of its fee leg")
+        }
 
     // ---- periods ----
 

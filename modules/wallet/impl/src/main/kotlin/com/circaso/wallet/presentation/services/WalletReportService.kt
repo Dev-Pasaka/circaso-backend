@@ -9,7 +9,7 @@ import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.FinanceTotals
 import com.circaso.wallet.domain.models.GroupWalletResults
 import com.circaso.wallet.domain.models.StaffHoldings
-import com.circaso.wallet.domain.models.Transfer
+import com.circaso.wallet.domain.models.StaffTransfer
 import com.circaso.wallet.domain.models.TransferResults
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.usecases.BuildFinanceReport
@@ -52,7 +52,7 @@ class WalletReportService(
         limit: Int,
     ): Resource<TransferResults> = listStaffTransfers(filter, cursor, limit)
 
-    suspend fun transfer(transferId: TransferId): Resource<Transfer?> = getStaffTransfer(transferId)
+    suspend fun transfer(transferId: TransferId): Resource<StaffTransfer?> = getStaffTransfer(transferId)
 
     suspend fun report(
         from: Instant,
