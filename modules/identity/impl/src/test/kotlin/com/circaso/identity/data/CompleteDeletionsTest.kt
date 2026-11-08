@@ -77,6 +77,7 @@ class CompleteDeletionsTest {
                                 "key",
                                 "ES256",
                                 null,
+                                null,
                                 DeviceStatus.ACTIVE,
                                 now,
                                 now,

@@ -48,4 +48,8 @@ class DeviceSignaturesImpl(private val directory: DirectoryService) : DeviceSign
 
 class PushRegistrationsImpl(private val directory: DirectoryService) : PushRegistrations {
     override suspend fun pushTarget(userId: UserId): PushRegistration? = directory.pushTarget(userId).getOrNull()
+
+    override suspend fun forgetVoipToken(userId: UserId, voipToken: String) {
+        directory.forgetVoipToken(userId, voipToken)
+    }
 }

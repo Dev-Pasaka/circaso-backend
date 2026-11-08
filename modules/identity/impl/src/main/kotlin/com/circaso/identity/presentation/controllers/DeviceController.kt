@@ -3,6 +3,7 @@ package com.circaso.identity.presentation.controllers
 import com.circaso.identity.presentation.dto.PushTokenRequest
 import com.circaso.identity.presentation.dto.RegisterDeviceRequest
 import com.circaso.identity.presentation.dto.RegisterDeviceResponse
+import com.circaso.identity.presentation.dto.VoipTokenRequest
 import com.circaso.identity.presentation.mappers.toCommand
 import com.circaso.identity.presentation.mappers.toPrincipal
 import com.circaso.identity.presentation.mappers.toResponse
@@ -69,6 +70,26 @@ fun Route.deviceController(devices: DeviceService) {
                     "I9 · Store this phone's FCM or APNs token",
                     TAG,
                     notes = "Scope: `app`.",
+                )
+
+                put("voip-token") {
+                    val token = call.receive<VoipTokenRequest>().voipToken
+                    val result: Resource<Unit> =
+                        if (token.isBlank()) {
+                            Resource.error(SharedError.Malformed("voipToken", "is required"))
+                        } else {
+                            devices.updateVoipToken(call.principal().toPrincipal(), token.trim())
+                        }
+                    call.respondDefault(result.toDefaultResponse { it })
+                }.docs<VoipTokenRequest, NoBody>(
+                    "I9b · Store this iPhone's PushKit (VoIP) token, so calls ring with the app closed",
+                    TAG,
+                    listOf("request.malformed"),
+                    notes =
+                        "Scope: `app`. iOS only: the hex string of the PushKit token. Send it on every " +
+                            "`didUpdate` and after each sign-in; sign-out and I10 forget it. While it is set, an " +
+                            "incoming call rings this phone through an APNs VoIP push (`apns-push-type: voip`) " +
+                            "instead of the FCM `call.ringing` push.",
                 )
 
                 delete {

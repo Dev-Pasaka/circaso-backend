@@ -113,6 +113,10 @@ data class RefreshResponse(val session: SessionDto, val agentSession: SessionDto
 @Serializable
 data class PushTokenRequest(val pushToken: String)
 
+/** I9b: the iPhone's PushKit token, as the hex string of `pushRegistry(_:didUpdate:for:)`'s token data. */
+@Serializable
+data class VoipTokenRequest(val voipToken: String)
+
 @Serializable
 data class ProviderDto(
     val provider: String,

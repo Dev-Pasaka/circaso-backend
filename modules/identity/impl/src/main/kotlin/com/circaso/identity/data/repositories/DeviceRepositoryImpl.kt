@@ -59,6 +59,7 @@ class DeviceRepositoryImpl(private val database: Database) : DeviceRepository {
                 it[publicKey] = device.publicKey
                 it[keyAlgorithm] = device.keyAlgorithm
                 it[pushToken] = device.pushToken
+                it[voipToken] = device.voipToken
                 it[status] = device.status.name
                 it[registeredAt] = device.registeredAt
                 it[lastSeenAt] = device.lastSeenAt
@@ -77,6 +78,7 @@ internal fun ResultRow.toDevice() =
         publicKey = this[DevicesTable.publicKey],
         keyAlgorithm = this[DevicesTable.keyAlgorithm],
         pushToken = this[DevicesTable.pushToken],
+        voipToken = this[DevicesTable.voipToken],
         status = DeviceStatus.valueOf(this[DevicesTable.status]),
         registeredAt = this[DevicesTable.registeredAt],
         lastSeenAt = this[DevicesTable.lastSeenAt],

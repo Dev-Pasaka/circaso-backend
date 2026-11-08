@@ -4,6 +4,7 @@ import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.Principal
 import com.circaso.identity.api.PushRegistration
+import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.GetAccountCreatedAt
 import com.circaso.identity.domain.usecases.GetAccountKind
 import com.circaso.identity.domain.usecases.GetAccountStatus
@@ -28,6 +29,7 @@ class DirectoryService(
     private val getAccountKind: GetAccountKind,
     private val getAccountCreatedAt: GetAccountCreatedAt,
     private val verifyAccessTokenAlongside: VerifyAccessTokenAlongside,
+    private val clearVoipToken: ClearVoipToken,
 ) {
     suspend fun verifyToken(token: String): Resource<Principal> = verifyAccessToken(token)
 
@@ -52,4 +54,6 @@ class DirectoryService(
     ): Resource<Unit> = verifyDeviceSignature(userId, deviceId, payload, signature)
 
     suspend fun pushTarget(userId: UserId): Resource<PushRegistration?> = getPushTarget(userId)
+
+    suspend fun forgetVoipToken(userId: UserId, voipToken: String): Resource<Unit> = clearVoipToken(userId, voipToken)
 }

@@ -25,11 +25,14 @@ import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
+import com.circaso.identity.domain.usecases.ClearVoipToken
+import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
+import com.circaso.identity.domain.usecases.RemoveDevice
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
@@ -37,10 +40,13 @@ import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
 import com.circaso.identity.domain.usecases.UnlinkProvider
+import com.circaso.identity.domain.usecases.UpdatePushToken
+import com.circaso.identity.domain.usecases.UpdateVoipToken
 import com.circaso.identity.domain.usecases.VerifyAccessToken
 import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
+import com.circaso.identity.presentation.services.DeviceService
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CodeCheck
@@ -252,7 +258,13 @@ class Harness(
             clock,
         )
     val refresh = RefreshSession(p.transactor, p.sessions, p.accounts, p.devices, p.store, cache, opener, proofs)
-    val signOut = SignOut(p.transactor, p.sessions, p.store, cache, bus)
+    val signOut = SignOut(p.transactor, p.sessions, p.accounts, p.devices, p.store, cache, bus)
+    val updatePushToken = UpdatePushToken(p.transactor, p.accounts, p.devices, p.store)
+    val updateVoipToken = UpdateVoipToken(p.transactor, p.accounts, p.devices, p.store)
+    val clearVoipToken = ClearVoipToken(p.transactor, p.accounts, p.devices, p.store)
+    val removeDevice = RemoveDevice(p.transactor, p.accounts, p.devices, p.sessions, p.store, cache)
+    val pushTarget = GetPushTarget(p.accounts, p.devices)
+    val deviceService = DeviceService(registerDevice, updatePushToken, removeDevice, updateVoipToken)
     val verifyToken = VerifyAccessToken(tokens, cache)
     val verifyTokenAlongside = VerifyAccessTokenAlongside(tokens, cache)
     val overview = GetSecurityOverview(p.accounts, p.providers, p.devices)

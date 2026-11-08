@@ -70,3 +70,39 @@ data class PushPayload(
 )
 
 data class PushReceipt(val messageId: String, val provider: String)
+
+/**
+ * Apple PushKit VoIP pushes for incoming calls (decision 2026-11-08): the only push that wakes a closed iPhone app to
+ * ring through CallKit. FCM can't deliver one, so it goes straight to APNs. The gateway sends one per `call.ringing`
+ * to an offline iPhone that registered a PushKit token, and falls back to [PushGateway] when this is [enabled] false
+ * or the send isn't [VoipPushResult.SENT].
+ */
+interface VoipPushGateway {
+    /** False when no APNs key is configured: every ring then goes through [PushGateway] as before. */
+    val enabled: Boolean
+
+    /** Rings the iPhone whose PushKit token is [voipToken]. */
+    suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult
+}
+
+/**
+ * What the phone needs to report the call to CallKit before it is back online; the same ids and fields the FCM
+ * `call.ringing` push carries. [callKind] is `VOICE` or `VIDEO`.
+ */
+data class VoipRing(
+    val callId: String,
+    val chatId: String,
+    val callKind: String,
+    val callerName: String,
+)
+
+enum class VoipPushResult {
+    /** APNs accepted it. */
+    SENT,
+
+    /** APNs no longer accepts the token (`BadDeviceToken`, `Unregistered`): forget it and push through FCM. */
+    TOKEN_INVALID,
+
+    /** Anything else (APNs down, our key refused, a timeout): push through FCM this time. */
+    FAILED,
+}

@@ -66,7 +66,7 @@ class AdminDataTest {
         userId: UserId,
         lastSeenAt: Instant,
         status: DeviceStatus = DeviceStatus.ACTIVE,
-    ) = Device(userId, DeviceId.new(), "android", "Pixel", "1.0.0", "key", "ES256", null, status, now, lastSeenAt)
+    ) = Device(userId, DeviceId.new(), "android", "Pixel", "1.0.0", "key", "ES256", null, null, status, now, lastSeenAt)
 
     private fun session(userId: UserId, createdAt: Instant) =
         Session(SessionId.new(), userId, DeviceId.new(), "hash", Scope.APP, SessionStatus.ACTIVE, createdAt, createdAt)
