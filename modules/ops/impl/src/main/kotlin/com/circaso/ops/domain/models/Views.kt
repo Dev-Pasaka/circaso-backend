@@ -44,8 +44,32 @@ data class UserAccount(val account: AdminAccount, val profile: AdminProfile?, va
 
 data class UserDevices(val devices: List<AdminDevice>, val sessions: List<AdminSession>)
 
-/** A transfer with the names of both sides, when they have a profile. */
-data class TransferView(val transfer: OpsTransfer, val senderName: String?, val recipientName: String?)
+/** What is on one side of a transfer: a person, a group's wallet, an address outside Circaso, or Circaso's fee wallet. */
+enum class PartyKind { USER, GROUP, EXTERNAL, FEE }
+
+/**
+ * One side of a transfer as staff see it. [id] is the user id, the group's chat id, or the address (EXTERNAL, FEE).
+ * [name] is the person's display name; for a group it is null, since a group's name is sealed under its key and the
+ * server never knows it ([memberCount] says which group it is, null once the group is gone); for an address, the
+ * address shortened; for FEE, "Circaso fee".
+ */
+data class Party(
+    val kind: PartyKind,
+    val id: String,
+    val name: String?,
+    val memberCount: Int? = null,
+)
+
+/**
+ * A transfer with both sides resolved, and [fee], Circaso's fee wallet when the payment carried a fee leg in the same
+ * signature (it never shows as a transfer of its own).
+ */
+data class TransferView(
+    val transfer: OpsTransfer,
+    val sender: Party,
+    val recipient: Party,
+    val fee: Party?,
+)
 
 data class TransferViewPage(val items: List<TransferView>, val nextCursor: String?)
 

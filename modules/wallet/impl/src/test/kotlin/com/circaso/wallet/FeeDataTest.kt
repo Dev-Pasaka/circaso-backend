@@ -171,7 +171,7 @@ class FeeDataTest {
             assertEquals(listOf("wallet.limit_exceeded"), refused)
         }
 
-    private companion object {
+    internal companion object {
         /** The `INSERT`s of the V4 script, so the test reads exactly what the migration seeds. */
         fun seeds(): List<String> =
             checkNotNull(FeeDataTest::class.java.getResource("/db/wallet/V4__fees_limits.sql"))

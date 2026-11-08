@@ -49,12 +49,14 @@ class AuditRepositoryImpl(private val database: Database) : AuditRepository {
         outcome: AuditOutcome,
         errorCode: String?,
         finishedAt: Instant,
+        detail: String?,
     ) {
         database.tx("audit.finish") {
             AuditLogTable.update({ AuditLogTable.entryId eq id }) {
                 it[AuditLogTable.outcome] = outcome.name
                 it[AuditLogTable.errorCode] = errorCode
                 it[AuditLogTable.finishedAt] = finishedAt
+                detail?.let { value -> it[AuditLogTable.detail] = value }
             }
         }
     }

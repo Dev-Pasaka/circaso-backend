@@ -43,7 +43,15 @@ data class OpsHoldings(
 /** How a transfer moved: person to person, out of or into a group wallet, or to an address outside Circaso. */
 enum class OpsTransferKind { PERSON, GROUP_OUT, GROUP_IN, EXTERNAL }
 
-/** [state]: `AWAITING_SIGNATURE`, `SUBMITTED`, `CONFIRMED`, `FAILED`, `EXPIRED`. [origin]: `APP` or `ASHA`. */
+/**
+ * [state]: `AWAITING_SIGNATURE`, `SUBMITTED`, `CONFIRMED`, `FAILED`, `EXPIRED`. [origin]: `APP` or `ASHA`.
+ *
+ * Out of a group wallet [senderId] is that wallet's holder id and [fromGroupId] the group; into one, [recipientId] is
+ * the wallet's holder id and [toGroupId] the group. [feeAddress] is Circaso's fee wallet the fee leg ([feeMinor]) went
+ * to in the same signature, null when the payment carried none. [toFeeWallet] is true when the destination itself is
+ * Circaso's fee wallet on the chain (the configured `wallet.fees.chain.<chain>.address`), so staff never read
+ * Circaso's own wallet as an outside address.
+ */
 data class OpsTransfer(
     val transferId: TransferId,
     val senderId: UserId,
@@ -62,6 +70,10 @@ data class OpsTransfer(
     val failureReason: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val fromGroupId: ChatId? = null,
+    val toGroupId: ChatId? = null,
+    val feeAddress: String? = null,
+    val toFeeWallet: Boolean = false,
 )
 
 /** Every field optional; [from] inclusive, [to] exclusive, on the transfer's creation time. */

@@ -13,7 +13,7 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
   `OpsRouteContributor`s (shared-web). `OpsSeparationTest` checks both.
 - **Contract (`ops:api`):** `StaffDirectory` (`signIn(email)`, `recordDevLogin`), implemented here, used by the ops gateway.
 - **Depends on:** identity (`AccountAdmin`, `SupportAccounts`), users (`ProfileAdmin`), messaging (`GroupReports`), wallet
-  (`WalletReports`), support (`SupportDesk`), assistant (`AssistantReports`), and integrations' `AiBilling`. Each is a staff-facing contract next to the module's own, never used by the app.
+  (`WalletReports`, `FeeAdmin`), support (`SupportDesk`), assistant (`AssistantReports`), and integrations' `AiBilling`. Each is a staff-facing contract next to the module's own, never used by the app.
 - **Schema** `ops`, no outbox (publishes nothing), no Redis keys of its own (the ops gateway uses `ogw:` for its limits and
   idempotency), no frames.
 
@@ -47,6 +47,8 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
 | groups (balances only with money) | ✓ | ✓ | ✓ |
 | tickets: queue, reply, note, assign, status | ✓ | ✓ | |
 | staff, audit, support accounts | ✓ | | |
+| fees and limits: read (`fees.read`) | ✓ | | ✓ |
+| fees and limits: change, fee bounds (`fees.manage`) | ✓ | | |
 
 ## Endpoints (all under `/v1/ops`, on the ops gateway only)
 
@@ -56,7 +58,20 @@ Public: `GET auth/config`, `GET auth/handoff?return=`, `POST auth/dev-login`. Si
 `POST users/{id}/unsuspend` `{reason}`, `GET transactions`, `GET transactions/{id}`, `GET finance?from=&to=&bucket=`, `GET ai-usage?from=&to=&bucket=&limit=`,
 `GET groups?wallet=`, `GET groups/{chatId}`, `GET tickets?status=&category=&assignee=&olderThanHours=`,
 `GET tickets/{id}`, `POST tickets/{id}/replies|notes|assign|status`, `GET|POST staff`, `PATCH staff/{id}`, `GET audit`,
-`GET|POST support-accounts` (OPS1, OPS2, moved here from the app gateway), and `GET openapi.json` outside production.
+`GET|POST support-accounts` (OPS1, OPS2, moved here from the app gateway), `GET fees/rules`, `POST fees/rules`,
+`POST fees/rules/{ruleId}/versions`, `POST fees/rules/{ruleId}/end`, `GET|PATCH fees/bounds`, `GET limits/rules`,
+`POST limits/rules`, `POST limits/rules/{ruleId}/versions`, `POST limits/rules/{ruleId}/end`, and `GET openapi.json`
+outside production.
+
+**Transfers** on every staff route (`transactions`, `transactions/{id}`, `users/{id}/transfers`) carry `sender` and
+`recipient` as typed parties `{kind: USER | GROUP | EXTERNAL | FEE, id, name, memberCount}` and `fee` (the fee leg to
+Circaso's fee wallet, with its amount) when the payment carried one; `senderName`/`recipientName` are deprecated. A
+group's name is always null (end-to-end encrypted). Groups and profiles are looked up once per page.
+
+**Fees and limits** (decision 2026-11-08): the rules are the wallet's, edited through `FeeAdmin`. A change is a new
+version (`baseVersion` the version edited; `effectiveFrom` null for now, never in the past); ending sets the latest
+version's end; nothing is deleted. Every write needs a `reason` and is audited as `fee_rule.create|change|end`,
+`limit_rule.create|change|end` or `fee_bounds.update` with the wallet's before and after in `detail`.
 Every change needs an `Idempotency-Key`; limits: `OPS_RATE_LIMIT_PER_MINUTE` per staff member (300),
 `OPS_PUBLIC_RATE_LIMIT_PER_MINUTE` per address (30), the dev login 5 a minute per address.
 
@@ -73,7 +88,9 @@ Every change needs an `Idempotency-Key`; limits: `OPS_RATE_LIMIT_PER_MINUTE` per
 `ops.not_staff` (403), `ops.access_unavailable` (503), `ops.dev_login_disabled` (404), `ops.dev_login_refused` (401),
 `ops.return_url_invalid` (400) — the gateway's; `ops.reason_required`, `ops.user_not_found`, `ops.transfer_not_found`,
 `ops.group_not_found`, `ops.staff_not_found`, `ops.staff_exists`, `ops.email_invalid`, `ops.cannot_change_self`,
-`ops.staff_from_config`, `ops.assignee_invalid`, `ops.staff_changed` — the module's.
+`ops.staff_from_config`, `ops.assignee_invalid`, `ops.staff_changed` — the module's; the fee routes pass the wallet's
+`wallet.rule_not_found`, `wallet.rule_changed`, `wallet.rule_ended`, `wallet.rule_change_pending`,
+`wallet.rule_scope_taken`, `wallet.rule_invalid`, `wallet.fee_rate_out_of_bounds`, `wallet.fee_bounds_exclude_rules`.
 
 ## AI usage (decision 2026-11-08)
 

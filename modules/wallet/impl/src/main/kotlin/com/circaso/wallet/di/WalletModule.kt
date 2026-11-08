@@ -9,6 +9,7 @@ import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.shared.RealtimeModule
+import com.circaso.wallet.api.FeeAdmin
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.WalletReports
 import com.circaso.wallet.api.Wallets
@@ -28,6 +29,7 @@ import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
 import com.circaso.wallet.data.repositories.NoPaymentHolds
+import com.circaso.wallet.data.repositories.RuleAdminRepositoryImpl
 import com.circaso.wallet.data.repositories.RuleRepositoryImpl
 import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
 import com.circaso.wallet.data.repositories.TransferRepositoryImpl
@@ -66,6 +68,7 @@ import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.CoinIconRepository
 import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.repositories.TransferRepository
@@ -78,6 +81,7 @@ import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.FeeCalculator
 import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.FeeSettlement
+import com.circaso.wallet.domain.support.FeeWallets
 import com.circaso.wallet.domain.support.HeldFunds
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
@@ -106,14 +110,20 @@ import com.circaso.wallet.domain.usecases.AddMissingChains
 import com.circaso.wallet.domain.usecases.ApplyCustodyUpdate
 import com.circaso.wallet.domain.usecases.ApplyWalletChallenge
 import com.circaso.wallet.domain.usecases.BuildFinanceReport
+import com.circaso.wallet.domain.usecases.ChangeFeeRule
+import com.circaso.wallet.domain.usecases.ChangeLimitRule
 import com.circaso.wallet.domain.usecases.CheckFundsBeforeDeletion
 import com.circaso.wallet.domain.usecases.CheckRecipient
 import com.circaso.wallet.domain.usecases.CheckSpaceWalletFunds
 import com.circaso.wallet.domain.usecases.CheckStuckTransfers
 import com.circaso.wallet.domain.usecases.CountGroupWallets
+import com.circaso.wallet.domain.usecases.CreateFeeRule
 import com.circaso.wallet.domain.usecases.CreateGroupWallet
+import com.circaso.wallet.domain.usecases.CreateLimitRule
 import com.circaso.wallet.domain.usecases.CreateSpaceWallet
 import com.circaso.wallet.domain.usecases.CreateWallet
+import com.circaso.wallet.domain.usecases.EndFeeRule
+import com.circaso.wallet.domain.usecases.EndLimitRule
 import com.circaso.wallet.domain.usecases.EstimateFee
 import com.circaso.wallet.domain.usecases.ExpireUnsignedTransfers
 import com.circaso.wallet.domain.usecases.FindDepositAddress
@@ -130,7 +140,9 @@ import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
 import com.circaso.wallet.domain.usecases.ListChains
+import com.circaso.wallet.domain.usecases.ListFeeRules
 import com.circaso.wallet.domain.usecases.ListGroupWallets
+import com.circaso.wallet.domain.usecases.ListLimitRules
 import com.circaso.wallet.domain.usecases.ListMyWallets
 import com.circaso.wallet.domain.usecases.ListStaffTransfers
 import com.circaso.wallet.domain.usecases.ListTransactions
@@ -146,9 +158,11 @@ import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SumFeesPaid
 import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.SweepWalletSetups
+import com.circaso.wallet.domain.usecases.UpdateFeeBounds
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.domain.usecases.ValueAssets
 import com.circaso.wallet.presentation.agent.agentController
+import com.circaso.wallet.presentation.api.FeeAdminImpl
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
@@ -161,6 +175,7 @@ import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
 import com.circaso.wallet.presentation.controllers.walletController
 import com.circaso.wallet.presentation.services.CoinIconService
+import com.circaso.wallet.presentation.services.FeeAdminService
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.SpaceWalletService
@@ -472,18 +487,33 @@ fun walletModule(config: Config): Module =
 
         // wallet:api's staff contract, read-only, for the ops module behind the ops gateway; never mounted on the app
         // gateway (decision 2026-11-08)
-        single { StaffTransferPages(get()) }
+        single { FeeWallets(get()) }
+        single { StaffTransferPages(get(), get()) }
         single { GetStaffHoldings(get(), get(), get()) }
         single { ListTransfersOf(get()) }
         single { SumFeesPaid(get()) }
         single { ListStaffTransfers(get()) }
-        single { GetStaffTransfer(get()) }
+        single { GetStaffTransfer(get(), get()) }
         single { BuildFinanceReport(get()) }
         single { CountGroupWallets(get()) }
         single { ListGroupWallets(get()) }
         single { FindGroupWallets(get()) }
         single { WalletReportService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<WalletReports> { WalletReportsImpl(get()) }
+
+        // wallet:api's fees-and-limits staff contract (decision 2026-11-08): versioned rule edits, ops gateway only
+        single<RuleAdminRepository> { RuleAdminRepositoryImpl(get(named("wallet.database"))) }
+        single { ListFeeRules(get(), get(), get(), clock) }
+        single { CreateFeeRule(get(), get(), get(), clock) }
+        single { ChangeFeeRule(get(), get(), clock) }
+        single { EndFeeRule(get(), get(), clock) }
+        single { UpdateFeeBounds(get(), get(), get(), clock) }
+        single { ListLimitRules(get(), clock) }
+        single { CreateLimitRule(get(), get(), get(), clock) }
+        single { ChangeLimitRule(get(), get(), clock) }
+        single { EndLimitRule(get(), get(), clock) }
+        single { FeeAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single<FeeAdmin> { FeeAdminImpl(get()) }
         single(named("wallet.deletion-guard")) { WalletDeletionGuard(get()) } bind DeletionGuard::class
         single<CustodyNotifications> { WalletCustodyNotifications(get()) }
         single(named("wallet.replay")) { RealtimeModule(WalletFrames.MODULE, WalletRealtimeReplay(get())) }
