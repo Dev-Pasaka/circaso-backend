@@ -1436,7 +1436,7 @@ class SocketHubTest {
     fun `a key request wakes the offline poster silently with the requester's id, and lives an hour`() =
         runBlocking {
             val push = RecordingPush()
-            val realtime = GatewayRealtime(hub(), push, registrations)
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val poster = UserId.new()
             val requester = UserId.new()
 
