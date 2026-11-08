@@ -26,7 +26,11 @@ class ApiDocsAccessTest {
         application {
             routing {
                 get("/v1/ping") { }
-                apiDocsRoutes(this@application, ApiDocsConfig(enabled = true, requireOps = true, access = settings), AccessVerifier(settings, keys))
+                apiDocsRoutes(
+                    this@application,
+                    ApiDocsConfig(enabled = true, requireOps = true, access = settings),
+                    AccessVerifier(settings, keys),
+                )
             }
         }
     }
@@ -50,7 +54,12 @@ class ApiDocsAccessTest {
             for (bad in listOf(
                 "fake",
                 access.token(audience = "someone-elses-app"),
-                access.token(expiresAt = java.time.Instant.now().minusSeconds(5)),
+                access.token(
+                    expiresAt =
+                        java.time.Instant
+                            .now()
+                            .minusSeconds(5),
+                ),
                 AccessTokens(kid = access.kid).token(),
             )) {
                 val res = client.get("/docs/openapi.json") { header("Cf-Access-Jwt-Assertion", bad) }

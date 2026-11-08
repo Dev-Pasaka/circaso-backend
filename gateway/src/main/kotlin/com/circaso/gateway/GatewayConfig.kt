@@ -1,7 +1,7 @@
 package com.circaso.gateway
 
-import com.circaso.infrastructure.api.Config
 import com.circaso.gateway.access.AccessSettings
+import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 
 /** Gateway settings, read from the `gateway` config section. */
@@ -27,7 +27,11 @@ class GatewayConfig(
                         // Behind the `ops` scope outside local runs, unless something in front of the app already decides who may read the docs
                         // (Cloudflare Access on the dev server): a browser cannot send a bearer token to open a page.
                         requireOps = gateway.boolean("api-docs.require-ops", !config.environment.isLocal),
-                        access = accessFor(gateway.string("api-docs.access-team-domain"), gateway.string("api-docs.access-aud")),
+                        access =
+                            accessFor(
+                                gateway.string("api-docs.access-team-domain"),
+                                gateway.string("api-docs.access-aud"),
+                            ),
                     ),
                 minClientVersions =
                     platforms

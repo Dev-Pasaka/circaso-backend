@@ -69,7 +69,11 @@ private suspend fun ApplicationCall.respondRevalidated(
  * of the docs site (the docs.circaso.com Worker forwards its visitor's). The route is hidden from the spec itself.
  */
 @OptIn(ExperimentalKtorApi::class)
-fun Route.apiDocsRoutes(application: Application, config: ApiDocsConfig, access: AccessVerifier? = null) {
+fun Route.apiDocsRoutes(
+    application: Application,
+    config: ApiDocsConfig,
+    access: AccessVerifier? = null,
+) {
     if (!config.enabled) return
     val base = OpenApiDoc(info = OpenApiInfo(title = "Circaso API", version = "v1"))
     val source = OpenApiDocSource.Routing(ContentType.Application.Json)
@@ -101,15 +105,23 @@ private suspend fun ApplicationCall.accessAllowed(access: AccessVerifier): Boole
     val token = request.headers[ACCESS_HEADER] ?: request.cookies[ACCESS_COOKIE]
     val check = if (token.isNullOrBlank()) AccessCheck.Invalid("missing") else access.verify(token)
     return when (check) {
-        is AccessCheck.Verified -> true
+        is AccessCheck.Verified -> {
+            true
+        }
+
         is AccessCheck.Invalid -> {
             response.header(HttpHeaders.CacheControl, "no-store")
             respondText("Sign in through Cloudflare Access.\n", ContentType.Text.Plain, HttpStatusCode.Forbidden)
             false
         }
+
         AccessCheck.Unavailable -> {
             response.header(HttpHeaders.CacheControl, "no-store")
-            respondText("Cloudflare Access keys are unavailable; try again.\n", ContentType.Text.Plain, HttpStatusCode.ServiceUnavailable)
+            respondText(
+                "Cloudflare Access keys are unavailable; try again.\n",
+                ContentType.Text.Plain,
+                HttpStatusCode.ServiceUnavailable,
+            )
             false
         }
     }

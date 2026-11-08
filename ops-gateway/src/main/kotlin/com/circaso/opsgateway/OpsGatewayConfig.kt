@@ -1,11 +1,11 @@
 package com.circaso.opsgateway
 
+import com.circaso.gateway.access.AccessSettings
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.Secrets
 import java.net.URI
 import java.time.Duration
-import com.circaso.gateway.access.AccessSettings
 
 /**
  * The ops gateway's settings (decision 2026-11-08), all `OPS_*`, none shared with the app gateway:

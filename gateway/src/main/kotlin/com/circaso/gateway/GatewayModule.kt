@@ -1,11 +1,14 @@
 package com.circaso.gateway
 
+import com.circaso.gateway.access.AccessVerifier
+import com.circaso.gateway.access.HttpAccessKeys
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
 import com.circaso.identity.api.PushRegistrations
 import com.circaso.identity.api.TokenVerifier
 import com.circaso.infrastructure.api.Config
+import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.WebhookVendor
@@ -34,9 +37,6 @@ import kotlinx.coroutines.cancel
 import org.koin.dsl.module
 import org.koin.ktor.ext.getKoin
 import kotlin.time.Duration.Companion.seconds
-import com.circaso.infrastructure.api.HttpClients
-import com.circaso.gateway.access.HttpAccessKeys
-import com.circaso.gateway.access.AccessVerifier
 
 /**
  * The gateway's Koin bindings: the socket hub, `Realtime` for every module to call, and the gateway's consumer
@@ -100,7 +100,8 @@ fun Application.installGateway() {
         apiDocsRoutes(
             this@installGateway,
             deps.config.apiDocs,
-            deps.config.apiDocs.access?.let { AccessVerifier(it, HttpAccessKeys(koin.get<HttpClients>(), it)) },
+            deps.config.apiDocs.access
+                ?.let { AccessVerifier(it, HttpAccessKeys(koin.get<HttpClients>(), it)) },
         )
         errorPageRoutes()
     }
