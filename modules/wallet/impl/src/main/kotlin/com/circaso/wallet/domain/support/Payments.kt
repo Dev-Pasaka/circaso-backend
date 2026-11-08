@@ -122,7 +122,10 @@ class PaymentPlanner(
             val read = if (coin.heldMinor == null) async { rules.balance(sender, coin) } else null
             val pricing =
                 when (val answer = priced.await()) {
-                    is Resource.Success -> answer.data
+                    is Resource.Success -> {
+                        answer.data
+                    }
+
                     is Resource.Error -> {
                         read?.cancel()
                         return@coroutineScope answer
@@ -150,22 +153,6 @@ class PaymentPlanner(
         if (minor == null || minor.signum() <= 0) return Resource.error(WalletError.AmountInvalid)
         return Resource.success(PaymentCoin.dollar(asset, offered.tokenAddress) to Money(minor, asset))
     }
-
-                    is Resource.Error -> {
-                        read.cancel()
-                        return@coroutineScope answer
-                    }
-                }
-            when (val balance = read.await()) {
-                is Resource.Success -> {
-                    Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance.data))
-                }
-
-                is Resource.Error -> {
-                    balance
-                }
-            }
-        }
 
     /**
      * A membership payment (SP13, Spaces phase 3) is paid from the personal wallet, into exactly its space and for
