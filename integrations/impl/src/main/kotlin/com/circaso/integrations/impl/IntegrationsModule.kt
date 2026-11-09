@@ -34,9 +34,11 @@ import com.circaso.integrations.api.WebhookVendor
 import com.circaso.integrations.impl.africastalking.AfricasTalkingSms
 import com.circaso.integrations.impl.africastalking.africasTalkingBaseUrl
 import com.circaso.integrations.impl.anthropic.AnthropicAdminBilling
+import com.circaso.integrations.impl.apns.ApnsAlertPush
 import com.circaso.integrations.impl.apns.ApnsProviderToken
 import com.circaso.integrations.impl.apns.ApnsVoipPush
 import com.circaso.integrations.impl.apns.JdkApnsTransport
+import com.circaso.integrations.impl.apns.PlatformPushGateway
 import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleClient
 import com.circaso.integrations.impl.circle.CircleCustody
@@ -194,15 +196,18 @@ fun integrationsModule(config: Config, secrets: Secrets) =
             )
         }
         single<PushGateway> {
-            pick(
-                "push",
-                providers =
-                    mapOf(
-                        "log" to ::LogPush,
-                        "fake" to ::FakePush,
-                        "fcm" to { fcmPush(integrations.section("push"), secrets, get()) },
-                    ),
-            )
+            val picked =
+                pick<PushGateway>(
+                    "push",
+                    providers =
+                        mapOf(
+                            "log" to ::LogPush,
+                            "fake" to ::FakePush,
+                            "fcm" to { fcmPush(integrations.section("push"), secrets, get()) },
+                        ),
+                )
+            // iPhones register an APNs token (2026-11-09): their pushes go to APNs when its key is configured.
+            PlatformPushGateway(picked, apnsAlertPush(integrations.section("apns"), secrets))
         }
         // Incoming-call rings to iPhones straight through APNs (decision 2026-11-08); off, and every ring through
         // `PushGateway`, until the key is configured. Created at start so its one line says which.
@@ -621,6 +626,27 @@ private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
     val host = if (sandbox) "https://api.sandbox.push.apple.com" else "https://api.push.apple.com"
     log.info("APNs VoIP pushes: on (host={}, topic={}.voip, keyId={})", host, topic, keyId)
     return ApnsVoipPush(tokens, JdkApnsTransport(host), topic)
+}
+
+/**
+ * APNs alerts for every iPhone push but a ring (decision 2026-11-09): the same key, team, topic and sandbox settings as
+ * [apnsVoipPush], posted to the bundle id itself. Null (iPhone pushes go through FCM) until `INTEGRATIONS_APNS_KEY` is
+ * set.
+ */
+private fun apnsAlertPush(apns: Config, secrets: Secrets): PushGateway? {
+    val log = LoggerFactory.getLogger("com.circaso.integrations.impl.apns")
+    val key = secrets.get("integrations.apns.key")?.takeIf { it.isNotBlank() }
+    if (key == null) {
+        log.info("APNs alerts: off (INTEGRATIONS_APNS_KEY not set); iPhone pushes go through FCM")
+        return null
+    }
+    val sandbox = apns.boolean("sandbox", false)
+    val topic = apns.string("topic", "com.circaso.app")
+    val keyId = apns.requireString("key-id")
+    val tokens = ApnsProviderToken(keyId, apns.requireString("team-id"), ApnsProviderToken.parseKey(key))
+    val host = if (sandbox) "https://api.sandbox.push.apple.com" else "https://api.push.apple.com"
+    log.info("APNs alerts: on (host={}, topic={}, keyId={})", host, topic, keyId)
+    return ApnsAlertPush(tokens, JdkApnsTransport(host), topic)
 }
 
 /**

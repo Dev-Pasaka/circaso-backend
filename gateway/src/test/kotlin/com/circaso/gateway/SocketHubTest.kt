@@ -11,6 +11,7 @@ import com.circaso.calls.api.CallRingingFrame
 import com.circaso.calls.api.CallSnapshot
 import com.circaso.gateway.realtime.GatewayRealtime
 import com.circaso.gateway.realtime.NodeMessage
+import com.circaso.gateway.realtime.PUSH_CIPHERTEXT_MAX
 import com.circaso.gateway.realtime.SessionRevokedFrame
 import com.circaso.gateway.realtime.SocketHub
 import com.circaso.gateway.realtime.gatewayIdentitySubscription
@@ -338,11 +339,14 @@ class SocketHubTest {
         data: T,
     ) = RealtimeEnvelope.of("messaging", type, 1, data, serializer)
 
-    private fun newMessage(pushable: Boolean) =
+    private val sender = UserId.new()
+    private val sentAt = Instant.parse("2026-11-09T10:15:30Z")
+
+    private fun newMessage(pushable: Boolean, ciphertext: String? = null) =
         typed(
             MessageNewFrame.TYPE,
             MessageNewFrame.serializer(),
-            MessageNewFrame(messageId, chat, UserId.new(), MessageKind.MESSAGE, pushable, Instant.now()),
+            MessageNewFrame(messageId, chat, sender, MessageKind.MESSAGE, pushable, sentAt, ciphertext = ciphertext),
         )
 
     private fun membersAdded(userIds: List<UserId>) =
@@ -614,10 +618,33 @@ class SocketHubTest {
             assertEquals(1, redis.pipelinedReads.get(), "who is offline, in one pipelined lookup")
             assertEquals(0, redis.singleReads.get())
             push.sent.forEach { (_, message) ->
-                assertEquals(PushPayload(chat.toString(), messageId.toString()), message.data)
+                assertEquals(
+                    PushPayload(
+                        chat.toString(),
+                        messageId.toString(),
+                        senderId = sender.toString(),
+                        sentAt = "2026-11-09T10:15:30Z",
+                        messageKind = "MESSAGE",
+                    ),
+                    message.data,
+                )
                 assertEquals("New message", message.body, "no text from the chat")
                 assertTrue(message.dataOnly, "the app fetches, decrypts and words it")
             }
+        }
+
+    @Test
+    fun `a new-message push carries the recipient's ciphertext when it fits, never when it doesn't`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
+            val small = "A".repeat(PUSH_CIPHERTEXT_MAX)
+
+            realtime.deliverMany(listOf(UserId.new()), newMessage(pushable = true, ciphertext = small))
+            realtime.deliverMany(listOf(UserId.new()), newMessage(pushable = true, ciphertext = small + "A"))
+
+            assertEquals(listOf(small, null), push.sent.map { it.second.data.ciphertext })
+            assertTrue(push.sent.all { it.second.body == "New message" }, "still no text from the chat")
         }
 
     @Test

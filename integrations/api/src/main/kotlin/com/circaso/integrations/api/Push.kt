@@ -74,6 +74,16 @@ data class PushPayload(
     val userId: String? = null,
     /** The support ticket a `support.ticket` push is about (added 2026-11-08): a tap opens it. */
     val ticketId: String? = null,
+    /**
+     * A new chat message (added 2026-11-09), so the phone can word it without a network fetch: who sent it
+     * ([senderId], an id, never a name), when ([sentAt], ISO-8601), the server's [messageKind] (`MESSAGE`,
+     * `SENDER_KEY`, …; not [kind], which the phone routes on) and, when small enough, the recipient's own end-to-end
+     * [ciphertext] (base64), which only that phone can open. Never plaintext.
+     */
+    val senderId: String? = null,
+    val sentAt: String? = null,
+    val messageKind: String? = null,
+    val ciphertext: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

@@ -57,6 +57,12 @@ private const val PUSH_BATCH = 100
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
 
+/**
+ * The largest ciphertext (base64 characters) a chat push carries: FCM's data and APNs' payload both stop at 4 KB, and
+ * the ids, words and `aps` need the rest. A longer message is fetched from the inbox as before.
+ */
+internal const val PUSH_CIPHERTEXT_MAX = 2800
+
 /** A support reply's push: from the team, as the app shows staff replies; a tap opens the ticket. */
 private const val SUPPORT_TITLE = "Circaso Support"
 private const val SUPPORT_TICKET_KIND = "support.ticket"
@@ -467,7 +473,17 @@ class GatewayRealtime(
     private fun newMessagePush(frame: MessageNewFrame): PushMessage? {
         if (frame.keyRequest) return metaKeyRequestPush(frame)
         if (!frame.pushable) return null
-        val ids = PushPayload(chatId = frame.chatId.toString(), messageId = frame.messageId.toString())
+        // Ids, never words (2026-11-09): with the sender and the recipient's own ciphertext the phone (or the iPhone's
+        // notification extension) opens and words the message itself, without fetching it first.
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                messageId = frame.messageId.toString(),
+                senderId = frame.senderId.toString(),
+                sentAt = frame.sentAt.toString(),
+                messageKind = frame.kind.name,
+                ciphertext = frame.ciphertext?.takeIf { it.length <= PUSH_CIPHERTEXT_MAX },
+            )
         return PushMessage("Circaso", NEW_MESSAGE, ids, dataOnly = true)
     }
 
