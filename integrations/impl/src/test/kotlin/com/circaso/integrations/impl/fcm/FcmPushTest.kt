@@ -136,6 +136,46 @@ class FcmPushTest {
         }
 
     @Test
+    fun `a chat push carries the sender, time, kind and ciphertext as data strings, and no words`() =
+        runBlocking<Unit> {
+            val wake =
+                PushMessage(
+                    "Circaso",
+                    "New message",
+                    PushPayload(
+                        chatId = "c1",
+                        messageId = "m1",
+                        senderId = "u1",
+                        sentAt = "2026-11-09T10:15:30Z",
+                        messageKind = "MESSAGE",
+                        ciphertext = "c2VhbGVk",
+                    ),
+                    dataOnly = true,
+                )
+
+            push.send(PushTarget(PushPlatform.ANDROID, "device-token"), wake)
+
+            val data =
+                Json
+                    .parseToJsonElement(
+                        sends().single().text(),
+                    ).jsonObject["message"]!!
+                    .jsonObject["data"]!!
+                    .jsonObject
+            assertEquals(
+                mapOf(
+                    "chatId" to "c1",
+                    "messageId" to "m1",
+                    "senderId" to "u1",
+                    "sentAt" to "2026-11-09T10:15:30Z",
+                    "messageKind" to "MESSAGE",
+                    "ciphertext" to "c2VhbGVk",
+                ),
+                data.mapValues { it.value.jsonPrimitive.content },
+            )
+        }
+
+    @Test
     fun `a silent push shows nothing - data without words on Android, a background push on iOS`() =
         runBlocking<Unit> {
             val wake =
