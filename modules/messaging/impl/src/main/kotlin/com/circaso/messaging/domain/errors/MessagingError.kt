@@ -149,6 +149,16 @@ sealed class MessagingError(
         ErrorKind.UPSTREAM,
     )
 
+    /**
+     * Group invites (2026-11-09): no such invite for the caller, or it was answered, cancelled or ran out. All look the
+     * same, so nobody learns of invites that aren't theirs.
+     */
+    data object InviteNotFound : MessagingError(
+        "messaging.invite_not_found",
+        "That invite is no longer open.",
+        ErrorKind.NOT_FOUND,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

@@ -33,7 +33,7 @@ class AttachmentsTest {
         AttachmentService(
             PrepareAttachmentUpload(attachments, h.transactor, h.membership, storage, h.config, h.clock),
             CompleteAttachmentUpload(attachments, h.transactor, storage, h.clock),
-            GetAttachmentDownload(attachments, h.membership, storage, h.config, h.clock),
+            GetAttachmentDownload(attachments, h.membership, h.chats, h.invites, storage, h.config, h.clock),
             PurgeAttachments(attachments, h.transactor, storage, h.config.copy(attachmentPurgeBatch = 2), h.clock),
         )
 
@@ -125,7 +125,7 @@ class AttachmentsTest {
                         h.clock,
                     ),
                     CompleteAttachmentUpload(attachments, h.transactor, storage, h.clock),
-                    GetAttachmentDownload(attachments, h.membership, storage, h.config, h.clock),
+                    GetAttachmentDownload(attachments, h.membership, h.chats, h.invites, storage, h.config, h.clock),
                     PurgeAttachments(attachments, h.transactor, storage, h.config, h.clock),
                 )
             val chatId = chat()

@@ -19,6 +19,7 @@ import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.VoipPushResult
 import com.circaso.integrations.api.VoipRing
 import com.circaso.integrations.api.VoipRingEnded
+import com.circaso.messaging.api.InviteReceivedFrame
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.shared.Realtime
@@ -234,6 +235,10 @@ class GatewayRealtime(
 
             "messaging.${MemberAddedFrame.TYPE}" -> {
                 decode(MemberAddedFrame.serializer(), frame)?.let { addedToGroupPush(it, recipient) }
+            }
+
+            "messaging.${InviteReceivedFrame.TYPE}" -> {
+                decode(InviteReceivedFrame.serializer(), frame)?.let(::invitePush)
             }
 
             "${ChamaFrames.MODULE}.${ChamaFrames.CONTRIBUTION_ADDED}" -> {
@@ -525,10 +530,21 @@ class GatewayRealtime(
      * members just see it next time.
      */
     private fun addedToGroupPush(frame: MemberAddedFrame, recipient: UserId): PushMessage? {
-        if (recipient !in frame.userIds) return null
+        // Someone who accepted an invite (2026-11-09) is the one who acted: nothing to wake them for.
+        if (frame.joined || recipient !in frame.userIds) return null
         // Never the group name, which is sealed: the push is data-only and the phone words it from the sealed name.
         val ids = PushPayload(chatId = frame.chatId.toString())
         return PushMessage("Circaso", "You were added to a group", ids, dataOnly = true)
+    }
+
+    /**
+     * An invite to a group (2026-11-09), to the person invited. Data-only, as for a group add: the group's name is
+     * sealed, so the phone loads its invites and words it "Amina invited you to Book club" from the inviter's sealed
+     * key; the text here is the fallback for a phone that can't.
+     */
+    private fun invitePush(frame: InviteReceivedFrame): PushMessage {
+        val ids = PushPayload(kind = INVITE_KIND, chatId = frame.chatId.toString(), userId = frame.byUserId.toString())
+        return PushMessage("Circaso", "${frame.byName} invited you to a group", ids, dataOnly = true)
     }
 
     /**
@@ -701,6 +717,9 @@ private const val KEY_REQUEST_TTL_SECONDS = 3_600L
 
 /** A member's new phone asked for a group's metadata key: a silent push, `chatId` and `userId` the asker. */
 private const val META_KEY_REQUESTED_KIND = "chat.meta_key_requested"
+
+/** An invite to a group (2026-11-09): `chatId`, `userId` the inviter; the phone names the group from its invite. */
+private const val INVITE_KIND = "chat.invite"
 private const val MONEY_SOUND = "money_received.wav"
 
 /** A space post's push shows at most this much of its text. */

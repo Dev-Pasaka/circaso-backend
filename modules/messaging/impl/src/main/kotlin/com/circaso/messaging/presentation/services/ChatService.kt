@@ -3,6 +3,7 @@ package com.circaso.messaging.presentation.services
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
+import com.circaso.messaging.domain.models.InviteKey
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.UpdateGroupCommand
 import com.circaso.messaging.domain.usecases.AddMembers
@@ -58,11 +59,13 @@ class ChatService(
         caller: UserId,
         chatId: ChatId,
         memberIds: Set<UserId>,
+        inviteKeys: List<InviteKey> = emptyList(),
     ): Resource<ChatView> =
         addMembers.invoke(
             caller,
             chatId,
             memberIds,
+            inviteKeys,
         )
 
     /** M10 is one route for two things: removing someone else, or leaving when the target is the caller. */

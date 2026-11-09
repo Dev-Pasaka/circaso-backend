@@ -4,7 +4,10 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.models.AvatarChange
 import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
+import com.circaso.messaging.domain.models.InviteKey
+import com.circaso.messaging.domain.models.InviteView
 import com.circaso.messaging.domain.models.MemberView
+import com.circaso.messaging.domain.models.PendingInviteView
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.UpdateGroupCommand
 import com.circaso.messaging.presentation.dto.AvatarField
@@ -13,11 +16,15 @@ import com.circaso.messaging.presentation.dto.ChatMemberDto
 import com.circaso.messaging.presentation.dto.ChatProfileDto
 import com.circaso.messaging.presentation.dto.ChatSettingsDto
 import com.circaso.messaging.presentation.dto.CreateGroupRequest
+import com.circaso.messaging.presentation.dto.InviteDto
+import com.circaso.messaging.presentation.dto.InviteKeyDto
+import com.circaso.messaging.presentation.dto.PendingInviteDto
 import com.circaso.messaging.presentation.dto.UpdateGroupRequest
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import com.circaso.users.api.PublicProfile
 
 // ---- request → command: shape checks answer `request.malformed`; the sealed name is the use case's to judge ----
 
@@ -44,14 +51,30 @@ fun CreateGroupRequest.toCommand(creator: UserId, requestKey: String?): Resource
             is Resource.Error -> return parsed
             is Resource.Success -> parsed.data
         }
+    val keys =
+        when (val parsed = parseInviteKeys(inviteKeys)) {
+            is Resource.Error -> return parsed
+            is Resource.Success -> parsed.data
+        }
     val command =
         CreateGroupCommand(
             creator,
             sealedMeta,
             ids,
             key,
+            keys,
         )
     return Resource.success(command)
+}
+
+/** Each sealed key names a user id; whether the key itself is fit is the use case's to judge. */
+fun parseInviteKeys(raw: List<InviteKeyDto>): Resource<List<InviteKey>> {
+    val keys =
+        raw.map {
+            val userId = UserId.parse(it.userId) ?: return malformed("inviteKeys", "each must name a user id")
+            InviteKey(userId, it.sealedKey)
+        }
+    return Resource.success(keys)
 }
 
 fun UpdateGroupRequest.toCommand(caller: UserId, chatId: ChatId): Resource<UpdateGroupCommand> {
@@ -105,19 +128,45 @@ fun ChatView.toDto() =
         notAdded = notAdded?.map { it.toString() },
         viaSpaceId = chat.viaSpaceId?.toString(),
         avatarMediaId = chat.avatarMediaId?.toString(),
+        invited = invited?.map { it.toString() },
     )
 
 private fun MemberView.toDto() =
     ChatMemberDto(
-        user =
-            ChatProfileDto(
-                userId = profile.userId.toString(),
-                displayName = profile.displayName,
-                handle = profile.handle,
-                avatarUrl = profile.avatarUrl,
-                about = profile.about,
-                support = profile.support,
-            ),
+        user = profile.toDto(),
         role = role.name,
         joinedAt = joinedAt,
+    )
+
+fun PublicProfile.toDto() =
+    ChatProfileDto(
+        userId = userId.toString(),
+        displayName = displayName,
+        handle = handle,
+        avatarUrl = avatarUrl,
+        about = about,
+        support = support,
+    )
+
+fun InviteView.toDto() =
+    InviteDto(
+        inviteId = invite.inviteId.toString(),
+        chatId = chat.chatId.toString(),
+        invitedBy = invitedBy.toDto(),
+        sealedMeta = chat.sealedMeta,
+        metaVersion = chat.metaVersion,
+        avatarMediaId = chat.avatarMediaId?.toString(),
+        memberCount = chat.memberCount,
+        sealedKey = invite.sealedKey,
+        createdAt = invite.createdAt,
+        expiresAt = invite.expiresAt,
+    )
+
+fun PendingInviteView.toDto() =
+    PendingInviteDto(
+        inviteId = invite.inviteId.toString(),
+        user = user.toDto(),
+        invitedBy = invitedBy.toDto(),
+        createdAt = invite.createdAt,
+        expiresAt = invite.expiresAt,
     )

@@ -109,9 +109,18 @@ data class KeysChangedFrame(val userId: UserId) : MessagingFrame {
     }
 }
 
-/** [userIds] is everyone one action added, sorted; only they are pushed (decision 2026-10-26). */
+/**
+ * [userIds] is everyone one action added, sorted; only they are pushed (decision 2026-10-26). [joined] (2026-11-09,
+ * group invites): the one person in [userIds] accepted an invite from [byUserId], so phones say "X joined" rather
+ * than "Y added X", and nobody is pushed, since the person who joined is the one who acted.
+ */
 @Serializable
-data class MemberAddedFrame(val chatId: ChatId, val userIds: List<UserId>, val byUserId: UserId) : MessagingFrame {
+data class MemberAddedFrame(
+    val chatId: ChatId,
+    val userIds: List<UserId>,
+    val byUserId: UserId,
+    val joined: Boolean = false,
+) : MessagingFrame {
     override val type: String get() = TYPE
 
     companion object {
@@ -158,6 +167,49 @@ data class PresenceChangedFrame(val userId: UserId, val online: Boolean, val las
 
     companion object {
         const val TYPE = "presence.changed"
+    }
+}
+
+/**
+ * To the person invited (2026-11-09, group invites): [byUserId] invited them to [chatId]. The group's name is sealed,
+ * so the phone loads its invites (`GET /chats/invites`) to name it; [byName] is the inviter's display name, for the
+ * push's words when the phone is offline. Pushed.
+ */
+@Serializable
+data class InviteReceivedFrame(
+    val inviteId: UUID,
+    val chatId: ChatId,
+    val byUserId: UserId,
+    val byName: String,
+) : MessagingFrame {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "invite.received"
+    }
+}
+
+/** To the person invited: the invite went before they answered it (cancelled). Drop it from the inbox. */
+@Serializable
+data class InviteRemovedFrame(val inviteId: UUID, val chatId: ChatId) : MessagingFrame {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "invite.removed"
+    }
+}
+
+/**
+ * To a group's admins and the inviter: the group's pending invites changed (one sent, accepted, declined or
+ * cancelled). Reload `GET /chats/{chatId}/invites` if group info is open. Never pushed, and says nothing of why, so a
+ * decline never becomes a notification.
+ */
+@Serializable
+data class InvitesChangedFrame(val chatId: ChatId) : MessagingFrame {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "invites.changed"
     }
 }
 

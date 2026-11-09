@@ -94,7 +94,8 @@ data class MemberView(val profile: PublicProfile, val role: Role, val joinedAt: 
 
 /**
  * A chat as M4 to M11 answer it. [created] is set by M4 only; [notAdded] by M5 and M9, listing the people who
- * couldn't be reached, without a reason.
+ * couldn't be reached, without a reason; [invited] by M5 and M9 too, listing the people who now have an open invite
+ * (decision 2026-11-09: they join when they accept).
  */
 data class ChatView(
     val chat: Chat,
@@ -102,6 +103,7 @@ data class ChatView(
     val lastMessageId: UUID?,
     val created: Boolean? = null,
     val notAdded: List<UserId>? = null,
+    val invited: List<UserId>? = null,
 )
 
 /**
@@ -113,6 +115,8 @@ data class CreateGroupCommand(
     val sealedMeta: String,
     val memberIds: Set<UserId>,
     val requestKey: String,
+    /** The group's metadata key sealed 1:1 for the people invited, so their invite shows the name (2026-11-09). */
+    val inviteKeys: List<InviteKey> = emptyList(),
 )
 
 /** M8's change to the group photo (decision 2026-11-05); no change at all is a null [UpdateGroupCommand.avatar]. */
@@ -137,5 +141,8 @@ data class UpdateGroupCommand(
 /** M11 decided inside the version check: the chat to write (a new owner, a new version) and the rows that follow. */
 data class RoleChange(val chat: Chat, val rows: List<Member>)
 
-/** M9 decided under the chat's lock: the chat as it now is, who joined, and the events written for them. */
-data class MembersAdded(val chat: Chat, val joined: Set<UserId>, val events: List<EventEnvelope>)
+/**
+ * An accepted invite, decided under the chat's lock: the chat as it now is, the invite, and the `MemberAdded` written
+ * for the person (null when they were already in, so nothing was).
+ */
+data class InviteAccepted(val chat: Chat, val invite: Invite, val event: EventEnvelope?)

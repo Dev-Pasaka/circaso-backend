@@ -9,13 +9,17 @@ import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
+import com.circaso.messaging.data.repositories.InviteRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
 import com.circaso.messaging.data.repositories.SettingsRepositoryImpl
 import com.circaso.messaging.di.messagingDatabaseSpec
+import com.circaso.messaging.domain.models.ChatView
 import com.circaso.messaging.domain.models.CreateGroupCommand
 import com.circaso.messaging.domain.models.KeyUploadProof
+import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.RecipientCopy
+import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.SendMessageCommand
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
@@ -25,6 +29,7 @@ import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
 import com.circaso.messaging.domain.support.DeliveryNotifier
 import com.circaso.messaging.domain.support.InboxRemoval
+import com.circaso.messaging.domain.support.Invitations
 import com.circaso.messaging.domain.support.KeyProofs
 import com.circaso.messaging.domain.support.MemberRemoval
 import com.circaso.messaging.domain.support.Membership
@@ -32,10 +37,12 @@ import com.circaso.messaging.domain.support.MessageSenders
 import com.circaso.messaging.domain.support.MessagingConfig
 import com.circaso.messaging.domain.support.OrderedIds
 import com.circaso.messaging.domain.support.ReceiptBatcher
+import com.circaso.messaging.domain.usecases.AcceptInvite
 import com.circaso.messaging.domain.usecases.AckDelivered
 import com.circaso.messaging.domain.usecases.AddMembers
 import com.circaso.messaging.domain.usecases.AddOneTimeKeys
 import com.circaso.messaging.domain.usecases.CreateGroup
+import com.circaso.messaging.domain.usecases.DeclineInvite
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.LeaveGroup
@@ -79,6 +86,7 @@ class PostgresHarness(
     val clock: Clock = Clock.systemUTC()
     val transactor: Transactor = DatabaseTransactor(database)
     val chats: ChatRepository = ChatRepositoryImpl(database)
+    val invites = InviteRepositoryImpl(database)
     val keys = KeyRepositoryImpl(database)
     val delivery: DeliveryRepository = delivery(DeliveryRepositoryImpl(database, clock))
     val settings = SettingsRepositoryImpl(database)
@@ -107,9 +115,25 @@ class PostgresHarness(
     private val proofs = KeyProofs(signatures, clock, config.proofWindow)
 
     val openDirectChat = OpenDirectChat(chats, transactor, this.outbox, reach, views, bus, clock)
-    val createGroup = CreateGroup(chats, transactor, this.outbox, reach, views, chatNotifier, bus, config, clock)
-    val addMembers =
-        AddMembers(chats, transactor, this.outbox, reach, membership, views, chatNotifier, bus, config, clock)
+    private val invitations = Invitations(invites, membership, chatNotifier, FakeProfiles(), config, clock)
+    val createGroup =
+        CreateGroup(chats, invites, transactor, this.outbox, reach, views, invitations, bus, config, clock)
+    val addMembers = AddMembers(chats, transactor, reach, membership, views, invitations, config)
+    val acceptInvite =
+        AcceptInvite(
+            invites,
+            chats,
+            transactor,
+            this.outbox,
+            membership,
+            views,
+            chatNotifier,
+            invitations,
+            bus,
+            config,
+            clock,
+        )
+    val declineInvite = DeclineInvite(invites, invitations, clock)
     val removeMember = RemoveMember(removal)
     val leaveGroup = LeaveGroup(removal)
     val setRole = SetRole(chats, transactor, membership, views, chatNotifier)
@@ -152,11 +176,37 @@ class PostgresHarness(
 
     val sealed: String = Base64.getEncoder().encodeToString(ByteArray(64) { 7 })
 
-    /** A group of [owner] and [members], made in one create. */
-    suspend fun group(owner: UserId, members: Collection<UserId>): ChatId =
-        createGroup(CreateGroupCommand(owner, sealed, members.toSet(), UUID.randomUUID().toString()))
-            .data()
-            .chat.chatId
+    /**
+     * A group of [owner] and [members]. The members are seated directly (their places reserved and their rows written
+     * in one transaction, as an accept does), so a 999-member group doesn't take 998 accepts to set up; the invite
+     * path itself is tested in `InviteDataTest`.
+     */
+    suspend fun group(owner: UserId, members: Collection<UserId>): ChatId {
+        val chatId =
+            createGroup(CreateGroupCommand(owner, sealed, emptySet(), UUID.randomUUID().toString()))
+                .data()
+                .chat.chatId
+        if (members.isEmpty()) return chatId
+        transactor.run("test.seat-members") {
+            chats.reserveSeats(chatId, members.size, config.maxGroupMembers) ?: error("no room for $members")
+            val now = clock.instant()
+            chats.addMembers(members.map { Member(chatId, it, Role.MEMBER, now) })
+        }
+        membership.changed(chatId)
+        return chatId
+    }
+
+    /** M9 then each invite accepted: someone joining the group the only way there is. */
+    suspend fun addAndJoin(
+        caller: UserId,
+        chatId: ChatId,
+        person: UserId,
+    ): Resource<ChatView> {
+        val invited = addMembers(caller, chatId, setOf(person))
+        if (invited is Resource.Error) return invited
+        val invite = invites.openFor(chatId, listOf(person), clock.instant()).single()
+        return acceptInvite(person, invite.inviteId)
+    }
 
     suspend fun direct(a: UserId, b: UserId): ChatId =
         openDirectChat(a, b)

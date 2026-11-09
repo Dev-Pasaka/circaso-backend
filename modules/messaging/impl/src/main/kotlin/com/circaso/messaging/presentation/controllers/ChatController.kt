@@ -9,6 +9,7 @@ import com.circaso.messaging.presentation.dto.OpenDirectChatRequest
 import com.circaso.messaging.presentation.dto.SetRoleRequest
 import com.circaso.messaging.presentation.dto.UpdateGroupRequest
 import com.circaso.messaging.presentation.mappers.parseChatId
+import com.circaso.messaging.presentation.mappers.parseInviteKeys
 import com.circaso.messaging.presentation.mappers.parseRole
 import com.circaso.messaging.presentation.mappers.parseUserId
 import com.circaso.messaging.presentation.mappers.parseUserIds
@@ -43,6 +44,10 @@ private const val SEALED =
     "`sealedMeta` is the group's name and avatar sealed on the phone under the group metadata key, base64, at most " +
         "4 KB once decoded; the server never reads it."
 private const val NOT_ADDED = "Anyone you can't reach is left out and listed in `notAdded`, with no reason."
+private const val INVITED =
+    "The people you add are invited, not put in (2026-11-09): each gets an `invite.received` frame and push, and " +
+        "joins when they accept (M24). They are listed in `invited`, not `members`. `inviteKeys` carries the " +
+        "group's metadata key sealed 1:1 for each of them, so their invite shows the name and photo."
 
 /** Chats and membership, M4 to M11. */
 fun Route.chatController(chats: ChatService) {
@@ -89,11 +94,10 @@ fun Route.chatController(chats: ChatService) {
                 TAG,
                 listOf("messaging.group_invalid", "messaging.group_full", "request.malformed"),
                 notes =
-                    "$SCOPE $SEALED You become the owner. $NOT_ADDED At most 1,000 people, you included. Every " +
-                        "member gets one `member.added` frame listing everyone added in `userIds`. The group's id " +
-                        "comes from the `Idempotency-Key`: if a create fails part-way, retry with the same key and " +
-                        "it carries on with the same group, unless the group changed in the meantime: then it is " +
-                        "returned as it is.",
+                    "$SCOPE $SEALED You become the owner and only member. $INVITED $NOT_ADDED At most 1,000 " +
+                        "people, you included. The group's id comes from the `Idempotency-Key`: if a create fails " +
+                        "part-way, retry with the same key and it carries on with the same group, unless the group " +
+                        "changed in the meantime: then it is returned as it is.",
             )
 
             route("/{chatId}") {
@@ -155,22 +159,25 @@ private fun Route.memberRoutes(chats: ChatService) {
         val result =
             parseChatId(call.parameters["chatId"]).flatMap { chatId ->
                 parseUserIds(request.memberIds).flatMap { ids ->
-                    chats.addMembers(
-                        caller,
-                        chatId,
-                        ids,
-                    )
+                    parseInviteKeys(request.inviteKeys).flatMap { keys ->
+                        chats.addMembers(
+                            caller,
+                            chatId,
+                            ids,
+                            keys,
+                        )
+                    }
                 }
             }
         call.respondDefault(result.toDefaultResponse { it.toDto() })
     }.docs<AddMembersRequest, ChatDto>(
-        "M9 · Add people to a group",
+        "M9 · Invite people to a group",
         TAG,
         listOf("messaging.chat_not_found", "messaging.not_admin", "messaging.group_full", "request.malformed"),
         notes =
-            "$SCOPE Admins add people, or any member when `settings.membersCanAdd` is on. $NOT_ADDED People " +
-                "already in the group are skipped. A group holds at most 1,000 people. Every member gets one " +
-                "`member.added` frame listing everyone added in `userIds`.",
+            "$SCOPE Admins add people, or any member when `settings.membersCanAdd` is on. $INVITED $NOT_ADDED " +
+                "People already in the group are skipped; someone whose invite is still open keeps it. A group " +
+                "holds at most 1,000 people.",
     )
 
     delete("{userId}") {

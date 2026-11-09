@@ -26,9 +26,16 @@ class ChatViews(private val chats: ChatRepository, private val profiles: Profile
         lastMessageId: UUID?,
         created: Boolean? = null,
         notAdded: List<UserId>? = null,
+        invited: List<UserId>? = null,
     ): ChatView {
         val single = views(listOf(chat to lastMessageId)).single()
-        return single.copy(created = created, notAdded = notAdded)
+        return single.copy(created = created, notAdded = notAdded, invited = invited)
+    }
+
+    /** Public profiles of [ids], with the same fallback as members get: for invites, which aren't members. */
+    suspend fun profiles(ids: Set<UserId>): Map<UserId, PublicProfile> {
+        val found = if (ids.isEmpty()) emptyMap() else profiles.get(ids)
+        return ids.associateWith { found[it] ?: fallbackProfile(it) }
     }
 
     /** Many chats with one profile lookup for every member of all of them. */

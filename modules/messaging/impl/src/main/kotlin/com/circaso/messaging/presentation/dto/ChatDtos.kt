@@ -59,6 +59,11 @@ data class ChatDto(
      * and digest are in `sealedMeta`. Kept while it is the photo; null when the group has none.
      */
     val avatarMediaId: String? = null,
+    /**
+     * Set by `POST /chats/groups` and `POST /chats/{chatId}/members` (2026-11-09): the people who now have an open
+     * invite. They aren't in `members` until they accept.
+     */
+    val invited: List<String>? = null,
 )
 
 @Serializable
@@ -71,8 +76,19 @@ data class OpenDirectChatRequest(
     val viaSpaceId: String? = null,
 )
 
+/**
+ * The group's metadata key sealed 1:1 (as a `SENDER_KEY` copy is) by the inviter's phone for one person invited, so
+ * their invite can show the group's name and photo before they decide (2026-11-09). Base64, at most 8 KB decoded.
+ */
 @Serializable
-data class CreateGroupRequest(val sealedMeta: String, val memberIds: List<String> = emptyList())
+data class InviteKeyDto(val userId: String, val sealedKey: String)
+
+@Serializable
+data class CreateGroupRequest(
+    val sealedMeta: String,
+    val memberIds: List<String> = emptyList(),
+    val inviteKeys: List<InviteKeyDto> = emptyList(),
+)
 
 /**
  * Every field but `version` is optional; one left out stays as it is. `avatarMediaId` sets the group photo,
@@ -123,7 +139,7 @@ object AvatarFieldSerializer : KSerializer<AvatarField> {
 }
 
 @Serializable
-data class AddMembersRequest(val memberIds: List<String>)
+data class AddMembersRequest(val memberIds: List<String>, val inviteKeys: List<InviteKeyDto> = emptyList())
 
 @Serializable
 data class SetRoleRequest(

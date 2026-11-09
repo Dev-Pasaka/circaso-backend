@@ -64,7 +64,7 @@ class GroupReportsTest {
             val owner = UserId.new()
             val (amina, brian) = List(2) { UserId.new() }
             val chatId = h.group(owner, listOf(amina))
-            h.addMembers(owner, chatId, setOf(brian)).data()
+            h.addAndJoin(owner, chatId, brian).data()
 
             val members = reports.members(chatId, 10)
 
