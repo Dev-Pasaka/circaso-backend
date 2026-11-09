@@ -31,7 +31,8 @@ sealed interface MessagingFrame {
 /**
  * A message for the recipient. [ciphertext] rides along up to `MESSAGING_FRAME_CIPHERTEXT_MAX_CHARS` base64
  * characters (16 K) and is null beyond, when the phone fetches it from the inbox (M13). The gateway pushes offline
- * recipients only when [pushable].
+ * recipients only when [pushable]. [keyRequest]: a `SENDER_KEY` copy in which a phone without a group's metadata key
+ * asks the members for it (2026-11-09); the gateway wakes an offline member silently (`chat.meta_key_requested`).
  */
 @Serializable
 data class MessageNewFrame(
@@ -43,6 +44,7 @@ data class MessageNewFrame(
     val sentAt: Instant,
     val mediaIds: List<UUID> = emptyList(),
     val ciphertext: String? = null,
+    val keyRequest: Boolean = false,
 ) : MessagingFrame {
     override val type: String get() = TYPE
 

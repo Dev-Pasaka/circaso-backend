@@ -12,6 +12,8 @@ data class RecipientDto(val userId: String, val ciphertext: String)
 /**
  * M12. `ciphertext` is a group's one ciphertext; `recipients` are per-recipient copies (direct, and `SENDER_KEY` to
  * some members of a group). All ciphertext is base64. `pushable` wakes offline recipients; left out, it is false.
+ * `keyRequest` (a `SENDER_KEY` only): the copies ask for the group's metadata key, and offline recipients get a silent
+ * `chat.meta_key_requested` push so their phone answers; left out, it is false.
  */
 @Serializable
 data class SendChatMessageRequest(
@@ -22,6 +24,7 @@ data class SendChatMessageRequest(
     val recipients: List<RecipientDto> = emptyList(),
     val mediaIds: List<String> = emptyList(),
     val pushable: Boolean = false,
+    val keyRequest: Boolean = false,
 )
 
 @Serializable

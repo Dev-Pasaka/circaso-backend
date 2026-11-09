@@ -30,12 +30,14 @@ class DeliveryNotifier(
 ) {
     /**
      * [message] is one recipient's row, or a group's pointer with the group ciphertext filled in: the same frame
-     * goes to every one of [recipients]. The gateway pushes the offline ones when [pushable] (Frame data).
+     * goes to every one of [recipients]. The gateway pushes the offline ones when [pushable] (Frame data), and
+     * wakes them silently when [keyRequest] (a member's phone asks for the group's metadata key).
      */
     suspend fun newMessage(
         recipients: Collection<UserId>,
         message: InboxMessage,
         pushable: Boolean,
+        keyRequest: Boolean = false,
     ) {
         if (recipients.isEmpty()) return
         val fits = message.ciphertext?.let { it.length <= config.frameCiphertextMaxChars } ?: false
@@ -49,6 +51,7 @@ class DeliveryNotifier(
                 sentAt = message.sentAt,
                 mediaIds = message.mediaIds,
                 ciphertext = message.ciphertext.takeIf { fits },
+                keyRequest = keyRequest,
             )
         live.send(recipients, frame)
     }

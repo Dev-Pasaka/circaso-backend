@@ -465,10 +465,30 @@ class GatewayRealtime(
      * the inbox, decrypts it and words the notification itself; the text here shows only if it can't.
      */
     private fun newMessagePush(frame: MessageNewFrame): PushMessage? {
+        if (frame.keyRequest) return metaKeyRequestPush(frame)
         if (!frame.pushable) return null
         val ids = PushPayload(chatId = frame.chatId.toString(), messageId = frame.messageId.toString())
         return PushMessage("Circaso", NEW_MESSAGE, ids, dataOnly = true)
     }
+
+    /**
+     * Silent (2026-11-09): a member's new phone can't read the group's name and photo and asked for the group's
+     * metadata key in a sender-key copy. The phone pulls its inbox and answers (with the key, or that it has none),
+     * showing nothing. Without it the request waited until the member opened Circaso, and the new phone showed the
+     * group as "Group" with no photo. Lives an hour, like the moments key request: the asker asks again after that.
+     */
+    private fun metaKeyRequestPush(frame: MessageNewFrame): PushMessage =
+        PushMessage(
+            "Circaso",
+            "",
+            PushPayload(
+                kind = META_KEY_REQUESTED_KIND,
+                chatId = frame.chatId.toString(),
+                userId = frame.senderId.toString(),
+            ),
+            silent = true,
+            ttlSeconds = KEY_REQUEST_TTL_SECONDS,
+        )
 
     /**
      * Only the people added are woken (`userIds` in the frame, one frame per action, decision 2026-10-26); the other
@@ -648,6 +668,9 @@ private const val MOMENT_LOVED_KIND = "moment.loved"
 /** Someone's new phone asked for keys to my moments: a silent push, `userId` the requester. */
 private const val MOMENT_KEYS_REQUESTED_KIND = "moment.keys_requested"
 private const val KEY_REQUEST_TTL_SECONDS = 3_600L
+
+/** A member's new phone asked for a group's metadata key: a silent push, `chatId` and `userId` the asker. */
+private const val META_KEY_REQUESTED_KIND = "chat.meta_key_requested"
 private const val MONEY_SOUND = "money_received.wav"
 
 /** A space post's push shows at most this much of its text. */

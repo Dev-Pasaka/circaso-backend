@@ -268,6 +268,40 @@ class DeliveryTest {
         }
 
     @Test
+    fun `a sender key copy marked as a key request says so in its frame, and never wakes like a message`() =
+        runBlocking<Unit> {
+            val group = h.group(amina, listOf(brian, chidi))
+
+            val ask =
+                command(
+                    amina,
+                    group,
+                    MessageKind.SENDER_KEY,
+                    recipients = listOf(RecipientCopy(brian, cipher(10)), RecipientCopy(chidi, cipher(20))),
+                ).copy(keyRequest = true)
+            h.sendMessage(ask).data()
+            h.settle()
+
+            val frames = h.live.of("message.new").map { it.data<MessageNewFrame>() }
+            assertEquals(2, frames.size)
+            assertTrue(frames.all { it.keyRequest && !it.pushable })
+        }
+
+    @Test
+    fun `only a sender key copy can be a key request`() =
+        runBlocking<Unit> {
+            val group = h.group(amina, listOf(brian))
+
+            h
+                .sendMessage(
+                    command(amina, group, MessageKind.MESSAGE, ciphertext = cipher()).copy(keyRequest = true),
+                ).data()
+            h.settle()
+
+            assertTrue(h.live.of("message.new").none { it.data<MessageNewFrame>().keyRequest })
+        }
+
+    @Test
     fun `control messages never wake anyone, whatever the phone asked`() =
         runBlocking<Unit> {
             val group = h.group(amina, listOf(brian))

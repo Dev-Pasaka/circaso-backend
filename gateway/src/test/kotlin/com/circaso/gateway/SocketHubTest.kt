@@ -1459,6 +1459,59 @@ class SocketHubTest {
         }
 
     @Test
+    fun `a group key request wakes offline members silently with the chat and the asker, online ones get the frame`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
+            val asker = UserId.new()
+            val members = List(2) { UserId.new() }
+
+            realtime.deliverMany(
+                members,
+                typed(
+                    MessageNewFrame.TYPE,
+                    MessageNewFrame.serializer(),
+                    MessageNewFrame(
+                        messageId,
+                        chat,
+                        asker,
+                        MessageKind.SENDER_KEY,
+                        sentAt = Instant.now(),
+                        keyRequest = true,
+                    ),
+                ),
+            )
+
+            assertEquals(members.map { "token-$it" }.toSet(), push.sent.map { it.first.token }.toSet())
+            push.sent.map { it.second }.forEach { sent ->
+                assertTrue(sent.silent, "nothing is shown: the phone only answers with the key")
+                assertEquals("chat.meta_key_requested", sent.data.kind)
+                assertEquals(chat.toString(), sent.data.chatId)
+                assertEquals(asker.toString(), sent.data.userId)
+                assertEquals(3_600L, sent.ttlSeconds)
+            }
+        }
+
+    @Test
+    fun `a sender key copy that is not a key request still wakes nobody`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
+
+            realtime.deliverMany(
+                List(2) { UserId.new() },
+                typed(
+                    MessageNewFrame.TYPE,
+                    MessageNewFrame.serializer(),
+                    MessageNewFrame(messageId, chat, UserId.new(), MessageKind.SENDER_KEY, sentAt = Instant.now()),
+                ),
+            )
+
+            assertTrue(push.sent.isEmpty())
+        }
+
+    @Test
     fun `space pushes - post text only for public spaces, and money into a space wallet names the space`() =
         runBlocking {
             val push = RecordingPush()
