@@ -89,6 +89,31 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
                 ?.let { withParticipants(it) }
         }
 
+    override suspend fun liveFor(userId: UserId): List<Call> =
+        database.tx("calls.live-for") {
+            // the calls that haven't ended are few (the partial index), then one primary-key probe for the person
+            val live =
+                CallsTable
+                    .selectAll()
+                    .where { CallsTable.state neq CallState.ENDED.name }
+                    .map { it[CallsTable.callId] }
+                    .toList()
+            if (live.isEmpty()) return@tx emptyList()
+            val mine =
+                ParticipantsTable
+                    .selectAll()
+                    .where { (ParticipantsTable.callId inList live) and (ParticipantsTable.userId eq userId.value) }
+                    .map { it[ParticipantsTable.callId] }
+                    .toList()
+            if (mine.isEmpty()) return@tx emptyList()
+            CallsTable
+                .selectAll()
+                .where { (CallsTable.callId inList mine) and (CallsTable.state neq CallState.ENDED.name) }
+                .map { it }
+                .toList()
+                .map { withParticipants(it) }
+        }
+
     override suspend fun save(before: Call, after: Call) {
         database.tx("calls.save") {
             CallsTable.update({ CallsTable.callId eq after.callId.value }) {
