@@ -50,7 +50,9 @@ object CallRules {
             }
 
             CallState.ACTIVE -> {
-                if (call.joined.size < 2) end(call, EndReason.COMPLETED, now) else call
+                // A direct call needs both people; a group call goes on while anyone is still in it (Pasaka 2026-11-09).
+                val over = if (call.isGroup) call.joined.isEmpty() else call.joined.size < 2
+                if (over) end(call, EndReason.COMPLETED, now) else call
             }
 
             CallState.RINGING -> {
@@ -63,7 +65,7 @@ object CallRules {
      * [userId] hung up. The caller hanging up before anyone answered cancels the call. A direct call ends for both
      * the moment either person hangs up (2026-11-09): there is nobody else to talk to, and before this a callee who
      * answered and hung up while the caller's own join was still on its way left the call ringing the caller alone.
-     * A group call goes on while two people are still in it.
+     * A group call goes on while anyone is still in it, and ends when the last person leaves (Pasaka 2026-11-09).
      */
     fun leave(
         call: Call,

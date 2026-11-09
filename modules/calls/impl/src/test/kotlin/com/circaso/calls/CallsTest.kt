@@ -495,7 +495,7 @@ class CallsTest {
         }
 
     @Test
-    fun `the call ends when fewer than two are left, and a member can rejoin a group call meanwhile`() =
+    fun `a group call goes on while anyone is in it, ends when the last person leaves, and a member can rejoin meanwhile`() =
         runTest {
             val h = Harness()
             val call = h.call(h.group)
@@ -511,7 +511,11 @@ class CallsTest {
 
             h.joined(call, h.otieno)
             success(h.leave(h.otieno, call.callId))
-            val ended = success(h.leave(h.achieng, call.callId))
+            val alone = success(h.leave(h.achieng, call.callId))
+            assertEquals(CallState.ACTIVE, alone.call.state, "one person is still on the call")
+            assertEquals(0, h.bus.published.size)
+
+            val ended = success(h.leave(h.wanjiru, call.callId))
 
             assertEquals(CallState.ENDED, ended.call.state)
             assertEquals(EndReason.COMPLETED, ended.call.endReason)
@@ -644,6 +648,8 @@ class CallsTest {
             assertEquals(8, h.stored(call).joined.size)
 
             people.take(7).forEach { h.leave(it, call.callId) }
+            assertEquals(1, h.stored(call).joined.size, "a group call goes on with one person")
+            h.leave(people[7], call.callId)
             assertEquals(CallsError.CallEnded, failure(h.join(ninth)))
         }
 
