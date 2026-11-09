@@ -121,6 +121,16 @@ class CloudflareRealtime(
         ) { answer ->
             // Cloudflare may leave a pulled track's sessionId out of its answer; the name we asked for identifies it.
             val askedFrom = tracks.associate { it.trackName to it.sessionId }
+            // A pull answers 200 even when single tracks fail (a video with no media yet is `empty_track_error`); say
+            // which, or a missing picture leaves no trace (2026-11-09).
+            answer.tracks.filter { it.errorCode != null }.forEach { track ->
+                log.warn(
+                    "cloudflare realtime: operation=pull_tracks track={} error={} description={}",
+                    track.trackName?.substringBefore('-'),
+                    track.errorCode,
+                    track.errorDescription,
+                )
+            }
             val pulled =
                 answer.tracks.mapNotNull { track ->
                     val name = track.trackName ?: return@mapNotNull null
@@ -344,6 +354,7 @@ private data class TrackAnswer(
     val sessionId: String? = null,
     val trackName: String? = null,
     val errorCode: String? = null,
+    val errorDescription: String? = null,
 )
 
 @Serializable
