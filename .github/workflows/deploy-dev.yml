@@ -75,10 +75,10 @@ jobs:
       - uses: actions/checkout@v4
       - id: ref
         run: echo "image=${{ vars.DOCKERHUB_USERNAME }}/${DOCS_IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          # An exact version is one download; "latest" also asks for the newest release, which failed with 504 (2026-11-09).
-          bun-version: 1.4.0
+      # Bun from npm, not setup-bun: GitHub's release downloads returned 504 to runners for hours (2026-11-09) and
+      # blocked deploys. npm serves the same binary from its own CDN.
+      - name: Install Bun
+        run: npm install -g bun@1.4.0 && bun --version
       - run: bun run build.ts
         working-directory: docs-ui
       - uses: docker/setup-buildx-action@v3
