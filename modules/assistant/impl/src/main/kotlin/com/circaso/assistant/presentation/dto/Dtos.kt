@@ -18,7 +18,15 @@ data class SendMessageRequest(
     val currency: String? = null,
     /** The conversation to ask in (C1, C2); without it, the user's most recent one, or a new one if they have none. */
     val conversationId: String? = null,
+    /** The app screen the user asked from (Asha's bubble, 2026-11-09), for example `Wallet › Send`; at most 80 chars. */
+    val screen: String? = null,
+    /** A picture of the user's app screen for this question only; read by the model, never stored. */
+    val image: ImageDto? = null,
 )
+
+/** A picture: [data] is its bytes in base64, [mediaType] `image/jpeg`, `image/png` or `image/webp`. */
+@Serializable
+data class ImageDto(val mediaType: String, val data: String)
 
 @Serializable
 data class ReadNoteDto(val chatIds: List<String>, val chatNames: List<String> = emptyList(), val messageCount: Int)

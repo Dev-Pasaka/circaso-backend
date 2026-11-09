@@ -9,6 +9,7 @@ import com.circaso.assistant.domain.models.Conversation
 import com.circaso.assistant.domain.models.ConversationPage
 import com.circaso.assistant.domain.models.DeviceToolResult
 import com.circaso.assistant.domain.models.TurnCommand
+import com.circaso.assistant.domain.models.TurnImage
 import com.circaso.assistant.domain.models.TurnResult
 import com.circaso.assistant.domain.models.Usage
 import com.circaso.assistant.domain.models.VoiceClip
@@ -19,6 +20,7 @@ import com.circaso.assistant.presentation.dto.ChatResponse
 import com.circaso.assistant.presentation.dto.ConversationDto
 import com.circaso.assistant.presentation.dto.ConversationsResponse
 import com.circaso.assistant.presentation.dto.DoneEvent
+import com.circaso.assistant.presentation.dto.ImageDto
 import com.circaso.assistant.presentation.dto.ReadNoteDto
 import com.circaso.assistant.presentation.dto.SendMessageRequest
 import com.circaso.assistant.presentation.dto.ToolResultsRequest
@@ -32,6 +34,7 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.util.Base64
 import java.util.Currency
 import java.util.UUID
 
@@ -50,6 +53,13 @@ fun SendMessageRequest.toCommand(
         conversationId?.let {
             parseUuid(it) ?: return Resource.error(SharedError.Malformed("conversationId", "is not valid"))
         }
+    val picture =
+        image?.let {
+            when (val r = it.toTurnImage()) {
+                is Resource.Success -> r.data
+                is Resource.Error -> return r
+            }
+        }
     return Resource.success(
         TurnCommand(
             userId,
@@ -62,9 +72,75 @@ fun SendMessageRequest.toCommand(
             requestId,
             currency = code,
             conversationId = conversation,
+            screen = screenNameOf(screen),
+            image = picture,
         ),
     )
 }
+
+/** The largest picture a question may carry, decoded (the app sends a JPEG of at most 1280 px, about 100–300 KB). */
+const val MAX_IMAGE_BYTES = 1_500_000
+
+/** The longest screen name kept; longer is cut. */
+const val MAX_SCREEN_CHARS = 80
+
+private val IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+
+/**
+ * A screen name as the model may read it: one short line, no brackets or control characters (it goes inside the
+ * question's "[The user is on: …]" note), or null when nothing is left.
+ */
+fun screenNameOf(raw: String?): String? =
+    raw
+        ?.filter { !it.isISOControl() && it != '[' && it != ']' }
+        ?.replace(Regex("\\s+"), " ")
+        ?.trim()
+        ?.take(MAX_SCREEN_CHARS)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+/** A picture from the app: a known type, real base64, within [MAX_IMAGE_BYTES], and bytes that are that type. */
+fun ImageDto.toTurnImage(): Resource<TurnImage> {
+    val type = mediaType.trim().lowercase()
+    if (type !in IMAGE_TYPES) {
+        return Resource.error(SharedError.Malformed("image.mediaType", "must be image/jpeg, image/png or image/webp"))
+    }
+    // Base64 is 4 characters for 3 bytes: refuse an oversized one before decoding it.
+    if (data.length > (MAX_IMAGE_BYTES / 3 + 1) * 4 + 4) {
+        return Resource.error(SharedError.Malformed("image", "is larger than $MAX_IMAGE_BYTES bytes"))
+    }
+    val bytes =
+        try {
+            Base64.getMimeDecoder().decode(data)
+        } catch (e: IllegalArgumentException) {
+            return Resource.error(SharedError.Malformed("image.data", "is not base64"))
+        }
+    if (bytes.isEmpty() || bytes.size > MAX_IMAGE_BYTES) {
+        return Resource.error(SharedError.Malformed("image", "must be 1 to $MAX_IMAGE_BYTES bytes"))
+    }
+    if (!looksLike(type, bytes)) return Resource.error(SharedError.Malformed("image.data", "is not a $type picture"))
+    return Resource.success(TurnImage(bytes, type))
+}
+
+/** The format's magic bytes, so what reaches the model is the picture it says it is. */
+private fun looksLike(type: String, b: ByteArray): Boolean =
+    when (type) {
+        "image/jpeg" -> {
+            b.size > 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() && b[2] == 0xFF.toByte()
+        }
+
+        "image/png" -> {
+            b.size > 8 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte() && b[2] == 'N'.code.toByte()
+        }
+
+        "image/webp" -> {
+            b.size > 12 && String(b, 0, 4, Charsets.US_ASCII) == "RIFF" && String(b, 8, 4, Charsets.US_ASCII) == "WEBP"
+        }
+
+        else -> {
+            false
+        }
+    }
 
 /** The ISO 4217 codes the JDK knows. */
 private val CURRENCIES: Set<String> = Currency.getAvailableCurrencies().map { it.currencyCode }.toSet()

@@ -4,6 +4,8 @@ import ai.koog.prompt.Prompt
 import ai.koog.prompt.executor.clients.anthropic.AnthropicCacheControl
 import ai.koog.prompt.executor.clients.anthropic.AnthropicParams
 import ai.koog.prompt.executor.clients.anthropic.models.AnthropicThinking
+import ai.koog.prompt.message.AttachmentContent
+import ai.koog.prompt.message.AttachmentSource
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.RequestMetaInfo
@@ -26,6 +28,7 @@ import kotlinx.serialization.json.Json
  * - Thinking is off ([AnthropicThinking.Disabled]): Koog 1.3.0 doesn't stream a thinking block's signature, and our
  *   conversation can't carry one through a tool round trip or a pause for the phone. Effort is the dial instead,
  *   sent as `output_config.effort`, which Koog doesn't model, through its additional properties.
+ * - A user message's pictures (Asha's "Show Asha my screen", 2026-11-09) go as image blocks before its text.
  * - The request also asks Anthropic to cache the conversation itself (top-level `cache_control`), so the second step of
  *   a tool loop, and the next turn, read what was already sent.
  */
@@ -75,7 +78,7 @@ internal object AnthropicPrompts {
 
                 is ModelMessage.User -> {
                     flushResults()
-                    out += Message.User(message.text, RequestMetaInfo.Empty)
+                    out += user(message)
                 }
 
                 is ModelMessage.Assistant -> {
@@ -87,6 +90,25 @@ internal object AnthropicPrompts {
         flushResults()
         return out
     }
+
+    /** A user's message; its pictures go first, then the text, as Anthropic recommends for vision. */
+    private fun user(message: ModelMessage.User): Message.User =
+        if (message.images.isEmpty()) {
+            Message.User(message.text, RequestMetaInfo.Empty)
+        } else {
+            val parts: List<MessagePart.RequestPart> =
+                message.images.map { image ->
+                    MessagePart.Attachment(
+                        AttachmentSource.Image(
+                            content = AttachmentContent.Binary.Bytes(image.bytes),
+                            format = image.mediaType.substringAfter('/'),
+                            mimeType = image.mediaType,
+                            fileName = "screen." + image.mediaType.substringAfter('/'),
+                        ),
+                    )
+                } + MessagePart.Text(message.text)
+            Message.User(parts, RequestMetaInfo.Empty)
+        }
 
     private fun assistant(message: ModelMessage.Assistant): Message.Assistant? {
         val parts =

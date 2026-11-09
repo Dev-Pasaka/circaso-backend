@@ -186,13 +186,21 @@ class AshaPromptTest {
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-08-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-09-v1", AshaPrompt.VERSION)
     }
 
     @Test
     fun `the sections are these, in this order, and each mode is shown only its own way of answering`() {
         val shared =
-            listOf("# Who you are", "# What you can see", "# What you never do", "# Money, exactly", "# How you work")
+            listOf(
+                "# Who you are",
+                "# What you can see",
+                "# What you never do",
+                "# Money, exactly",
+                "# How you work",
+                "# Showing how Circaso works",
+                "# The app guide",
+            )
         assertEquals(
             shared + listOf("# How you answer in a text chat", "# This conversation"),
             text.lines().filter { it.startsWith("# ") },
