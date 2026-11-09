@@ -495,7 +495,7 @@ class CallsTest {
         }
 
     @Test
-    fun `a group call goes on while anyone is in it, ends when the last person leaves, and a member can rejoin meanwhile`() =
+    fun `a group call goes on while anyone is in it and ends when the last person leaves`() =
         runTest {
             val h = Harness()
             val call = h.call(h.group)
