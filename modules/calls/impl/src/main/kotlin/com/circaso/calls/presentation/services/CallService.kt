@@ -2,6 +2,7 @@ package com.circaso.calls.presentation.services
 
 import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.models.CallView
+import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
 import com.circaso.calls.domain.models.MediaCommand
@@ -15,13 +16,14 @@ import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
+import com.circaso.calls.domain.usecases.ReportConnected
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
-/** CL1 to CL8: start, look up, join, pull, renegotiate, decline, leave and mute. */
+/** CL1 to CL9: start, look up, join, say connected, pull, renegotiate, decline, ring, leave and mute. */
 class CallService(
     private val startCall: StartCall,
     private val getCall: GetCall,
@@ -33,6 +35,7 @@ class CallService(
     private val ringAgain: com.circaso.calls.domain.usecases.RingAgain,
     private val leaveCall: LeaveCall,
     private val setMedia: SetMedia,
+    private val reportConnected: ReportConnected,
 ) {
     suspend fun start(
         userId: UserId,
@@ -45,6 +48,8 @@ class CallService(
     suspend fun live(userId: UserId, chatId: ChatId): Resource<CallView> = getLiveCall(userId, chatId)
 
     suspend fun join(command: JoinCommand): Resource<Joined> = joinCall(command)
+
+    suspend fun connected(command: ConnectedCommand): Resource<Unit> = reportConnected(command)
 
     suspend fun pull(command: PullCommand): Resource<Pulled> = pullTracks(command)
 

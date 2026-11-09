@@ -190,4 +190,21 @@ class CloudflareRealtimeTest {
             withTurn.iceServers()
             assertEquals(asked, clients.requests.size, "credentials are reused until they near their expiry")
         }
+
+    @Test
+    fun `closing a session that is already gone (410, 404) is done, not refused`() =
+        runBlocking<Unit> {
+            reply = """{"errorCode":"session_gone"}"""
+            for (code in listOf(410, 404)) {
+                status = code
+                assertIs<Resource.Success<Unit>>(media.closeTracks("s1", listOf("0")))
+            }
+            status = 400
+            assertIs<IntegrationError.Rejected>(assertIs<Resource.Error>(media.closeTracks("s1", listOf("0"))).error)
+            status = 410
+            assertIs<IntegrationError.Rejected>(
+                assertIs<Resource.Error>(media.pushTracks("s1", "v=0", emptyList())).error,
+                "only a close takes 410 as done",
+            )
+        }
 }

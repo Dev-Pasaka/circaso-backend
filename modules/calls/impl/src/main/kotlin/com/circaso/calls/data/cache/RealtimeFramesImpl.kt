@@ -2,6 +2,7 @@ package com.circaso.calls.data.cache
 
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.CallParticipantSnapshot
+import com.circaso.calls.api.CallRingStoppedFrame
 import com.circaso.calls.api.CallRingingFrame
 import com.circaso.calls.api.CallSnapshot
 import com.circaso.calls.api.CallTrackSnapshot
@@ -130,6 +131,17 @@ internal fun CallFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ts,
             )
         }
+
+        is CallFrame.RingStopped -> {
+            RealtimeEnvelope.of(
+                CallFrames.MODULE,
+                CallFrames.RING_STOPPED,
+                seq,
+                CallRingStoppedFrame(callId, chatId, reason),
+                CallRingStoppedFrame.serializer(),
+                ts,
+            )
+        }
     }
 
 /** The call in the shape of `calls:api`'s [CallSnapshot]; sessions and mids stay on the server. */
@@ -157,6 +169,7 @@ internal fun CallView.toSnapshot(): CallSnapshot =
                     connection =
                         com.circaso.calls.domain.support.Connection
                             .tag(participant.sessionId),
+                    connected = participant.isConnected,
                 )
             },
         iceServers = iceServers.map { IceServerSnapshot(it.urls, it.username, it.credential) },

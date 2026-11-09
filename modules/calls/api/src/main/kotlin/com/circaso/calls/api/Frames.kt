@@ -13,7 +13,18 @@ object CallFrames {
     const val RINGING = "call.ringing"
     const val UPDATED = "call.updated"
     const val ENDED = "call.ended"
+    const val RING_STOPPED = "call.ring_stopped"
 }
+
+/**
+ * `calls/call.ring_stopped`, once, to each person whose ring stopped without them answering or declining it
+ * (2026-11-09): the caller hung up, the call ended, or their 45 seconds ran out while a group call went on. The
+ * gateway turns it into an "ended" VoIP push for an iPhone, so CallKit stops ringing on a phone whose app is
+ * suspended and whose socket is gone. [reason] is `CANCELLED`, `MISSED`, `DECLINED` or `COMPLETED` (the call ended
+ * that way) or `MISSED` (the ring ran out in a call that goes on).
+ */
+@Serializable
+data class CallRingStoppedFrame(val callId: CallId, val chatId: ChatId, val reason: String)
 
 /**
  * `calls/call.ringing`, to each person invited: someone is calling in the chat. Pushed data-only and high priority
@@ -65,6 +76,8 @@ data class CallParticipantSnapshot(
     val joinedAt: String? = null,
     /** Changes every time this person (re)joins: pull their tracks again when it does. */
     val connection: String? = null,
+    /** Their phone's SFU connection is up under [connection] (CL3b): their tracks are ready to pull. */
+    val connected: Boolean = false,
 )
 
 @Serializable

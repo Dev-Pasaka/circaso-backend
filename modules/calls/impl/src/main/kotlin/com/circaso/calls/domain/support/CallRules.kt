@@ -50,7 +50,9 @@ object CallRules {
             }
 
             CallState.ACTIVE -> {
-                if (call.joined.size < 2) end(call, EndReason.COMPLETED, now) else call
+                // A direct call needs both people; a group call goes on while anyone is still in it (Pasaka 2026-11-09).
+                val over = if (call.isGroup) call.joined.isEmpty() else call.joined.size < 2
+                if (over) end(call, EndReason.COMPLETED, now) else call
             }
 
             CallState.RINGING -> {
@@ -60,8 +62,10 @@ object CallRules {
         }
 
     /**
-     * [userId] hung up. The caller hanging up before anyone answered cancels the call; otherwise the call goes on
-     * while two people are still in it.
+     * [userId] hung up. The caller hanging up before anyone answered cancels the call. A direct call ends for both
+     * the moment either person hangs up (2026-11-09): there is nobody else to talk to, and before this a callee who
+     * answered and hung up while the caller's own join was still on its way left the call ringing the caller alone.
+     * A group call goes on while anyone is still in it, and ends when the last person leaves (Pasaka 2026-11-09).
      */
     fun leave(
         call: Call,
@@ -73,15 +77,20 @@ object CallRules {
             return end(call, EndReason.CANCELLED, now)
         }
         val gone = call.withParticipant(userId, now) { it.moved(ParticipantState.LEFT, now) }
+        if (!call.isGroup) {
+            // the callee hanging up a call they never answered is turning it down
+            val unanswered = nobodyAnswered && call.participant(userId)?.joinedAt == null
+            return end(gone, if (unanswered) EndReason.DECLINED else EndReason.COMPLETED, now)
+        }
         return settle(gone, now)
     }
 
-    /** The person's row with a new state; leaving drops their session and tracks. */
+    /** The person's row with a new state; leaving drops their session, its tracks and its connection. */
     fun Participant.moved(state: ParticipantState, now: Instant): Participant =
         if (state == ParticipantState.JOINED) {
             copy(state = state, updatedAt = now)
         } else {
-            copy(state = state, sessionId = null, tracks = emptyList(), updatedAt = now)
+            copy(state = state, sessionId = null, tracks = emptyList(), connectedAt = null, updatedAt = now)
         }
 
     /** Replaces [userId]'s row (or adds it, for a member who wasn't rung) with what [change] makes of it. */

@@ -639,7 +639,17 @@ private fun cloudflareRealtime(
     return CloudflareRealtime(
         appId = config.requireString("cloudflare.realtime-app-id"),
         appToken = secrets.require("cloudflare.realtime-app-token"),
-        http = clients.named("cloudflare-realtime") { baseUrl = "https://rtc.live.cloudflare.com" },
+        http =
+            clients.named("cloudflare-realtime") {
+                baseUrl = "https://rtc.live.cloudflare.com"
+                // Stated, not defaulted (2026-11-09). Cloudflare answers in well under a second, except that it may
+                // hold a pull (tracks/new) about 9 s while the publisher connects: a request timeout under that would
+                // abandon operations the SFU still completes. Only a push, a pull and a renegotiation are on a phone's
+                // request; closes run after the answer (calls' CallNotices). A POST is never retried (no
+                // idempotency key), so the worst case on a request is one 12 s wait.
+                connectTimeout = Duration.ofSeconds(3)
+                requestTimeout = Duration.ofSeconds(12)
+            },
         turn = turn,
     )
 }

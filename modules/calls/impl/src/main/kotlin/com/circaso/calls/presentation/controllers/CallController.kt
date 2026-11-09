@@ -3,6 +3,7 @@ package com.circaso.calls.presentation.controllers
 import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.models.CallView
 import com.circaso.calls.presentation.dto.CallResponse
+import com.circaso.calls.presentation.dto.ConnectedRequest
 import com.circaso.calls.presentation.dto.EmptyResponse
 import com.circaso.calls.presentation.dto.JoinRequest
 import com.circaso.calls.presentation.dto.JoinResponse
@@ -63,11 +64,13 @@ fun Route.callController(calls: CallService) {
             }.docs<StartCallRequest, CallResponse>(
                 "CL1 · Call a chat",
                 TAG,
-                listOf(MEMBER, "calls.already_in_call", MALFORMED),
+                listOf(MEMBER, MALFORMED),
                 notes =
                     "$SCOPE $IDEMPOTENT Everyone else in the chat is rung: `calls/call.ringing`, pushed data-only " +
                         "and high priority to a phone without a socket. The caller then joins with CL3. A chat " +
-                        "with a call ringing or active answers `calls.already_in_call` (409): join that one (CL2).",
+                        "with a call ringing or active answers that call (its `callId`, `startedBy` someone else " +
+                        "perhaps) and rings nobody: join it with CL3. Two people calling each other at once end up " +
+                        "in one call.",
             )
 
             route("/{callId}") {
@@ -100,6 +103,24 @@ fun Route.callController(calls: CallService) {
                             "At most 8 people at once. Joining again replaces your earlier session.",
                 )
 
+                post("connected") {
+                    val userId = call.principal().userId
+                    val result =
+                        callIdOf(call.parameters["callId"]).flatMap { callId ->
+                            call.receive<ConnectedRequest>().toCommand(userId, callId).flatMap { calls.connected(it) }
+                        }
+                    call.respondDefault(result.map { EmptyResponse }.toDefaultResponse { it })
+                }.docs<ConnectedRequest, EmptyResponse>(
+                    "CL3b · Say the phone's connection is up",
+                    TAG,
+                    listOf(NOT_FOUND, ENDED, NOT_IN_CALL, SESSION, MALFORMED),
+                    notes =
+                        "$SCOPE $IDEMPOTENT When the peer connection of this `sessionId` first turns `connected`. " +
+                            "Everyone gets `calls/call.updated` with `connected: true` on your tile, and pulls you " +
+                            "(CL4) then: the SFU holds a pull of tracks whose publisher isn't connected yet for " +
+                            "about 9 seconds. Saying it twice changes nothing.",
+                )
+
                 post("pull") {
                     val userId = call.principal().userId
                     val result =
@@ -115,7 +136,8 @@ fun Route.callController(calls: CallService) {
                         "$SCOPE Name tracks by `userId` and `trackName` (from the call's participants); the " +
                             "server finds their sessions. A track not available is left out of `tracks`. When " +
                             "`requiresRenegotiation`, set `offer` as the remote description and send the answer " +
-                            "with CL5.",
+                            "with CL5. Pull a person once your own connection is up and their tile says " +
+                            "`connected` (CL3b); before that the SFU holds the request for about 9 seconds.",
                 )
 
                 post("renegotiate") {
@@ -166,9 +188,11 @@ fun Route.callController(calls: CallService) {
                     TAG,
                     listOf(NOT_FOUND, MALFORMED),
                     notes =
-                        "$SCOPE $IDEMPOTENT Your tracks are closed at the SFU. The caller hanging up before anyone " +
-                            "answered cancels the call (`CANCELLED`); otherwise it ends (`COMPLETED`) when fewer " +
-                            "than two people are left. Everyone gets `calls/call.ended` with the final call.",
+                        "$SCOPE $IDEMPOTENT Answers at once; your tracks are closed at the SFU afterwards. The " +
+                            "caller hanging up before anyone answered cancels the call (`CANCELLED`). A direct call " +
+                            "ends for both as soon as either hangs up (`COMPLETED`, or `DECLINED` when the callee " +
+                            "hangs up unanswered); a group call ends when fewer than two people are left. Everyone " +
+                            "gets `calls/call.ended` with the final call.",
                 )
 
                 post("media") {

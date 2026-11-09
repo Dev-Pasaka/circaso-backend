@@ -82,6 +82,8 @@ class JoinCall(
                     // turn into video without renegotiating. The camera starts on only in a video call; CL8 changes it.
                     video = call.kind == CallKind.VIDEO && tracks.any { it.kind == VIDEO },
                     joinedAt = participant.joinedAt ?: now,
+                    // a new session connects from scratch: others wait for CL3b again before pulling it
+                    connectedAt = null,
                 )
             }
         val becameActive = withMe.state == CallState.RINGING && withMe.joined.size >= 2

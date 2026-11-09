@@ -30,8 +30,14 @@ data class Participant(
     val video: Boolean,
     val joinedAt: Instant?,
     val updatedAt: Instant,
+    /**
+     * When their phone said its connection to the SFU under [sessionId] is up (CL3b); null while it connects. Others
+     * pull this person's tracks once it is set: the SFU holds a pull of a publisher that isn't connected yet.
+     */
+    val connectedAt: Instant? = null,
 ) {
     val isJoined: Boolean get() = state == ParticipantState.JOINED
+    val isConnected: Boolean get() = isJoined && connectedAt != null
 }
 
 /**
@@ -100,6 +106,9 @@ data class RenegotiateCommand(
     val sessionId: String,
     val answerSdp: String,
 )
+
+/** CL3b: the phone's connection to the SFU under [sessionId] is up. */
+data class ConnectedCommand(val userId: UserId, val callId: CallId, val sessionId: String)
 
 data class MediaCommand(
     val userId: UserId,

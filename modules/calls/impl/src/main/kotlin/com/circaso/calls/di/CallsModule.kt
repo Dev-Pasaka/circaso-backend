@@ -31,6 +31,7 @@ import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReplayFrames
+import com.circaso.calls.domain.usecases.ReportConnected
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
 import com.circaso.calls.presentation.api.CallsImpl
@@ -45,9 +46,14 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.shared.RealtimeModule
 import com.circaso.web.RouteContributor
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 
@@ -98,7 +104,7 @@ fun callsModule(config: Config): Module =
         // domain
         single { People(get(), get()) }
         single { CallViews(get(), get()) }
-        single { CallNotices(get(), get(), get(), get()) }
+        single { CallNotices(get(), get(), get(), get(), backgroundScope()) }
         single { CallChanges(get(), get(), get(), get(), get()) }
         single { Sessions(get()) }
         single { StartCall(get(), get(), get(), get(), clock) }
@@ -115,11 +121,12 @@ fun callsModule(config: Config): Module =
         }
         single { LeaveCall(get(), get(), clock) }
         single { SetMedia(get(), clock) }
+        single { ReportConnected(get(), clock) }
         single { ExpireRings(get(), get(), clock) }
         single { ReplayFrames(get()) }
 
         // presentation
-        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CallEventsService(get(), get(), get()) }
         single<RouteContributor>(named("calls.routes")) {
             val calls = get<CallService>()
@@ -128,3 +135,13 @@ fun callsModule(config: Config): Module =
         single<Calls> { CallsImpl(get()) }
         single(named("calls.replay")) { RealtimeModule(CallFrames.MODULE, CallsRealtimeReplay(get())) }
     }
+
+/**
+ * Where the SFU clean-up of a hang-up or a replaced session runs, after the answer has gone (2026-11-09). A failure
+ * is logged by its class only, never its message, which could carry a session id.
+ */
+private fun backgroundScope(): CoroutineScope {
+    val log = LoggerFactory.getLogger("com.circaso.calls.background")
+    val handler = CoroutineExceptionHandler { _, e -> log.warn("background work failed: error={}", e.javaClass.name) }
+    return CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
+}

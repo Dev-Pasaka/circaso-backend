@@ -149,6 +149,10 @@ class CloudflareRealtime(
         ) { Resource.success(Unit) }
     }
 
+    /**
+     * `410 Gone` and `404` mean the session (and so its tracks) is already gone, which is what closing wanted: done
+     * (2026-11-09; the phone has usually closed its peer connection before the server's close arrives).
+     */
     override suspend fun closeTracks(sessionId: String, mids: List<String>): Resource<Unit> {
         if (mids.isEmpty()) return Resource.success(Unit)
         val body = CloseBody(mids.map { CloseTrack(it) }, force = true)
@@ -159,6 +163,7 @@ class CloudflareRealtime(
                 val json = RealtimeJson.encodeToString(CloseBody.serializer(), body)
                 send(HttpMethod.Put, "$app/sessions/$sessionId/tracks/close", json, prepare)
             },
+            alreadyDone = setOf(GONE, NOT_FOUND),
         ) { Resource.success(Unit) }
     }
 
@@ -229,6 +234,7 @@ class CloudflareRealtime(
         operation: String,
         serializer: KSerializer<A>,
         send: suspend (prepare: HttpRequestBuilder.() -> Unit) -> HttpResponse,
+        alreadyDone: Set<Int> = emptySet(),
         read: (A) -> Resource<T>?,
     ): Resource<T> {
         val (status, text) =
@@ -245,6 +251,11 @@ class CloudflareRealtime(
                 log.warn("cloudflare realtime unreachable: operation={} error={}", operation, e::class.simpleName)
                 return Resource.error(IntegrationError.Unavailable(VENDOR), e)
             }
+        if (status in alreadyDone) {
+            log.info("cloudflare realtime: operation={} status={} (already done)", operation, status)
+            return read(decode(serializer, "{}") ?: return Resource.error(IntegrationError.Unavailable(VENDOR)))
+                ?: Resource.error(IntegrationError.Unavailable(VENDOR))
+        }
         failure(operation, status)?.let { return Resource.error(it) }
         val answer = decode(serializer, text.ifBlank { "{}" })
         if (answer?.errorCode != null) {
@@ -283,6 +294,8 @@ class CloudflareRealtime(
         runCatching { RealtimeJson.decodeFromString(serializer, text) }.getOrNull()
 
     private companion object {
+        const val GONE = 410
+        const val NOT_FOUND = 404
         val TURN_TTL: Duration = Duration.ofHours(24)
         val TURN_REFRESH_BEFORE: Duration = Duration.ofHours(1)
 

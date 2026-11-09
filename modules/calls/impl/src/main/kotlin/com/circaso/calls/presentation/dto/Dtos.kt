@@ -38,6 +38,11 @@ data class ParticipantDto(
     val joinedAt: String? = null,
     /** Changes every time this person (re)joins: pull their tracks again when it does. Null until they join. */
     val connection: String? = null,
+    /**
+     * Their phone's connection to the SFU is up (CL3b) under the current [connection]: pull their tracks now. False
+     * while they connect, and again after each rejoin. Older apps never say it; pull them as before.
+     */
+    val connected: Boolean = false,
 )
 
 @Serializable
@@ -62,6 +67,10 @@ data class TrackOfferDto(
 
 @Serializable
 data class JoinResponse(val sessionId: String, val answer: String, val call: CallResponse)
+
+/** CL3b `POST /calls/{callId}/connected`: this phone's peer connection under [sessionId] is `connected`. */
+@Serializable
+data class ConnectedRequest(val sessionId: String)
 
 /** CL4 `POST /calls/{callId}/pull`. */
 @Serializable

@@ -130,4 +130,27 @@ class ApnsVoipPushTest {
             assertEquals(apns.sent[0].headers["authorization"], apns.sent[1].headers["authorization"])
             assertTrue(Base64.getUrlDecoder().decode(apns.sent[0].headers["authorization"]!!.split('.')[2]).size == 64)
         }
+
+    @Test
+    fun `a stopped ring posts an ended VoIP push for the same call`() =
+        runTest {
+            val apns = FakeApns()
+
+            assertEquals(
+                VoipPushResult.SENT,
+                push(apns).ended(
+                    token,
+                    com.circaso.integrations.api
+                        .VoipRingEnded("call-1", "chat-1", "CANCELLED"),
+                ),
+            )
+
+            val sent = apns.sent.single()
+            assertEquals("/3/device/$token", sent.path)
+            assertEquals("voip", sent.headers["apns-push-type"])
+            assertEquals(
+                mapOf("kind" to "call.ended", "callId" to "call-1", "chatId" to "chat-1", "reason" to "CANCELLED"),
+                Json.parseToJsonElement(sent.body).jsonObject.mapValues { it.value.jsonPrimitive.content },
+            )
+        }
 }

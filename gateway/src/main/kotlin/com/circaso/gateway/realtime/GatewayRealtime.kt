@@ -3,6 +3,7 @@ package com.circaso.gateway.realtime
 import com.circaso.assistant.api.AssistantFrames
 import com.circaso.assistant.api.AssistantStatusFrame
 import com.circaso.calls.api.CallFrames
+import com.circaso.calls.api.CallRingStoppedFrame
 import com.circaso.calls.api.CallRingingFrame
 import com.circaso.calls.api.CallSnapshot
 import com.circaso.chama.api.ChamaFrames
@@ -17,6 +18,7 @@ import com.circaso.integrations.api.PushTarget
 import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.VoipPushResult
 import com.circaso.integrations.api.VoipRing
+import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.shared.Realtime
@@ -77,6 +79,11 @@ class GatewayRealtime(
     private val voip: VoipPushGateway,
 ) : Realtime {
     override suspend fun deliver(userId: UserId, envelope: RealtimeEnvelope): Resource<Unit> {
+        if (isRingStopped(envelope)) {
+            hub.deliver(userId, envelope)
+            stopIphoneRing(userId, envelope)
+            return Resource.success(Unit)
+        }
         if (hub.deliver(userId, envelope)) {
             ringIphoneWithSocket(userId, envelope)
             return Resource.success(Unit)
@@ -88,6 +95,10 @@ class GatewayRealtime(
 
     override suspend fun deliverMany(userIds: Collection<UserId>, envelope: RealtimeEnvelope): Resource<Unit> {
         hub.deliverMany(userIds, envelope)
+        if (isRingStopped(envelope)) {
+            userIds.distinct().forEach { stopIphoneRing(it, envelope) }
+            return Resource.success(Unit)
+        }
         // Only users this frame would push to are looked up, so receipts and typing cost one publish and no reads.
         val candidates = userIds.distinct().mapNotNull { userId -> pushFor(envelope, userId)?.let { userId to it } }
         if (candidates.isEmpty()) return Resource.success(Unit)
@@ -129,6 +140,25 @@ class GatewayRealtime(
         val message = pushFor(envelope, userId) ?: return
         val target = registrations.pushTarget(userId) ?: return
         if (target.platform.equals("ios", ignoreCase = true)) rangByVoip(userId, target.voipToken, message)
+    }
+
+    private fun isRingStopped(envelope: RealtimeEnvelope) =
+        envelope.module == CallFrames.MODULE && envelope.type == CallFrames.RING_STOPPED
+
+    /**
+     * A ring that stopped (the caller hung up, the call ended, the ring ran out) goes to an iPhone with a PushKit token
+     * as an "ended" VoIP push, socket or not (2026-11-09): its ring came by VoIP whatever its socket looked like (see
+     * [ringIphoneWithSocket]), and a suspended app hears nothing else, so CallKit rang on after the caller had hung up.
+     * Android stops from the frame or the FCM `call.ended`/`call.missed` that `call.ended` brings.
+     */
+    private suspend fun stopIphoneRing(userId: UserId, envelope: RealtimeEnvelope) {
+        if (!voip.enabled) return
+        val frame = decode(CallRingStoppedFrame.serializer(), envelope) ?: return
+        val target = registrations.pushTarget(userId) ?: return
+        if (!target.platform.equals("ios", ignoreCase = true)) return
+        val token = target.voipToken ?: return
+        val ended = VoipRingEnded(frame.callId.toString(), frame.chatId.toString(), frame.reason)
+        if (voip.ended(token, ended) == VoipPushResult.TOKEN_INVALID) registrations.forgetVoipToken(userId, token)
     }
 
     /**
