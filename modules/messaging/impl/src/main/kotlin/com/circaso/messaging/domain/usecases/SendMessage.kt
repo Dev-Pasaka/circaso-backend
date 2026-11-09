@@ -257,12 +257,17 @@ class SendMessage(
         return Fanout(record, others.map { row(it, null) }, body)
     }
 
-    /** Sender keys and control messages never wake anyone, whatever the phone asked. */
+    /**
+     * Sender keys and control messages never wake anyone with a notification, whatever the phone asked. A sender-key
+     * copy marked as a key request (2026-11-09) wakes offline members silently, so a phone in a pocket hands a new
+     * phone the group's name and photo key without Circaso being opened.
+     */
     private suspend fun notify(command: SendMessageCommand, fanout: Fanout) {
         val pushable = command.pushable && command.kind == MessageKind.MESSAGE
+        val keyRequest = command.keyRequest && command.kind == MessageKind.SENDER_KEY
         val body = fanout.body
         if (body == null) {
-            for (row in fanout.rows) notifier.newMessage(listOf(row.userId), row, pushable)
+            for (row in fanout.rows) notifier.newMessage(listOf(row.userId), row, pushable, keyRequest)
             return
         }
         val shared = fanout.rows.firstOrNull()?.copy(ciphertext = body.ciphertext) ?: return

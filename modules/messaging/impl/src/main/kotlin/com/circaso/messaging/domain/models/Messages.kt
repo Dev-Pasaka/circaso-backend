@@ -23,6 +23,11 @@ data class SendMessageCommand(
     val recipients: List<RecipientCopy>,
     val mediaIds: List<UUID>,
     val pushable: Boolean,
+    /**
+     * A `SENDER_KEY` copy that asks the members for the group's metadata key (a new phone can't read the name). The
+     * server can't read it; the phone says so, and offline recipients get a silent push to answer it.
+     */
+    val keyRequest: Boolean = false,
 )
 
 data class SentMessage(val messageId: UUID, val sentAt: Instant)

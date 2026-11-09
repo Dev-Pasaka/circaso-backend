@@ -70,6 +70,7 @@ fun SendChatMessageRequest.toCommand(sender: UserId, chatId: ChatId): Resource<S
             recipients = copies,
             mediaIds = media.distinct(),
             pushable = pushable,
+            keyRequest = keyRequest,
         )
     return Resource.success(command)
 }

@@ -80,7 +80,9 @@ private fun Route.messageRoutes(messages: MessageService) {
                 "their own copy. Ciphertext is base64, at most 64 KB decoded. A direct send needs reach both ways " +
                 "(`users.not_reachable`). A retry with the same `clientMessageId` (within 24 hours) returns the " +
                 "first `messageId` and sends nothing. Recipients get a `messaging.message.new` frame; offline ones " +
-                "get a data-only push if `pushable` (never for `SENDER_KEY` or `CONTROL`).",
+                "get a data-only push if `pushable` (never for `SENDER_KEY` or `CONTROL`). A `SENDER_KEY` with " +
+                "`keyRequest` (a phone asking the members for the group's metadata key) wakes offline recipients " +
+                "with a silent `chat.meta_key_requested` push (`chatId`, `userId` the asker), so they answer.",
     )
 
     delete("{messageId}") {
