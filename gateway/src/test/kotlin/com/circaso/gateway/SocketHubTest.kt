@@ -32,6 +32,7 @@ import com.circaso.integrations.api.PushTarget
 import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.VoipPushResult
 import com.circaso.integrations.api.VoipRing
+import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageKind
@@ -243,6 +244,8 @@ class SocketHubTest {
         override val enabled = false
 
         override suspend fun ring(voipToken: String, ring: VoipRing) = VoipPushResult.FAILED
+
+        override suspend fun ended(voipToken: String, ended: VoipRingEnded) = VoipPushResult.FAILED
     }
 
     /** A fake APNs: records each ring and answers [result]. */
@@ -253,6 +256,13 @@ class SocketHubTest {
 
         override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult {
             rang += voipToken to ring
+            return result
+        }
+
+        val ended = CopyOnWriteArrayList<Pair<String, VoipRingEnded>>()
+
+        override suspend fun ended(voipToken: String, ended: VoipRingEnded): VoipPushResult {
+            this.ended += voipToken to ended
             return result
         }
     }
@@ -1544,4 +1554,48 @@ class SocketHubTest {
         }
         return nodeOne to nodeTwo
     }
+
+    @Test
+    fun `a stopped ring sends an iPhone an ended VoIP push, socket or not, and nothing to Android`() =
+        runBlocking {
+            val callId = CallId.new()
+            val stopped =
+                RealtimeEnvelope.of(
+                    CallFrames.MODULE,
+                    CallFrames.RING_STOPPED,
+                    3,
+                    com.circaso.calls.api
+                        .CallRingStoppedFrame(callId, chat, "CANCELLED"),
+                    com.circaso.calls.api.CallRingStoppedFrame
+                        .serializer(),
+                )
+            val callee = UserId.new()
+
+            val push = RecordingPush()
+            val voip = RecordingVoip()
+            GatewayRealtime(hub(), push, IphoneRegistrations(), voip).deliver(callee, stopped)
+            val (token, ended) = voip.ended.single()
+            assertEquals("ab12cd34ef56ab12cd34", token)
+            assertEquals(VoipRingEnded(callId.toString(), chat.toString(), "CANCELLED"), ended)
+            assertTrue(push.sent.isEmpty(), "no FCM for it: call.ended brings that")
+
+            val many = RecordingVoip()
+            GatewayRealtime(hub(), RecordingPush(), IphoneRegistrations(), many).deliverMany(listOf(callee), stopped)
+            assertEquals(1, many.ended.size)
+
+            val android = RecordingVoip()
+            val androidPush = RecordingPush()
+            GatewayRealtime(hub(), androidPush, registrations, android).deliver(callee, stopped)
+            assertTrue(android.ended.isEmpty())
+            assertTrue(androidPush.sent.isEmpty())
+
+            val gone = IphoneRegistrations()
+            GatewayRealtime(
+                hub(),
+                RecordingPush(),
+                gone,
+                RecordingVoip(VoipPushResult.TOKEN_INVALID),
+            ).deliver(callee, stopped)
+            assertEquals(listOf("ab12cd34ef56ab12cd34"), gone.forgotten.toList(), "a token APNs refuses is forgotten")
+        }
 }

@@ -90,7 +90,17 @@ interface VoipPushGateway {
 
     /** Rings the iPhone whose PushKit token is [voipToken]. */
     suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult
+
+    /**
+     * Tells the iPhone a call it was rung for stopped ringing it (2026-11-09): the caller hung up, the call ended or
+     * the ring ran out. The app ends that CallKit call, or reports and ends one at once if it has none (PushKit
+     * requires a reported call for every VoIP push).
+     */
+    suspend fun ended(voipToken: String, ended: VoipRingEnded): VoipPushResult
 }
+
+/** Which ring stopped and why: `CANCELLED`, `MISSED`, `DECLINED` or `COMPLETED`. */
+data class VoipRingEnded(val callId: String, val chatId: String, val reason: String)
 
 /**
  * What the phone needs to report the call to CallKit before it is back online; the same ids and fields the FCM

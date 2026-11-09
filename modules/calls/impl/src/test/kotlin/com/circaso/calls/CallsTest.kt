@@ -7,6 +7,7 @@ import com.circaso.calls.domain.models.Call
 import com.circaso.calls.domain.models.CallKind
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallView
+import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.EndReason
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
@@ -35,6 +36,7 @@ import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
+import com.circaso.calls.domain.usecases.ReportConnected
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
 import com.circaso.integrations.api.CallMedia
@@ -57,6 +59,12 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -184,6 +192,14 @@ private class RecordingOutbox : CallsOutbox {
 /** The SFU: made-up sessions and SDP, remembering what each session publishes; fails on demand. */
 private class TestMedia : CallMedia {
     var down = false
+
+    /** How long the SFU takes to answer a pull and a close (virtual time under runTest). */
+    var pullMillis = 0L
+    var closeMillis = 0L
+
+    /** What the next closes answer, in order; then success. */
+    val closeAnswers = ArrayDeque<Resource<Unit>>()
+    var closeAttempts = 0
     val published = mutableMapOf<String, Set<String>>()
     val closed = mutableListOf<Pair<String, List<String>>>()
     val renegotiated = mutableListOf<String>()
@@ -203,6 +219,7 @@ private class TestMedia : CallMedia {
     }
 
     override suspend fun pullTracks(sessionId: String, tracks: List<RemoteTrack>): Resource<PulledTracks> {
+        if (pullMillis > 0) delay(pullMillis)
         val pulled = tracks.map { PulledTrack(it.trackName, it.sessionId, "${++mids}") }
         return Resource.success(PulledTracks("v=0 offer for $sessionId", pulled.isNotEmpty(), pulled))
     }
@@ -213,6 +230,9 @@ private class TestMedia : CallMedia {
     }
 
     override suspend fun closeTracks(sessionId: String, mids: List<String>): Resource<Unit> {
+        closeAttempts++
+        if (closeMillis > 0) delay(closeMillis)
+        closeAnswers.removeFirstOrNull()?.let { if (it is Resource.Error) return it }
         closed += sessionId to mids
         return Resource.success(Unit)
     }
@@ -220,7 +240,11 @@ private class TestMedia : CallMedia {
     override suspend fun iceServers() = listOf(IceServer(listOf("stun:stun.cloudflare.com:3478")))
 }
 
-private class Harness {
+/**
+ * [background] runs the SFU clean-up after a change has answered: eagerly by default, so a test sees it done when the
+ * call returns; a test's `backgroundScope` to let it take (virtual) time.
+ */
+private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Unconfined)) {
     val calls = MemoryCalls()
     val chats = FakeChats()
     val profiles = FakeProfiles()
@@ -239,7 +263,12 @@ private class Harness {
         }
     val people = People(chats, profiles)
     val views = CallViews(people, media)
-    val notices = CallNotices(frames, views, media, bus)
+    val pauses = mutableListOf<Long>()
+    val notices =
+        CallNotices(frames, views, media, bus, background) {
+            pauses += it
+            delay(it)
+        }
     val changes = CallChanges(calls, MemoryTransactor(calls), outbox, bus, notices)
     val sessions = Sessions(calls)
     val start = StartCall(people, calls, views, frames, clock)
@@ -251,6 +280,7 @@ private class Harness {
     val decline = DeclineCall(changes, views, clock)
     val leave = LeaveCall(changes, views, clock)
     val setMedia = SetMedia(changes, clock)
+    val connected = ReportConnected(changes, clock)
     val expire = ExpireRings(calls, changes, clock)
     val ringAgain =
         com.circaso.calls.domain.usecases
@@ -331,7 +361,7 @@ class CallsTest {
         runTest {
             val h = Harness()
             val first = h.call()
-            assertEquals(CallsError.AlreadyInCall, failure(h.start(h.otieno, h.direct, false)))
+            assertEquals(first.callId, success(h.start(h.otieno, h.direct, false)).call.callId, "that call, to join")
             assertEquals(first.callId, success(h.live(h.otieno, h.direct)).call.callId)
 
             assertEquals(CallsError.NotAMember, failure(h.start(h.achieng, h.direct, false)))
@@ -703,5 +733,249 @@ class CallsTest {
             val video = h2.call(video = true)
             h2.joined(video, h2.wanjiru)
             assertEquals(true, h2.stored(video).participant(h2.wanjiru)?.video)
+        }
+
+    @Test
+    fun `hanging up answers at once while the SFU takes 6 seconds to close both sessions`() =
+        runTest {
+            val h = Harness(backgroundScope)
+            val call = h.call()
+            val mine = h.joined(call, h.wanjiru)
+            val theirs = h.joined(call, h.otieno)
+            h.media.closeMillis = 5_800 // what Cloudflare took to answer 410 on 2026-11-09
+
+            val before = currentTime
+            val view = success(h.leave(h.otieno, call.callId))
+            val tookMillis = currentTime - before
+
+            // Before 2026-11-09 the two closes ran on the request, one after the other: 11,600 ms here, 11.7 s live.
+            assertEquals(0L, tookMillis, "the hang-up doesn't wait for the SFU")
+            assertEquals(CallState.ENDED, view.call.state)
+            assertEquals(
+                setOf(h.wanjiru, h.otieno),
+                h.frames
+                    .ofType<CallFrame.Ended>()
+                    .single()
+                    .first,
+            )
+            assertTrue(h.media.closed.isEmpty(), "still closing")
+
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertEquals(
+                setOf(mine.sessionId, theirs.sessionId),
+                h.media.closed
+                    .map { it.first }
+                    .toSet(),
+            )
+        }
+
+    @Test
+    fun `a close the SFU can't take now is tried again in the background, and one it refuses is not`() =
+        runTest {
+            val h = Harness(backgroundScope)
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            h.media.closeAnswers += Resource.error(IntegrationError.Unavailable("SFU"))
+            h.media.closeAnswers += Resource.error(IntegrationError.Unavailable("SFU"))
+
+            success(h.leave(h.otieno, call.callId))
+            advanceTimeBy(60_000)
+            runCurrent()
+
+            assertEquals(4, h.media.closeAttempts, "one session closed on its first try, the other on its third")
+            assertEquals(2, h.media.closed.size)
+
+            val h2 = Harness(backgroundScope)
+            val c2 = h2.call()
+            h2.joined(c2, h2.wanjiru)
+            h2.media.closeAnswers += Resource.error(IntegrationError.Rejected("unknown session"))
+            success(h2.leave(h2.wanjiru, c2.callId))
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertEquals(1, h2.media.closeAttempts, "a refusal isn't retried")
+        }
+
+    @Test
+    fun `in a direct call either person hanging up ends it for both`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+
+            val view = success(h.leave(h.wanjiru, call.callId))
+
+            assertEquals(CallState.ENDED, view.call.state)
+            assertEquals(EndReason.COMPLETED, view.call.endReason)
+            assertEquals(ParticipantState.LEFT, h.state(call, h.otieno))
+            assertEquals(
+                setOf(h.wanjiru, h.otieno),
+                h.frames
+                    .ofType<CallFrame.Ended>()
+                    .single()
+                    .first,
+            )
+        }
+
+    @Test
+    fun `a callee who answers and hangs up before the caller's own join arrives ends the direct call`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.otieno) // the caller (Wanjiru) is still INVITED: her CL3 is on its way
+
+            val view = success(h.leave(h.otieno, call.callId))
+
+            assertEquals(CallState.ENDED, view.call.state, "it used to stay RINGING, ringing nobody")
+            assertEquals(EndReason.COMPLETED, view.call.endReason)
+            assertEquals(
+                CallsError.CallEnded,
+                failure(h.join(JoinCommand(h.wanjiru, call.callId, "v=0", listOf(TrackOffer("0", "a", "audio"))))),
+            )
+        }
+
+    @Test
+    fun `a callee hanging up a direct call they never answered declines it`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+
+            val view = success(h.leave(h.otieno, call.callId))
+
+            assertEquals(EndReason.DECLINED, view.call.endReason)
+        }
+
+    @Test
+    fun `two people calling each other at once end up in one call`() =
+        runTest {
+            val h = Harness()
+            val first = success(h.start(h.wanjiru, h.direct, false))
+            val second = success(h.start(h.otieno, h.direct, false))
+
+            assertEquals(first.call.callId, second.call.callId, "Otieno's call is Wanjiru's")
+            assertEquals(1, h.frames.ofType<CallFrame.Ringing>().size, "nobody is rung twice")
+            h.joined(first.call, h.wanjiru)
+            val joined = h.joined(second.call, h.otieno)
+            assertEquals(CallState.ACTIVE, joined.view.call.state)
+            assertEquals(1, h.calls.rows.size)
+        }
+
+    @Test
+    fun `calling again right after a hang-up starts a new call, while the SFU is still closing the last one`() =
+        runTest {
+            val h = Harness(backgroundScope)
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            h.media.closeMillis = 5_800
+
+            success(h.leave(h.otieno, call.callId))
+            val again = success(h.start(h.otieno, h.direct, false))
+
+            assertTrue(again.call.callId != call.callId, "a new call, not the one ending")
+            assertEquals(CallState.RINGING, again.call.state)
+            assertEquals(0L, currentTime, "no wait for the SFU")
+        }
+
+    @Test
+    fun `a pull takes what the SFU takes and nothing more`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            val mine = h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            h.media.pullMillis = 250
+
+            val before = currentTime
+            val pulled =
+                success(
+                    h.pull(
+                        PullCommand(
+                            h.wanjiru,
+                            call.callId,
+                            mine.sessionId,
+                            listOf(TrackWanted(h.otieno, "audio-${h.otieno}")),
+                        ),
+                    ),
+                )
+
+            assertEquals(250L, currentTime - before, "no sleep, poll or retry of the server's own")
+            assertEquals(1, pulled.tracks.size)
+        }
+
+    @Test
+    fun `a phone says its connection is up, everyone hears it, and a rejoin starts over`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            val mine = h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            assertEquals(false, h.stored(call).participant(h.wanjiru)!!.isConnected)
+            val updates = h.frames.ofType<CallFrame.Updated>().size
+
+            assertIs<Resource.Success<Unit>>(h.connected(ConnectedCommand(h.wanjiru, call.callId, mine.sessionId)))
+
+            assertEquals(true, h.stored(call).participant(h.wanjiru)!!.isConnected)
+            val update = h.frames.ofType<CallFrame.Updated>()
+            assertEquals(updates + 1, update.size)
+            assertEquals(
+                true,
+                (update.last().second as CallFrame.Updated)
+                    .view.call
+                    .participant(h.wanjiru)!!
+                    .isConnected,
+            )
+
+            h.connected(ConnectedCommand(h.wanjiru, call.callId, mine.sessionId))
+            assertEquals(updates + 1, h.frames.ofType<CallFrame.Updated>().size, "saying it twice changes nothing")
+
+            val again = h.joined(call, h.wanjiru)
+            assertEquals(false, h.stored(call).participant(h.wanjiru)!!.isConnected, "a new session connects anew")
+            assertEquals(
+                CallsError.SessionMismatch,
+                failure(h.connected(ConnectedCommand(h.wanjiru, call.callId, mine.sessionId))),
+            )
+            assertIs<Resource.Success<Unit>>(h.connected(ConnectedCommand(h.wanjiru, call.callId, again.sessionId)))
+            assertEquals(CallsError.NotFound, failure(h.connected(ConnectedCommand(h.achieng, call.callId, "s"))))
+        }
+
+    @Test
+    fun `the caller hanging up stops the callee's ring, once`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+
+            success(h.leave(h.wanjiru, call.callId))
+
+            val (to, frame) = h.frames.ofType<CallFrame.RingStopped>().single()
+            assertEquals(setOf(h.otieno), to)
+            assertEquals("CANCELLED", (frame as CallFrame.RingStopped).reason)
+            success(h.leave(h.wanjiru, call.callId))
+            assertEquals(1, h.frames.ofType<CallFrame.RingStopped>().size)
+        }
+
+    @Test
+    fun `a ring that runs out in a group call going on stops, and declining stops nothing`() =
+        runTest {
+            val h = Harness()
+            val call = h.call(h.group)
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            h.now = h.now.plusSeconds(46)
+            h.expire()
+
+            val (to, frame) = h.frames.ofType<CallFrame.RingStopped>().single()
+            assertEquals(setOf(h.achieng), to)
+            assertEquals("MISSED", (frame as CallFrame.RingStopped).reason)
+
+            val h2 = Harness()
+            val direct = h2.call()
+            h2.joined(direct, h2.wanjiru)
+            success(h2.decline(h2.otieno, direct.callId))
+            assertTrue(h2.frames.ofType<CallFrame.RingStopped>().isEmpty(), "the callee ended their own ring")
         }
 }

@@ -3,6 +3,7 @@ package com.circaso.integrations.impl.apns
 import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.VoipPushResult
 import com.circaso.integrations.api.VoipRing
+import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.shared.CircasoJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
@@ -16,6 +17,15 @@ private data class ApnsVoipPayload(
     val chatId: String,
     val callKind: String,
     val callerName: String,
+)
+
+/** The ring stopped (2026-11-09): `kind` `call.ended`, so the PushKit delegate ends that CallKit call. */
+@Serializable
+private data class ApnsVoipEndedPayload(
+    val kind: String,
+    val callId: String,
+    val chatId: String,
+    val reason: String,
 )
 
 /** APNs' error body: only the reason is read (`BadDeviceToken`, `Unregistered`, `ExpiredProviderToken`, …). */
@@ -36,12 +46,33 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
 
     override val enabled: Boolean = true
 
-    override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult {
+    override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult =
+        send(voipToken, "ring", ring.callId, payload(ring))
+
+    override suspend fun ended(voipToken: String, ended: VoipRingEnded): VoipPushResult =
+        send(
+            voipToken,
+            "ended",
+            ended.callId,
+            CircasoJson.encodeToString(
+                ApnsVoipEndedPayload.serializer(),
+                ApnsVoipEndedPayload(ENDED, ended.callId, ended.chatId, ended.reason),
+            ),
+        )
+
+    /** One VoIP push; [what] (`ring`, `ended`) names it in the log line. */
+    private suspend fun send(
+        voipToken: String,
+        what: String,
+        callId: String,
+        body: String,
+    ): VoipPushResult {
         val tail = voipToken.takeLast(TOKEN_TAIL)
         if (!HEX.matches(voipToken)) {
             log.warn(
-                "apns voip ring: callId={} outcome={} reason=not-hex token=…{}",
-                ring.callId,
+                "apns voip {}: callId={} outcome={} reason=not-hex token=…{}",
+                what,
+                callId,
                 VoipPushResult.TOKEN_INVALID,
                 tail,
             )
@@ -49,13 +80,14 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
         }
         val response =
             try {
-                transport.post("/3/device/$voipToken", headers(), payload(ring))
+                transport.post("/3/device/$voipToken", headers(), body)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log.warn(
-                    "apns voip ring: callId={} outcome={} error={} token=…{}",
-                    ring.callId,
+                    "apns voip {}: callId={} outcome={} error={} token=…{}",
+                    what,
+                    callId,
                     VoipPushResult.FAILED,
                     e::class.simpleName,
                     tail,
@@ -82,8 +114,8 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
                     VoipPushResult.FAILED
                 }
             }
-        val line = "apns voip ring: callId={} outcome={} status={} reason={} apnsId={} token=…{}"
-        val args = arrayOf<Any?>(ring.callId, outcome, response.status, reason, response.apnsId, tail)
+        val line = "apns voip {}: callId={} outcome={} status={} reason={} apnsId={} token=…{}"
+        val args = arrayOf<Any?>(what, callId, outcome, response.status, reason, response.apnsId, tail)
         if (outcome == VoipPushResult.FAILED) log.warn(line, *args) else log.info(line, *args)
         return outcome
     }
@@ -113,6 +145,7 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
 
     private companion object {
         const val RINGING = "call.ringing"
+        const val ENDED = "call.ended"
         const val OK = 200
         const val BAD_REQUEST = 400
         const val FORBIDDEN = 403

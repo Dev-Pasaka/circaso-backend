@@ -20,7 +20,10 @@ import java.time.Clock
 /**
  * CL1 `POST /calls`: a member calls the chat. Everyone else in it is rung (`call.ringing`, pushed data-only to a
  * phone without a socket); the caller joins with CL3. A chat has one call at a time: when one is ringing or active,
- * this answers `calls.already_in_call` and the app joins that one instead.
+ * this answers that call, and the caller joins it with CL3 like anyone answering it (2026-11-09; it was
+ * `calls.already_in_call`, 409). So two people calling each other at the same moment ("glare") end up in one call,
+ * nobody is rung twice, and calling again straight after a hang-up starts a new call, since the hang-up has already
+ * ended the old one (CL7 answers at once).
  */
 class StartCall(
     private val people: People,
@@ -55,7 +58,14 @@ class StartCall(
                 activeAt = now,
                 participants = members.map { CallRules.invited(it, now).copy(video = video) },
             )
-        if (!calls.insert(call)) return Resource.error(CallsError.AlreadyInCall)
+        if (!calls.insert(call)) {
+            calls.live(chatId)?.let { return Resource.success(views.view(it)) }
+            // the live call ended between the two reads: this one can start now
+            if (!calls.insert(call)) {
+                return calls.live(chatId)?.let { Resource.success(views.view(it)) }
+                    ?: Resource.error(CallsError.AlreadyInCall)
+            }
+        }
 
         val ringing = CallFrame.Ringing(call.callId, chatId, call.kind, userId, people.name(userId))
         frames.send(members - userId, ringing)

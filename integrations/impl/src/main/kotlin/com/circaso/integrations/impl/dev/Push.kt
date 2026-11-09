@@ -7,6 +7,7 @@ import com.circaso.integrations.api.PushTarget
 import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.VoipPushResult
 import com.circaso.integrations.api.VoipRing
+import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.util.UUID
@@ -39,6 +40,8 @@ class NoVoipPush : VoipPushGateway {
     override val enabled: Boolean = false
 
     override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult = VoipPushResult.FAILED
+
+    override suspend fun ended(voipToken: String, ended: VoipRingEnded): VoipPushResult = VoipPushResult.FAILED
 }
 
 /** Tests: records every ring and answers [result]. */
@@ -46,11 +49,17 @@ class FakeVoipPush(var result: VoipPushResult = VoipPushResult.SENT) : VoipPushG
     data class Rang(val voipToken: String, val ring: VoipRing)
 
     val rang: MutableList<Rang> = CopyOnWriteArrayList()
+    val endedRings: MutableList<Pair<String, VoipRingEnded>> = CopyOnWriteArrayList()
 
     override val enabled: Boolean = true
 
     override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult {
         rang += Rang(voipToken, ring)
+        return result
+    }
+
+    override suspend fun ended(voipToken: String, ended: VoipRingEnded): VoipPushResult {
+        endedRings += voipToken to ended
         return result
     }
 }

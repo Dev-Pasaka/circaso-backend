@@ -21,6 +21,9 @@ sealed interface CallFrame {
     data class Updated(val view: CallView) : CallFrame
 
     data class Ended(val view: CallView) : CallFrame
+
+    /** [callId] stopped ringing this person without them answering or declining; [reason] as `CallRingStoppedFrame`. */
+    data class RingStopped(val callId: CallId, val chatId: ChatId, val reason: String) : CallFrame
 }
 
 /** Sends a frame to the people named: to their sockets, or as a push where the gateway words one. */

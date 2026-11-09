@@ -2,6 +2,7 @@ package com.circaso.calls.presentation.mappers
 
 import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.models.CallView
+import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
 import com.circaso.calls.domain.models.MediaCommand
@@ -11,6 +12,7 @@ import com.circaso.calls.domain.models.RenegotiateCommand
 import com.circaso.calls.domain.models.TrackOffer
 import com.circaso.calls.domain.models.TrackWanted
 import com.circaso.calls.presentation.dto.CallResponse
+import com.circaso.calls.presentation.dto.ConnectedRequest
 import com.circaso.calls.presentation.dto.IceServerDto
 import com.circaso.calls.presentation.dto.JoinRequest
 import com.circaso.calls.presentation.dto.JoinResponse
@@ -75,6 +77,11 @@ fun PullRequest.toCommand(userId: UserId, callId: CallId): Resource<PullCommand>
     return Resource.success(PullCommand(userId, callId, sessionId, wanted))
 }
 
+fun ConnectedRequest.toCommand(userId: UserId, callId: CallId): Resource<ConnectedCommand> {
+    if (sessionId.isBlank()) return Resource.error(SharedError.Malformed("sessionId", "is empty"))
+    return Resource.success(ConnectedCommand(userId, callId, sessionId))
+}
+
 fun RenegotiateRequest.toCommand(userId: UserId, callId: CallId): Resource<RenegotiateCommand> {
     if (sessionId.isBlank()) return Resource.error(SharedError.Malformed("sessionId", "is empty"))
     sdpProblem("answer", answer)?.let { return Resource.error(it) }
@@ -107,6 +114,7 @@ fun CallView.toResponse(): CallResponse =
                     connection =
                         com.circaso.calls.domain.support.Connection
                             .tag(participant.sessionId),
+                    connected = participant.isConnected,
                 )
             },
         iceServers = iceServers.map { IceServerDto(it.urls, it.username, it.credential) },
