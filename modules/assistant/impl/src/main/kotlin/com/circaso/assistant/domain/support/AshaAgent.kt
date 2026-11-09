@@ -426,11 +426,16 @@ class AshaAgent(
     }
 }
 
+/** Added to a question whose picture was left behind at a pause for the phone. */
+internal const val PICTURE_NOT_KEPT = " [The picture is no longer attached: use what you already saw in it.]"
+
 internal fun List<ModelMessage>.toPending(): List<PendingMessage> =
     map {
         when (it) {
+            // A picture of the screen isn't kept while the turn waits for the phone (it is never stored); the model is
+            // told, so it answers from what it already read of it.
             is ModelMessage.User -> {
-                PendingMessage.User(it.text)
+                PendingMessage.User(if (it.images.isEmpty()) it.text else it.text + PICTURE_NOT_KEPT)
             }
 
             is ModelMessage.Assistant -> {

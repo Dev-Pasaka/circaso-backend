@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.ModelImage
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
@@ -253,6 +254,36 @@ class AnthropicLanguageModelTest {
             assertEquals(listOf("toolu_1", "toolu_2"), results.map { it["tool_use_id"]!!.jsonPrimitive.content })
             assertTrue(results.all { it["type"]!!.jsonPrimitive.content == "tool_result" })
             assertIs<JsonArray>(results[0]["content"])
+        }
+
+    @Test
+    fun `a picture of the screen goes as a base64 image block before the question's text`() =
+        fakeAnthropic {
+            val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1, 2, 3)
+            events(
+                request(
+                    messages = listOf(ModelMessage.User("What is this error?", listOf(ModelImage(jpeg, "image/jpeg")))),
+                ),
+            )
+
+            val content =
+                body()["messages"]!!
+                    .jsonArray
+                    .single()
+                    .jsonObject["content"]!!
+                    .jsonArray
+                    .map { it.jsonObject }
+            assertEquals(listOf("image", "text"), content.map { it["type"]!!.jsonPrimitive.content })
+            val source = content[0]["source"]!!.jsonObject
+            assertEquals("base64", source["type"]!!.jsonPrimitive.content)
+            assertEquals("image/jpeg", source["media_type"]!!.jsonPrimitive.content)
+            assertEquals(
+                java.util.Base64
+                    .getEncoder()
+                    .encodeToString(jpeg),
+                source["data"]!!.jsonPrimitive.content,
+            )
+            assertEquals("What is this error?", content[1]["text"]!!.jsonPrimitive.content)
         }
 
     @Test

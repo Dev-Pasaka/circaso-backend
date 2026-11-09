@@ -376,6 +376,7 @@ class AnthropicLanguageModel(
         private const val NANOS_PER_MILLI = 1_000_000L
         private const val CONTEXT_TOKENS = 1_000_000L
         private const val MAX_OUTPUT_TOKENS = 128_000L
-        private val CAPABILITIES = listOf(LLMCapability.Completion, LLMCapability.Tools, LLMCapability.Document)
+        private val CAPABILITIES =
+            listOf(LLMCapability.Completion, LLMCapability.Tools, LLMCapability.Document, LLMCapability.Vision.Image)
     }
 }

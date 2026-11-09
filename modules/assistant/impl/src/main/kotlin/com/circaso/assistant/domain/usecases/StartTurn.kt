@@ -20,6 +20,7 @@ import com.circaso.assistant.domain.support.TurnRecorder
 import com.circaso.assistant.domain.support.isOwnAgentToken
 import com.circaso.assistant.domain.support.today
 import com.circaso.identity.api.TokenVerifier
+import com.circaso.integrations.api.ModelImage
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -78,7 +79,12 @@ class StartTurn(
                 .asReversed()
                 .map(::toModel)
         val asked = command.askedFrom?.let { "[Asked from the chat \"${it.chatName ?: it.chatId}\"] " }.orEmpty()
-        val history = context + ModelMessage.User(asked + text)
+        // Asha's bubble (2026-11-09): the screen the question was asked on, and a picture of it, for this question only;
+        // neither is saved with the conversation.
+        val on = command.screen?.let { "[The user is on: $it] " }.orEmpty()
+        val shown = command.image?.let { "[The user attached a picture of their app screen] " }.orEmpty()
+        val images = listOfNotNull(command.image?.let { ModelImage(it.bytes, it.mediaType) })
+        val history = context + ModelMessage.User(asked + on + shown + text, images)
         // The turn's id comes first, so the app can be told about each tool call as it happens.
         val turnId = ids.next()
         val turn =

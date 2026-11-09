@@ -91,7 +91,16 @@ data class TurnCommand(
     val currency: String? = null,
     /** The conversation to ask in; null for the user's most recent one, or a new one if they have none. */
     val conversationId: UUID? = null,
+    /** The app screen the user asked from ("Wallet › Send"), told to the model with this question only. */
+    val screen: String? = null,
+    /** A picture of the user's app screen for this question; read by the model, never stored. */
+    val image: TurnImage? = null,
 )
+
+/** A picture with a question: its bytes and media type, checked at the edge. Kept in memory for the turn only. */
+class TurnImage(val bytes: ByteArray, val mediaType: String) {
+    override fun toString(): String = "TurnImage($mediaType, ${bytes.size} bytes)"
+}
 
 /**
  * One tool call as the app is told about it (decision 2026-10-31): `tool_status` before it runs, `tool_done` after.

@@ -119,11 +119,25 @@ enum class ModelPurpose {
 }
 
 sealed interface ModelMessage {
-    data class User(val text: String) : ModelMessage
+    /** [images]: pictures for the model to read with the text (a picture of the app screen); most turns have none. */
+    data class User(val text: String, val images: List<ModelImage> = emptyList()) : ModelMessage
 
     data class Assistant(val text: String?, val toolCalls: List<ToolCall> = emptyList()) : ModelMessage
 
     data class ToolResult(val callId: String, val name: String, val content: String) : ModelMessage
+}
+
+/**
+ * A picture in a user message: [bytes] encoded as [mediaType] (`image/jpeg`, `image/png` or `image/webp`). Held for
+ * the one model call that reads it, never stored. Equal by content, so a conversation compares as it reads.
+ */
+class ModelImage(val bytes: ByteArray, val mediaType: String) {
+    override fun equals(other: Any?): Boolean =
+        other is ModelImage && mediaType == other.mediaType && bytes.contentEquals(other.bytes)
+
+    override fun hashCode(): Int = 31 * mediaType.hashCode() + bytes.contentHashCode()
+
+    override fun toString(): String = "ModelImage($mediaType, ${bytes.size} bytes)"
 }
 
 /** [parametersJsonSchema] is a JSON Schema object describing the arguments. */
