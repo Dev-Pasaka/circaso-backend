@@ -183,7 +183,7 @@ class VendorHttpClients(
 
 /**
  * The JDK's client, which keeps connections open between calls ([JdkHttpEngine]); CIO for a client that opens
- * WebSockets, which the JDK's client can't upgrade to through Ktor.
+ * WebSockets, which the JDK's client can't upgrade to through Ktor, or that asks for it ([VendorHttpConfig.jdkEngine]).
  */
 internal fun defaultEngine(config: VendorHttpConfig): HttpClientEngine =
-    if (config.webSockets) CIO.create() else JdkHttpEngine(config.connectTimeout)
+    if (config.webSockets || !config.jdkEngine) CIO.create() else JdkHttpEngine(config.connectTimeout)
