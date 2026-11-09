@@ -115,6 +115,23 @@ class CloudflareRealtimeTest {
         }
 
     @Test
+    fun `a video Cloudflare turns down for having no media comes back without a mid, its audio with one`() =
+        runBlocking<Unit> {
+            reply =
+                """{"requiresImmediateRenegotiation":true,""" +
+                """"sessionDescription":{"type":"offer","sdp":"v=0 sfu offer"},""" +
+                """"tracks":[{"sessionId":"s2","trackName":"audio-u2","mid":"2"},""" +
+                """{"sessionId":"s2","trackName":"video-u2","errorCode":"empty_track_error",""" +
+                """"errorDescription":"Track did not receive source media in time"}]}"""
+            val pulled =
+                assertIs<Resource.Success<PulledTracks>>(
+                    media.pullTracks("s1", listOf(RemoteTrack("s2", "audio-u2"), RemoteTrack("s2", "video-u2"))),
+                ).data
+            assertEquals("2", pulled.tracks.first { it.trackName == "audio-u2" }.mid)
+            assertEquals(null, pulled.tracks.first { it.trackName == "video-u2" }.mid)
+        }
+
+    @Test
     fun `renegotiate puts the answer and close forces the tracks shut`() =
         runBlocking<Unit> {
             reply = "{}"
