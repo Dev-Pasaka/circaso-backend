@@ -83,10 +83,16 @@ Money starts and ends in the chat. There is no separate payment form.
 
 ## Calls
 1. Open a chat and tap the phone (voice) or camera (video) at the top. Group calls work from a group chat.
-2. In a video call, tap someone's picture to make it big. You can switch voice to video, mute, flip the camera, and
-   minimise the call to a small pill to use the app (tap the pill to go back).
+2. In a one-to-one video call, tap the small picture to swap who's big (you or them); drag it to any corner.
+3. In a group call, tap anyone's tile (or your own "You") to make it big with the others in a strip; tap another to
+   switch, or tap the big one to see everyone again.
+4. You can switch voice to video, mute, flip the camera, and minimise the call to a small pill to use the app (tap the
+   pill to go back).
+5. To share your screen, tap **Share screen** in the call and allow it. You can then leave Circaso and show any app;
+   the call keeps going. Others see "<your name> is sharing their screen". Tap **Stop** to end sharing. Your wallet
+   PIN screen shows blank to viewers on Android. On iPhone, screen sharing appears once the app's update with it is
+   installed; if there's no Share screen button, it isn't on that phone yet.
 - Calls are labelled "Secure call".
-- Screen sharing in calls is being built and isn't available yet.
 
 ## Moments
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
