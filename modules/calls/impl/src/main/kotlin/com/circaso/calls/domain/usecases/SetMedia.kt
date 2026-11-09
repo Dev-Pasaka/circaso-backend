@@ -9,7 +9,7 @@ import com.circaso.shared.Resource
 import java.time.Clock
 
 /**
- * CL8 `POST /calls/{callId}/media`: the microphone muted or the camera turned off, so the others' tiles show it
+ * CL8 `POST /calls/{callId}/media`: the microphone muted, the camera turned off, or the screen shared, so the others' tiles show it
  * (`call.updated`). The tracks stay published; the phone stops sending on them.
  */
 class SetMedia(private val changes: CallChanges, private val clock: Clock) {
@@ -25,7 +25,7 @@ class SetMedia(private val changes: CallChanges, private val clock: Clock) {
         val now = clock.instant()
         return Resource.success(
             call.withParticipant(command.userId, now) {
-                it.copy(audio = command.audio, video = command.video, updatedAt = now)
+                it.copy(audio = command.audio, video = command.video, screen = command.screen, updatedAt = now)
             },
         )
     }

@@ -43,6 +43,8 @@ data class ParticipantDto(
      * while they connect, and again after each rejoin. Older apps never say it; pull them as before.
      */
     val connected: Boolean = false,
+    /** Their video is their screen, not their camera: show it whole (fitted, not cropped) and say they are sharing. */
+    val screen: Boolean = false,
 )
 
 @Serializable
@@ -95,9 +97,12 @@ data class PulledTrackDto(val userId: String, val trackName: String, val mid: St
 @Serializable
 data class RenegotiateRequest(val sessionId: String, val answer: String)
 
-/** CL8 `POST /calls/{callId}/media`: whether the microphone and the camera are on. */
+/**
+ * CL8 `POST /calls/{callId}/media`: whether the microphone and the camera are on, and whether the video is the
+ * phone's screen. [screen] is optional so older apps keep working.
+ */
 @Serializable
-data class MediaRequest(val audio: Boolean, val video: Boolean)
+data class MediaRequest(val audio: Boolean, val video: Boolean, val screen: Boolean = false)
 
 /** `POST /calls/{callId}/ring`: who to ring again; empty or left out is everyone not on the call. */
 @Serializable

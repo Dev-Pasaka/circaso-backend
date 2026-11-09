@@ -35,6 +35,11 @@ data class Participant(
      * pull this person's tracks once it is set: the SFU holds a pull of a publisher that isn't connected yet.
      */
     val connectedAt: Instant? = null,
+    /**
+     * Their video track carries their screen, not their camera (CL8, 2026-11-09): the others show it whole, never
+     * cropped, and say they are sharing. The phone swaps what feeds the track; nothing is renegotiated.
+     */
+    val screen: Boolean = false,
 ) {
     val isJoined: Boolean get() = state == ParticipantState.JOINED
     val isConnected: Boolean get() = isJoined && connectedAt != null
@@ -115,4 +120,6 @@ data class MediaCommand(
     val callId: CallId,
     val audio: Boolean,
     val video: Boolean,
+    /** The video track carries the screen; older apps never send it. */
+    val screen: Boolean = false,
 )

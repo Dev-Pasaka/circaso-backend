@@ -88,7 +88,7 @@ fun RenegotiateRequest.toCommand(userId: UserId, callId: CallId): Resource<Reneg
     return Resource.success(RenegotiateCommand(userId, callId, sessionId, answer))
 }
 
-fun MediaRequest.toCommand(userId: UserId, callId: CallId) = MediaCommand(userId, callId, audio, video)
+fun MediaRequest.toCommand(userId: UserId, callId: CallId) = MediaCommand(userId, callId, audio, video, screen)
 
 fun CallView.toResponse(): CallResponse =
     CallResponse(
@@ -109,6 +109,7 @@ fun CallView.toResponse(): CallResponse =
                     state = participant.state.name,
                     audio = participant.audio,
                     video = participant.video,
+                    screen = participant.screen,
                     tracks = participant.tracks.map { TrackDto(it.trackName, it.kind) },
                     joinedAt = participant.joinedAt?.toString(),
                     connection =

@@ -170,6 +170,7 @@ internal fun CallView.toSnapshot(): CallSnapshot =
                         com.circaso.calls.domain.support.Connection
                             .tag(participant.sessionId),
                     connected = participant.isConnected,
+                    screen = participant.screen,
                 )
             },
         iceServers = iceServers.map { IceServerSnapshot(it.urls, it.username, it.credential) },

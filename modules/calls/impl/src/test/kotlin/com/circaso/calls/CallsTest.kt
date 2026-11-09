@@ -633,6 +633,46 @@ class CallsTest {
         }
 
     @Test
+    fun `a shared screen is shown to everyone and is cleared by a rejoin and by leaving`() =
+        runTest {
+            val h = Harness()
+            val call = h.call(h.group)
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+
+            success(h.setMedia(MediaCommand(h.wanjiru, call.callId, audio = true, video = true, screen = true)))
+            assertTrue(h.stored(call).participant(h.wanjiru)!!.screen)
+            val frame =
+                h.frames
+                    .ofType<CallFrame.Updated>()
+                    .last()
+                    .second as CallFrame.Updated
+            assertTrue(
+                frame.view.call
+                    .participant(h.wanjiru)!!
+                    .screen,
+                "the others are told it's a screen",
+            )
+            assertEquals(
+                false,
+                frame.view.call
+                    .participant(h.otieno)!!
+                    .screen,
+            )
+
+            success(h.setMedia(MediaCommand(h.wanjiru, call.callId, audio = true, video = true)))
+            assertEquals(false, h.stored(call).participant(h.wanjiru)!!.screen, "an older app's CL8 means camera")
+
+            success(h.setMedia(MediaCommand(h.wanjiru, call.callId, audio = true, video = true, screen = true)))
+            h.joined(call, h.wanjiru)
+            assertEquals(false, h.stored(call).participant(h.wanjiru)!!.screen, "a rejoin starts on the camera")
+
+            success(h.setMedia(MediaCommand(h.wanjiru, call.callId, audio = true, video = true, screen = true)))
+            success(h.leave(h.wanjiru, call.callId))
+            assertEquals(false, h.stored(call).participant(h.wanjiru)!!.screen, "leaving stops the share")
+        }
+
+    @Test
     fun `a ninth person can't join, and joining an ended call is refused`() =
         runTest {
             val h = Harness()
