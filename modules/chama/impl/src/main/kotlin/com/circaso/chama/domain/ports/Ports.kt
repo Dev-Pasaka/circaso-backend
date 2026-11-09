@@ -50,6 +50,18 @@ sealed interface ChamaFrame {
         val amount: WalletAmount,
         val userId: UserId? = null,
         val requestId: RequestId? = null,
+        /** The coin a contribution was paid in, in its own units (2026-11-09). */
+        val paid: WalletAmount? = null,
+    ) : ChamaFrame
+
+    /** A member's payment into the group's wallet is on its way, not yet confirmed (2026-11-09). No push. */
+    data class ContributionSubmitted(
+        val chatId: ChatId,
+        val transferId: String,
+        val userId: UserId,
+        val displayName: String,
+        val paid: WalletAmount,
+        val amount: WalletAmount?,
     ) : ChamaFrame
 }
 

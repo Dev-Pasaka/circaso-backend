@@ -21,7 +21,8 @@ import com.circaso.wallet.domain.repositories.WalletOutbox
 
 /**
  * Circle's `transactions.outbound`. A transfer prepared here is found by `refId`: its state, its `OUT` row and the
- * event for a final state (`TransferConfirmed`, `TransferFailed`) are written in one transaction, and only the update
+ * event for a final state (`TransferConfirmed`, `TransferFailed`; `TransferSubmitted` when a payment into a group's wallet
+ * is on its way) are written in one transaction, and only the update
  * that moves it publishes and sends `transfer.updated`. Its fee ledger row follows it
  * (collected, or void).
  */
@@ -149,7 +150,12 @@ class OutgoingUpdates(
     ): EventEnvelope? =
         when (next) {
             TransferState.CONFIRMED -> events.confirmed(transfer)
+
             TransferState.FAILED -> events.failed(transfer, change.failureReason)
+
+            // A payment into a group's wallet is told to its members as soon as it is on its way (2026-11-09).
+            TransferState.SUBMITTED -> events.submitted(transfer)
+
             else -> null
         }
 

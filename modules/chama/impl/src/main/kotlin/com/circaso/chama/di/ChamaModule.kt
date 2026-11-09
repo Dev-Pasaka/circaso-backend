@@ -29,6 +29,7 @@ import com.circaso.chama.domain.support.ChamaNames
 import com.circaso.chama.domain.support.ChamaViews
 import com.circaso.chama.domain.support.Members
 import com.circaso.chama.domain.support.RequestFrames
+import com.circaso.chama.domain.usecases.AnnounceContribution
 import com.circaso.chama.domain.usecases.AskPayout
 import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
@@ -153,7 +154,8 @@ fun chamaModule(config: Config): Module =
 
         // presentation
         single { ChamaService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { ChamaEventsService(get(), get(), get(), get(), get(), get()) }
+        single { AnnounceContribution(get(), get()) }
+        single { ChamaEventsService(get(), get(), get(), get(), get(), get(), get()) }
         single { ChamaAgentService(get(), get()) }
         single<RouteContributor>(named("chama.routes")) {
             val chamas = get<ChamaService>()

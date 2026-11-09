@@ -9,6 +9,7 @@ import com.circaso.shared.UserId
 import com.circaso.shared.decode
 import com.circaso.wallet.api.ApprovedPayout
 import com.circaso.wallet.api.TransferConfirmed
+import com.circaso.wallet.api.TransferSubmitted
 import com.circaso.wallet.api.WalletOwnerType
 import com.circaso.wallet.domain.models.AddChainCommand
 import com.circaso.wallet.domain.models.CreateGroupWalletCommand
@@ -281,6 +282,57 @@ class GroupWalletTest {
                     .decode<TransferConfirmed>()
             assertEquals(chat, confirmed.toGroupId)
             assertEquals(wanjiru, confirmed.signerId)
+        }
+
+    @Test
+    fun `a payment into the group wallet is announced once when it is on its way, a personal one never`() =
+        runBlocking<Unit> {
+            activeGroupWallet()
+            h.fund(wanjiru, 100_000_000)
+            val prepared = h.pay(wanjiru, Payee.Group(chat), tenUsdc, chatId = chat).data().transfer
+
+            suspend fun submitted() =
+                h.update(
+                    h.walletOn(wanjiru),
+                    h.circleUserOf(wanjiru),
+                    CustodyDirection.OUT,
+                    CustodyTransactionState.SUBMITTED,
+                    tenUsdc,
+                    refId = prepared.transferId.toString(),
+                    destination = prepared.destinationAddress,
+                )
+            h.applyUpdate(submitted())
+            h.applyUpdate(submitted()) // Circle says QUEUED, then SENT: still one announcement
+            val events = h.bus.published.filter { it.type == TransferSubmitted.TYPE }
+            assertEquals(1, events.size)
+            val event = events.single().decode<TransferSubmitted>()
+            assertEquals(chat, event.toGroupId)
+            assertEquals(wanjiru, event.senderId)
+            assertEquals(prepared.transferId, event.transferId)
+            assertEquals(chat, event.chatId)
+            assertEquals("10000000", event.usdValueMinor)
+            assertEquals(6, event.assetDecimals)
+            assertTrue(
+                (h.outbox as RecordingOutbox).written.any { it.type == TransferSubmitted.TYPE },
+                "written to the outbox with the move",
+            )
+
+            // A payment to a person is not announced on its way: only its final state has an event.
+            h.fund(otieno, 100_000_000)
+            h.reach.connect(otieno, wanjiru)
+            val personal = h.pay(otieno, Payee.Person(wanjiru), tenUsdc).data().transfer
+            h.applyUpdate(
+                h.update(
+                    h.walletOn(otieno),
+                    h.circleUserOf(otieno),
+                    CustodyDirection.OUT,
+                    CustodyTransactionState.SUBMITTED,
+                    tenUsdc,
+                    refId = personal.transferId.toString(),
+                    destination = personal.destinationAddress,
+                ),
+            )
+            assertEquals(1, h.bus.published.count { it.type == TransferSubmitted.TYPE })
         }
 
     @Test

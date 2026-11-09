@@ -5,11 +5,13 @@ import com.circaso.shared.EventEnvelope
 import com.circaso.shared.envelope
 import com.circaso.wallet.api.TransferConfirmed
 import com.circaso.wallet.api.TransferFailed
+import com.circaso.wallet.api.TransferSubmitted
 import com.circaso.wallet.domain.models.Transfer
 import java.math.BigDecimal
 
 /**
- * The events that end a transfer (Wallet → Events → Published), built before the transaction that writes their
+ * The events that end a transfer (Wallet → Events → Published), and the one that says a payment into a group's
+ * wallet is on its way, built before the transaction that writes their
  * outbox row: building an envelope is pure, publishing waits for the commit. Exactly one per transfer, written only by
  * the operation whose transition guard moved the transfer to its final state.
  */
@@ -36,6 +38,23 @@ class TransferEvents(private val bus: EventBus) {
                 assetDecimals = transfer.amount.asset.decimals,
             ),
         )
+
+    /** A payment into a group's wallet is on its way (2026-11-09); null for any other transfer. */
+    fun submitted(transfer: Transfer): EventEnvelope? {
+        val group = transfer.toGroupId ?: return null
+        return bus.envelope(
+            TransferSubmitted(
+                transferId = transfer.transferId,
+                senderId = transfer.senderId,
+                toGroupId = group,
+                blockchain = transfer.blockchain,
+                amount = Amounts.of(transfer.amount),
+                chatId = transfer.chatId,
+                usdValueMinor = usdValueMinor(transfer),
+                assetDecimals = transfer.amount.asset.decimals,
+            ),
+        )
+    }
 
     /**
      * The amount in micro-dollars at the price it was paid at (2026-11-07): one dollar for a dollar stablecoin

@@ -31,6 +31,7 @@ import com.circaso.chama.domain.support.ChamaNames
 import com.circaso.chama.domain.support.ChamaViews
 import com.circaso.chama.domain.support.Members
 import com.circaso.chama.domain.support.RequestFrames
+import com.circaso.chama.domain.usecases.AnnounceContribution
 import com.circaso.chama.domain.usecases.AskPayout
 import com.circaso.chama.domain.usecases.AttachPayment
 import com.circaso.chama.domain.usecases.DecidePayout
@@ -319,6 +320,7 @@ private class Harness {
             clock,
         )
     val expireRequests = ExpireRequests(requests, clock)
+    val announceContribution = AnnounceContribution(members, frames)
 
     val chat = ChatId.new()
     val otieno = UserId.new() // the group's owner, who set its wallet's PIN
@@ -380,6 +382,7 @@ class ChamaTest {
                         HasGoal(h.goals),
                         h.findApproved,
                         h.getChamaStatement,
+                        h.announceContribution,
                     ),
                 )
 
@@ -435,6 +438,7 @@ class ChamaTest {
                         HasGoal(h.goals),
                         h.findApproved,
                         h.getChamaStatement,
+                        h.announceContribution,
                     ),
                 )
 
@@ -482,6 +486,127 @@ class ChamaTest {
                 rows.last().paid,
             )
             assertEquals("USDC", rows.first().paid?.symbol)
+        }
+
+    @Test
+    fun `a payment into the group wallet is told to every member while it is on its way, and nothing moves yet`() =
+        runTest {
+            val h = Harness()
+            h.withWallet()
+            h.goal()
+            val handler =
+                com.circaso.chama.presentation.events.WalletEventHandler(
+                    ChamaEventsService(
+                        h.recordTransfer,
+                        ReplayFrames(NoFrames),
+                        h.expireRequests,
+                        HasGoal(h.goals),
+                        h.findApproved,
+                        h.getChamaStatement,
+                        h.announceContribution,
+                    ),
+                )
+            val handle = handler.subscription().handlers.getValue("wallet.TransferSubmitted")
+
+            fun submitted(
+                from: UserId,
+                amount: WalletAmount,
+                usdValueMinor: String?,
+                decimals: Int?,
+                transferId: TransferId = TransferId.new(),
+            ) = EventEnvelope.of(
+                com.circaso.wallet.api.TransferSubmitted(
+                    transferId = transferId,
+                    senderId = from,
+                    toGroupId = h.chat,
+                    blockchain = "BASE-SEPOLIA",
+                    amount = amount,
+                    chatId = h.chat,
+                    usdValueMinor = usdValueMinor,
+                    assetDecimals = decimals,
+                ),
+                com.circaso.wallet.api.TransferSubmitted
+                    .serializer(),
+            )
+
+            val t = TransferId.new()
+            handle.handle(submitted(h.wanjiru, WalletAmount("USDC", "7750000", "7.75"), "7750000", 6, t))
+            val (to, frame) = h.frames.sent.single { it.second is ChamaFrame.ContributionSubmitted }
+            frame as ChamaFrame.ContributionSubmitted
+            assertEquals(setOf(h.otieno, h.wanjiru, h.achieng, h.juma), to, "every member, the payer too")
+            assertEquals(t.value.toString(), frame.transferId)
+            assertEquals(h.wanjiru, frame.userId)
+            assertEquals("Wanjiru", frame.displayName)
+            assertEquals(WalletAmount("USDC", "7750000", "7.75"), frame.paid)
+            assertEquals("7.75", frame.amount?.amount)
+            assertTrue(h.contributions.rows.isEmpty(), "nothing is recorded until the chain confirms it")
+            assertTrue(h.bus.published.isEmpty())
+
+            // In a coin: the coin in its own units and its dollar value; unpriced, the coin alone.
+            handle.handle(submitted(h.juma, WalletAmount("ETH", "10000000000000000", "0.01"), "30000000", 18))
+            val eth = h.frames.ofType<ChamaFrame.ContributionSubmitted>().last()
+            assertEquals("0.01", eth.paid.amount)
+            assertEquals("ETH", eth.paid.asset)
+            assertEquals("30", eth.amount?.amount)
+            handle.handle(submitted(h.juma, WalletAmount("EURC", "1000000", "1"), null, 6))
+            assertNull(
+                h.frames
+                    .ofType<ChamaFrame.ContributionSubmitted>()
+                    .last()
+                    .amount,
+            )
+
+            // Someone no longer in the group isn't announced.
+            handle.handle(submitted(UserId.new(), WalletAmount("USDC", "1000000", "1"), "1000000", 6))
+            assertEquals(3, h.frames.ofType<ChamaFrame.ContributionSubmitted>().size)
+
+            // Confirmed: recorded once, and money.updated names the coin that was paid as well as its dollar value.
+            h.recordTransfer(
+                WalletTransfer(
+                    t,
+                    h.wanjiru,
+                    7_750_000,
+                    h.chat,
+                    null,
+                    h.chat,
+                    null,
+                    paid =
+                        com.circaso.chama.domain.models
+                            .PaidCoin("USDC", 6, java.math.BigInteger.valueOf(7_750_000)),
+                ),
+            )
+            val moved = h.frames.ofType<ChamaFrame.MoneyUpdated>().single()
+            assertEquals(t.value.toString(), moved.transferId)
+            assertEquals(WalletAmount("USDC", "7750000", "7.75"), moved.paid)
+        }
+
+    @Test
+    fun `a phone whose number is ahead of the member's counter is told to resync, not left dropping frames`() =
+        runTest {
+            val user = UserId.new()
+
+            class Log(val latest: Long?, val kept: List<LoggedFrame> = emptyList()) : RealtimeLog {
+                override suspend fun since(
+                    userId: UserId,
+                    seq: Long,
+                    limit: Int,
+                ) = kept.filter { it.seq > seq }
+
+                override suspend fun latest(userId: UserId) = latest
+            }
+            // The counter ended after a quiet week (gone) or started again below the phone's 40: resync.
+            assertNull(ReplayFrames(Log(latest = null))(user, 40).data())
+            assertNull(ReplayFrames(Log(latest = 3, kept = listOf(LoggedFrame(3, "{}"))))(user, 40).data())
+            // The frames after the phone's number are gone: resync, as before.
+            assertNull(ReplayFrames(Log(latest = 50))(user, 40).data())
+            // Up to date, or behind with the frames kept: nothing, or those frames.
+            assertEquals(emptyList(), ReplayFrames(Log(latest = 40))(user, 40).data())
+            assertEquals(
+                listOf(41L),
+                ReplayFrames(Log(41, listOf(LoggedFrame(41, "{}"))))(user, 40).data()?.map { it.seq },
+            )
+            // A phone that never had a frame asks from 0 and is never told to resync.
+            assertEquals(emptyList(), ReplayFrames(Log(latest = null))(user, 0).data())
         }
 
     @Test

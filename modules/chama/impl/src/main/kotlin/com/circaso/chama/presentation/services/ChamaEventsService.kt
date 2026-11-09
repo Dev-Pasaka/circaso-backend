@@ -1,8 +1,10 @@
 package com.circaso.chama.presentation.services
 
 import com.circaso.chama.domain.models.ChamaDigest
+import com.circaso.chama.domain.models.SubmittedContribution
 import com.circaso.chama.domain.models.WalletTransfer
 import com.circaso.chama.domain.ports.LoggedFrame
+import com.circaso.chama.domain.usecases.AnnounceContribution
 import com.circaso.chama.domain.usecases.ExpireRequests
 import com.circaso.chama.domain.usecases.FindApprovedPayout
 import com.circaso.chama.domain.usecases.GetChamaStatement
@@ -26,8 +28,11 @@ class ChamaEventsService(
     private val hasGoal: HasGoal,
     private val findApprovedPayout: FindApprovedPayout,
     private val getChamaStatement: GetChamaStatement,
+    private val announceContribution: AnnounceContribution,
 ) {
     suspend fun transferConfirmed(transfer: WalletTransfer): Resource<Unit> = recordTransfer(transfer)
+
+    suspend fun contributionSubmitted(payment: SubmittedContribution): Resource<Unit> = announceContribution(payment)
 
     suspend fun approvedPayout(chatId: ChatId, requestId: UUID): ApprovedPayout? = findApprovedPayout(chatId, requestId)
 
