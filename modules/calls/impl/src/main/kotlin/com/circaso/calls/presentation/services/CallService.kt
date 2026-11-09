@@ -14,6 +14,7 @@ import com.circaso.calls.domain.usecases.GetCall
 import com.circaso.calls.domain.usecases.GetLiveCall
 import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
+import com.circaso.calls.domain.usecases.ListLiveCalls
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReportConnected
@@ -36,6 +37,7 @@ class CallService(
     private val leaveCall: LeaveCall,
     private val setMedia: SetMedia,
     private val reportConnected: ReportConnected,
+    private val listLiveCalls: ListLiveCalls,
 ) {
     suspend fun start(
         userId: UserId,
@@ -46,6 +48,8 @@ class CallService(
     suspend fun get(userId: UserId, callId: CallId): Resource<CallView> = getCall(userId, callId)
 
     suspend fun live(userId: UserId, chatId: ChatId): Resource<CallView> = getLiveCall(userId, chatId)
+
+    suspend fun liveCalls(userId: UserId): Resource<List<CallView>> = listLiveCalls(userId)
 
     suspend fun join(command: JoinCommand): Resource<Joined> = joinCall(command)
 

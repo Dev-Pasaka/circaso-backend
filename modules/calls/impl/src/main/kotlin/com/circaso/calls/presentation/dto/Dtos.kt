@@ -26,6 +26,10 @@ data class CallResponse(
     val iceServers: List<IceServerDto>,
 )
 
+/** CL2c `GET /calls/live`: the calls going on in the person's chats; `iceServers` is empty in each. */
+@Serializable
+data class LiveCallsResponse(val calls: List<CallResponse>)
+
 @Serializable
 data class ParticipantDto(
     val userId: String,

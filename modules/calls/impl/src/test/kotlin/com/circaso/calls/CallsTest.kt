@@ -34,6 +34,7 @@ import com.circaso.calls.domain.usecases.GetCall
 import com.circaso.calls.domain.usecases.GetLiveCall
 import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
+import com.circaso.calls.domain.usecases.ListLiveCalls
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReportConnected
@@ -94,6 +95,9 @@ private class MemoryCalls : CallRepository {
     override suspend fun lock(callId: CallId) = rows[callId]
 
     override suspend fun live(chatId: ChatId) = rows.values.firstOrNull { it.chatId == chatId && !it.isEnded }
+
+    override suspend fun liveFor(userId: UserId) =
+        rows.values.filter { call -> !call.isEnded && call.participant(userId) != null }
 
     override suspend fun save(before: Call, after: Call) {
         rows[after.callId] = after
@@ -274,6 +278,7 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
     val start = StartCall(people, calls, views, frames, clock)
     val get = GetCall(people, calls, views)
     val live = GetLiveCall(people, calls, views)
+    val liveCalls = ListLiveCalls(calls, views)
     val join = JoinCall(people, calls, media, changes, notices, views, clock)
     val pull = PullTracks(sessions, calls, media, clock)
     val renegotiate = Renegotiate(sessions, calls, media, clock)
@@ -495,7 +500,7 @@ class CallsTest {
         }
 
     @Test
-    fun `a group call goes on while anyone is in it, ends when the last person leaves, and a member can rejoin meanwhile`() =
+    fun `a group call lasts while anyone is in it, ends with the last to leave, and members can rejoin`() =
         runTest {
             val h = Harness()
             val call = h.call(h.group)
@@ -983,5 +988,49 @@ class CallsTest {
             h2.joined(direct, h2.wanjiru)
             success(h2.decline(h2.otieno, direct.callId))
             assertTrue(h2.frames.ofType<CallFrame.RingStopped>().isEmpty(), "the callee ended their own ring")
+        }
+
+    @Test
+    fun `everyone a group call rang hears it go on and end, on it or not, so their chat can show it`() =
+        runTest {
+            val h = Harness()
+            val call = h.call(h.group)
+            h.joined(call, h.wanjiru)
+            success(h.decline(h.achieng, call.callId))
+            h.joined(call, h.otieno)
+
+            val everyone = setOf(h.wanjiru, h.otieno, h.achieng)
+            assertTrue(
+                h.frames.ofType<CallFrame.Updated>().all { it.first == everyone },
+                "Achieng declined and still hears",
+            )
+            success(h.leave(h.otieno, call.callId))
+            success(h.leave(h.wanjiru, call.callId))
+            assertEquals(
+                everyone,
+                h.frames
+                    .ofType<CallFrame.Ended>()
+                    .single()
+                    .first,
+            )
+        }
+
+    @Test
+    fun `my live calls are the ones going on in chats I was rung for, without ICE servers, and end when they end`() =
+        runTest {
+            val h = Harness()
+            val group = h.call(h.group)
+            h.joined(group, h.wanjiru)
+            h.now = h.now.plusSeconds(1)
+            val direct = h.call(h.direct, by = h.otieno)
+
+            val achieng = success(h.liveCalls(h.achieng))
+            assertEquals(listOf(group.callId), achieng.map { it.call.callId }, "not in the direct chat")
+            assertTrue(achieng.single().iceServers.isEmpty(), "for showing, not joining")
+            assertEquals(listOf(group.callId, direct.callId), success(h.liveCalls(h.wanjiru)).map { it.call.callId })
+
+            success(h.leave(h.wanjiru, group.callId))
+            assertTrue(success(h.liveCalls(h.achieng)).isEmpty(), "the last person left: it's over")
+            assertEquals(listOf(direct.callId), success(h.liveCalls(h.wanjiru)).map { it.call.callId })
         }
 }

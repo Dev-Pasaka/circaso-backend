@@ -3,6 +3,7 @@ package com.circaso.calls.domain.repositories
 import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.models.Call
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.UserId
 import java.time.Instant
 
 interface CallRepository {
@@ -16,6 +17,9 @@ interface CallRepository {
 
     /** The chat's call that hasn't ended, if any. */
     suspend fun live(chatId: ChatId): Call?
+
+    /** The calls that haven't ended in which [userId] is a participant (rung, on it, or was on it). */
+    suspend fun liveFor(userId: UserId): List<Call>
 
     /** Writes what changed from [before] to [after]: the call row and the participants that differ. */
     suspend fun save(before: Call, after: Call)

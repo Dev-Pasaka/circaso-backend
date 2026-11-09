@@ -28,6 +28,7 @@ import com.circaso.calls.domain.usecases.GetCall
 import com.circaso.calls.domain.usecases.GetLiveCall
 import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
+import com.circaso.calls.domain.usecases.ListLiveCalls
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReplayFrames
@@ -111,6 +112,7 @@ fun callsModule(config: Config): Module =
         single { GetCall(get(), get(), get()) }
         single { GetLiveCall(get(), get(), get()) }
         single { FindLiveCall(get()) }
+        single { ListLiveCalls(get(), get()) }
         single { JoinCall(get(), get(), get(), get(), get(), get(), clock) }
         single { PullTracks(get(), get(), get(), clock) }
         single { Renegotiate(get(), get(), get(), clock) }
@@ -126,7 +128,7 @@ fun callsModule(config: Config): Module =
         single { ReplayFrames(get()) }
 
         // presentation
-        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CallEventsService(get(), get(), get()) }
         single<RouteContributor>(named("calls.routes")) {
             val calls = get<CallService>()

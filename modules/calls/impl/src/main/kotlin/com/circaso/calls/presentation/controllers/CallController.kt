@@ -7,6 +7,7 @@ import com.circaso.calls.presentation.dto.ConnectedRequest
 import com.circaso.calls.presentation.dto.EmptyResponse
 import com.circaso.calls.presentation.dto.JoinRequest
 import com.circaso.calls.presentation.dto.JoinResponse
+import com.circaso.calls.presentation.dto.LiveCallsResponse
 import com.circaso.calls.presentation.dto.MediaRequest
 import com.circaso.calls.presentation.dto.PullRequest
 import com.circaso.calls.presentation.dto.PullResponse
@@ -71,6 +72,21 @@ fun Route.callController(calls: CallService) {
                         "with a call ringing or active answers that call (its `callId`, `startedBy` someone else " +
                         "perhaps) and rings nobody: join it with CL3. Two people calling each other at once end up " +
                         "in one call.",
+            )
+
+            get("live") {
+                val userId = call.principal().userId
+                val result = calls.liveCalls(userId).map { views -> LiveCallsResponse(views.map { it.toResponse() }) }
+                call.respondDefault(result.toDefaultResponse { it })
+            }.docs<NoBody, LiveCallsResponse>(
+                "CL2c · The calls going on in my chats",
+                TAG,
+                emptyList(),
+                notes =
+                    "$SCOPE Every call `RINGING` or `ACTIVE` in a chat you were rung for, oldest first, with " +
+                        "`iceServers` empty (read CL2 to join). For the chats list's \"Call in progress\": read it " +
+                        "when the list opens and after every socket reconnect, then keep it current from " +
+                        "`calls/call.updated` and `call.ended`, which go to everyone the call rang.",
             )
 
             route("/{callId}") {
