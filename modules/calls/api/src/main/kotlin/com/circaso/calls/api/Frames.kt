@@ -78,6 +78,8 @@ data class CallParticipantSnapshot(
     val connection: String? = null,
     /** Their phone's SFU connection is up under [connection] (CL3b): their tracks are ready to pull. */
     val connected: Boolean = false,
+    /** Their video is their screen, not their camera (CL8): show it whole and say they are sharing. */
+    val screen: Boolean = false,
 )
 
 @Serializable

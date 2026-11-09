@@ -34,7 +34,7 @@ Built 2026-10-29. Voice and video calls between the people in a chat (direct or 
 | CL5 | `POST /calls/{callId}/renegotiate` `{sessionId, answer}` | app | `Renegotiate` | `{}` |
 | CL6 | `POST /calls/{callId}/decline` | app | `DeclineCall` | direct: ends `DECLINED`; group: the person `DECLINED`, the call ends when nobody is left to ring or talk to |
 | CL7 | `POST /calls/{callId}/leave` | app | `LeaveCall` | answers at once, the SFU close runs after (background, 3 tries, 404/410 = done); caller before any answer → `CANCELLED`; a direct call ends for both on either hang-up (`COMPLETED`, `DECLINED` for an unanswered callee); a group call with fewer than 2 joined → `COMPLETED` |
-| CL8 | `POST /calls/{callId}/media` `{audio, video}` | app | `SetMedia` | `{}`; broadcast in `call.updated` |
+| CL8 | `POST /calls/{callId}/media` `{audio, video, screen?}` (`screen` since 2026-11-09, reset on join and leave) | app | `SetMedia` | `{}`; broadcast in `call.updated` |
 
 Every change to an existing call goes through `CallChanges`: lock the call row, decide with the pure `CallRules`, write what changed and (when it ended) the outbox row, commit, then frames, publish and SFU closes. SFU closes run in a background scope after the answer (2026-11-09: Cloudflare took ~5.8 s to answer `410` for a session the phone had closed, so hang-ups took 6 to 12 s). SFU calls never run inside the transaction; a join pushes to the SFU first and gives the session up if the call ended or filled meanwhile.
 

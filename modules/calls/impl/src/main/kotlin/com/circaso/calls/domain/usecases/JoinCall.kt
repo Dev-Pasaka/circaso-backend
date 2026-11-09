@@ -84,6 +84,8 @@ class JoinCall(
                     joinedAt = participant.joinedAt ?: now,
                     // a new session connects from scratch: others wait for CL3b again before pulling it
                     connectedAt = null,
+                    // a (re)join starts on the camera; the phone says CL8 again if it is still sharing its screen
+                    screen = false,
                 )
             }
         val becameActive = withMe.state == CallState.RINGING && withMe.joined.size >= 2

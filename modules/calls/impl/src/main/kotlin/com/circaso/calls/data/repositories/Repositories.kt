@@ -154,6 +154,7 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
             it[joinedAt] = participant.joinedAt
             it[updatedAt] = participant.updatedAt
             it[connectedAt] = participant.connectedAt
+            it[screen] = participant.screen
         }
         TracksTable.deleteWhere {
             (TracksTable.callId eq callId.value) and (TracksTable.userId eq participant.userId.value)
@@ -202,6 +203,7 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
             joinedAt = this[ParticipantsTable.joinedAt],
             updatedAt = this[ParticipantsTable.updatedAt],
             connectedAt = this[ParticipantsTable.connectedAt],
+            screen = this[ParticipantsTable.screen],
         )
     }
 

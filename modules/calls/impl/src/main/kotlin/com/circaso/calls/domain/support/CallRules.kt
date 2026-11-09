@@ -90,7 +90,14 @@ object CallRules {
         if (state == ParticipantState.JOINED) {
             copy(state = state, updatedAt = now)
         } else {
-            copy(state = state, sessionId = null, tracks = emptyList(), connectedAt = null, updatedAt = now)
+            copy(
+                state = state,
+                sessionId = null,
+                tracks = emptyList(),
+                connectedAt = null,
+                screen = false,
+                updatedAt = now,
+            )
         }
 
     /** Replaces [userId]'s row (or adds it, for a member who wasn't rung) with what [change] makes of it. */

@@ -31,6 +31,7 @@ object ParticipantsTable : Table("calls.participants") {
     val joinedAt = timestamp("joined_at").nullable()
     val updatedAt = timestamp("updated_at")
     val connectedAt = timestamp("connected_at").nullable()
+    val screen = bool("screen").default(false)
     override val primaryKey = PrimaryKey(callId, userId)
 }
 
