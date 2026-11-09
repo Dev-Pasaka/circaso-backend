@@ -1,6 +1,9 @@
 package com.circaso.messaging.data.cache
 
 import com.circaso.messaging.api.ChatUpdatedFrame
+import com.circaso.messaging.api.InviteReceivedFrame
+import com.circaso.messaging.api.InviteRemovedFrame
+import com.circaso.messaging.api.InvitesChangedFrame
 import com.circaso.messaging.api.KeysChangedFrame
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MemberRemovedFrame
@@ -62,5 +65,17 @@ internal fun MessagingFrame.envelope(seq: Long, ts: Instant): RealtimeEnvelope =
 
         is PresenceChangedFrame -> {
             RealtimeEnvelope.of(MODULE, type, seq, this, PresenceChangedFrame.serializer(), ts)
+        }
+
+        is InviteReceivedFrame -> {
+            RealtimeEnvelope.of(MODULE, type, seq, this, InviteReceivedFrame.serializer(), ts)
+        }
+
+        is InviteRemovedFrame -> {
+            RealtimeEnvelope.of(MODULE, type, seq, this, InviteRemovedFrame.serializer(), ts)
+        }
+
+        is InvitesChangedFrame -> {
+            RealtimeEnvelope.of(MODULE, type, seq, this, InvitesChangedFrame.serializer(), ts)
         }
     }

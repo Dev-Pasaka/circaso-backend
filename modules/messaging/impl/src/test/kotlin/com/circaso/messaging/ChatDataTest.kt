@@ -76,14 +76,14 @@ class ChatDataTest {
     // ---- M9 cap ----
 
     @Test
-    fun `of many adds racing for the last place of a 999-member group, exactly one gets in`() =
+    fun `of many people joining for the last place of a 999-member group, exactly one gets in`() =
         runBlocking<Unit> {
             val owner = UserId.new()
             val chatId = h.group(owner, List(998) { UserId.new() })
             assertEquals(999, h.chats.chat(chatId)!!.memberCount)
             val hopefuls = List(8) { UserId.new() }
 
-            val results = concurrently(hopefuls.size) { i -> h.addMembers(owner, chatId, setOf(hopefuls[i])) }
+            val results = concurrently(hopefuls.size) { i -> h.addAndJoin(owner, chatId, hopefuls[i]) }
 
             assertEquals(1, results.count { it is Resource.Success })
             assertEquals(
@@ -93,11 +93,11 @@ class ChatDataTest {
             val chat = h.chats.chat(chatId)!!
             assertEquals(1_000, chat.memberCount)
             assertEquals(1_000, memberRows(chatId), "the count is the rows")
-            assertEquals(998 + 1, outboxRows(MemberAdded.TYPE), "the creation's and the one add's")
+            assertEquals(1, outboxRows(MemberAdded.TYPE), "the one accept's (the setup seats members directly)")
         }
 
     @Test
-    fun `of many adds racing for a group's last place, exactly one gets in (50 runs)`() =
+    fun `of many people joining for a group's last place, exactly one gets in (50 runs)`() =
         runBlocking<Unit> {
             // The same statements as at 1,000, with a cap of 10 so 50 runs stay quick.
             val small = PostgresHarness(MessagingConfig(maxGroupMembers = 10))
@@ -106,7 +106,7 @@ class ChatDataTest {
                 val chatId = small.group(owner, List(8) { UserId.new() })
                 val hopefuls = List(6) { UserId.new() }
 
-                val results = concurrently(hopefuls.size) { i -> small.addMembers(owner, chatId, setOf(hopefuls[i])) }
+                val results = concurrently(hopefuls.size) { i -> small.addAndJoin(owner, chatId, hopefuls[i]) }
 
                 assertEquals(1, results.count { it is Resource.Success }, "run $run")
                 assertTrue(results.filterIsInstance<Resource.Error>().all { it.error.code == "messaging.group_full" })
@@ -116,7 +116,7 @@ class ChatDataTest {
         }
 
     @Test
-    fun `an add that would pass the cap reserves nothing and writes nothing`() =
+    fun `an add that would pass the cap invites nobody and changes nothing`() =
         runBlocking<Unit> {
             val owner = UserId.new()
             val chatId = h.group(owner, List(997) { UserId.new() })
@@ -129,6 +129,7 @@ class ChatDataTest {
             assertNull(h.chats.reserveSeats(chatId, 3, 1_000), "the conditional update finds no row")
             assertEquals(998, h.chats.chat(chatId)!!.memberCount)
             assertEquals(version, h.chats.chat(chatId)!!.version)
+            assertEquals(0, h.count("SELECT count(*) FROM messaging.invites WHERE chat_id = ?", chatId.value))
         }
 
     // ---- M10 ----

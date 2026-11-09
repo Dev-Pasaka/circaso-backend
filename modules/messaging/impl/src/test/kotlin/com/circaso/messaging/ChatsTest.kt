@@ -102,9 +102,10 @@ class ChatsTest {
             val group = h.createGroup(h.command(amina, setOf(brian, chidi, dalia, amina))).data()
 
             assertEquals(listOf(dalia), group.notAdded)
-            assertEquals(3, group.chat.memberCount)
+            assertEquals(listOf(brian, chidi).sortedBy { it.toString() }, group.invited)
+            assertEquals(1, group.chat.memberCount, "the people asked for are invited, not put in")
             assertEquals(Role.OWNER, h.role(group.chat.chatId, amina))
-            assertEquals(Role.MEMBER, h.role(group.chat.chatId, brian))
+            assertNull(h.role(group.chat.chatId, brian))
             assertNull(h.role(group.chat.chatId, dalia))
             assertEquals(h.sealed, group.chat.sealedMeta)
             assertEquals(1, group.chat.metaVersion)
@@ -113,29 +114,30 @@ class ChatsTest {
         }
 
     @Test
-    fun `one member added frame per member lists everyone the action added`() =
+    fun `one member added frame per join tells every member who joined`() =
         runTest {
             val h = ChatHarness()
 
             val group = h.group(amina, listOf(brian, chidi))
 
             val added = h.frames.sent.filter { it.type == "member.added" }
-            assertEquals(setOf(amina, brian, chidi), added.map { it.to }.toSet())
-            assertEquals(3, added.size, "one frame to each of the three members")
-            val frame = added.first().data<MemberAddedFrame>()
-            assertEquals(listOf(brian, chidi).sortedBy { it.toString() }, frame.userIds)
+            val chidiJoined = added.filter { it.data<MemberAddedFrame>().userIds == listOf(chidi) }
+            assertEquals(setOf(amina, brian, chidi), chidiJoined.map { it.to }.toSet(), "every member, Chidi too")
+            val frame = chidiJoined.first().data<MemberAddedFrame>()
             assertEquals(group.chat.chatId, frame.chatId)
-            assertEquals(amina, frame.byUserId)
+            assertEquals(amina, frame.byUserId, "invited by Amina")
+            assertTrue(frame.joined)
+            assertEquals(2 + 3, added.size, "Brian's join to the two of them, Chidi's to the three")
         }
 
     @Test
-    fun `the chat, its members and their events are one transaction`() =
+    fun `the chat, its owner and the invites are one transaction, and each join another`() =
         runTest {
             val h = ChatHarness()
 
             val group = h.group(amina, listOf(brian, chidi))
 
-            assertEquals(listOf("chats.create-group"), h.transactor.operations)
+            assertEquals(listOf("chats.create-group", "invites.accept", "invites.accept"), h.transactor.operations)
             assertEquals(listOf(ChatCreated.TYPE, MemberAdded.TYPE, MemberAdded.TYPE), h.outbox.types())
             val added =
                 h.outbox.written
@@ -146,7 +148,7 @@ class ChatsTest {
                 added.none { amina.toString() in it.substringBefore("byUserId") },
                 "the creator is in ChatCreated",
             )
-            assertEquals(h.outbox.written, h.bus.published, "published after the transaction, each once")
+            assertEquals(h.outbox.written, h.bus.published, "published after each transaction, each once")
             assertEquals(3, h.chats.members(group.chat.chatId).size)
         }
 
@@ -182,9 +184,12 @@ class ChatsTest {
             val people = (1..999).map { UserId.new() }.toSet()
             h.connect(amina, people)
 
-            val full = h.createGroup(h.command(amina, people)).data()
+            val created = h.createGroup(h.command(amina, people)).data()
+            assertEquals(999, created.invited!!.size)
+            assertEquals(1_000L, h.frames.count, "an invite to each person, and invites.changed to Amina")
+            h.join(created.chat.chatId, people)
+            val full = h.getChat(amina, created.chat.chatId).data()
             assertEquals(1_000, full.chat.memberCount)
-            assertEquals(1_000L, h.frames.count, "one member.added frame to each member")
 
             val tooMany = people + UserId.new()
             assertEquals(
@@ -197,22 +202,26 @@ class ChatsTest {
         }
 
     @Test
-    fun `adds racing for the last places can't pass the cap between them`() =
+    fun `joins racing for the last places can't pass the cap between them`() =
         runTest {
             val h = ChatHarness(MessagingConfig(maxGroupMembers = 4))
             val group = h.group(amina, listOf(brian))
+            val chatId = group.chat.chatId
             val newcomers = (1..4).map { UserId.new() }
             h.connect(amina, newcomers)
+            h.addMembers(amina, chatId, newcomers.take(2).toSet()).data()
+            h.addMembers(amina, chatId, newcomers.drop(2).toSet()).data()
 
             val results =
                 newcomers
-                    .map { person -> async { h.addMembers(amina, group.chat.chatId, setOf(person)) } }
+                    .map { person -> async { h.acceptInvite(person, h.invites.openId(chatId, person)) } }
                     .awaitAll()
 
-            val chat = h.chats.chats[group.chat.chatId]!!
+            val chat = h.chats.chats[chatId]!!
             assertTrue(chat.memberCount <= 4, "count ${chat.memberCount}")
-            assertEquals(4, h.chats.members(group.chat.chatId).size)
+            assertEquals(4, h.chats.members(chatId).size)
             assertEquals(2, results.count { it.isError("messaging.group_full") })
+            assertEquals(2, h.invites.openIn(chatId, h.clock.instant()).size, "a full group leaves their invites open")
         }
 
     // ---- admin rules ----
@@ -232,13 +241,7 @@ class ChatsTest {
 
             h.setRole(amina, chatId, brian, Role.ADMIN).data()
             assertEquals(Role.ADMIN, h.role(chatId, brian))
-            assertEquals(
-                listOf(dalia),
-                h.addMembers(brian, chatId, setOf(dalia)).data().members.map { it.profile.userId }.filter {
-                    it ==
-                        dalia
-                },
-            )
+            assertEquals(listOf(dalia), h.addMembers(brian, chatId, setOf(dalia)).data().invited)
         }
 
     @Test
@@ -252,8 +255,14 @@ class ChatsTest {
             val allowed = h.update(amina, chatId, group.chat.version, membersCanAdd = true).data()
             assertTrue(allowed.chat.settings.membersCanAdd)
 
-            h.addMembers(brian, chatId, setOf(chidi)).data()
+            h.addAndJoin(brian, chatId, setOf(chidi))
             assertEquals(Role.MEMBER, h.role(chatId, chidi))
+            assertEquals(
+                brian,
+                h.invites.invites.values
+                    .single { it.userId == chidi }
+                    .invitedBy,
+            )
         }
 
     @Test
@@ -299,11 +308,14 @@ class ChatsTest {
             val result = h.addMembers(amina, group.chat.chatId, setOf(brian, chidi, dalia)).data()
 
             assertEquals(listOf(dalia), result.notAdded)
-            assertEquals(Role.MEMBER, h.role(group.chat.chatId, chidi))
+            assertEquals(listOf(chidi), result.invited, "Brian is in already")
+            assertNull(h.role(group.chat.chatId, chidi), "invited, not in")
             assertNull(h.role(group.chat.chatId, dalia))
-            assertEquals(3, result.chat.memberCount)
+            assertEquals(2, result.chat.memberCount)
+            assertTrue(h.frames.to(dalia).isEmpty(), "the person left out hears nothing")
+            h.join(group.chat.chatId, listOf(chidi))
             val types = h.outbox.types().filter { it == MemberAdded.TYPE }
-            assertEquals(2, types.size, "brian at creation and chidi now; dalia never")
+            assertEquals(2, types.size, "brian's join and chidi's; dalia never")
         }
 
     @Test
@@ -396,9 +408,9 @@ class ChatsTest {
             val chatId = h.group(amina, listOf(brian)).chat.chatId
             h.clock.advance()
             h.connect(amina, listOf(chidi, dalia))
-            h.addMembers(amina, chatId, setOf(chidi)).data()
+            h.addAndJoin(amina, chatId, setOf(chidi))
             h.clock.advance()
-            h.addMembers(amina, chatId, setOf(dalia)).data()
+            h.addAndJoin(amina, chatId, setOf(dalia))
             h.setRole(amina, chatId, dalia, Role.ADMIN).data()
             h.setRole(amina, chatId, chidi, Role.ADMIN).data()
             h.frames.sent.clear()
@@ -423,7 +435,7 @@ class ChatsTest {
             val chatId = h.group(amina, listOf(brian)).chat.chatId
             h.clock.advance()
             h.connect(amina, chidi)
-            h.addMembers(amina, chatId, setOf(chidi)).data()
+            h.addAndJoin(amina, chatId, setOf(chidi))
 
             h.leaveGroup(amina, chatId).data()
 
@@ -506,7 +518,7 @@ class ChatsTest {
             val frames = h.frames.sent.filter { it.type == "chat.updated" }
             assertEquals(setOf(amina, brian), frames.map { it.to }.toSet())
             assertEquals(
-                ChatUpdatedFrame(group.chat.chatId, metaVersion = 2, version = 2L),
+                ChatUpdatedFrame(group.chat.chatId, metaVersion = 2, version = group.chat.version + 1),
                 frames.first().data<ChatUpdatedFrame>(),
             )
         }
@@ -532,7 +544,9 @@ class ChatsTest {
             val group = h.group(amina, listOf(brian))
             h.connect(amina, chidi)
 
-            val added = h.addMembers(amina, group.chat.chatId, setOf(chidi)).data()
+            val invited = h.addMembers(amina, group.chat.chatId, setOf(chidi)).data()
+            assertEquals(group.chat.version, invited.chat.version, "an invite isn't a membership change")
+            val added = h.acceptInvite(chidi, h.invites.openId(group.chat.chatId, chidi)).data()
 
             assertEquals(group.chat.version + 1, added.chat.version)
             assertEquals(
@@ -564,6 +578,7 @@ class ChatsTest {
             val h = ChatHarness()
             val group = h.group(amina, listOf(brian))
             val chatId = group.chat.chatId
+            h.cache.expireMarkers()
 
             assertEquals(setOf(amina, brian), h.directory.members(chatId))
             assertEquals(setOf(amina, brian), h.cache.entries[chatId], "cached after the first read")
@@ -572,7 +587,9 @@ class ChatsTest {
 
             h.connect(amina, chidi)
             h.addMembers(amina, chatId, setOf(chidi)).data()
-            assertNull(h.cache.entries[chatId], "an add clears it")
+            assertFalse(h.directory.isMember(chatId, chidi), "an invite isn't a membership")
+            h.join(chatId, listOf(chidi))
+            assertNull(h.cache.entries[chatId], "a join clears it")
             assertTrue(h.directory.isMember(chatId, chidi))
 
             h.removeMember(amina, chatId, brian).data()
@@ -668,14 +685,18 @@ class ChatsTest {
             val h = ChatHarness()
             val group = h.group(amina, listOf(brian))
             h.connect(amina, chidi)
-            h.addMembers(amina, group.chat.chatId, setOf(chidi)).data()
+            h.addAndJoin(amina, group.chat.chatId, setOf(chidi))
             h.update(amina, group.chat.chatId, h.chats.chats[group.chat.chatId]!!.version, membersCanAdd = true).data()
 
             val all = h.replayFrames(brian, 0).data()!!
-            assertEquals(listOf("member.added", "member.added", "chat.updated"), all.map { it.json })
-            assertEquals(listOf(1L, 2L, 3L), all.map { it.seq })
-            assertEquals(listOf(3L), h.replayFrames(brian, 2).data()!!.map { it.seq })
-            assertEquals(emptyList(), h.replayFrames(brian, 3).data())
+            assertEquals(
+                listOf("invite.received", "member.added", "member.added", "chat.updated"),
+                all.map { it.json },
+                "Brian's invite and join, Chidi's join (not his invite) and the change",
+            )
+            assertEquals(listOf(1L, 2L, 3L, 4L), all.map { it.seq })
+            assertEquals(listOf(4L), h.replayFrames(brian, 3).data()!!.map { it.seq })
+            assertEquals(emptyList(), h.replayFrames(brian, 4).data())
 
             h.frames.expire(brian, 1)
             assertNull(h.replayFrames(brian, 0).getOrNull(), "frame 1 is gone: the phone must resync")

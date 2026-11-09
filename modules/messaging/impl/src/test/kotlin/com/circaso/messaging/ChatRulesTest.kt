@@ -31,16 +31,12 @@ class ChatRulesTest {
             val again = h.createGroup(h.command(amina, setOf(brian, chidi), key = key)).data()
 
             assertEquals(first.chat.chatId, again.chat.chatId)
-            assertEquals(
-                setOf(amina, brian),
-                h.chats
-                    .members(first.chat.chatId)
-                    .map { it.userId }
-                    .toSet(),
-            )
-            assertEquals(2, h.chats.chats[first.chat.chatId]!!.memberCount, "the create committed whole, once")
+            assertEquals(listOf(amina), h.chats.members(first.chat.chatId).map { it.userId })
+            assertEquals(1, h.chats.chats[first.chat.chatId]!!.memberCount, "the create committed whole, once")
             assertEquals(1, h.outbox.types().count { it == ChatCreated.TYPE })
-            assertTrue(h.frames.sent.isEmpty(), "the retry adds nobody and tells nobody")
+            assertEquals(1, h.invites.invites.size, "Brian's invite, once; Chidi wasn't in the first attempt")
+            assertEquals(listOf(brian), again.invited, "the open invites of the people asked for")
+            assertTrue(h.frames.sent.isEmpty(), "the retry invites nobody and tells nobody")
         }
 
     @Test
@@ -54,6 +50,7 @@ class ChatRulesTest {
                     .createGroup(h.command(amina, setOf(brian, chidi), key = key))
                     .data()
                     .chat.chatId
+            h.join(chatId, listOf(brian, chidi))
             h.leaveGroup(brian, chatId).data()
 
             val retried = h.createGroup(h.command(amina, setOf(brian, chidi), key = key)).data()
@@ -66,6 +63,7 @@ class ChatRulesTest {
                     .map { it.userId }
                     .toSet(),
             )
+            assertEquals(emptyList(), retried.invited, "and nobody is invited again")
         }
 
     @Test
@@ -79,6 +77,7 @@ class ChatRulesTest {
                     .createGroup(h.command(amina, setOf(brian), key = key))
                     .data()
                     .chat.chatId
+            h.join(chatId, listOf(brian))
             h.leaveGroup(amina, chatId).data()
 
             val retried = h.createGroup(h.command(amina, setOf(brian), key = key))

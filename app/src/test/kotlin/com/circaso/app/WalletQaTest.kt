@@ -514,6 +514,21 @@ class WalletQaTest {
         assertEquals(code, response.code(), "$label: $text")
     }
 
+    /** Each of [people] accepts their invite to [chatId] (decision 2026-11-09: adding someone invites them). */
+    private suspend fun ApplicationTestBuilder.join(chatId: String, vararg people: Person) {
+        for (person in people) {
+            val invite =
+                get("/v1/chats/invites", person.app)
+                    .data()["invites"]!!
+                    .jsonArray
+                    .map { it.jsonObject }
+                    .single { it["chatId"]!!.jsonPrimitive.content == chatId }
+            val inviteId = invite["inviteId"]!!.jsonPrimitive.content
+            val accepted = send("POST", "/v1/chats/invites/$inviteId/accept", person.app, "{}")
+            assertEquals(HttpStatusCode.OK, accepted.status, accepted.bodyAsText())
+        }
+    }
+
     /** Both people save the other's number, so each can reach the other. */
     private suspend fun ApplicationTestBuilder.meet(a: Person, b: Person) {
         for ((from, to) in listOf(a to b, b to a)) {
@@ -1263,6 +1278,7 @@ class WalletQaTest {
                     .data()
                     .let { it["chatId"] ?: it["id"] }!!
                     .jsonPrimitive.content
+            join(chatId, payer, stranger)
             val viaChat = get("/v1/wallet/recipients/${stranger.userId}?chatId=$chatId", payer.app)
             expect("reach through the chat", viaChat, 200, null)
             assertEquals("CAN_RECEIVE", viaChat.data()["status"]!!.jsonPrimitive.content)
@@ -1587,6 +1603,7 @@ class WalletQaTest {
                     .data()
                     .let { it["chatId"] ?: it["id"] }!!
                     .jsonPrimitive.content
+            join(chatId, payer, stranger)
             val withChat = ""","chatId":"$chatId""""
             expect(
                 "through the chat",

@@ -70,6 +70,13 @@ data class MessagingConfig(
      * fetching it a moment earlier still gets it.
      */
     val groupPhotoGrace: Duration = Duration.ofHours(24),
+    /** Decision 2026-11-09: an invite to a group not answered in this long runs out. */
+    val inviteTtl: Duration = Duration.ofDays(30),
+    /**
+     * The inviter's sealed metadata key for one person, base64-decoded: a Signal message around a 32-byte key and its
+     * version, a few hundred bytes. The cap keeps a row small without depending on the wire format.
+     */
+    val maxInviteKeyBytes: Int = 8 * 1_024,
 )
 
 /** `MESSAGING_MAX_ATTACHMENT_BYTES` when unset: 100 MiB of ciphertext (decision 2026-11-07). */

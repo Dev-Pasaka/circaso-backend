@@ -8,11 +8,15 @@ import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.models.UpdateGroupCommand
 import com.circaso.messaging.domain.support.ChatNotifier
 import com.circaso.messaging.domain.support.ChatViews
+import com.circaso.messaging.domain.support.Invitations
 import com.circaso.messaging.domain.support.MemberRemoval
 import com.circaso.messaging.domain.support.Membership
 import com.circaso.messaging.domain.support.MessagingConfig
+import com.circaso.messaging.domain.usecases.AcceptInvite
 import com.circaso.messaging.domain.usecases.AddMembers
+import com.circaso.messaging.domain.usecases.CancelInvite
 import com.circaso.messaging.domain.usecases.CreateGroup
+import com.circaso.messaging.domain.usecases.DeclineInvite
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
@@ -20,8 +24,10 @@ import com.circaso.messaging.domain.usecases.GetMembers
 import com.circaso.messaging.domain.usecases.GetOwner
 import com.circaso.messaging.domain.usecases.IsGroup
 import com.circaso.messaging.domain.usecases.LeaveGroup
+import com.circaso.messaging.domain.usecases.ListChatInvites
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.ListGroupIds
+import com.circaso.messaging.domain.usecases.ListMyInvites
 import com.circaso.messaging.domain.usecases.OpenDirectChat
 import com.circaso.messaging.domain.usecases.RemoveMember
 import com.circaso.messaging.domain.usecases.ReplayFrames
@@ -52,25 +58,46 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val clock = TestClock()
     val attachments = MemoryAttachments()
     private val profiles = FakeProfiles()
+    val invites = MemoryInvites(chats)
 
     val membership = Membership(chats, cache)
     private val views = ChatViews(chats, profiles)
     private val notifier = ChatNotifier(frames)
+    private val invitations = Invitations(invites, membership, notifier, profiles, config, clock)
     private val removal = MemberRemoval(chats, attachments, transactor, outbox, membership, notifier, bus, clock)
 
     val openDirectChat = OpenDirectChat(chats, transactor, outbox, reach, views, bus, clock)
     val createGroup =
         CreateGroup(
             chats,
+            invites,
             transactor,
             outbox,
             reach,
             views,
-            notifier,
+            invitations,
             bus,
             config,
             clock,
         )
+    val listMyInvites = ListMyInvites(invites, chats, views, clock)
+    val acceptInvite =
+        AcceptInvite(
+            invites,
+            chats,
+            transactor,
+            outbox,
+            membership,
+            views,
+            notifier,
+            invitations,
+            bus,
+            config,
+            clock,
+        )
+    val declineInvite = DeclineInvite(invites, invitations, clock)
+    val listChatInvites = ListChatInvites(invites, membership, views, clock)
+    val cancelInvite = CancelInvite(invites, chats, notifier, invitations, clock)
     val listChats = ListChats(chats, views)
     val getChat = GetChat(chats, views)
     val updateGroup =
@@ -84,7 +111,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
             config,
             clock,
         )
-    val addMembers = AddMembers(chats, transactor, outbox, reach, membership, views, notifier, bus, config, clock)
+    val addMembers = AddMembers(chats, transactor, reach, membership, views, invitations, config)
     val removeMember = RemoveMember(removal)
     val leaveGroup = LeaveGroup(removal)
     val setRole = SetRole(chats, transactor, membership, views, notifier)
@@ -118,9 +145,32 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
 
     fun connect(from: UserId, to: UserId) = connect(from, listOf(to))
 
+    /**
+     * A group of [owner] and [members], each of whom accepted their invite (decision 2026-11-09), as the chat now is:
+     * the group most tests start from.
+     */
     suspend fun group(owner: UserId, members: List<UserId> = emptyList()): ChatView {
         connect(owner, members)
-        return createGroup(command(owner, members.toSet())).data()
+        val created = createGroup(command(owner, members.toSet())).data()
+        val chatId = created.chat.chatId
+        join(chatId, members)
+        return if (members.isEmpty()) created else getChat(owner, chatId).data()
+    }
+
+    /** Each of [people] accepts their open invite to [chatId]. */
+    suspend fun join(chatId: ChatId, people: Collection<UserId>) {
+        for (person in people) acceptInvite(person, invites.openId(chatId, person)).data()
+    }
+
+    /** M9 then every invite accepted: the add as it used to be, for tests about what comes after. */
+    suspend fun addAndJoin(
+        caller: UserId,
+        chatId: ChatId,
+        people: Set<UserId>,
+    ): ChatView {
+        val added = addMembers(caller, chatId, people).data()
+        join(chatId, added.invited.orEmpty())
+        return getChat(caller, chatId).data()
     }
 
     /** A create with its own `Idempotency-Key`, unless [key] repeats one. */

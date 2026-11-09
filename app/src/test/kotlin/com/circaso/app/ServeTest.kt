@@ -434,6 +434,11 @@ class ServeTest {
                 "/v1/chats/{chatId}/members",
                 "/v1/chats/{chatId}/members/{userId}",
                 "/v1/chats/{chatId}/members/{userId}/role",
+                "/v1/chats/invites",
+                "/v1/chats/invites/{inviteId}/accept",
+                "/v1/chats/invites/{inviteId}/decline",
+                "/v1/chats/{chatId}/invites",
+                "/v1/chats/{chatId}/invites/{userId}",
                 "/v1/chats/{chatId}/messages",
                 "/v1/chats/{chatId}/messages/{messageId}",
                 "/v1/chats/{chatId}/presence",
@@ -876,7 +881,25 @@ class ServeTest {
         val chatId = group["chatId"]!!.jsonPrimitive.content
         assertEquals(listOf(chidi.userId), group["notAdded"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(sealed, group["sealedMeta"]!!.jsonPrimitive.content)
-        assertTrue("OWNER" in group["members"].toString() && "Brian Mwangi" in group["members"].toString())
+        assertTrue("OWNER" in group["members"].toString() && "Brian Mwangi" !in group["members"].toString())
+        assertEquals(listOf(brian.userId), group["invited"]!!.jsonArray.map { it.jsonPrimitive.content })
+
+        // Brian is invited (decision 2026-11-09): he sees the invite, and joins when he accepts it
+        val invites = data(get("/v1/chats/invites", brian.app))["invites"]!!.jsonArray
+        val invite = invites.single().jsonObject
+        assertEquals(chatId, invite["chatId"]!!.jsonPrimitive.content)
+        assertEquals("1", invite["memberCount"]!!.jsonPrimitive.content)
+        assertEquals("messaging.chat_not_found", code(get("/v1/chats/$chatId", brian.app)), "not in it yet")
+        val pending = data(get("/v1/chats/$chatId/invites", amina.app))["invites"]!!.jsonArray
+        assertTrue("Brian Mwangi" in pending.toString(), "Amina's group info lists him as invited")
+        val inviteId = invite["inviteId"]!!.jsonPrimitive.content
+        val joined = data(send(HttpMethod.Post, "/v1/chats/invites/$inviteId/accept", brian.app, "{}"))
+        assertTrue("Brian Mwangi" in joined["members"].toString())
+        assertTrue(data(get("/v1/chats/invites", brian.app))["invites"]!!.jsonArray.isEmpty())
+        val declined = send(HttpMethod.Post, "/v1/chats/invites/$inviteId/decline", brian.app, "{}")
+        assertEquals("messaging.invite_not_found", code(declined), "an accepted invite can't be declined")
+        val version = data(get("/v1/chats/$chatId", amina.app))["version"]!!.jsonPrimitive.content
+
         val oversized = Base64.getEncoder().encodeToString(ByteArray(5_000))
         val invalid = send(HttpMethod.Post, "/v1/chats/groups", amina.app, """{"sealedMeta":"$oversized"}""")
         assertEquals("messaging.group_invalid", code(invalid))
@@ -888,7 +911,6 @@ class ServeTest {
         assertEquals(HttpStatusCode.Forbidden, asAgent.status)
 
         // Brian is a member, not an admin; Chidi isn't in it at all
-        val version = group["version"]!!.jsonPrimitive.content
         val notAdmin = send(HttpMethod.Patch, "/v1/chats/$chatId", brian.app, """{"version":$version}""")
         assertEquals(HttpStatusCode.Forbidden, notAdmin.status)
         assertEquals("messaging.not_admin", code(notAdmin))
