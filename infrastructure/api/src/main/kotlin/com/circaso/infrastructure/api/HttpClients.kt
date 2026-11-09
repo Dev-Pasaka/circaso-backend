@@ -46,6 +46,13 @@ class VendorHttpConfig {
      */
     var webSockets: Boolean = false
 
+    /**
+     * False puts this client on Ktor's CIO engine instead of the JDK's kept-alive one (perf, 2026-11-05). Anthropic's
+     * client (Koog's transport) failed every request on the JDK engine with IllegalArgumentException before sending
+     * (2026-11-09, Asha down), so it stays on CIO until that is understood.
+     */
+    var jdkEngine: Boolean = true
+
     /** How long opening a socket may take, from the first byte to the `101 Switching Protocols`. */
     var handshakeTimeout: Duration = Duration.ofSeconds(10)
 

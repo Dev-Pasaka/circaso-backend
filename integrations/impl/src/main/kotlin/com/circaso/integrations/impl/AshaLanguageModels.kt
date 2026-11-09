@@ -131,6 +131,8 @@ private fun anthropic(
                 connectTimeout = CONNECT_TIMEOUT
                 requestTimeout = TEXT_REQUEST_TIMEOUT
                 maxAttempts = 1
+                // Koog's requests fail on the JDK engine (IllegalArgumentException before sending, 2026-11-09).
+                jdkEngine = false
             },
         apiKey = key,
         chat = mode("text", TEXT_MAX_TOKENS, TEXT_SOCKET_TIMEOUT, TEXT_REQUEST_TIMEOUT),
