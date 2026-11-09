@@ -85,6 +85,7 @@ class RecordTransfer(
                 MoneyUpdatedFrame.CONTRIBUTION,
                 Amounts.usdc(transfer.amountMinor),
                 userId = transfer.senderId,
+                paid = transfer.paid?.let(Amounts::coin),
             ),
         )
 

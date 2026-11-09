@@ -10,6 +10,14 @@ object Amounts {
 
     fun usdc(minor: Long): WalletAmount = WalletAmount(ASSET, minor.toString(), whole(minor))
 
+    /** The coin a member paid, in its own units ("0.01" ETH from 10^16 at 18 decimals). */
+    fun coin(paid: com.circaso.chama.domain.models.PaidCoin): WalletAmount =
+        WalletAmount(
+            paid.symbol,
+            paid.amountMinor.toString(),
+            BigDecimal(paid.amountMinor).movePointLeft(paid.decimals).stripTrailingZeros().toPlainString(),
+        )
+
     fun whole(minor: Long): String =
         BigDecimal
             .valueOf(minor)

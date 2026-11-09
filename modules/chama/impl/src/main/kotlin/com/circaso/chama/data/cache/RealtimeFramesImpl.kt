@@ -2,6 +2,7 @@ package com.circaso.chama.data.cache
 
 import com.circaso.chama.api.ChamaFrames
 import com.circaso.chama.api.ContributionAddedFrame
+import com.circaso.chama.api.ContributionSubmittedFrame
 import com.circaso.chama.api.GoalUpdatedFrame
 import com.circaso.chama.api.GroupUpdatedFrame
 import com.circaso.chama.api.MoneyUpdatedFrame
@@ -158,8 +159,19 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ChamaFrames.MODULE,
                 ChamaFrames.MONEY_UPDATED,
                 seq,
-                MoneyUpdatedFrame(chatId, transferId, kind, amount, userId, requestId),
+                MoneyUpdatedFrame(chatId, transferId, kind, amount, userId, requestId, paid),
                 MoneyUpdatedFrame.serializer(),
+                ts,
+            )
+        }
+
+        is ChamaFrame.ContributionSubmitted -> {
+            RealtimeEnvelope.of(
+                ChamaFrames.MODULE,
+                ChamaFrames.CONTRIBUTION_SUBMITTED,
+                seq,
+                ContributionSubmittedFrame(chatId, transferId, userId, displayName, paid, amount),
+                ContributionSubmittedFrame.serializer(),
                 ts,
             )
         }

@@ -16,6 +16,7 @@ object ChamaFrames {
     const val REQUEST_UPDATED = "request.updated"
     const val GROUP_UPDATED = "group.updated"
     const val MONEY_UPDATED = "money.updated"
+    const val CONTRIBUTION_SUBMITTED = "contribution.submitted"
 }
 
 /**
@@ -33,12 +34,35 @@ data class MoneyUpdatedFrame(
     val amount: WalletAmount,
     val userId: UserId? = null,
     val requestId: RequestId? = null,
+    /**
+     * For a contribution, the coin that was actually paid in its own units (added 2026-11-09; [amount] is its dollar
+     * value), so a group call can say "Amina +0.01 ETH". Null for payouts and before.
+     */
+    val paid: WalletAmount? = null,
 ) {
     companion object {
         const val CONTRIBUTION = "CONTRIBUTION"
         const val PAYOUT = "PAYOUT"
     }
 }
+
+/**
+ * `chama/contribution.submitted`, to every member (added 2026-11-09): [userId] signed a payment into the group's wallet
+ * and it is on its way; the chain hasn't confirmed it yet, so the group's money hasn't moved (that is
+ * `money.updated` with the same [transferId], moments later). A group call shows it landing at once ("Amina +KES 1,000")
+ * and the balance moves when `money.updated` comes. [paid] is the coin in its own units; [amount] its dollar value,
+ * null when the coin's price wasn't kept. No push. At most once per transfer; it may never come (a payment that went
+ * straight to confirmed), so treat `money.updated` `CONTRIBUTION` for an unseen [transferId] the same way.
+ */
+@Serializable
+data class ContributionSubmittedFrame(
+    val chatId: ChatId,
+    val transferId: String,
+    val userId: UserId,
+    val displayName: String,
+    val paid: WalletAmount,
+    val amount: WalletAmount? = null,
+)
 
 /**
  * `chama/group.updated`, to every member (added 2026-11-03): who approves payouts changed, or the target was removed;

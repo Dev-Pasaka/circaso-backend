@@ -232,3 +232,15 @@ data class ChamaDigest(
     val recent: List<LedgerEntry>,
     val isDetailed: Boolean,
 )
+
+/** A member's payment into a group's wallet that is on its way (`wallet.TransferSubmitted`), in chama's words. Never logged. */
+data class SubmittedContribution(
+    val transferId: TransferId,
+    val senderId: UserId,
+    val chatId: ChatId,
+    val paid: PaidCoin,
+    /** Its value in micro-dollars, null when the coin's price wasn't kept. */
+    val usdMinor: Long?,
+) {
+    override fun toString(): String = "SubmittedContribution($transferId)"
+}

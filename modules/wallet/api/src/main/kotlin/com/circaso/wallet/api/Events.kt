@@ -74,6 +74,35 @@ data class TransferConfirmed(
     }
 }
 
+/**
+ * A payment into a group's wallet was signed and is on its way (Circle accepted it; the transfer moved to `SUBMITTED`),
+ * added 2026-11-09 so every member of the group hears it the moment it is sent rather than when the chain confirms it
+ * (a group call shows it landing live). Published once per transfer, only for a transfer to a group wallet
+ * ([toGroupId] set); [TransferConfirmed] still follows when the chain confirms it, or [TransferFailed].
+ */
+@Serializable
+data class TransferSubmitted(
+    val transferId: TransferId,
+    /** The member who paid. */
+    val senderId: UserId,
+    /** The group whose wallet it pays. */
+    val toGroupId: ChatId,
+    val blockchain: String,
+    val amount: WalletAmount,
+    /** The chat it was paid from, when it was. */
+    val chatId: ChatId? = null,
+    /** As [TransferConfirmed.usdValueMinor]: its value in micro-dollars, null when the coin's price wasn't kept. */
+    val usdValueMinor: String? = null,
+    /** [amount]'s coin's decimals. */
+    val assetDecimals: Int? = null,
+) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "wallet.TransferSubmitted"
+    }
+}
+
 /** A transfer the wallet prepared failed (Circle `FAILED`, `DENIED` or `CANCELLED`); published once per transfer. */
 @Serializable
 data class TransferFailed(
