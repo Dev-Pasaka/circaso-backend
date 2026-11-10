@@ -24,7 +24,7 @@ class Counterparties(
     suspend fun entries(rows: List<WalletTransaction>): List<HistoryEntry> {
         val owners = owners(rows)
         val people = rows.mapNotNullTo(mutableSetOf()) { it.counterpartyId ?: owners[it.chainAddress()] }
-        val named = names(people) + groups(people)
+        val named = named(people)
         return rows.map {
             val who = it.counterpartyId ?: owners[it.chainAddress()]
             HistoryEntry(it, counterparty(who, it.counterpartyAddress, named))
@@ -54,6 +54,9 @@ class Counterparties(
             .mapNotNull { id -> (repository.find(WalletId(id.value)) as? WalletOwner.Group)?.let { id to it } }
             .associate { (id, group) -> id to Counterparty(id, null, null, null, null, group.chatId) }
     }
+
+    /** [ids] named: the people from their profiles, the group wallets by their group's id. */
+    suspend fun named(ids: Set<UserId>): Map<UserId, Counterparty> = names(ids) + groups(ids)
 
     suspend fun names(people: Set<UserId>): Map<UserId, Counterparty> =
         if (people.isEmpty()) {

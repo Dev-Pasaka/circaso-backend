@@ -47,13 +47,20 @@ data class AgentWalletResponse(
     val partial: Boolean = false,
 )
 
-/** The other side of a payment: a person on Circaso (id, name, handle) and/or an on-chain address. */
+/**
+ * The other side of a payment: a person on Circaso (id, name, handle) and/or an on-chain address. When it is a
+ * group's wallet (2026-11-10), `userId` is that wallet's id and `groupId` the group's chatId. The wallet never knows
+ * a group's name (it is sealed, decision 2026-11-03): `groupName` is left out here, and the assistant fills it from
+ * the user's own chamas when one matches.
+ */
 @Serializable
 data class AgentCounterpartyDto(
     val userId: String? = null,
     val displayName: String? = null,
     val handle: String? = null,
     val address: String? = null,
+    val groupId: String? = null,
+    val groupName: String? = null,
 )
 
 /**

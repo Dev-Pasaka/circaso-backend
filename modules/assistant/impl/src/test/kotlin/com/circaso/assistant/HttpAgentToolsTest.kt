@@ -302,4 +302,147 @@ class HttpAgentToolsTest {
         assertTrue(""""totalViews":4""" in text, text)
         assertEquals("/v1/agent/status/moments", requests.single().url.encodedPath)
     }
+
+    // ---- groups in the history (2026-11-10) ----
+
+    private fun chama(chatId: String, name: String) =
+        """{"chatId":"$chatId","name":"$name","asset":"USDC","target":"500","contributed":"120","paidOut":"0",""" +
+            """"held":"120","myContribution":"30","progressPercent":24,"memberCount":4,"isAdmin":false,""" +
+            """"isTreasurer":false,"openRequests":[]}"""
+
+    private fun groups() {
+        answer(
+            "/v1/agent/chama",
+            """{"chamas":[${chama(TRIP_CHAT, "Dubai trip")},${chama(LAND_CHAT, "Ruiru land")}]}""",
+        )
+        answer(
+            "/v1/agent/wallet/wallets",
+            """{"wallets":[{"walletId":"$ME","type":"PERSON","status":"ACTIVE","canSign":true,"blockchains":[]},""" +
+                """{"walletId":"$TRIP_WALLET","type":"GROUP","status":"ACTIVE","canSign":false,""" +
+                """"blockchains":["BASE"],"chatId":"$TRIP_CHAT"}]}""",
+        )
+        answer(
+            "/v1/agent/wallet/transactions",
+            """{"transactions":[{"id":"t1","direction":"OUT","state":"CONFIRMED","asset":"USDC","amount":"30",""" +
+                """"blockchain":"BASE","counterparty":{"userId":"$TRIP_WALLET","groupId":"$TRIP_CHAT"},""" +
+                """"at":"2026-10-01T00:00:00Z"}]}""",
+        )
+    }
+
+    private fun history() = requests.single { it.url.encodedPath == "/v1/agent/wallet/transactions" }.url.parameters
+
+    private fun summary() =
+        requests.single { it.url.encodedPath == "/v1/agent/wallet/transactions/summary" }.url.parameters
+
+    @Test
+    fun `a group's name finds the user's own payments into its wallet, and the group is named in the answer`() {
+        groups()
+
+        val text = (call("listTransactions", """{"groupName":"dubai trip"}""") as Resource.Success).data
+
+        assertEquals(TRIP_WALLET, history()["counterparty"], "the user's payments with the group's wallet")
+        assertEquals(null, history()["walletId"], "the user's own history, not the group's")
+        assertTrue(""""groupId":"$TRIP_CHAT","groupName":"Dubai trip"""" in text, text)
+        assertEquals(1, requests.count { it.url.encodedPath == "/v1/agent/chama" }, "the chamas are read once")
+        assertTrue(requests.all { it.method.value == "GET" })
+    }
+
+    @Test
+    fun `a group put in counterpartyName, matching no contact, is found as the group`() {
+        groups()
+        answer("/v1/agent/users/contacts/search", """{"contacts":[]}""")
+        answer(
+            "/v1/agent/wallet/transactions/summary",
+            """{"count":1,"totals":[],"topCounterparties":[{"counterparty":{"userId":"$TRIP_WALLET",""" +
+                """"groupId":"$TRIP_CHAT"},"asset":"USDC","totalIn":"0","totalOut":"30","count":1}],"byMonth":[]}""",
+        )
+
+        val text = (call("summarizeTransactions", """{"counterpartyName":"Dubai trip"}""") as Resource.Success).data
+
+        assertEquals(TRIP_WALLET, summary()["counterparty"])
+        assertTrue(""""groupName":"Dubai trip"""" in text, text)
+    }
+
+    @Test
+    fun `the group wallet's own history is read by its wallet id, narrowed to one member when named`() {
+        groups()
+        answer("/v1/agent/users/contacts/search", """{"contacts":[{"userId":"u-mum","displayName":"Mum"}]}""")
+
+        call("listTransactions", """{"groupId":"$TRIP_CHAT","groupWallet":true,"direction":"OUT"}""")
+        assertEquals(TRIP_WALLET, history()["walletId"])
+        assertEquals(null, history()["counterparty"])
+        assertEquals("OUT", history()["direction"])
+
+        requests.clear()
+        call("listTransactions", """{"groupName":"Dubai trip","counterpartyName":"Mum"}""")
+        assertEquals(TRIP_WALLET, history()["walletId"], "a member named inside a group reads the group's wallet")
+        assertEquals("u-mum", history()["counterparty"])
+
+        requests.clear()
+        call("summarizeTransactions", """{"groupId":"$TRIP_WALLET","groupWallet":true}""")
+        assertEquals(TRIP_WALLET, summary()["walletId"], "the wallet's own id names the group too")
+    }
+
+    @Test
+    fun `a group that can't be found is answered to the model, and no history is read for a guess`() {
+        groups()
+
+        val unknown = (call("listTransactions", """{"groupName":"Mombasa"}""") as Resource.Success).data
+        val noWallet = (call("listTransactions", """{"groupId":"$LAND_CHAT"}""") as Resource.Success).data
+        val made = (call("listTransactions", """{"groupId":"the trip"}""") as Resource.Success).data
+        val nameless = (call("summarizeTransactions", """{"groupWallet":true}""") as Resource.Success).data
+
+        assertTrue("No chama is called" in unknown && "end-to-end encrypted" in unknown, unknown)
+        assertTrue("no wallet" in noWallet, noWallet)
+        assertTrue("not a group's chatId" in made, made)
+        assertTrue("Say which group" in nameless, nameless)
+        assertTrue(requests.none { it.url.encodedPath.startsWith("/v1/agent/wallet/transactions") })
+    }
+
+    @Test
+    fun `two chamas matching a name go back to the model to choose`() {
+        answer(
+            "/v1/agent/chama",
+            """{"chamas":[${chama(TRIP_CHAT, "Dubai trip 2025")},${chama(LAND_CHAT, "Dubai trip 2026")}]}""",
+        )
+
+        val text = (call("listTransactions", """{"groupName":"dubai"}""") as Resource.Success).data
+
+        assertTrue("\"candidates\"" in text && "Dubai trip 2026" in text, text)
+        assertTrue(requests.none { it.url.encodedPath.startsWith("/v1/agent/wallet") })
+    }
+
+    @Test
+    fun `any answer naming a group gets the group's name, and a group wallet's payment opens with its wallet`() {
+        groups()
+
+        val listed = (call("listTransactions") as Resource.Success).data
+        assertTrue(""""groupName":"Dubai trip"""" in listed, listed)
+
+        answer(
+            "/v1/agent/wallet/transactions/$PAYMENT",
+            """{"transaction":{"id":"t1","direction":"IN","state":"CONFIRMED","asset":"USDC","amount":"30",""" +
+                """"blockchain":"BASE","counterparty":{"userId":"$TRIP_WALLET","groupId":"$TRIP_CHAT"},""" +
+                """"at":"2026-10-01T00:00:00Z"}}""",
+        )
+        val one = call("getTransaction", """{"id":"$PAYMENT","walletId":"$TRIP_WALLET"}""") as Resource.Success
+        assertTrue(""""groupName":"Dubai trip"""" in one.data, one.data)
+        val opened = requests.last { it.url.encodedPath.endsWith(PAYMENT) }
+        assertEquals(TRIP_WALLET, opened.url.parameters["walletId"])
+
+        assertEquals(
+            "Checking your payments with Dubai trip…",
+            tools.label("listTransactions", """{"groupName":"Dubai trip"}"""),
+        )
+        assertEquals(
+            "Adding up Dubai trip's wallet payments…",
+            tools.label("summarizeTransactions", """{"groupName":"Dubai trip","groupWallet":true}"""),
+        )
+    }
 }
+
+private const val ME = "0192e3a4-0000-7000-8000-0000000000aa"
+private const val TRIP_CHAT = "0192e3a4-0000-7000-8000-0000000000c1"
+private const val LAND_CHAT = "0192e3a4-0000-7000-8000-0000000000c2"
+private const val TRIP_WALLET = "0192e3a4-0000-7000-8000-0000000000f1"
+private const val PAYMENT = "0192e3a4-0000-7000-8000-000000000001"

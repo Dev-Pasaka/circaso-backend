@@ -431,8 +431,8 @@ fun walletModule(config: Config): Module =
         single { GetTransfer(get(), get(), getOrNull()) }
         single { Counterparties(get(), get(), get()) }
         single { ListTransactions(get(), get(), get(), get()) }
-        single { GetTransaction(get(), get(), get()) }
-        single { SummariseTransactions(get(), get(), get()) }
+        single { GetTransaction(get(), get(), get(), get()) }
+        single { SummariseTransactions(get(), get(), get(), get()) }
         single { CheckRecipient(get(), get(), get()) }
         single { RequestSetup(get(), get(), get(), get(), get()) }
         single { ValidateAddress(get()) }

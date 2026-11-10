@@ -36,7 +36,9 @@ private const val SCOPE = "Scope: `agent` (read-only), the caller's own wallet o
 private const val FILTERS =
     "Query: `from`, `to` (dates `YYYY-MM-DD`, UTC, both inclusive), `month` (`YYYY-MM`), `direction` (`IN`, " +
         "`OUT`), `counterparty` (a user id, or an address), `asset` (`USDC`, `USDT`), `blockchain`, `currency` " +
-        "(ISO 4217: adds `fiat` at today's rate)."
+        "(ISO 4217: adds `fiat` at today's rate), `walletId` (added 2026-11-10: a group wallet's id from " +
+        "`/agent/wallet/wallets`, for that wallet's history; members only). A payment with a group's wallet names " +
+        "the group's chatId as `counterparty.groupId`."
 
 /**
  * Read-only routes for the assistant (`/v1/agent/wallet/…`, agent token only, decision 2026-10-31), in their own
@@ -128,7 +130,7 @@ fun Route.agentController(reads: WalletAgentService) {
                 }.docs<NoBody, AgentTransactionsResponse>(
                     "The user's payments, newest first, narrowed by date, direction, person, asset or chain",
                     AGENT,
-                    listOf("request.malformed"),
+                    listOf("wallet.not_found", "request.malformed"),
                     notes = "$SCOPE $FILTERS Also `cursor`, `limit` (default 20, at most 50).",
                 )
 
@@ -142,7 +144,7 @@ fun Route.agentController(reads: WalletAgentService) {
                 }.docs<NoBody, AgentSummaryResponse>(
                     "Totals in and out per asset, the biggest counterparties and month by month",
                     AGENT,
-                    listOf("request.malformed"),
+                    listOf("wallet.not_found", "request.malformed"),
                     notes =
                         "$SCOPE $FILTERS Also `top` (counterparties to name, default 5, at most 20). Counts " +
                             "`SUBMITTED` and `CONFIRMED` payments; `truncated` when more than 5,000 matched.",
@@ -154,13 +156,14 @@ fun Route.agentController(reads: WalletAgentService) {
                             call.userId(),
                             call.parameters["transactionId"],
                             call.request.queryParameters["currency"],
+                            call.request.queryParameters["walletId"],
                         ).flatMap { reads.getTransaction(it) }
                     call.respondDefault(result.toDefaultResponse { it.toAgentResponse() })
                 }.docs<NoBody, AgentTransactionResponse>(
                     "One of the user's payments by its id from the list",
                     AGENT,
-                    listOf("wallet.transfer_not_found", "request.malformed"),
-                    notes = "$SCOPE Query: `currency` (optional).",
+                    listOf("wallet.transfer_not_found", "wallet.not_found", "request.malformed"),
+                    notes = "$SCOPE Query: `currency` (optional), `walletId` (optional, a group wallet's id).",
                 )
             }
         }
@@ -192,4 +195,5 @@ private fun Parameters.toParams() =
         cursor = this["cursor"],
         limit = this["limit"],
         top = this["top"],
+        walletId = this["walletId"],
     )
