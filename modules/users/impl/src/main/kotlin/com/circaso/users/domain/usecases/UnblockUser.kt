@@ -5,9 +5,9 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.envelope
 import com.circaso.users.api.UserUnblocked
+import com.circaso.users.domain.models.ContactStatus
 import com.circaso.users.domain.ports.ReachCache
 import com.circaso.users.domain.ports.Transactor
-import com.circaso.users.domain.models.ContactStatus
 import com.circaso.users.domain.repositories.BlockRepository
 import com.circaso.users.domain.repositories.ContactRepository
 import com.circaso.users.domain.repositories.UsersChanges
