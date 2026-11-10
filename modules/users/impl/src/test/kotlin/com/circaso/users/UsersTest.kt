@@ -280,6 +280,35 @@ class UsersTest {
         }
 
     @Test
+    fun `unblocking gives back the contact the block took, so messages work again`() =
+        runTest {
+            val h = Harness()
+            val me = h.person("Me")
+            val amina = h.person("Amina", "+254712345678")
+            h.syncContacts(SyncCommand(me, UUID.randomUUID(), 1, true, setOf(phone("+254712345678"))))
+            assertTrue(h.reach.canReach(me, amina))
+
+            // What the app used to do: block, then remove the contact.
+            h.blockUser(me, amina).data()
+            h.removeContact(me, amina).data()
+            assertFalse(h.reach.canReach(me, amina))
+
+            h.unblockUser(me, amina).data()
+            assertTrue(h.reach.canReach(me, amina), "the contact is back, so the unblocked person can be messaged")
+        }
+
+    @Test
+    fun `unblocking someone who was never a contact doesn't make them one`() =
+        runTest {
+            val h = Harness()
+            val me = h.person("Me")
+            val amina = h.person("Amina")
+            h.blockUser(me, amina).data()
+            h.unblockUser(me, amina).data()
+            assertFalse(h.reach.canReach(me, amina))
+        }
+
+    @Test
     fun `a block shows from either side, and lifting it clears it`() =
         runTest {
             val h = Harness()
