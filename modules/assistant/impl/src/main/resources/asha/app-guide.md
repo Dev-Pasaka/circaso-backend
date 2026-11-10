@@ -120,8 +120,13 @@ Money starts and ends in the chat. There is no separate payment form.
 
 ## Security and the PIN
 - Your wallet PIN (6 digits, with security questions) is set the first time you use money, and you confirm every
-  payment with it. To approve without typing it, turn on Face ID / fingerprint in You → Security (the PIN still works
-  if that fails). A group wallet has its own PIN, not your personal one (Group info → Change PIN).
+  payment with it. A group wallet has its own PIN, not your personal one (Group info → Change PIN).
+- Approving with your fingerprint or Face ID: after your first payment approved with your PIN, Circaso asks once
+  whether you'd like to approve with your fingerprint (or Face ID) instead. Tap **Turn On** and enter your PIN once in
+  the secure PIN screen. After that, paying shows your phone's fingerprint or face prompt; if it doesn't work or you
+  cancel it, the PIN pad is right there, so you're never stuck. Turn it on or off any time in You → Security →
+  Payments; a group wallet has its own switch in the group's info. If you add a new fingerprint or face to your
+  phone, Circaso asks you to set it up again after your next PIN. Circaso never sees your PIN or your fingerprint.
 - Circaso and Asha never ask for your PIN, codes or recovery words. Nobody from Circaso will ask you to send money.
 - You → Security also shows your devices and recent security activity. One phone per account: signing in on a new
   phone signs the old one out, and payments pause for a short while after.
