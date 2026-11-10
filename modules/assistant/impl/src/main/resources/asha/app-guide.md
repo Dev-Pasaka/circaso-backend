@@ -29,7 +29,7 @@ Money starts and ends in the chat. There is no separate payment form.
 - Money is never queued offline: you need a connection to pay.
 
 ## Money during a call
-1. In a voice or video call, tap the **Send money** button (the money icon).
+1. In a voice or video call, tap **Send money** (the money button at the left of the call's bottom bar).
 2. A sheet slides up with that chat's message field: type the amount the same way (`#500 for airtime`), check the
    card and send with your PIN. The call keeps going.
 3. In a group call the money button is **Contribute** when the group has a goal or wallet: the amount goes to the
@@ -86,12 +86,16 @@ Money starts and ends in the chat. There is no separate payment form.
 2. In a one-to-one video call, tap the small picture to swap who's big (you or them); drag it to any corner.
 3. In a group call, tap anyone's tile (or your own "You") to make it big with the others in a strip; tap another to
    switch, or tap the big one to see everyone again.
-4. You can switch voice to video, mute, flip the camera, and minimise the call to a small pill to use the app (tap the
-   pill to go back).
-5. To share your screen, tap **Share screen** in the call and allow it. You can then leave Circaso and show any app;
-   the call keeps going. Others see "<your name> is sharing their screen". Tap **Stop** to end sharing. Your wallet
-   PIN screen shows blank to viewers on Android. On iPhone, screen sharing appears once the app's update with it is
-   installed; if there's no Share screen button, it isn't on that phone yet.
+4. The bar at the bottom of every call (one-to-one and group, voice and video) has, left to right: **Send money**
+   (or **Contribute** in a group with a goal), **camera** on/off, **mic** mute/unmute, **More** (three dots) and the
+   red **End** (or **Leave** in a group).
+5. **More** (the three dots) opens a sheet with the rest: **Share screen** / **Stop sharing**, **Flip camera** (while
+   your camera is on), **Speaker** on/off, **Add people** (group calls) and **Minimise call**. Minimised, the call is a
+   small pill you can tap to go back while you use the app.
+6. To share your screen, tap **More**, then **Share screen**, and allow it. You can then leave Circaso and show any
+   app; the call keeps going. Others see "<your name> is sharing their screen". Tap **Stop sharing** in **More** to
+   end it. Your wallet PIN screen shows blank to viewers on Android. On iPhone, screen sharing appears once the app's
+   update with it is installed; if **Share screen** isn't in **More**, it isn't on that phone yet.
 - Calls are labelled "Secure call".
 
 ## Moments
