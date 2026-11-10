@@ -17,6 +17,7 @@ import com.circaso.users.api.AgentContactDto
 import com.circaso.users.api.AgentContactsResponse
 import com.circaso.users.api.AgentProfileResponse
 import com.circaso.wallet.api.AgentAssetValuesResponse
+import com.circaso.wallet.api.AgentCounterpartyDto
 import com.circaso.wallet.api.AgentFeeQuoteResponse
 import com.circaso.wallet.api.AgentSummaryResponse
 import com.circaso.wallet.api.AgentTransactionResponse
@@ -91,8 +92,8 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
             GET_ASSET_VALUES -> "Checking today's rate…"
             GET_FEE_QUOTE -> "Working out the fee…"
             GET_MY_MOMENTS -> "Looking at your moments…"
-            LIST_TRANSACTIONS -> "Checking your payments${about(arguments(argumentsJson, HistoryArgs()))}…"
-            SUMMARIZE_TRANSACTIONS -> "Adding up your payments${about(arguments(argumentsJson, HistoryArgs()))}…"
+            LIST_TRANSACTIONS -> "Checking ${whose(arguments(argumentsJson, HistoryArgs()))}…"
+            SUMMARIZE_TRANSACTIONS -> "Adding up ${whose(arguments(argumentsJson, HistoryArgs()))}…"
             GET_TRANSACTION -> "Opening that payment…"
             LIST_CHAMAS -> "Looking at your chamas…"
             else -> "Looking at your chama…"
@@ -258,20 +259,22 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         context: ToolContext,
         token: String,
     ): Resource<String> {
-        val person =
-            when (val resolved = counterparty(arguments, token)) {
-                is Counterparty.Chosen -> resolved.value
-                is Counterparty.Answer -> return resolved.answer
+        val scope =
+            when (val resolved = scopeOf(arguments, token)) {
+                is Scoped.Chosen -> resolved.scope
+                is Scoped.Answer -> return resolved.answer
             }
         val limit = (arguments.limit ?: TRANSACTIONS_LIMIT).coerceIn(1, MAX_TRANSACTIONS_LIMIT)
         val response =
             get("/v1/agent/wallet/transactions", token) {
-                filters(arguments, person, context)
+                filters(arguments, scope, context)
                 arguments.cursor?.let { parameter("cursor", it) }
                 parameter("limit", limit)
             }
         return dataOf(response, AgentTransactionsResponse.serializer())
-            .encoded(AgentTransactionsResponse.serializer()) {
+            .named(token, scope.knownGroups) { answer, name ->
+                answer.copy(transactions = answer.transactions.map { it.copy(counterparty = name(it.counterparty)) })
+            }.encoded(AgentTransactionsResponse.serializer()) {
                 it.transactions.half()?.let { fewer -> it.copy(transactions = fewer) }
             }
     }
@@ -281,21 +284,26 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         context: ToolContext,
         token: String,
     ): Resource<String> {
-        val person =
-            when (val resolved = counterparty(arguments, token)) {
-                is Counterparty.Chosen -> resolved.value
-                is Counterparty.Answer -> return resolved.answer
+        val scope =
+            when (val resolved = scopeOf(arguments, token)) {
+                is Scoped.Chosen -> resolved.scope
+                is Scoped.Answer -> return resolved.answer
             }
         val response =
             get("/v1/agent/wallet/transactions/summary", token) {
-                filters(arguments, person, context)
+                filters(arguments, scope, context)
                 arguments.top?.let { parameter("top", it.coerceIn(0, MAX_TOP)) }
             }
-        return dataOf(response, AgentSummaryResponse.serializer()).encoded(AgentSummaryResponse.serializer()) {
-            // the oldest months go first: the latest are what people ask about
-            val months = it.byMonth.takeLast(it.byMonth.size / 2)
-            if (months.size == it.byMonth.size) null else it.copy(byMonth = months)
-        }
+        return dataOf(response, AgentSummaryResponse.serializer())
+            .named(token, scope.knownGroups) { answer, name ->
+                answer.copy(
+                    topCounterparties = answer.topCounterparties.map { it.copy(counterparty = name(it.counterparty)) },
+                )
+            }.encoded(AgentSummaryResponse.serializer()) {
+                // the oldest months go first: the latest are what people ask about
+                val months = it.byMonth.takeLast(it.byMonth.size / 2)
+                if (months.size == it.byMonth.size) null else it.copy(byMonth = months)
+            }
     }
 
     private suspend fun getTransaction(
@@ -304,9 +312,151 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         token: String,
     ): Resource<String> {
         val id = arguments.id.trim().takeIf { ID.matches(it) } ?: return ToolOutput.message(NO_SUCH_PAYMENT)
-        val response = get("/v1/agent/wallet/transactions/${id.encodeURLPathPart()}", token) { currency(context) }
+        val walletId = arguments.walletId?.trim()?.takeIf { it.isNotEmpty() }
+        if (walletId != null && !ID.matches(walletId)) return ToolOutput.message(NO_SUCH_WALLET)
+        val response =
+            get("/v1/agent/wallet/transactions/${id.encodeURLPathPart()}", token) {
+                currency(context)
+                walletId?.let { parameter("walletId", it) }
+            }
         return dataOf(response, AgentTransactionResponse.serializer())
-            .encoded(AgentTransactionResponse.serializer()) { null }
+            .named(token, emptyMap()) { answer, name ->
+                answer.copy(transaction = answer.transaction.copy(counterparty = name(answer.transaction.counterparty)))
+            }.encoded(AgentTransactionResponse.serializer()) { null }
+    }
+
+    // ---- groups in the history (2026-11-10) ----
+
+    /**
+     * What a history call reads: the user's own payments, narrowed to a person or to a group's wallet, or (with
+     * `groupWallet`, or a person named inside a group) the group wallet's own history, which every member may see.
+     * A group is named by its chatId or wallet id, or by a chama's name: other groups' names are end-to-end
+     * encrypted, so the server can't match them. A name that matches no contact is tried as a chama's name too, so
+     * "how much have I paid to Dubai trip?" finds the group whichever field the model put it in. The wallet route
+     * checks membership again: a group the user isn't in answers `wallet.not_found`.
+     */
+    private suspend fun scopeOf(arguments: HistoryArgs, token: String): Scoped {
+        val asked = arguments.groupId?.trim()?.takeIf { it.isNotEmpty() }
+        val named = arguments.groupName?.trim()?.takeIf { it.isNotEmpty() }
+        if (asked == null && named == null) {
+            if (arguments.groupWallet == true) return Scoped.Answer(ToolOutput.message(NAME_THE_GROUP))
+            return when (val person = counterparty(arguments, token)) {
+                is Counterparty.Chosen -> Scoped.Chosen(HistoryScope(counterparty = person.value))
+                is Counterparty.Answer -> notAContact(arguments, person, token)
+            }
+        }
+        val group =
+            when (val found = group(asked, named, token)) {
+                is GroupFound.Found -> found
+                is GroupFound.Answer -> return Scoped.Answer(found.answer)
+            }
+        val person =
+            when (val resolved = counterparty(arguments, token)) {
+                is Counterparty.Chosen -> resolved.value
+                is Counterparty.Answer -> return Scoped.Answer(resolved.answer)
+            }
+        val known = group.name?.let { mapOf(group.chatId to it) }.orEmpty()
+        return if (arguments.groupWallet == true || person != null) {
+            Scoped.Chosen(HistoryScope(counterparty = person, walletId = group.walletId, knownGroups = known))
+        } else {
+            Scoped.Chosen(HistoryScope(counterparty = group.walletId, knownGroups = known))
+        }
+    }
+
+    /** A counterpartyName that matched no contact may be a chama's name; otherwise the contact answer stands. */
+    private suspend fun notAContact(
+        arguments: HistoryArgs,
+        person: Counterparty.Answer,
+        token: String,
+    ): Scoped {
+        if (!person.noContact) return Scoped.Answer(person.answer)
+        val name = arguments.counterpartyName?.trim()?.takeIf { it.isNotEmpty() } ?: return Scoped.Answer(person.answer)
+        val chama = chamas(token)?.singleOrNull { it.second.equals(name, ignoreCase = true) }
+        val group = chama?.let { (chatId, title) -> group(chatId, title, token) as? GroupFound.Found }
+        group ?: return Scoped.Answer(person.answer)
+        val known = mapOf(group.chatId to (group.name ?: name))
+        return Scoped.Chosen(HistoryScope(counterparty = group.walletId, knownGroups = known))
+    }
+
+    /** The group by its chatId (or wallet id), or by a chama's name, with its wallet. */
+    private suspend fun group(
+        asked: String?,
+        named: String?,
+        token: String,
+    ): GroupFound {
+        var name = named.takeIf { asked != null }
+        val id =
+            if (asked != null) {
+                asked.takeIf { ID.matches(it) } ?: return GroupFound.Answer(ToolOutput.message(NO_SUCH_GROUP))
+            } else {
+                val all =
+                    chamas(token) ?: return GroupFound.Answer(Resource.error(IntegrationError.Unavailable(LOOKUP)))
+                val wanted = named.orEmpty().lowercase()
+                val matches =
+                    all.filter { it.second.lowercase() == wanted }.ifEmpty {
+                        all.filter { wanted in it.second.lowercase() }
+                    }
+                when (matches.size) {
+                    0 -> {
+                        return GroupFound.Answer(ToolOutput.message(noGroupNamed(named.orEmpty())))
+                    }
+
+                    1 -> {
+                        name = matches.single().second
+                        matches.single().first
+                    }
+
+                    else -> {
+                        val choice =
+                            GroupChoice(
+                                "More than one chama matches. Ask the user which one they mean.",
+                                matches.map { GroupDto(it.first, it.second) },
+                            )
+                        return GroupFound.Answer(ToolOutput.encode(choice, GroupChoice.serializer()) { null })
+                    }
+                }
+            }
+        val wallets =
+            when (val read = dataOf(get("/v1/agent/wallet/wallets", token) {}, AgentWalletsResponse.serializer())) {
+                is Resource.Error -> return GroupFound.Answer(read)
+                is Resource.Success -> read.data.wallets
+            }
+        val wallet =
+            wallets.firstOrNull {
+                it.type == GROUP &&
+                    (it.chatId.equals(id, ignoreCase = true) || it.walletId.equals(id, ignoreCase = true))
+            } ?: return GroupFound.Answer(ToolOutput.message(NO_GROUP_WALLET))
+        return GroupFound.Found(wallet.chatId ?: id, name, wallet.walletId)
+    }
+
+    /** The user's chamas as (chatId, name), or null when they couldn't be read. */
+    private suspend fun chamas(token: String): List<Pair<String, String>>? =
+        when (val read = dataOf(get("/v1/agent/chama", token) {}, AgentChamasResponse.serializer())) {
+            is Resource.Error -> null
+            is Resource.Success -> read.data.chamas.map { it.chatId to it.name }
+        }
+
+    /**
+     * Names the groups among an answer's counterparties: the wallet only knows a group's chatId (its name is
+     * sealed), so the name comes from what was resolved already, or else from the user's own chamas (one read, only
+     * when an unnamed group is there). A group that is no chama keeps its chatId only.
+     */
+    private suspend fun <T : Any> Resource<T>.named(
+        token: String,
+        known: Map<String, String>,
+        rename: (T, (AgentCounterpartyDto) -> AgentCounterpartyDto) -> T,
+    ): Resource<T> {
+        if (this !is Resource.Success) return this
+        val groups = mutableSetOf<String>()
+        rename(data) { other -> other.also { it.groupId?.let(groups::add) } }
+        if (groups.isEmpty()) return this
+        val names = if (groups.all { it in known }) known else chamas(token).orEmpty().toMap() + known
+        return Resource.success(
+            rename(data) { other ->
+                val groupId = other.groupId
+                if (groupId == null || other.groupName != null) other else other.copy(groupName = names[groupId])
+            },
+        )
     }
 
     /**
@@ -333,7 +483,7 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
                 val choice = ContactChoice("More than one contact matches. Ask the user which one they mean.", found)
                 ToolOutput.encode(choice, ContactChoice.serializer()) { null }
             }
-        return Counterparty.Answer(answer)
+        return Counterparty.Answer(answer, noContact = found.isEmpty())
     }
 
     private fun AgentContactDto.matches(name: String): Boolean {
@@ -343,9 +493,11 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
 
     private fun HttpRequestBuilder.filters(
         arguments: HistoryArgs,
-        counterparty: String?,
+        scope: HistoryScope,
         context: ToolContext,
     ) {
+        val counterparty = scope.counterparty
+        scope.walletId?.let { parameter("walletId", it) }
         arguments.from?.let { parameter("from", it) }
         arguments.to?.let { parameter("to", it) }
         arguments.month?.let { parameter("month", it) }
@@ -430,6 +582,20 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
     private inline fun <reified T> arguments(json: String, fallback: T): T =
         runCatching { CircasoJson.decodeFromString<T>(json) }.getOrDefault(fallback)
 
+    private fun whose(arguments: HistoryArgs): String {
+        val group =
+            arguments.groupName
+                ?.takeIf { it.isNotBlank() }
+                ?.trim()
+                ?.take(MAX_QUOTED)
+        val inGroup = arguments.groupWallet == true || (group != null && arguments.counterpartyName != null)
+        return when {
+            inGroup -> "${group ?: "the group"}'s wallet payments" + about(arguments)
+            group != null -> "your payments with $group" + about(arguments)
+            else -> "your payments" + about(arguments)
+        }
+    }
+
     private fun about(arguments: HistoryArgs): String {
         val who = arguments.counterpartyName?.takeIf { it.isNotBlank() }?.let { " with ${it.trim().take(MAX_QUOTED)}" }
         val period =
@@ -441,11 +607,32 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         return who.orEmpty() + period
     }
 
+    /** What a history call reads: [walletId] a group wallet's history (else the user's own), [counterparty] narrows. */
+    private data class HistoryScope(
+        val counterparty: String? = null,
+        val walletId: String? = null,
+        /** Groups already named while resolving, by chatId. */
+        val knownGroups: Map<String, String> = emptyMap(),
+    )
+
+    private sealed interface Scoped {
+        data class Chosen(val scope: HistoryScope) : Scoped
+
+        data class Answer(val answer: Resource<String>) : Scoped
+    }
+
+    private sealed interface GroupFound {
+        data class Found(val chatId: String, val name: String?, val walletId: String) : GroupFound
+
+        data class Answer(val answer: Resource<String>) : GroupFound
+    }
+
     /** A person chosen for a filter (or none), or an answer for the model instead of the lookup. */
     private sealed interface Counterparty {
         data class Chosen(val value: String?) : Counterparty
 
-        data class Answer(val answer: Resource<String>) : Counterparty
+        /** [noContact]: the name matched no contact at all (not several, and the search answered). */
+        data class Answer(val answer: Resource<String>, val noContact: Boolean = false) : Counterparty
     }
 
     private companion object {
@@ -489,6 +676,12 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         const val NO_SUCH_PAYMENT = "That is not a payment id from listTransactions."
         const val NO_SUCH_CHAMA = "That is not a chatId from listChamas."
         const val NO_SUCH_WALLET = "That is not a walletId from listWallets."
+        const val NO_SUCH_GROUP =
+            "That is not a group's chatId (from listChamas or listWallets) or a group wallet's walletId."
+        const val NO_GROUP_WALLET =
+            "That group has no wallet the user can see, so no payments went to or from it. Say so; don't guess."
+        const val NAME_THE_GROUP = "Say which group: a chama's name as groupName, or the group's chatId as groupId."
+        const val GROUP = "GROUP"
         const val MAX_ASSETS = 10
         const val SEARCH_LIMIT = 5
         const val LIST_LIMIT = 20
@@ -501,6 +694,11 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         const val MAX_QUOTED = 40
         const val MONTH_LENGTH = 7
         val ID = Regex("^[0-9a-fA-F-]{32,36}$")
+
+        fun noGroupNamed(name: String): String =
+            "No chama is called \"${name.take(MAX_QUOTED)}\". Other groups' names are end-to-end encrypted, so the " +
+                "server can't match them: pass the group's chatId as groupId (from the chat the user is in, " +
+                "searchChats or listWallets), or ask the user which group they mean."
     }
 }
 
@@ -522,6 +720,12 @@ private data class HistoryArgs(
     val cursor: String? = null,
     val limit: Int? = null,
     val top: Int? = null,
+    /** A group by a chama's name (2026-11-10). */
+    val groupName: String? = null,
+    /** A group by its chatId, or its wallet's id. */
+    val groupId: String? = null,
+    /** The group wallet's own history (what every member paid in, what it paid out) instead of the user's. */
+    val groupWallet: Boolean? = null,
 )
 
 /** `getWallet`: absent for the user's own wallet, or a walletId from `listWallets`. */
@@ -549,13 +753,20 @@ private data class FeeArgs(
     val walletId: String? = null,
 )
 
-/** `getTransaction`. */
+/** `getTransaction`: a payment's id, and the group wallet's id for a row of that wallet's history. */
 @Serializable
-private data class IdArgs(val id: String = "")
+private data class IdArgs(val id: String = "", val walletId: String? = null)
 
 /** `getChama`. */
 @Serializable
 private data class ChatArgs(val chatId: String = "")
+
+@Serializable
+private data class GroupDto(val chatId: String, val name: String)
+
+/** The answer when a name matches more than one chama: the model asks the user which. */
+@Serializable
+private data class GroupChoice(val message: String, val candidates: List<GroupDto>)
 
 /** The answer when a name matches more than one contact: the model asks the user which. */
 @Serializable

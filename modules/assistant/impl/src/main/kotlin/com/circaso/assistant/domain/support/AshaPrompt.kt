@@ -36,9 +36,13 @@ import com.circaso.integrations.api.ToolSpec
  * Since 2026-11-10 (Pasaka): she acts without asking. Her tools only read, so she searches the web, checks market
  * prices, rates and the user's balances, and draws a chart or diagram whenever it helps, in the same answer, never
  * "shall I check?". Only a support ticket still waits for the user's yes.
+ *
+ * Since 2026-11-10 (v2, Pasaka): she answers about payments with groups as well as with people. The history tools
+ * take a group (a chama's name, or a chatId) for the user's own payments into it, or that group wallet's own
+ * history (every member's contributions and what it paid out), and a payment with a group names the group.
  */
 object AshaPrompt {
-    const val VERSION = "asha-2026-11-10-v1"
+    const val VERSION = "asha-2026-11-10-v2"
 
     /**
      * The fixed prompt for one mode: what Asha is and does, then how she answers in that mode only. A spoken turn is
@@ -174,6 +178,14 @@ object AshaPrompt {
           Never search for an exchange rate: that is getExchangeRate.
         - To filter payments by a person, pass their name as counterpartyName (or their user id as counterparty).
           If a name matches more than one contact, ask which one. If nothing matches, say so.
+        - Payments with a group (a chama, a trip, any group chat with a wallet) work the same way: pass the group's
+          name as groupName (or its chatId as groupId). That gives the user's own payments into and from the group
+          ("how much have I paid to Dubai trip?"). For what the group's wallet itself took in and paid out ("what
+          did the group pay out?", "who has contributed?"), add groupWallet true: there IN is a member paying in
+          and OUT is the group paying out; add counterpartyName for one member's part. A payment with a group has
+          the group's chatId as counterparty.groupId and its name as groupName when known. Only chamas' names are
+          known to the server; for another group, use its chatId (from the chat the user is in, searchChats or
+          listWallets) or ask which group.
         - Ask a short clarifying question only when the answer would really change (which John? which chama?).
         - When you can't solve a problem yourself, or only Circaso can (a payment that is stuck or missing, an
           account or sign-in problem, something broken), offer a support ticket and say what it will say. Open it
@@ -423,9 +435,11 @@ object AshaPrompt {
         ToolSpec(
             "listTransactions",
             "The user's payments, newest first (up to 50 a page; pass nextCursor back as cursor for more). Each " +
-                "has its id, direction IN or OUT, state, coin, amount, network, the other person or address, time, " +
-                "and the worth in the display currency at today's rate. Filter by days, month, direction, person, " +
-                "coin or network. For totals use summarizeTransactions instead.",
+                "has its id, direction IN or OUT, state, coin, amount, network, the other side (a person, an " +
+                "address, or a group: groupId and groupName), time, and the worth in the display currency at " +
+                "today's rate. Filter by days, month, direction, person, group, coin or network. With a group and " +
+                "groupWallet true, the group wallet's own payments instead (members' contributions IN, payouts " +
+                "OUT). For totals use summarizeTransactions instead.",
             HISTORY_FILTERS +
                 """"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}}}""",
         )
@@ -434,8 +448,10 @@ object AshaPrompt {
         ToolSpec(
             "summarizeTransactions",
             "Totals over the user's payments: money in, out and net per coin (also in the display currency), the " +
-                "people or addresses paid or paid by the most, and month by month. Same filters as " +
-                "listTransactions. Counts payments that went through or are on their way, not failed ones.",
+                "people, groups or addresses paid or paid by the most, and month by month. Same filters as " +
+                "listTransactions: with a group, what the user paid into it; with groupWallet true, the group " +
+                "wallet's totals (all contributions in, payouts out). Counts payments that went through or are on " +
+                "their way, not failed ones.",
             HISTORY_FILTERS + """"top":{"type":"integer","minimum":0,"maximum":20}}}""",
         )
 
@@ -443,8 +459,11 @@ object AshaPrompt {
         ToolSpec(
             "getTransaction",
             "One payment by its id (from listTransactions): amount, coin, network, the other side, state, time, " +
-                "the chat it was paid from and its on-chain hash.",
-            """{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}""",
+                "the chat it was paid from and its on-chain hash. For a payment from a group wallet's history, " +
+                "pass that wallet's walletId too.",
+            """{"type":"object","properties":{"id":{"type":"string"},""" +
+                """"walletId":{"type":"string","description":"The group wallet it was listed under, if any"}},""" +
+                """"required":["id"]}""",
         )
 
     val listChamas =
@@ -590,6 +609,9 @@ object AshaPrompt {
             """"direction":{"type":"string","enum":["IN","OUT"]},""" +
             """"counterpartyName":{"type":"string","description":"A contact's name or @handle"},""" +
             """"counterparty":{"type":"string","description":"A user id, or an on-chain address"},""" +
+            """"groupName":{"type":"string","description":"A group's (chama's) name, for payments with it"},""" +
+            """"groupId":{"type":"string","description":"A group's chatId, or its wallet's walletId"},""" +
+            """"groupWallet":{"type":"boolean","description":"With a group: the group wallet's own payments"},""" +
             """"asset":{"type":"string","description":"USDC or USDT"},""" +
             """"blockchain":{"type":"string","description":"The network, as getWallet names it"},"""
 }

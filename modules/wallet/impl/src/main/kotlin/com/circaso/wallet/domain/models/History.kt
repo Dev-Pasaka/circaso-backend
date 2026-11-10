@@ -69,8 +69,16 @@ data class HistoryEntry(val transaction: WalletTransaction, val counterparty: Co
  */
 data class HistoryPage(val entries: List<HistoryEntry>, val next: HistoryPosition?, val rate: UsdRate? = null)
 
-/** One payment by its history row id (Asha's agent route), with today's [rate] when a currency was named. */
-data class TransactionQuery(val userId: UserId, val transactionId: UUID, val currency: String?)
+/**
+ * One payment by its history row id (Asha's agent route), with today's [rate] when a currency was named. With
+ * [walletId], a row of that group wallet's history, for its members (2026-11-10).
+ */
+data class TransactionQuery(
+    val userId: UserId,
+    val transactionId: UUID,
+    val currency: String?,
+    val walletId: WalletId? = null,
+)
 
 data class TransactionDetail(val entry: HistoryEntry, val rate: UsdRate?)
 
@@ -86,6 +94,8 @@ data class SummaryQuery(
     val currency: String?,
     /** How many of the people paid or paid by to name, biggest first. */
     val topCounterparties: Int,
+    /** The wallet whose history it adds up (null: the caller's own; a group wallet's for its members, 2026-11-10). */
+    val walletId: WalletId? = null,
 )
 
 /** In and out of one asset; amounts in its minor units. */

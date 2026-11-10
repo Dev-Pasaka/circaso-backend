@@ -14,6 +14,7 @@ import com.circaso.wallet.domain.models.TransactionSummary
 import com.circaso.wallet.domain.models.WalletTransaction
 import com.circaso.wallet.domain.repositories.TransactionRepository
 import com.circaso.wallet.domain.support.Counterparties
+import com.circaso.wallet.domain.support.Holders
 import java.time.YearMonth
 import java.time.ZoneOffset
 
@@ -22,13 +23,22 @@ import java.time.ZoneOffset
  * and month by month. It walks the matching rows by keyset, at most [MAX_ROWS] of them, and says when there were
  * more, so an answer over a very long range is never silently short. Amounts stay in each asset's minor units; a
  * currency adds today's rate, never a past one.
+ *
+ * With a group wallet's id (2026-11-10), that wallet's history instead, for its members only, as [ListTransactions]
+ * reads it: what every member paid in and what the wallet paid out.
  */
 class SummariseTransactions(
     private val transactions: TransactionRepository,
     private val counterparties: Counterparties,
     private val rates: ExchangeRates,
+    private val holders: Holders,
 ) {
-    suspend operator fun invoke(query: SummaryQuery): Resource<TransactionSummary> {
+    suspend operator fun invoke(asked: SummaryQuery): Resource<TransactionSummary> {
+        val query =
+            when (val access = holders.view(asked.userId, asked.walletId)) {
+                is Resource.Success -> asked.copy(userId = access.data.owner.holder)
+                is Resource.Error -> return access
+            }
         val (rows, truncated) = read(query)
         val top = topCounterparties(rows, query.topCounterparties.coerceIn(0, MAX_TOP))
         return Resource.success(
@@ -92,7 +102,7 @@ class SummariseTransactions(
                 .entries
                 .sortedByDescending { (_, of) -> of.sumOf { it.amount.amountMinor } }
                 .take(limit)
-        val named = counterparties.names(groups.mapNotNullTo(mutableSetOf()) { it.key.userId })
+        val named = counterparties.named(groups.mapNotNullTo(mutableSetOf()) { it.key.userId })
         return groups.map { (party, of) ->
             CounterpartyFlow(
                 counterparty = counterparties.counterparty(party.userId, party.address, named),

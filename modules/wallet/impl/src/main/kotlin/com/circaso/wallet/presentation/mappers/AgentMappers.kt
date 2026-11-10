@@ -62,6 +62,8 @@ data class AgentHistoryParams(
     val cursor: String? = null,
     val limit: String? = null,
     val top: String? = null,
+    /** A group wallet's id (2026-11-10): that wallet's history instead of the caller's own, for its members. */
+    val walletId: String? = null,
 )
 
 /** `/agent/wallet/transactions`: W6's rows narrowed by the filter, at most 50 a page (default 20). */
@@ -69,6 +71,7 @@ fun AgentHistoryParams.toHistoryQuery(userId: UserId): Resource<HistoryQuery> {
     val range = range().orReturn { return it }
     val filter = filter().orReturn { return it }
     val code = currencyCode().orReturn { return it }
+    val wallet = walletIdOf(walletId).orReturn { return it }
     val after = cursor?.let { decodeCursor(it) ?: return malformed("cursor", "is not a cursor from this list") }
     val size =
         limit
@@ -77,7 +80,7 @@ fun AgentHistoryParams.toHistoryQuery(userId: UserId): Resource<HistoryQuery> {
             ?.takeIf { it >= 1 }
             ?.coerceAtMost(AGENT_MAX_LIMIT)
             ?: if (limit == null) AGENT_DEFAULT_LIMIT else return malformed("limit", "is not a number from 1 to 50")
-    return Resource.success(HistoryQuery(userId, null, after, size, range.first, range.second, filter, code))
+    return Resource.success(HistoryQuery(userId, null, after, size, range.first, range.second, filter, code, wallet))
 }
 
 /** `/agent/wallet/transactions/summary`: totals over the range and filter. */
@@ -85,6 +88,7 @@ fun AgentHistoryParams.toSummaryQuery(userId: UserId): Resource<SummaryQuery> {
     val range = range().orReturn { return it }
     val filter = filter().orReturn { return it }
     val code = currencyCode().orReturn { return it }
+    val wallet = walletIdOf(walletId).orReturn { return it }
     val count =
         top
             ?.trim()
@@ -92,7 +96,7 @@ fun AgentHistoryParams.toSummaryQuery(userId: UserId): Resource<SummaryQuery> {
             ?.takeIf { it >= 0 }
             ?.coerceAtMost(MAX_TOP)
             ?: if (top == null) DEFAULT_TOP else return malformed("top", "is not a number from 0 to 20")
-    return Resource.success(SummaryQuery(userId, range.first, range.second, filter, code, count))
+    return Resource.success(SummaryQuery(userId, range.first, range.second, filter, code, count, wallet))
 }
 
 /** `/agent/wallet/transactions/{id}`. */
@@ -100,12 +104,14 @@ fun transactionQuery(
     userId: UserId,
     rawId: String?,
     currency: String?,
+    walletId: String? = null,
 ): Resource<TransactionQuery> {
     val id =
         rawId?.let { runCatching { UUID.fromString(it.trim()) }.getOrNull() }
             ?: return malformed("transactionId", "is not a payment id")
     val code = AgentHistoryParams(currency = currency).currencyCode().orReturn { return it }
-    return Resource.success(TransactionQuery(userId, id, code))
+    val wallet = walletIdOf(walletId).orReturn { return it }
+    return Resource.success(TransactionQuery(userId, id, code, wallet))
 }
 
 /**
@@ -255,7 +261,8 @@ private fun HistoryEntry.toAgentDto(rate: UsdRate?): AgentTransactionDto =
         txHash = transaction.txHash,
     )
 
-private fun Counterparty.toAgentDto() = AgentCounterpartyDto(userId?.toString(), displayName, handle, address)
+private fun Counterparty.toAgentDto() =
+    AgentCounterpartyDto(userId?.toString(), displayName, handle, address, groupId = groupId?.toString())
 
 private fun UsdRate.toAgentDto() = AgentRateDto(currency, rate.toPlainString(), asOf.toString())
 

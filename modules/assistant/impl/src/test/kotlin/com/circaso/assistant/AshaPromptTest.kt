@@ -186,7 +186,7 @@ class AshaPromptTest {
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-10-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-10-v2", AshaPrompt.VERSION)
     }
 
     @Test
