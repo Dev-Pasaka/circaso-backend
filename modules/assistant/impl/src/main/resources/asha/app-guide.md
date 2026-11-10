@@ -12,8 +12,10 @@ be summoned anywhere with `/asha`.
 ## Sending money in a chat (the money chat)
 Money starts and ends in the chat. There is no separate payment form.
 1. Open the chat with the person (Chats, tap their name). For someone new, tap the pencil (New chat) and find them.
-2. In the message field type `#` and the amount, then an optional note: `#500 for lunch`. A space after `#` isn't
-   needed: as soon as you type past the amount it turns into a money pill in the field.
+2. In the message field type `#` and the amount, then an optional note: `#500 for lunch`. A space before `#` isn't
+   needed. As soon as you type past the amount (a space or any other character), it becomes a money chip in the
+   field reading, for example, "KES 500": a dark chip in light mode, a light chip in dark mode. To remove it, tap the
+   chip and then its ✕, or press backspace right after it (the first press selects the chip, the second deletes it).
 3. The amount is in your display currency (You → Currency, for example KES). To choose the coin, add `@` and its
    name: `#500 @usdc for lunch` or `#500 @eth`. Typing `@` shows the coins you hold, most valuable first.
 4. A money card appears above the field. It is the whole review: who gets it, the amount in your currency and in the
@@ -122,7 +124,8 @@ Money starts and ends in the chat. There is no separate payment form.
 
 ## Asha
 - Open Asha from the top of Chats, or summon her anywhere: type `/asha` in any text field (not a PIN, password or code
-  field). She appears as a floating bubble over the screen you're on, so you don't have to leave it.
+  field). As soon as you type `/` at the start of a word, a small **Asha** button appears just above the field; tap it
+  to open her straight away (the `/` you typed is removed). It stays while what you type still spells `/asha`. She appears as a floating bubble over the screen you're on, so you don't have to leave it.
   - Type or talk to her (the waves button starts voice mode).
   - Minimise her to a round bubble and drag it to any side of the screen; tap it to carry on.
   - Close her with the X.
