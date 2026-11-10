@@ -98,6 +98,11 @@ Money starts and ends in the chat. There is no separate payment form.
    app; the call keeps going. Others see "<your name> is sharing their screen". Tap **Stop sharing** in **More** to
    end it. Your wallet PIN screen shows blank to viewers on Android. On iPhone, screen sharing appears once the app's
    update with it is installed; if **Share screen** isn't in **More**, it isn't on that phone yet.
+7. You can ask Asha during a call: tap **More**, then **Ask Asha**, or type `/asha` in the call's money box. Her bubble
+   opens over the call; drag it aside, minimise or close it any time. On a call she answers in text only (the call has
+   the microphone), and she can't take a picture of the call screen, so other people's faces stay private.
+8. On a one-to-one call, money the other person sends you lands on your call screen as it arrives, for example
+   "Juma sent you KES 500", the same way contributions land on a group call.
 - Calls are labelled "Secure call".
 
 ## Moments
