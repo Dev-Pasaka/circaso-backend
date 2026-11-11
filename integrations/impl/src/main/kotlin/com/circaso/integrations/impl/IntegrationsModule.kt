@@ -605,7 +605,9 @@ private fun fcmPush(
  * set: base64 of the `.p8` file (Apple Developer > Keys, with Apple Push Notifications service), or its PEM text. It
  * then needs `INTEGRATIONS_APNS_KEY_ID` (the key's 10-character id) and `INTEGRATIONS_APNS_TEAM_ID`; optional are
  * `INTEGRATIONS_APNS_TOPIC`, the app's bundle id (default `com.circaso.app`; pushes go to `<topic>.voip`), and
- * `INTEGRATIONS_APNS_SANDBOX` (`true` for development-signed builds, default `false`). The key never prints.
+ * `INTEGRATIONS_APNS_SANDBOX` (`true` makes the sandbox host the first one tried, default `false`). A token the first
+ * host calls `BadDeviceToken` is tried on the other host (2026-11-11), so Xcode and TestFlight iPhones both ring. The
+ * key never prints.
  */
 private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
     val log = LoggerFactory.getLogger("com.circaso.integrations.impl.apns")
@@ -618,9 +620,11 @@ private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
     val topic = apns.string("topic", "com.circaso.app")
     val keyId = apns.requireString("key-id")
     val tokens = ApnsProviderToken(keyId, apns.requireString("team-id"), ApnsProviderToken.parseKey(key))
-    val host = if (sandbox) "https://api.sandbox.push.apple.com" else "https://api.push.apple.com"
-    log.info("APNs VoIP pushes: on (host={}, topic={}.voip, keyId={})", host, topic, keyId)
-    return ApnsVoipPush(tokens, JdkApnsTransport(host), topic)
+    val production = "https://api.push.apple.com"
+    val development = "https://api.sandbox.push.apple.com"
+    val (host, other) = if (sandbox) development to production else production to development
+    log.info("APNs VoIP pushes: on (host={}, then {}; topic={}.voip, keyId={})", host, other, topic, keyId)
+    return ApnsVoipPush(tokens, JdkApnsTransport(host), topic, otherHost = JdkApnsTransport(other))
 }
 
 /**

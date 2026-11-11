@@ -153,4 +153,54 @@ class ApnsVoipPushTest {
                 Json.parseToJsonElement(sent.body).jsonObject.mapValues { it.value.jsonPrimitive.content },
             )
         }
+
+    private val badToken = """{"reason":"BadDeviceToken"}"""
+
+    @Test
+    fun `a sandbox token the production host rejects rings through the sandbox host`() =
+        runTest {
+            val production = FakeApns(status = 400, body = badToken)
+            val sandbox = FakeApns()
+            val push = ApnsVoipPush(providerToken, production, "com.circaso.app", otherHost = sandbox)
+
+            assertEquals(VoipPushResult.SENT, push.ring(token, ring))
+            assertEquals(1, production.sent.size)
+            assertEquals(1, sandbox.sent.size)
+
+            // The host that took it is remembered: the next ring goes straight there.
+            assertEquals(VoipPushResult.SENT, push.ring(token, ring))
+            assertEquals(1, production.sent.size)
+            assertEquals(2, sandbox.sent.size)
+        }
+
+    @Test
+    fun `a token both hosts reject is invalid`() =
+        runTest {
+            val production = FakeApns(status = 400, body = badToken)
+            val sandbox = FakeApns(status = 400, body = badToken)
+            val push = ApnsVoipPush(providerToken, production, "com.circaso.app", otherHost = sandbox)
+
+            assertEquals(VoipPushResult.TOKEN_INVALID, push.ring(token, ring))
+        }
+
+    @Test
+    fun `a token is not called invalid when the other host can't be reached`() =
+        runTest {
+            val production = FakeApns(status = 400, body = badToken)
+            val sandbox = FakeApns(failure = IOException("down"))
+            val push = ApnsVoipPush(providerToken, production, "com.circaso.app", otherHost = sandbox)
+
+            assertEquals(VoipPushResult.FAILED, push.ring(token, ring))
+        }
+
+    @Test
+    fun `other rejections don't try the other host`() =
+        runTest {
+            val production = FakeApns(status = 410, body = """{"reason":"Unregistered"}""")
+            val sandbox = FakeApns()
+            val push = ApnsVoipPush(providerToken, production, "com.circaso.app", otherHost = sandbox)
+
+            assertEquals(VoipPushResult.TOKEN_INVALID, push.ring(token, ring))
+            assertTrue(sandbox.sent.isEmpty())
+        }
 }

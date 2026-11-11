@@ -1146,6 +1146,28 @@ class SocketHubTest {
         }
 
     @Test
+    fun `an Android phone whose socket still looks open gets the FCM ring too, since it may have just left the app`() =
+        testApplication {
+            val push = RecordingPush()
+            val hub = hub()
+            serve(hub)
+            val realtime = GatewayRealtime(hub, push, registrations, NoVoip)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                realtime.deliver(user, ringing(CallId.new(), UserId.new()))
+
+                val (target, message) = push.sent.single()
+                assertEquals(PushPlatform.ANDROID, target.platform)
+                assertEquals("call.ringing", message.data.kind)
+                // Anything that isn't a ring is the frame alone.
+                realtime.deliver(user, frame(5))
+                assertEquals(1, push.sent.size)
+            }
+        }
+
+    @Test
     fun `a PushKit token APNs refuses is forgotten and the ring falls back to FCM`() =
         runBlocking {
             val push = RecordingPush()
