@@ -86,3 +86,17 @@ data class SupportAccountCreated(val userId: UserId, val displayName: String, va
         const val TYPE = "identity.SupportAccountCreated"
     }
 }
+
+/**
+ * The person's PIN Vault was opened (2026-11-11): the phone fetched its ciphertext to decrypt the wallet PIN. The wallet
+ * pauses outgoing payments for a while after it (`payment_holds`, reason `VAULT_OPENED`), counted from the envelope's
+ * `occurredAt`, so whoever opened it can't empty the wallet before the owner hears about it.
+ */
+@Serializable
+data class PinVaultOpened(val userId: UserId) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "identity.PinVaultOpened"
+    }
+}

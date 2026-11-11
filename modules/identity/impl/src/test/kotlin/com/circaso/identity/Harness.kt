@@ -21,6 +21,7 @@ import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.identity.domain.repositories.VaultRepository
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
@@ -28,14 +29,18 @@ import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetSecurityOverview
+import com.circaso.identity.domain.usecases.GetVaultStatus
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
+import com.circaso.identity.domain.usecases.OpenVault
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
 import com.circaso.identity.domain.usecases.RemoveDevice
+import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
+import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
@@ -47,6 +52,7 @@ import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
 import com.circaso.identity.presentation.services.DeviceService
+import com.circaso.identity.presentation.services.VaultService
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CodeCheck
@@ -184,9 +190,10 @@ class IdentityPorts(
     val devices: DeviceRepository,
     val sessions: SessionRepository,
     val store: IdentityStore,
+    val vaults: VaultRepository,
 )
 
-fun MemoryStore.ports() = IdentityPorts(this, this, this, this, this, this)
+fun MemoryStore.ports() = IdentityPorts(this, this, this, this, this, this, vaultRepository)
 
 class Harness(
     attestation: AttestationMode = AttestationMode.LOG,
@@ -274,6 +281,13 @@ class Harness(
         RequestAccountDeletion(p.transactor, p.accounts, p.sessions, emptyList(), p.store, cache, bus, config, clock)
     val recovery = RequestSupportRecovery(p.accounts, p.providers, p.store, cache, phones, email)
     val release = RequestPhoneRelease(cache, p.accounts, p.providers, phones, p.store, email, config, clock)
+    val vaultService =
+        VaultService(
+            GetVaultStatus(p.vaults),
+            OpenVault(p.transactor, p.accounts, p.devices, p.providers, p.vaults, p.store, cache, email, bus),
+            SaveVault(p.transactor, p.accounts, p.devices, p.vaults, p.store, clock),
+            RemoveVault(p.transactor, p.accounts, p.devices, p.vaults, p.store),
+        )
 
     suspend fun nonce(): String = issueNonce().getOrNull()!!
 

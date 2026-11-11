@@ -5,6 +5,7 @@ import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
@@ -23,6 +24,7 @@ import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.identity.domain.repositories.VaultRepository
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainEvent
@@ -61,6 +63,13 @@ class MemoryStore :
     val sessions = ConcurrentHashMap<SessionId, Session>()
     val log = CopyOnWriteArrayList<SecurityEvent>()
     val recoveries = ConcurrentHashMap<UUID, SupportRecovery>()
+    val vaults = ConcurrentHashMap<UserId, PinVault>()
+
+    /** Apart from the store: `find(userId)` is already the account's. */
+    val vaultRepository =
+        object : VaultRepository {
+            override suspend fun find(userId: UserId): PinVault? = vaults[userId]
+        }
     val events = CopyOnWriteArrayList<EventEnvelope>()
     private val lock = Mutex()
 
@@ -117,6 +126,7 @@ class MemoryStore :
         if (account.status != AccountStatus.DELETED || account.deleteAfter?.let { it <= now } != true) return false
         accounts.remove(userId)
         links.removeAll { it.userId == userId }
+        vaults.remove(userId)
         return true
     }
 
@@ -188,6 +198,8 @@ class MemoryStore :
         }
         log += changes.securityEvents
         changes.recoveries.forEach { recoveries[it.requestId] = it }
+        changes.vaults.forEach { vaults[it.userId] = it }
+        changes.removedVaults.forEach { vaults.remove(it) }
         events += changes.events
     }
 
@@ -308,6 +320,10 @@ class MemoryCache : IdentityCache {
     override suspend fun phoneRelease(phoneHmac: String) = releases[phoneHmac]
 
     override suspend fun countPhoneRelease(phoneHmac: String) = counters.putIfAbsent("release:$phoneHmac", 1L) == null
+
+    override suspend fun countVaultOpening(userId: UserId) = count("vault-open:$userId")
+
+    override suspend fun vaultOpeningRetryAfter(userId: UserId): Duration? = Duration.ofMinutes(42)
 }
 
 class MemoryBus : EventBus {

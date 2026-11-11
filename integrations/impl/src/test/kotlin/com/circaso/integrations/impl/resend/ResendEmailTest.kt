@@ -74,6 +74,35 @@ class ResendEmailTest {
         }
 
     @Test
+    fun `the PIN Vault notice names the phone that opened it, under its own template`() =
+        runBlocking<Unit> {
+            email.send("sam@example.com", Email.PinVaultOpened("iPhone 16"), idempotencyKey = "vault-opened-1")
+
+            assertEquals(
+                Template("tpl_pin_vault_opened", Variables("iPhone 16")),
+                Json.decodeFromString<Sent>(clients.last.text()).template,
+            )
+        }
+
+    @Test
+    fun `a template with no id configured is refused without calling Resend`() =
+        runBlocking<Unit> {
+            val unpublished =
+                ResendEmail(
+                    "re_key",
+                    "Circaso <no-reply@circaso.com>",
+                    templates - EmailTemplate.PIN_VAULT_OPENED,
+                    clients.named("resend") { baseUrl = "https://api.resend.com" },
+                )
+            val before = clients.requests.size
+
+            val result = unpublished.send("sam@example.com", Email.PinVaultOpened("iPhone 16"))
+
+            assertIs<Resource.Error>(result)
+            assertEquals(before, clients.requests.size, "nothing was sent")
+        }
+
+    @Test
     fun `a template without variables sends an empty variables object`() =
         runBlocking<Unit> {
             email.send("sam@example.com", Email.RecoveryCompleted)

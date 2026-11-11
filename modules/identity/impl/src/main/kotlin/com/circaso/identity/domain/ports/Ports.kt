@@ -127,6 +127,12 @@ interface IdentityCache {
     suspend fun phoneRelease(phoneHmac: String): PhoneRelease?
 
     suspend fun countPhoneRelease(phoneHmac: String): Boolean
+
+    /** Counts one PIN Vault opening in the account's hour-long window; how many it holds, this one included. */
+    suspend fun countVaultOpening(userId: UserId): Long
+
+    /** How long until the account's opening window ends; null when none is open. */
+    suspend fun vaultOpeningRetryAfter(userId: UserId): Duration?
 }
 
 /** What [PendingOtp.codeHash] holds when a vendor (Twilio Verify) makes and checks the code: there is no hash of ours to compare. */

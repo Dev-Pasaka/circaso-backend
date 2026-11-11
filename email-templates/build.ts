@@ -120,6 +120,29 @@ const mails: Mail[] = [
     variables: ['DEVICE_MODEL'],
   },
   {
+    file: 'pin-vault-opened.html',
+    subject: 'Your Circaso PIN backup was opened',
+    preheader: 'Your PIN backup was opened on your phone. Payments are paused for 24 hours to keep your money safe.',
+    eyebrow: 'Security notice',
+    title: 'Your PIN backup was opened',
+    intro: [
+      'Your wallet PIN backup (your PIN Vault) was just opened on your phone, with your passkey, ' +
+        'to restore your PIN.',
+      'To keep your money safe, payments from your wallet are paused for 24 hours. ' +
+        'You can still receive money and use the rest of Circaso as usual.',
+    ],
+    facts: [['Phone', '{{{DEVICE_MODEL}}}']],
+    outro: ['If this was you, there is nothing to do. Payments start again on their own after 24 hours.'],
+    notYou: {
+      heading: 'Not you?',
+      text:
+        'Someone may have your phone and your passkey. Contact us straight away so we can protect your account. ' +
+        'Do not share codes or your PIN with anyone, including people who say they are from Circaso.',
+      button: 'Contact support',
+    },
+    variables: ['DEVICE_MODEL'],
+  },
+  {
     file: 'recovery-started.html',
     subject: 'A request was made to recover your Circaso account',
     preheader: 'Someone asked to change how you sign in to Circaso. Nothing changes until it is verified.',

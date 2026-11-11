@@ -18,6 +18,7 @@ class IdentityStoreImpl(
     private val providers: ProviderRepositoryImpl,
     private val log: SecurityLogRepositoryImpl,
     private val recoveries: RecoveryRepositoryImpl,
+    private val vaults: VaultRepositoryImpl,
     private val bus: EventBus,
 ) : IdentityStore {
     override suspend fun write(changes: Changes) {
@@ -28,6 +29,8 @@ class IdentityStoreImpl(
             changes.removedProviderLinks.forEach { providers.remove(it) }
             changes.securityEvents.forEach { log.add(it) }
             changes.recoveries.forEach { recoveries.save(it) }
+            changes.vaults.forEach { vaults.save(it) }
+            changes.removedVaults.forEach { vaults.delete(it) }
             changes.events.forEach { database.writeOutbox(it) }
         }
     }

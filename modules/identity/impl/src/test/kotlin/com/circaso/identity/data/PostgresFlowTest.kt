@@ -247,4 +247,4 @@ private class TogetherAt(private val inner: Transactor, private val operation: S
 }
 
 private fun IdentityPorts.copyWith(transactor: Transactor) =
-    IdentityPorts(transactor, accounts, providers, devices, sessions, store)
+    IdentityPorts(transactor, accounts, providers, devices, sessions, store, vaults)

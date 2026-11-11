@@ -522,6 +522,10 @@ class MemoryHolds : PaymentHolds {
     val holds = ConcurrentHashMap<UserId, PaymentHold>()
 
     override suspend fun active(userId: UserId): PaymentHold? = holds[userId]
+
+    override suspend fun place(userId: UserId, hold: PaymentHold) {
+        holds.merge(userId, hold) { old, new -> if (new.until > old.until) new else old }
+    }
 }
 
 /** Every account is a person's and `ACTIVE` unless the test says otherwise. */
