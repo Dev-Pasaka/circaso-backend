@@ -70,8 +70,8 @@ private const val RING_TTL_SECONDS = 45L
 /**
  * What modules call to tell a user something now: to the socket when the user has one open, otherwise to push
  * when the frame is marked push-worthy. A frame that reaches neither is recovered by the module's replay when
- * the phone reconnects. An incoming call to an iPhone with a PushKit token rings through [voip] instead (decision
- * 2026-11-08), and through [push] only when that is off or fails.
+ * the phone reconnects. An incoming call is pushed whether or not a socket is open (2026-11-11); to an iPhone with a
+ * PushKit token it rings through [voip] (decision 2026-11-08), and through [push] only when that is off or fails.
  */
 class GatewayRealtime(
     private val hub: SocketHub,
@@ -86,7 +86,7 @@ class GatewayRealtime(
             return Resource.success(Unit)
         }
         if (hub.deliver(userId, envelope)) {
-            ringIphoneWithSocket(userId, envelope)
+            ringWithSocket(userId, envelope)
             return Resource.success(Unit)
         }
         val message = pushFor(envelope, userId) ?: return Resource.success(Unit)
@@ -108,7 +108,7 @@ class GatewayRealtime(
         candidates
             .filter { (userId, _) ->
                 userId !in offline
-            }.forEach { (userId, _) -> ringIphoneWithSocket(userId, envelope) }
+            }.forEach { (userId, _) -> ringWithSocket(userId, envelope) }
         pushes.chunked(PUSH_BATCH).forEach { batch ->
             coroutineScope {
                 batch.map { (userId, message) -> async { pushTo(userId, message) } }.awaitAll()
@@ -127,20 +127,16 @@ class GatewayRealtime(
     }
 
     /**
-     * A ring also goes as a VoIP push to an iPhone that still has a socket open (decision 2026-11-08): iOS suspends
-     * an app seconds after it leaves the screen, but its socket can look open here until the ping times out, so the
-     * frame alone would ring nothing. The app reports the push to CallKit and treats the frame for the same call as
-     * the same ring. Android keeps ringing from the frame, and from FCM only when offline.
+     * A ring is always pushed, even to a phone whose socket still looks open (iPhone 2026-11-08, Android 2026-11-11).
+     * A phone that just left the app keeps a socket that looks open here until the ping times out, while iOS has
+     * suspended the app and Android may have frozen it, so the frame alone rang nothing visible. An iPhone gets the
+     * VoIP push (CallKit), Android the FCM `call.ringing` (its full-screen call notification). Each app treats the frame
+     * and the push for the same call as one ring, and Android shows no notification over its own answer screen.
      */
-    private suspend fun ringIphoneWithSocket(userId: UserId, envelope: RealtimeEnvelope) {
-        if ("${envelope.module}.${envelope.type}" != "${CallFrames.MODULE}.${CallFrames.RINGING}" ||
-            !voip.enabled
-        ) {
-            return
-        }
+    private suspend fun ringWithSocket(userId: UserId, envelope: RealtimeEnvelope) {
+        if ("${envelope.module}.${envelope.type}" != "${CallFrames.MODULE}.${CallFrames.RINGING}") return
         val message = pushFor(envelope, userId) ?: return
-        val target = registrations.pushTarget(userId) ?: return
-        if (target.platform.equals("ios", ignoreCase = true)) rangByVoip(userId, target.voipToken, message)
+        pushTo(userId, message)
     }
 
     private fun isRingStopped(envelope: RealtimeEnvelope) =
@@ -149,7 +145,7 @@ class GatewayRealtime(
     /**
      * A ring that stopped (the caller hung up, the call ended, the ring ran out) goes to an iPhone with a PushKit token
      * as an "ended" VoIP push, socket or not (2026-11-09): its ring came by VoIP whatever its socket looked like (see
-     * [ringIphoneWithSocket]), and a suspended app hears nothing else, so CallKit rang on after the caller had hung up.
+     * [ringWithSocket]), and a suspended app hears nothing else, so CallKit rang on after the caller had hung up.
      * Android stops from the frame or the FCM `call.ended`/`call.missed` that `call.ended` brings.
      */
     private suspend fun stopIphoneRing(userId: UserId, envelope: RealtimeEnvelope) {
