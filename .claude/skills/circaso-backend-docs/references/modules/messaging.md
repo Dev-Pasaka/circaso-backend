@@ -75,6 +75,8 @@ interface ChatDirectory {            // read by wallet (pay-in-chat) and calls (
 
 Messaging also implements `RealtimeReplay` and the new `RealtimeInbound` (below), and supplies the push wording for its frames.
 
+It also implements **identity's `GroupMembership`** (`GroupMembershipImpl`, 2026-11-12): identity's group key backup (KB4) asks whether a person is in a chat before storing a meta key for it, answered through the `msg:members` cache like `ChatDirectory.isMember`.
+
 **Staff contract `GroupReports`** (decision 2026-11-08), bound in messaging's Koin module for the ops module on the separate ops gateway, never mounted on the app gateway. A group's name and photo are sealed on the phones, so staff see ids, counts and roles only.
 
 | Call | Use case | Notes |

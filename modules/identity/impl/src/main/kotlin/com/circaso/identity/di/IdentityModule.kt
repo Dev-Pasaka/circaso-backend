@@ -14,6 +14,7 @@ import com.circaso.identity.data.repositories.DatabaseTransactor
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
 import com.circaso.identity.data.repositories.ExpiredRows
 import com.circaso.identity.data.repositories.IdentityStoreImpl
+import com.circaso.identity.data.repositories.KeyBackupRepositoryImpl
 import com.circaso.identity.data.repositories.ProviderRepositoryImpl
 import com.circaso.identity.data.repositories.RecoveryRepositoryImpl
 import com.circaso.identity.data.repositories.SecurityLogRepositoryImpl
@@ -25,6 +26,8 @@ import com.circaso.identity.data.security.KeyedPhoneProtection
 import com.circaso.identity.data.security.UnconfiguredAttestation
 import com.circaso.identity.data.tables.AccountsTable
 import com.circaso.identity.data.tables.DevicesTable
+import com.circaso.identity.data.tables.GroupKeyBackupsTable
+import com.circaso.identity.data.tables.KeyBackupRootsTable
 import com.circaso.identity.data.tables.PinVaultsTable
 import com.circaso.identity.data.tables.ProviderLinksTable
 import com.circaso.identity.data.tables.SecurityLogTable
@@ -42,6 +45,7 @@ import com.circaso.identity.domain.repositories.AccountAdminRepository
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
+import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
@@ -62,6 +66,7 @@ import com.circaso.identity.domain.usecases.GetAccountCreatedAt
 import com.circaso.identity.domain.usecases.GetAccountKind
 import com.circaso.identity.domain.usecases.GetAccountRecords
 import com.circaso.identity.domain.usecases.GetAccountStatus
+import com.circaso.identity.domain.usecases.GetKeyBackupRoot
 import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetRecoveryCase
@@ -72,6 +77,7 @@ import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
 import com.circaso.identity.domain.usecases.ListAccountDevices
 import com.circaso.identity.domain.usecases.ListAccountSessions
+import com.circaso.identity.domain.usecases.ListGroupKeys
 import com.circaso.identity.domain.usecases.ListNewestAccounts
 import com.circaso.identity.domain.usecases.ListSecurityEvents
 import com.circaso.identity.domain.usecases.ListSupportAccounts
@@ -79,11 +85,14 @@ import com.circaso.identity.domain.usecases.OpenVault
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
 import com.circaso.identity.domain.usecases.RemoveDevice
+import com.circaso.identity.domain.usecases.RemoveKeyBackup
 import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
 import com.circaso.identity.domain.usecases.ResolvePhones
+import com.circaso.identity.domain.usecases.SaveGroupKey
+import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
 import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
@@ -109,6 +118,7 @@ import com.circaso.identity.presentation.api.TokenVerifierImpl
 import com.circaso.identity.presentation.controllers.accountController
 import com.circaso.identity.presentation.controllers.authController
 import com.circaso.identity.presentation.controllers.deviceController
+import com.circaso.identity.presentation.controllers.keyBackupController
 import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
 import com.circaso.identity.presentation.controllers.vaultController
@@ -118,6 +128,7 @@ import com.circaso.identity.presentation.services.AuthService
 import com.circaso.identity.presentation.services.DeviceService
 import com.circaso.identity.presentation.services.DirectoryService
 import com.circaso.identity.presentation.services.IdentityAgentService
+import com.circaso.identity.presentation.services.KeyBackupService
 import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
@@ -173,6 +184,8 @@ fun identityDatabaseSpec() =
                 SecurityLogTable,
                 SupportRecoveriesTable,
                 PinVaultsTable,
+                KeyBackupRootsTable,
+                GroupKeyBackupsTable,
             ),
         migrationsLocation = "classpath:db/identity",
         outbox = true,
@@ -215,9 +228,22 @@ fun identityModule(config: Config): Module =
         single<SecurityLogRepository> { get<SecurityLogRepositoryImpl>() }
         single<RecoveryRepository> { get<RecoveryRepositoryImpl>() }
         single<VaultRepository> { get<VaultRepositoryImpl>() }
+        single { KeyBackupRepositoryImpl(get(named("identity.database"))) }
+        single<KeyBackupRepository> { get<KeyBackupRepositoryImpl>() }
         single<AccountAdminRepository> { AccountAdminRepositoryImpl(get(named("identity.database"))) }
         single<IdentityStore> {
-            IdentityStoreImpl(get(named("identity.database")), get(), get(), get(), get(), get(), get(), get(), get())
+            IdentityStoreImpl(
+                get(named("identity.database")),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
         }
         single { ExpiredRows(get(named("identity.database"))) }
 
@@ -281,6 +307,12 @@ fun identityModule(config: Config): Module =
         single { OpenVault(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SaveVault(get(), get(), get(), get(), get(), clock) }
         single { RemoveVault(get(), get(), get(), get(), get()) }
+        // group key backup (2026-11-12); GroupMembership is messaging's (bound in its module, wired by `app`)
+        single { GetKeyBackupRoot(get()) }
+        single { SaveKeyBackupRoot(get(), get(), get(), get(), get(), clock) }
+        single { RemoveKeyBackup(get(), get(), get(), get(), get()) }
+        single { SaveGroupKey(get(), get(), get(), get(), get(), clock) }
+        single { ListGroupKeys(get()) }
         single { SweepPendingAccounts(get(), identity, clock) }
         single { CompleteDeletions(get(), get(), get(), get(), clock) }
         // staff, on the ops gateway only (decision 2026-11-08)
@@ -306,6 +338,7 @@ fun identityModule(config: Config): Module =
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single { VaultService(get(), get(), get(), get()) }
+        single { KeyBackupService(get(), get(), get(), get(), get()) }
         single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
@@ -315,6 +348,7 @@ fun identityModule(config: Config): Module =
             val recovery = get<RecoveryService>()
             val agent = get<IdentityAgentService>()
             val vault = get<VaultService>()
+            val keyBackup = get<KeyBackupService>()
             RouteContributor { route ->
                 route.authController(auth)
                 route.phoneController(phone)
@@ -323,6 +357,7 @@ fun identityModule(config: Config): Module =
                 route.recoveryController(recovery)
                 route.agentController(agent)
                 route.vaultController(vault)
+                route.keyBackupController(keyBackup)
             }
         }
 

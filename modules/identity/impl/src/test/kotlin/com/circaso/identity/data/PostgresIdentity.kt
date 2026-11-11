@@ -7,6 +7,7 @@ import com.circaso.identity.data.repositories.DatabaseTransactor
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
 import com.circaso.identity.data.repositories.ExpiredRows
 import com.circaso.identity.data.repositories.IdentityStoreImpl
+import com.circaso.identity.data.repositories.KeyBackupRepositoryImpl
 import com.circaso.identity.data.repositories.ProviderRepositoryImpl
 import com.circaso.identity.data.repositories.RecoveryRepositoryImpl
 import com.circaso.identity.data.repositories.SecurityLogRepositoryImpl
@@ -31,10 +32,12 @@ class PostgresIdentity(val clock: Clock = Clock.systemUTC()) {
     val log = SecurityLogRepositoryImpl(database, clock)
     val recoveries = RecoveryRepositoryImpl(database)
     val vaults = VaultRepositoryImpl(database)
-    val store = IdentityStoreImpl(database, accounts, devices, sessions, providers, log, recoveries, vaults, bus)
+    val keyBackups = KeyBackupRepositoryImpl(database)
+    val store =
+        IdentityStoreImpl(database, accounts, devices, sessions, providers, log, recoveries, vaults, keyBackups, bus)
     val expired = ExpiredRows(database)
 
-    fun ports() = IdentityPorts(transactor, accounts, providers, devices, sessions, store, vaults)
+    fun ports() = IdentityPorts(transactor, accounts, providers, devices, sessions, store, vaults, keyBackups)
 
     companion object {
         fun reset() = TestPostgres.truncate("identity")

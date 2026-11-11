@@ -138,3 +138,13 @@ interface SupportProfiles {
 }
 
 data class SupportProfile(val displayName: String, val handle: String?)
+
+/**
+ * Implemented by messaging, wired in `app` (group key backup, 2026-11-12). Identity keeps each person's backed-up group
+ * meta keys, but who is in a group is messaging's, and messaging sits above identity, so identity asks through this
+ * instead of depending on it.
+ */
+interface GroupMembership {
+    /** Whether [userId] is in the chat [chatId] now; false for a chat that doesn't exist. */
+    suspend fun isMember(chatId: UUID, userId: UserId): Boolean
+}

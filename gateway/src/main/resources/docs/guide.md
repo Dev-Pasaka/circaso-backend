@@ -149,6 +149,11 @@ The shared ones, then each area's own. Codes are stable.
 | `vault.not_found` | 404 | No PIN Vault to open |
 | `vault.version_conflict` | 409 | The PIN Vault changed since you read its version (or there is none); read V1 again |
 | `vault.credential_id_invalid`, `vault.salt_invalid`, `vault.ciphertext_invalid`, `vault.algorithm_invalid`, `vault.expected_version_invalid` | 400 | That field of a PIN Vault save is the wrong encoding or size |
+| `key_backup.not_found` | 404 | Group key backup is off (no root): turn it on (KB2) before backing up a group key |
+| `key_backup.chat_not_found` | 404 | Not a group you are in (nor one you already backed up a key of) |
+| `key_backup.version_conflict` | 409 | The backup root changed since you read its version (or there is none); read KB1 again |
+| `key_backup.too_many` | 409 | The account already holds 10,000 backed-up group keys |
+| `key_backup.credential_id_invalid`, `key_backup.salt_invalid`, `key_backup.sealed_root_invalid`, `key_backup.algorithm_invalid`, `key_backup.expected_version_invalid`, `key_backup.chat_id_invalid`, `key_backup.meta_version_invalid`, `key_backup.ciphertext_invalid` | 400 | That field of a key backup save is the wrong encoding, size or range |
 | `users.profile_invalid` | 400 | Name empty or over 40 characters, about over 140 |
 | `users.version_conflict` | 409 | The profile changed since you read it; reload and retry |
 | `users.avatar_invalid` | 400 | Wrong type, over 5 MB or not uploaded |
