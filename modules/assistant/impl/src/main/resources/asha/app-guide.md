@@ -104,6 +104,10 @@ Money starts and ends in the chat. There is no separate payment form.
 8. On a one-to-one call, money the other person sends you lands on your call screen as it arrives, for example
    "Juma sent you KES 500", the same way contributions land on a group call.
 - Calls are labelled "Secure call".
+- An incoming call rings even if you've only just left Circaso. On Android it opens full screen when the phone is
+  locked or idle, and shows a call banner with Answer and Decline over other apps (the phone's own rule, as for every
+  calling app). On iPhone it rings like a phone call; to make calls full screen over other apps, iPhone Settings →
+  Phone → Incoming Calls → Full Screen.
 
 ## Moments
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
@@ -111,6 +115,9 @@ Money starts and ends in the chat. There is no separate payment form.
 - Reply to a moment and it arrives in your chat with that person. Choose who sees your moments in Moments → privacy.
 
 ## Contacts
+- The first time you reach Chats, Circaso asks once to use your contacts. Allow it and your phone contacts who are on
+  Circaso show up straight away in New chat and search, and stay up to date. Only phone numbers are checked, never
+  names. Said no? Chats → pencil → **Find from contacts** asks again.
 - Chats → pencil → find people by name, phone contacts already on Circaso, or their @username. Invite friends who
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
@@ -122,6 +129,12 @@ Money starts and ends in the chat. There is no separate payment form.
 - Your wallet PIN (6 digits, with security questions) is set the first time you use money, and you confirm every
   payment with it. To approve without typing it, turn on Face ID / fingerprint in You → Security (the PIN still works
   if that fails). A group wallet has its own PIN, not your personal one (Group info → Change PIN).
+- **PIN Vault** (You → Security → Wallet PIN → PIN Vault): back up your wallet PIN, and if you like your security
+  answers, locked with a passkey that your Face ID, fingerprint or screen lock opens. The passkey syncs with your Apple
+  or Google account, so a new phone can open it too. Circaso stores it locked and can never read it. Forgot your PIN?
+  Open the vault: the PIN shows for a minute, then sending pauses for 24 hours and you get an email, in case it wasn't
+  you (receiving still works). Needs an iPhone with iOS 18 or later, or an Android phone with Google Password
+  Manager; on other phones the option doesn't show. Asha can't open the vault or see the PIN.
 - Circaso and Asha never ask for your PIN, codes or recovery words. Nobody from Circaso will ask you to send money.
 - You → Security also shows your devices and recent security activity. One phone per account: signing in on a new
   phone signs the old one out, and payments pause for a short while after.
