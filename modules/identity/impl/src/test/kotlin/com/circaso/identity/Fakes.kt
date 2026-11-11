@@ -1,10 +1,14 @@
 package com.circaso.identity
 
 import com.circaso.identity.api.AccountStatus
+import com.circaso.identity.api.GroupMembership
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.GroupKeyPosition
+import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
@@ -20,6 +24,7 @@ import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
+import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
@@ -69,6 +74,39 @@ class MemoryStore :
     val vaultRepository =
         object : VaultRepository {
             override suspend fun find(userId: UserId): PinVault? = vaults[userId]
+        }
+    val keyBackupRoots = ConcurrentHashMap<UserId, KeyBackupRoot>()
+
+    /** Group keys by (account, chat, metaVersion). */
+    val groupKeys = ConcurrentHashMap<Triple<UserId, UUID, Int>, GroupKeyBackup>()
+
+    /** Apart from the store, like [vaultRepository]. */
+    val keyBackupRepository =
+        object : KeyBackupRepository {
+            override suspend fun findRoot(userId: UserId) = keyBackupRoots[userId]
+
+            override suspend fun findGroupKey(
+                userId: UserId,
+                chatId: UUID,
+                metaVersion: Int,
+            ) = groupKeys[Triple(userId, chatId, metaVersion)]
+
+            override suspend fun hasGroupKeys(userId: UserId, chatId: UUID) =
+                groupKeys.keys.any { it.first == userId && it.second == chatId }
+
+            override suspend fun countGroupKeys(userId: UserId) = groupKeys.keys.count { it.first == userId }
+
+            override suspend fun listGroupKeys(
+                userId: UserId,
+                after: GroupKeyPosition?,
+                limit: Int,
+            ) = groupKeys.values
+                .filter { it.userId == userId }
+                .sortedWith(compareBy<GroupKeyBackup> { it.chatId }.thenBy { it.metaVersion })
+                .filter {
+                    after == null || it.chatId > after.chatId ||
+                        (it.chatId == after.chatId && it.metaVersion > after.metaVersion)
+                }.take(limit)
         }
     val events = CopyOnWriteArrayList<EventEnvelope>()
     private val lock = Mutex()
@@ -127,6 +165,7 @@ class MemoryStore :
         accounts.remove(userId)
         links.removeAll { it.userId == userId }
         vaults.remove(userId)
+        removeKeyBackup(userId)
         return true
     }
 
@@ -200,7 +239,15 @@ class MemoryStore :
         changes.recoveries.forEach { recoveries[it.requestId] = it }
         changes.vaults.forEach { vaults[it.userId] = it }
         changes.removedVaults.forEach { vaults.remove(it) }
+        changes.keyBackupRoots.forEach { keyBackupRoots[it.userId] = it }
+        changes.groupKeys.forEach { groupKeys[Triple(it.userId, it.chatId, it.metaVersion)] = it }
+        changes.removedKeyBackups.forEach { removeKeyBackup(it) }
         events += changes.events
+    }
+
+    private fun removeKeyBackup(userId: UserId) {
+        keyBackupRoots.remove(userId)
+        groupKeys.keys.removeIf { it.first == userId }
     }
 
     override suspend fun publish(changes: Changes) = Unit
@@ -213,6 +260,17 @@ class MemoryStore :
     fun eventTypes() = events.map { it.type }
 
     fun active() = accounts.values.filter { it.status == AccountStatus.ACTIVE }
+}
+
+/** Messaging's answer to `GroupMembership`, kept in memory: a test adds who is in which chat. */
+class MemoryMemberships : GroupMembership {
+    val members = CopyOnWriteArrayList<Pair<UUID, UserId>>()
+    var asked = 0
+
+    override suspend fun isMember(chatId: UUID, userId: UserId): Boolean {
+        asked++
+        return (chatId to userId) in members
+    }
 }
 
 class MemoryCache : IdentityCache {

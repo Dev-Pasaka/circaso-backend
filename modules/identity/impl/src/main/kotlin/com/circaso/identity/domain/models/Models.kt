@@ -100,6 +100,15 @@ enum class SecurityEventType {
 
     /** The PIN Vault was deleted by its owner. */
     VAULT_REMOVED,
+
+    /** Group key backup was turned on (2026-11-12): its first root saved; [SecurityEvent.detail] is its version. */
+    KEY_BACKUP_ON,
+
+    /** The group key backup's root was replaced; [SecurityEvent.detail] is its new version. */
+    KEY_BACKUP_CHANGED,
+
+    /** Group key backup was turned off: its root and every group key deleted by the owner. */
+    KEY_BACKUP_OFF,
 }
 
 data class SecurityEvent(

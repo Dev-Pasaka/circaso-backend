@@ -3,6 +3,9 @@ package com.circaso.identity.domain.repositories
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.GroupKeyPosition
+import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
@@ -56,7 +59,7 @@ interface AccountRepository {
 
     /**
      * Deletes the account and every identity row of it (logins, devices, sessions, security log, support cases, PIN
-     * Vault), but only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs
+     * Vault, key backup), but only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs
      * racing, one deletes and the other finds nothing). True when this call deleted it. Inside `Transactor.run`, with the event.
      */
     suspend fun completeDeletion(userId: UserId, now: Instant): Boolean
@@ -123,6 +126,37 @@ interface VaultRepository {
     suspend fun find(userId: UserId): PinVault?
 }
 
+/**
+ * The group key backup (2026-11-12): one sealed root and up to [MAX_GROUP_KEYS] group key blobs per account. Changed
+ * only through [Changes.keyBackupRoots], [Changes.groupKeys] and [Changes.removedKeyBackups], read under the account's
+ * lock, so two phones writing at once run one after the other.
+ */
+interface KeyBackupRepository {
+    suspend fun findRoot(userId: UserId): KeyBackupRoot?
+
+    suspend fun findGroupKey(
+        userId: UserId,
+        chatId: UUID,
+        metaVersion: Int,
+    ): GroupKeyBackup?
+
+    /** Whether the account has backed up any key of [chatId], at any `metaVersion`. */
+    suspend fun hasGroupKeys(userId: UserId, chatId: UUID): Boolean
+
+    suspend fun countGroupKeys(userId: UserId): Int
+
+    /** Keyset paging in `(chatId, metaVersion)` order, starting after [after] (from the start when null). */
+    suspend fun listGroupKeys(
+        userId: UserId,
+        after: GroupKeyPosition?,
+        limit: Int,
+    ): List<GroupKeyBackup>
+
+    companion object {
+        const val MAX_GROUP_KEYS = 10_000
+    }
+}
+
 interface RecoveryRepository {
     suspend fun find(requestId: UUID): SupportRecovery?
 }
@@ -140,6 +174,12 @@ data class Changes(
     val vaults: List<PinVault> = emptyList(),
     /** Accounts whose PIN Vault is deleted. */
     val removedVaults: List<UserId> = emptyList(),
+    /** Key backup roots written as they are now, each replacing the account's one root. */
+    val keyBackupRoots: List<KeyBackupRoot> = emptyList(),
+    /** Group key blobs written as they are now, each replacing the one at its (account, chat, metaVersion). */
+    val groupKeys: List<GroupKeyBackup> = emptyList(),
+    /** Accounts whose whole key backup (root and every group key) is deleted. */
+    val removedKeyBackups: List<UserId> = emptyList(),
     /** Written to the outbox in the same transaction, then published once it commits. */
     val events: List<EventEnvelope> = emptyList(),
 )

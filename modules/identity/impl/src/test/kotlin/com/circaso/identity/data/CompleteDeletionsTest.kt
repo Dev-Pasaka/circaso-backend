@@ -7,6 +7,8 @@ import com.circaso.identity.data.PostgresIdentity.Companion.count
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
@@ -22,6 +24,7 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import com.circaso.shared.decode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -50,8 +53,8 @@ class CompleteDeletionsTest {
     fun clean() = PostgresIdentity.reset()
 
     /**
-     * An account with a number, a login, a phone, a session, a log entry and a PIN Vault, deleted with its grace ending
-     * [at].
+     * An account with a number, a login, a phone, a session, a log entry, a PIN Vault and a group key backup (its root
+     * and two group keys), deleted with its grace ending [at].
      */
     private suspend fun deleted(number: String, at: Instant?): UserId {
         val userId = UserId.new()
@@ -96,6 +99,12 @@ class CompleteDeletionsTest {
                             SecurityEvent(userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
                         ),
                     vaults = listOf(PinVault(userId, "cred", "c2FsdA==", "Y2lwaGVy", "prf/v1", 1, now)),
+                    keyBackupRoots = listOf(KeyBackupRoot(userId, "cred", "c2FsdA==", "cm9vdA==", "prf/v1", 1, now)),
+                    groupKeys =
+                        listOf(
+                            GroupKeyBackup(userId, Uuid7.generate(), 0, "a2V5MA==", now),
+                            GroupKeyBackup(userId, Uuid7.generate(), 3, "a2V5Mw==", now),
+                        ),
                 ),
             )
         }
@@ -111,6 +120,8 @@ class CompleteDeletionsTest {
             "security_log",
             "support_recoveries",
             "pin_vaults",
+            "key_backup_roots",
+            "group_key_backups",
         ).sumOf {
             count("SELECT count(*) FROM identity.$it WHERE user_id = '$userId'")
         }
