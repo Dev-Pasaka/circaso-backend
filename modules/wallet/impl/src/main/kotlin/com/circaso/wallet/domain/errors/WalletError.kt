@@ -64,10 +64,13 @@ sealed class WalletError(
         ErrorKind.CONFLICT,
     )
 
-    /** Outgoing payments are held after a support restore. TODO(WS4): `data.until`, once the hold is built. */
+    /**
+     * Outgoing payments are paused for a while: after the PIN Vault was opened, or a support restore. W1's `hold` says
+     * until when and why.
+     */
     data object OnHold : WalletError(
         "wallet.on_hold",
-        "Payments from your wallet are on hold for a while after your account was restored.",
+        "Payments from your wallet are paused for a while to keep your money safe.",
         ErrorKind.FORBIDDEN,
     )
 

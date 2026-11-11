@@ -18,12 +18,14 @@ import com.circaso.identity.data.repositories.ProviderRepositoryImpl
 import com.circaso.identity.data.repositories.RecoveryRepositoryImpl
 import com.circaso.identity.data.repositories.SecurityLogRepositoryImpl
 import com.circaso.identity.data.repositories.SessionRepositoryImpl
+import com.circaso.identity.data.repositories.VaultRepositoryImpl
 import com.circaso.identity.data.security.EcdsaDeviceKeyVerifier
 import com.circaso.identity.data.security.Ed25519Tokens
 import com.circaso.identity.data.security.KeyedPhoneProtection
 import com.circaso.identity.data.security.UnconfiguredAttestation
 import com.circaso.identity.data.tables.AccountsTable
 import com.circaso.identity.data.tables.DevicesTable
+import com.circaso.identity.data.tables.PinVaultsTable
 import com.circaso.identity.data.tables.ProviderLinksTable
 import com.circaso.identity.data.tables.SecurityLogTable
 import com.circaso.identity.data.tables.SessionsTable
@@ -44,6 +46,7 @@ import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.identity.domain.repositories.VaultRepository
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
@@ -64,6 +67,7 @@ import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetRecoveryCase
 import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.GetSecuritySummary
+import com.circaso.identity.domain.usecases.GetVaultStatus
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
 import com.circaso.identity.domain.usecases.ListAccountDevices
@@ -71,13 +75,16 @@ import com.circaso.identity.domain.usecases.ListAccountSessions
 import com.circaso.identity.domain.usecases.ListNewestAccounts
 import com.circaso.identity.domain.usecases.ListSecurityEvents
 import com.circaso.identity.domain.usecases.ListSupportAccounts
+import com.circaso.identity.domain.usecases.OpenVault
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
 import com.circaso.identity.domain.usecases.RemoveDevice
+import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
 import com.circaso.identity.domain.usecases.ResolvePhones
+import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
@@ -104,6 +111,7 @@ import com.circaso.identity.presentation.controllers.authController
 import com.circaso.identity.presentation.controllers.deviceController
 import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
+import com.circaso.identity.presentation.controllers.vaultController
 import com.circaso.identity.presentation.services.AccountAdminService
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
@@ -114,6 +122,7 @@ import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
 import com.circaso.identity.presentation.services.SupportAccountService
+import com.circaso.identity.presentation.services.VaultService
 import com.circaso.identity.presentation.warmup.IdentityWarmUp
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Database
@@ -163,6 +172,7 @@ fun identityDatabaseSpec() =
                 SessionsTable,
                 SecurityLogTable,
                 SupportRecoveriesTable,
+                PinVaultsTable,
             ),
         migrationsLocation = "classpath:db/identity",
         outbox = true,
@@ -197,15 +207,17 @@ fun identityModule(config: Config): Module =
         single { SessionRepositoryImpl(get(named("identity.database")), clock) }
         single { SecurityLogRepositoryImpl(get(named("identity.database")), clock) }
         single { RecoveryRepositoryImpl(get(named("identity.database"))) }
+        single { VaultRepositoryImpl(get(named("identity.database"))) }
         single<AccountRepository> { get<AccountRepositoryImpl>() }
         single<ProviderRepository> { get<ProviderRepositoryImpl>() }
         single<DeviceRepository> { get<DeviceRepositoryImpl>() }
         single<SessionRepository> { get<SessionRepositoryImpl>() }
         single<SecurityLogRepository> { get<SecurityLogRepositoryImpl>() }
         single<RecoveryRepository> { get<RecoveryRepositoryImpl>() }
+        single<VaultRepository> { get<VaultRepositoryImpl>() }
         single<AccountAdminRepository> { AccountAdminRepositoryImpl(get(named("identity.database"))) }
         single<IdentityStore> {
-            IdentityStoreImpl(get(named("identity.database")), get(), get(), get(), get(), get(), get(), get())
+            IdentityStoreImpl(get(named("identity.database")), get(), get(), get(), get(), get(), get(), get(), get())
         }
         single { ExpiredRows(get(named("identity.database"))) }
 
@@ -264,6 +276,11 @@ fun identityModule(config: Config): Module =
         single { ResolvePhones(get()) }
         single { VerifyDeviceSignature(get(), get()) }
         single { GetPushTarget(get(), get()) }
+        // the PIN Vault (2026-11-11)
+        single { GetVaultStatus(get()) }
+        single { OpenVault(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SaveVault(get(), get(), get(), get(), get(), clock) }
+        single { RemoveVault(get(), get(), get(), get(), get()) }
         single { SweepPendingAccounts(get(), identity, clock) }
         single { CompleteDeletions(get(), get(), get(), get(), clock) }
         // staff, on the ops gateway only (decision 2026-11-08)
@@ -288,6 +305,7 @@ fun identityModule(config: Config): Module =
         single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
+        single { VaultService(get(), get(), get(), get()) }
         single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
@@ -296,6 +314,7 @@ fun identityModule(config: Config): Module =
             val account = get<AccountService>()
             val recovery = get<RecoveryService>()
             val agent = get<IdentityAgentService>()
+            val vault = get<VaultService>()
             RouteContributor { route ->
                 route.authController(auth)
                 route.phoneController(phone)
@@ -303,6 +322,7 @@ fun identityModule(config: Config): Module =
                 route.accountController(account)
                 route.recoveryController(recovery)
                 route.agentController(agent)
+                route.vaultController(vault)
             }
         }
 

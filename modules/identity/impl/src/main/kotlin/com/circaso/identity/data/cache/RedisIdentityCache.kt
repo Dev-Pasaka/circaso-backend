@@ -125,6 +125,14 @@ class RedisIdentityCache(private val redis: RedisScope) : IdentityCache {
             Duration.ofDays(1),
         )
 
+    override suspend fun countVaultOpening(userId: UserId): Long =
+        redis.increment(
+            "vault-open:$userId",
+            Duration.ofHours(1),
+        )
+
+    override suspend fun vaultOpeningRetryAfter(userId: UserId): Duration? = redis.ttl("vault-open:$userId")
+
     override suspend fun savePhoneRelease(phoneHmac: String, release: PhoneRelease) =
         redis.hashSet(
             "phone-release:$phoneHmac",

@@ -491,8 +491,15 @@ private fun Module.circle(custody: Config, secrets: Secrets) {
 }
 
 /**
+ * Templates a server may start without (2026-11-11), so a deploy never waits on publishing one in Resend: until its id
+ * is set, that email is refused (`Rejected`) and the use case, which sends it best effort, carries on.
+ */
+private val OPTIONAL_TEMPLATES = setOf(EmailTemplate.PIN_VAULT_OPENED)
+
+/**
  * Resend needs `RESEND_API_KEY`, `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified domain) and
- * one template id per [EmailTemplate] (`INTEGRATIONS_EMAIL_TEMPLATES_<NAME>`). Anything missing stops startup, naming it.
+ * one template id per [EmailTemplate] (`INTEGRATIONS_EMAIL_TEMPLATES_<NAME>`). Anything missing stops startup, naming
+ * it, except the [OPTIONAL_TEMPLATES].
  */
 private fun resendEmail(
     email: Config,
@@ -502,7 +509,13 @@ private fun resendEmail(
     ResendEmail(
         apiKey = secrets.require("resend.api-key"),
         from = email.requireString("from"),
-        templates = EmailTemplate.entries.associateWith { email.requireString("templates.${it.name.lowercase()}") },
+        templates =
+            EmailTemplate.entries
+                .mapNotNull { template ->
+                    val key = "templates.${template.name.lowercase()}"
+                    val id = if (template in OPTIONAL_TEMPLATES) email.string(key) else email.requireString(key)
+                    id?.let { template to it }
+                }.toMap(),
         http = clients.named("resend") { baseUrl = email.string("base-url", "https://api.resend.com") },
     )
 

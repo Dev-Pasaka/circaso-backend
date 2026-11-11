@@ -8,12 +8,14 @@ import com.circaso.wallet.domain.models.ChainHoldings
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
+import com.circaso.wallet.domain.models.PaymentHold
 import com.circaso.wallet.domain.models.WalletAccess
 import com.circaso.wallet.domain.models.WalletQuery
 import com.circaso.wallet.domain.models.WalletStatus
 import com.circaso.wallet.domain.models.WalletView
 import com.circaso.wallet.domain.ports.ActiveWallets
 import com.circaso.wallet.domain.ports.AddingChains
+import com.circaso.wallet.domain.ports.PaymentHolds
 import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Holders
 import com.circaso.wallet.domain.support.HoldingPrices
@@ -55,6 +57,7 @@ class GetWallet(
     private val holders: Holders,
     private val progress: SetupProgress,
     private val prices: HoldingPrices,
+    private val holds: PaymentHolds,
 ) {
     suspend operator fun invoke(query: WalletQuery): Resource<WalletView> {
         val access =
@@ -63,11 +66,13 @@ class GetWallet(
                 is Resource.Error -> return seen
             }
         val holder = access.owner.holder
-        val user = wallets.circleUser(holder) ?: return Resource.success(empty(WalletStatus.NONE, access))
+        // The caller's own hold: theirs are the payments it pauses, from this wallet or any they sign for.
+        val hold = holds.active(query.userId)
+        val user = wallets.circleUser(holder) ?: return Resource.success(empty(WalletStatus.NONE, access, hold))
         // The user is looking: the light reconciliation pass checks their wallet for a lost webhook for a while.
         active.touch(holder)
         val open = current(user).filter { it.state != ChainWalletState.CLOSED }
-        if (open.isEmpty()) return Resource.success(empty(WalletStatus.SETTING_UP, access))
+        if (open.isEmpty()) return Resource.success(empty(WalletStatus.SETTING_UP, access, hold))
 
         val (reads, rate) =
             coroutineScope {
@@ -83,7 +88,7 @@ class GetWallet(
                     is Resource.Error -> return read
                 }
             }
-        return Resource.success(view(prices.price(chains), rate).copy(access = access))
+        return Resource.success(view(prices.price(chains), rate).copy(access = access, hold = hold))
     }
 
     /** Our rows, after asking Circle when something is still on its way; Circle being down leaves our rows. */
@@ -108,15 +113,17 @@ class GetWallet(
             chains = priced,
             totals = Valuation.totals(priced),
             fiat = rate?.let { Valuation.fiat(priced, it) },
-            // TODO(WS4): the payment hold after a support restore (payment_holds, decision 2026-10-28).
             hold = null,
         )
     }
 
     private fun receives(blockchain: String): Boolean = custody.supported.find(blockchain)?.receiveEnabled == true
 
-    private fun empty(status: WalletStatus, access: WalletAccess) =
-        WalletView(status, chains = emptyList(), totals = emptyList(), fiat = null, hold = null, access = access)
+    private fun empty(
+        status: WalletStatus,
+        access: WalletAccess,
+        hold: PaymentHold?,
+    ) = WalletView(status, chains = emptyList(), totals = emptyList(), fiat = null, hold = hold, access = access)
 
     private companion object {
         /** Chains read from Circle at once for one wallet: a wallet is on a handful, this only caps an odd one. */

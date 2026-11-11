@@ -3,6 +3,7 @@ package com.circaso.identity.domain.repositories
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
@@ -54,9 +55,9 @@ interface AccountRepository {
     suspend fun dueForDeletion(now: Instant, limit: Int): List<UserId>
 
     /**
-     * Deletes the account and every identity row of it (logins, devices, sessions, security log, support cases), but
-     * only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs racing, one
-     * deletes and the other finds nothing). True when this call deleted it. Inside `Transactor.run`, with the event.
+     * Deletes the account and every identity row of it (logins, devices, sessions, security log, support cases, PIN
+     * Vault), but only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs
+     * racing, one deletes and the other finds nothing). True when this call deleted it. Inside `Transactor.run`, with the event.
      */
     suspend fun completeDeletion(userId: UserId, now: Instant): Boolean
 }
@@ -113,6 +114,15 @@ interface SecurityLogRepository {
     ): List<SecurityEvent>
 }
 
+/**
+ * The PIN Vault, one per account (2026-11-11). Changed only through [Changes.vaults] and [Changes.removedVaults], read
+ * under the account's lock, so two phones saving at once run one after the other and the second sees the first's
+ * version.
+ */
+interface VaultRepository {
+    suspend fun find(userId: UserId): PinVault?
+}
+
 interface RecoveryRepository {
     suspend fun find(requestId: UUID): SupportRecovery?
 }
@@ -126,6 +136,10 @@ data class Changes(
     val removedProviderLinks: List<ProviderLink> = emptyList(),
     val securityEvents: List<SecurityEvent> = emptyList(),
     val recoveries: List<SupportRecovery> = emptyList(),
+    /** PIN Vaults written as they are now, each replacing the account's one vault. */
+    val vaults: List<PinVault> = emptyList(),
+    /** Accounts whose PIN Vault is deleted. */
+    val removedVaults: List<UserId> = emptyList(),
     /** Written to the outbox in the same transaction, then published once it commits. */
     val events: List<EventEnvelope> = emptyList(),
 )

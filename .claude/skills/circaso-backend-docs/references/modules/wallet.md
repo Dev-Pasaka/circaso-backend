@@ -194,7 +194,7 @@ Paths relative to `https://api.circaso.com/v1`, all `app` scope. Every POST take
 }
 ```
 
-Amounts of crypto assets are strings (`amountMinor` in the smallest unit, `amount` in whole units for display): an 18-decimal token passes what a JSON number holds exactly. Fiat amounts are decimal strings rounded half up to the currency's minor unit. `SETTING_UP` means the Circle user exists and no chain's wallet does yet: it is derived (a `circle_users` row with no `wallets` row), not stored. While `SETTING_UP`, or while a chain is being added (`wal:adding`), W1 reads Circle's wallet list first and records any new wallet; balances come through `wal:balance` (15 s). `hold` is filled by WS4 (`payment_holds`). `receiveEnabled: false` marks a chain retired from receiving: the app doesn't show its address to be paid, but it can still send out.
+Amounts of crypto assets are strings (`amountMinor` in the smallest unit, `amount` in whole units for display): an 18-decimal token passes what a JSON number holds exactly. Fiat amounts are decimal strings rounded half up to the currency's minor unit. `SETTING_UP` means the Circle user exists and no chain's wallet does yet: it is derived (a `circle_users` row with no `wallets` row), not stored. While `SETTING_UP`, or while a chain is being added (`wal:adding`), W1 reads Circle's wallet list first and records any new wallet; balances come through `wal:balance` (15 s). `hold` is the caller's `payment_holds` row in force (`{ until, reason }`; built 2026-11-11 for the PIN Vault), else null. `receiveEnabled: false` marks a chain retired from receiving: the app doesn't show its address to be paid, but it can still send out.
 
 ### W12 Chains
 
@@ -304,7 +304,7 @@ PostgreSQL tables in schema `wallet` (role `wallet`, Flyway location `db/wallet`
 
 ```sql
 -- V1__wallet.sql (WS2: circle_users, wallets, outbox); V2__transfers.sql (WS3: transfers, transactions, realtime);
--- payment_holds arrives with WS4
+-- payment_holds: V11 (2026-11-11), below
 
 CREATE TABLE wallet.circle_users (                      -- one per user: the wallet itself, whatever chains it is on
     user_id        uuid        PRIMARY KEY,
@@ -384,7 +384,7 @@ CREATE INDEX transactions_occurred_idx ON wallet.transactions (occurred_at);   -
 
 CREATE TABLE wallet.payment_holds (
     user_id    uuid        PRIMARY KEY,
-    reason     text        NOT NULL,                    -- RELINKED
+    reason     text        NOT NULL,                    -- VAULT_OPENED (24 h, built 2026-11-11) | RELINKED (48 h, WS4)
     expires_at timestamptz NOT NULL                     -- the end of the hold
 );
 
@@ -435,6 +435,7 @@ Every job applies what Circle says through the one path the webhook takes (`Cust
 
 | Stream (group `wallet`) | Event | What wallet does |
 | --- | --- | --- |
+| `events:identity` | `identity.PinVaultOpened` | Places a `payment_holds` row, reason `VAULT_OPENED`, until the event's `occurredAt` + 24 h (built 2026-11-11). Insert, or for a person already on hold `UPDATE … WHERE expires_at < :until`: a hold only gets longer, so replays and late deliveries are harmless |
 | `events:identity` | `identity.AccountRelinked` | Writes a 48-hour `payment_holds` row, if the hold is kept (Open questions) |
 | `events:identity` | `identity.AccountStatusChanged` | Suspended or blocked: W4 refuses; wallets aren't frozen at Circle, which we can't do for user-controlled wallets |
 | `events:identity` | `identity.AccountDeleted` | Deletion only happens once the guard has seen an empty wallet; marks the wallet `CLOSED` and keeps transaction records for the retention period (Open questions) |
@@ -471,7 +472,7 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 | `wallet.not_ready` | CONFLICT → 409 | The wallet is still being set up |
 | `wallet.not_on_chain` | CONFLICT → 409 | W4 on a chain the wallet isn't on (or isn't active on): add it first (W12) |
 | `wallet.account_restricted` | FORBIDDEN → 403 | W4 from an account that isn't `ACTIVE` (suspended, blocked, being deleted) |
-| `wallet.on_hold` | FORBIDDEN → 403 | Outgoing payments are on hold after a support restore; `data.until` says when they resume |
+| `wallet.on_hold` | FORBIDDEN → 403 | Outgoing payments are paused (`payment_holds`): 24 h after the PIN Vault was opened, or after a support restore; W1's `hold.until` says when they resume |
 | `wallet.amount_invalid` | INVALID → 400 | Zero, negative, more decimals than the asset has, `amountMinor` and `amount` that disagree, or an asset not offered on the chain |
 | `wallet.insufficient_funds` | INVALID → 400 | Balance below the amount |
 | `wallet.limit_exceeded` | INVALID → 400 | Over the per-payment or daily limit |

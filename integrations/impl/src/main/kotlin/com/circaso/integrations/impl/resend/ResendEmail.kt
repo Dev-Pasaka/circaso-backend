@@ -34,9 +34,9 @@ private data class TemplateRef<V>(val id: String, val variables: V)
 @Serializable
 private data class SentEmail(val id: String)
 
-/** `new-phone-sign-in`'s variables, under the names the Resend template uses. */
+/** `new-phone-sign-in`'s and `pin-vault-opened`'s variables, under the names the Resend templates use. */
 @Serializable
-private data class NewPhoneSignInVariables(
+private data class DeviceModelVariables(
     @SerialName("DEVICE_MODEL") val deviceModel: String,
 )
 
@@ -57,8 +57,18 @@ private fun sendBody(
                 from,
                 to,
                 templateId,
-                NewPhoneSignInVariables(email.deviceModel),
-                NewPhoneSignInVariables.serializer(),
+                DeviceModelVariables(email.deviceModel),
+                DeviceModelVariables.serializer(),
+            )
+        }
+
+        is Email.PinVaultOpened -> {
+            encode(
+                from,
+                to,
+                templateId,
+                DeviceModelVariables(email.deviceModel),
+                DeviceModelVariables.serializer(),
             )
         }
 

@@ -91,6 +91,10 @@ Seventeen app routes: seven take a person from Google/Apple sign-in to an active
 | I11 | `GET /account/security` | app | `GetSecurityOverview` | Phone, linked providers, this phone, verification status |
 | I12 | `POST /account/providers` / `DELETE /account/providers/{provider}` | app | `LinkProvider` / `UnlinkProvider` | Link Google or Apple; unlink only if the other stays |
 | I13 | `GET /account/security-log` | app | `ListSecurityEvents` | Paged, newest first |
+| V1 | `GET /vault/status` | app | `GetVaultStatus` | The PIN Vault (2026-11-11): whether there is one, its `credentialId`, `version`, `updatedAt`; never the blob. Not an opening: no log, no email, no hold |
+| V2 | `GET /vault` | app | `OpenVault` | Hands over the blob to decrypt. **An opening**: logs `VAULT_OPENED` (with the phone's model), writes `identity.PinVaultOpened` to the outbox in the same transaction (the wallet holds payments 24 h on it), and emails the owner (`PIN_VAULT_OPENED`, keyed by the event id; best effort). At most 5 per account per hour (`idn:vault-open:{userId}`, `request.rate_limited`). No push: the opener is the account's one active phone. `vault.not_found` when there is none |
+| V3 | `PUT /vault` | app | `SaveVault` | Creates (version 1) or replaces (version + 1) the account's one vault under the account's lock, logs `VAULT_SAVED`; `expectedVersion` must match or `vault.version_conflict`. Shape checks in the mapper: `credentialId` base64url ≤ 1024 chars, `salt` base64 16–64 bytes, `ciphertext` base64 ≤ 8 KiB, `algorithm` ≤ 64 of `[A-Za-z0-9._+/-]` |
+| V4 | `DELETE /vault` | app | `RemoveVault` | Deletes it and logs `VAULT_REMOVED`; succeeds (nothing logged) when there is none |
 | I14 | `DELETE /account` | app | `RequestAccountDeletion` | Schedules deletion once every `DeletionGuard` agrees (the wallet refuses while its US dollar stablecoins, added up over every chain, come to 0.01 or more, or it holds any amount of another asset; decision 2026-10-28). A guard's own error reaches the app as is: `wallet.funds_remaining`, or `wallet.custody_unavailable` when the wallet can't check (decision 2026-10-28; `identity.wallet_not_empty` was removed) |
 | I15 | `POST /recovery/requests` | onboarding | `RequestSupportRecovery` | Opens a support case for a lost Google/Apple login |
 | I16 | `POST /auth/phone/release` | onboarding | `RequestPhoneRelease` | Frees a number held by a lost, unverified account, after a 7-day notice |
@@ -339,7 +343,7 @@ CREATE INDEX sessions_user_idx ON identity.sessions (user_id, created_at DESC); 
 CREATE TABLE identity.security_log (
     user_id      uuid NOT NULL,
     event_id     uuid NOT NULL,                         -- UUIDv7 made in the app; newest first by id
-    type         text NOT NULL,                         -- SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | SUSPENDED | UNSUSPENDED | …
+    type         text NOT NULL,                         -- SIGN_IN | NEW_PHONE | PHONE_VERIFIED | PROVIDER_LINKED | RECOVERY_REQUESTED | SUSPENDED | UNSUSPENDED | VAULT_SAVED | VAULT_OPENED | VAULT_REMOVED | …
     device_model text,
     detail       text,
     PRIMARY KEY (user_id, event_id)                     -- I13 pages it by keyset, event_id DESC
@@ -365,6 +369,17 @@ CREATE INDEX support_recoveries_relink_idx ON identity.support_recoveries (relin
 CREATE INDEX support_recoveries_status_idx ON identity.support_recoveries (status, request_id);
                                                         -- /ops/recoveries: the cases in a status, oldest first
 
+CREATE TABLE identity.pin_vaults (                      -- V5 (2026-11-11): the PIN Vault, one per account
+    user_id       uuid        PRIMARY KEY,
+    credential_id text        NOT NULL,                 -- base64url WebAuthn credential id of the passkey
+    salt          text        NOT NULL,                 -- base64, 16–64 bytes
+    ciphertext    text        NOT NULL,                 -- base64, ≤ 8 KiB decoded; opaque to the server
+    algorithm     text        NOT NULL,                 -- prf-hkdf-sha256+aes-256-gcm/v1
+    version       int         NOT NULL,                 -- 1, then +1 on each replace
+    created_at    timestamptz NOT NULL,
+    updated_at    timestamptz NOT NULL
+);
+
 -- identity.outbox: the shared outbox, created with the DDL in architecture.md → Durable events
 -- (DatabaseModuleSpec(outbox = true); infrastructure writes and relays it)
 ```
@@ -377,6 +392,7 @@ CREATE INDEX support_recoveries_status_idx ON identity.support_recoveries (statu
 | `sessions` | `expires_at`, purged by `identity.purge-expired` | Sign-out is `UPDATE … WHERE status = 'ACTIVE' RETURNING`, so one caller ends a session; a refresh checks and rotates under the account's lock, so a second refresh with the same token is a reuse |
 | `security_log` | — | — |
 | `support_recoveries` | — | — |
+| `pin_vaults` | — (deleted with the account's other rows when its deletion completes, or by V4) | Under the account's lock: V3 reads the version and writes the next one in the same transaction |
 | `outbox` | Daily partitions, dropped after 7 days | — |
 
 Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one row by `session_id` and compares hashes; no table is keyed by the token itself. Every read of `sessions` filters `expires_at > now()`.
@@ -390,6 +406,7 @@ Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one r
 | `idn:otp-rate:phone:{phoneHmac}` / `idn:otp-rate:device:{deviceId}` | counter | 10 min / 24 h | 3 codes per number per 10 min, 10 per device per day |
 | `idn:revoked:{sessionId}` | `1` | 15 min | Gateway deny-list for access tokens of a revoked session |
 | `idn:phone-release:{phoneHmac}` | pending release info | 7 days | Phone release waiting period |
+| `idn:vault-open:{userId}` | counter | 1 h from the first opening | V2: at most 5 PIN Vault openings per account per hour |
 
 ## Events published
 
@@ -404,6 +421,7 @@ All on stream `events:identity`, in the envelope described on the Architecture t
 | `identity.AccountStatusChanged` v1 | Suspended, reinstated, blocked | `userId`, `status` | users: hide or restore the profile, clear cached reach decisions; gateway: close sockets when not active |
 | `identity.AccountRelinked` v1 | Support recovery completed after the 48-hour notice | `userId`, `provider` | gateway: close old sockets; the user id is unchanged, so the Circle user and wallets carry over |
 | `identity.SupportAccountCreated` v1 | Ops created a support account (OPS1; decision 2026-10-31) | `userId`, `displayName`, `handle` (no `phoneHmac`: it has no phone) | users: make the profile marked `support` and claim the handle |
+| `identity.PinVaultOpened` v1 | V2 handed over the PIN Vault's blob (2026-11-11) | `userId` | wallet: `payment_holds` row, reason `VAULT_OPENED`, until `occurredAt` + 24 h |
 | `identity.AccountDeleted` v1 | Deletion completed, 30 days after I14 (written in the transaction that deletes the rows) | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |
 
 No raw phone number goes on a stream: `AccountActivated` and `PhoneChanged` carry the number's HMAC only, so neither Redis nor its backups hold phone numbers.
@@ -455,3 +473,10 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `identity.account_not_found` | NOT_FOUND → 404 | Staff (`AccountAdmin.suspend`/`unsuspend`): no such account (decision 2026-11-08) |
 | `identity.account_not_active` | CONFLICT → 409 | Staff: only an `ACTIVE` account can be suspended |
 | `identity.account_not_suspended` | CONFLICT → 409 | Staff: only a `SUSPENDED` account can be given back |
+| `vault.not_found` | NOT_FOUND → 404 | V2: no PIN Vault (the vault's codes are `vault.*`, 2026-11-11) |
+| `vault.version_conflict` | CONFLICT → 409 | V3: `expectedVersion` isn't the stored version (or there is none) |
+| `vault.credential_id_invalid` | INVALID → 400 | V3: `credentialId` empty, not base64url or over 1024 characters |
+| `vault.salt_invalid` | INVALID → 400 | V3: `salt` not base64, or not 16–64 bytes |
+| `vault.ciphertext_invalid` | INVALID → 400 | V3: `ciphertext` empty, not base64, or over 8 KiB |
+| `vault.algorithm_invalid` | INVALID → 400 | V3: `algorithm` empty, over 64 characters or outside `[A-Za-z0-9._+/-]` |
+| `vault.expected_version_invalid` | INVALID → 400 | V3: `expectedVersion` below 1 |

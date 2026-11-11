@@ -7,6 +7,7 @@ import com.circaso.identity.data.PostgresIdentity.Companion.count
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
@@ -48,7 +49,10 @@ class CompleteDeletionsTest {
     @BeforeTest
     fun clean() = PostgresIdentity.reset()
 
-    /** An account with a number, a login, a phone, a session and a log entry, deleted with its grace ending [at]. */
+    /**
+     * An account with a number, a login, a phone, a session, a log entry and a PIN Vault, deleted with its grace ending
+     * [at].
+     */
     private suspend fun deleted(number: String, at: Instant?): UserId {
         val userId = UserId.new()
         val account = Account(userId, null, AccountStatus.PENDING_PHONE, null, Verification.NONE, 1, now)
@@ -91,6 +95,7 @@ class CompleteDeletionsTest {
                         listOf(
                             SecurityEvent(userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
                         ),
+                    vaults = listOf(PinVault(userId, "cred", "c2FsdA==", "Y2lwaGVy", "prf/v1", 1, now)),
                 ),
             )
         }
@@ -98,7 +103,15 @@ class CompleteDeletionsTest {
     }
 
     private fun rowsOf(userId: UserId): Int =
-        listOf("accounts", "provider_links", "devices", "sessions", "security_log", "support_recoveries").sumOf {
+        listOf(
+            "accounts",
+            "provider_links",
+            "devices",
+            "sessions",
+            "security_log",
+            "support_recoveries",
+            "pin_vaults",
+        ).sumOf {
             count("SELECT count(*) FROM identity.$it WHERE user_id = '$userId'")
         }
 
