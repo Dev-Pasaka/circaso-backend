@@ -87,6 +87,12 @@ Money starts and ends in the chat. There is no separate payment form.
 - In a group, tap the reactions under a message to see who reacted with what (filter by emoji); tap your own to
   remove it. In a one-to-one chat, tapping the reaction lets you change yours.
 
+- Group names and photos are end-to-end encrypted. After signing out or on a new phone a group can show its members'
+  names instead of its own until its name is back. With **Group names backup** on (You → Security → Chats, or turned
+  on automatically when you save your PIN Vault), Chats shows "Restore your group names": one Face ID / fingerprint
+  and every group's name comes back. Without it, names return when another member's phone sends the group's key.
+  Circaso can't read the backup; it's locked with the same passkey as the PIN Vault.
+
 ## Calls
 1. Open a chat and tap the phone (voice) or camera (video) at the top. Group calls work from a group chat.
 2. In a one-to-one video call, tap the small picture to swap who's big (you or them); drag it to any corner.
