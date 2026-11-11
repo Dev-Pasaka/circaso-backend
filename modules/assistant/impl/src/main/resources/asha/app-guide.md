@@ -81,7 +81,11 @@ Money starts and ends in the chat. There is no separate payment form.
 - Encrypted one-to-one and group chats, with read receipts, typing, delete for everyone, voice notes, photos,
   videos, documents and location (including live location for 15 minutes, 1 hour or 8 hours).
 - Filters at the top of Chats: All, Unread, Groups, Moments.
-- Long-press a message to react, reply, forward or delete.
+- Long-press a message to react with an emoji, or for its options (send again, delete).
+- To reply to a message, swipe it to the right (yours or theirs, including photos, voice notes and money cards). The
+  box shows "Replying to …"; tap × to cancel. The reply shows the message it answers; tap that to jump to it.
+- In a group, tap the reactions under a message to see who reacted with what (filter by emoji); tap your own to
+  remove it. In a one-to-one chat, tapping the reaction lets you change yours.
 
 ## Calls
 1. Open a chat and tap the phone (voice) or camera (video) at the top. Group calls work from a group chat.
