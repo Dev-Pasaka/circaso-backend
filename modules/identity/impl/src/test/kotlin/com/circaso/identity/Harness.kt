@@ -208,6 +208,8 @@ class Harness(
     attested: Boolean = true,
     vendor: PhoneVerificationGateway = NoVendorVerification,
     ports: IdentityPorts? = null,
+    reviewPhone: String? = null,
+    reviewCode: String? = null,
 ) {
     val store = MemoryStore()
     private val p = ports ?: store.ports()
@@ -216,7 +218,7 @@ class Harness(
     val sms = RecordingSms()
     val email = RecordingEmail()
     private val clock = Clock.systemUTC()
-    private val config = IdentityConfig(attestation = attestation)
+    private val config = IdentityConfig(attestation = attestation, reviewPhone = reviewPhone, reviewCode = reviewCode)
     private val secrets =
         object : Secrets {
             override fun get(name: String): String? = null

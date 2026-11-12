@@ -21,4 +21,15 @@ data class IdentityConfig(
     val phoneReleaseNotice: Duration = Duration.ofDays(7),
     /** A sign-up that never verified its number is deleted this long after it began (identity.md). */
     val pendingAccountLifetime: Duration = Duration.ofDays(30),
-)
+    /**
+     * The store review login (decision 2026-11-12): Google Play and App Store reviewers can't receive a text, so this
+     * one number signs in with [reviewCode], which never changes and is never texted. Every other number, and every
+     * other check (limits, lockout, attestation, one phone per account), works as usual. Both unset: no review login.
+     */
+    val reviewPhone: String? = null,
+    val reviewCode: String? = null,
+) {
+    /** The fixed code for [phone] when it is the review number and the code is well formed, else null. */
+    fun reviewCodeFor(phone: String): String? =
+        reviewCode?.takeIf { reviewPhone != null && phone == reviewPhone && it.length == codeLength && it.all(Char::isDigit) }
+}

@@ -144,6 +144,7 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.api.WarmUp
+import com.circaso.shared.PhoneNumber
 import com.circaso.shared.getOrNull
 import com.circaso.web.RouteContributor
 import org.koin.core.module.Module
@@ -160,6 +161,8 @@ fun identityConfig(config: Config): IdentityConfig {
         attestation = AttestationMode.valueOf(section.string("attestation", default).uppercase()),
         smsRetrieverHash = section.string("sms-retriever-hash"),
         deletionGrace = Duration.ofDays(section.int("deletion-grace-days", 30).toLong()),
+        reviewPhone = section.string("review-phone")?.let { PhoneNumber.parse(it.trim())?.e164 },
+        reviewCode = section.string("review-code")?.takeIf { it.isNotBlank() },
     )
 }
 
