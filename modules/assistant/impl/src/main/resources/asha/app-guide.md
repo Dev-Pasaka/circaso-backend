@@ -132,6 +132,12 @@ Money starts and ends in the chat. There is no separate payment form.
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
 
+## Signing up and your number
+- Sign in with Google (or Apple on iPhone), then add your phone number and enter the 6-digit code we text you.
+- The number's country is Kenya (+254) unless you change it: tap the flag and code next to the number to pick any
+  country (search by name or code, for example `uk` or `+44`). Pasting a whole number that starts with `+` picks its
+  country for you.
+
 ## Profile
 - You tab → your picture → **Edit profile**: change your photo (camera or gallery), name, about and @username.
 
