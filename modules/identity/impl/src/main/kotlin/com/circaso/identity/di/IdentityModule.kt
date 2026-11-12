@@ -11,6 +11,7 @@ import com.circaso.identity.data.cache.RedisIdentityCache
 import com.circaso.identity.data.repositories.AccountAdminRepositoryImpl
 import com.circaso.identity.data.repositories.AccountRepositoryImpl
 import com.circaso.identity.data.repositories.DatabaseTransactor
+import com.circaso.identity.data.repositories.DeletionFeedbackRepositoryImpl
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
 import com.circaso.identity.data.repositories.ExpiredRows
 import com.circaso.identity.data.repositories.IdentityStoreImpl
@@ -25,6 +26,7 @@ import com.circaso.identity.data.security.Ed25519Tokens
 import com.circaso.identity.data.security.KeyedPhoneProtection
 import com.circaso.identity.data.security.UnconfiguredAttestation
 import com.circaso.identity.data.tables.AccountsTable
+import com.circaso.identity.data.tables.DeletionFeedbackTable
 import com.circaso.identity.data.tables.DevicesTable
 import com.circaso.identity.data.tables.GroupKeyBackupsTable
 import com.circaso.identity.data.tables.KeyBackupRootsTable
@@ -51,6 +53,7 @@ import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
 import com.circaso.identity.domain.repositories.SessionRepository
 import com.circaso.identity.domain.repositories.VaultRepository
+import com.circaso.identity.domain.support.DeletionScheduler
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
@@ -90,6 +93,7 @@ import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
+import com.circaso.identity.domain.usecases.RequestWebAccountDeletion
 import com.circaso.identity.domain.usecases.ResolvePhones
 import com.circaso.identity.domain.usecases.SaveGroupKey
 import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
@@ -122,6 +126,7 @@ import com.circaso.identity.presentation.controllers.keyBackupController
 import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
 import com.circaso.identity.presentation.controllers.vaultController
+import com.circaso.identity.presentation.controllers.webDeletionController
 import com.circaso.identity.presentation.services.AccountAdminService
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
@@ -134,6 +139,7 @@ import com.circaso.identity.presentation.services.PhoneService
 import com.circaso.identity.presentation.services.RecoveryService
 import com.circaso.identity.presentation.services.SupportAccountService
 import com.circaso.identity.presentation.services.VaultService
+import com.circaso.identity.presentation.services.WebDeletionService
 import com.circaso.identity.presentation.warmup.IdentityWarmUp
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Database
@@ -189,6 +195,7 @@ fun identityDatabaseSpec() =
                 PinVaultsTable,
                 KeyBackupRootsTable,
                 GroupKeyBackupsTable,
+                DeletionFeedbackTable,
             ),
         migrationsLocation = "classpath:db/identity",
         outbox = true,
@@ -233,10 +240,12 @@ fun identityModule(config: Config): Module =
         single<VaultRepository> { get<VaultRepositoryImpl>() }
         single { KeyBackupRepositoryImpl(get(named("identity.database"))) }
         single<KeyBackupRepository> { get<KeyBackupRepositoryImpl>() }
+        single { DeletionFeedbackRepositoryImpl(get(named("identity.database"))) }
         single<AccountAdminRepository> { AccountAdminRepositoryImpl(get(named("identity.database"))) }
         single<IdentityStore> {
             IdentityStoreImpl(
                 get(named("identity.database")),
+                get(),
                 get(),
                 get(),
                 get(),
@@ -288,8 +297,10 @@ fun identityModule(config: Config): Module =
         single { ListSecurityEvents(get()) }
         single { GetSecuritySummary(get(), get(), get(), get()) }
         single {
-            RequestAccountDeletion(get(), get(), get(), getAll<DeletionGuard>(), get(), get(), get(), identity, clock)
+            DeletionScheduler(get(), get(), get(), getAll<DeletionGuard>(), get(), get(), get(), identity, clock)
         }
+        single { RequestAccountDeletion(get(), get()) }
+        single { RequestWebAccountDeletion(get(), get(), get(), get(), get(), clock) }
         single { RequestSupportRecovery(get(), get(), get(), get(), get(), get()) }
         single { RequestPhoneRelease(get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetRecoveryCase(get(), get()) }
@@ -342,6 +353,7 @@ fun identityModule(config: Config): Module =
         single { MaintenanceService(get(), get()) }
         single { VaultService(get(), get(), get(), get()) }
         single { KeyBackupService(get(), get(), get(), get(), get()) }
+        single { WebDeletionService(get()) }
         single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
@@ -352,6 +364,7 @@ fun identityModule(config: Config): Module =
             val agent = get<IdentityAgentService>()
             val vault = get<VaultService>()
             val keyBackup = get<KeyBackupService>()
+            val webDeletion = get<WebDeletionService>()
             RouteContributor { route ->
                 route.authController(auth)
                 route.phoneController(phone)
@@ -361,6 +374,7 @@ fun identityModule(config: Config): Module =
                 route.agentController(agent)
                 route.vaultController(vault)
                 route.keyBackupController(keyBackup)
+                route.webDeletionController(webDeletion)
             }
         }
 

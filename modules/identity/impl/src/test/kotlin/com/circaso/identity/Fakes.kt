@@ -4,6 +4,7 @@ import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.GroupMembership
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
+import com.circaso.identity.domain.models.DeletionFeedback
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
 import com.circaso.identity.domain.models.GroupKeyBackup
@@ -67,6 +68,7 @@ class MemoryStore :
     val devices = ConcurrentHashMap<Pair<UserId, DeviceId>, Device>()
     val sessions = ConcurrentHashMap<SessionId, Session>()
     val log = CopyOnWriteArrayList<SecurityEvent>()
+    val feedback = CopyOnWriteArrayList<DeletionFeedback>()
     val recoveries = ConcurrentHashMap<UUID, SupportRecovery>()
     val vaults = ConcurrentHashMap<UserId, PinVault>()
 
@@ -236,6 +238,7 @@ class MemoryStore :
             }
         }
         log += changes.securityEvents
+        feedback += changes.deletionFeedback
         changes.recoveries.forEach { recoveries[it.requestId] = it }
         changes.vaults.forEach { vaults[it.userId] = it }
         changes.removedVaults.forEach { vaults.remove(it) }

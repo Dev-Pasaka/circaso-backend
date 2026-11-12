@@ -4,6 +4,7 @@ import com.circaso.identity.IdentityPorts
 import com.circaso.identity.MemoryBus
 import com.circaso.identity.data.repositories.AccountRepositoryImpl
 import com.circaso.identity.data.repositories.DatabaseTransactor
+import com.circaso.identity.data.repositories.DeletionFeedbackRepositoryImpl
 import com.circaso.identity.data.repositories.DeviceRepositoryImpl
 import com.circaso.identity.data.repositories.ExpiredRows
 import com.circaso.identity.data.repositories.IdentityStoreImpl
@@ -33,8 +34,21 @@ class PostgresIdentity(val clock: Clock = Clock.systemUTC()) {
     val recoveries = RecoveryRepositoryImpl(database)
     val vaults = VaultRepositoryImpl(database)
     val keyBackups = KeyBackupRepositoryImpl(database)
+    val feedback = DeletionFeedbackRepositoryImpl(database)
     val store =
-        IdentityStoreImpl(database, accounts, devices, sessions, providers, log, recoveries, vaults, keyBackups, bus)
+        IdentityStoreImpl(
+            database,
+            accounts,
+            devices,
+            sessions,
+            providers,
+            log,
+            recoveries,
+            vaults,
+            keyBackups,
+            feedback,
+            bus,
+        )
     val expired = ExpiredRows(database)
 
     fun ports() = IdentityPorts(transactor, accounts, providers, devices, sessions, store, vaults, keyBackups)
