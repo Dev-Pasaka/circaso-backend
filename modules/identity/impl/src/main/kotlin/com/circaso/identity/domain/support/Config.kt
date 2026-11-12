@@ -31,5 +31,8 @@ data class IdentityConfig(
 ) {
     /** The fixed code for [phone] when it is the review number and the code is well formed, else null. */
     fun reviewCodeFor(phone: String): String? =
-        reviewCode?.takeIf { reviewPhone != null && phone == reviewPhone && it.length == codeLength && it.all(Char::isDigit) }
+        reviewCode?.takeIf {
+            reviewPhone != null && phone == reviewPhone && it.length == codeLength &&
+                it.all(Char::isDigit)
+        }
 }

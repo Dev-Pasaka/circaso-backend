@@ -14,6 +14,7 @@ import kotlin.test.assertTrue
 /** The store review login: one configured number signs in with a fixed code that is never texted; no other number can. */
 class StoreReviewLoginTest {
     private val review = "+254700000001"
+
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 
     @Test
