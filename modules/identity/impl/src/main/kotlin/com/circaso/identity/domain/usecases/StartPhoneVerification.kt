@@ -59,10 +59,11 @@ class StartPhoneVerification(
             return Resource.error(SharedError.RateLimited(86_400))
         }
 
-        if (verifier.managesCodes) return startWithVendor(command, phoneHmac)
+        val reviewCode = config.reviewCodeFor(command.phone.e164)
+        if (reviewCode == null && verifier.managesCodes) return startWithVendor(command, phoneHmac)
 
         val code =
-            "%0${config.codeLength}d".format(
+            reviewCode ?: "%0${config.codeLength}d".format(
                 random.nextInt(Math.pow(10.0, config.codeLength.toDouble()).toInt()),
             )
         val verificationId = randomToken(16)
@@ -77,6 +78,12 @@ class StartPhoneVerification(
             ),
         )
 
+        // The store review number: its fixed code is already known to the reviewer, so nothing is texted.
+        if (reviewCode != null) {
+            return Resource.success(
+                StartPhoneResult(verificationId, config.codeLength, config.codeTtl.seconds, config.resendAfter.seconds),
+            )
+        }
         val text = "Your Circaso code is $code. Don't share it." + (config.smsRetrieverHash?.let { " $it" } ?: "")
         return when (sms.send(command.phone, text, SmsPurpose.VERIFICATION)) {
             is Resource.Success -> {
