@@ -6,6 +6,7 @@ import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.GroupKeyBackup
 import com.circaso.identity.domain.models.GroupKeyPosition
 import com.circaso.identity.domain.models.KeyBackupRoot
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.shared.UserId
@@ -129,6 +130,7 @@ class KeyBackupDataTest {
                 Changes(
                     keyBackupRoots = listOf(root(userId, 1, now), root(other, 1, now)),
                     groupKeys = listOf(key(userId, chat, 0), key(userId, chat, 1), key(other, chat, 0)),
+                    savedNames = listOf(SavedNames(userId, "bmFtZXM=", 1, now), SavedNames(other, "b3RoZXI=", 1, now)),
                 ),
             )
 
@@ -139,5 +141,25 @@ class KeyBackupDataTest {
             assertEquals(0, pg.keyBackups.countGroupKeys(userId))
             assertEquals(root(other, 1, now), pg.keyBackups.findRoot(other))
             assertEquals(1, pg.keyBackups.countGroupKeys(other))
+            assertNull(pg.keyBackups.findSavedNames(userId))
+            assertEquals(SavedNames(other, "b3RoZXI=", 1, now), pg.keyBackups.findSavedNames(other))
+        }
+
+    @Test
+    fun `saved names are one blob per account, replaced in place with their version`() =
+        runBlocking<Unit> {
+            val userId = account()
+            val big =
+                java.util.Base64
+                    .getEncoder()
+                    .encodeToString(ByteArray(512 * 1024) { it.toByte() })
+            val later = now.plusSeconds(5)
+
+            assertNull(pg.keyBackups.findSavedNames(userId))
+            write(Changes(savedNames = listOf(SavedNames(userId, "bmFtZXM=", 1, now))))
+            write(Changes(savedNames = listOf(SavedNames(userId, big, 2, later))))
+
+            assertEquals(SavedNames(userId, big, 2, later), pg.keyBackups.findSavedNames(userId))
+            assertEquals(1, PostgresIdentity.count("SELECT count(*) FROM identity.saved_names"))
         }
 }

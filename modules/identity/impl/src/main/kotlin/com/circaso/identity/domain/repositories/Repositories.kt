@@ -9,6 +9,7 @@ import com.circaso.identity.domain.models.GroupKeyPosition
 import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SupportRecovery
@@ -153,6 +154,9 @@ interface KeyBackupRepository {
         limit: Int,
     ): List<GroupKeyBackup>
 
+    /** The account's sealed saved names, or null when none were saved (changed through [Changes.savedNames]). */
+    suspend fun findSavedNames(userId: UserId): SavedNames?
+
     companion object {
         const val MAX_GROUP_KEYS = 10_000
     }
@@ -179,7 +183,9 @@ data class Changes(
     val keyBackupRoots: List<KeyBackupRoot> = emptyList(),
     /** Group key blobs written as they are now, each replacing the one at its (account, chat, metaVersion). */
     val groupKeys: List<GroupKeyBackup> = emptyList(),
-    /** Accounts whose whole key backup (root and every group key) is deleted. */
+    /** Saved names blobs written as they are now, each replacing the account's one blob. */
+    val savedNames: List<SavedNames> = emptyList(),
+    /** Accounts whose whole key backup (root, every group key and the saved names) is deleted. */
     val removedKeyBackups: List<UserId> = emptyList(),
     /** Why people asked for their account to go (I17), stored apart from the account. */
     val deletionFeedback: List<DeletionFeedback> = emptyList(),

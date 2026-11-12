@@ -12,8 +12,8 @@ import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.shared.Resource
 
 /**
- * KB3 `DELETE /key-backup`: turns group key backup off, deleting the root and every group key, and logs
- * `KEY_BACKUP_OFF`. With nothing backed up there is nothing to delete or log, and the answer is the same.
+ * KB3 `DELETE /key-backup`: turns group key backup off, deleting the root, every group key and the saved names, and
+ * logs `KEY_BACKUP_OFF`. With nothing backed up there is nothing to delete or log, and the answer is the same.
  */
 class RemoveKeyBackup(
     private val transactor: Transactor,
@@ -26,7 +26,11 @@ class RemoveKeyBackup(
         val userId = principal.userId
         transactor.run("key-backup.remove") {
             accounts.lock(userId) ?: return@run
-            if (keys.findRoot(userId) == null && keys.countGroupKeys(userId) == 0) return@run
+            val nothing =
+                keys.findRoot(userId) == null &&
+                    keys.countGroupKeys(userId) == 0 &&
+                    keys.findSavedNames(userId) == null
+            if (nothing) return@run
             val model = devices.find(userId, principal.deviceId)?.model
             val off = SecurityEvent(userId, null, SecurityEventType.KEY_BACKUP_OFF, model, null)
             store.write(Changes(removedKeyBackups = listOf(userId), securityEvents = listOf(off)))

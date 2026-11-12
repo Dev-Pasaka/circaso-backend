@@ -35,6 +35,7 @@ class IdentityStoreImpl(
             changes.removedVaults.forEach { vaults.delete(it) }
             changes.keyBackupRoots.forEach { keyBackups.saveRoot(it) }
             changes.groupKeys.forEach { keyBackups.saveGroupKey(it) }
+            changes.savedNames.forEach { keyBackups.saveSavedNames(it) }
             changes.removedKeyBackups.forEach { keyBackups.delete(it) }
             changes.deletionFeedback.forEach { feedback.add(it) }
             changes.events.forEach { database.writeOutbox(it) }

@@ -2,9 +2,11 @@ package com.circaso.identity.data.repositories
 
 import com.circaso.identity.data.tables.GroupKeyBackupsTable
 import com.circaso.identity.data.tables.KeyBackupRootsTable
+import com.circaso.identity.data.tables.SavedNamesTable
 import com.circaso.identity.domain.models.GroupKeyBackup
 import com.circaso.identity.domain.models.GroupKeyPosition
 import com.circaso.identity.domain.models.KeyBackupRoot
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.infrastructure.api.Database
 import com.circaso.shared.UserId
@@ -106,6 +108,15 @@ class KeyBackupRepositoryImpl(private val database: Database) : KeyBackupReposit
                 .toList()
         }
 
+    override suspend fun findSavedNames(userId: UserId): SavedNames? =
+        database.tx("key-backup.find-saved-names") {
+            SavedNamesTable
+                .selectAll()
+                .where { SavedNamesTable.userId eq userId.value }
+                .map { it.toSavedNames() }
+                .singleOrNull()
+        }
+
     /** For the store: writes the root as it is now, inside the open transaction; a replace keeps `created_at`. */
     internal suspend fun saveRoot(root: KeyBackupRoot) {
         database.tx("key-backup.save-root") {
@@ -142,9 +153,29 @@ class KeyBackupRepositoryImpl(private val database: Database) : KeyBackupReposit
         }
     }
 
-    /** For the store: deletes the account's root and every group key, inside the open transaction. */
+    /**
+     * For the store: writes the saved names blob as it is now, inside the open transaction; a replace keeps
+     * `created_at`. The version was compared under the account's lock by the use case.
+     */
+    internal suspend fun saveSavedNames(names: SavedNames) {
+        database.tx("key-backup.save-saved-names") {
+            SavedNamesTable.upsert(
+                SavedNamesTable.userId,
+                onUpdateExclude = listOf(SavedNamesTable.createdAt),
+            ) {
+                it[userId] = names.userId.value
+                it[ciphertext] = names.ciphertext
+                it[version] = names.version
+                it[createdAt] = names.updatedAt
+                it[updatedAt] = names.updatedAt
+            }
+        }
+    }
+
+    /** For the store: deletes the account's root, every group key and the saved names, inside the open transaction. */
     internal suspend fun delete(userId: UserId) {
         database.tx("key-backup.delete") {
+            SavedNamesTable.deleteWhere { SavedNamesTable.userId eq userId.value }
             GroupKeyBackupsTable.deleteWhere { GroupKeyBackupsTable.userId eq userId.value }
             KeyBackupRootsTable.deleteWhere { KeyBackupRootsTable.userId eq userId.value }
         }
@@ -169,4 +200,12 @@ private fun ResultRow.toGroupKey() =
         metaVersion = this[GroupKeyBackupsTable.metaVersion],
         ciphertext = this[GroupKeyBackupsTable.ciphertext],
         updatedAt = this[GroupKeyBackupsTable.updatedAt],
+    )
+
+private fun ResultRow.toSavedNames() =
+    SavedNames(
+        userId = UserId(this[SavedNamesTable.userId]),
+        ciphertext = this[SavedNamesTable.ciphertext],
+        version = this[SavedNamesTable.version],
+        updatedAt = this[SavedNamesTable.updatedAt],
     )

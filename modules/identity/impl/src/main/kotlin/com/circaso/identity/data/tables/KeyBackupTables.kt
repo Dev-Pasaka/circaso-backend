@@ -29,3 +29,13 @@ object GroupKeyBackupsTable : Table("identity.group_key_backups") {
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(userId, chatId, metaVersion)
 }
+
+/** `identity.saved_names` (V8, 2026-11-12): the person's names for their contacts, one sealed blob per account. */
+object SavedNamesTable : Table("identity.saved_names") {
+    val userId = javaUUID("user_id")
+    val ciphertext = text("ciphertext")
+    val version = long("version")
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(userId)
+}

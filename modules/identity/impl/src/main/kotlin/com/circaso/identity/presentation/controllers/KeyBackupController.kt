@@ -4,9 +4,13 @@ import com.circaso.identity.presentation.dto.GroupKeysResponse
 import com.circaso.identity.presentation.dto.KeyBackupRootResponse
 import com.circaso.identity.presentation.dto.SaveGroupKeyRequest
 import com.circaso.identity.presentation.dto.SaveKeyBackupRootRequest
+import com.circaso.identity.presentation.dto.SaveSavedNamesRequest
+import com.circaso.identity.presentation.dto.SavedNamesResponse
+import com.circaso.identity.presentation.dto.SavedNamesVersionResponse
 import com.circaso.identity.presentation.mappers.toCommand
 import com.circaso.identity.presentation.mappers.toPrincipal
 import com.circaso.identity.presentation.mappers.toResponse
+import com.circaso.identity.presentation.mappers.toVersionResponse
 import com.circaso.identity.presentation.services.KeyBackupService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
@@ -33,7 +37,8 @@ private const val BLOB_NOTES =
 
 /**
  * Group key backup (2026-11-12): each group's meta key, encrypted on the phone under a random backup root key, and that
- * root sealed under the circaso.com passkey's PRF key. KB1 to KB5.
+ * root sealed under the circaso.com passkey's PRF key. KB1 to KB5. KB6 and KB7 keep the person's names for their
+ * contacts as one blob sealed under the same root.
  */
 fun Route.keyBackupController(keys: KeyBackupService) {
     route("/key-backup") {
@@ -87,6 +92,46 @@ fun Route.keyBackupController(keys: KeyBackupService) {
                     "Scope: `app`, with an `Idempotency-Key`. Answers 200 with `data: null`, also when there is " +
                         "nothing. Logged (`KEY_BACKUP_OFF`) when there was something.",
             )
+
+            route("/saved-names") {
+                get {
+                    val result = keys.savedNames(call.principal().userId)
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<NoBody, SavedNamesResponse>(
+                    "KB6 · Your saved names for your contacts, sealed",
+                    TAG,
+                    notes =
+                        "Scope: `app`. Logs nothing. With none saved: `exists: false`, `version: 0`, `ciphertext` " +
+                            "and `updatedAt` null (200, not 404). `version` is what KB7's `baseVersion` must be. " +
+                            BLOB_NOTES,
+                )
+
+                put {
+                    val result =
+                        call
+                            .receive<SaveSavedNamesRequest>()
+                            .toCommand(call.principal().toPrincipal())
+                            .flatMap { keys.putSavedNames(it) }
+                    call.respondDefault(result.toDefaultResponse { it.toVersionResponse() })
+                }.docs<SaveSavedNamesRequest, SavedNamesVersionResponse>(
+                    "KB7 · Back up your saved names: the whole sealed blob, compare-and-set",
+                    TAG,
+                    listOf(
+                        "identity.saved_names_conflict",
+                        "identity.key_backup_off",
+                        "identity.saved_names_ciphertext_invalid",
+                        "identity.saved_names_base_version_invalid",
+                        "request.malformed",
+                    ),
+                    notes =
+                        "Scope: `app`, with an `Idempotency-Key`. `ciphertext` is standard base64 of 1 byte to 512 " +
+                            "KiB, AES-256-GCM under the backup root key, replacing the whole blob. `baseVersion` is " +
+                            "KB6's `version` (0 when none): any other answers " +
+                            "`identity.saved_names_conflict` (409), so read again, merge and retry. Only while key " +
+                            "backup is on (`identity.key_backup_off`, 409). Answers `{ version }`, which is " +
+                            "`baseVersion + 1`. KB3 and account deletion delete it.",
+                )
+            }
 
             route("/group-keys") {
                 get {

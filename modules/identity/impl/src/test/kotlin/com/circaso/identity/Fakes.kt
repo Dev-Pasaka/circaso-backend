@@ -12,6 +12,7 @@ import com.circaso.identity.domain.models.GroupKeyPosition
 import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SessionStatus
@@ -82,6 +83,8 @@ class MemoryStore :
     /** Group keys by (account, chat, metaVersion). */
     val groupKeys = ConcurrentHashMap<Triple<UserId, UUID, Int>, GroupKeyBackup>()
 
+    val savedNames = ConcurrentHashMap<UserId, SavedNames>()
+
     /** Apart from the store, like [vaultRepository]. */
     val keyBackupRepository =
         object : KeyBackupRepository {
@@ -109,6 +112,8 @@ class MemoryStore :
                     after == null || it.chatId > after.chatId ||
                         (it.chatId == after.chatId && it.metaVersion > after.metaVersion)
                 }.take(limit)
+
+            override suspend fun findSavedNames(userId: UserId) = savedNames[userId]
         }
     val events = CopyOnWriteArrayList<EventEnvelope>()
     private val lock = Mutex()
@@ -244,6 +249,7 @@ class MemoryStore :
         changes.removedVaults.forEach { vaults.remove(it) }
         changes.keyBackupRoots.forEach { keyBackupRoots[it.userId] = it }
         changes.groupKeys.forEach { groupKeys[Triple(it.userId, it.chatId, it.metaVersion)] = it }
+        changes.savedNames.forEach { savedNames[it.userId] = it }
         changes.removedKeyBackups.forEach { removeKeyBackup(it) }
         events += changes.events
     }
@@ -251,6 +257,7 @@ class MemoryStore :
     private fun removeKeyBackup(userId: UserId) {
         keyBackupRoots.remove(userId)
         groupKeys.keys.removeIf { it.first == userId }
+        savedNames.remove(userId)
     }
 
     override suspend fun publish(changes: Changes) = Unit

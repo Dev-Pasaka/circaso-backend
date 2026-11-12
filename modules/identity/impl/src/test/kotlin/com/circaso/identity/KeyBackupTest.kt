@@ -68,6 +68,17 @@ class KeyBackupTest {
     @Serializable
     private data class Keys(val items: List<Key>, val nextCursor: String? = null)
 
+    @Serializable
+    private data class Names(
+        val exists: Boolean,
+        val version: Long,
+        val ciphertext: String? = null,
+        val updatedAt: String? = null,
+    )
+
+    @Serializable
+    private data class NamesVersion(val version: Long)
+
     private class Setup(val h: Harness, val me: Principal)
 
     private fun base64(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
@@ -116,6 +127,17 @@ class KeyBackupTest {
             contentType(ContentType.Application.Json)
             setBody("""{"ciphertext":"$ciphertext"}""")
         }
+
+    private suspend fun ApplicationTestBuilder.putNames(ciphertext: String = blob, baseVersion: Long): HttpResponse =
+        client.put("/v1/key-backup/saved-names") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"ciphertext":"$ciphertext","baseVersion":$baseVersion}""")
+        }
+
+    private suspend fun ApplicationTestBuilder.names(): Names =
+        json.decodeFromString<Envelope<Names>>(client.get("/v1/key-backup/saved-names").bodyAsText()).data!!
+
+    private fun savedVersion(response: String) = json.decodeFromString<Envelope<NamesVersion>>(response).data!!.version
 
     private fun code(response: String) = json.decodeFromString<Envelope<Unit>>(response).code
 
@@ -443,5 +465,115 @@ class KeyBackupTest {
                 s.h.store.groupKeys
                     .isEmpty(),
             )
+        }
+
+    @Test
+    fun `with no saved names KB6 says exists false at version 0, with nulls`() =
+        testApplication {
+            serve()
+
+            val response = client.get("/v1/key-backup/saved-names")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(Names(exists = false, version = 0), names())
+            val raw = response.bodyAsText()
+            assertTrue(raw.contains(""""ciphertext":null""") && raw.contains(""""updatedAt":null"""), raw)
+        }
+
+    @Test
+    fun `saved names save from 0, then each save goes up one, and KB6 gives the blob back as sent`() =
+        testApplication {
+            val s = serve()
+            saveRoot()
+
+            val first = putNames(baseVersion = 0)
+            val other = base64(ByteArray(100) { 5 })
+            val second = putNames(other, baseVersion = 1)
+
+            assertEquals(HttpStatusCode.OK, first.status)
+            assertEquals(1, savedVersion(first.bodyAsText()))
+            assertEquals(2, savedVersion(second.bodyAsText()))
+            val shown = names()
+            assertEquals(Names(true, 2, other, shown.updatedAt), shown)
+            assertNotNull(shown.updatedAt)
+            assertEquals(listOf(SecurityEventType.KEY_BACKUP_ON), s.logged(), "saved names aren't logged")
+        }
+
+    @Test
+    fun `a stale or ahead baseVersion is a conflict and changes nothing`() =
+        testApplication {
+            val s = serve()
+            saveRoot()
+            putNames(baseVersion = 0)
+            putNames(baseVersion = 1)
+
+            for (base in listOf(0L, 1L, 3L)) {
+                val response = putNames(base64(ByteArray(8)), baseVersion = base)
+                assertEquals(HttpStatusCode.Conflict, response.status, "base $base")
+                assertEquals("identity.saved_names_conflict", code(response.bodyAsText()))
+            }
+            val kept = s.h.store.savedNames[s.me.userId]!!
+            assertEquals(2, kept.version)
+            assertEquals(blob, kept.ciphertext)
+        }
+
+    @Test
+    fun `saved names need key backup on`() =
+        testApplication {
+            val s = serve()
+
+            val response = putNames(baseVersion = 0)
+
+            assertEquals(HttpStatusCode.Conflict, response.status)
+            assertEquals("identity.key_backup_off", code(response.bodyAsText()))
+            assertNull(s.h.store.savedNames[s.me.userId])
+        }
+
+    @Test
+    fun `malformed saved names are refused before anything is read, and 512 KiB is allowed`() =
+        testApplication {
+            val s = serve()
+            saveRoot()
+            val cases =
+                listOf(
+                    putNames("", 0) to "identity.saved_names_ciphertext_invalid",
+                    putNames("not-base64*", 0) to "identity.saved_names_ciphertext_invalid",
+                    putNames(base64(ByteArray(512 * 1024 + 1)), 0) to "identity.saved_names_ciphertext_invalid",
+                    putNames(blob, -1) to "identity.saved_names_base_version_invalid",
+                )
+
+            for ((response, expected) in cases) {
+                assertEquals(HttpStatusCode.BadRequest, response.status, expected)
+                assertEquals(expected, code(response.bodyAsText()), expected)
+            }
+            val missing =
+                client.put("/v1/key-backup/saved-names") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"ciphertext":"$blob"}""")
+                }
+            assertEquals(HttpStatusCode.BadRequest, missing.status)
+            assertEquals("request.malformed", code(missing.bodyAsText()))
+            assertNull(s.h.store.savedNames[s.me.userId])
+            val max = putNames(base64(ByteArray(512 * 1024)), 0)
+            assertEquals(HttpStatusCode.OK, max.status)
+            assertEquals(1, savedVersion(max.bodyAsText()))
+        }
+
+    @Test
+    fun `turning key backup off deletes the saved names, and they start again at version 1`() =
+        testApplication {
+            val s = serve()
+            saveRoot()
+            putNames(baseVersion = 0)
+            putNames(baseVersion = 1)
+
+            assertEquals(HttpStatusCode.OK, client.delete("/v1/key-backup").status)
+
+            assertNull(s.h.store.savedNames[s.me.userId])
+            assertEquals(Names(exists = false, version = 0), names())
+            assertEquals(1, s.logged().count { it == SecurityEventType.KEY_BACKUP_OFF })
+            assertEquals("identity.key_backup_off", code(putNames(baseVersion = 0).bodyAsText()))
+            saveRoot()
+            assertEquals(1, savedVersion(putNames(baseVersion = 0).bodyAsText()))
         }
 }

@@ -131,6 +131,10 @@ Money starts and ends in the chat. There is no separate payment form.
 - Chats → pencil → find people by name, phone contacts already on Circaso, or their @username. Invite friends who
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
+- You can give anyone your own name for them ("Mum", "John Plumber"): open the chat, tap their name at the top, then
+  **Edit name**. Everywhere in Circaso shows your name, with theirs in small text. **Use their name** undoes it.
+  With key backup on (the same Group names backup), your names are backed up sealed with your passkey, so they come
+  back on a new phone and Circaso can't read them.
 
 ## Signing up and your number
 - Sign in with Google (or Apple on iPhone), then add your phone number and enter the 6-digit code we text you.
