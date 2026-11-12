@@ -45,4 +45,13 @@ class RateLimitTableTest {
         assertEquals("user", RateLimitTable.limitFor("GET", "/v1/support/tickets", signedIn = true)!!.name)
         assertEquals("user", RateLimitTable.limitFor("POST", "/v1/support/tickets/x/replies", signedIn = true)!!.name)
     }
+
+    @Test
+    fun `I17 the website's deletion request has its own bucket of 20 per address per hour`() {
+        val limit = RateLimitTable.limitFor("POST", "/v1/web/account-deletion", signedIn = false)!!
+
+        assertEquals("web-deletion", limit.name)
+        assertEquals(20, limit.max)
+        assertEquals(LimitBy.IP, limit.by)
+    }
 }

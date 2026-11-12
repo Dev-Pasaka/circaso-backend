@@ -20,6 +20,7 @@ class IdentityStoreImpl(
     private val recoveries: RecoveryRepositoryImpl,
     private val vaults: VaultRepositoryImpl,
     private val keyBackups: KeyBackupRepositoryImpl,
+    private val feedback: DeletionFeedbackRepositoryImpl,
     private val bus: EventBus,
 ) : IdentityStore {
     override suspend fun write(changes: Changes) {
@@ -35,6 +36,7 @@ class IdentityStoreImpl(
             changes.keyBackupRoots.forEach { keyBackups.saveRoot(it) }
             changes.groupKeys.forEach { keyBackups.saveGroupKey(it) }
             changes.removedKeyBackups.forEach { keyBackups.delete(it) }
+            changes.deletionFeedback.forEach { feedback.add(it) }
             changes.events.forEach { database.writeOutbox(it) }
         }
     }

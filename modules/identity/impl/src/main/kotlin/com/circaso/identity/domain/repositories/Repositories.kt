@@ -2,6 +2,7 @@ package com.circaso.identity.domain.repositories
 
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
+import com.circaso.identity.domain.models.DeletionFeedback
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.GroupKeyBackup
 import com.circaso.identity.domain.models.GroupKeyPosition
@@ -180,6 +181,8 @@ data class Changes(
     val groupKeys: List<GroupKeyBackup> = emptyList(),
     /** Accounts whose whole key backup (root and every group key) is deleted. */
     val removedKeyBackups: List<UserId> = emptyList(),
+    /** Why people asked for their account to go (I17), stored apart from the account. */
+    val deletionFeedback: List<DeletionFeedback> = emptyList(),
     /** Written to the outbox in the same transaction, then published once it commits. */
     val events: List<EventEnvelope> = emptyList(),
 )

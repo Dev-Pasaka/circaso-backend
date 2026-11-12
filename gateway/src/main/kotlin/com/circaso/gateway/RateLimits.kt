@@ -47,6 +47,11 @@ object RateLimitTable {
                 )
             }
 
+            // I17, the website's account deletion page: a person asks once, perhaps twice after a refusal.
+            method == "POST" && path == "/v1/web/account-deletion" -> {
+                Limit("web-deletion", 20, Duration.ofHours(1), LimitBy.IP)
+            }
+
             method == "POST" && path == "/v1/recovery/requests" -> {
                 Limit("recovery", 5, Duration.ofDays(1), LimitBy.IP)
             }

@@ -1,5 +1,6 @@
 package com.circaso.identity
 
+import com.circaso.identity.api.DeletionGuard
 import com.circaso.identity.api.Principal
 import com.circaso.identity.data.security.EcdsaDeviceKeyVerifier
 import com.circaso.identity.data.security.Ed25519Tokens
@@ -23,6 +24,7 @@ import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.SessionRepository
 import com.circaso.identity.domain.repositories.VaultRepository
+import com.circaso.identity.domain.support.DeletionScheduler
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
@@ -44,6 +46,7 @@ import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
+import com.circaso.identity.domain.usecases.RequestWebAccountDeletion
 import com.circaso.identity.domain.usecases.SaveGroupKey
 import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
 import com.circaso.identity.domain.usecases.SaveVault
@@ -210,6 +213,7 @@ class Harness(
     ports: IdentityPorts? = null,
     reviewPhone: String? = null,
     reviewCode: String? = null,
+    guards: List<DeletionGuard> = emptyList(),
 ) {
     val store = MemoryStore()
     private val p = ports ?: store.ports()
@@ -287,8 +291,10 @@ class Harness(
     val overview = GetSecurityOverview(p.accounts, p.providers, p.devices)
     val link = LinkProvider(p.transactor, cache, FakeSocial(), p.accounts, p.providers, p.store, clock)
     val unlink = UnlinkProvider(p.transactor, p.accounts, p.providers, p.store)
-    val delete =
-        RequestAccountDeletion(p.transactor, p.accounts, p.sessions, emptyList(), p.store, cache, bus, config, clock)
+    private val deletions =
+        DeletionScheduler(p.transactor, p.accounts, p.sessions, guards, p.store, cache, bus, config, clock)
+    val delete = RequestAccountDeletion(p.accounts, deletions)
+    val webDelete = RequestWebAccountDeletion(cache, FakeSocial(), p.providers, p.accounts, deletions, clock)
     val recovery = RequestSupportRecovery(p.accounts, p.providers, p.store, cache, phones, email)
     val release = RequestPhoneRelease(cache, p.accounts, p.providers, phones, p.store, email, config, clock)
     val vaultService =
