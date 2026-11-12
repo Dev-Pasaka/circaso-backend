@@ -13,7 +13,7 @@ Identity answers "is this really the person behind this account, and is this req
 - **Sessions** — 15-minute access tokens and device-bound refresh tokens, with scopes `onboarding`, `app`, `agent`, `ops`.
 - **Recovery eligibility** — whether the account completed identity verification (status and a reference only, never the documents). A lost Google/Apple login can only be relinked by support, and only for verified accounts.
 - **Security log** — every sign-in, device change, verification and recovery.
-- **PIN Vault and group key backup** — opaque blobs the phone sealed under a circaso.com passkey's PRF key: the wallet PIN (V1–V4) and the group meta keys under a backup root (KB1–KB5, 2026-11-12). The server never sees a key.
+- **PIN Vault and group key backup** — opaque blobs the phone sealed under a circaso.com passkey's PRF key: the wallet PIN (V1–V4) and the group meta keys under a backup root (KB1–KB5, 2026-11-12), and the person's names for their contacts as one blob under the same root (KB6–KB7). The server never sees a key.
 
 ### Contract (`identity:api`)
 
@@ -80,7 +80,7 @@ Identity owns everything around these calls: generating and hashing codes, expir
 
 ## Endpoints
 
-Seventeen app routes (plus the PIN Vault, V1–V4, and group key backup, KB1–KB5): seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery. OPS1–OPS2 (Circaso's support accounts) are served by the ops module on the separate ops gateway, through identity's `SupportAccounts` contract (decision 2026-11-08; see Staff contracts below). Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
+Seventeen app routes (plus the PIN Vault, V1–V4, and key backup, KB1–KB7): seven take a person from Google/Apple sign-in to an active session, the rest manage the session, the account and support recovery. OPS1–OPS2 (Circaso's support accounts) are served by the ops module on the separate ops gateway, through identity's `SupportAccounts` contract (decision 2026-11-08; see Staff contracts below). Paths are relative to `https://api.circaso.com/v1`; samples show only `data` from the `DefaultResponse` envelope (API conventions are on the Architecture tab).
 
 | # | Route | Scope | Use case (domain) | Does |
 | --- | --- | --- | --- | --- |
@@ -104,9 +104,11 @@ Seventeen app routes (plus the PIN Vault, V1–V4, and group key backup, KB1–K
 | V4 | `DELETE /vault` | app | `RemoveVault` | Deletes it and logs `VAULT_REMOVED`; succeeds (nothing logged) when there is none |
 | KB1 | `GET /key-backup/root` | app | `GetKeyBackupRoot` | Group key backup (2026-11-12): the sealed root (`credentialId`, `salt`, `sealedRoot`, `algorithm`, `version`, `updatedAt`), or `exists: false` (200, never 404). Not sensitive: no log, no email, no hold, only the usual rate limit |
 | KB2 | `PUT /key-backup/root` | app | `SaveKeyBackupRoot` | Creates (version 1, logs `KEY_BACKUP_ON`) or replaces (version + 1, logs `KEY_BACKUP_CHANGED`) the account's one root under the account's lock; `expectedVersion` must match or `key_backup.version_conflict`. Shape checks in the mapper: `credentialId` base64url ≤ 1024 chars, `salt` base64 16–64 bytes, `sealedRoot` base64 ≤ 1 KiB, `algorithm` ≤ 64 of `[A-Za-z0-9._+/-]`. Answers KB1's shape |
-| KB3 | `DELETE /key-backup` | app | `RemoveKeyBackup` | Deletes the root and every group key in one transaction and logs `KEY_BACKUP_OFF`; succeeds (nothing logged) when there is nothing. `data: null` |
+| KB3 | `DELETE /key-backup` | app | `RemoveKeyBackup` | Deletes the root, every group key and the saved names in one transaction and logs `KEY_BACKUP_OFF`; succeeds (nothing logged) when there is nothing. `data: null` |
 | KB4 | `PUT /key-backup/group-keys/{chatId}/{metaVersion}` | app | `SaveGroupKey` | `{ ciphertext }` (base64 ≤ 512 bytes): one group meta key under the root key. Allowed when messaging's `GroupMembership.isMember` says yes, or the account already holds a key of that chat (it was a member then); asked before the transaction, else `key_backup.chat_not_found`. Then under the account's lock: a root must exist (`key_backup.not_found`, so a late upload can't outlive KB3), the same blob again writes nothing, a new (chat, metaVersion) is refused at 10,000 (`key_backup.too_many`). Not logged. `data: null` |
 | KB5 | `GET /key-backup/group-keys` | app | `ListGroupKeys` | `?cursor=&limit=` (default 200, at most 500): `{ items: [{ chatId, metaVersion, ciphertext }], nextCursor? }` in primary-key order; the cursor is the last `(chatId, metaVersion)` as base64url, `request.malformed` when it isn't one |
+| KB6 | `GET /key-backup/saved-names` | app | `GetSavedNames` | Saved names (2026-11-12): `{ exists, version, ciphertext, updatedAt }`; with none saved `exists: false`, `version: 0`, nulls (200, never 404). Logs nothing |
+| KB7 | `PUT /key-backup/saved-names` | app | `SaveSavedNames` | `{ ciphertext, baseVersion }`: the whole blob (base64, 1 byte–512 KiB decoded, AES-256-GCM under the root key) → `{ version }` = `baseVersion + 1`. Under the account's lock: a root must exist (`identity.key_backup_off`), and `baseVersion` must be the stored version, 0 when none (`identity.saved_names_conflict`): a compare-and-set. Shape: `identity.saved_names_ciphertext_invalid`, `identity.saved_names_base_version_invalid`. Not logged |
 | I14 | `DELETE /account` | app | `RequestAccountDeletion` | Schedules deletion once every `DeletionGuard` agrees (the wallet refuses while its US dollar stablecoins, added up over every chain, come to 0.01 or more, or it holds any amount of another asset; decision 2026-10-28). A guard's own error reaches the app as is: `wallet.funds_remaining`, or `wallet.custody_unavailable` when the wallet can't check (decision 2026-10-28; `identity.wallet_not_empty` was removed) |
 | I15 | `POST /recovery/requests` | onboarding | `RequestSupportRecovery` | Opens a support case for a lost Google/Apple login |
 | I16 | `POST /auth/phone/release` | onboarding | `RequestPhoneRelease` | Frees a number held by a lost, unverified account, after a 7-day notice |
@@ -412,6 +414,14 @@ CREATE TABLE identity.group_key_backups (              -- V6: each group meta ke
     PRIMARY KEY (user_id, chat_id, meta_version)        -- KB5's keyset order and KB4's per-account count
 );
 
+CREATE TABLE identity.saved_names (                    -- V8 (2026-11-12): a person's names for their contacts, one sealed blob
+    user_id    uuid        PRIMARY KEY,
+    ciphertext text        NOT NULL,                    -- base64, ≤ 512 KiB decoded; opaque to the server
+    version    bigint      NOT NULL CHECK (version >= 1), -- 1, then + 1 on each save (KB7's compare-and-set)
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+);
+
 -- identity.outbox: the shared outbox, created with the DDL in architecture.md → Durable events
 -- (DatabaseModuleSpec(outbox = true); infrastructure writes and relays it)
 ```
@@ -427,6 +437,7 @@ CREATE TABLE identity.group_key_backups (              -- V6: each group meta ke
 | `pin_vaults` | — (deleted with the account's other rows when its deletion completes, or by V4) | Under the account's lock: V3 reads the version and writes the next one in the same transaction |
 | `key_backup_roots` | — (deleted with the account's other rows when its deletion completes, or by KB3) | Under the account's lock: KB2 reads the version and writes the next one in the same transaction |
 | `group_key_backups` | — (as `key_backup_roots`) | Under the account's lock: KB4 checks the root, the existing row and the count, then upserts; KB3 deletes both tables in one transaction |
+| `saved_names` | — (as `key_backup_roots`; KB3 deletes it with them) | Under the account's lock: KB7 checks the root and compares `baseVersion` with the stored version, then upserts at the next |
 | `outbox` | Daily partitions, dropped after 7 days | — |
 
 Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one row by `session_id` and compares hashes; no table is keyed by the token itself. Every read of `sessions` filters `expires_at > now()`.
@@ -526,3 +537,7 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `key_backup.chat_id_invalid` | INVALID → 400 | KB4: the path's `chatId` isn't a canonical UUID |
 | `key_backup.meta_version_invalid` | INVALID → 400 | KB4: the path's `metaVersion` isn't an int of 0 or more |
 | `key_backup.ciphertext_invalid` | INVALID → 400 | KB4: `ciphertext` empty, not base64, or over 512 bytes |
+| `identity.saved_names_conflict` | CONFLICT → 409 | KB7: `baseVersion` isn't the stored version (0 when none) |
+| `identity.key_backup_off` | CONFLICT → 409 | KB7: key backup is off (no root) |
+| `identity.saved_names_ciphertext_invalid` | INVALID → 400 | KB7: `ciphertext` empty, not base64, or over 512 KiB |
+| `identity.saved_names_base_version_invalid` | INVALID → 400 | KB7: `baseVersion` below 0 |

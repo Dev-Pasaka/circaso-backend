@@ -32,6 +32,7 @@ import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.GetKeyBackupRoot
 import com.circaso.identity.domain.usecases.GetPushTarget
+import com.circaso.identity.domain.usecases.GetSavedNames
 import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.GetVaultStatus
 import com.circaso.identity.domain.usecases.IssueNonce
@@ -49,6 +50,7 @@ import com.circaso.identity.domain.usecases.RequestSupportRecovery
 import com.circaso.identity.domain.usecases.RequestWebAccountDeletion
 import com.circaso.identity.domain.usecases.SaveGroupKey
 import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
+import com.circaso.identity.domain.usecases.SaveSavedNames
 import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
@@ -314,6 +316,8 @@ class Harness(
             RemoveKeyBackup(p.transactor, p.accounts, p.devices, p.keyBackups, p.store),
             SaveGroupKey(p.transactor, p.accounts, p.keyBackups, memberships, p.store, clock),
             ListGroupKeys(p.keyBackups),
+            GetSavedNames(p.keyBackups),
+            SaveSavedNames(p.transactor, p.accounts, p.keyBackups, p.store, clock),
         )
 
     suspend fun nonce(): String = issueNonce().getOrNull()!!

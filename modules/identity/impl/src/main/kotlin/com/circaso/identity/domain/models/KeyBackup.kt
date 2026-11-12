@@ -55,3 +55,17 @@ data class SaveGroupKeyCommand(
 data class GroupKeyPosition(val chatId: UUID, val metaVersion: Int)
 
 data class GroupKeyPage(val items: List<GroupKeyBackup>, val nextCursor: String?)
+
+/**
+ * The names a person gave their contacts (2026-11-12), as ONE base64 [ciphertext] sealed on the phone (AES-256-GCM)
+ * under the key backup root: opaque to the server. [version] starts at 1 and goes up by one on every save.
+ */
+data class SavedNames(
+    val userId: UserId,
+    val ciphertext: String,
+    val version: Long,
+    val updatedAt: Instant,
+)
+
+/** `PUT /key-backup/saved-names`, checked for shape: [baseVersion] must be the stored version (0 when none). */
+data class SaveSavedNamesCommand(val principal: Principal, val ciphertext: String, val baseVersion: Long)

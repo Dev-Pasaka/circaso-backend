@@ -11,6 +11,7 @@ import com.circaso.identity.domain.models.GroupKeyBackup
 import com.circaso.identity.domain.models.KeyBackupRoot
 import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
 import com.circaso.identity.domain.models.Session
@@ -105,6 +106,7 @@ class CompleteDeletionsTest {
                             GroupKeyBackup(userId, Uuid7.generate(), 0, "a2V5MA==", now),
                             GroupKeyBackup(userId, Uuid7.generate(), 3, "a2V5Mw==", now),
                         ),
+                    savedNames = listOf(SavedNames(userId, "bmFtZXM=", 4, now)),
                 ),
             )
         }
@@ -122,6 +124,7 @@ class CompleteDeletionsTest {
             "pin_vaults",
             "key_backup_roots",
             "group_key_backups",
+            "saved_names",
         ).sumOf {
             count("SELECT count(*) FROM identity.$it WHERE user_id = '$userId'")
         }
@@ -141,6 +144,12 @@ class CompleteDeletionsTest {
             assertNull(pg.accounts.findByPhone(PhoneNumber.parse("+254700000001")!!), "its number is free")
             assertNotNull(pg.accounts.find(inGrace))
             assertNotNull(pg.accounts.find(active))
+            assertEquals(
+                0,
+                count("SELECT count(*) FROM identity.saved_names WHERE user_id = '$due'"),
+                "saved names too",
+            )
+            assertEquals(1, count("SELECT count(*) FROM identity.saved_names WHERE user_id = '$inGrace'"))
             assertEquals(1, outboxRows())
             assertEquals(
                 AccountDeleted(due),

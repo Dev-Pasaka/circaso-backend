@@ -32,6 +32,7 @@ import com.circaso.identity.data.tables.GroupKeyBackupsTable
 import com.circaso.identity.data.tables.KeyBackupRootsTable
 import com.circaso.identity.data.tables.PinVaultsTable
 import com.circaso.identity.data.tables.ProviderLinksTable
+import com.circaso.identity.data.tables.SavedNamesTable
 import com.circaso.identity.data.tables.SecurityLogTable
 import com.circaso.identity.data.tables.SessionsTable
 import com.circaso.identity.data.tables.SupportRecoveriesTable
@@ -73,6 +74,7 @@ import com.circaso.identity.domain.usecases.GetKeyBackupRoot
 import com.circaso.identity.domain.usecases.GetPublicKeys
 import com.circaso.identity.domain.usecases.GetPushTarget
 import com.circaso.identity.domain.usecases.GetRecoveryCase
+import com.circaso.identity.domain.usecases.GetSavedNames
 import com.circaso.identity.domain.usecases.GetSecurityOverview
 import com.circaso.identity.domain.usecases.GetSecuritySummary
 import com.circaso.identity.domain.usecases.GetVaultStatus
@@ -97,6 +99,7 @@ import com.circaso.identity.domain.usecases.RequestWebAccountDeletion
 import com.circaso.identity.domain.usecases.ResolvePhones
 import com.circaso.identity.domain.usecases.SaveGroupKey
 import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
+import com.circaso.identity.domain.usecases.SaveSavedNames
 import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
@@ -195,6 +198,7 @@ fun identityDatabaseSpec() =
                 PinVaultsTable,
                 KeyBackupRootsTable,
                 GroupKeyBackupsTable,
+                SavedNamesTable,
                 DeletionFeedbackTable,
             ),
         migrationsLocation = "classpath:db/identity",
@@ -327,6 +331,8 @@ fun identityModule(config: Config): Module =
         single { RemoveKeyBackup(get(), get(), get(), get(), get()) }
         single { SaveGroupKey(get(), get(), get(), get(), get(), clock) }
         single { ListGroupKeys(get()) }
+        single { GetSavedNames(get()) }
+        single { SaveSavedNames(get(), get(), get(), get(), clock) }
         single { SweepPendingAccounts(get(), identity, clock) }
         single { CompleteDeletions(get(), get(), get(), get(), clock) }
         // staff, on the ops gateway only (decision 2026-11-08)
@@ -352,7 +358,7 @@ fun identityModule(config: Config): Module =
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
         single { VaultService(get(), get(), get(), get()) }
-        single { KeyBackupService(get(), get(), get(), get(), get()) }
+        single { KeyBackupService(get(), get(), get(), get(), get(), get(), get()) }
         single { WebDeletionService(get()) }
         single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("identity.routes")) {

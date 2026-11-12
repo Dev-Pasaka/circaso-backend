@@ -40,3 +40,23 @@ data class GroupKeyDto(val chatId: String, val metaVersion: Int, val ciphertext:
 /** KB5: one page of backed-up group keys; [nextCursor] is null on the last page. */
 @Serializable
 data class GroupKeysResponse(val items: List<GroupKeyDto>, val nextCursor: String? = null)
+
+/**
+ * KB6: the sealed saved names as last saved. With none saved: `exists: false`, `version: 0`, the rest null. [version] is
+ * what KB7's `baseVersion` must be.
+ */
+@Serializable
+data class SavedNamesResponse(
+    val exists: Boolean,
+    val version: Long,
+    val ciphertext: String? = null,
+    @Serializable(with = InstantSerializer::class) val updatedAt: Instant? = null,
+)
+
+/** KB7: the whole saved names blob (standard base64, AES-256-GCM under the backup root) and the version it replaces. */
+@Serializable
+data class SaveSavedNamesRequest(val ciphertext: String, val baseVersion: Long)
+
+/** KB7: the version the blob was saved at, `baseVersion + 1`. */
+@Serializable
+data class SavedNamesVersionResponse(val version: Long)
