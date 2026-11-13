@@ -153,8 +153,11 @@ Money starts and ends in the chat. There is no separate payment form.
 ## Notifications
 - A message notification shows who sent it, with their profile photo (their initials when they have none), the name
   you saved for them, and what they said ("📷 Photo", "🎤 Voice message" for media). A group's shows the group's name
-  and who wrote. Money shows the sender's photo and the amount in your own currency. On Android you can reply or mark
-  as read from the notification. iPhone and Android both.
+  and who wrote. Money shows the sender's photo and the amount in your own currency. iPhone and Android both.
+- **Reply from the notification**, on iPhone and Android: on a message's notification tap **Reply** (on iPhone, press and
+  hold it first), type and **Send**; it goes like one typed in the chat, without opening Circaso,
+  and the chat counts as read. **Mark as read** clears it. Not for money notifications, chats you've left or people
+  you blocked. With Notification privacy on, Reply first asks for your Face ID, fingerprint or passcode.
 - **Notification privacy** (You → Notification privacy, on iPhone and Android): turn it on and notifications say only
   "New message", "You received money" or "Missed call", with no names, photos, amounts or words. Off by default.
 - No notifications at all: check that Circaso may send them in the phone's Settings (Notifications → Circaso).
