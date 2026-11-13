@@ -38,9 +38,19 @@ class OpenDiagnosticLog(private val logs: DiagnosticLogDesk, private val trail: 
             outcome = { "${it.line.code} of user ${it.line.userId}" },
         ) {
             when (val read = logs.read(logId)) {
-                is Resource.Success -> read
-                is Resource.Error ->
-                    if (read.error.code == "support.log_not_found") Resource.error(OpsError.DiagnosticLogNotFound) else read
+                is Resource.Success -> {
+                    read
+                }
+
+                is Resource.Error -> {
+                    if (read.error.code ==
+                        "support.log_not_found"
+                    ) {
+                        Resource.error(OpsError.DiagnosticLogNotFound)
+                    } else {
+                        read
+                    }
+                }
             }
         }
 }

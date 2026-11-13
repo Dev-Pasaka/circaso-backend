@@ -24,7 +24,12 @@ class UploadDiagnosticLog(
 ) {
     suspend operator fun invoke(upload: NewDiagnosticLog): Resource<DiagnosticLog> {
         invalid(upload)?.let { return Resource.error(it) }
-        allowance.take(upload.userId, MAX_PER_HOUR, WINDOW)?.let { return Resource.error(SupportError.LogRateLimited(it)) }
+        allowance
+            .take(
+                upload.userId,
+                MAX_PER_HOUR,
+                WINDOW,
+            )?.let { return Resource.error(SupportError.LogRateLimited(it)) }
         val now = clock.instant()
         val text = LogScrub.scrub(upload.log)
         repeat(CODE_ATTEMPTS) {

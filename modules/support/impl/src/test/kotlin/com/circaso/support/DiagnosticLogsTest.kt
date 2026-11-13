@@ -62,12 +62,34 @@ class DiagnosticLogsTest {
             assertEquals(stored.createdAt.plus(Duration.ofDays(30)), stored.expiresAt)
 
             val bare = stored.code.removePrefix("DL-").lowercase()
-            val found = harness.logDesk.byCode(bare).data().single()
+            val found =
+                harness.logDesk
+                    .byCode(bare)
+                    .data()
+                    .single()
             assertEquals(stored.logId, found.logId)
             assertEquals("Xiaomi 23021RAA2Y", found.deviceModel)
-            assertEquals(amina, harness.logDesk.ofUser(amina, 50).data().single().userId)
-            assertEquals(upload().log, harness.logDesk.read(stored.logId).data().log)
-            assertTrue(harness.logDesk.byCode("not-a-code").data().isEmpty())
+            assertEquals(
+                amina,
+                harness.logDesk
+                    .ofUser(amina, 50)
+                    .data()
+                    .single()
+                    .userId,
+            )
+            assertEquals(
+                upload().log,
+                harness.logDesk
+                    .read(stored.logId)
+                    .data()
+                    .log,
+            )
+            assertTrue(
+                harness.logDesk
+                    .byCode("not-a-code")
+                    .data()
+                    .isEmpty(),
+            )
         }
 
     @Test
@@ -75,7 +97,11 @@ class DiagnosticLogsTest {
         runBlocking {
             val raw = "auth: Bearer abc.def refresh for amina@example.com, +254 712 345678 eyJhbGciOi.eyJzdWIiOi.sig"
             val stored = harness.diagnostics.upload(upload(raw)).data()
-            val text = harness.logDesk.read(stored.logId).data().log
+            val text =
+                harness.logDesk
+                    .read(stored.logId)
+                    .data()
+                    .log
             assertTrue("amina@" !in text && "712" !in text && "eyJ" !in text && "abc.def" !in text, text)
         }
 
@@ -85,7 +111,10 @@ class DiagnosticLogsTest {
             val blank = assertIs<Resource.Error>(harness.diagnostics.upload(upload("  ")))
             assertEquals("support.log_invalid", blank.error.code)
             val big = "x".repeat(2 * 1024 * 1024 + 1)
-            assertEquals("support.log_invalid", assertIs<Resource.Error>(harness.diagnostics.upload(upload(big))).error.code)
+            assertEquals(
+                "support.log_invalid",
+                assertIs<Resource.Error>(harness.diagnostics.upload(upload(big))).error.code,
+            )
             val noPlatform = upload().copy(platform = "")
             assertEquals(
                 "support.log_invalid",
@@ -125,7 +154,10 @@ class DiagnosticLogsTest {
             installJson()
             installStatusPages()
             intercept(ApplicationCallPipeline.Plugins) {
-                call.attributes.put(CallPrincipalKey, CallPrincipal(amina, DeviceId.new(), UUID.randomUUID(), Scope.APP))
+                call.attributes.put(
+                    CallPrincipalKey,
+                    CallPrincipal(amina, DeviceId.new(), UUID.randomUUID(), Scope.APP),
+                )
             }
             routing { route("/v1") { diagnosticLogController(harness.diagnostics) } }
         }
@@ -167,10 +199,20 @@ class DiagnosticLogsTest {
             val database = TestPostgres.database(supportDatabaseSpec)
             val logs = DiagnosticLogRepositoryImpl(database)
             val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+
             fun log(code: String, expiresAt: Instant) =
                 DiagnosticLog(
-                    Uuid7.generate(now), code, amina, "android", "1.4.2 (61)", "14", "Redmi", 11, "a\nb\nc\nd\ne\nf",
-                    now, expiresAt,
+                    Uuid7.generate(now),
+                    code,
+                    amina,
+                    "android",
+                    "1.4.2 (61)",
+                    "14",
+                    "Redmi",
+                    11,
+                    "a\nb\nc\nd\ne\nf",
+                    now,
+                    expiresAt,
                 )
             val live = log("DL-AAAAAA", now.plus(Duration.ofDays(30)))
             assertTrue(logs.insert(live))

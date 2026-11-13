@@ -21,7 +21,8 @@ class DiagnosticLogService(
 
     suspend fun byCode(code: String): Resource<List<DiagnosticLog>> = findDiagnosticLog(code)
 
-    suspend fun ofUser(userId: UserId, limit: Int): Resource<List<DiagnosticLog>> = listUserDiagnosticLogs(userId, limit)
+    suspend fun ofUser(userId: UserId, limit: Int): Resource<List<DiagnosticLog>> =
+        listUserDiagnosticLogs(userId, limit)
 
     suspend fun read(logId: UUID): Resource<DiagnosticLog> = readDiagnosticLog(logId)
 }

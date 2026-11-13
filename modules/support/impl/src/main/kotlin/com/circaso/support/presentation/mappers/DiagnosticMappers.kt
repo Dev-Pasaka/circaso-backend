@@ -14,6 +14,17 @@ fun DiagnosticLogRequest.toNewLog(userId: UserId) =
 fun DiagnosticLog.toReceipt() = DiagnosticLogReceiptResponse(code, expiresAt.toString())
 
 fun DiagnosticLog.toLine() =
-    DiagnosticLogLine(logId, code, userId, platform, appVersion, osVersion, deviceModel, sizeBytes, createdAt, expiresAt)
+    DiagnosticLogLine(
+        logId,
+        code,
+        userId,
+        platform,
+        appVersion,
+        osVersion,
+        deviceModel,
+        sizeBytes,
+        createdAt,
+        expiresAt,
+    )
 
 fun DiagnosticLog.toText() = DiagnosticLogText(toLine(), log)

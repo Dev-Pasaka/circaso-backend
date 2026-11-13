@@ -21,11 +21,11 @@ import com.circaso.support.api.TicketQueueFilter
 import com.circaso.support.api.TicketStatus
 import com.circaso.support.api.TicketSummary
 import com.circaso.support.presentation.mappers.parseCursor
-import com.circaso.support.presentation.mappers.toLine
-import com.circaso.support.presentation.mappers.toText
 import com.circaso.support.presentation.mappers.toDetail
+import com.circaso.support.presentation.mappers.toLine
 import com.circaso.support.presentation.mappers.toPage
 import com.circaso.support.presentation.mappers.toSummary
+import com.circaso.support.presentation.mappers.toText
 import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.presentation.services.SupportDeskService
 import com.circaso.support.presentation.services.TicketService

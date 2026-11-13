@@ -36,7 +36,12 @@ class FakeLogDesk : DiagnosticLogDesk {
         Resource.success(logs.values.map { it.line }.filter { it.code == "DL-" + code.uppercase().removePrefix("DL-") })
 
     override suspend fun ofUser(userId: UserId, limit: Int) =
-        Resource.success(logs.values.map { it.line }.filter { it.userId == userId }.take(limit))
+        Resource.success(
+            logs.values
+                .map { it.line }
+                .filter { it.userId == userId }
+                .take(limit),
+        )
 
     override suspend fun read(logId: UUID): Resource<DiagnosticLogText> =
         logs[logId]?.let { Resource.success(it) } ?: Resource.error(LogNotFound)

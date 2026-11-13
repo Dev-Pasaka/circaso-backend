@@ -13,10 +13,13 @@ import com.circaso.support.api.TicketMessage
 import com.circaso.support.api.TicketQueueFilter
 import com.circaso.support.api.TicketStatus
 import com.circaso.support.api.WaitingOn
+import com.circaso.support.domain.models.DiagnosticLog
 import com.circaso.support.domain.models.Ticket
 import com.circaso.support.domain.ports.FrameSender
+import com.circaso.support.domain.ports.LogAllowance
 import com.circaso.support.domain.ports.TicketAllowance
 import com.circaso.support.domain.ports.Transactor
+import com.circaso.support.domain.repositories.DiagnosticLogRepository
 import com.circaso.support.domain.repositories.MessageRepository
 import com.circaso.support.domain.repositories.TicketRepository
 import com.circaso.support.domain.repositories.isOldestFirst
@@ -26,26 +29,23 @@ import com.circaso.support.domain.usecases.AddStaffNote
 import com.circaso.support.domain.usecases.AssignTicket
 import com.circaso.support.domain.usecases.ChangeTicketStatus
 import com.circaso.support.domain.usecases.CountTickets
+import com.circaso.support.domain.usecases.FindDiagnosticLog
 import com.circaso.support.domain.usecases.GetMyTicket
 import com.circaso.support.domain.usecases.GetTicket
 import com.circaso.support.domain.usecases.ListMyTickets
 import com.circaso.support.domain.usecases.ListTicketQueue
+import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
 import com.circaso.support.domain.usecases.ListUserTickets
 import com.circaso.support.domain.usecases.OpenTicket
-import com.circaso.support.domain.models.DiagnosticLog
-import com.circaso.support.domain.ports.LogAllowance
-import com.circaso.support.domain.repositories.DiagnosticLogRepository
-import com.circaso.support.domain.usecases.FindDiagnosticLog
-import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
 import com.circaso.support.domain.usecases.ReadDiagnosticLog
-import com.circaso.support.domain.usecases.UploadDiagnosticLog
-import com.circaso.support.presentation.api.DiagnosticLogDeskImpl
-import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.domain.usecases.RemoveAccountTickets
 import com.circaso.support.domain.usecases.ReplyAsStaff
 import com.circaso.support.domain.usecases.ReplyAsUser
+import com.circaso.support.domain.usecases.UploadDiagnosticLog
+import com.circaso.support.presentation.api.DiagnosticLogDeskImpl
 import com.circaso.support.presentation.api.SupportDeskImpl
 import com.circaso.support.presentation.api.SupportTicketsImpl
+import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.presentation.services.SupportDeskService
 import com.circaso.support.presentation.services.TicketService
 import com.circaso.wallet.api.GroupWalletSummary
@@ -358,7 +358,11 @@ class MemoryLogs(private val clock: Clock) : DiagnosticLogRepository {
     override suspend fun byCode(code: String) = live().firstOrNull { it.code == code }?.copy(log = "")
 
     override suspend fun ofUser(userId: UserId, limit: Int) =
-        live().filter { it.userId == userId }.sortedByDescending { it.logId }.take(limit).map { it.copy(log = "") }
+        live()
+            .filter { it.userId == userId }
+            .sortedByDescending { it.logId }
+            .take(limit)
+            .map { it.copy(log = "") }
 
     override suspend fun find(logId: UUID) = live().firstOrNull { it.logId == logId }
 

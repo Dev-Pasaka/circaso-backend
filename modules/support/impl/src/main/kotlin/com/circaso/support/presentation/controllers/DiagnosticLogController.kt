@@ -56,8 +56,18 @@ fun Route.diagnosticLogController(logs: DiagnosticLogService) {
 private suspend fun ApplicationCall.boundedRequest(): Resource<DiagnosticLogRequest> {
     val bytes = receiveChannel().readRemaining(MAX_BODY_BYTES + 1).readByteArray()
     return when {
-        bytes.size > MAX_BODY_BYTES -> Resource.error(SupportError.LogInvalid("body", "at most 3 MiB"))
-        bytes.isEmpty() -> Resource.error(SupportError.LogInvalid("body", "required"))
-        else -> Resource.success(CircasoJson.decodeFromString(DiagnosticLogRequest.serializer(), bytes.decodeToString()))
+        bytes.size > MAX_BODY_BYTES -> {
+            Resource.error(SupportError.LogInvalid("body", "at most 3 MiB"))
+        }
+
+        bytes.isEmpty() -> {
+            Resource.error(SupportError.LogInvalid("body", "required"))
+        }
+
+        else -> {
+            Resource.success(
+                CircasoJson.decodeFromString(DiagnosticLogRequest.serializer(), bytes.decodeToString()),
+            )
+        }
     }
 }

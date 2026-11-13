@@ -16,7 +16,14 @@ object DiagnosticCodes {
 
     /** A code as typed (any case, spaces, `DL-` optional) in its stored form; null when it can't be one. */
     fun normalize(raw: String): String? {
-        val bare = raw.trim().uppercase().removePrefix(PREFIX).removePrefix("DL").trim().removePrefix("-")
+        val bare =
+            raw
+                .trim()
+                .uppercase()
+                .removePrefix(PREFIX)
+                .removePrefix("DL")
+                .trim()
+                .removePrefix("-")
         if (bare.length != LENGTH || bare.any { it !in ALPHABET }) return null
         return PREFIX + bare
     }

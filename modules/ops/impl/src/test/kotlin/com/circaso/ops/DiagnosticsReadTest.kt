@@ -34,7 +34,13 @@ class DiagnosticsReadTest {
         testApplication {
             application { harness.install(this) }
             for (path in listOf("/v1/ops/diagnostics?code=dl-7k3qx9", "/v1/ops/diagnostics?userId=$amina")) {
-                val item = read(path).json()["data"]!!.jsonObject["items"]!!.jsonArray.single().jsonObject
+                val item =
+                    read(path)
+                        .json()["data"]!!
+                        .jsonObject["items"]!!
+                        .jsonArray
+                        .single()
+                        .jsonObject
                 assertEquals(log.logId.toString(), item["logId"]!!.jsonPrimitive.content, path)
                 assertEquals("DL-7K3QX9", item["code"]!!.jsonPrimitive.content)
                 assertTrue("log" !in item)
@@ -65,6 +71,9 @@ class DiagnosticsReadTest {
             val missing = read("/v1/ops/diagnostics/${com.circaso.shared.Uuid7.generate()}")
             assertEquals(HttpStatusCode.NotFound, missing.status)
             assertEquals("ops.diagnostic_log_not_found", missing.json()["code"]!!.jsonPrimitive.content)
-            assertEquals("request.malformed", read("/v1/ops/diagnostics/${UUID.randomUUID()}x").json()["code"]!!.jsonPrimitive.content)
+            assertEquals(
+                "request.malformed",
+                read("/v1/ops/diagnostics/${UUID.randomUUID()}x").json()["code"]!!.jsonPrimitive.content,
+            )
         }
 }

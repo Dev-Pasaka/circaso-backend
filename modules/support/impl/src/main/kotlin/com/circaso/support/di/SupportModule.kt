@@ -42,8 +42,8 @@ import com.circaso.support.domain.usecases.FindDiagnosticLog
 import com.circaso.support.domain.usecases.GetMyTicket
 import com.circaso.support.domain.usecases.GetTicket
 import com.circaso.support.domain.usecases.ListMyTickets
-import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
 import com.circaso.support.domain.usecases.ListTicketQueue
+import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
 import com.circaso.support.domain.usecases.ListUserTickets
 import com.circaso.support.domain.usecases.OpenTicket
 import com.circaso.support.domain.usecases.ReadDiagnosticLog
