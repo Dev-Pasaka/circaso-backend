@@ -2,19 +2,25 @@ package com.circaso.calls.di
 
 import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.Calls
+import com.circaso.calls.api.CallsAdmin
 import com.circaso.calls.data.cache.CallsExpiry
 import com.circaso.calls.data.cache.RealtimeFramesImpl
+import com.circaso.calls.data.cache.RedisReportAllowance
+import com.circaso.calls.data.repositories.CallReportRepositoryImpl
 import com.circaso.calls.data.repositories.CallRepositoryImpl
 import com.circaso.calls.data.repositories.CallsOutboxImpl
 import com.circaso.calls.data.repositories.DatabaseTransactor
 import com.circaso.calls.data.tables.CallsTable
 import com.circaso.calls.data.tables.ParticipantsTable
 import com.circaso.calls.data.tables.RealtimeTable
+import com.circaso.calls.data.tables.ReportsTable
 import com.circaso.calls.data.tables.TracksTable
 import com.circaso.calls.domain.ports.CallsOutbox
 import com.circaso.calls.domain.ports.FrameSender
 import com.circaso.calls.domain.ports.RealtimeLog
+import com.circaso.calls.domain.ports.ReportAllowance
 import com.circaso.calls.domain.ports.Transactor
+import com.circaso.calls.domain.repositories.CallReportRepository
 import com.circaso.calls.domain.repositories.CallRepository
 import com.circaso.calls.domain.support.CallChanges
 import com.circaso.calls.domain.support.CallNotices
@@ -25,18 +31,23 @@ import com.circaso.calls.domain.usecases.DeclineCall
 import com.circaso.calls.domain.usecases.ExpireRings
 import com.circaso.calls.domain.usecases.FindLiveCall
 import com.circaso.calls.domain.usecases.GetCall
+import com.circaso.calls.domain.usecases.GetCallRecord
 import com.circaso.calls.domain.usecases.GetLiveCall
 import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
+import com.circaso.calls.domain.usecases.ListCallsOfUser
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReplayFrames
 import com.circaso.calls.domain.usecases.ReportConnected
+import com.circaso.calls.domain.usecases.SendCallReport
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
+import com.circaso.calls.presentation.api.CallsAdminImpl
 import com.circaso.calls.presentation.api.CallsImpl
 import com.circaso.calls.presentation.api.CallsRealtimeReplay
 import com.circaso.calls.presentation.controllers.callController
+import com.circaso.calls.presentation.services.CallAdminService
 import com.circaso.calls.presentation.services.CallEventsService
 import com.circaso.calls.presentation.services.CallService
 import com.circaso.infrastructure.api.Config
@@ -61,7 +72,7 @@ import java.time.Duration
 internal val callsDatabaseSpec =
     DatabaseModuleSpec(
         schema = "calls",
-        tables = listOf(CallsTable, ParticipantsTable, TracksTable, RealtimeTable),
+        tables = listOf(CallsTable, ParticipantsTable, TracksTable, RealtimeTable, ReportsTable),
         migrationsLocation = "classpath:db/calls",
         outbox = true,
     )
@@ -82,6 +93,8 @@ fun callsModule(config: Config): Module =
         single<CallRepository> { CallRepositoryImpl(get(named("calls.database"))) }
         single<CallsOutbox> { CallsOutboxImpl(get(named("calls.database"))) }
         single<Transactor> { DatabaseTransactor(get(named("calls.database"))) }
+        single<CallReportRepository> { CallReportRepositoryImpl(get(named("calls.database"))) }
+        single<ReportAllowance> { RedisReportAllowance(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single {
             RealtimeFramesImpl(
                 get<RedisScopes>().scope(REDIS_PREFIX),
@@ -124,15 +137,20 @@ fun callsModule(config: Config): Module =
         single { ReportConnected(get(), clock) }
         single { ExpireRings(get(), get(), clock) }
         single { ReplayFrames(get()) }
+        single { SendCallReport(get(), get(), get(), clock) }
+        single { ListCallsOfUser(get()) }
+        single { GetCallRecord(get(), get()) }
 
         // presentation
-        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { CallAdminService(get(), get()) }
         single { CallEventsService(get(), get(), get()) }
         single<RouteContributor>(named("calls.routes")) {
             val calls = get<CallService>()
             RouteContributor { route -> route.callController(calls) }
         }
         single<Calls> { CallsImpl(get()) }
+        single<CallsAdmin> { CallsAdminImpl(get()) }
         single(named("calls.replay")) { RealtimeModule(CallFrames.MODULE, CallsRealtimeReplay(get())) }
     }
 

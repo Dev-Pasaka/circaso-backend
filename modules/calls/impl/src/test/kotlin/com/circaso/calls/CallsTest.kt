@@ -5,23 +5,31 @@ import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.errors.CallsError
 import com.circaso.calls.domain.models.Call
 import com.circaso.calls.domain.models.CallKind
+import com.circaso.calls.domain.models.CallLine
+import com.circaso.calls.domain.models.CallReport
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallView
 import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.EndReason
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
+import com.circaso.calls.domain.models.LeaveCause
 import com.circaso.calls.domain.models.MediaCommand
 import com.circaso.calls.domain.models.ParticipantState
 import com.circaso.calls.domain.models.PullCommand
 import com.circaso.calls.domain.models.Pulled
 import com.circaso.calls.domain.models.RenegotiateCommand
+import com.circaso.calls.domain.models.ReportEvent
+import com.circaso.calls.domain.models.ReportSample
+import com.circaso.calls.domain.models.ReportSummary
 import com.circaso.calls.domain.models.TrackOffer
 import com.circaso.calls.domain.models.TrackWanted
 import com.circaso.calls.domain.ports.CallFrame
 import com.circaso.calls.domain.ports.CallsOutbox
 import com.circaso.calls.domain.ports.FrameSender
+import com.circaso.calls.domain.ports.ReportAllowance
 import com.circaso.calls.domain.ports.Transactor
+import com.circaso.calls.domain.repositories.CallReportRepository
 import com.circaso.calls.domain.repositories.CallRepository
 import com.circaso.calls.domain.support.CallChanges
 import com.circaso.calls.domain.support.CallNotices
@@ -31,14 +39,22 @@ import com.circaso.calls.domain.support.Sessions
 import com.circaso.calls.domain.usecases.DeclineCall
 import com.circaso.calls.domain.usecases.ExpireRings
 import com.circaso.calls.domain.usecases.GetCall
+import com.circaso.calls.domain.usecases.GetCallRecord
 import com.circaso.calls.domain.usecases.GetLiveCall
 import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
+import com.circaso.calls.domain.usecases.ListCallsOfUser
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReportConnected
+import com.circaso.calls.domain.usecases.SendCallReport
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
+import com.circaso.calls.presentation.api.CallsAdminImpl
+import com.circaso.calls.presentation.controllers.callController
+import com.circaso.calls.presentation.mappers.leaveCauseOf
+import com.circaso.calls.presentation.services.CallAdminService
+import com.circaso.calls.presentation.services.CallService
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.IceServer
 import com.circaso.integrations.api.IntegrationError
@@ -49,6 +65,7 @@ import com.circaso.integrations.api.PushedTracks
 import com.circaso.integrations.api.RemoteTrack
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainError
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.EventBus
@@ -56,9 +73,29 @@ import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventId
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Resource
+import com.circaso.shared.Scope
 import com.circaso.shared.UserId
+import com.circaso.shared.getOrNull
 import com.circaso.users.api.Profiles
 import com.circaso.users.api.PublicProfile
+import com.circaso.web.CallPrincipal
+import com.circaso.web.CallPrincipalKey
+import com.circaso.web.installJson
+import com.circaso.web.installStatusPages
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
+import io.ktor.server.routing.route
+import io.ktor.server.routing.routing
+import io.ktor.server.testing.ApplicationTestBuilder
+import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -68,6 +105,8 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -111,6 +150,57 @@ private class MemoryCalls : CallRepository {
 
     override suspend fun idleSince(cutoff: Instant) =
         rows.values.filter { it.state == CallState.ACTIVE && it.activeAt < cutoff }.map { it.callId }
+
+    var reports: MemoryReports? = null
+
+    override suspend fun ofUser(
+        userId: UserId,
+        before: CallId?,
+        limit: Int,
+    ) = rows.values
+        .filter { call -> call.participant(userId) != null && (before == null || call.callId.value < before.value) }
+        .sortedByDescending { it.callId.value }
+        .take(limit)
+        .map { call ->
+            CallLine(
+                call.callId,
+                call.chatId,
+                call.kind,
+                call.state,
+                call.endReason,
+                call.isGroup,
+                call.startedBy,
+                call.createdAt,
+                call.startedAt,
+                call.endedAt,
+                call.participants.size,
+                reports?.rows?.keys?.count { it.first == call.callId } ?: 0,
+            )
+        }
+}
+
+private class MemoryReports : CallReportRepository {
+    val rows = linkedMapOf<Pair<CallId, UserId>, CallReport>()
+
+    override suspend fun upsert(report: CallReport) {
+        rows[report.callId to report.userId] = report
+    }
+
+    override suspend fun forCall(callId: CallId) = rows.values.filter { it.callId == callId }
+}
+
+/** The hourly report cap as a plain counter; [retryAfter] is what a refused report is told. */
+private class MemoryAllowance(private val retryAfter: Long = 1_800) : ReportAllowance {
+    val taken = mutableMapOf<UserId, Long>()
+
+    override suspend fun take(
+        userId: UserId,
+        max: Long,
+        window: Duration,
+    ): Long? {
+        val count = taken.merge(userId, 1, Long::plus)!!
+        return if (count > max) retryAfter else null
+    }
 }
 
 /** Runs the block as if in a transaction: an error leaves the rows as they were. */
@@ -285,6 +375,49 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
     val ringAgain =
         com.circaso.calls.domain.usecases
             .RingAgain(changes, views, people, frames, clock)
+    val reports = MemoryReports().also { calls.reports = it }
+    val allowance = MemoryAllowance()
+    val sendReport = SendCallReport(calls, reports, allowance, clock)
+    val listCalls = ListCallsOfUser(calls)
+    val record = GetCallRecord(calls, reports)
+    val service =
+        CallService(
+            start,
+            get,
+            live,
+            join,
+            pull,
+            renegotiate,
+            decline,
+            ringAgain,
+            leave,
+            setMedia,
+            connected,
+            sendReport,
+        )
+    val admin = CallsAdminImpl(CallAdminService(listCalls, record))
+
+    fun report(
+        call: Call,
+        who: UserId,
+        endCause: String = "RECONNECT_GAVE_UP",
+    ) = CallReport(
+        callId = call.callId,
+        userId = who,
+        platform = "android",
+        appVersion = "1.4.2 (61)",
+        osVersion = "14",
+        deviceModel = "Xiaomi 23021RAA2Y",
+        video = false,
+        outgoing = who == call.startedBy,
+        endCause = endCause,
+        startedAt = call.createdAt,
+        endedAt = call.createdAt.plusSeconds(162),
+        receivedAt = Instant.EPOCH,
+        summary = ReportSummary(durationMs = 162_000, reconnects = 1),
+        events = listOf(ReportEvent(0, "phase", "Ringing"), ReportEvent(61_000, "socket", "down")),
+        samples = listOf(ReportSample(5_000, 84.0, 3.1, 0.0, 250, 21_000)),
+    )
 
     val direct = ChatId.new()
     val group = ChatId.new()
@@ -602,7 +735,7 @@ class CallsTest {
 
             h.now = h.now.plus(Duration.ofMinutes(31))
             h.expire()
-            assertEquals(EndReason.COMPLETED, h.stored(call).endReason)
+            assertEquals(EndReason.DROPPED, h.stored(call).endReason, "nobody hung up")
         }
 
     @Test
@@ -1023,5 +1156,327 @@ class CallsTest {
             h2.joined(direct, h2.wanjiru)
             success(h2.decline(h2.otieno, direct.callId))
             assertTrue(h2.frames.ofType<CallFrame.RingStopped>().isEmpty(), "the callee ended their own ring")
+        }
+
+    @Test
+    fun `a leave because the line stalled or reconnecting gave up ends the call dropped, and keeps the cause`() =
+        runTest {
+            for (cause in listOf(LeaveCause.STALL, LeaveCause.RECONNECT_GAVE_UP)) {
+                val h = Harness()
+                val call = h.call()
+                h.joined(call, h.wanjiru)
+                h.joined(call, h.otieno)
+
+                val view = success(h.leave(h.otieno, call.callId, cause))
+
+                assertEquals(EndReason.DROPPED, view.call.endReason)
+                assertEquals(cause, h.stored(call).participant(h.otieno)?.leftCause)
+                assertEquals(null, h.stored(call).participant(h.wanjiru)?.leftCause, "the other phone said nothing")
+                val event = h.bus.published.single()
+                assertTrue(event.data.toString().contains("\"DROPPED\""), "CallEnded says DROPPED")
+                assertIs<CallFrame.Ended>(
+                    h.frames.sent
+                        .last()
+                        .second,
+                )
+            }
+        }
+
+    @Test
+    fun `hanging up on purpose or without a cause still ends the call completed`() =
+        runTest {
+            for (cause in listOf(LeaveCause.USER_HANGUP, LeaveCause.REMOTE_LEFT, null)) {
+                val h = Harness()
+                val call = h.call()
+                h.joined(call, h.wanjiru)
+                h.joined(call, h.otieno)
+
+                assertEquals(EndReason.COMPLETED, success(h.leave(h.wanjiru, call.callId, cause)).call.endReason)
+                assertEquals(cause, h.stored(call).participant(h.wanjiru)?.leftCause)
+            }
+        }
+
+    @Test
+    fun `a stall doesn't turn a cancel or a group call going on into a drop, and a rejoin clears the cause`() =
+        runTest {
+            val h = Harness()
+            val direct = h.call()
+            h.joined(direct, h.wanjiru)
+            assertEquals(
+                EndReason.CANCELLED,
+                success(h.leave(h.wanjiru, direct.callId, LeaveCause.STALL)).call.endReason,
+            )
+            assertEquals(LeaveCause.STALL, h.stored(direct).participant(h.wanjiru)?.leftCause)
+
+            val group = h.call(h.group)
+            h.joined(group, h.wanjiru)
+            h.joined(group, h.otieno)
+            h.joined(group, h.achieng)
+            success(h.leave(h.achieng, group.callId, LeaveCause.STALL))
+            assertEquals(CallState.ACTIVE, h.stored(group).state)
+            assertEquals(LeaveCause.STALL, h.stored(group).participant(h.achieng)?.leftCause)
+            h.joined(group, h.achieng)
+            assertEquals(null, h.stored(group).participant(h.achieng)?.leftCause, "a rejoin starts over")
+        }
+
+    @Test
+    fun `a cause the server doesn't know is kept as other, and a body without one is no cause`() {
+        assertEquals(LeaveCause.OTHER, leaveCauseOf("""{"cause":"BATTERY_DIED"}"""))
+        assertEquals(LeaveCause.STALL, leaveCauseOf("""{"cause":"stall"}"""))
+        assertEquals(null, leaveCauseOf(null))
+        assertEquals(null, leaveCauseOf(""))
+        assertEquals(null, leaveCauseOf("{}"))
+        assertEquals(null, leaveCauseOf("not json"))
+        assertEquals(null, leaveCauseOf("""{"cause":42}"""))
+    }
+
+    @Test
+    fun `a report is stored for someone the call rang, and a repeat replaces it`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            success(h.leave(h.otieno, call.callId, LeaveCause.RECONNECT_GAVE_UP))
+            h.now = h.now.plus(Duration.ofHours(3))
+
+            success(h.sendReport(h.report(call, h.otieno, "STALL")))
+            success(h.sendReport(h.report(call, h.otieno)))
+
+            val stored =
+                h.reports.rows.values
+                    .single()
+            assertEquals("RECONNECT_GAVE_UP", stored.endCause)
+            assertEquals(h.now, stored.receivedAt, "stamped when it came")
+            assertEquals(listOf("Ringing", "down"), stored.events.map { it.detail })
+        }
+
+    @Test
+    fun `a report from someone who was never in the call, or for no call, is not found`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            assertEquals(CallsError.NotFound, failure(h.sendReport(h.report(call, h.achieng))))
+            val other = call.copy(callId = CallId.new())
+            assertEquals(CallsError.NotFound, failure(h.sendReport(h.report(other, h.wanjiru))))
+            assertTrue(h.reports.rows.isEmpty())
+        }
+
+    @Test
+    fun `the 31st report in an hour is rate limited with when to try again`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            repeat(30) { success(h.sendReport(h.report(call, h.wanjiru))) }
+
+            val refused = failure(h.sendReport(h.report(call, h.wanjiru)))
+
+            assertEquals("calls.report_rate_limited", refused.code)
+            assertEquals(1_800L, refused.details?.retryAfterSeconds)
+        }
+
+    @Test
+    fun `staff see a person's calls newest first, and a call with each phone's cause and report`() =
+        runTest {
+            val h = Harness()
+            val first = h.call()
+            h.joined(first, h.wanjiru)
+            h.joined(first, h.otieno)
+            success(h.leave(h.otieno, first.callId, LeaveCause.STALL))
+            success(h.sendReport(h.report(first, h.otieno)))
+            Thread.sleep(2) // call ids are UUIDv7: a later millisecond sorts after
+            val second = h.call(h.group)
+
+            val page = h.admin.callsOf(h.otieno, null, 1).getOrNull()!!
+            assertEquals(listOf(second.callId), page.items.map { it.callId })
+            val rest = h.admin.callsOf(h.otieno, page.nextCursor, 1).getOrNull()!!
+            assertEquals(listOf(first.callId), rest.items.map { it.callId })
+            assertEquals("DROPPED", rest.items.single().endReason)
+            assertEquals(1, rest.items.single().reports)
+            assertEquals("request.malformed", (h.admin.callsOf(h.otieno, "nope", 1) as Resource.Error).error.code)
+
+            val sheet = h.admin.call(first.callId)!!
+            val otieno = sheet.participants.single { it.userId == h.otieno }
+            assertEquals("STALL", otieno.leftCause)
+            assertEquals("RECONNECT_GAVE_UP", otieno.report?.endCause)
+            assertEquals(
+                84.0,
+                otieno.report
+                    ?.samples
+                    ?.single()
+                    ?.rttMs,
+            )
+            assertNull(sheet.participants.single { it.userId == h.wanjiru }.report)
+            assertNull(h.admin.call(CallId.new()))
+        }
+}
+
+/** CL7 and CL10 through Ktor, as the app sends them, with the caller set as the gateway would. */
+class CallRoutesTest {
+    private val h = Harness()
+
+    private fun ApplicationTestBuilder.serve(caller: UserId) {
+        application {
+            installJson()
+            installStatusPages()
+            intercept(ApplicationCallPipeline.Plugins) {
+                call.attributes.put(
+                    CallPrincipalKey,
+                    CallPrincipal(caller, DeviceId.new(), java.util.UUID.randomUUID(), Scope.APP),
+                )
+            }
+            routing { route("/v1") { callController(h.service) } }
+        }
+    }
+
+    private suspend fun HttpResponse.code(): String? =
+        Json
+            .parseToJsonElement(bodyAsText())
+            .jsonObject["code"]
+            ?.jsonPrimitive
+            ?.content
+
+    private suspend fun active(): Call {
+        val call = h.call()
+        h.joined(call, h.wanjiru)
+        h.joined(call, h.otieno)
+        return call
+    }
+
+    private fun reportBody(events: Int = 2, extra: String = ""): String {
+        val lines = (0 until events).joinToString(",") { """{"t":${it * 100},"type":"net","detail":"offline"}""" }
+        return """{"platform":"ios","appVersion":"1.4.2 (61)","osVersion":"18.1","deviceModel":"iPhone15,2",""" +
+            """"video":false,"outgoing":false,"startedAt":"2026-10-29T10:00:00Z","endedAt":"2026-10-29T10:02:42Z",""" +
+            """"endCause":"REMOTE_ENDED","events":[$lines],"samples":[{"t":5000,"rttMs":84.0,"jitterMs":null}],""" +
+            """"summary":{"durationMs":162000,"reconnects":0}$extra}"""
+    }
+
+    @Test
+    fun `CL7 works with no body and no content type, as older apps send it`() =
+        testApplication {
+            val call = active()
+            serve(h.otieno)
+
+            val left = client.post("/v1/calls/${call.callId}/leave")
+
+            assertEquals(HttpStatusCode.OK, left.status, left.bodyAsText())
+            assertEquals(EndReason.COMPLETED, h.stored(call).endReason)
+            assertNull(h.stored(call).participant(h.otieno)?.leftCause)
+        }
+
+    @Test
+    fun `CL7 with a cause keeps it, and a stall ends the call dropped`() =
+        testApplication {
+            val call = active()
+            serve(h.otieno)
+
+            val left =
+                client.post("/v1/calls/${call.callId}/leave") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"cause":"STALL"}""")
+                }
+
+            assertEquals(HttpStatusCode.OK, left.status)
+            assertTrue(left.bodyAsText().contains("\"endReason\":\"DROPPED\""))
+            assertEquals(LeaveCause.STALL, h.stored(call).participant(h.otieno)?.leftCause)
+        }
+
+    @Test
+    fun `CL7 with an empty body, junk or an unknown cause still hangs up`() =
+        testApplication {
+            val call = active()
+            serve(h.otieno)
+
+            val left =
+                client.post("/v1/calls/${call.callId}/leave") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"cause":"PHONE_ON_FIRE"}""")
+                }
+            assertEquals(HttpStatusCode.OK, left.status)
+            assertEquals(LeaveCause.OTHER, h.stored(call).participant(h.otieno)?.leftCause)
+            for (body in listOf("", "{", "x".repeat(10_000))) {
+                val again =
+                    client.post("/v1/calls/${call.callId}/leave") {
+                        contentType(ContentType.Application.Json)
+                        setBody(body)
+                    }
+                assertEquals(HttpStatusCode.OK, again.status, "body '${body.take(10)}'")
+            }
+        }
+
+    @Test
+    fun `CL10 stores a report and answers received`() =
+        testApplication {
+            val call = active()
+            serve(h.otieno)
+
+            val sent =
+                client.post("/v1/calls/${call.callId}/report") {
+                    contentType(ContentType.Application.Json)
+                    setBody(reportBody())
+                }
+
+            assertEquals(HttpStatusCode.OK, sent.status, sent.bodyAsText())
+            assertTrue(sent.bodyAsText().contains("\"received\":true"))
+            val stored =
+                h.reports.rows.values
+                    .single()
+            assertEquals("ios", stored.platform)
+            assertEquals("REMOTE_ENDED", stored.endCause)
+            assertEquals(null, stored.samples.single().jitterMs)
+            assertEquals(2, stored.events.size)
+        }
+
+    @Test
+    fun `CL10 refuses a non-participant, a missing field, too many events, a long field and a body over 64 KiB`() =
+        testApplication {
+            val call = active()
+            serve(h.achieng)
+
+            suspend fun send(body: String) =
+                client.post("/v1/calls/${call.callId}/report") {
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
+
+            val stranger = send(reportBody())
+            assertEquals(HttpStatusCode.NotFound, stranger.status)
+            assertEquals("calls.not_found", stranger.code())
+            assertEquals("calls.report_invalid", send(reportBody().replace(""""platform":"ios",""", "")).code())
+            assertEquals("calls.report_invalid", send(reportBody(events = 401)).code())
+            assertEquals("calls.report_invalid", send(reportBody().replace("iPhone15,2", "x".repeat(81))).code())
+            assertEquals(
+                "calls.report_invalid",
+                send(reportBody().replace(""""t":100""", """"t":-1""")).code(),
+            )
+            val huge = send(reportBody(extra = ""","padding":"${"x".repeat(70_000)}""""))
+            assertEquals(HttpStatusCode.BadRequest, huge.status)
+            assertEquals("calls.report_invalid", huge.code())
+            assertEquals("request.malformed", send("{not json").code())
+            assertEquals("calls.report_invalid", client.post("/v1/calls/${call.callId}/report").code())
+            assertTrue(h.reports.rows.isEmpty())
+        }
+
+    @Test
+    fun `CL10's 31st report in an hour is 429 with Retry-After`() =
+        testApplication {
+            val call = active()
+            serve(h.otieno)
+            repeat(30) {
+                val ok =
+                    client.post("/v1/calls/${call.callId}/report") {
+                        contentType(ContentType.Application.Json)
+                        setBody(reportBody())
+                    }
+                assertEquals(HttpStatusCode.OK, ok.status)
+            }
+            val refused =
+                client.post("/v1/calls/${call.callId}/report") {
+                    contentType(ContentType.Application.Json)
+                    setBody(reportBody())
+                }
+            assertEquals(HttpStatusCode.TooManyRequests, refused.status)
+            assertEquals("calls.report_rate_limited", refused.code())
+            assertEquals("1800", refused.headers[HttpHeaders.RetryAfter])
         }
 }

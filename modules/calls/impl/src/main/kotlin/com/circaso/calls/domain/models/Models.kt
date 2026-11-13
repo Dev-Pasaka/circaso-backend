@@ -12,7 +12,35 @@ enum class CallState { RINGING, ACTIVE, ENDED }
 
 enum class ParticipantState { INVITED, JOINED, DECLINED, MISSED, LEFT }
 
-enum class EndReason { COMPLETED, CANCELLED, MISSED, DECLINED }
+/**
+ * How a call ended. [DROPPED] (2026-11-13): nobody hung up on purpose. The leave that ended it said the media stalled
+ * or reconnecting gave up, or the idle sweep ended a call every phone had gone quiet on.
+ */
+enum class EndReason { COMPLETED, CANCELLED, MISSED, DECLINED, DROPPED }
+
+/**
+ * Why a phone left a call, as it says on CL7 (2026-11-13). Stored on the leaver's row for staff to read; a cause this
+ * build doesn't know is kept as [OTHER], never refused.
+ */
+enum class LeaveCause {
+    USER_HANGUP,
+    REMOTE_LEFT,
+    STALL,
+    RECONNECT_GAVE_UP,
+    JOIN_FAILED,
+    PERMISSION_DENIED,
+    ENGINE_FAILED,
+    APP_KILLED,
+    OTHER,
+    ;
+
+    /** The phone lost the call rather than hanging up: a leave for this that ends the call ends it `DROPPED`. */
+    val isDrop: Boolean get() = this == STALL || this == RECONNECT_GAVE_UP
+
+    companion object {
+        fun parse(raw: String): LeaveCause = entries.firstOrNull { it.name == raw.trim().uppercase() } ?: OTHER
+    }
+}
 
 /** A track a joined participant publishes: the name others pull it by, `audio` or `video`, and its mid at the SFU. */
 data class CallTrack(val trackName: String, val kind: String, val mid: String)
@@ -40,6 +68,8 @@ data class Participant(
      * cropped, and say they are sharing. The phone swaps what feeds the track; nothing is renegotiated.
      */
     val screen: Boolean = false,
+    /** Why they last left, when their phone said (CL7); cleared when they join again. */
+    val leftCause: LeaveCause? = null,
 ) {
     val isJoined: Boolean get() = state == ParticipantState.JOINED
     val isConnected: Boolean get() = isJoined && connectedAt != null

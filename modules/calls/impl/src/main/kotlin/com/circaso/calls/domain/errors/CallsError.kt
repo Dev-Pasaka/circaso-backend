@@ -1,11 +1,17 @@
 package com.circaso.calls.domain.errors
 
 import com.circaso.shared.DomainError
+import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.FieldError
 
 /** Calls' own codes (Calls → Error codes). */
-sealed class CallsError(override val code: String, override val message: String, override val kind: ErrorKind) :
-    DomainError {
+sealed class CallsError(
+    override val code: String,
+    override val message: String,
+    override val kind: ErrorKind,
+    override val details: ErrorDetails? = null,
+) : DomainError {
     data object NotFound : CallsError("calls.not_found", "We couldn't find that call.", ErrorKind.NOT_FOUND)
 
     data object NotAMember : CallsError("calls.not_a_member", "You're not in this chat.", ErrorKind.NOT_FOUND)
@@ -43,4 +49,22 @@ sealed class CallsError(override val code: String, override val message: String,
         "We couldn't connect the call right now. Try again.",
         ErrorKind.UPSTREAM,
     )
+
+    /** A call report with a field missing or too long, too many events or samples, or a body over 64 KiB. */
+    class ReportInvalid(field: String, problem: String) :
+        CallsError(
+            "calls.report_invalid",
+            "That call report isn't valid.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError(field, problem))),
+        )
+
+    /** More than 30 call reports from one person in an hour; [retryAfterSeconds] says when to try again. */
+    class ReportRateLimited(retryAfterSeconds: Long) :
+        CallsError(
+            "calls.report_rate_limited",
+            "Too many call reports. Try again later.",
+            ErrorKind.RATE_LIMITED,
+            ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
 }

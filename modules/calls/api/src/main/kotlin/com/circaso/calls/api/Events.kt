@@ -8,8 +8,8 @@ import kotlinx.serialization.Serializable
 // Published on `events:calls`.
 
 /**
- * A call ended, once per call: how it ended (`COMPLETED`, `CANCELLED`, `MISSED`, `DECLINED`), who was in it, and how
- * long it lasted ([startedAt] is null when nobody answered). For a call log in the chat later.
+ * A call ended, once per call: how it ended (`COMPLETED`, `CANCELLED`, `MISSED`, `DECLINED`, `DROPPED`), who was in
+ * it, and how long it lasted ([startedAt] is null when nobody answered). For a call log in the chat later.
  */
 @Serializable
 data class CallEnded(

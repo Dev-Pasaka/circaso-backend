@@ -21,6 +21,8 @@ sealed class OpsError(override val code: String, override val message: String, o
         ErrorKind.NOT_FOUND,
     )
 
+    data object CallNotFound : OpsError("ops.call_not_found", "There is no such call.", ErrorKind.NOT_FOUND)
+
     data object GroupNotFound : OpsError("ops.group_not_found", "There is no such group.", ErrorKind.NOT_FOUND)
 
     data object StaffNotFound : OpsError("ops.staff_not_found", "There is no such staff member.", ErrorKind.NOT_FOUND)
