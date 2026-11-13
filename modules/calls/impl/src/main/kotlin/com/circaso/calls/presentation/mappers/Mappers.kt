@@ -66,7 +66,6 @@ fun JoinRequest.toCommand(userId: UserId, callId: CallId): Resource<JoinCommand>
             callId,
             offer,
             tracks.map { TrackOffer(it.mid, it.trackName, it.kind) },
-            pullConnected = pull,
         ),
     )
 }
@@ -127,7 +126,7 @@ fun CallView.toResponse(): CallResponse =
         iceServers = iceServers.map { IceServerDto(it.urls, it.username, it.credential) },
     )
 
-fun Joined.toResponse() = JoinResponse(sessionId, answerSdp, view.toResponse(), pulled?.toResponse())
+fun Joined.toResponse() = JoinResponse(sessionId, answerSdp, view.toResponse())
 
 fun Pulled.toResponse() =
     PullResponse(

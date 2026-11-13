@@ -59,8 +59,8 @@ data class JoinRequest(
     val offer: String,
     val tracks: List<TrackOfferDto>,
     /**
-     * Also pull everyone already connected, in the same request (2026-11-13): their tracks come back in
-     * [JoinResponse.pull] to answer with CL5 right away. Optional, so older apps (which pull with CL4) are unchanged.
+     * Ignored since 2026-11-14 (it asked for a pull in the same request, which the SFU can't make before this phone's
+     * connection is up: it held the join ~11 s). Still accepted so the 2026-11-13 apps' joins aren't malformed.
      */
     val pull: Boolean = false,
 )
@@ -76,13 +76,7 @@ data class TrackOfferDto(
 )
 
 @Serializable
-data class JoinResponse(
-    val sessionId: String,
-    val answer: String,
-    val call: CallResponse,
-    /** With [JoinRequest.pull]: the pull of everyone already connected, as CL4 answers it; null when none was made. */
-    val pull: PullResponse? = null,
-)
+data class JoinResponse(val sessionId: String, val answer: String, val call: CallResponse)
 
 /** CL3b `POST /calls/{callId}/connected`: this phone's peer connection under [sessionId] is `connected`. */
 @Serializable

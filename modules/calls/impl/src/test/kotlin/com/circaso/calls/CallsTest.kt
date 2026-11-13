@@ -118,6 +118,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -321,6 +322,9 @@ private class TestMedia : CallMedia {
     var down = false
     var pullDown = false
 
+    /** How many pulls the SFU was asked for. */
+    var pulls = 0
+
     /** How long the SFU takes to answer a pull and a close (virtual time under runTest). */
     var pullMillis = 0L
     var closeMillis = 0L
@@ -347,6 +351,7 @@ private class TestMedia : CallMedia {
     }
 
     override suspend fun pullTracks(sessionId: String, tracks: List<RemoteTrack>): Resource<PulledTracks> {
+        pulls++
         if (pullMillis > 0) delay(pullMillis)
         if (pullDown) return Resource.error(IntegrationError.Unavailable("SFU"))
         val pulled = tracks.map { PulledTrack(it.trackName, it.sessionId, "${++mids}") }
@@ -482,11 +487,7 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
         video: Boolean = false,
     ): Call = success(start(by, chat, video)).call
 
-    suspend fun joined(
-        call: Call,
-        who: UserId,
-        pull: Boolean = false,
-    ): Joined =
+    suspend fun joined(call: Call, who: UserId): Joined =
         success(
             join(
                 JoinCommand(
@@ -494,7 +495,6 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
                     call.callId,
                     "v=0 offer",
                     listOf(TrackOffer("0", "audio-$who", "audio"), TrackOffer("1", "video-$who", "video")),
-                    pullConnected = pull,
                 ),
             ),
         )
@@ -1528,47 +1528,37 @@ class CallRoutesTest {
         }
 
     @Test
-    fun `joining with pull pulls everyone already connected in the same request, and nobody who isn't`() =
+    fun `joining never pulls, even with everyone else connected, so the join answers as soon as the push does`() =
         runTest {
+            // 2026-11-14: a pull inside the join was held by the SFU until the joiner's connection came up, which it
+            // couldn't without this answer: CL3 took 11.5 s and the SFU refused the pull (425) in the end.
             val h = Harness()
             val call = h.call(chat = h.group)
             val caller = h.joined(call, h.wanjiru)
             h.connected(ConnectedCommand(h.wanjiru, call.callId, caller.sessionId))
-            h.joined(call, h.achieng) // joined, never connected: the SFU would hold a pull of them ~9 s
+            val pullsBefore = h.media.pulls
 
-            val joined = h.joined(call, h.otieno, pull = true)
+            h.joined(call, h.otieno)
 
-            val pulled = assertNotNull(joined.pulled)
-            assertEquals(setOf(h.wanjiru), pulled.tracks.map { it.userId }.toSet())
-            assertEquals(setOf("audio-${h.wanjiru}", "video-${h.wanjiru}"), pulled.tracks.map { it.trackName }.toSet())
-            assertTrue(pulled.requiresRenegotiation)
-            assertEquals("v=0 offer for ${joined.sessionId}", pulled.offerSdp)
+            assertEquals(pullsBefore, h.media.pulls, "the SFU was asked for no pull")
+            assertEquals(ParticipantState.JOINED, h.state(call, h.otieno))
         }
 
     @Test
-    fun `joining without pull, or with nobody connected, pulls nothing`() =
-        runTest {
-            val h = Harness()
+    fun `an older app's join that still says pull is accepted, and its answer carries no pull`() =
+        testApplication {
             val call = h.call()
             h.joined(call, h.wanjiru)
-            assertNull(h.joined(call, h.otieno, pull = true).pulled, "the caller isn't connected yet")
-            val call2 = h.call(chat = h.group)
-            val first = h.joined(call2, h.wanjiru)
-            h.connected(ConnectedCommand(h.wanjiru, call2.callId, first.sessionId))
-            assertNull(h.joined(call2, h.otieno).pulled, "an older app didn't ask")
-        }
-
-    @Test
-    fun `a pull that fails at join is no failed join`() =
-        runTest {
-            val h = Harness()
-            val call = h.call()
-            val caller = h.joined(call, h.wanjiru)
-            h.connected(ConnectedCommand(h.wanjiru, call.callId, caller.sessionId))
-            h.media.pullDown = true
-            val joined = h.joined(call, h.otieno, pull = true)
-            assertNull(joined.pulled)
-            assertEquals(ParticipantState.JOINED, h.state(call, h.otieno))
+            serve(h.otieno)
+            val response =
+                client.post("/v1/calls/${call.callId}/join") {
+                    contentType(ContentType.Application.Json)
+                    setBody(
+                        """{"offer":"v=0 offer","tracks":[{"mid":"0","trackName":"audio-x","kind":"audio"}],"pull":true}""",
+                    )
+                }
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertFalse(response.bodyAsText().contains("\"pull\""))
         }
 
     @Test
