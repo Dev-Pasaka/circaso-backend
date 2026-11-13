@@ -35,6 +35,9 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
 
     /** A person's calls and each call's reports from the phones, to see why a call dropped (2026-11-13). */
     CALLS_READ("calls.read", setOf(ADMIN, SUPPORT)),
+
+    /** Diagnostic logs phones sent from You → Help (2026-11-13); opening one is audited. */
+    DIAGNOSTICS_READ("diagnostics.read", setOf(ADMIN, SUPPORT)),
     STAFF_MANAGE("staff.manage", setOf(ADMIN)),
     AUDIT_READ("audit.read", setOf(ADMIN)),
     SUPPORT_ACCOUNTS_MANAGE("support_accounts.manage", setOf(ADMIN)),

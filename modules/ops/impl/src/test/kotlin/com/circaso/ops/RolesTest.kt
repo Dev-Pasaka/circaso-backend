@@ -36,6 +36,7 @@ class RolesTest {
     private val transfer = Uuid7.generate()
     private val otherStaff = Uuid7.generate()
     private val droppedCall = harness.calls.dropped(user, UserId.new())
+    private val log = harness.logs.add(user)
 
     init {
         harness.groups.groups[chat] = OpsGroup(chat, 3, user, EPOCH)
@@ -69,6 +70,8 @@ class RolesTest {
             Call("GET", "/v1/ops/groups/${chat.value}", Permission.GROUPS_READ),
             Call("GET", "/v1/ops/users/$user/calls", Permission.CALLS_READ),
             Call("GET", "/v1/ops/calls/$droppedCall", Permission.CALLS_READ),
+            Call("GET", "/v1/ops/diagnostics?userId=$user", Permission.DIAGNOSTICS_READ),
+            Call("GET", "/v1/ops/diagnostics/${log.logId}", Permission.DIAGNOSTICS_READ),
             Call("GET", "/v1/ops/tickets", Permission.TICKETS_READ),
             Call("GET", "/v1/ops/tickets/$ticket", Permission.TICKETS_READ),
             Call("POST", "/v1/ops/tickets/$ticket/replies", Permission.TICKETS_WRITE, """{"body":"On it."}"""),

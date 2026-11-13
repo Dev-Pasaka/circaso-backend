@@ -49,3 +49,16 @@ interface RealtimeLog {
 }
 
 data class LoggedFrame(val seq: Long, val json: String)
+
+/**
+ * How many diagnostic logs one user may send in a window (2026-11-13: 5 an hour). Lives in Redis (`sup:logs:{userId}`),
+ * like [TicketAllowance], so a phone stuck re-sending costs the database nothing.
+ */
+interface LogAllowance {
+    /** Counts one log for [userId]; the seconds to wait when [max] in [window] is used up, else null. */
+    suspend fun take(
+        userId: UserId,
+        max: Long,
+        window: Duration,
+    ): Long?
+}
