@@ -154,6 +154,9 @@ Money starts and ends in the chat. There is no separate payment form.
 - A message notification shows who sent it, with their profile photo (their initials when they have none), the name
   you saved for them, and what they said ("📷 Photo", "🎤 Voice message" for media). A group's shows the group's name
   and who wrote. Money shows the sender's photo and the amount in your own currency. iPhone and Android both.
+- Reactions to your moment ("Amina reacted ❤️ to your moment"), replies to it, missed calls and contacts who join
+  Circaso show that person's photo and the name you saved for them too. One moment's reactions gather in one
+  notification, a line per person, and it buzzes at most once a minute; tap it to open your moment.
 - **Reply from the notification**, on iPhone and Android: on a message's notification tap **Reply** (on iPhone, press and
   hold it first), type and **Send**; it goes like one typed in the chat, without opening Circaso,
   and the chat counts as read. **Mark as read** clears it. Not for money notifications, chats you've left or people
