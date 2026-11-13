@@ -70,7 +70,10 @@ data class PushPayload(
     val walletId: String? = null,
     /** A group payout request (`chama.request.*`), added 2026-11-06. */
     val requestId: String? = null,
-    /** The person a push is about (a group contribution's member, a contact who joined), added 2026-11-06. */
+    /**
+     * The person a push is about (a group contribution's member, a contact who joined, who reacted to my moment, who
+     * called), added 2026-11-06: the phone shows their photo and the name it knows them by.
+     */
     val userId: String? = null,
     /** The support ticket a `support.ticket` push is about (added 2026-11-08): a tap opens it. */
     val ticketId: String? = null,
@@ -83,6 +86,12 @@ data class PushPayload(
     val senderId: String? = null,
     val sentAt: String? = null,
     val ciphertext: String? = null,
+    /**
+     * A reaction on my moment (`moment.loved`, added 2026-11-14): which moment, and the emoji. [userId] is the person
+     * who reacted, so the phone names them as I saved them and shows their photo, as for a chat message.
+     */
+    val momentId: String? = null,
+    val reaction: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

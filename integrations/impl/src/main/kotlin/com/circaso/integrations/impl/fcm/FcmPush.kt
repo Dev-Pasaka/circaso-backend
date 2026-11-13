@@ -148,6 +148,8 @@ class FcmPush(
                 senderId = ids.senderId,
                 sentAt = ids.sentAt,
                 ciphertext = ids.ciphertext,
+                momentId = ids.momentId,
+                reaction = ids.reaction,
                 title = message.title.takeIf { message.dataOnly && !message.silent && ids.kind != null },
                 body = message.body.takeIf { message.dataOnly && !message.silent && ids.kind != null },
             ).takeIf { it != FcmData() }
@@ -272,6 +274,8 @@ private data class FcmData(
     val senderId: String? = null,
     val sentAt: String? = null,
     val ciphertext: String? = null,
+    val momentId: String? = null,
+    val reaction: String? = null,
     val title: String? = null,
     val body: String? = null,
 )

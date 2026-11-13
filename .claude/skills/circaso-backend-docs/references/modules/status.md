@@ -12,7 +12,7 @@ Built 2026-11-03 (Spaces phase 1). **Moments**: WhatsApp-style statuses that liv
 
 ### Contract (`status:api`)
 - `MomentId`.
-- Frames (`StatusFrames`): `status.posted` (`MomentPostedFrame {momentId, posterId}`) to the audience, `status.deleted` (`MomentDeletedFrame {momentId, posterId}`) to the audience, `status.viewed` (`MomentViewedFrame {momentId, viewerId, viewedAt, reacted, reaction, viewerName}`) to the poster. `viewerName` is set only when the frame adds or changes a reaction to an emoji, and the gateway pushes exactly those to an offline poster: "Name reacted 😂 to your moment", `kind` `moment.loved` (the name kept from the heart-only first version). Plain views and cleared reactions never push.
+- Frames (`StatusFrames`): `status.posted` (`MomentPostedFrame {momentId, posterId}`) to the audience, `status.deleted` (`MomentDeletedFrame {momentId, posterId}`) to the audience, `status.viewed` (`MomentViewedFrame {momentId, viewerId, viewedAt, reacted, reaction, viewerName}`) to the poster. `viewerName` is set only when the frame adds or changes a reaction to an emoji, and the gateway pushes every frame with a reaction to an offline poster: "Name reacted 😂 to your moment", `kind` `moment.loved` (the name kept from the heart-only first version), data-only since 2026-11-14 with `userId` (the reactor), `momentId` and `reaction`, so the phone names them as it knows them and shows their photo. Plain views and cleared reactions never push.
 - Nothing else asks status anything yet.
 
 ### Integrations used

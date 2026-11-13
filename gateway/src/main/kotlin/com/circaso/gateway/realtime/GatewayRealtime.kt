@@ -267,10 +267,13 @@ class GatewayRealtime(
             "${UsersFrames.MODULE}.${UsersFrames.CONTACT_JOINED}" -> {
                 val joined = decode(ContactJoinedFrame.serializer(), frame)
                 val name = joined?.displayName
+                // Data-only (2026-11-14): the phone names them as it knows them and shows their photo; the text here is
+                // the fallback for a phone that can't.
                 PushMessage(
                     "Circaso",
                     "${name ?: "Someone you know"} is on Circaso",
                     PushPayload(kind = "contact.joined", userId = joined?.userId?.toString()),
+                    dataOnly = joined?.userId != null,
                 )
             }
 
@@ -281,6 +284,7 @@ class GatewayRealtime(
                     "Circaso",
                     "${name ?: "Someone"} connected with you",
                     PushPayload(kind = "connection.added", userId = added?.userId?.toString()),
+                    dataOnly = added?.userId != null,
                 )
             }
 
@@ -666,14 +670,24 @@ class GatewayRealtime(
         }
     }
 
-    /** Only a frame that names the viewer, which status does when it adds or changes a reaction. */
+    /**
+     * Only a frame with a reaction, which status sends when one is added or changed. Data-only with the reactor's id,
+     * the moment and the emoji (2026-11-14): the phone names them as it knows them (a saved name first), shows their
+     * photo as a chat message does, gathers one moment's reactions in one notification and says only "Someone
+     * reacted to your moment" with Notification privacy on. The text here is the fallback for a phone that can't.
+     */
     private fun reactionPush(frame: MomentViewedFrame): PushMessage? {
-        val name = frame.viewerName ?: return null
         val reaction = frame.reaction ?: return null
         return PushMessage(
             "Circaso",
-            "$name reacted $reaction to your moment",
-            PushPayload(kind = MOMENT_LOVED_KIND),
+            "${frame.viewerName ?: "Someone"} reacted $reaction to your moment",
+            PushPayload(
+                kind = MOMENT_LOVED_KIND,
+                userId = frame.viewerId.toString(),
+                momentId = frame.momentId.toString(),
+                reaction = reaction,
+            ),
+            dataOnly = true,
         )
     }
 
@@ -724,7 +738,13 @@ class GatewayRealtime(
         if (me.state != "MISSED") return null
         val caller = frame.participants.firstOrNull { it.userId == frame.startedBy }?.displayName ?: "Someone"
         val text = "Missed call from $caller"
-        val ids = PushPayload(chatId = frame.chatId.toString(), callId = frame.callId.toString())
+        // The caller's id too (2026-11-14): the phone shows their photo and the name it knows them by.
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                callId = frame.callId.toString(),
+                userId = frame.startedBy.toString(),
+            )
         return when (frame.endReason) {
             // Data-only (2026-11-06): the phone words it itself, so Notification privacy can say just "Missed call".
             "MISSED" -> PushMessage("Missed call", text, ids.copy(kind = "call.missed"), dataOnly = true)
@@ -779,7 +799,10 @@ private const val CONTRIBUTION_KIND = "chama.contribution"
 /** A group payout request moved: `chama.request.pending|approved|payable|declined|paid`. */
 private const val REQUEST_KIND = "chama.request"
 
-/** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
+/**
+ * A reaction on my moment (the kind is still named for the first, a heart): `userId` who reacted, `momentId`, `reaction`
+ * the emoji; the app opens my moment.
+ */
 private const val MOMENT_LOVED_KIND = "moment.loved"
 
 /** Someone's new phone asked for keys to my moments: a silent push, `userId` the requester. */
