@@ -8,6 +8,8 @@ import com.circaso.calls.domain.models.CallTrack
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
 import com.circaso.calls.domain.models.ParticipantState
+import com.circaso.calls.domain.models.Pulled
+import com.circaso.calls.domain.models.PulledFrom
 import com.circaso.calls.domain.repositories.CallRepository
 import com.circaso.calls.domain.support.CallChanges
 import com.circaso.calls.domain.support.CallNotices
@@ -18,6 +20,7 @@ import com.circaso.calls.domain.support.People
 import com.circaso.calls.domain.support.orMediaUnavailable
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.LocalTrack
+import com.circaso.integrations.api.RemoteTrack
 import com.circaso.shared.Resource
 import java.time.Clock
 
@@ -61,7 +64,37 @@ class JoinCall(
             return changed
         }
         val after = (changed as Resource.Success).data.after
-        return Resource.success(Joined(sessionId, answer, views.view(after)))
+        val pulled = if (command.pullConnected) pullConnected(after, command, sessionId) else null
+        return Resource.success(Joined(sessionId, answer, views.view(after), pulled))
+    }
+
+    /**
+     * Everyone else already connected (CL3b), pulled into the joiner's fresh session in this request (2026-11-13). The
+     * SFU answers a pull on a session that isn't connected yet in ~0.3 s, and 0.8 to 2.6 s once it is, so pulling
+     * here, before the phone's connection comes up, took the person answering a call from hearing the caller ~2 s
+     * after their own connection to hearing them as it connects. Only connected publishers: the SFU holds a pull of
+     * one that isn't for ~9 s. A failed pull is no failed join: the phone pulls with CL4 as before.
+     */
+    private suspend fun pullConnected(
+        call: Call,
+        command: JoinCommand,
+        sessionId: String,
+    ): Pulled? {
+        val publishers = call.joined.filter { it.userId != command.userId && it.isConnected && it.sessionId != null }
+        val wanted =
+            publishers.flatMap { p ->
+                p.sessionId?.let { session -> p.tracks.map { RemoteTrack(session, it.trackName) } }.orEmpty()
+            }
+        if (wanted.isEmpty()) return null
+        val pulled = (media.pullTracks(sessionId, wanted) as? Resource.Success)?.data ?: return null
+        val owners = publishers.associate { it.sessionId to it.userId }
+        val tracks =
+            pulled.tracks.mapNotNull { track ->
+                val owner = owners[track.sessionId] ?: return@mapNotNull null
+                val mid = track.mid ?: return@mapNotNull null
+                PulledFrom(owner, track.trackName, mid)
+            }
+        return Pulled(pulled.offerSdp, pulled.requiresRenegotiation, tracks)
     }
 
     private fun joined(

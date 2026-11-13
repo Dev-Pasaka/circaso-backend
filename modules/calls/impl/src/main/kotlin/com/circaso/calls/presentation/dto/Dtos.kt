@@ -55,7 +55,15 @@ data class IceServerDto(val urls: List<String>, val username: String? = null, va
 
 /** CL3 `POST /calls/{callId}/join`: the phone's offer and the tracks in it. */
 @Serializable
-data class JoinRequest(val offer: String, val tracks: List<TrackOfferDto>)
+data class JoinRequest(
+    val offer: String,
+    val tracks: List<TrackOfferDto>,
+    /**
+     * Also pull everyone already connected, in the same request (2026-11-13): their tracks come back in
+     * [JoinResponse.pull] to answer with CL5 right away. Optional, so older apps (which pull with CL4) are unchanged.
+     */
+    val pull: Boolean = false,
+)
 
 @Serializable
 data class TrackOfferDto(
@@ -68,7 +76,13 @@ data class TrackOfferDto(
 )
 
 @Serializable
-data class JoinResponse(val sessionId: String, val answer: String, val call: CallResponse)
+data class JoinResponse(
+    val sessionId: String,
+    val answer: String,
+    val call: CallResponse,
+    /** With [JoinRequest.pull]: the pull of everyone already connected, as CL4 answers it; null when none was made. */
+    val pull: PullResponse? = null,
+)
 
 /** CL3b `POST /calls/{callId}/connected`: this phone's peer connection under [sessionId] is `connected`. */
 @Serializable
@@ -186,3 +200,7 @@ data class ReportSummaryDto(
 
 @Serializable
 data class ReportReceivedResponse(val received: Boolean = true)
+
+/** `calls/heartbeat` from the phone over the socket (2026-11-13): it is still on [callId]. */
+@Serializable
+data class HeartbeatFrameDto(val callId: String)

@@ -7,8 +7,8 @@ import com.circaso.calls.domain.models.CallKind
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallView
 import com.circaso.calls.domain.ports.CallFrame
-import com.circaso.calls.domain.ports.FrameSender
 import com.circaso.calls.domain.repositories.CallRepository
+import com.circaso.calls.domain.support.CallNotices
 import com.circaso.calls.domain.support.CallRules
 import com.circaso.calls.domain.support.CallViews
 import com.circaso.calls.domain.support.People
@@ -29,7 +29,7 @@ class StartCall(
     private val people: People,
     private val calls: CallRepository,
     private val views: CallViews,
-    private val frames: FrameSender,
+    private val notices: CallNotices,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(
@@ -68,7 +68,8 @@ class StartCall(
         }
 
         val ringing = CallFrame.Ringing(call.callId, chatId, call.kind, userId, people.name(userId))
-        frames.send(members - userId, ringing)
+        // Rung after the answer: the caller starts joining while the push services take their time (2026-11-13).
+        notices.ring(members - userId, ringing)
         return Resource.success(views.view(call))
     }
 }

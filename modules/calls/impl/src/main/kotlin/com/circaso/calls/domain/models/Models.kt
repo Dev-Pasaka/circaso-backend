@@ -27,6 +27,9 @@ enum class LeaveCause {
     REMOTE_LEFT,
     STALL,
     RECONNECT_GAVE_UP,
+
+    /** The other person's phone went quiet (no media, no heartbeat) and never came back (2026-11-13). */
+    PEER_LOST,
     JOIN_FAILED,
     PERMISSION_DENIED,
     ENGINE_FAILED,
@@ -35,7 +38,7 @@ enum class LeaveCause {
     ;
 
     /** The phone lost the call rather than hanging up: a leave for this that ends the call ends it `DROPPED`. */
-    val isDrop: Boolean get() = this == STALL || this == RECONNECT_GAVE_UP
+    val isDrop: Boolean get() = this == STALL || this == RECONNECT_GAVE_UP || this == PEER_LOST
 
     companion object {
         fun parse(raw: String): LeaveCause = entries.firstOrNull { it.name == raw.trim().uppercase() } ?: OTHER
@@ -115,10 +118,24 @@ data class JoinCommand(
     val callId: CallId,
     val offerSdp: String,
     val tracks: List<TrackOffer>,
+    /**
+     * Pull everyone already connected in the same request (2026-11-13), while the joiner's own connection is still
+     * fresh: the SFU answers a pull on a new session in ~0.3 s, on one that is connected in 0.8 to 2.6 s.
+     */
+    val pullConnected: Boolean = false,
 )
 
-/** The joiner's own session and the SFU's answer, with the call as it now is. */
-data class Joined(val sessionId: String, val answerSdp: String, val view: CallView)
+/**
+ * The joiner's own session and the SFU's answer, with the call as it now is; [pulled] is the pull of everyone already
+ * connected when the phone asked for it ([JoinCommand.pullConnected]), null when nothing was pulled or the pull
+ * failed (the phone then pulls with CL4 as before).
+ */
+data class Joined(
+    val sessionId: String,
+    val answerSdp: String,
+    val view: CallView,
+    val pulled: Pulled? = null,
+)
 
 /** A track the phone wants to receive: whose, and by which name. */
 data class TrackWanted(val userId: UserId, val trackName: String)
@@ -141,6 +158,9 @@ data class RenegotiateCommand(
     val sessionId: String,
     val answerSdp: String,
 )
+
+/** A phone in a call says it is still there (`calls/heartbeat`, 2026-11-13). */
+data class HeartbeatCommand(val userId: UserId, val callId: CallId)
 
 /** CL3b: the phone's connection to the SFU under [sessionId] is up. */
 data class ConnectedCommand(val userId: UserId, val callId: CallId, val sessionId: String)

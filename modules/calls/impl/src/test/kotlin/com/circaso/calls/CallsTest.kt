@@ -11,6 +11,7 @@ import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallView
 import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.EndReason
+import com.circaso.calls.domain.models.HeartbeatCommand
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
 import com.circaso.calls.domain.models.LeaveCause
@@ -27,6 +28,8 @@ import com.circaso.calls.domain.models.TrackWanted
 import com.circaso.calls.domain.ports.CallFrame
 import com.circaso.calls.domain.ports.CallsOutbox
 import com.circaso.calls.domain.ports.FrameSender
+import com.circaso.calls.domain.ports.HeartbeatCache
+import com.circaso.calls.domain.ports.LiveCallFrames
 import com.circaso.calls.domain.ports.ReportAllowance
 import com.circaso.calls.domain.ports.Transactor
 import com.circaso.calls.domain.repositories.CallReportRepository
@@ -45,6 +48,7 @@ import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.ListCallsOfUser
 import com.circaso.calls.domain.usecases.PullTracks
+import com.circaso.calls.domain.usecases.RelayHeartbeat
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReportConnected
 import com.circaso.calls.domain.usecases.SendCallReport
@@ -250,6 +254,39 @@ private class RecordingFrames : FrameSender {
     inline fun <reified T : CallFrame> ofType() = sent.filter { it.second is T }
 }
 
+private class RecordingLiveFrames : LiveCallFrames {
+    val beats = mutableListOf<Triple<Set<UserId>, CallId, UserId>>()
+
+    override suspend fun heartbeat(
+        userIds: Collection<UserId>,
+        callId: CallId,
+        from: UserId,
+    ) {
+        beats += Triple(userIds.toSet(), callId, from)
+    }
+}
+
+/** `cal:hb:*` in memory; [second] stands for Redis's one-second marker expiring. */
+private class MemoryHeartbeatCache : HeartbeatCache {
+    val marks = mutableSetOf<String>()
+    var joinedKept: MutableMap<CallId, Set<UserId>> = mutableMapOf()
+    var reads = 0
+
+    fun nextSecond() {
+        marks.clear()
+        joinedKept.clear()
+    }
+
+    override suspend fun take(callId: CallId, userId: UserId): Boolean = marks.add("$callId:$userId")
+
+    override suspend fun joined(callId: CallId): Set<UserId>? = joinedKept[callId]
+
+    override suspend fun keepJoined(callId: CallId, userIds: Set<UserId>) {
+        reads++
+        joinedKept[callId] = userIds
+    }
+}
+
 private class MemoryBus : EventBus {
     val published = mutableListOf<EventEnvelope>()
 
@@ -282,6 +319,7 @@ private class RecordingOutbox : CallsOutbox {
 /** The SFU: made-up sessions and SDP, remembering what each session publishes; fails on demand. */
 private class TestMedia : CallMedia {
     var down = false
+    var pullDown = false
 
     /** How long the SFU takes to answer a pull and a close (virtual time under runTest). */
     var pullMillis = 0L
@@ -310,6 +348,7 @@ private class TestMedia : CallMedia {
 
     override suspend fun pullTracks(sessionId: String, tracks: List<RemoteTrack>): Resource<PulledTracks> {
         if (pullMillis > 0) delay(pullMillis)
+        if (pullDown) return Resource.error(IntegrationError.Unavailable("SFU"))
         val pulled = tracks.map { PulledTrack(it.trackName, it.sessionId, "${++mids}") }
         return Resource.success(PulledTracks("v=0 offer for $sessionId", pulled.isNotEmpty(), pulled))
     }
@@ -361,7 +400,10 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
         }
     val changes = CallChanges(calls, MemoryTransactor(calls), outbox, bus, notices)
     val sessions = Sessions(calls)
-    val start = StartCall(people, calls, views, frames, clock)
+    val start = StartCall(people, calls, views, notices, clock)
+    val heartbeatCache = MemoryHeartbeatCache()
+    val liveFrames = RecordingLiveFrames()
+    val heartbeat = RelayHeartbeat(calls, heartbeatCache, liveFrames)
     val get = GetCall(people, calls, views)
     val live = GetLiveCall(people, calls, views)
     val join = JoinCall(people, calls, media, changes, notices, views, clock)
@@ -440,7 +482,11 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
         video: Boolean = false,
     ): Call = success(start(by, chat, video)).call
 
-    suspend fun joined(call: Call, who: UserId): Joined =
+    suspend fun joined(
+        call: Call,
+        who: UserId,
+        pull: Boolean = false,
+    ): Joined =
         success(
             join(
                 JoinCommand(
@@ -448,6 +494,7 @@ private class Harness(background: CoroutineScope = CoroutineScope(Dispatchers.Un
                     call.callId,
                     "v=0 offer",
                     listOf(TrackOffer("0", "audio-$who", "audio"), TrackOffer("1", "video-$who", "video")),
+                    pullConnected = pull,
                 ),
             ),
         )
@@ -1478,5 +1525,90 @@ class CallRoutesTest {
             assertEquals(HttpStatusCode.TooManyRequests, refused.status)
             assertEquals("calls.report_rate_limited", refused.code())
             assertEquals("1800", refused.headers[HttpHeaders.RetryAfter])
+        }
+
+    @Test
+    fun `joining with pull pulls everyone already connected in the same request, and nobody who isn't`() =
+        runTest {
+            val h = Harness()
+            val call = h.call(chat = h.group)
+            val caller = h.joined(call, h.wanjiru)
+            h.connected(ConnectedCommand(h.wanjiru, call.callId, caller.sessionId))
+            h.joined(call, h.achieng) // joined, never connected: the SFU would hold a pull of them ~9 s
+
+            val joined = h.joined(call, h.otieno, pull = true)
+
+            val pulled = assertNotNull(joined.pulled)
+            assertEquals(setOf(h.wanjiru), pulled.tracks.map { it.userId }.toSet())
+            assertEquals(setOf("audio-${h.wanjiru}", "video-${h.wanjiru}"), pulled.tracks.map { it.trackName }.toSet())
+            assertTrue(pulled.requiresRenegotiation)
+            assertEquals("v=0 offer for ${joined.sessionId}", pulled.offerSdp)
+        }
+
+    @Test
+    fun `joining without pull, or with nobody connected, pulls nothing`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            assertNull(h.joined(call, h.otieno, pull = true).pulled, "the caller isn't connected yet")
+            val call2 = h.call(chat = h.group)
+            val first = h.joined(call2, h.wanjiru)
+            h.connected(ConnectedCommand(h.wanjiru, call2.callId, first.sessionId))
+            assertNull(h.joined(call2, h.otieno).pulled, "an older app didn't ask")
+        }
+
+    @Test
+    fun `a pull that fails at join is no failed join`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            val caller = h.joined(call, h.wanjiru)
+            h.connected(ConnectedCommand(h.wanjiru, call.callId, caller.sessionId))
+            h.media.pullDown = true
+            val joined = h.joined(call, h.otieno, pull = true)
+            assertNull(joined.pulled)
+            assertEquals(ParticipantState.JOINED, h.state(call, h.otieno))
+        }
+
+    @Test
+    fun `a heartbeat is relayed to everyone else joined, at most once a second, and never from outside the call`() =
+        runTest {
+            val h = Harness()
+            val call = h.call(chat = h.group)
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+
+            assertIs<Resource.Success<Unit>>(h.heartbeat(HeartbeatCommand(h.wanjiru, call.callId)))
+            assertEquals(Triple(setOf(h.otieno), call.callId, h.wanjiru), h.liveFrames.beats.single())
+
+            h.heartbeat(HeartbeatCommand(h.wanjiru, call.callId))
+            assertEquals(1, h.liveFrames.beats.size, "a phone repeating itself within the second costs nothing")
+
+            h.heartbeat(HeartbeatCommand(h.otieno, call.callId))
+            assertEquals(1, h.heartbeatCache.reads, "who is joined is read once and kept")
+            assertEquals(
+                setOf(h.wanjiru),
+                h.liveFrames.beats
+                    .last()
+                    .first,
+            )
+
+            assertEquals(CallsError.NotInCall, failure(h.heartbeat(HeartbeatCommand(h.achieng, call.callId))))
+            assertEquals(2, h.liveFrames.beats.size)
+            assertEquals(CallsError.NotFound, failure(h.heartbeat(HeartbeatCommand(h.wanjiru, CallId.new()))))
+        }
+
+    @Test
+    fun `a heartbeat for an ended call is refused`() =
+        runTest {
+            val h = Harness()
+            val call = h.call()
+            h.joined(call, h.wanjiru)
+            h.joined(call, h.otieno)
+            h.leave(h.wanjiru, call.callId, null)
+            h.heartbeatCache.nextSecond()
+            assertEquals(CallsError.CallEnded, failure(h.heartbeat(HeartbeatCommand(h.otieno, call.callId))))
+            assertTrue(h.liveFrames.beats.isEmpty())
         }
 }
