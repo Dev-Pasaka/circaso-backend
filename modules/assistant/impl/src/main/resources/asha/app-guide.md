@@ -114,6 +114,11 @@ Money starts and ends in the chat. There is no separate payment form.
 8. On a one-to-one call, money the other person sends you lands on your call screen as it arrives, for example
    "Juma sent you KES 500", the same way contributions land on a group call.
 - Calls are labelled "Secure call".
+- If the other person's phone drops off the network, your call screen says so within a few seconds, for example
+  "Rhoda's connection dropped · Reconnecting…" (on a group call their tile says "reconnecting"), and the call picks up
+  again by itself when they're back. If your own phone loses its connection it says "Reconnecting…" ("You're offline ·
+  Reconnecting…" with no network at all) and reconnects on its own. A call that can't come back within about 45
+  seconds ends; call again.
 - An incoming call rings even if you've only just left Circaso. On Android it opens full screen when the phone is
   locked or idle, and shows a call banner with Answer and Decline over other apps (the phone's own rule, as for every
   calling app). On iPhone it rings like a phone call; to make calls full screen over other apps, iPhone Settings →

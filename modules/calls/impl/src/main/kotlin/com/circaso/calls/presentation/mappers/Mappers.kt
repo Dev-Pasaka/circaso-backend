@@ -61,7 +61,13 @@ fun JoinRequest.toCommand(userId: UserId, callId: CallId): Resource<JoinCommand>
         return Resource.error(SharedError.Malformed("tracks", "names a track twice"))
     }
     return Resource.success(
-        JoinCommand(userId, callId, offer, tracks.map { TrackOffer(it.mid, it.trackName, it.kind) }),
+        JoinCommand(
+            userId,
+            callId,
+            offer,
+            tracks.map { TrackOffer(it.mid, it.trackName, it.kind) },
+            pullConnected = pull,
+        ),
     )
 }
 
@@ -121,7 +127,7 @@ fun CallView.toResponse(): CallResponse =
         iceServers = iceServers.map { IceServerDto(it.urls, it.username, it.credential) },
     )
 
-fun Joined.toResponse() = JoinResponse(sessionId, answerSdp, view.toResponse())
+fun Joined.toResponse() = JoinResponse(sessionId, answerSdp, view.toResponse(), pulled?.toResponse())
 
 fun Pulled.toResponse() =
     PullResponse(

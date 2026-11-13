@@ -4,7 +4,9 @@ import com.circaso.calls.api.CallFrames
 import com.circaso.calls.api.Calls
 import com.circaso.calls.api.CallsAdmin
 import com.circaso.calls.data.cache.CallsExpiry
+import com.circaso.calls.data.cache.LiveCallFramesImpl
 import com.circaso.calls.data.cache.RealtimeFramesImpl
+import com.circaso.calls.data.cache.RedisHeartbeatCache
 import com.circaso.calls.data.cache.RedisReportAllowance
 import com.circaso.calls.data.repositories.CallReportRepositoryImpl
 import com.circaso.calls.data.repositories.CallRepositoryImpl
@@ -17,6 +19,8 @@ import com.circaso.calls.data.tables.ReportsTable
 import com.circaso.calls.data.tables.TracksTable
 import com.circaso.calls.domain.ports.CallsOutbox
 import com.circaso.calls.domain.ports.FrameSender
+import com.circaso.calls.domain.ports.HeartbeatCache
+import com.circaso.calls.domain.ports.LiveCallFrames
 import com.circaso.calls.domain.ports.RealtimeLog
 import com.circaso.calls.domain.ports.ReportAllowance
 import com.circaso.calls.domain.ports.Transactor
@@ -37,6 +41,7 @@ import com.circaso.calls.domain.usecases.JoinCall
 import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.ListCallsOfUser
 import com.circaso.calls.domain.usecases.PullTracks
+import com.circaso.calls.domain.usecases.RelayHeartbeat
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReplayFrames
 import com.circaso.calls.domain.usecases.ReportConnected
@@ -45,16 +50,20 @@ import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
 import com.circaso.calls.presentation.api.CallsAdminImpl
 import com.circaso.calls.presentation.api.CallsImpl
+import com.circaso.calls.presentation.api.CallsRealtimeInbound
 import com.circaso.calls.presentation.api.CallsRealtimeReplay
 import com.circaso.calls.presentation.controllers.callController
 import com.circaso.calls.presentation.services.CallAdminService
 import com.circaso.calls.presentation.services.CallEventsService
+import com.circaso.calls.presentation.services.CallPresenceService
 import com.circaso.calls.presentation.services.CallService
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
+import com.circaso.shared.Realtime
+import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
 import com.circaso.web.RouteContributor
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -104,6 +113,8 @@ fun callsModule(config: Config): Module =
             )
         }
         single<FrameSender> { get<RealtimeFramesImpl>() }
+        single<LiveCallFrames> { LiveCallFramesImpl(get<Realtime>(), clock) }
+        single<HeartbeatCache> { RedisHeartbeatCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<RealtimeLog> { get<RealtimeFramesImpl>() }
         single(named("calls.purge-expired")) {
             val expiry = CallsExpiry(get(named("calls.database")))
@@ -140,11 +151,13 @@ fun callsModule(config: Config): Module =
         single { SendCallReport(get(), get(), get(), clock) }
         single { ListCallsOfUser(get()) }
         single { GetCallRecord(get(), get()) }
+        single { RelayHeartbeat(get(), get(), get()) }
 
         // presentation
         single { CallService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CallAdminService(get(), get()) }
         single { CallEventsService(get(), get(), get()) }
+        single { CallPresenceService(get()) }
         single<RouteContributor>(named("calls.routes")) {
             val calls = get<CallService>()
             RouteContributor { route -> route.callController(calls) }
@@ -152,6 +165,7 @@ fun callsModule(config: Config): Module =
         single<Calls> { CallsImpl(get()) }
         single<CallsAdmin> { CallsAdminImpl(get()) }
         single(named("calls.replay")) { RealtimeModule(CallFrames.MODULE, CallsRealtimeReplay(get())) }
+        single(named("calls.inbound")) { RealtimeInboundModule(CallFrames.MODULE, CallsRealtimeInbound(get())) }
     }
 
 /**

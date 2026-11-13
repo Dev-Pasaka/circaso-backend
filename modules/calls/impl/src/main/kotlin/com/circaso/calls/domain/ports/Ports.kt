@@ -68,3 +68,29 @@ interface ReportAllowance {
         window: Duration,
     ): Long?
 }
+
+/**
+ * The live frames that are never kept or replayed (`call.heartbeat`): one envelope to everyone named, `seq` 0, through
+ * `Realtime.deliverMany`. A failure is logged and dropped; the next heartbeat follows in 2 seconds.
+ */
+interface LiveCallFrames {
+    suspend fun heartbeat(
+        userIds: Collection<UserId>,
+        callId: CallId,
+        from: UserId,
+    )
+}
+
+/**
+ * What a heartbeat needs from Redis (`cal:hb:*`), so a phone saying it is there every 2 seconds costs no database read
+ * each time: at most one relay per person and call per second, and who is joined in the call, kept a few seconds.
+ */
+interface HeartbeatCache {
+    /** True the first time [userId] beats for [callId] in this second; false for a phone repeating itself faster. */
+    suspend fun take(callId: CallId, userId: UserId): Boolean
+
+    /** The people joined in [callId] as last read, or null when not kept (or gone stale). */
+    suspend fun joined(callId: CallId): Set<UserId>?
+
+    suspend fun keepJoined(callId: CallId, userIds: Set<UserId>)
+}
