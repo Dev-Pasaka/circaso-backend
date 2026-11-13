@@ -1,6 +1,8 @@
 package com.circaso.identity.domain.usecases
 
 import com.circaso.identity.domain.repositories.AccountAdminRepository
+import com.circaso.identity.domain.repositories.AccountRepository
+import com.circaso.identity.domain.support.AbandonedSignUps
 import com.circaso.shared.Resource
 import java.time.Clock
 import java.time.Duration
@@ -25,6 +27,7 @@ class CountPendingSignUps(private val admin: AccountAdminRepository, private val
 }
 
 /** Deletes them, with their logins and log, as the sweep does; returns how many went. */
-class DeletePendingSignUps(private val sweep: SweepPendingAccounts, private val clock: Clock) {
-    suspend operator fun invoke(): Resource<Int> = sweep.startedBefore(PendingSignUpRules.cutoff(clock))
+class DeletePendingSignUps(private val accounts: AccountRepository, private val clock: Clock) {
+    suspend operator fun invoke(): Resource<Int> =
+        Resource.success(AbandonedSignUps.deleteStartedBefore(accounts, PendingSignUpRules.cutoff(clock)))
 }

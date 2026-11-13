@@ -15,7 +15,6 @@ import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SessionStatus
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.Changes
-import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.usecases.CountActiveUsers
 import com.circaso.identity.domain.usecases.CountPendingSignUps
 import com.circaso.identity.domain.usecases.CountSignUps
@@ -23,7 +22,6 @@ import com.circaso.identity.domain.usecases.DeletePendingSignUps
 import com.circaso.identity.domain.usecases.FindAccountsByEmail
 import com.circaso.identity.domain.usecases.ListNewestAccounts
 import com.circaso.identity.domain.usecases.SuspendAccount
-import com.circaso.identity.domain.usecases.SweepPendingAccounts
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainException
@@ -105,8 +103,7 @@ class AdminDataTest {
             assertEquals(listOf(person.userId), shown.accounts.map { it.account.userId })
             assertEquals(1L, CountPendingSignUps(admin, clock)().data())
 
-            val sweep = SweepPendingAccounts(pg.accounts, IdentityConfig(), clock)
-            assertEquals(1, DeletePendingSignUps(sweep, clock)().data())
+            assertEquals(1, DeletePendingSignUps(pg.accounts, clock)().data())
 
             val left =
                 ListNewestAccounts(
