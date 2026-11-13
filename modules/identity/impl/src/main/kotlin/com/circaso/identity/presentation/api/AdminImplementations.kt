@@ -43,8 +43,15 @@ class AccountAdminImpl(private val admin: AccountAdminService) : AccountAdmin {
 
     override suspend fun findByEmail(email: String): List<UserId> = admin.findByEmail(email).getOrNull().orEmpty()
 
-    override suspend fun newest(cursor: String?, limit: Int): Resource<AccountPage> =
-        admin.newest(cursor, limit).map { it.toAdmin() }
+    override suspend fun newest(
+        cursor: String?,
+        limit: Int,
+        includePending: Boolean,
+    ): Resource<AccountPage> = admin.newest(cursor, limit, includePending).map { it.toAdmin() }
+
+    override suspend fun pendingSignUps(): Long = admin.pendingSignUps().getOrThrow()
+
+    override suspend fun deletePendingSignUps(): Resource<Int> = admin.deletePendingSignUps()
 
     override suspend fun devices(userId: UserId): List<AdminDevice> =
         admin

@@ -62,8 +62,10 @@ import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.CompleteDeletions
 import com.circaso.identity.domain.usecases.CountActiveUsers
+import com.circaso.identity.domain.usecases.CountPendingSignUps
 import com.circaso.identity.domain.usecases.CountSignUps
 import com.circaso.identity.domain.usecases.CreateSupportAccount
+import com.circaso.identity.domain.usecases.DeletePendingSignUps
 import com.circaso.identity.domain.usecases.FindAccountByPhone
 import com.circaso.identity.domain.usecases.FindAccountsByEmail
 import com.circaso.identity.domain.usecases.GetAccountCreatedAt
@@ -340,6 +342,8 @@ fun identityModule(config: Config): Module =
         single { FindAccountByPhone(get()) }
         single { FindAccountsByEmail(get()) }
         single { ListNewestAccounts(get()) }
+        single { CountPendingSignUps(get(), clock) }
+        single { DeletePendingSignUps(get(), clock) }
         single { ListAccountDevices(get(), get()) }
         single { ListAccountSessions(get(), clock) }
         single { SuspendAccount(get(), get(), get(), get(), get(), get(), get()) }
@@ -360,7 +364,22 @@ fun identityModule(config: Config): Module =
         single { VaultService(get(), get(), get(), get()) }
         single { KeyBackupService(get(), get(), get(), get(), get(), get(), get()) }
         single { WebDeletionService(get()) }
-        single { AccountAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            AccountAdminService(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
         single<RouteContributor>(named("identity.routes")) {
             val auth = get<AuthService>()
             val phone = get<PhoneService>()

@@ -23,8 +23,18 @@ interface AccountAdminRepository {
     /** Accounts with a login on [email], compared lowercased (`provider_links_email_idx`), at most [limit]. */
     suspend fun byEmail(email: String, limit: Int): List<UserId>
 
-    /** Every account newest first, strictly after [after] in `(created_at, user_id) DESC` order, at most [limit]. */
-    suspend fun newest(after: AccountKey?, limit: Int): List<Account>
+    /**
+     * Every account newest first, strictly after [after] in `(created_at, user_id) DESC` order, at most [limit]; without
+     * the unfinished sign-ups (`PENDING_PHONE`) unless [includePending].
+     */
+    suspend fun newest(
+        after: AccountKey?,
+        limit: Int,
+        includePending: Boolean,
+    ): List<Account>
+
+    /** Unfinished sign-ups (`PENDING_PHONE`) started before [createdBefore] (`accounts_pending_idx`). */
+    suspend fun pendingCount(createdBefore: Instant): Long
 
     /** Every phone the account registered, newest first. */
     suspend fun devices(userId: UserId): List<Device>

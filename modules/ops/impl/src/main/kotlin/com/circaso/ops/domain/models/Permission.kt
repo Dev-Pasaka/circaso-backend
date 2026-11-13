@@ -20,6 +20,9 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     USERS_MONEY("users.money", setOf(ADMIN, FINANCE)),
     USERS_TICKETS("users.tickets", setOf(ADMIN, SUPPORT)),
     USERS_SUSPEND("users.suspend", setOf(ADMIN, SUPPORT)),
+
+    /** Deleting unfinished sign-ups now rather than at the 30-day sweep (2026-11-13). */
+    USERS_CLEANUP("users.cleanup", setOf(ADMIN)),
     TRANSACTIONS_READ("transactions.read", setOf(ADMIN, FINANCE)),
     FINANCE_READ("finance.read", setOf(ADMIN, FINANCE)),
 

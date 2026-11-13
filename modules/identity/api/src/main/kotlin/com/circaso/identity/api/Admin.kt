@@ -75,8 +75,24 @@ interface AccountAdmin {
     /** Accounts with a Google or Apple sign-in on [email], compared case-insensitively. */
     suspend fun findByEmail(email: String): List<UserId>
 
-    /** Every account, newest first. Error: `request.malformed` for a cursor that isn't one. [limit] 1-200. */
-    suspend fun newest(cursor: String?, limit: Int): Resource<AccountPage>
+    /**
+     * Every account, newest first; unfinished sign-ups (`PENDING_PHONE`) only with [includePending]. Error:
+     * `request.malformed` for a cursor that isn't one. [limit] 1-200.
+     */
+    suspend fun newest(
+        cursor: String?,
+        limit: Int,
+        includePending: Boolean,
+    ): Resource<AccountPage>
+
+    /** Unfinished sign-ups (Google/Apple sign-in, no phone yet) started over an hour ago: what a clean-up would delete. */
+    suspend fun pendingSignUps(): Long
+
+    /**
+     * Deletes the unfinished sign-ups started over an hour ago, with their logins and log, as the 30-day sweep does
+     * (never activated, so no other module knows them). Returns how many went.
+     */
+    suspend fun deletePendingSignUps(): Resource<Int>
 
     /** The account's phones, newest first. */
     suspend fun devices(userId: UserId): List<AdminDevice>

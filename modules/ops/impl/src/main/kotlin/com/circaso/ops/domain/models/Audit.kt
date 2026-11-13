@@ -30,6 +30,7 @@ enum class AuditTarget(val wire: String) {
 enum class AuditAction(val wire: String, val target: AuditTarget) {
     USER_SUSPEND("user.suspend", AuditTarget.USER),
     USER_UNSUSPEND("user.unsuspend", AuditTarget.USER),
+    USERS_PENDING_DELETE("users.pending_delete", AuditTarget.USER),
     TICKET_REPLY("ticket.reply", AuditTarget.TICKET),
     TICKET_NOTE("ticket.note", AuditTarget.TICKET),
     TICKET_ASSIGN("ticket.assign", AuditTarget.TICKET),

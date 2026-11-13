@@ -6,6 +6,8 @@ import com.circaso.ops.domain.models.TicketLine
 import com.circaso.ops.domain.models.UserAccount
 import com.circaso.ops.domain.models.UserDevices
 import com.circaso.ops.domain.models.UserPage
+import com.circaso.ops.domain.usecases.CountPendingSignUps
+import com.circaso.ops.domain.usecases.DeletePendingSignUps
 import com.circaso.ops.domain.usecases.GetUserAccount
 import com.circaso.ops.domain.usecases.GetUserDevices
 import com.circaso.ops.domain.usecases.ListUserGroups
@@ -25,12 +27,19 @@ class UserService(
     private val listUserTickets: ListUserTickets,
     private val suspendUser: SuspendUser,
     private val unsuspendUser: UnsuspendUser,
+    private val countPendingSignUps: CountPendingSignUps,
+    private val deletePendingSignUps: DeletePendingSignUps,
 ) {
     suspend fun search(
         query: String,
         cursor: String?,
         limit: Int,
-    ): Resource<UserPage> = searchUsers(query, cursor, limit)
+        includePending: Boolean,
+    ): Resource<UserPage> = searchUsers(query, cursor, limit, includePending)
+
+    suspend fun pendingSignUps(): Resource<Long> = countPendingSignUps()
+
+    suspend fun deletePendingSignUps(actor: Actor): Resource<Int> = deletePendingSignUps.invoke(actor)
 
     suspend fun account(userId: UserId): Resource<UserAccount> = getUserAccount(userId)
 

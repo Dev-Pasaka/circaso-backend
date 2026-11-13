@@ -16,7 +16,9 @@ import com.circaso.identity.domain.models.SessionStatus
 import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.usecases.CountActiveUsers
+import com.circaso.identity.domain.usecases.CountPendingSignUps
 import com.circaso.identity.domain.usecases.CountSignUps
+import com.circaso.identity.domain.usecases.DeletePendingSignUps
 import com.circaso.identity.domain.usecases.FindAccountsByEmail
 import com.circaso.identity.domain.usecases.ListNewestAccounts
 import com.circaso.identity.domain.usecases.SuspendAccount
@@ -27,6 +29,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
 import kotlinx.coroutines.runBlocking
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -79,13 +82,36 @@ class AdminDataTest {
             val pending = account(now.minusSeconds(10), AccountStatus.PENDING_PHONE)
             val list = ListNewestAccounts(admin)
 
-            val first = list(null, 2).data()
-            val second = list(first.nextCursor, 2).data()
+            val first = list(null, 2, includePending = true).data()
+            val second = list(first.nextCursor, 2, includePending = true).data()
 
             assertEquals(tied.map { it.userId }, first.accounts.map { it.account.userId })
             assertEquals(listOf(pending.userId, oldest.userId), second.accounts.map { it.account.userId })
             assertNull(second.nextCursor)
-            assertEquals("request.malformed", list("not-a-cursor", 2).errorCode())
+            assertEquals("request.malformed", list("not-a-cursor", 2, includePending = true).errorCode())
+        }
+
+    @Test
+    fun `unfinished sign-ups are hidden by default, counted, and cleaned up except the last hour's`() =
+        runBlocking<Unit> {
+            val person = account(now.minusSeconds(7200))
+            val robot = account(now.minusSeconds(7200), AccountStatus.PENDING_PHONE)
+            val typingNow = account(now.minusSeconds(60), AccountStatus.PENDING_PHONE)
+            val clock = Clock.fixed(now, ZoneOffset.UTC)
+
+            val shown = ListNewestAccounts(admin)(null, 10, includePending = false).data()
+            assertEquals(listOf(person.userId), shown.accounts.map { it.account.userId })
+            assertEquals(1L, CountPendingSignUps(admin, clock)().data())
+
+            assertEquals(1, DeletePendingSignUps(pg.accounts, clock)().data())
+
+            val left =
+                ListNewestAccounts(
+                    admin,
+                )(null, 10, includePending = true).data().accounts.map { it.account.userId }
+            assertEquals(setOf(person.userId, typingNow.userId), left.toSet())
+            assertTrue(robot.userId !in left)
+            assertEquals(0L, CountPendingSignUps(admin, clock)().data())
         }
 
     @Test

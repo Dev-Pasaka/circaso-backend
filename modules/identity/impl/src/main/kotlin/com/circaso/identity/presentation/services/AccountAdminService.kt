@@ -7,7 +7,9 @@ import com.circaso.identity.domain.models.AccountRecordPage
 import com.circaso.identity.domain.models.DeviceRecord
 import com.circaso.identity.domain.models.SessionRecord
 import com.circaso.identity.domain.usecases.CountActiveUsers
+import com.circaso.identity.domain.usecases.CountPendingSignUps
 import com.circaso.identity.domain.usecases.CountSignUps
+import com.circaso.identity.domain.usecases.DeletePendingSignUps
 import com.circaso.identity.domain.usecases.FindAccountByPhone
 import com.circaso.identity.domain.usecases.FindAccountsByEmail
 import com.circaso.identity.domain.usecases.GetAccountRecords
@@ -34,6 +36,8 @@ class AccountAdminService(
     private val unsuspendAccount: UnsuspendAccount,
     private val countSignUps: CountSignUps,
     private val countActiveUsers: CountActiveUsers,
+    private val countPendingSignUps: CountPendingSignUps,
+    private val deletePendingSignUps: DeletePendingSignUps,
 ) {
     suspend fun accounts(ids: Set<UserId>): Resource<Map<UserId, AccountRecord>> = getAccountRecords(ids)
 
@@ -41,7 +45,15 @@ class AccountAdminService(
 
     suspend fun findByEmail(email: String): Resource<List<UserId>> = findAccountsByEmail(email)
 
-    suspend fun newest(cursor: String?, limit: Int): Resource<AccountRecordPage> = listNewestAccounts(cursor, limit)
+    suspend fun newest(
+        cursor: String?,
+        limit: Int,
+        includePending: Boolean,
+    ): Resource<AccountRecordPage> = listNewestAccounts(cursor, limit, includePending)
+
+    suspend fun pendingSignUps(): Resource<Long> = countPendingSignUps()
+
+    suspend fun deletePendingSignUps(): Resource<Int> = deletePendingSignUps.invoke()
 
     suspend fun devices(userId: UserId): Resource<List<DeviceRecord>> = listAccountDevices(userId)
 
