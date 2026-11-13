@@ -118,24 +118,10 @@ data class JoinCommand(
     val callId: CallId,
     val offerSdp: String,
     val tracks: List<TrackOffer>,
-    /**
-     * Pull everyone already connected in the same request (2026-11-13), while the joiner's own connection is still
-     * fresh: the SFU answers a pull on a new session in ~0.3 s, on one that is connected in 0.8 to 2.6 s.
-     */
-    val pullConnected: Boolean = false,
 )
 
-/**
- * The joiner's own session and the SFU's answer, with the call as it now is; [pulled] is the pull of everyone already
- * connected when the phone asked for it ([JoinCommand.pullConnected]), null when nothing was pulled or the pull
- * failed (the phone then pulls with CL4 as before).
- */
-data class Joined(
-    val sessionId: String,
-    val answerSdp: String,
-    val view: CallView,
-    val pulled: Pulled? = null,
-)
+/** The joiner's own session and the SFU's answer, with the call as it now is. */
+data class Joined(val sessionId: String, val answerSdp: String, val view: CallView)
 
 /** A track the phone wants to receive: whose, and by which name. */
 data class TrackWanted(val userId: UserId, val trackName: String)

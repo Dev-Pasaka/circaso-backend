@@ -113,9 +113,10 @@ fun Route.callController(calls: CallService) {
                         "$SCOPE $IDEMPOTENT The server opens an SFU session for this connection, pushes the " +
                             "tracks in the offer and answers with the SFU's SDP. Keep `sessionId` for CL4 and CL5. " +
                             "The second person in makes the call `ACTIVE`; everyone gets `calls/call.updated`. " +
-                            "At most 8 people at once. Joining again replaces your earlier session. With " +
-                            "`pull: true` everyone already connected is pulled in the same request and returned as " +
-                            "`pull` (CL4's answer): answer its offer with CL5 at once.",
+                            "At most 8 people at once. Joining again replaces your earlier session. " +
+                            "Nothing is pulled here (`pull` is ignored since 2026-11-14): set the answer, " +
+                            "then pull with CL4 at once; the SFU holds that pull until your connection is up " +
+                            "(at most 5 s) and answers then.",
                 )
 
                 post("connected") {
