@@ -1121,6 +1121,7 @@ class SocketHubTest {
             assertTrue(missed.dataOnly, "the phone words it, so Notification privacy can hide the name")
             assertEquals("Missed call from Wanjiru", missed.body)
             assertEquals("call.missed", missed.data.kind)
+            assertEquals(caller.toString(), missed.data.userId, "the phone shows the caller's photo")
             assertTrue(cancelled.dataOnly, "the phone stops ringing and words it itself")
         }
 
@@ -1461,36 +1462,53 @@ class SocketHubTest {
         }
 
     @Test
-    fun `a reaction on my moment pushes the emoji and the name, a plain view or a cleared reaction never`() =
+    fun `a moment reaction pushes data-only with who, the moment and the emoji, never a view or a cleared one`() =
         runBlocking {
             val push = RecordingPush()
             val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val poster = UserId.new()
             val momentId = MomentId.new()
             val at = Instant.parse("2026-11-03T09:00:00Z")
+            val amina = UserId.new()
+            val baraka = UserId.new()
+            val unnamed = UserId.new()
 
             fun viewed(
                 seq: Long,
+                viewer: UserId,
                 reaction: String?,
                 name: String?,
             ) = RealtimeEnvelope.of(
                 StatusFrames.MODULE,
                 StatusFrames.VIEWED,
                 seq,
-                MomentViewedFrame(momentId, UserId.new(), at, reaction != null, viewerName = name, reaction = reaction),
+                MomentViewedFrame(momentId, viewer, at, reaction != null, viewerName = name, reaction = reaction),
                 MomentViewedFrame.serializer(),
             )
-            realtime.deliver(poster, viewed(1, null, null)) // a plain view
-            realtime.deliver(poster, viewed(2, "😂", "Amina"))
-            realtime.deliver(poster, viewed(3, null, null)) // cleared
-            realtime.deliver(poster, viewed(4, "🔥", null)) // no name: status found no profile
-            realtime.deliver(poster, viewed(5, "\u2764\uFE0F", "Baraka"))
+            realtime.deliver(poster, viewed(1, amina, null, null)) // a plain view
+            realtime.deliver(poster, viewed(2, amina, "😂", "Amina"))
+            realtime.deliver(poster, viewed(3, amina, null, null)) // cleared
+            realtime.deliver(poster, viewed(4, unnamed, "🔥", null)) // no name: the phone names them from their id
+            realtime.deliver(poster, viewed(5, baraka, "\u2764\uFE0F", "Baraka"))
 
             assertEquals(
-                listOf("Amina reacted 😂 to your moment", "Baraka reacted \u2764\uFE0F to your moment"),
+                listOf(
+                    "Amina reacted 😂 to your moment",
+                    "Someone reacted 🔥 to your moment",
+                    "Baraka reacted \u2764\uFE0F to your moment",
+                ),
                 push.sent.map { it.second.body },
             )
-            assertTrue(push.sent.all { it.second.title == "Circaso" && it.second.data.kind == "moment.loved" })
+            assertEquals(listOf(amina, unnamed, baraka).map { it.toString() }, push.sent.map { it.second.data.userId })
+            assertEquals(listOf("😂", "🔥", "\u2764\uFE0F"), push.sent.map { it.second.data.reaction })
+            assertTrue(
+                push.sent.all {
+                    it.second.title == "Circaso" &&
+                        it.second.data.kind == "moment.loved" &&
+                        it.second.data.momentId == momentId.toString() &&
+                        it.second.dataOnly
+                },
+            )
         }
 
     @Test

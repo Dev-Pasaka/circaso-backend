@@ -9,6 +9,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-14, pushes about a person carry who it is, so the phone shows their photo (Android: a data-only push needs the app to word it):**
+> 1. **`moment.loved`** (a reaction on my moment) is now **data-only** and carries `userId` (who reacted), `momentId` and `reaction` (the emoji). The phone names them as it knows them (a saved name first), shows their photo the way a chat message does, gathers one moment's reactions in one notification, and with Notification privacy on says only "Someone reacted to your moment". A frame whose reactor has no profile name now pushes too ("Someone reacted 🔥 to your moment"). The title and body stay as the fallback (iOS alert, and FCM `data.title` / `data.body`).
+> 2. **`contact.joined` and `connection.added`** are now **data-only** (they already carried `userId`): the app words them ("Amina is on Circaso") with the person's photo.
+> 3. **`call.missed` and `call.ended`** now carry `userId` = the caller, for their photo.
+> 4. An Android app older than this shows nothing for these data-only kinds (it only showed what the system showed); update the app with the server.
+
 > **Changed on 2026-11-13, pushes while Circaso is in the background (additive; old apps keep working):**
 > 1. **New phone frame `{"module":"system","type":"app.state","data":{"state":"foreground"|"background"}}`** (section 8). Send it the moment Circaso comes to the front or leaves it (not after the 15-second wait `messaging` / `presence` `away` has), and again right after every (re)connect. Any other `state` is ignored; nothing answers it.
 > 2. **While the phone says `background`, every push-worthy frame is also pushed**, socket or not: the same push it gets with no socket (a message's push still carries `chatId` and `messageId`). Before, a backgrounded app's socket stayed open until its ping timed out, so the frame was acked ("delivered") but nothing showed. Silent pushes (key requests), `session.revoked` and rings are unchanged: a ring is already pushed whatever the socket.
