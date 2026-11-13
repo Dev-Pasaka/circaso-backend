@@ -8,22 +8,28 @@ import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeModule
+import com.circaso.support.api.DiagnosticLogDesk
 import com.circaso.support.api.SupportDesk
 import com.circaso.support.api.SupportFrames
 import com.circaso.support.api.SupportTickets
 import com.circaso.support.data.cache.RealtimeFramesImpl
+import com.circaso.support.data.cache.RedisLogAllowance
 import com.circaso.support.data.cache.RedisTicketAllowance
 import com.circaso.support.data.repositories.DatabaseTransactor
+import com.circaso.support.data.repositories.DiagnosticLogRepositoryImpl
 import com.circaso.support.data.repositories.MessageRepositoryImpl
 import com.circaso.support.data.repositories.SupportExpiry
 import com.circaso.support.data.repositories.TicketRepositoryImpl
+import com.circaso.support.data.tables.DiagnosticLogsTable
 import com.circaso.support.data.tables.MessagesTable
 import com.circaso.support.data.tables.RealtimeTable
 import com.circaso.support.data.tables.TicketsTable
 import com.circaso.support.domain.ports.FrameSender
+import com.circaso.support.domain.ports.LogAllowance
 import com.circaso.support.domain.ports.RealtimeLog
 import com.circaso.support.domain.ports.TicketAllowance
 import com.circaso.support.domain.ports.Transactor
+import com.circaso.support.domain.repositories.DiagnosticLogRepository
 import com.circaso.support.domain.repositories.MessageRepository
 import com.circaso.support.domain.repositories.TicketRepository
 import com.circaso.support.domain.support.OrderedIds
@@ -32,21 +38,28 @@ import com.circaso.support.domain.usecases.AddStaffNote
 import com.circaso.support.domain.usecases.AssignTicket
 import com.circaso.support.domain.usecases.ChangeTicketStatus
 import com.circaso.support.domain.usecases.CountTickets
+import com.circaso.support.domain.usecases.FindDiagnosticLog
 import com.circaso.support.domain.usecases.GetMyTicket
 import com.circaso.support.domain.usecases.GetTicket
 import com.circaso.support.domain.usecases.ListMyTickets
+import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
 import com.circaso.support.domain.usecases.ListTicketQueue
 import com.circaso.support.domain.usecases.ListUserTickets
 import com.circaso.support.domain.usecases.OpenTicket
+import com.circaso.support.domain.usecases.ReadDiagnosticLog
 import com.circaso.support.domain.usecases.RemoveAccountTickets
 import com.circaso.support.domain.usecases.ReplayFrames
 import com.circaso.support.domain.usecases.ReplyAsStaff
 import com.circaso.support.domain.usecases.ReplyAsUser
+import com.circaso.support.domain.usecases.UploadDiagnosticLog
+import com.circaso.support.presentation.api.DiagnosticLogDeskImpl
 import com.circaso.support.presentation.api.SupportDeskImpl
 import com.circaso.support.presentation.api.SupportRealtimeReplay
 import com.circaso.support.presentation.api.SupportTicketsImpl
+import com.circaso.support.presentation.controllers.diagnosticLogController
 import com.circaso.support.presentation.controllers.ticketController
 import com.circaso.support.presentation.events.IdentityEventHandler
+import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.presentation.services.IdentityEventsService
 import com.circaso.support.presentation.services.RealtimeService
 import com.circaso.support.presentation.services.SupportDeskService
@@ -65,14 +78,14 @@ import java.time.Duration
 internal val supportDatabaseSpec =
     DatabaseModuleSpec(
         schema = "support",
-        tables = listOf(TicketsTable, MessagesTable, RealtimeTable),
+        tables = listOf(TicketsTable, MessagesTable, RealtimeTable, DiagnosticLogsTable),
         migrationsLocation = "classpath:db/support",
     )
 
-/** Redis prefix `sup:` (`sup:seq:{userId}`, `sup:opened:{userId}`), every key with a TTL. */
+/** Redis prefix `sup:` (`sup:seq:{userId}`, `sup:opened:{userId}`, `sup:logs:{userId}`), every key with a TTL. */
 private const val REDIS_PREFIX = "sup"
 
-/** `support.purge-expired`: the daily partitions of `support.realtime` (frames kept 7 days). */
+/** `support.purge-expired`: the daily partitions of `support.realtime` (frames kept 7 days) and expired diagnostic logs. */
 private val PURGE_INTERVAL: Duration = Duration.ofHours(1)
 
 /** Support's settings from `SUPPORT_*` (`.env.example` → support tickets). */
@@ -84,7 +97,7 @@ fun supportConfig(config: Config): SupportConfig {
 }
 
 /**
- * Support's Koin bindings: its database spec and purge job, the app's routes (SU1-SU4), `SupportDesk` for the ops
+ * Support's Koin bindings: its database spec and purge job, the app's routes (SU1-SU5), `SupportDesk` and `DiagnosticLogDesk` for the ops
  * module and `SupportTickets` for Asha, its `events:identity` subscription and its replay (`RealtimeModule`).
  */
 fun supportModule(config: Config): Module =
@@ -101,6 +114,8 @@ fun supportModule(config: Config): Module =
         single<TicketRepository> { TicketRepositoryImpl(get(named("support.database"))) }
         single<MessageRepository> { MessageRepositoryImpl(get(named("support.database"))) }
         single<TicketAllowance> { RedisTicketAllowance(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<DiagnosticLogRepository> { DiagnosticLogRepositoryImpl(get(named("support.database"))) }
+        single<LogAllowance> { RedisLogAllowance(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single {
             RealtimeFramesImpl(
                 get<RedisScopes>().scope(REDIS_PREFIX),
@@ -130,7 +145,11 @@ fun supportModule(config: Config): Module =
         single { AssignTicket(get(), get(), clock) }
         single { ChangeTicketStatus(get(), get(), get(), clock) }
         single { CountTickets(get()) }
-        single { RemoveAccountTickets(get()) }
+        single { RemoveAccountTickets(get(), get()) }
+        single { UploadDiagnosticLog(get(), get(), clock) }
+        single { FindDiagnosticLog(get()) }
+        single { ListUserDiagnosticLogs(get()) }
+        single { ReadDiagnosticLog(get()) }
         single { ReplayFrames(get()) }
 
         // presentation
@@ -138,11 +157,17 @@ fun supportModule(config: Config): Module =
         single { SupportDeskService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single { RealtimeService(get()) }
+        single { DiagnosticLogService(get(), get(), get(), get()) }
+        single<DiagnosticLogDesk> { DiagnosticLogDeskImpl(get()) }
         single<SupportDesk> { SupportDeskImpl(get()) }
         single<SupportTickets> { SupportTicketsImpl(get()) }
         single<RouteContributor>(named("support.routes")) {
             val tickets = get<TicketService>()
-            RouteContributor { route -> route.ticketController(tickets, support) }
+            val logs = get<DiagnosticLogService>()
+            RouteContributor { route ->
+                route.ticketController(tickets, support)
+                route.diagnosticLogController(logs)
+            }
         }
         single<EventSubscription>(named("support.identity-events")) { IdentityEventHandler(get()).subscription() }
         single(named("support.replay")) { RealtimeModule(SupportFrames.MODULE, SupportRealtimeReplay(get())) }

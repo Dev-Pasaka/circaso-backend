@@ -19,6 +19,7 @@ enum class AuditTarget(val wire: String) {
     FEE_RULE("fee_rule"),
     LIMIT_RULE("limit_rule"),
     FEE_BOUNDS("fee_bounds"),
+    DIAGNOSTIC_LOG("diagnostic_log"),
     ;
 
     companion object {
@@ -46,6 +47,7 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     LIMIT_RULE_CHANGE("limit_rule.change", AuditTarget.LIMIT_RULE),
     LIMIT_RULE_END("limit_rule.end", AuditTarget.LIMIT_RULE),
     FEE_BOUNDS_UPDATE("fee_bounds.update", AuditTarget.FEE_BOUNDS),
+    DIAGNOSTICS_READ("diagnostics.read", AuditTarget.DIAGNOSTIC_LOG),
     ;
 
     companion object {

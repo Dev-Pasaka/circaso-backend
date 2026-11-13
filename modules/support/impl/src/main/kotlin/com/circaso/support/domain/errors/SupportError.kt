@@ -3,6 +3,7 @@ package com.circaso.support.domain.errors
 import com.circaso.shared.DomainError
 import com.circaso.shared.ErrorDetails
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.FieldError
 
 /** Support's own codes (support.md → Error codes). The messages are the user's; the app may show them as they are. */
 sealed class SupportError(
@@ -73,4 +74,29 @@ sealed class SupportError(
             ErrorKind.RATE_LIMITED,
             ErrorDetails(retryAfterSeconds = retryAfterSeconds),
         )
+
+    /** A diagnostic log with a field missing or too long (SU5); [field] names it. */
+    class LogInvalid(field: String, problem: String) :
+        SupportError(
+            "support.log_invalid",
+            "That diagnostic log can't be sent.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError(field, problem))),
+        )
+
+    /** More diagnostic logs in an hour than the cap; [retryAfterSeconds] says when to try. */
+    class LogRateLimited(retryAfterSeconds: Long) :
+        SupportError(
+            "support.log_rate_limited",
+            "You've sent a few logs already. Try again in a little while.",
+            ErrorKind.RATE_LIMITED,
+            ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
+
+    /** No such diagnostic log, or it expired. */
+    data object LogNotFound : SupportError(
+        "support.log_not_found",
+        "There's no diagnostic log with this id.",
+        ErrorKind.NOT_FOUND,
+    )
 }

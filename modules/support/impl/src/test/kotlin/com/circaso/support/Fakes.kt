@@ -32,6 +32,15 @@ import com.circaso.support.domain.usecases.ListMyTickets
 import com.circaso.support.domain.usecases.ListTicketQueue
 import com.circaso.support.domain.usecases.ListUserTickets
 import com.circaso.support.domain.usecases.OpenTicket
+import com.circaso.support.domain.models.DiagnosticLog
+import com.circaso.support.domain.ports.LogAllowance
+import com.circaso.support.domain.repositories.DiagnosticLogRepository
+import com.circaso.support.domain.usecases.FindDiagnosticLog
+import com.circaso.support.domain.usecases.ListUserDiagnosticLogs
+import com.circaso.support.domain.usecases.ReadDiagnosticLog
+import com.circaso.support.domain.usecases.UploadDiagnosticLog
+import com.circaso.support.presentation.api.DiagnosticLogDeskImpl
+import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.domain.usecases.RemoveAccountTickets
 import com.circaso.support.domain.usecases.ReplyAsStaff
 import com.circaso.support.domain.usecases.ReplyAsUser
@@ -321,7 +330,60 @@ class SupportHarness(val config: SupportConfig = SupportConfig()) {
             ),
         )
     val asha = SupportTicketsImpl(service)
-    val removeAccount = RemoveAccountTickets(tickets)
+    val logs = MemoryLogs(clock)
+    val logAllowance = MemoryLogAllowance(clock)
+    val diagnostics =
+        DiagnosticLogService(
+            UploadDiagnosticLog(logs, logAllowance, clock),
+            FindDiagnosticLog(logs),
+            ListUserDiagnosticLogs(logs),
+            ReadDiagnosticLog(logs),
+        )
+    val logDesk = DiagnosticLogDeskImpl(diagnostics)
+    val removeAccount = RemoveAccountTickets(tickets, logs)
+}
+
+/** `support.diagnostic_logs` in memory; an expired log reads as gone, as in the database. */
+class MemoryLogs(private val clock: Clock) : DiagnosticLogRepository {
+    val rows = mutableMapOf<UUID, DiagnosticLog>()
+
+    override suspend fun insert(log: DiagnosticLog): Boolean {
+        if (rows.values.any { it.code == log.code }) return false
+        rows[log.logId] = log
+        return true
+    }
+
+    private fun live() = rows.values.filter { it.expiresAt > clock.instant() }
+
+    override suspend fun byCode(code: String) = live().firstOrNull { it.code == code }?.copy(log = "")
+
+    override suspend fun ofUser(userId: UserId, limit: Int) =
+        live().filter { it.userId == userId }.sortedByDescending { it.logId }.take(limit).map { it.copy(log = "") }
+
+    override suspend fun find(logId: UUID) = live().firstOrNull { it.logId == logId }
+
+    override suspend fun deleteOfUser(userId: UserId): Int {
+        val gone = rows.values.filter { it.userId == userId }.map { it.logId }
+        gone.forEach { rows.remove(it) }
+        return gone.size
+    }
+}
+
+/** The hourly log cap in memory, as [MemoryAllowance]. */
+class MemoryLogAllowance(private val clock: Clock) : LogAllowance {
+    private val windows = mutableMapOf<UserId, Pair<Instant, Long>>()
+
+    override suspend fun take(
+        userId: UserId,
+        max: Long,
+        window: Duration,
+    ): Long? {
+        val now = clock.instant()
+        val (start, count) = windows[userId]?.takeIf { it.first.plus(window) > now } ?: (now to 0L)
+        windows[userId] = start to count + 1
+        if (count + 1 <= max) return null
+        return Duration.between(now, start.plus(window)).seconds.coerceAtLeast(1)
+    }
 }
 
 fun <T> Resource<T>.data(): T = assertIs<Resource.Success<T>>(this).data
