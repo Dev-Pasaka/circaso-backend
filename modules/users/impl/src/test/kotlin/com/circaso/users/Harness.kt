@@ -420,7 +420,7 @@ class Harness {
     val revokeInvite = RevokeInvite(users.inviteRepo)
     val listBlocks = ListBlocks(users, users, views)
     val blockUser = BlockUser(directory, users, users, users, bus, reachCache, clock)
-    val unblockUser = UnblockUser(users, users, users, bus, reachCache)
+    val unblockUser = UnblockUser(users, users, users, bus, reachCache, users)
     val removeContact = RemoveContact(users, users, users, bus, reachCache, clock)
     val searchContacts = SearchContacts(users, users, views)
     val onActivated = CreateProfileOnActivation(provisioner, matcher, notifier)

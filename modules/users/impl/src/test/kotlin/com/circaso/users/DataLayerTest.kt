@@ -97,7 +97,7 @@ class DataLayerTest {
         )
     private val directory = FakeDirectory()
     private val blockUser = BlockUser(directory, blocks, transactor, store, bus, reachCache, clock)
-    private val unblockUser = UnblockUser(blocks, transactor, store, bus, reachCache)
+    private val unblockUser = UnblockUser(blocks, transactor, store, bus, reachCache, contacts)
 
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
 

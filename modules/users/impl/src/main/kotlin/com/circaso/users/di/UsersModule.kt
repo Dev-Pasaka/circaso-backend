@@ -208,7 +208,7 @@ fun usersModule(config: Config): Module =
         single { RevokeInvite(get()) }
         single { ListBlocks(get(), get(), get()) }
         single { BlockUser(get<AccountDirectory>(), get(), get(), get(), get(), get(), clock) }
-        single { UnblockUser(get(), get(), get(), get(), get()) }
+        single { UnblockUser(get(), get(), get(), get(), get(), get()) }
         single { CheckReach(get()) }
         single { RemoveContact(get(), get(), get(), get(), get(), clock) }
         single { SearchContacts(get(), get(), get()) }
