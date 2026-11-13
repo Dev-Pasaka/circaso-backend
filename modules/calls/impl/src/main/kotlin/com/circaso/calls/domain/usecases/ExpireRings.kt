@@ -15,8 +15,8 @@ import java.time.Instant
 /**
  * `calls.ring-timeout`, every 15 seconds: whoever a call has rung for 45 seconds without an answer missed it
  * (`MISSED`); a call nobody answered ends `MISSED`, and the callee of a direct call is pushed "Missed call from …".
- * An active call quiet for two hours (no join, leave, pull or media change) is ended, in case every phone vanished
- * without hanging up. How many calls it changed.
+ * An active call quiet for two hours (no join, leave, pull or media change) is ended `DROPPED` (2026-11-13), in case
+ * every phone vanished without hanging up: nobody hung up. How many calls it changed.
  */
 class ExpireRings(private val calls: CallRepository, private val changes: CallChanges, private val clock: Clock) {
     suspend operator fun invoke(): Int {
@@ -66,7 +66,7 @@ class ExpireRings(private val calls: CallRepository, private val changes: CallCh
 
     private fun idle(call: Call, now: Instant): Call {
         if (call.isEnded || call.activeAt.isAfter(now.minus(IDLE_FOR))) return call
-        return CallRules.end(call, EndReason.COMPLETED, now)
+        return CallRules.end(call, EndReason.DROPPED, now)
     }
 
     private companion object {

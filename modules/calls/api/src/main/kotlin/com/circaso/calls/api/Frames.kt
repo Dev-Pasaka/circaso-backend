@@ -21,7 +21,7 @@ object CallFrames {
  * (2026-11-09): the caller hung up, the call ended, or their 45 seconds ran out while a group call went on. The
  * gateway turns it into an "ended" VoIP push for an iPhone, so CallKit stops ringing on a phone whose app is
  * suspended and whose socket is gone. [reason] is `CANCELLED`, `MISSED`, `DECLINED` or `COMPLETED` (the call ended
- * that way) or `MISSED` (the ring ran out in a call that goes on).
+ * that way, or `DROPPED`) or `MISSED` (the ring ran out in a call that goes on).
  */
 @Serializable
 data class CallRingStoppedFrame(val callId: CallId, val chatId: ChatId, val reason: String)
@@ -57,7 +57,7 @@ data class CallSnapshot(
     val createdAt: String,
     val startedAt: String? = null,
     val endedAt: String? = null,
-    /** `COMPLETED`, `CANCELLED`, `MISSED` or `DECLINED` once `ENDED`. */
+    /** `COMPLETED`, `CANCELLED`, `MISSED`, `DECLINED` or `DROPPED` (2026-11-13: the line dropped) once `ENDED`. */
     val endReason: String? = null,
     val participants: List<CallParticipantSnapshot>,
     val iceServers: List<IceServerSnapshot> = emptyList(),

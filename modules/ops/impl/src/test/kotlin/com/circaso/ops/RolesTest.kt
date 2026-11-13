@@ -35,6 +35,7 @@ class RolesTest {
     private val chat = ChatId(Uuid7.generate())
     private val transfer = Uuid7.generate()
     private val otherStaff = Uuid7.generate()
+    private val droppedCall = harness.calls.dropped(user, UserId.new())
 
     init {
         harness.groups.groups[chat] = OpsGroup(chat, 3, user, EPOCH)
@@ -66,6 +67,8 @@ class RolesTest {
             Call("GET", "/v1/ops/ai-usage", Permission.AI_USAGE_READ),
             Call("GET", "/v1/ops/groups", Permission.GROUPS_READ),
             Call("GET", "/v1/ops/groups/${chat.value}", Permission.GROUPS_READ),
+            Call("GET", "/v1/ops/users/$user/calls", Permission.CALLS_READ),
+            Call("GET", "/v1/ops/calls/$droppedCall", Permission.CALLS_READ),
             Call("GET", "/v1/ops/tickets", Permission.TICKETS_READ),
             Call("GET", "/v1/ops/tickets/$ticket", Permission.TICKETS_READ),
             Call("POST", "/v1/ops/tickets/$ticket/replies", Permission.TICKETS_WRITE, """{"body":"On it."}"""),
@@ -193,6 +196,19 @@ class RolesTest {
             assertTrue(body.contains("\"finance.read\""))
             assertTrue(!body.contains("\"tickets.read\""))
             assertTrue(body.contains("\"role\":\"FINANCE\""))
+        }
+
+    @Test
+    fun `calls are read by SUPPORT and ADMIN, and me lists calls read for them`() =
+        testApplication {
+            application { harness.install(this) }
+            assertEquals(setOf(StaffRole.ADMIN, StaffRole.SUPPORT), Permission.CALLS_READ.roles)
+            for (role in listOf("SUPPORT", "ADMIN")) {
+                val body = client.get("/v1/ops/me") { header(OpsHarness.ROLE_HEADER, role) }.bodyAsText()
+                assertTrue(body.contains("\"calls.read\""), role)
+            }
+            val finance = client.get("/v1/ops/me") { header(OpsHarness.ROLE_HEADER, "FINANCE") }.bodyAsText()
+            assertTrue(!finance.contains("\"calls.read\""))
         }
 
     @Test

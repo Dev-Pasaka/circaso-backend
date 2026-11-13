@@ -30,6 +30,7 @@ import com.circaso.ops.domain.usecases.DeletePendingSignUps
 import com.circaso.ops.domain.usecases.EndFeeRule
 import com.circaso.ops.domain.usecases.EndLimitRule
 import com.circaso.ops.domain.usecases.GetAiUsageReport
+import com.circaso.ops.domain.usecases.GetCallSheet
 import com.circaso.ops.domain.usecases.GetDashboard
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
@@ -47,6 +48,7 @@ import com.circaso.ops.domain.usecases.ListStaff
 import com.circaso.ops.domain.usecases.ListSupportAccounts
 import com.circaso.ops.domain.usecases.ListTickets
 import com.circaso.ops.domain.usecases.ListTransactions
+import com.circaso.ops.domain.usecases.ListUserCalls
 import com.circaso.ops.domain.usecases.ListUserGroups
 import com.circaso.ops.domain.usecases.ListUserTickets
 import com.circaso.ops.domain.usecases.ListUserTransfers
@@ -61,6 +63,7 @@ import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
 import com.circaso.ops.presentation.controllers.aiUsageController
+import com.circaso.ops.presentation.controllers.callController
 import com.circaso.ops.presentation.controllers.dashboardController
 import com.circaso.ops.presentation.controllers.feeController
 import com.circaso.ops.presentation.controllers.groupController
@@ -71,6 +74,7 @@ import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
 import com.circaso.ops.presentation.services.AiUsageService
 import com.circaso.ops.presentation.services.AuditService
+import com.circaso.ops.presentation.services.CallService
 import com.circaso.ops.presentation.services.DashboardService
 import com.circaso.ops.presentation.services.FeeService
 import com.circaso.ops.presentation.services.GroupService
@@ -181,6 +185,8 @@ fun opsModule(config: Config): Module =
         single { GetAiUsageReport(get(), get(), get(), pricing, settings) }
         single { ListGroups(get(), get(), get()) }
         single { GetGroup(get(), get(), get()) }
+        single { ListUserCalls(get()) }
+        single { GetCallSheet(get(), get()) }
         single { ListTickets(get(), get()) }
         single { GetTicket(get(), get()) }
         single { ReplyToTicket(get(), get(), get()) }
@@ -210,6 +216,7 @@ fun opsModule(config: Config): Module =
         single { AiUsageService(get()) }
         single { GroupService(get(), get()) }
         single { TicketService(get(), get(), get(), get(), get(), get()) }
+        single { CallService(get(), get()) }
         single { StaffService(get(), get(), get()) }
         single { AuditService(get()) }
         single { SupportAccountService(get(), get()) }
@@ -223,6 +230,7 @@ fun opsModule(config: Config): Module =
             val aiUsage = get<AiUsageService>()
             val groups = get<GroupService>()
             val tickets = get<TicketService>()
+            val calls = get<CallService>()
             val staff = get<StaffService>()
             val audit = get<AuditService>()
             val supportAccounts = get<SupportAccountService>()
@@ -235,6 +243,7 @@ fun opsModule(config: Config): Module =
                 route.aiUsageController(aiUsage)
                 route.groupController(groups, settings)
                 route.ticketController(tickets, settings)
+                route.callController(calls, settings)
                 route.staffController(staff, audit, supportAccounts, settings)
                 route.feeController(fees)
             }

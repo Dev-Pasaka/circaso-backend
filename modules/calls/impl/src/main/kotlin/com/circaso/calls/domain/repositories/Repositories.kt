@@ -2,7 +2,10 @@ package com.circaso.calls.domain.repositories
 
 import com.circaso.calls.api.CallId
 import com.circaso.calls.domain.models.Call
+import com.circaso.calls.domain.models.CallLine
+import com.circaso.calls.domain.models.CallReport
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.UserId
 import java.time.Instant
 
 interface CallRepository {
@@ -28,4 +31,19 @@ interface CallRepository {
 
     /** `ACTIVE` calls with nothing happening since [cutoff]. */
     suspend fun idleSince(cutoff: Instant): List<CallId>
+
+    /** Calls [userId] was rung for or joined, newest first: at most [limit], older than [before] when given. */
+    suspend fun ofUser(
+        userId: UserId,
+        before: CallId?,
+        limit: Int,
+    ): List<CallLine>
+}
+
+/** The reports phones send after a call (CL10), one per person per call, kept 30 days. */
+interface CallReportRepository {
+    /** Writes [report], replacing the one this person sent for this call before. */
+    suspend fun upsert(report: CallReport)
+
+    suspend fun forCall(callId: CallId): List<CallReport>
 }

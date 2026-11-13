@@ -1,10 +1,12 @@
 package com.circaso.calls.presentation.services
 
 import com.circaso.calls.api.CallId
+import com.circaso.calls.domain.models.CallReport
 import com.circaso.calls.domain.models.CallView
 import com.circaso.calls.domain.models.ConnectedCommand
 import com.circaso.calls.domain.models.JoinCommand
 import com.circaso.calls.domain.models.Joined
+import com.circaso.calls.domain.models.LeaveCause
 import com.circaso.calls.domain.models.MediaCommand
 import com.circaso.calls.domain.models.PullCommand
 import com.circaso.calls.domain.models.Pulled
@@ -17,13 +19,14 @@ import com.circaso.calls.domain.usecases.LeaveCall
 import com.circaso.calls.domain.usecases.PullTracks
 import com.circaso.calls.domain.usecases.Renegotiate
 import com.circaso.calls.domain.usecases.ReportConnected
+import com.circaso.calls.domain.usecases.SendCallReport
 import com.circaso.calls.domain.usecases.SetMedia
 import com.circaso.calls.domain.usecases.StartCall
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
-/** CL1 to CL9: start, look up, join, say connected, pull, renegotiate, decline, ring, leave and mute. */
+/** CL1 to CL10: start, look up, join, say connected, pull, renegotiate, decline, ring, leave, mute and report. */
 class CallService(
     private val startCall: StartCall,
     private val getCall: GetCall,
@@ -36,6 +39,7 @@ class CallService(
     private val leaveCall: LeaveCall,
     private val setMedia: SetMedia,
     private val reportConnected: ReportConnected,
+    private val sendCallReport: SendCallReport,
 ) {
     suspend fun start(
         userId: UserId,
@@ -63,7 +67,13 @@ class CallService(
         userIds: Set<UserId>,
     ): Resource<CallView> = ringAgain(userId, callId, userIds)
 
-    suspend fun leave(userId: UserId, callId: CallId): Resource<CallView> = leaveCall(userId, callId)
+    suspend fun leave(
+        userId: UserId,
+        callId: CallId,
+        cause: LeaveCause?,
+    ): Resource<CallView> = leaveCall(userId, callId, cause)
+
+    suspend fun report(report: CallReport): Resource<Unit> = sendCallReport(report)
 
     suspend fun media(command: MediaCommand): Resource<Unit> = setMedia(command)
 }
