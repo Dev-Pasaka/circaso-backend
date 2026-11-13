@@ -87,8 +87,28 @@ class FakeAccounts : AccountAdmin {
 
     override suspend fun findByEmail(email: String): List<UserId> = emptyList()
 
-    override suspend fun newest(cursor: String?, limit: Int) =
-        Resource.success(AccountPage(accounts.values.toList().take(limit), null))
+    override suspend fun newest(
+        cursor: String?,
+        limit: Int,
+        includePending: Boolean,
+    ) = Resource.success(
+        AccountPage(
+            accounts.values.filter { includePending || it.status != AccountStatus.PENDING_PHONE }.take(limit),
+            null,
+        ),
+    )
+
+    override suspend fun pendingSignUps(): Long =
+        accounts.values
+            .count {
+                it.status == AccountStatus.PENDING_PHONE
+            }.toLong()
+
+    override suspend fun deletePendingSignUps(): Resource<Int> {
+        val pending = accounts.filterValues { it.status == AccountStatus.PENDING_PHONE }.keys
+        pending.forEach { accounts.remove(it) }
+        return Resource.success(pending.size)
+    }
 
     override suspend fun devices(userId: UserId): List<AdminDevice> = emptyList()
 

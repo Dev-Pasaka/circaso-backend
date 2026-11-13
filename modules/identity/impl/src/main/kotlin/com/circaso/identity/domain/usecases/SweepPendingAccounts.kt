@@ -4,6 +4,7 @@ import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.shared.Resource
 import java.time.Clock
+import java.time.Instant
 
 /**
  * The scheduled sweep of sign-ups that never finished (identity.md → Sign-in decision table): an account still
@@ -16,8 +17,10 @@ class SweepPendingAccounts(
     private val config: IdentityConfig,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(): Resource<Int> {
-        val cutoff = clock.instant().minus(config.pendingAccountLifetime)
+    suspend operator fun invoke(): Resource<Int> = startedBefore(clock.instant().minus(config.pendingAccountLifetime))
+
+    /** Deletes every unfinished sign-up started before [cutoff]; the 30-day sweep and staff's clean-up both use it. */
+    suspend fun startedBefore(cutoff: Instant): Resource<Int> {
         var total = 0
         while (true) {
             val deleted = accounts.deleteAbandoned(cutoff, CHUNK)

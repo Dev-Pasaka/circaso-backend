@@ -67,3 +67,10 @@ data class UserDevicesResponse(val devices: List<DeviceDto>, val sessions: List<
 /** Suspend or unsuspend: why, 3 to 500 characters. It is kept in the audit log. */
 @Serializable
 data class ReasonRequest(val reason: String = "")
+
+/** Unfinished sign-ups a clean-up would delete now (no phone yet, started over an hour ago). */
+@Serializable
+data class PendingSignUpsResponse(val count: Long)
+
+@Serializable
+data class PendingSignUpsDeletedResponse(val deleted: Int)

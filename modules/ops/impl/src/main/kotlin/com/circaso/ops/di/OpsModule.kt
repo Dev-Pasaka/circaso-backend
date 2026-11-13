@@ -22,9 +22,11 @@ import com.circaso.ops.domain.usecases.AssignTicket
 import com.circaso.ops.domain.usecases.ChangeFeeRule
 import com.circaso.ops.domain.usecases.ChangeLimitRule
 import com.circaso.ops.domain.usecases.ChangeTicketStatus
+import com.circaso.ops.domain.usecases.CountPendingSignUps
 import com.circaso.ops.domain.usecases.CreateFeeRule
 import com.circaso.ops.domain.usecases.CreateLimitRule
 import com.circaso.ops.domain.usecases.CreateSupportAccount
+import com.circaso.ops.domain.usecases.DeletePendingSignUps
 import com.circaso.ops.domain.usecases.EndFeeRule
 import com.circaso.ops.domain.usecases.EndLimitRule
 import com.circaso.ops.domain.usecases.GetAiUsageReport
@@ -168,6 +170,8 @@ fun opsModule(config: Config): Module =
         single { ListUserGroups(get(), get(), get(), get()) }
         single { ListUserTickets(get(), get(), get()) }
         single { SuspendUser(get(), get(), get()) }
+        single { CountPendingSignUps(get()) }
+        single { DeletePendingSignUps(get(), get()) }
         single { UnsuspendUser(get(), get(), get()) }
         single { GetUserWallets(get(), get()) }
         single { ListUserTransfers(get(), get(), get()) }
@@ -201,7 +205,7 @@ fun opsModule(config: Config): Module =
         single { StaffDirectoryService(get(), get()) }
         single { MeService(get()) }
         single { DashboardService(get()) }
-        single { UserService(get(), get(), get(), get(), get(), get(), get()) }
+        single { UserService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { MoneyService(get(), get(), get(), get(), get()) }
         single { AiUsageService(get()) }
         single { GroupService(get(), get()) }

@@ -28,7 +28,8 @@ import com.circaso.wallet.api.WalletReports
 
 /**
  * One search box for everything staff search people by (decision 2026-11-08): a user id, an @handle (prefix), a phone
- * number (exact, E.164), an email (exact) or a name (prefix). Empty: the newest accounts.
+ * number (exact, E.164), an email (exact) or a name (prefix). Empty: the newest accounts, without unfinished sign-ups
+ * unless [includePending] is set (2026-11-13); a search by id, phone or email still finds them.
  */
 class SearchUsers(
     private val accounts: AccountAdmin,
@@ -39,11 +40,12 @@ class SearchUsers(
         query: String,
         cursor: String?,
         limit: Int,
+        includePending: Boolean = false,
     ): Resource<UserPage> {
         val q = query.trim()
         return when {
             q.isEmpty() -> {
-                accounts.newest(cursor, limit).map { page ->
+                accounts.newest(cursor, limit, includePending).map { page ->
                     UserPage(views.rows(page.accounts.map { it.userId }), page.nextCursor)
                 }
             }
@@ -160,4 +162,24 @@ class UnsuspendUser(private val accounts: AccountAdmin, private val views: UserV
             .record(actor, AuditAction.USER_UNSUSPEND, userId.toString(), reason = why) { accounts.unsuspend(userId) }
             .flatMap { views.account(userId)?.let { Resource.success(it) } ?: Resource.error(OpsError.UserNotFound) }
     }
+}
+
+/** How many unfinished sign-ups (no phone yet, started over an hour ago) a clean-up would delete now. */
+class CountPendingSignUps(private val accounts: AccountAdmin) {
+    suspend operator fun invoke(): Resource<Long> = Resource.success(accounts.pendingSignUps())
+}
+
+/**
+ * ADMIN deletes the unfinished sign-ups now instead of waiting for the 30-day sweep (2026-11-13). Audited with how many
+ * went; sign-ups started in the last hour are kept, so nobody mid-way through is cut off.
+ */
+class DeletePendingSignUps(private val accounts: AccountAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(actor: Actor): Resource<Int> =
+        trail.record(
+            actor,
+            AuditAction.USERS_PENDING_DELETE,
+            targetId = null,
+            reason = "Clean up unfinished sign-ups",
+            outcome = { deleted: Int -> "deleted $deleted" },
+        ) { accounts.deletePendingSignUps() }
 }

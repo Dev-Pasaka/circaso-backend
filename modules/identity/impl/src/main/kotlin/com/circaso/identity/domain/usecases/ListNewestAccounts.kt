@@ -10,16 +10,22 @@ import com.circaso.shared.SharedError
 
 /**
  * Staff: every account, newest first (decision 2026-11-08), paged by keyset on `(created_at, user_id)` through
- * `accounts_newest_idx`, never by offset. Pending, suspended and support accounts are listed too: staff look for them.
+ * `accounts_newest_idx`, never by offset. Suspended and support accounts are listed too: staff look for them.
+ * Unfinished sign-ups (`PENDING_PHONE`) only with [includePending] (2026-11-13): most are Google Play's test robots,
+ * which sign in with Google and stop at the phone screen, so by default they'd bury the real people.
  */
 class ListNewestAccounts(private val admin: AccountAdminRepository) {
-    suspend operator fun invoke(cursor: String?, limit: Int): Resource<AccountRecordPage> {
+    suspend operator fun invoke(
+        cursor: String?,
+        limit: Int,
+        includePending: Boolean,
+    ): Resource<AccountRecordPage> {
         val after =
             cursor?.let {
                 AdminCursors.decode(it) ?: return Resource.error(SharedError.Malformed("cursor", "invalid"))
             }
         val page = limit.coerceIn(1, MAX_PAGE)
-        val found = admin.newest(after, page + 1)
+        val found = admin.newest(after, page + 1, includePending)
         val shown = found.take(page)
         val links = admin.links(shown.map { it.userId }.toSet())
         val next =

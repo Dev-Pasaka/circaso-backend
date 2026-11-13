@@ -6,10 +6,13 @@ import com.circaso.messaging.api.OpsGroup
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Actor
 import com.circaso.ops.domain.models.AuditOutcome
+import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.domain.models.Staff
 import com.circaso.ops.domain.support.StaffRoster
 import com.circaso.ops.domain.usecases.AddStaff
 import com.circaso.ops.domain.usecases.AssignTicket
+import com.circaso.ops.domain.usecases.CountPendingSignUps
+import com.circaso.ops.domain.usecases.DeletePendingSignUps
 import com.circaso.ops.domain.usecases.GetDashboard
 import com.circaso.ops.domain.usecases.GetGroup
 import com.circaso.ops.domain.usecases.GetUserAccount
@@ -60,6 +63,30 @@ class StaffActionsTest {
             assertEquals(AuditOutcome.SUCCEEDED, line.outcome)
             assertEquals(user.toString(), line.targetId)
             assertEquals("req-1", line.requestId)
+        }
+
+    @Test
+    fun `the user list hides unfinished sign-ups unless asked, and an admin's clean-up is audited`() =
+        runTest {
+            val person = harness.accounts.add()
+            val robot = harness.accounts.add(status = AccountStatus.PENDING_PHONE)
+            val search = koin.get<SearchUsers>()
+
+            val shown = search("", null, 50).getOrNull()!!.items.map { it.userId }
+            val all = search("", null, 50, includePending = true).getOrNull()!!.items.map { it.userId }
+            assertEquals(listOf(person), shown)
+            assertEquals(setOf(person, robot), all.toSet())
+            assertEquals(1L, koin.get<CountPendingSignUps>()().getOrNull())
+
+            val deleted = koin.get<DeletePendingSignUps>()(admin)
+
+            assertEquals(1, deleted.getOrNull())
+            assertNull(harness.accounts.accounts[robot])
+            val line = harness.audit.entries.single()
+            assertEquals("users.pending_delete", line.action)
+            assertEquals(AuditOutcome.SUCCEEDED, line.outcome)
+            assertEquals("deleted 1", line.detail)
+            assertEquals(setOf(StaffRole.ADMIN), Permission.USERS_CLEANUP.roles)
         }
 
     @Test
