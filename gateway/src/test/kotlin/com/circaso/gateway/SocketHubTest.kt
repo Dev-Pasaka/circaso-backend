@@ -348,11 +348,14 @@ class SocketHubTest {
         data: T,
     ) = RealtimeEnvelope.of("messaging", type, 1, data, serializer)
 
-    private fun newMessage(pushable: Boolean) =
+    private val sender = UserId.new()
+    private val sentAt = Instant.parse("2026-11-13T10:15:30Z")
+
+    private fun newMessage(pushable: Boolean, ciphertext: String? = "AQJjaXBoZXI=") =
         typed(
             MessageNewFrame.TYPE,
             MessageNewFrame.serializer(),
-            MessageNewFrame(messageId, chat, UserId.new(), MessageKind.MESSAGE, pushable, Instant.now()),
+            MessageNewFrame(messageId, chat, sender, MessageKind.MESSAGE, pushable, sentAt, ciphertext = ciphertext),
         )
 
     private fun membersAdded(userIds: List<UserId>) =
@@ -624,10 +627,36 @@ class SocketHubTest {
             assertEquals(1, redis.pipelinedReads.get(), "who is offline, in one pipelined lookup")
             assertEquals(0, redis.singleReads.get())
             push.sent.forEach { (_, message) ->
-                assertEquals(PushPayload(chat.toString(), messageId.toString()), message.data)
+                assertEquals(
+                    PushPayload(
+                        chat.toString(),
+                        messageId.toString(),
+                        senderId = sender.toString(),
+                        sentAt = sentAt.toString(),
+                        ciphertext = "AQJjaXBoZXI=",
+                    ),
+                    message.data,
+                )
                 assertEquals("New message", message.body, "no text from the chat")
                 assertTrue(message.dataOnly, "the app fetches, decrypts and words it")
             }
+        }
+
+    @Test
+    fun `a message too long for a push goes without its ciphertext, still naming its sender`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(MemoryRedis()), push, registrations, NoVoip)
+            val offline = UserId.new()
+
+            realtime.deliverMany(listOf(offline), newMessage(pushable = true, ciphertext = "A".repeat(2_801)))
+
+            val data =
+                push.sent
+                    .single()
+                    .second.data
+            assertEquals(null, data.ciphertext, "APNs and FCM take 4 KB in all")
+            assertEquals(sender.toString(), data.senderId)
         }
 
     @Test
