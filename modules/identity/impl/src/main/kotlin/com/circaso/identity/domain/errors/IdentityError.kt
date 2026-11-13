@@ -167,4 +167,30 @@ sealed class IdentityError(
         "This account isn't suspended.",
         ErrorKind.CONFLICT,
     )
+
+    /** Saved names (2026-11-12): `baseVersion` isn't the stored version (0 when none): another phone saved first. */
+    data object SavedNamesConflict : IdentityError(
+        "identity.saved_names_conflict",
+        "Your saved names changed on another phone. Read them again before you save.",
+        ErrorKind.CONFLICT,
+    )
+
+    /** Saved names are sealed under the key backup root, so they can only be saved while key backup is on. */
+    data object KeyBackupOff : IdentityError(
+        "identity.key_backup_off",
+        "Key backup is off. Turn it on first.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object SavedNamesCiphertextInvalid : IdentityError(
+        "identity.saved_names_ciphertext_invalid",
+        "Your saved names couldn't be backed up.",
+        ErrorKind.INVALID,
+    )
+
+    data object SavedNamesBaseVersionInvalid : IdentityError(
+        "identity.saved_names_base_version_invalid",
+        "Your saved names couldn't be backed up.",
+        ErrorKind.INVALID,
+    )
 }

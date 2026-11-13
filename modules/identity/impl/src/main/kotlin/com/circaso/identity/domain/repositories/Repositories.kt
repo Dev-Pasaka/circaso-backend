@@ -2,8 +2,14 @@ package com.circaso.identity.domain.repositories
 
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
+import com.circaso.identity.domain.models.DeletionFeedback
 import com.circaso.identity.domain.models.Device
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.GroupKeyPosition
+import com.circaso.identity.domain.models.KeyBackupRoot
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SupportRecovery
@@ -54,9 +60,9 @@ interface AccountRepository {
     suspend fun dueForDeletion(now: Instant, limit: Int): List<UserId>
 
     /**
-     * Deletes the account and every identity row of it (logins, devices, sessions, security log, support cases), but
-     * only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs racing, one
-     * deletes and the other finds nothing). True when this call deleted it. Inside `Transactor.run`, with the event.
+     * Deletes the account and every identity row of it (logins, devices, sessions, security log, support cases, PIN
+     * Vault, key backup), but only if it is still `DELETED` with its grace ended by [now] (`DELETE … RETURNING`, so of two jobs
+     * racing, one deletes and the other finds nothing). True when this call deleted it. Inside `Transactor.run`, with the event.
      */
     suspend fun completeDeletion(userId: UserId, now: Instant): Boolean
 }
@@ -113,6 +119,49 @@ interface SecurityLogRepository {
     ): List<SecurityEvent>
 }
 
+/**
+ * The PIN Vault, one per account (2026-11-11). Changed only through [Changes.vaults] and [Changes.removedVaults], read
+ * under the account's lock, so two phones saving at once run one after the other and the second sees the first's
+ * version.
+ */
+interface VaultRepository {
+    suspend fun find(userId: UserId): PinVault?
+}
+
+/**
+ * The group key backup (2026-11-12): one sealed root and up to [MAX_GROUP_KEYS] group key blobs per account. Changed
+ * only through [Changes.keyBackupRoots], [Changes.groupKeys] and [Changes.removedKeyBackups], read under the account's
+ * lock, so two phones writing at once run one after the other.
+ */
+interface KeyBackupRepository {
+    suspend fun findRoot(userId: UserId): KeyBackupRoot?
+
+    suspend fun findGroupKey(
+        userId: UserId,
+        chatId: UUID,
+        metaVersion: Int,
+    ): GroupKeyBackup?
+
+    /** Whether the account has backed up any key of [chatId], at any `metaVersion`. */
+    suspend fun hasGroupKeys(userId: UserId, chatId: UUID): Boolean
+
+    suspend fun countGroupKeys(userId: UserId): Int
+
+    /** Keyset paging in `(chatId, metaVersion)` order, starting after [after] (from the start when null). */
+    suspend fun listGroupKeys(
+        userId: UserId,
+        after: GroupKeyPosition?,
+        limit: Int,
+    ): List<GroupKeyBackup>
+
+    /** The account's sealed saved names, or null when none were saved (changed through [Changes.savedNames]). */
+    suspend fun findSavedNames(userId: UserId): SavedNames?
+
+    companion object {
+        const val MAX_GROUP_KEYS = 10_000
+    }
+}
+
 interface RecoveryRepository {
     suspend fun find(requestId: UUID): SupportRecovery?
 }
@@ -126,6 +175,20 @@ data class Changes(
     val removedProviderLinks: List<ProviderLink> = emptyList(),
     val securityEvents: List<SecurityEvent> = emptyList(),
     val recoveries: List<SupportRecovery> = emptyList(),
+    /** PIN Vaults written as they are now, each replacing the account's one vault. */
+    val vaults: List<PinVault> = emptyList(),
+    /** Accounts whose PIN Vault is deleted. */
+    val removedVaults: List<UserId> = emptyList(),
+    /** Key backup roots written as they are now, each replacing the account's one root. */
+    val keyBackupRoots: List<KeyBackupRoot> = emptyList(),
+    /** Group key blobs written as they are now, each replacing the one at its (account, chat, metaVersion). */
+    val groupKeys: List<GroupKeyBackup> = emptyList(),
+    /** Saved names blobs written as they are now, each replacing the account's one blob. */
+    val savedNames: List<SavedNames> = emptyList(),
+    /** Accounts whose whole key backup (root, every group key and the saved names) is deleted. */
+    val removedKeyBackups: List<UserId> = emptyList(),
+    /** Why people asked for their account to go (I17), stored apart from the account. */
+    val deletionFeedback: List<DeletionFeedback> = emptyList(),
     /** Written to the outbox in the same transaction, then published once it commits. */
     val events: List<EventEnvelope> = emptyList(),
 )

@@ -61,7 +61,12 @@ fun JoinRequest.toCommand(userId: UserId, callId: CallId): Resource<JoinCommand>
         return Resource.error(SharedError.Malformed("tracks", "names a track twice"))
     }
     return Resource.success(
-        JoinCommand(userId, callId, offer, tracks.map { TrackOffer(it.mid, it.trackName, it.kind) }),
+        JoinCommand(
+            userId,
+            callId,
+            offer,
+            tracks.map { TrackOffer(it.mid, it.trackName, it.kind) },
+        ),
     )
 }
 

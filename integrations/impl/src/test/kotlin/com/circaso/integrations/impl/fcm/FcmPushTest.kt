@@ -108,7 +108,15 @@ class FcmPushTest {
             val apns = body["apns"]!!.jsonObject
             assertTrue("notification" in body)
             assertEquals(null, apns["headers"]!!.jsonObject["apns-push-type"])
-            assertEquals(null, apns["payload"]!!.jsonObject["aps"]!!.jsonObject["mutable-content"])
+            // Through iOS's notification extension too, so Notification privacy and saved names apply.
+            assertEquals(
+                1,
+                apns["payload"]!!
+                    .jsonObject["aps"]!!
+                    .jsonObject["mutable-content"]!!
+                    .jsonPrimitive.content
+                    .toInt(),
+            )
         }
 
     @Test
@@ -118,7 +126,13 @@ class FcmPushTest {
                 PushMessage(
                     "Circaso",
                     "New message",
-                    PushPayload(chatId = "c1", messageId = "m1"),
+                    PushPayload(
+                        chatId = "c1",
+                        messageId = "m1",
+                        senderId = "u1",
+                        sentAt = "2026-11-13T10:15:30Z",
+                        ciphertext = "AQI=",
+                    ),
                     dataOnly = true,
                 )
 
@@ -133,6 +147,11 @@ class FcmPushTest {
             val aps = apns["payload"]!!.jsonObject["aps"]!!.jsonObject
             assertEquals(1, aps["mutable-content"]!!.jsonPrimitive.content.toInt())
             assertEquals("New message", aps["alert"]!!.jsonObject["body"]!!.jsonPrimitive.content)
+            assertEquals("c1", aps["thread-id"]!!.jsonPrimitive.content, "a chat's notifications stack together")
+            val data = body["data"]!!.jsonObject
+            assertEquals("u1", data["senderId"]!!.jsonPrimitive.content)
+            assertEquals("AQI=", data["ciphertext"]!!.jsonPrimitive.content)
+            assertEquals("2026-11-13T10:15:30Z", data["sentAt"]!!.jsonPrimitive.content)
         }
 
     @Test

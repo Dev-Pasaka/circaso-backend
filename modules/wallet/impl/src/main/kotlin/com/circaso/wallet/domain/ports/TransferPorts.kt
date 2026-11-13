@@ -76,9 +76,13 @@ interface Reminders {
 }
 
 /**
- * The hold on outgoing payments after a support restore (`payment_holds`, decision 2026-10-28). Built in WS4; until
- * then nobody is on hold.
+ * The pause on a person's outgoing payments (`payment_holds`, decision 2026-10-28): after their PIN Vault is opened
+ * (2026-11-11) and, once support restores are built, after one.
  */
 interface PaymentHolds {
+    /** The hold in force now, or null. */
     suspend fun active(userId: UserId): PaymentHold?
+
+    /** Holds the person's payments until [PaymentHold.until], unless a hold already in force lasts longer. */
+    suspend fun place(userId: UserId, hold: PaymentHold)
 }

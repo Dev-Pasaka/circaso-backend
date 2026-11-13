@@ -79,8 +79,17 @@ data class FiatValue(
     val partial: Boolean,
 )
 
-/** Outgoing payments are held until [until] after a support restore (decision 2026-10-28; the hold arrives in WS4). */
-data class PaymentHold(val until: Instant)
+/** Why outgoing payments are paused (`payment_holds.reason`). */
+enum class HoldReason {
+    /** The person's PIN Vault was opened (`identity.PinVaultOpened`, 2026-11-11): 24 hours. */
+    VAULT_OPENED,
+
+    /** Support restored the account (decision 2026-10-28): 48 hours, once support restores are built. */
+    RELINKED,
+}
+
+/** Outgoing payments are paused until [until], for [reason]. */
+data class PaymentHold(val until: Instant, val reason: HoldReason)
 
 /**
  * W1: the wallet as the wallet screen shows it. [fiat] is null when no rate was asked for or none is known. [access]

@@ -28,6 +28,21 @@ Personal developer accounts are fine now; converting to an organisation account 
 - `POST /auth/nonce` first, then the provider request with that nonce: Google gets it as-is; on iOS pass Apple the SHA-256 of the nonce (the usual native flow) or the nonce itself, both are accepted.
 - `POST /auth/social` with `provider`, `idToken` and the same `nonce`. Apple sends the person's name only the first time, so the app passes it as `appleName` (the token has none).
 
+## The website's account deletion page (I17)
+
+Google Play requires a web page where people can ask for their account to be deleted. On `circaso.com/delete-account` the person signs in with Google (Google Identity Services) or Apple (Sign in with Apple JS), picks a reason and confirms. The page's Worker then calls the API:
+
+1. `POST /v1/auth/nonce` (with an `Idempotency-Key`), and passes the nonce to Google or Apple when the sign-in starts. Apple's JS gets the nonce as-is.
+2. `POST /v1/web/account-deletion` (with an `Idempotency-Key`), body `{ "provider": "google" | "apple", "idToken", "nonce", "reason", "details"? }`. The token is checked exactly as at I2; the account is the one that owns that login. `reason` is one of `not_useful`, `privacy`, `too_many_apps`, `switching`, `problems`, `other`; `details` is at most 500 characters.
+3. The answer's `data.status` is `scheduled` or `already_scheduled` (with `deleteAfter`), `no_account`, or `refused` with the refusal's `code` (`wallet.funds_remaining`, `wallet.custody_unavailable`, `identity.account_suspended`, `identity.account_blocked`, `identity.recovery_pending`). Bad token: 401 `identity.provider_token_invalid`; bad or used nonce: 400 `identity.nonce_invalid`.
+
+Console setup it needs:
+
+- **Google**: on the **Web application** OAuth client, add `https://circaso.com` (and `https://www.circaso.com` if used) under **Authorized JavaScript origins**. Its id is already the first in `INTEGRATIONS_SOCIAL_GOOGLE_CLIENT_IDS`, so nothing changes on the server.
+- **Apple**: a **Services ID** (for example `com.circaso.web`) with Sign in with Apple enabled, `circaso.com` as a domain and the page's return URL (for example `https://circaso.com/delete-account`) registered, even when the page uses the popup. Add that Services id to `INTEGRATIONS_SOCIAL_APPLE_CLIENT_IDS`.
+
+The reason and details go into `identity.deletion_feedback`, which has no user id, so it outlives the deletion and points at no one.
+
 ## Not done yet
 
 Revoking an Apple grant needs the refresh token Apple returns when the authorization code is exchanged, and the app does not collect or store that yet. `revokeApple` is built and tested only as far as signing the client secret; account deletion does not call it yet. `// TODO(decision: where the Apple refresh token is kept and who exchanges the authorization code)`.

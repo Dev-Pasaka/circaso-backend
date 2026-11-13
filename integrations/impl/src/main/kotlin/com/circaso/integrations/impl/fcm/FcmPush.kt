@@ -145,6 +145,11 @@ class FcmPush(
                 requestId = ids.requestId,
                 userId = ids.userId,
                 ticketId = ids.ticketId,
+                senderId = ids.senderId,
+                sentAt = ids.sentAt,
+                ciphertext = ids.ciphertext,
+                momentId = ids.momentId,
+                reaction = ids.reaction,
                 title = message.title.takeIf { message.dataOnly && !message.silent && ids.kind != null },
                 body = message.body.takeIf { message.dataOnly && !message.silent && ids.kind != null },
             ).takeIf { it != FcmData() }
@@ -154,9 +159,11 @@ class FcmPush(
                 // A background push: no alert, no sound; Apple wants priority 5 and push type `background` for it.
                 message.silent -> FcmAps(sound = null, contentAvailable = 1)
 
-                message.dataOnly -> FcmAps(sound = sound, alert = text, mutableContent = 1)
+                message.dataOnly -> FcmAps(sound = sound, alert = text, mutableContent = 1, threadId = ids.chatId)
 
-                else -> FcmAps(sound = sound)
+                // Every alert passes through iOS's Notification Service Extension (2026-11-13), so Notification privacy
+                // and saved names apply to the server-worded ones too ("Amina is on Circaso", a moment's reaction).
+                else -> FcmAps(sound = sound, mutableContent = 1, threadId = ids.chatId)
             }
         val ttl = message.ttlSeconds
         val apns =
@@ -264,6 +271,11 @@ private data class FcmData(
     val requestId: String? = null,
     val userId: String? = null,
     val ticketId: String? = null,
+    val senderId: String? = null,
+    val sentAt: String? = null,
+    val ciphertext: String? = null,
+    val momentId: String? = null,
+    val reaction: String? = null,
     val title: String? = null,
     val body: String? = null,
 )
@@ -290,6 +302,8 @@ private data class FcmAps(
     val alert: FcmNotification? = null,
     @SerialName("mutable-content") val mutableContent: Int? = null,
     @SerialName("content-available") val contentAvailable: Int? = null,
+    /** Groups a chat's notifications together on iOS (the chat's id). */
+    @SerialName("thread-id") val threadId: String? = null,
 )
 
 @Serializable

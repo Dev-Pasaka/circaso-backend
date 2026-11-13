@@ -491,8 +491,15 @@ private fun Module.circle(custody: Config, secrets: Secrets) {
 }
 
 /**
+ * Templates a server may start without (2026-11-11), so a deploy never waits on publishing one in Resend: until its id
+ * is set, that email is refused (`Rejected`) and the use case, which sends it best effort, carries on.
+ */
+private val OPTIONAL_TEMPLATES = setOf(EmailTemplate.PIN_VAULT_OPENED)
+
+/**
  * Resend needs `RESEND_API_KEY`, `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified domain) and
- * one template id per [EmailTemplate] (`INTEGRATIONS_EMAIL_TEMPLATES_<NAME>`). Anything missing stops startup, naming it.
+ * one template id per [EmailTemplate] (`INTEGRATIONS_EMAIL_TEMPLATES_<NAME>`). Anything missing stops startup, naming
+ * it, except the [OPTIONAL_TEMPLATES].
  */
 private fun resendEmail(
     email: Config,
@@ -502,7 +509,13 @@ private fun resendEmail(
     ResendEmail(
         apiKey = secrets.require("resend.api-key"),
         from = email.requireString("from"),
-        templates = EmailTemplate.entries.associateWith { email.requireString("templates.${it.name.lowercase()}") },
+        templates =
+            EmailTemplate.entries
+                .mapNotNull { template ->
+                    val key = "templates.${template.name.lowercase()}"
+                    val id = if (template in OPTIONAL_TEMPLATES) email.string(key) else email.requireString(key)
+                    id?.let { template to it }
+                }.toMap(),
         http = clients.named("resend") { baseUrl = email.string("base-url", "https://api.resend.com") },
     )
 
@@ -605,7 +618,9 @@ private fun fcmPush(
  * set: base64 of the `.p8` file (Apple Developer > Keys, with Apple Push Notifications service), or its PEM text. It
  * then needs `INTEGRATIONS_APNS_KEY_ID` (the key's 10-character id) and `INTEGRATIONS_APNS_TEAM_ID`; optional are
  * `INTEGRATIONS_APNS_TOPIC`, the app's bundle id (default `com.circaso.app`; pushes go to `<topic>.voip`), and
- * `INTEGRATIONS_APNS_SANDBOX` (`true` for development-signed builds, default `false`). The key never prints.
+ * `INTEGRATIONS_APNS_SANDBOX` (`true` makes the sandbox host the first one tried, default `false`). A token the first
+ * host calls `BadDeviceToken` is tried on the other host (2026-11-11), so Xcode and TestFlight iPhones both ring. The
+ * key never prints.
  */
 private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
     val log = LoggerFactory.getLogger("com.circaso.integrations.impl.apns")
@@ -618,9 +633,11 @@ private fun apnsVoipPush(apns: Config, secrets: Secrets): VoipPushGateway {
     val topic = apns.string("topic", "com.circaso.app")
     val keyId = apns.requireString("key-id")
     val tokens = ApnsProviderToken(keyId, apns.requireString("team-id"), ApnsProviderToken.parseKey(key))
-    val host = if (sandbox) "https://api.sandbox.push.apple.com" else "https://api.push.apple.com"
-    log.info("APNs VoIP pushes: on (host={}, topic={}.voip, keyId={})", host, topic, keyId)
-    return ApnsVoipPush(tokens, JdkApnsTransport(host), topic)
+    val production = "https://api.push.apple.com"
+    val development = "https://api.sandbox.push.apple.com"
+    val (host, other) = if (sandbox) development to production else production to development
+    log.info("APNs VoIP pushes: on (host={}, then {}; topic={}.voip, keyId={})", host, other, topic, keyId)
+    return ApnsVoipPush(tokens, JdkApnsTransport(host), topic, otherHost = JdkApnsTransport(other))
 }
 
 /**

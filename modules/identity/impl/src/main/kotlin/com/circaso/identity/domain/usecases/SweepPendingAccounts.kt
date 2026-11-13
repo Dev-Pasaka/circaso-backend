@@ -1,6 +1,7 @@
 package com.circaso.identity.domain.usecases
 
 import com.circaso.identity.domain.repositories.AccountRepository
+import com.circaso.identity.domain.support.AbandonedSignUps
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.shared.Resource
 import java.time.Clock
@@ -16,18 +17,8 @@ class SweepPendingAccounts(
     private val config: IdentityConfig,
     private val clock: Clock,
 ) {
-    suspend operator fun invoke(): Resource<Int> {
-        val cutoff = clock.instant().minus(config.pendingAccountLifetime)
-        var total = 0
-        while (true) {
-            val deleted = accounts.deleteAbandoned(cutoff, CHUNK)
-            total += deleted
-            if (deleted < CHUNK) break
-        }
-        return Resource.success(total)
-    }
-
-    private companion object {
-        const val CHUNK = 500
-    }
+    suspend operator fun invoke(): Resource<Int> =
+        Resource.success(
+            AbandonedSignUps.deleteStartedBefore(accounts, clock.instant().minus(config.pendingAccountLifetime)),
+        )
 }

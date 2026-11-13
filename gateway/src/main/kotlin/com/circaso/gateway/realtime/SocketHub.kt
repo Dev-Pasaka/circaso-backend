@@ -58,6 +58,29 @@ private const val INVALID_LAST = "invalid last"
 private const val UNAUTHORIZED = "unauthorized"
 private const val SESSION_REVOKED = "session revoked"
 
+/**
+ * `rt:conn:{userId}` holds the node's id, followed by this when the phone said Circaso is in the background
+ * (`system/app.state`, 2026-11-13). Kept in the same value so the lookup that finds a socket also says whether anyone
+ * is looking at the app, with no second read, and it goes when the socket does.
+ */
+private const val BACKGROUND_MARK = ";bg"
+
+/** The phone's own frame that says whether Circaso is in front: `{"module":"system","type":"app.state",...}`. */
+private const val SYSTEM_MODULE = "system"
+private const val APP_STATE = "app.state"
+
+/** Whether a user has a socket open, and whether their phone last said Circaso was in front. */
+enum class SocketPresence {
+    /** No node holds a socket for them: push is the only way to reach the phone. */
+    NONE,
+
+    /** A socket, with Circaso in front (or a phone too old to say otherwise). */
+    FOREGROUND,
+
+    /** A socket, but the phone said Circaso went to the background: the frame alone shows nobody anything. */
+    BACKGROUND,
+}
+
 /** The heartbeat, `{"type":"ping"}`, encoded once. */
 private val PING = CircasoJson.encodeToString(PingFrame.serializer(), PingFrame())
 
@@ -128,6 +151,12 @@ class SocketHub(
 
     private val connections = ConcurrentHashMap<UserId, MutableSet<Connection>>()
 
+    /** Users whose phone last said Circaso is in the background, while this node holds a socket of theirs. */
+    private val inBackground: MutableSet<UserId> = ConcurrentHashMap.newKeySet()
+
+    /** What this node writes to `rt:conn:{userId}`: its id, and the background mark when the phone said so. */
+    private fun connValue(userId: UserId) = if (userId in inBackground) "$nodeId$BACKGROUND_MARK" else nodeId
+
     /** Starts listening on this node's channel and on the fan-out channel. Called once, when the application starts. */
     fun start() {
         listen("node:$nodeId")
@@ -174,8 +203,16 @@ class SocketHub(
     }
 
     /** Hands a frame to the node that holds the user's socket; false if no node does (the caller falls back to push). */
-    suspend fun deliver(userId: UserId, frame: RealtimeEnvelope): Boolean {
-        val node = redis.get("conn:$userId") ?: return false
+    suspend fun deliver(userId: UserId, frame: RealtimeEnvelope): Boolean =
+        deliverTo(userId, frame) != SocketPresence.NONE
+
+    /**
+     * Hands a frame to the node that holds the user's socket, and says whether there was one and whether the phone
+     * last said Circaso was in front, from the same single `GET`.
+     */
+    suspend fun deliverTo(userId: UserId, frame: RealtimeEnvelope): SocketPresence {
+        val value = redis.get("conn:$userId") ?: return SocketPresence.NONE
+        val node = nodeOf(value)
         if (node == nodeId) {
             handle(NodeMessage.Frame(userId, frame))
         } else {
@@ -184,7 +221,7 @@ class SocketHub(
                 CircasoJson.encodeToString(NodeMessage.serializer(), NodeMessage.Frame(userId, frame)),
             )
         }
-        return true
+        return presenceOf(value)
     }
 
     /**
@@ -203,12 +240,28 @@ class SocketHub(
      * Of [userIds], those no node holds a socket for, from single-key `GET`s of `rt:conn:{userId}` sent as one
      * pipeline. Only asked for frames worth a push, so receipts and typing never read Redis.
      */
-    suspend fun withoutSocket(userIds: Collection<UserId>): List<UserId> {
+    suspend fun withoutSocket(userIds: Collection<UserId>): List<UserId> =
+        socketPresence(userIds).filterValues { it == SocketPresence.NONE }.keys.toList()
+
+    /**
+     * Of [userIds], whether each has a socket and whether their phone said Circaso is in front, from single-key `GET`s
+     * of `rt:conn:{userId}` sent as one pipeline: one round trip for a whole group.
+     */
+    suspend fun socketPresence(userIds: Collection<UserId>): Map<UserId, SocketPresence> {
         val users = userIds.distinct()
-        if (users.isEmpty()) return emptyList()
-        val nodes = redis.getPipelined(users.map { "conn:$it" })
-        return users.filterIndexed { index, _ -> nodes[index] == null }
+        if (users.isEmpty()) return emptyMap()
+        val values = redis.getPipelined(users.map { "conn:$it" })
+        return users.mapIndexed { index, user -> user to presenceOf(values[index]) }.toMap()
     }
+
+    private fun nodeOf(value: String) = value.substringBefore(BACKGROUND_MARK)
+
+    private fun presenceOf(value: String?): SocketPresence =
+        when {
+            value == null -> SocketPresence.NONE
+            value.endsWith(BACKGROUND_MARK) -> SocketPresence.BACKGROUND
+            else -> SocketPresence.FOREGROUND
+        }
 
     /**
      * Sends `system/session.revoked` and closes the matching sockets: only [deviceId]'s when given (a replaced phone),
@@ -279,8 +332,10 @@ class SocketHub(
         set.remove(connection)
         if (set.isEmpty()) {
             connections.remove(connection.userId, set)
+            inBackground.remove(connection.userId)
             // Only drop the mapping if it still points at this node: the phone may have reconnected elsewhere.
-            if (redis.get("conn:${connection.userId}") == nodeId) redis.delete("conn:${connection.userId}")
+            val node = redis.get("conn:${connection.userId}")?.let(::nodeOf)
+            if (node == nodeId) redis.delete("conn:${connection.userId}")
         }
     }
 
@@ -304,12 +359,12 @@ class SocketHub(
 
                 val connection = Connection(principal.userId, principal.deviceId, principal.sessionId, this)
                 register(connection)
-                redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
+                redis.set("conn:${principal.userId}", connValue(principal.userId), CONN_TTL)
                 val heartbeat =
                     scope.launch {
                         while (true) {
                             delay(HEARTBEAT_MILLIS)
-                            redis.set("conn:${principal.userId}", nodeId, CONN_TTL)
+                            redis.set("conn:${principal.userId}", connValue(principal.userId), CONN_TTL)
                             runCatching { send(Frame.Text(PING)) }.onSuccess { connection.framesOut.incrementAndGet() }
                         }
                     }
@@ -424,6 +479,10 @@ class SocketHub(
      */
     private suspend fun receive(connection: Connection, text: String) {
         val frame = runCatching { CircasoJson.decodeFromString(ClientFrame.serializer(), text) }.getOrNull()
+        if (frame?.module == SYSTEM_MODULE && frame.type == APP_STATE) {
+            appState(connection, frame)
+            return
+        }
         val handler = frame?.let { incoming -> inbound().firstOrNull { it.module == incoming.module } }
         if (frame == null || handler == null) {
             log.debug("client frame ignored")
@@ -446,6 +505,35 @@ class SocketHub(
         if (result is Resource.Error) {
             log.debug("client frame refused: module={} type={} code={}", frame.module, frame.type, result.error.code)
         }
+    }
+
+    /**
+     * `system/app.state` (2026-11-13): `{"state":"foreground"|"background"}`, sent by the phone as Circaso comes to the
+     * front or leaves it, and on every connect. Written to `rt:conn:{userId}` at once, so the next message to them is
+     * pushed when nobody is looking at the app, rather than only after the socket's ping times out. Another state is
+     * ignored. This is not "last seen": that is messaging's presence, which waits 15 seconds before saying away.
+     */
+    private suspend fun appState(connection: Connection, frame: ClientFrame) {
+        val state =
+            runCatching { CircasoJson.decodeFromString(AppStateFrame.serializer(), frame.data.toString()) }
+                .getOrNull()
+                ?.state
+        when (state) {
+            "background" -> {
+                inBackground.add(connection.userId)
+            }
+
+            "foreground" -> {
+                inBackground.remove(connection.userId)
+            }
+
+            else -> {
+                log.debug("app state ignored")
+                return
+            }
+        }
+        redis.set("conn:${connection.userId}", connValue(connection.userId), CONN_TTL)
+        log.debug("app state: {}", state)
     }
 
     /** Sends what the phone missed from each module; how many frames that was. */

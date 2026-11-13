@@ -8,6 +8,7 @@ import com.circaso.shared.CircasoJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
+import java.util.Collections
 
 /** What the iPhone's PushKit delegate reads: the FCM `call.ringing` push's fields, with no `aps` alert. */
 @Serializable
@@ -37,14 +38,36 @@ private data class ApnsError(val reason: String? = null)
  * voip`, the topic `<bundle id>.voip`, priority 10 and expiration 0 (a ring is delivered now or never; the phone gets
  * `call.missed` through FCM after). [tokens] signs the provider token; [transport] is the HTTP/2 connection.
  *
- * Each send logs one line: the call, the outcome, APNs' status and reason, and the token's last 6 characters only.
+ * Development and production tokens (2026-11-11): an iPhone running an Xcode build has a sandbox token, one from
+ * TestFlight or the App Store a production token, and each APNs host answers `BadDeviceToken` to the other kind. So a
+ * `BadDeviceToken` from [transport] is tried once on [otherHost] (the other environment) before the token counts as
+ * invalid, and the host that took it is remembered for that token. One server then rings both kinds of iPhone, and a
+ * sandbox token is no longer forgotten after its first ring.
+ *
+ * Each send logs one line: the call, the outcome, APNs' status and reason, the host when it was [otherHost], and the
+ * token's last 6 characters only.
  */
-class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport: ApnsTransport, bundleId: String) :
-    VoipPushGateway {
+class ApnsVoipPush(
+    private val tokens: ApnsProviderToken,
+    private val transport: ApnsTransport,
+    bundleId: String,
+    private val otherHost: ApnsTransport? = null,
+) : VoipPushGateway {
     private val log = LoggerFactory.getLogger(ApnsVoipPush::class.java)
     private val topic = "$bundleId.voip"
 
     override val enabled: Boolean = true
+
+    /** Tokens that [otherHost] took, most recent last; capped so it can't grow without bound. */
+    private val onOtherHost: MutableSet<String> =
+        Collections.synchronizedSet(
+            Collections.newSetFromMap(
+                object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
+                    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) =
+                        size > REMEMBERED_TOKENS
+                },
+            ),
+        )
 
     override suspend fun ring(voipToken: String, ring: VoipRing): VoipPushResult =
         send(voipToken, "ring", ring.callId, payload(ring))
@@ -78,22 +101,31 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
             )
             return VoipPushResult.TOKEN_INVALID
         }
-        val response =
-            try {
-                transport.post("/3/device/$voipToken", headers(), body)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log.warn(
-                    "apns voip {}: callId={} outcome={} error={} token=…{}",
-                    what,
-                    callId,
-                    VoipPushResult.FAILED,
-                    e::class.simpleName,
-                    tail,
-                )
-                return VoipPushResult.FAILED
+        val first = if (otherHost != null && voipToken in onOtherHost) otherHost else transport
+        var (response, failure) = post(first, voipToken, body)
+        var used = first
+        val second = (if (first === transport) otherHost else transport)?.takeIf { response.isBadDeviceToken() }
+        if (second != null) {
+            // The other host decides. If it can't be reached, the ring failed but the token isn't called invalid.
+            val (retried, retryFailure) = post(second, voipToken, body)
+            response = retried
+            failure = retryFailure
+            used = second
+            if (retried?.status == OK) {
+                if (second === otherHost) onOtherHost += voipToken else onOtherHost -= voipToken
             }
+        }
+        if (failure != null || response == null) {
+            log.warn(
+                "apns voip {}: callId={} outcome={} error={} token=…{}",
+                what,
+                callId,
+                VoipPushResult.FAILED,
+                failure?.let { it::class.simpleName },
+                tail,
+            )
+            return VoipPushResult.FAILED
+        }
         val reason = reason(response)
         val outcome =
             when {
@@ -114,11 +146,29 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
                     VoipPushResult.FAILED
                 }
             }
-        val line = "apns voip {}: callId={} outcome={} status={} reason={} apnsId={} token=…{}"
-        val args = arrayOf<Any?>(what, callId, outcome, response.status, reason, response.apnsId, tail)
+        val host = if (used === otherHost) "other" else "main"
+        val line = "apns voip {}: callId={} outcome={} status={} reason={} host={} apnsId={} token=…{}"
+        val args = arrayOf<Any?>(what, callId, outcome, response.status, reason, host, response.apnsId, tail)
         if (outcome == VoipPushResult.FAILED) log.warn(line, *args) else log.info(line, *args)
         return outcome
     }
+
+    /** One POST to [to]; the response, or the exception that stopped it. */
+    private suspend fun post(
+        to: ApnsTransport,
+        voipToken: String,
+        body: String,
+    ): Pair<ApnsResponse?, Exception?> =
+        try {
+            to.post("/3/device/$voipToken", headers(), body) to null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null to e
+        }
+
+    private fun ApnsResponse?.isBadDeviceToken(): Boolean =
+        this != null && status == BAD_REQUEST && reason(this) in BAD_TOKEN
 
     private fun headers(): Map<String, String> =
         mapOf(
@@ -151,6 +201,7 @@ class ApnsVoipPush(private val tokens: ApnsProviderToken, private val transport:
         const val FORBIDDEN = 403
         const val GONE = 410
         const val TOKEN_TAIL = 6
+        const val REMEMBERED_TOKENS = 10_000
         val HEX = Regex("^[0-9a-fA-F]{16,200}$")
         val BAD_TOKEN = setOf("BadDeviceToken")
         val STALE_PROVIDER_TOKEN = setOf("ExpiredProviderToken", "InvalidProviderToken")

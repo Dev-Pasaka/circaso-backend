@@ -9,6 +9,8 @@ const val TAG_USERS = "Ops · Users"
 const val TAG_MONEY = "Ops · Money"
 const val TAG_GROUPS = "Ops · Groups"
 const val TAG_TICKETS = "Ops · Tickets"
+const val TAG_CALLS = "Ops · Calls"
+const val TAG_DIAGNOSTICS = "Ops · Diagnostic logs"
 const val TAG_STAFF = "Ops · Staff and audit"
 const val TAG_FEES = "Ops · Fees and limits"
 

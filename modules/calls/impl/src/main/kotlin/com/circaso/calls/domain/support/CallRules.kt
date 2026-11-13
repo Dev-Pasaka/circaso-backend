@@ -4,6 +4,7 @@ import com.circaso.calls.api.CallEnded
 import com.circaso.calls.domain.models.Call
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.EndReason
+import com.circaso.calls.domain.models.LeaveCause
 import com.circaso.calls.domain.models.Participant
 import com.circaso.calls.domain.models.ParticipantState
 import com.circaso.shared.UserId
@@ -66,8 +67,39 @@ object CallRules {
      * the moment either person hangs up (2026-11-09): there is nobody else to talk to, and before this a callee who
      * answered and hung up while the caller's own join was still on its way left the call ringing the caller alone.
      * A group call goes on while anyone is still in it, and ends when the last person leaves (Pasaka 2026-11-09).
+     * [cause] is what the phone said (CL7): kept on the leaver's row, and a stall or a reconnect that gave up ends
+     * the call `DROPPED` instead of `COMPLETED`.
      */
     fun leave(
+        call: Call,
+        userId: UserId,
+        now: Instant,
+        cause: LeaveCause? = null,
+    ): Call {
+        val left = leaveFor(call, userId, now)
+        val withCause =
+            if (cause == null) {
+                left
+            } else {
+                left.copy(
+                    participants =
+                        left.participants.map {
+                            if (it.userId ==
+                                userId
+                            ) {
+                                it.copy(leftCause = cause)
+                            } else {
+                                it
+                            }
+                        },
+                )
+            }
+        // the phone lost the call rather than hanging up (2026-11-13): staff see it apart from a normal end
+        val dropped = cause?.isDrop == true && !call.isEnded && withCause.endReason == EndReason.COMPLETED
+        return if (dropped) withCause.copy(endReason = EndReason.DROPPED) else withCause
+    }
+
+    private fun leaveFor(
         call: Call,
         userId: UserId,
         now: Instant,
@@ -88,7 +120,7 @@ object CallRules {
     /** The person's row with a new state; leaving drops their session, its tracks and its connection. */
     fun Participant.moved(state: ParticipantState, now: Instant): Participant =
         if (state == ParticipantState.JOINED) {
-            copy(state = state, updatedAt = now)
+            copy(state = state, updatedAt = now, leftCause = null)
         } else {
             copy(
                 state = state,

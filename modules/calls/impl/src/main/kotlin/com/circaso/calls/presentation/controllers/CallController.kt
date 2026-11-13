@@ -1,24 +1,33 @@
 package com.circaso.calls.presentation.controllers
 
 import com.circaso.calls.api.CallId
+import com.circaso.calls.domain.errors.CallsError
 import com.circaso.calls.domain.models.CallView
+import com.circaso.calls.presentation.dto.CallReportRequest
 import com.circaso.calls.presentation.dto.CallResponse
 import com.circaso.calls.presentation.dto.ConnectedRequest
 import com.circaso.calls.presentation.dto.EmptyResponse
 import com.circaso.calls.presentation.dto.JoinRequest
 import com.circaso.calls.presentation.dto.JoinResponse
+import com.circaso.calls.presentation.dto.LeaveRequest
 import com.circaso.calls.presentation.dto.MediaRequest
 import com.circaso.calls.presentation.dto.PullRequest
 import com.circaso.calls.presentation.dto.PullResponse
 import com.circaso.calls.presentation.dto.RenegotiateRequest
+import com.circaso.calls.presentation.dto.ReportReceivedResponse
 import com.circaso.calls.presentation.dto.RingRequest
 import com.circaso.calls.presentation.dto.StartCallRequest
+import com.circaso.calls.presentation.mappers.MAX_LEAVE_BYTES
+import com.circaso.calls.presentation.mappers.MAX_REPORT_BYTES
 import com.circaso.calls.presentation.mappers.callIdOf
 import com.circaso.calls.presentation.mappers.chatIdOf
+import com.circaso.calls.presentation.mappers.leaveCauseOf
 import com.circaso.calls.presentation.mappers.toCommand
+import com.circaso.calls.presentation.mappers.toReport
 import com.circaso.calls.presentation.mappers.toResponse
 import com.circaso.calls.presentation.mappers.toUserIds
 import com.circaso.calls.presentation.services.CallService
+import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
@@ -30,12 +39,16 @@ import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 
 private const val TAG = "Calls"
 private const val SCOPE = "Scope: `app`."
@@ -51,7 +64,7 @@ private const val MEDIA = "calls.media_unavailable"
 /**
  * Voice and video calls in a chat, with the media on Cloudflare Realtime's SFU (decision 2026-10-29). CL1 start,
  * CL2 look up (also by chat), CL3 join with the phone's offer, CL4 pull others' tracks, CL5 answer the SFU's offer,
- * CL6 decline, CL7 leave, CL8 mute or camera off. Frames `calls/call.ringing`, `call.updated` and `call.ended`.
+ * CL6 decline, CL7 leave, CL8 mute or camera off, CL10 a call's report. Frames `calls/call.ringing`, `call.updated` and `call.ended`.
  */
 fun Route.callController(calls: CallService) {
     route("/calls") {
@@ -100,7 +113,10 @@ fun Route.callController(calls: CallService) {
                         "$SCOPE $IDEMPOTENT The server opens an SFU session for this connection, pushes the " +
                             "tracks in the offer and answers with the SFU's SDP. Keep `sessionId` for CL4 and CL5. " +
                             "The second person in makes the call `ACTIVE`; everyone gets `calls/call.updated`. " +
-                            "At most 8 people at once. Joining again replaces your earlier session.",
+                            "At most 8 people at once. Joining again replaces your earlier session. " +
+                            "Nothing is pulled here (`pull` is ignored since 2026-11-14): set the answer, " +
+                            "then pull with CL4 at once; the SFU holds that pull until your connection is up " +
+                            "(at most 5 s) and answers then.",
                 )
 
                 post("connected") {
@@ -183,7 +199,12 @@ fun Route.callController(calls: CallService) {
                             "everyone not on the call. Each ring lasts 45 seconds.",
                 )
 
-                post("leave") { change(calls::leave) }.docs<NoBody, CallResponse>(
+                post("leave") {
+                    val userId = call.principal().userId
+                    val cause = leaveCauseOf(call.boundedBody(MAX_LEAVE_BYTES).leaveText())
+                    val result = callIdOf(call.parameters["callId"]).flatMap { calls.leave(userId, it, cause) }
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<LeaveRequest, CallResponse>(
                     "CL7 · Leave a call",
                     TAG,
                     listOf(NOT_FOUND, MALFORMED),
@@ -192,7 +213,31 @@ fun Route.callController(calls: CallService) {
                             "caller hanging up before anyone answered cancels the call (`CANCELLED`). A direct call " +
                             "ends for both as soon as either hangs up (`COMPLETED`, or `DECLINED` when the callee " +
                             "hangs up unanswered); a group call ends when fewer than two people are left. Everyone " +
-                            "gets `calls/call.ended` with the final call.",
+                            "gets `calls/call.ended` with the final call. The body is optional (2026-11-13): " +
+                            "`cause` says why the phone left and is kept for support; a leave with `STALL` or " +
+                            "`RECONNECT_GAVE_UP` that ends the call ends it `DROPPED`. An unknown cause is kept as " +
+                            "`OTHER`; no body is a leave without a cause.",
+                )
+
+                post("report") {
+                    val userId = call.principal().userId
+                    val body = call.boundedBody(MAX_REPORT_BYTES)
+                    val result =
+                        callIdOf(call.parameters["callId"]).flatMap { callId ->
+                            body.reportRequest().flatMap { it.toReport(userId, callId) }.flatMap { calls.report(it) }
+                        }
+                    call.respondDefault(result.toDefaultResponse { ReportReceivedResponse() })
+                }.docs<CallReportRequest, ReportReceivedResponse>(
+                    "CL10 · Send a call's report",
+                    TAG,
+                    listOf(NOT_FOUND, "calls.report_invalid", "calls.report_rate_limited", MALFORMED),
+                    notes =
+                        "$SCOPE $IDEMPOTENT Once per call per phone, after the call ended, perhaps hours later " +
+                            "(queued offline): this phone's timeline (at most 400 events), media samples (at most " +
+                            "720) and totals, for support to see why a call dropped. A repeat replaces the earlier " +
+                            "one. Only someone the call rang or who joined it; anyone else is `calls.not_found`. " +
+                            "The body is at most 64 KiB. At most 30 reports an hour. Kept 30 days. Never put " +
+                            "message content, phone numbers or names in it.",
                 )
 
                 post("media") {
@@ -235,3 +280,20 @@ private suspend fun RoutingContext.change(action: suspend (UserId, CallId) -> Re
     val result = callIdOf(call.parameters["callId"]).flatMap { action(userId, it) }
     call.respondDefault(result.toDefaultResponse { it.toResponse() })
 }
+
+/** The request body, read no further than [max] bytes (after any decompression) plus one: "" for none, null when over. */
+private suspend fun ApplicationCall.boundedBody(max: Long): String? {
+    val bytes = receiveChannel().readRemaining(max + 1).readByteArray()
+    return if (bytes.size > max) null else bytes.decodeToString()
+}
+
+/** CL7's optional body: none, or over its few bytes, is a leave without a cause. */
+private fun String?.leaveText(): String? = this?.takeIf { it.isNotEmpty() }
+
+/** CL10's body as its request: none or over 64 KiB is `calls.report_invalid`, JSON that isn't one is malformed. */
+private fun String?.reportRequest(): Resource<CallReportRequest> =
+    when {
+        this == null -> Resource.error(CallsError.ReportInvalid("body", "at most 64 KiB"))
+        isEmpty() -> Resource.error(CallsError.ReportInvalid("body", "required"))
+        else -> Resource.success(CircasoJson.decodeFromString(CallReportRequest.serializer(), this))
+    }

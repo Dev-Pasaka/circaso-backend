@@ -165,6 +165,7 @@ class Harness(
             holders,
             progress,
             HoldingPrices(prices, custody),
+            holds,
         )
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock, pendingSetups)
     val createWallet = CreateWallet(creation, support)

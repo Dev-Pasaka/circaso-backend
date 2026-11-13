@@ -81,7 +81,17 @@ Money starts and ends in the chat. There is no separate payment form.
 - Encrypted one-to-one and group chats, with read receipts, typing, delete for everyone, voice notes, photos,
   videos, documents and location (including live location for 15 minutes, 1 hour or 8 hours).
 - Filters at the top of Chats: All, Unread, Groups, Moments.
-- Long-press a message to react, reply, forward or delete.
+- Long-press a message to react with an emoji, or for its options (send again, delete).
+- To reply to a message, swipe it to the right (yours or theirs, including photos, voice notes and money cards). The
+  box shows "Replying to …"; tap × to cancel. The reply shows the message it answers; tap that to jump to it.
+- In a group, tap the reactions under a message to see who reacted with what (filter by emoji); tap your own to
+  remove it. In a one-to-one chat, tapping the reaction lets you change yours.
+
+- Group names and photos are end-to-end encrypted. After signing out or on a new phone a group can show its members'
+  names instead of its own until its name is back. With **Group names backup** on (You → Security → Chats, or turned
+  on automatically when you save your PIN Vault), Chats shows "Restore your group names": one Face ID / fingerprint
+  and every group's name comes back. Without it, names return when another member's phone sends the group's key.
+  Circaso can't read the backup; it's locked with the same passkey as the PIN Vault.
 
 ## Calls
 1. Open a chat and tap the phone (voice) or camera (video) at the top. Group calls work from a group chat.
@@ -104,6 +114,15 @@ Money starts and ends in the chat. There is no separate payment form.
 8. On a one-to-one call, money the other person sends you lands on your call screen as it arrives, for example
    "Juma sent you KES 500", the same way contributions land on a group call.
 - Calls are labelled "Secure call".
+- If the other person's phone drops off the network, your call screen says so within a few seconds, for example
+  "Rhoda's connection dropped · Reconnecting…" (on a group call their tile says "reconnecting"), and the call picks up
+  again by itself when they're back. If your own phone loses its connection it says "Reconnecting…" ("You're offline ·
+  Reconnecting…" with no network at all) and reconnects on its own. A call that can't come back within about 45
+  seconds ends; call again.
+- An incoming call rings even if you've only just left Circaso. On Android it opens full screen when the phone is
+  locked or idle, and shows a call banner with Answer and Decline over other apps (the phone's own rule, as for every
+  calling app). On iPhone it rings like a phone call; to make calls full screen over other apps, iPhone Settings →
+  Phone → Incoming Calls → Full Screen.
 
 ## Moments
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
@@ -111,17 +130,51 @@ Money starts and ends in the chat. There is no separate payment form.
 - Reply to a moment and it arrives in your chat with that person. Choose who sees your moments in Moments → privacy.
 
 ## Contacts
+- The first time you reach Chats, Circaso asks once to use your contacts. Allow it and your phone contacts who are on
+  Circaso show up straight away in New chat and search, and stay up to date. Only phone numbers are checked, never
+  names. Said no? Chats → pencil → **Find from contacts** asks again.
 - Chats → pencil → find people by name, phone contacts already on Circaso, or their @username. Invite friends who
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
+- You can give anyone your own name for them ("Mum", "John Plumber"): open the chat, tap their name at the top, then
+  **Edit name**. Everywhere in Circaso shows your name, with theirs in small text. **Use their name** undoes it.
+  With key backup on (the same Group names backup), your names are backed up sealed with your passkey, so they come
+  back on a new phone and Circaso can't read them.
+
+## Signing up and your number
+- Sign in with Google (or Apple on iPhone), then add your phone number and enter the 6-digit code we text you.
+- The number's country is Kenya (+254) unless you change it: tap the flag and code next to the number to pick any
+  country (search by name or code, for example `uk` or `+44`). Pasting a whole number that starts with `+` picks its
+  country for you.
 
 ## Profile
 - You tab → your picture → **Edit profile**: change your photo (camera or gallery), name, about and @username.
+
+## Notifications
+- A message notification shows who sent it, with their profile photo (their initials when they have none), the name
+  you saved for them, and what they said ("📷 Photo", "🎤 Voice message" for media). A group's shows the group's name
+  and who wrote. Money shows the sender's photo and the amount in your own currency. iPhone and Android both.
+- Reactions to your moment ("Amina reacted ❤️ to your moment"), replies to it, missed calls and contacts who join
+  Circaso show that person's photo and the name you saved for them too. One moment's reactions gather in one
+  notification, a line per person, and it buzzes at most once a minute; tap it to open your moment.
+- **Reply from the notification**, on iPhone and Android: on a message's notification tap **Reply** (on iPhone, press and
+  hold it first), type and **Send**; it goes like one typed in the chat, without opening Circaso,
+  and the chat counts as read. **Mark as read** clears it. Not for money notifications, chats you've left or people
+  you blocked. With Notification privacy on, Reply first asks for your Face ID, fingerprint or passcode.
+- **Notification privacy** (You → Notification privacy, on iPhone and Android): turn it on and notifications say only
+  "New message", "You received money" or "Missed call", with no names, photos, amounts or words. Off by default.
+- No notifications at all: check that Circaso may send them in the phone's Settings (Notifications → Circaso).
 
 ## Security and the PIN
 - Your wallet PIN (6 digits, with security questions) is set the first time you use money, and you confirm every
   payment with it. To approve without typing it, turn on Face ID / fingerprint in You → Security (the PIN still works
   if that fails). A group wallet has its own PIN, not your personal one (Group info → Change PIN).
+- **PIN Vault** (You → Security → Wallet PIN → PIN Vault): back up your wallet PIN, and if you like your security
+  answers, locked with a passkey that your Face ID, fingerprint or screen lock opens. The passkey syncs with your Apple
+  or Google account, so a new phone can open it too. Circaso stores it locked and can never read it. Forgot your PIN?
+  Open the vault: the PIN shows for a minute, then sending pauses for 24 hours and you get an email, in case it wasn't
+  you (receiving still works). Needs an iPhone with iOS 18 or later, or an Android phone with Google Password
+  Manager; on other phones the option doesn't show. Asha can't open the vault or see the PIN.
 - Circaso and Asha never ask for your PIN, codes or recovery words. Nobody from Circaso will ask you to send money.
 - You → Security also shows your devices and recent security activity. One phone per account: signing in on a new
   phone signs the old one out, and payments pause for a short while after.
@@ -139,6 +192,15 @@ Money starts and ends in the chat. There is no separate payment form.
 - Asha can read your money, contacts, groups and (if you allow it) search your chats on your phone to answer. She
   can't move money or send messages; she can open a support ticket if you agree.
 - Her menu (⋮): New chat, Recent chats, Usage & credits, Settings (her voice).
+
+## Help and diagnostic logs
+- You → Help has the help topics and support. When something isn't working (a call that dropped, a message stuck
+  sending), **Send diagnostic log** (under "Something not working?") sends support a record of what the app did on
+  this phone over the last two days, like calls connecting and dropping. It never includes messages, money details,
+  phone numbers or the PIN, and is kept 30 days. It needs a connection.
+- After sending, the app shows a code like `DL-7K3QX9` with **Copy Code**. Tell the person to give that code to
+  support (in their ticket, or when they chat or call) so the team can find the log. Suggest it when someone reports a
+  dropped call or something that keeps failing; you can't send it for them.
 
 ## Sharing links
 - Receipts, group statements, your address, "pay me" and invites are shared as short links. You choose whether names

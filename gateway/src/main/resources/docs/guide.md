@@ -100,6 +100,7 @@ When a limit is hit the answer is `429` with `request.rate_limited`, `details.re
 | Key bundles (`GET /v1/keys/{userId}`) | 60 per user per hour, answered with `messaging.rate_limited` |
 | Support recovery requests | 3 per number per day, 5 per IP per day |
 | Phone release | 1 per number per 7 days |
+| PIN Vault openings (`GET /v1/vault`) | 5 per account per hour |
 | Asha's agent token (all `/v1/agent/` routes) | 60 per user per minute, in its own bucket |
 | Payment history (`GET /v1/wallet/transactions`) | 60 per user per minute, in its own bucket |
 | New support tickets (`POST /v1/support/tickets`) | 5 per user per day, counted from the first, answered with `support.rate_limited` (and 10 per user per hour at the gateway) |
@@ -145,6 +146,14 @@ The shared ones, then each area's own. Codes are stable.
 | `identity.recovery_not_eligible` | 403 | Support can only restore accounts that completed identity verification |
 | `identity.release_not_allowed` | 403 | A verified account's number cannot be released |
 | `identity.support_account_not_on_mobile` | 403 | A Circaso support account tried to get an app session (sign-in, phone, device or refresh); support uses its own dashboard |
+| `vault.not_found` | 404 | No PIN Vault to open |
+| `vault.version_conflict` | 409 | The PIN Vault changed since you read its version (or there is none); read V1 again |
+| `vault.credential_id_invalid`, `vault.salt_invalid`, `vault.ciphertext_invalid`, `vault.algorithm_invalid`, `vault.expected_version_invalid` | 400 | That field of a PIN Vault save is the wrong encoding or size |
+| `key_backup.not_found` | 404 | Group key backup is off (no root): turn it on (KB2) before backing up a group key |
+| `key_backup.chat_not_found` | 404 | Not a group you are in (nor one you already backed up a key of) |
+| `key_backup.version_conflict` | 409 | The backup root changed since you read its version (or there is none); read KB1 again |
+| `key_backup.too_many` | 409 | The account already holds 10,000 backed-up group keys |
+| `key_backup.credential_id_invalid`, `key_backup.salt_invalid`, `key_backup.sealed_root_invalid`, `key_backup.algorithm_invalid`, `key_backup.expected_version_invalid`, `key_backup.chat_id_invalid`, `key_backup.meta_version_invalid`, `key_backup.ciphertext_invalid` | 400 | That field of a key backup save is the wrong encoding, size or range |
 | `users.profile_invalid` | 400 | Name empty or over 40 characters, about over 140 |
 | `users.version_conflict` | 409 | The profile changed since you read it; reload and retry |
 | `users.avatar_invalid` | 400 | Wrong type, over 5 MB or not uploaded |
@@ -181,7 +190,7 @@ The shared ones, then each area's own. Codes are stable.
 | `wallet.not_on_chain` | 409 | A payment on a chain your wallet isn't on: add the chain first (`POST /v1/wallet/chains`) |
 | `wallet.chain_unsupported` | 400 | A blockchain the server doesn't support (or, when adding one, a chain retired from receiving); `GET /v1/wallet/chains` lists those that are |
 | `wallet.account_restricted` | 403 | A payment from an account that isn't active (suspended, blocked, being deleted) |
-| `wallet.on_hold` | 403 | Payments are on hold for a while after a support restore |
+| `wallet.on_hold` | 403 | Payments are paused for a while (24 hours after the PIN Vault was opened, or after a support restore); W1's `hold.until` says until when |
 | `wallet.amount_invalid` | 400 | An amount that can't be sent: zero, more decimals than the asset has, `amountMinor` and `amount` that disagree, or an asset not offered on that chain |
 | `wallet.limit_exceeded` | 400 | Over the per-payment or daily limit |
 | `wallet.insufficient_funds` | 400 | The wallet doesn't hold enough on the payment's chain |

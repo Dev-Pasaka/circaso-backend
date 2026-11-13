@@ -7,7 +7,11 @@ import com.circaso.identity.data.PostgresIdentity.Companion.count
 import com.circaso.identity.domain.models.Account
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.KeyBackupRoot
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.SecurityEventType
 import com.circaso.identity.domain.models.Session
@@ -21,6 +25,7 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import com.circaso.shared.decode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -48,7 +53,10 @@ class CompleteDeletionsTest {
     @BeforeTest
     fun clean() = PostgresIdentity.reset()
 
-    /** An account with a number, a login, a phone, a session and a log entry, deleted with its grace ending [at]. */
+    /**
+     * An account with a number, a login, a phone, a session, a log entry, a PIN Vault and a group key backup (its root
+     * and two group keys), deleted with its grace ending [at].
+     */
     private suspend fun deleted(number: String, at: Instant?): UserId {
         val userId = UserId.new()
         val account = Account(userId, null, AccountStatus.PENDING_PHONE, null, Verification.NONE, 1, now)
@@ -91,6 +99,14 @@ class CompleteDeletionsTest {
                         listOf(
                             SecurityEvent(userId, null, SecurityEventType.DELETION_REQUESTED, null, null),
                         ),
+                    vaults = listOf(PinVault(userId, "cred", "c2FsdA==", "Y2lwaGVy", "prf/v1", 1, now)),
+                    keyBackupRoots = listOf(KeyBackupRoot(userId, "cred", "c2FsdA==", "cm9vdA==", "prf/v1", 1, now)),
+                    groupKeys =
+                        listOf(
+                            GroupKeyBackup(userId, Uuid7.generate(), 0, "a2V5MA==", now),
+                            GroupKeyBackup(userId, Uuid7.generate(), 3, "a2V5Mw==", now),
+                        ),
+                    savedNames = listOf(SavedNames(userId, "bmFtZXM=", 4, now)),
                 ),
             )
         }
@@ -98,7 +114,18 @@ class CompleteDeletionsTest {
     }
 
     private fun rowsOf(userId: UserId): Int =
-        listOf("accounts", "provider_links", "devices", "sessions", "security_log", "support_recoveries").sumOf {
+        listOf(
+            "accounts",
+            "provider_links",
+            "devices",
+            "sessions",
+            "security_log",
+            "support_recoveries",
+            "pin_vaults",
+            "key_backup_roots",
+            "group_key_backups",
+            "saved_names",
+        ).sumOf {
             count("SELECT count(*) FROM identity.$it WHERE user_id = '$userId'")
         }
 
@@ -117,6 +144,12 @@ class CompleteDeletionsTest {
             assertNull(pg.accounts.findByPhone(PhoneNumber.parse("+254700000001")!!), "its number is free")
             assertNotNull(pg.accounts.find(inGrace))
             assertNotNull(pg.accounts.find(active))
+            assertEquals(
+                0,
+                count("SELECT count(*) FROM identity.saved_names WHERE user_id = '$due'"),
+                "saved names too",
+            )
+            assertEquals(1, count("SELECT count(*) FROM identity.saved_names WHERE user_id = '$inGrace'"))
             assertEquals(1, outboxRows())
             assertEquals(
                 AccountDeleted(due),

@@ -8,6 +8,7 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.wallet.api.FeeAdmin
 import com.circaso.wallet.api.WalletFrames
@@ -28,7 +29,7 @@ import com.circaso.wallet.data.repositories.DatabaseTransactor
 import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
-import com.circaso.wallet.data.repositories.NoPaymentHolds
+import com.circaso.wallet.data.repositories.PaymentHoldsImpl
 import com.circaso.wallet.data.repositories.RuleAdminRepositoryImpl
 import com.circaso.wallet.data.repositories.RuleRepositoryImpl
 import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
@@ -44,6 +45,7 @@ import com.circaso.wallet.data.tables.FeeLedgerTable
 import com.circaso.wallet.data.tables.FeeQuotesTable
 import com.circaso.wallet.data.tables.FeeRulesTable
 import com.circaso.wallet.data.tables.LimitRulesTable
+import com.circaso.wallet.data.tables.PaymentHoldsTable
 import com.circaso.wallet.data.tables.RealtimeTable
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.data.tables.TransfersTable
@@ -140,6 +142,7 @@ import com.circaso.wallet.domain.usecases.GetTransaction
 import com.circaso.wallet.domain.usecases.GetTransfer
 import com.circaso.wallet.domain.usecases.GetWallet
 import com.circaso.wallet.domain.usecases.HasWallet
+import com.circaso.wallet.domain.usecases.HoldAfterVaultOpened
 import com.circaso.wallet.domain.usecases.ListChains
 import com.circaso.wallet.domain.usecases.ListFeeRules
 import com.circaso.wallet.domain.usecases.ListGroupWallets
@@ -175,9 +178,11 @@ import com.circaso.wallet.presentation.controllers.recipientController
 import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
 import com.circaso.wallet.presentation.controllers.walletController
+import com.circaso.wallet.presentation.events.IdentityEventHandler
 import com.circaso.wallet.presentation.services.CoinIconService
 import com.circaso.wallet.presentation.services.FeeAdminService
 import com.circaso.wallet.presentation.services.HistoryService
+import com.circaso.wallet.presentation.services.IdentityEventsService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.SpaceWalletService
 import com.circaso.wallet.presentation.services.TransferService
@@ -213,6 +218,7 @@ internal val walletDatabaseSpec =
                 LimitRulesTable,
                 FeeQuotesTable,
                 FeeLedgerTable,
+                PaymentHoldsTable,
             ),
         migrationsLocation = "classpath:db/wallet",
         outbox = true,
@@ -316,7 +322,7 @@ fun walletModule(config: Config): Module =
         single<WalletReportRepository> { WalletReportRepositoryImpl(get(named("wallet.database"))) }
         single<FeeConfig> { fees }
         single<Reminders> { RedisReminders(get<RedisScopes>().scope(REDIS_PREFIX)) }
-        single<PaymentHolds> { NoPaymentHolds() }
+        single<PaymentHolds> { PaymentHoldsImpl(get(named("wallet.database")), clock) }
         single<WalletWarnings> { LogWalletWarnings() }
         single<ActiveWallets> { RedisActiveWallets(get<RedisScopes>().scope(REDIS_PREFIX), jobs.activeWindow, clock) }
         single<StuckNotices> { RedisStuckNotices(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -384,7 +390,8 @@ fun walletModule(config: Config): Module =
         single { CustodyUpdates(get(), get(), get(), get(), get(), get(), clock, get(), get(), get()) }
         single { Reconciler(get(), get(), get(), get()) }
         single { HoldingPrices(get(), get()) }
-        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { HoldAfterVaultOpened(get()) }
         single { CreateWallet(get(), get()) }
         single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
         single { GetGroupWallet(get(), get(), get(), get()) }
@@ -461,6 +468,9 @@ fun walletModule(config: Config): Module =
         if (spacesEnabled) single { SpaceWalletService(get(), get()) }
         single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
         single { WalletJobsService(get(), get(), get(), get(), get()) }
+        single { IdentityEventsService(get()) }
+        // `identity.PinVaultOpened` pauses the person's payments for 24 hours (2026-11-11).
+        single<EventSubscription>(named("wallet.identity-events")) { IdentityEventHandler(get()).subscription() }
         single<RouteContributor>(named("wallet.routes")) {
             val wallets = get<WalletService>()
             val transfers = get<TransferService>()

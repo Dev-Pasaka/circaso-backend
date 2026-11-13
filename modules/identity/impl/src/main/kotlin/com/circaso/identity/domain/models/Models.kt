@@ -91,6 +91,24 @@ enum class SecurityEventType {
 
     /** Staff gave a suspended account back; the person signs in again. */
     UNSUSPENDED,
+
+    /** The PIN Vault was created or replaced (2026-11-11); [SecurityEvent.detail] is its new version. */
+    VAULT_SAVED,
+
+    /** The PIN Vault's ciphertext was fetched to be decrypted: payments pause for 24 hours and the owner is told. */
+    VAULT_OPENED,
+
+    /** The PIN Vault was deleted by its owner. */
+    VAULT_REMOVED,
+
+    /** Group key backup was turned on (2026-11-12): its first root saved; [SecurityEvent.detail] is its version. */
+    KEY_BACKUP_ON,
+
+    /** The group key backup's root was replaced; [SecurityEvent.detail] is its new version. */
+    KEY_BACKUP_CHANGED,
+
+    /** Group key backup was turned off: its root and every group key deleted by the owner. */
+    KEY_BACKUP_OFF,
 }
 
 data class SecurityEvent(

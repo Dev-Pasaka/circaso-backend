@@ -19,7 +19,7 @@ data class CallResponse(
     val createdAt: String,
     val startedAt: String? = null,
     val endedAt: String? = null,
-    /** `COMPLETED`, `CANCELLED`, `MISSED` or `DECLINED` once `ENDED`. */
+    /** `COMPLETED`, `CANCELLED`, `MISSED`, `DECLINED` or `DROPPED` (nobody hung up: the line dropped) once `ENDED`. */
     val endReason: String? = null,
     val participants: List<ParticipantDto>,
     /** For the phone's `RTCPeerConnection`: STUN, and TURN with credentials valid for a day when configured. */
@@ -55,7 +55,15 @@ data class IceServerDto(val urls: List<String>, val username: String? = null, va
 
 /** CL3 `POST /calls/{callId}/join`: the phone's offer and the tracks in it. */
 @Serializable
-data class JoinRequest(val offer: String, val tracks: List<TrackOfferDto>)
+data class JoinRequest(
+    val offer: String,
+    val tracks: List<TrackOfferDto>,
+    /**
+     * Ignored since 2026-11-14 (it asked for a pull in the same request, which the SFU can't make before this phone's
+     * connection is up: it held the join ~11 s). Still accepted so the 2026-11-13 apps' joins aren't malformed.
+     */
+    val pull: Boolean = false,
+)
 
 @Serializable
 data class TrackOfferDto(
@@ -111,3 +119,82 @@ data class RingRequest(val userIds: List<String> = emptyList())
 /** `{}`: done, nothing to add. */
 @Serializable
 data object EmptyResponse
+
+/**
+ * CL7 `POST /calls/{callId}/leave`'s optional body: why the phone left (2026-11-13). No body, an empty one or no
+ * `Content-Type` is a leave without a cause, as older apps send it.
+ */
+@Serializable
+data class LeaveRequest(
+    /**
+     * `USER_HANGUP`, `REMOTE_LEFT`, `STALL`, `RECONNECT_GAVE_UP`, `JOIN_FAILED`, `PERMISSION_DENIED`, `ENGINE_FAILED`,
+     * `APP_KILLED` or `OTHER`; any other is kept as `OTHER`.
+     */
+    val cause: String? = null,
+)
+
+/**
+ * CL10 `POST /calls/{callId}/report` (2026-11-13): what this phone recorded about the call, sent once after it ended.
+ * Every field is checked by the server (`calls.report_invalid` names the one that is wrong), so all are optional here.
+ */
+@Serializable
+data class CallReportRequest(
+    /** `android` or `ios`, at most 16 characters. */
+    val platform: String? = null,
+    /** At most 40 characters, for example `1.4.2 (61)`. */
+    val appVersion: String? = null,
+    /** At most 40 characters. */
+    val osVersion: String? = null,
+    /** At most 80 characters. */
+    val deviceModel: String? = null,
+    val video: Boolean? = null,
+    /** This phone started the call. */
+    val outgoing: Boolean? = null,
+    /** When this phone's timeline began (ISO-8601). */
+    val startedAt: String? = null,
+    val endedAt: String? = null,
+    /** CL7's causes, plus `DECLINED`, `REMOTE_ENDED`, `RING_STOPPED`, `ANSWERED_ELSEWHERE`; at most 40 characters. */
+    val endCause: String? = null,
+    /** At most 400, oldest first. */
+    val events: List<ReportEventDto> = emptyList(),
+    /** At most 720, one about every 5 seconds. */
+    val samples: List<ReportSampleDto> = emptyList(),
+    val summary: ReportSummaryDto? = null,
+)
+
+/** One line of the timeline: [t] ms after `startedAt` (0 or more), [type] at most 32 characters, [detail] at most 160. */
+@Serializable
+data class ReportEventDto(val t: Long? = null, val type: String? = null, val detail: String = "")
+
+/** One media sample; every number but [t] may be null. */
+@Serializable
+data class ReportSampleDto(
+    val t: Long? = null,
+    val rttMs: Double? = null,
+    val jitterMs: Double? = null,
+    val lossPct: Double? = null,
+    val packetsReceived: Long? = null,
+    val bytesReceived: Long? = null,
+)
+
+/** The phone's totals; every number may be null. */
+@Serializable
+data class ReportSummaryDto(
+    val durationMs: Long? = null,
+    val samples: Int? = null,
+    val avgRttMs: Double? = null,
+    val maxRttMs: Double? = null,
+    val avgJitterMs: Double? = null,
+    val maxJitterMs: Double? = null,
+    val lossPct: Double? = null,
+    val packetsReceived: Long? = null,
+    val bytesReceived: Long? = null,
+    val reconnects: Int? = null,
+)
+
+@Serializable
+data class ReportReceivedResponse(val received: Boolean = true)
+
+/** `calls/heartbeat` from the phone over the socket (2026-11-13): it is still on [callId]. */
+@Serializable
+data class HeartbeatFrameDto(val callId: String)

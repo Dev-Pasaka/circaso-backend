@@ -50,7 +50,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.KSerializer
+import net.logstash.logback.argument.StructuredArguments.kv
 import org.slf4j.LoggerFactory
+import java.time.Duration
+import java.time.Instant
 
 private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.GatewayRealtime")
 
@@ -60,6 +63,12 @@ private const val PUSH_BATCH = 100
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
 
+/**
+ * The most ciphertext a message push carries (base64 characters): APNs and FCM take 4 KB in all, and the ids, the
+ * alert and `aps` need the rest. A text message of a few hundred characters fits; a longer one is worded by name.
+ */
+private const val PUSH_CIPHERTEXT_MAX_CHARS = 2_800
+
 /** A support reply's push: from the team, as the app shows staff replies; a tap opens the ticket. */
 private const val SUPPORT_TITLE = "Circaso Support"
 private const val SUPPORT_TICKET_KIND = "support.ticket"
@@ -68,10 +77,12 @@ private const val SUPPORT_TICKET_KIND = "support.ticket"
 private const val RING_TTL_SECONDS = 45L
 
 /**
- * What modules call to tell a user something now: to the socket when the user has one open, otherwise to push
- * when the frame is marked push-worthy. A frame that reaches neither is recovered by the module's replay when
- * the phone reconnects. An incoming call to an iPhone with a PushKit token rings through [voip] instead (decision
- * 2026-11-08), and through [push] only when that is off or fails.
+ * What modules call to tell a user something now: to the socket when the user has one open, and to push when the
+ * frame is marked push-worthy and either no socket is open or the phone said Circaso is in the background
+ * (`system/app.state`, 2026-11-13): a backgrounded app's socket stays open, so the frame arrived and was acked
+ * ("delivered") while nothing showed until the socket's ping timed out. Silent pushes stay socket-only then. A frame that reaches neither is recovered by the module's replay when
+ * the phone reconnects. An incoming call is pushed whether or not a socket is open (2026-11-11); to an iPhone with a
+ * PushKit token it rings through [voip] (decision 2026-11-08), and through [push] only when that is off or fails.
  */
 class GatewayRealtime(
     private val hub: SocketHub,
@@ -85,12 +96,12 @@ class GatewayRealtime(
             stopIphoneRing(userId, envelope)
             return Resource.success(Unit)
         }
-        if (hub.deliver(userId, envelope)) {
-            ringIphoneWithSocket(userId, envelope)
-            return Resource.success(Unit)
-        }
+        val presence = hub.deliverTo(userId, envelope)
+        if (presence != SocketPresence.NONE) ringWithSocket(userId, envelope)
+        if (presence == SocketPresence.FOREGROUND) return Resource.success(Unit)
         val message = pushFor(envelope, userId) ?: return Resource.success(Unit)
-        pushTo(userId, message)
+        if (presence == SocketPresence.BACKGROUND && !pushedWhileAway(envelope, message)) return Resource.success(Unit)
+        pushTo(userId, message, envelope, presence)
         return Resource.success(Unit)
     }
 
@@ -103,44 +114,88 @@ class GatewayRealtime(
         // Only users this frame would push to are looked up, so receipts and typing cost one publish and no reads.
         val candidates = userIds.distinct().mapNotNull { userId -> pushFor(envelope, userId)?.let { userId to it } }
         if (candidates.isEmpty()) return Resource.success(Unit)
-        val offline = hub.withoutSocket(candidates.map { it.first }).toSet()
-        val pushes = candidates.filter { (userId, _) -> userId in offline }
+        // One pipelined read for the whole group: who has a socket, and who of those said Circaso is in the background.
+        val presence = hub.socketPresence(candidates.map { it.first })
+
+        fun of(userId: UserId) = presence[userId] ?: SocketPresence.NONE
+        val pushes =
+            candidates.filter { (userId, message) ->
+                when (of(userId)) {
+                    SocketPresence.NONE -> true
+                    SocketPresence.BACKGROUND -> pushedWhileAway(envelope, message)
+                    SocketPresence.FOREGROUND -> false
+                }
+            }
         candidates
             .filter { (userId, _) ->
-                userId !in offline
-            }.forEach { (userId, _) -> ringIphoneWithSocket(userId, envelope) }
+                of(userId) != SocketPresence.NONE
+            }.forEach { (userId, _) -> ringWithSocket(userId, envelope) }
         pushes.chunked(PUSH_BATCH).forEach { batch ->
             coroutineScope {
-                batch.map { (userId, message) -> async { pushTo(userId, message) } }.awaitAll()
+                batch.map { (userId, message) -> async { pushTo(userId, message, envelope, of(userId)) } }.awaitAll()
             }
         }
         return Resource.success(Unit)
     }
 
-    private suspend fun pushTo(userId: UserId, message: PushMessage) {
+    /**
+     * To a phone whose socket is open but whose app is in the background, everything that shows something is pushed
+     * (the app shows nothing for a frame alone, and iOS has suspended it). Not a silent push (key requests: the open
+     * socket already carries them), not a ring (pushed by [ringWithSocket]) and not a sign-out (the socket closes).
+     */
+    private fun pushedWhileAway(envelope: RealtimeEnvelope, message: PushMessage): Boolean =
+        !message.silent && !isRing(envelope) && !(envelope.module == "system" && envelope.type == "session.revoked")
+
+    private fun isRing(envelope: RealtimeEnvelope) =
+        envelope.module == CallFrames.MODULE && envelope.type == CallFrames.RINGING
+
+    /**
+     * [envelope] and [presence], when given, write a `push.sent` line: the push's kind and message id, why it went (no
+     * socket, or the app in the background), how long after the frame was made it was handed to the vendor
+     * (`afterFrameMs`) and how long the vendor took (`sendMs`). Ids only, never content.
+     */
+    private suspend fun pushTo(
+        userId: UserId,
+        message: PushMessage,
+        envelope: RealtimeEnvelope? = null,
+        presence: SocketPresence? = null,
+    ) {
         val target = registrations.pushTarget(userId) ?: return
         val platform = if (target.platform.equals("ios", ignoreCase = true)) PushPlatform.IOS else PushPlatform.ANDROID
         if (platform == PushPlatform.IOS && rangByVoip(userId, target.voipToken, message)) return
         val token = target.token ?: return
+        val started = System.nanoTime()
         val result = push.send(PushTarget(platform, token), message)
         if (result is Resource.Error) log.warn("push failed: code={}", result.error.code)
+        if (envelope != null && result is Resource.Success) {
+            log.info(
+                "push.sent",
+                kv("kind", "push"),
+                kv("frame", "${envelope.module}.${envelope.type}"),
+                kv("pushKind", message.data.kind),
+                kv("messageId", message.data.messageId),
+                kv("userId", userId.toString()),
+                kv("platform", platform.name.lowercase()),
+                kv("reason", if (presence == SocketPresence.BACKGROUND) "background" else "no-socket"),
+                kv("afterFrameMs", Duration.between(envelope.ts, Instant.now()).toMillis()),
+                // A chat message: from the moment the server took it (its `sentAt`) to the push handed over.
+                kv("afterSentMs", sentAt(envelope)?.let { Duration.between(it, Instant.now()).toMillis() }),
+                kv("sendMs", (System.nanoTime() - started) / 1_000_000),
+            )
+        }
     }
 
     /**
-     * A ring also goes as a VoIP push to an iPhone that still has a socket open (decision 2026-11-08): iOS suspends
-     * an app seconds after it leaves the screen, but its socket can look open here until the ping times out, so the
-     * frame alone would ring nothing. The app reports the push to CallKit and treats the frame for the same call as
-     * the same ring. Android keeps ringing from the frame, and from FCM only when offline.
+     * A ring is always pushed, even to a phone whose socket still looks open (iPhone 2026-11-08, Android 2026-11-11).
+     * A phone that just left the app keeps a socket that looks open here until the ping times out, while iOS has
+     * suspended the app and Android may have frozen it, so the frame alone rang nothing visible. An iPhone gets the
+     * VoIP push (CallKit), Android the FCM `call.ringing` (its full-screen call notification). Each app treats the frame
+     * and the push for the same call as one ring, and Android shows no notification over its own answer screen.
      */
-    private suspend fun ringIphoneWithSocket(userId: UserId, envelope: RealtimeEnvelope) {
-        if ("${envelope.module}.${envelope.type}" != "${CallFrames.MODULE}.${CallFrames.RINGING}" ||
-            !voip.enabled
-        ) {
-            return
-        }
+    private suspend fun ringWithSocket(userId: UserId, envelope: RealtimeEnvelope) {
+        if ("${envelope.module}.${envelope.type}" != "${CallFrames.MODULE}.${CallFrames.RINGING}") return
         val message = pushFor(envelope, userId) ?: return
-        val target = registrations.pushTarget(userId) ?: return
-        if (target.platform.equals("ios", ignoreCase = true)) rangByVoip(userId, target.voipToken, message)
+        pushTo(userId, message)
     }
 
     private fun isRingStopped(envelope: RealtimeEnvelope) =
@@ -149,7 +204,7 @@ class GatewayRealtime(
     /**
      * A ring that stopped (the caller hung up, the call ended, the ring ran out) goes to an iPhone with a PushKit token
      * as an "ended" VoIP push, socket or not (2026-11-09): its ring came by VoIP whatever its socket looked like (see
-     * [ringIphoneWithSocket]), and a suspended app hears nothing else, so CallKit rang on after the caller had hung up.
+     * [ringWithSocket]), and a suspended app hears nothing else, so CallKit rang on after the caller had hung up.
      * Android stops from the frame or the FCM `call.ended`/`call.missed` that `call.ended` brings.
      */
     private suspend fun stopIphoneRing(userId: UserId, envelope: RealtimeEnvelope) {
@@ -212,10 +267,13 @@ class GatewayRealtime(
             "${UsersFrames.MODULE}.${UsersFrames.CONTACT_JOINED}" -> {
                 val joined = decode(ContactJoinedFrame.serializer(), frame)
                 val name = joined?.displayName
+                // Data-only (2026-11-14): the phone names them as it knows them and shows their photo; the text here is
+                // the fallback for a phone that can't.
                 PushMessage(
                     "Circaso",
                     "${name ?: "Someone you know"} is on Circaso",
                     PushPayload(kind = "contact.joined", userId = joined?.userId?.toString()),
+                    dataOnly = joined?.userId != null,
                 )
             }
 
@@ -226,6 +284,7 @@ class GatewayRealtime(
                     "Circaso",
                     "${name ?: "Someone"} connected with you",
                     PushPayload(kind = "connection.added", userId = added?.userId?.toString()),
+                    dataOnly = added?.userId != null,
                 )
             }
 
@@ -502,7 +561,16 @@ class GatewayRealtime(
     private fun newMessagePush(frame: MessageNewFrame): PushMessage? {
         if (frame.keyRequest) return metaKeyRequestPush(frame)
         if (!frame.pushable) return null
-        val ids = PushPayload(chatId = frame.chatId.toString(), messageId = frame.messageId.toString())
+        // The sender, the time and the ciphertext too (2026-11-13), for iOS's notification extension to open; the
+        // ciphertext only when the push stays inside APNs' and FCM's 4 KB.
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                messageId = frame.messageId.toString(),
+                senderId = frame.senderId.toString(),
+                sentAt = frame.sentAt.toString(),
+                ciphertext = frame.ciphertext?.takeIf { it.length <= PUSH_CIPHERTEXT_MAX_CHARS },
+            )
         return PushMessage("Circaso", NEW_MESSAGE, ids, dataOnly = true)
     }
 
@@ -602,14 +670,24 @@ class GatewayRealtime(
         }
     }
 
-    /** Only a frame that names the viewer, which status does when it adds or changes a reaction. */
+    /**
+     * Only a frame with a reaction, which status sends when one is added or changed. Data-only with the reactor's id,
+     * the moment and the emoji (2026-11-14): the phone names them as it knows them (a saved name first), shows their
+     * photo as a chat message does, gathers one moment's reactions in one notification and says only "Someone
+     * reacted to your moment" with Notification privacy on. The text here is the fallback for a phone that can't.
+     */
     private fun reactionPush(frame: MomentViewedFrame): PushMessage? {
-        val name = frame.viewerName ?: return null
         val reaction = frame.reaction ?: return null
         return PushMessage(
             "Circaso",
-            "$name reacted $reaction to your moment",
-            PushPayload(kind = MOMENT_LOVED_KIND),
+            "${frame.viewerName ?: "Someone"} reacted $reaction to your moment",
+            PushPayload(
+                kind = MOMENT_LOVED_KIND,
+                userId = frame.viewerId.toString(),
+                momentId = frame.momentId.toString(),
+                reaction = reaction,
+            ),
+            dataOnly = true,
         )
     }
 
@@ -660,7 +738,13 @@ class GatewayRealtime(
         if (me.state != "MISSED") return null
         val caller = frame.participants.firstOrNull { it.userId == frame.startedBy }?.displayName ?: "Someone"
         val text = "Missed call from $caller"
-        val ids = PushPayload(chatId = frame.chatId.toString(), callId = frame.callId.toString())
+        // The caller's id too (2026-11-14): the phone shows their photo and the name it knows them by.
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                callId = frame.callId.toString(),
+                userId = frame.startedBy.toString(),
+            )
         return when (frame.endReason) {
             // Data-only (2026-11-06): the phone words it itself, so Notification privacy can say just "Missed call".
             "MISSED" -> PushMessage("Missed call", text, ids.copy(kind = "call.missed"), dataOnly = true)
@@ -686,6 +770,13 @@ class GatewayRealtime(
             walletId = frame.walletId?.toString(),
         )
 
+    private fun sentAt(envelope: RealtimeEnvelope): Instant? =
+        if (envelope.module == "messaging" && envelope.type == MessageNewFrame.TYPE) {
+            decode(MessageNewFrame.serializer(), envelope)?.sentAt
+        } else {
+            null
+        }
+
     /** A frame's `data` as its class, from the module's `api`; null (no push) when it doesn't decode. */
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
@@ -708,7 +799,10 @@ private const val CONTRIBUTION_KIND = "chama.contribution"
 /** A group payout request moved: `chama.request.pending|approved|payable|declined|paid`. */
 private const val REQUEST_KIND = "chama.request"
 
-/** A reaction on my moment (the kind is still named for the first, a heart): the app opens my moments. */
+/**
+ * A reaction on my moment (the kind is still named for the first, a heart): `userId` who reacted, `momentId`, `reaction`
+ * the emoji; the app opens my moment.
+ */
 private const val MOMENT_LOVED_KIND = "moment.loved"
 
 /** Someone's new phone asked for keys to my moments: a silent push, `userId` the requester. */

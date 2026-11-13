@@ -19,7 +19,7 @@ data class WalletResponse(
     val totals: List<AssetTotalDto>,
     /** With `?currency=`: the priced assets' worth in that currency; null when no rate is known. */
     val fiat: FiatDto? = null,
-    /** Outgoing payments on hold after a support restore; null when there is none. */
+    /** Outgoing payments paused (after the PIN Vault was opened, or a support restore); null when there is none. */
     val hold: HoldDto? = null,
     /** Which wallet this is (added 2026-11-03): your user id for your own, a group wallet's own id otherwise. */
     val walletId: String? = null,
@@ -140,6 +140,8 @@ data class FiatDto(
 @Serializable
 data class HoldDto(
     @Serializable(with = InstantSerializer::class) val until: Instant,
+    /** `VAULT_OPENED` (24 hours after the PIN Vault was opened) or `RELINKED` (after a support restore). */
+    val reason: String,
 )
 
 /** What the Circle SDK on the phone runs under. For the app only; never logged, never for the agent token. */

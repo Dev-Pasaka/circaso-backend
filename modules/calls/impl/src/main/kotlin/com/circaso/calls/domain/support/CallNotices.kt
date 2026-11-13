@@ -10,6 +10,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Resource
+import com.circaso.shared.UserId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,6 +46,17 @@ class CallNotices(
         ringStopped(before, after)
         event?.let { bus.publish(it) }
         closeGone(before, after)
+    }
+
+    /**
+     * Rings [userIds] with [frame] after the answer has gone (2026-11-13): delivering it waits for the push services
+     * (APNs took ~0.5 s for an iPhone's VoIP ring), and CL1 answered only after that, so the caller's own join started
+     * later. The ring is kept for replay like any frame; a restart losing one in flight is what a lost frame always
+     * was, and the callee's phone still finds the call with CL2.
+     */
+    fun ring(userIds: Collection<UserId>, frame: CallFrame) {
+        if (userIds.isEmpty()) return
+        background.launch { frames.send(userIds, frame) }
     }
 
     /** Closes the tracks at [mids] of a session given up (its owner left, or a join lost the race), in the background. */

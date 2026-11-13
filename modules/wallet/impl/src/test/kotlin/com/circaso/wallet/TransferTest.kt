@@ -13,6 +13,7 @@ import com.circaso.wallet.api.TransferFailed
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.Direction
+import com.circaso.wallet.domain.models.HoldReason
 import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.PaymentHold
@@ -164,7 +165,7 @@ class TransferTest {
     fun `then the payment hold`() =
         runBlocking<Unit> {
             ready()
-            h.holds.holds[amina] = PaymentHold(Instant.parse("2026-10-30T00:00:00Z"))
+            h.holds.holds[amina] = PaymentHold(Instant.parse("2026-10-30T00:00:00Z"), HoldReason.RELINKED)
             assertEquals("wallet.on_hold", payBob(usdcMinor = 0).code(), "the hold comes before the amount")
         }
 

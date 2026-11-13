@@ -348,11 +348,14 @@ class SocketHubTest {
         data: T,
     ) = RealtimeEnvelope.of("messaging", type, 1, data, serializer)
 
-    private fun newMessage(pushable: Boolean) =
+    private val sender = UserId.new()
+    private val sentAt = Instant.parse("2026-11-13T10:15:30Z")
+
+    private fun newMessage(pushable: Boolean, ciphertext: String? = "AQJjaXBoZXI=") =
         typed(
             MessageNewFrame.TYPE,
             MessageNewFrame.serializer(),
-            MessageNewFrame(messageId, chat, UserId.new(), MessageKind.MESSAGE, pushable, Instant.now()),
+            MessageNewFrame(messageId, chat, sender, MessageKind.MESSAGE, pushable, sentAt, ciphertext = ciphertext),
         )
 
     private fun membersAdded(userIds: List<UserId>) =
@@ -624,10 +627,36 @@ class SocketHubTest {
             assertEquals(1, redis.pipelinedReads.get(), "who is offline, in one pipelined lookup")
             assertEquals(0, redis.singleReads.get())
             push.sent.forEach { (_, message) ->
-                assertEquals(PushPayload(chat.toString(), messageId.toString()), message.data)
+                assertEquals(
+                    PushPayload(
+                        chat.toString(),
+                        messageId.toString(),
+                        senderId = sender.toString(),
+                        sentAt = sentAt.toString(),
+                        ciphertext = "AQJjaXBoZXI=",
+                    ),
+                    message.data,
+                )
                 assertEquals("New message", message.body, "no text from the chat")
                 assertTrue(message.dataOnly, "the app fetches, decrypts and words it")
             }
+        }
+
+    @Test
+    fun `a message too long for a push goes without its ciphertext, still naming its sender`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(MemoryRedis()), push, registrations, NoVoip)
+            val offline = UserId.new()
+
+            realtime.deliverMany(listOf(offline), newMessage(pushable = true, ciphertext = "A".repeat(2_801)))
+
+            val data =
+                push.sent
+                    .single()
+                    .second.data
+            assertEquals(null, data.ciphertext, "APNs and FCM take 4 KB in all")
+            assertEquals(sender.toString(), data.senderId)
         }
 
     @Test
@@ -1092,6 +1121,7 @@ class SocketHubTest {
             assertTrue(missed.dataOnly, "the phone words it, so Notification privacy can hide the name")
             assertEquals("Missed call from Wanjiru", missed.body)
             assertEquals("call.missed", missed.data.kind)
+            assertEquals(caller.toString(), missed.data.userId, "the phone shows the caller's photo")
             assertTrue(cancelled.dataOnly, "the phone stops ringing and words it itself")
         }
 
@@ -1142,6 +1172,28 @@ class SocketHubTest {
                 // Anything that isn't a ring is the frame alone.
                 realtime.deliver(user, frame(5))
                 assertEquals(1, voip.rang.size)
+            }
+        }
+
+    @Test
+    fun `an Android phone whose socket still looks open gets the FCM ring too, since it may have just left the app`() =
+        testApplication {
+            val push = RecordingPush()
+            val hub = hub()
+            serve(hub)
+            val realtime = GatewayRealtime(hub, push, registrations, NoVoip)
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                realtime.deliver(user, ringing(CallId.new(), UserId.new()))
+
+                val (target, message) = push.sent.single()
+                assertEquals(PushPlatform.ANDROID, target.platform)
+                assertEquals("call.ringing", message.data.kind)
+                // Anything that isn't a ring is the frame alone.
+                realtime.deliver(user, frame(5))
+                assertEquals(1, push.sent.size)
             }
         }
 
@@ -1410,36 +1462,53 @@ class SocketHubTest {
         }
 
     @Test
-    fun `a reaction on my moment pushes the emoji and the name, a plain view or a cleared reaction never`() =
+    fun `a moment reaction pushes data-only with who, the moment and the emoji, never a view or a cleared one`() =
         runBlocking {
             val push = RecordingPush()
             val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
             val poster = UserId.new()
             val momentId = MomentId.new()
             val at = Instant.parse("2026-11-03T09:00:00Z")
+            val amina = UserId.new()
+            val baraka = UserId.new()
+            val unnamed = UserId.new()
 
             fun viewed(
                 seq: Long,
+                viewer: UserId,
                 reaction: String?,
                 name: String?,
             ) = RealtimeEnvelope.of(
                 StatusFrames.MODULE,
                 StatusFrames.VIEWED,
                 seq,
-                MomentViewedFrame(momentId, UserId.new(), at, reaction != null, viewerName = name, reaction = reaction),
+                MomentViewedFrame(momentId, viewer, at, reaction != null, viewerName = name, reaction = reaction),
                 MomentViewedFrame.serializer(),
             )
-            realtime.deliver(poster, viewed(1, null, null)) // a plain view
-            realtime.deliver(poster, viewed(2, "😂", "Amina"))
-            realtime.deliver(poster, viewed(3, null, null)) // cleared
-            realtime.deliver(poster, viewed(4, "🔥", null)) // no name: status found no profile
-            realtime.deliver(poster, viewed(5, "\u2764\uFE0F", "Baraka"))
+            realtime.deliver(poster, viewed(1, amina, null, null)) // a plain view
+            realtime.deliver(poster, viewed(2, amina, "😂", "Amina"))
+            realtime.deliver(poster, viewed(3, amina, null, null)) // cleared
+            realtime.deliver(poster, viewed(4, unnamed, "🔥", null)) // no name: the phone names them from their id
+            realtime.deliver(poster, viewed(5, baraka, "\u2764\uFE0F", "Baraka"))
 
             assertEquals(
-                listOf("Amina reacted 😂 to your moment", "Baraka reacted \u2764\uFE0F to your moment"),
+                listOf(
+                    "Amina reacted 😂 to your moment",
+                    "Someone reacted 🔥 to your moment",
+                    "Baraka reacted \u2764\uFE0F to your moment",
+                ),
                 push.sent.map { it.second.body },
             )
-            assertTrue(push.sent.all { it.second.title == "Circaso" && it.second.data.kind == "moment.loved" })
+            assertEquals(listOf(amina, unnamed, baraka).map { it.toString() }, push.sent.map { it.second.data.userId })
+            assertEquals(listOf("😂", "🔥", "\u2764\uFE0F"), push.sent.map { it.second.data.reaction })
+            assertTrue(
+                push.sent.all {
+                    it.second.title == "Circaso" &&
+                        it.second.data.kind == "moment.loved" &&
+                        it.second.data.momentId == momentId.toString() &&
+                        it.second.dataOnly
+                },
+            )
         }
 
     @Test
@@ -1651,4 +1720,139 @@ class SocketHubTest {
             ).deliver(callee, stopped)
             assertEquals(listOf("ab12cd34ef56ab12cd34"), gone.forgotten.toList(), "a token APNs refuses is forgotten")
         }
+
+    @Test
+    fun `a member whose socket is open but whose app is in the background gets the push too, in the same one read`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
+            val (looking, away, offline) = List(3) { UserId.new() }
+            redis.values["conn:$looking"] = "node-2"
+            redis.values["conn:$away"] = "node-2;bg"
+
+            realtime.deliverMany(listOf(looking, away, offline), newMessage(pushable = true))
+
+            assertEquals(setOf("token-$away", "token-$offline"), push.sent.map { it.first.token }.toSet())
+            assertEquals(1, redis.pipelinedReads.get(), "sockets and app states in one pipelined lookup")
+            assertEquals(0, redis.singleReads.get())
+            val frame = CircasoJson.decodeFromString(NodeMessage.serializer(), redis.published.single().second)
+            assertEquals(
+                listOf(looking, away, offline),
+                (frame as NodeMessage.Frames).userIds,
+                "the frame still goes to every socket",
+            )
+            push.sent.forEach { (_, message) ->
+                assertEquals(messageId.toString(), message.data.messageId, "the phone de-duplicates by message id")
+            }
+        }
+
+    @Test
+    fun `one person in the background gets the frame and the push, in front only the frame`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
+            redis.values["conn:$user"] = "node-2"
+
+            realtime.deliver(user, newMessage(pushable = true))
+            assertTrue(push.sent.isEmpty(), "in front: the socket shows it")
+
+            redis.values["conn:$user"] = "node-2;bg"
+            realtime.deliver(user, newMessage(pushable = true))
+
+            assertEquals(1, push.sent.size)
+            assertEquals(2, redis.published.count { it.first == "node:node-2" }, "both frames went to the socket")
+        }
+
+    @Test
+    fun `in the background a silent key request, a sign-out and a ring are not pushed again`() =
+        runBlocking {
+            val redis = MemoryRedis()
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(redis), push, registrations, NoVoip)
+            redis.values["conn:$user"] = "node-2;bg"
+
+            realtime.deliver(
+                user,
+                typed(
+                    MessageNewFrame.TYPE,
+                    MessageNewFrame.serializer(),
+                    MessageNewFrame(
+                        messageId,
+                        chat,
+                        otherUser,
+                        MessageKind.SENDER_KEY,
+                        sentAt = Instant.now(),
+                        keyRequest = true,
+                    ),
+                ),
+            )
+            realtime.deliver(user, frame(3, "system", "session.revoked"))
+            assertTrue(push.sent.isEmpty(), "the open socket carries both")
+
+            realtime.deliver(user, ringing(CallId.new(), UserId.new()))
+            assertEquals(listOf("call.ringing"), push.sent.map { it.second.data.kind }, "a ring is pushed once")
+        }
+
+    @Test
+    fun `the phone's app state marks its socket in rt conn, never reaches a module, and goes with the socket`() =
+        testApplication {
+            val redis = MemoryRedis()
+            val messaging = RecordingInbound()
+            serve(hub(redis, inbound = listOf(RealtimeInboundModule("messaging", messaging))))
+            val client = createClient { install(ClientWebSockets) }
+
+            client.webSocket("/v1/ws") {
+                authenticate()
+                assertEquals("node-1", redis.values["conn:$user"])
+
+                send(Frame.Text("""{"module":"system","type":"app.state","data":{"state":"background"}}"""))
+                redis.awaitReady("node:node-1", 0, "conn:$user", "node-1;bg")
+
+                send(Frame.Text("""{"module":"system","type":"app.state","data":{"state":"sideways"}}"""))
+                send(Frame.Text("""{"module":"system","type":"app.state","data":{"state":"foreground"}}"""))
+                redis.awaitReady("node:node-1", 0, "conn:$user", "node-1")
+
+                send(Frame.Text("""{"module":"system","type":"app.state","data":{"state":"background"}}"""))
+                redis.awaitReady("node:node-1", 0, "conn:$user", "node-1;bg")
+                assertNull(withTimeoutOrNull(200) { messaging.received.receive() }, "the gateway keeps it")
+
+                // A frame to a backgrounded socket on this node still reaches it.
+                val hub = hub(redis)
+                assertEquals(com.circaso.gateway.realtime.SocketPresence.BACKGROUND, hub.deliverTo(user, frame(9)))
+                close(CloseReason(CloseReason.Codes.NORMAL, "bye"))
+            }
+            withTimeout(3000) { while (redis.values.containsKey("conn:$user")) delay(20) }
+        }
+
+    @Test
+    fun `a push to a backgrounded phone writes push sent with the message id, the reason and how long it took`() {
+        val captured = ListAppender<ILoggingEvent>().apply { start() }
+        val logger = LoggerFactory.getLogger("com.circaso.gateway.realtime.GatewayRealtime") as LogbackLogger
+        logger.addAppender(captured)
+        try {
+            runBlocking {
+                val redis = MemoryRedis()
+                val realtime = GatewayRealtime(hub(redis), RecordingPush(), registrations, NoVoip)
+                redis.values["conn:$user"] = "node-2;bg"
+                realtime.deliver(user, newMessage(pushable = true))
+            }
+        } finally {
+            logger.detachAppender(captured)
+        }
+        val line =
+            captured.list
+                .single { it.message == "push.sent" }
+                .argumentArray
+                .joinToString(" ") { it.toString() }
+        listOf(
+            "messageId=$messageId",
+            "reason=background",
+            "afterFrameMs=",
+            "afterSentMs=",
+            "sendMs=",
+            "platform=android",
+        ).forEach { assertTrue(it in line, "$it in: $line") }
+    }
 }

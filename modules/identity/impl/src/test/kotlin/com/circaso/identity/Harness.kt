@@ -1,5 +1,6 @@
 package com.circaso.identity
 
+import com.circaso.identity.api.DeletionGuard
 import com.circaso.identity.api.Principal
 import com.circaso.identity.data.security.EcdsaDeviceKeyVerifier
 import com.circaso.identity.data.security.Ed25519Tokens
@@ -19,23 +20,38 @@ import com.circaso.identity.domain.ports.Transactor
 import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
+import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.identity.domain.repositories.VaultRepository
+import com.circaso.identity.domain.support.DeletionScheduler
 import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
 import com.circaso.identity.domain.usecases.ClearVoipToken
+import com.circaso.identity.domain.usecases.GetKeyBackupRoot
 import com.circaso.identity.domain.usecases.GetPushTarget
+import com.circaso.identity.domain.usecases.GetSavedNames
 import com.circaso.identity.domain.usecases.GetSecurityOverview
+import com.circaso.identity.domain.usecases.GetVaultStatus
 import com.circaso.identity.domain.usecases.IssueNonce
 import com.circaso.identity.domain.usecases.LinkProvider
+import com.circaso.identity.domain.usecases.ListGroupKeys
+import com.circaso.identity.domain.usecases.OpenVault
 import com.circaso.identity.domain.usecases.RefreshSession
 import com.circaso.identity.domain.usecases.RegisterDevice
 import com.circaso.identity.domain.usecases.RemoveDevice
+import com.circaso.identity.domain.usecases.RemoveKeyBackup
+import com.circaso.identity.domain.usecases.RemoveVault
 import com.circaso.identity.domain.usecases.RequestAccountDeletion
 import com.circaso.identity.domain.usecases.RequestPhoneRelease
 import com.circaso.identity.domain.usecases.RequestSupportRecovery
+import com.circaso.identity.domain.usecases.RequestWebAccountDeletion
+import com.circaso.identity.domain.usecases.SaveGroupKey
+import com.circaso.identity.domain.usecases.SaveKeyBackupRoot
+import com.circaso.identity.domain.usecases.SaveSavedNames
+import com.circaso.identity.domain.usecases.SaveVault
 import com.circaso.identity.domain.usecases.SignInWithProvider
 import com.circaso.identity.domain.usecases.SignOut
 import com.circaso.identity.domain.usecases.StartPhoneVerification
@@ -47,6 +63,8 @@ import com.circaso.identity.domain.usecases.VerifyAccessTokenAlongside
 import com.circaso.identity.domain.usecases.VerifyCarrierToken
 import com.circaso.identity.domain.usecases.VerifyPhoneCode
 import com.circaso.identity.presentation.services.DeviceService
+import com.circaso.identity.presentation.services.KeyBackupService
+import com.circaso.identity.presentation.services.VaultService
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CodeCheck
@@ -184,15 +202,20 @@ class IdentityPorts(
     val devices: DeviceRepository,
     val sessions: SessionRepository,
     val store: IdentityStore,
+    val vaults: VaultRepository,
+    val keyBackups: KeyBackupRepository,
 )
 
-fun MemoryStore.ports() = IdentityPorts(this, this, this, this, this, this)
+fun MemoryStore.ports() = IdentityPorts(this, this, this, this, this, this, vaultRepository, keyBackupRepository)
 
 class Harness(
     attestation: AttestationMode = AttestationMode.LOG,
     attested: Boolean = true,
     vendor: PhoneVerificationGateway = NoVendorVerification,
     ports: IdentityPorts? = null,
+    reviewPhone: String? = null,
+    reviewCode: String? = null,
+    guards: List<DeletionGuard> = emptyList(),
 ) {
     val store = MemoryStore()
     private val p = ports ?: store.ports()
@@ -201,7 +224,7 @@ class Harness(
     val sms = RecordingSms()
     val email = RecordingEmail()
     private val clock = Clock.systemUTC()
-    private val config = IdentityConfig(attestation = attestation)
+    private val config = IdentityConfig(attestation = attestation, reviewPhone = reviewPhone, reviewCode = reviewCode)
     private val secrets =
         object : Secrets {
             override fun get(name: String): String? = null
@@ -270,10 +293,32 @@ class Harness(
     val overview = GetSecurityOverview(p.accounts, p.providers, p.devices)
     val link = LinkProvider(p.transactor, cache, FakeSocial(), p.accounts, p.providers, p.store, clock)
     val unlink = UnlinkProvider(p.transactor, p.accounts, p.providers, p.store)
-    val delete =
-        RequestAccountDeletion(p.transactor, p.accounts, p.sessions, emptyList(), p.store, cache, bus, config, clock)
+    private val deletions =
+        DeletionScheduler(p.transactor, p.accounts, p.sessions, guards, p.store, cache, bus, config, clock)
+    val delete = RequestAccountDeletion(p.accounts, deletions)
+    val webDelete = RequestWebAccountDeletion(cache, FakeSocial(), p.providers, p.accounts, deletions, clock)
     val recovery = RequestSupportRecovery(p.accounts, p.providers, p.store, cache, phones, email)
     val release = RequestPhoneRelease(cache, p.accounts, p.providers, phones, p.store, email, config, clock)
+    val vaultService =
+        VaultService(
+            GetVaultStatus(p.vaults),
+            OpenVault(p.transactor, p.accounts, p.devices, p.providers, p.vaults, p.store, cache, email, bus),
+            SaveVault(p.transactor, p.accounts, p.devices, p.vaults, p.store, clock),
+            RemoveVault(p.transactor, p.accounts, p.devices, p.vaults, p.store),
+        )
+
+    /** Who is in which chat, as messaging would answer `GroupMembership`: (chatId, userId) pairs. */
+    val memberships = MemoryMemberships()
+    val keyBackupService =
+        KeyBackupService(
+            GetKeyBackupRoot(p.keyBackups),
+            SaveKeyBackupRoot(p.transactor, p.accounts, p.devices, p.keyBackups, p.store, clock),
+            RemoveKeyBackup(p.transactor, p.accounts, p.devices, p.keyBackups, p.store),
+            SaveGroupKey(p.transactor, p.accounts, p.keyBackups, memberships, p.store, clock),
+            ListGroupKeys(p.keyBackups),
+            GetSavedNames(p.keyBackups),
+            SaveSavedNames(p.transactor, p.accounts, p.keyBackups, p.store, clock),
+        )
 
     suspend fun nonce(): String = issueNonce().getOrNull()!!
 

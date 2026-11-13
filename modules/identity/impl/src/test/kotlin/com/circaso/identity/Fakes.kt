@@ -1,11 +1,18 @@
 package com.circaso.identity
 
 import com.circaso.identity.api.AccountStatus
+import com.circaso.identity.api.GroupMembership
 import com.circaso.identity.api.SessionId
 import com.circaso.identity.domain.models.Account
+import com.circaso.identity.domain.models.DeletionFeedback
 import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
+import com.circaso.identity.domain.models.GroupKeyBackup
+import com.circaso.identity.domain.models.GroupKeyPosition
+import com.circaso.identity.domain.models.KeyBackupRoot
+import com.circaso.identity.domain.models.PinVault
 import com.circaso.identity.domain.models.ProviderLink
+import com.circaso.identity.domain.models.SavedNames
 import com.circaso.identity.domain.models.SecurityEvent
 import com.circaso.identity.domain.models.Session
 import com.circaso.identity.domain.models.SessionStatus
@@ -19,10 +26,12 @@ import com.circaso.identity.domain.repositories.AccountRepository
 import com.circaso.identity.domain.repositories.Changes
 import com.circaso.identity.domain.repositories.DeviceRepository
 import com.circaso.identity.domain.repositories.IdentityStore
+import com.circaso.identity.domain.repositories.KeyBackupRepository
 import com.circaso.identity.domain.repositories.ProviderRepository
 import com.circaso.identity.domain.repositories.RecoveryRepository
 import com.circaso.identity.domain.repositories.SecurityLogRepository
 import com.circaso.identity.domain.repositories.SessionRepository
+import com.circaso.identity.domain.repositories.VaultRepository
 import com.circaso.integrations.api.SocialProvider
 import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainEvent
@@ -60,7 +69,52 @@ class MemoryStore :
     val devices = ConcurrentHashMap<Pair<UserId, DeviceId>, Device>()
     val sessions = ConcurrentHashMap<SessionId, Session>()
     val log = CopyOnWriteArrayList<SecurityEvent>()
+    val feedback = CopyOnWriteArrayList<DeletionFeedback>()
     val recoveries = ConcurrentHashMap<UUID, SupportRecovery>()
+    val vaults = ConcurrentHashMap<UserId, PinVault>()
+
+    /** Apart from the store: `find(userId)` is already the account's. */
+    val vaultRepository =
+        object : VaultRepository {
+            override suspend fun find(userId: UserId): PinVault? = vaults[userId]
+        }
+    val keyBackupRoots = ConcurrentHashMap<UserId, KeyBackupRoot>()
+
+    /** Group keys by (account, chat, metaVersion). */
+    val groupKeys = ConcurrentHashMap<Triple<UserId, UUID, Int>, GroupKeyBackup>()
+
+    val savedNames = ConcurrentHashMap<UserId, SavedNames>()
+
+    /** Apart from the store, like [vaultRepository]. */
+    val keyBackupRepository =
+        object : KeyBackupRepository {
+            override suspend fun findRoot(userId: UserId) = keyBackupRoots[userId]
+
+            override suspend fun findGroupKey(
+                userId: UserId,
+                chatId: UUID,
+                metaVersion: Int,
+            ) = groupKeys[Triple(userId, chatId, metaVersion)]
+
+            override suspend fun hasGroupKeys(userId: UserId, chatId: UUID) =
+                groupKeys.keys.any { it.first == userId && it.second == chatId }
+
+            override suspend fun countGroupKeys(userId: UserId) = groupKeys.keys.count { it.first == userId }
+
+            override suspend fun listGroupKeys(
+                userId: UserId,
+                after: GroupKeyPosition?,
+                limit: Int,
+            ) = groupKeys.values
+                .filter { it.userId == userId }
+                .sortedWith(compareBy<GroupKeyBackup> { it.chatId }.thenBy { it.metaVersion })
+                .filter {
+                    after == null || it.chatId > after.chatId ||
+                        (it.chatId == after.chatId && it.metaVersion > after.metaVersion)
+                }.take(limit)
+
+            override suspend fun findSavedNames(userId: UserId) = savedNames[userId]
+        }
     val events = CopyOnWriteArrayList<EventEnvelope>()
     private val lock = Mutex()
 
@@ -117,6 +171,8 @@ class MemoryStore :
         if (account.status != AccountStatus.DELETED || account.deleteAfter?.let { it <= now } != true) return false
         accounts.remove(userId)
         links.removeAll { it.userId == userId }
+        vaults.remove(userId)
+        removeKeyBackup(userId)
         return true
     }
 
@@ -187,8 +243,21 @@ class MemoryStore :
             }
         }
         log += changes.securityEvents
+        feedback += changes.deletionFeedback
         changes.recoveries.forEach { recoveries[it.requestId] = it }
+        changes.vaults.forEach { vaults[it.userId] = it }
+        changes.removedVaults.forEach { vaults.remove(it) }
+        changes.keyBackupRoots.forEach { keyBackupRoots[it.userId] = it }
+        changes.groupKeys.forEach { groupKeys[Triple(it.userId, it.chatId, it.metaVersion)] = it }
+        changes.savedNames.forEach { savedNames[it.userId] = it }
+        changes.removedKeyBackups.forEach { removeKeyBackup(it) }
         events += changes.events
+    }
+
+    private fun removeKeyBackup(userId: UserId) {
+        keyBackupRoots.remove(userId)
+        groupKeys.keys.removeIf { it.first == userId }
+        savedNames.remove(userId)
     }
 
     override suspend fun publish(changes: Changes) = Unit
@@ -201,6 +270,17 @@ class MemoryStore :
     fun eventTypes() = events.map { it.type }
 
     fun active() = accounts.values.filter { it.status == AccountStatus.ACTIVE }
+}
+
+/** Messaging's answer to `GroupMembership`, kept in memory: a test adds who is in which chat. */
+class MemoryMemberships : GroupMembership {
+    val members = CopyOnWriteArrayList<Pair<UUID, UserId>>()
+    var asked = 0
+
+    override suspend fun isMember(chatId: UUID, userId: UserId): Boolean {
+        asked++
+        return (chatId to userId) in members
+    }
 }
 
 class MemoryCache : IdentityCache {
@@ -308,6 +388,10 @@ class MemoryCache : IdentityCache {
     override suspend fun phoneRelease(phoneHmac: String) = releases[phoneHmac]
 
     override suspend fun countPhoneRelease(phoneHmac: String) = counters.putIfAbsent("release:$phoneHmac", 1L) == null
+
+    override suspend fun countVaultOpening(userId: UserId) = count("vault-open:$userId")
+
+    override suspend fun vaultOpeningRetryAfter(userId: UserId): Duration? = Duration.ofMinutes(42)
 }
 
 class MemoryBus : EventBus {

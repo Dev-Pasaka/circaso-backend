@@ -20,6 +20,9 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     USERS_MONEY("users.money", setOf(ADMIN, FINANCE)),
     USERS_TICKETS("users.tickets", setOf(ADMIN, SUPPORT)),
     USERS_SUSPEND("users.suspend", setOf(ADMIN, SUPPORT)),
+
+    /** Deleting unfinished sign-ups now rather than at the 30-day sweep (2026-11-13). */
+    USERS_CLEANUP("users.cleanup", setOf(ADMIN)),
     TRANSACTIONS_READ("transactions.read", setOf(ADMIN, FINANCE)),
     FINANCE_READ("finance.read", setOf(ADMIN, FINANCE)),
 
@@ -29,6 +32,12 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     GROUPS_MONEY("groups.money", setOf(ADMIN, FINANCE)),
     TICKETS_READ("tickets.read", setOf(ADMIN, SUPPORT)),
     TICKETS_WRITE("tickets.write", setOf(ADMIN, SUPPORT)),
+
+    /** A person's calls and each call's reports from the phones, to see why a call dropped (2026-11-13). */
+    CALLS_READ("calls.read", setOf(ADMIN, SUPPORT)),
+
+    /** Diagnostic logs phones sent from You → Help (2026-11-13); opening one is audited. */
+    DIAGNOSTICS_READ("diagnostics.read", setOf(ADMIN, SUPPORT)),
     STAFF_MANAGE("staff.manage", setOf(ADMIN)),
     AUDIT_READ("audit.read", setOf(ADMIN)),
     SUPPORT_ACCOUNTS_MANAGE("support_accounts.manage", setOf(ADMIN)),

@@ -68,3 +68,28 @@ object RealtimeTable : Table("support.realtime") {
     val sentAt = timestamp("sent_at")
     override val primaryKey = PrimaryKey(userId, seq, sentAt)
 }
+
+/**
+ * SU5 (2026-11-13): diagnostic logs phones sent, one row each, deleted 30 days after they came. `code` is what the
+ * person reads out to support (`DL-7K3QX9`).
+ */
+object DiagnosticLogsTable : Table("support.diagnostic_logs") {
+    val logId = javaUUID("log_id")
+    val code = text("code")
+    val userId = javaUUID("user_id")
+    val platform = text("platform")
+    val appVersion = text("app_version")
+    val osVersion = text("os_version")
+    val deviceModel = text("device_model")
+    val sizeBytes = integer("size_bytes")
+    val log = text("log")
+    val createdAt = timestamp("created_at")
+    val expiresAt = timestamp("expires_at")
+    override val primaryKey = PrimaryKey(logId)
+
+    init {
+        uniqueIndex("diagnostic_logs_code_key", code)
+        index("diagnostic_logs_user_idx", false, userId, logId)
+        index("diagnostic_logs_expires_idx", false, expiresAt)
+    }
+}

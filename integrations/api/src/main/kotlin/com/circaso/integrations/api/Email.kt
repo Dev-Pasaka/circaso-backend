@@ -17,7 +17,7 @@ interface EmailGateway {
 }
 
 /** The emails identity sends: security notices, and one welcome when an account first becomes active. Each maps to a provider template id in config (`integrations.email.templates.<name>`). */
-enum class EmailTemplate { NEW_PHONE_SIGN_IN, RECOVERY_STARTED, RECOVERY_COMPLETED, WELCOME }
+enum class EmailTemplate { NEW_PHONE_SIGN_IN, RECOVERY_STARTED, RECOVERY_COMPLETED, WELCOME, PIN_VAULT_OPENED }
 
 /**
  * One email to send, a class per [EmailTemplate] carrying exactly that template's variables (decision 2026-10-27:
@@ -41,6 +41,14 @@ sealed interface Email {
 
     data object Welcome : Email {
         override val template = EmailTemplate.WELCOME
+    }
+
+    /**
+     * The PIN Vault was opened (2026-11-11): the backed-up wallet PIN was fetched to be decrypted on [deviceModel], and
+     * payments from the wallet are paused for 24 hours.
+     */
+    data class PinVaultOpened(val deviceModel: String) : Email {
+        override val template = EmailTemplate.PIN_VAULT_OPENED
     }
 }
 

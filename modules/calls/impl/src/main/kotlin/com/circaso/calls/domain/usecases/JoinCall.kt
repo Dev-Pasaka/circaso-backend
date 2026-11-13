@@ -61,6 +61,10 @@ class JoinCall(
             return changed
         }
         val after = (changed as Resource.Success).data.after
+        // Nothing is pulled here, whatever the phone asks (2026-11-14). The SFU can't pull into a session until its
+        // phone is connected, and the phone can't connect without the answer this request carries: a pull here was
+        // held ~11 s and then refused with 425, so the person answering waited 11.5 s for CL3. The phone pulls with
+        // CL4 as soon as it has applied this answer; the SFU waits for the connection (up to 5 s) and answers then.
         return Resource.success(Joined(sessionId, answer, views.view(after)))
     }
 

@@ -176,12 +176,18 @@ internal fun CallView.toSnapshot(): CallSnapshot =
         iceServers = iceServers.map { IceServerSnapshot(it.urls, it.username, it.credential) },
     )
 
-/** `calls.purge-expired`: keeps the daily partitions of `realtime` and `outbox` rolling. */
+/**
+ * `calls.purge-expired`: keeps the daily partitions of `realtime` and `outbox` rolling, and deletes call reports 30
+ * days after they came (their `expires_at`).
+ */
 class CallsExpiry(private val database: Database) {
-    suspend fun run(): Int = PARTITIONED.sumOf { database.maintainDailyPartitions(it, RETENTION).count }
+    suspend fun run(): Int =
+        PARTITIONED.sumOf { database.maintainDailyPartitions(it, RETENTION).count } +
+            database.purgeExpired("reports", REPORT_CHUNK)
 
     private companion object {
         val PARTITIONED = listOf("realtime", "outbox")
         val RETENTION: Duration = Duration.ofDays(7)
+        const val REPORT_CHUNK = 1_000
     }
 }

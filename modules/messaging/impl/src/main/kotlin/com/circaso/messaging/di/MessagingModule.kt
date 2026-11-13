@@ -1,6 +1,7 @@
 package com.circaso.messaging.di
 
 import com.circaso.identity.api.DeviceSignatures
+import com.circaso.identity.api.GroupMembership
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
@@ -127,6 +128,7 @@ import com.circaso.messaging.domain.usecases.UpdateSettings
 import com.circaso.messaging.domain.usecases.WatchPresence
 import com.circaso.messaging.presentation.agent.agentController
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
+import com.circaso.messaging.presentation.api.GroupMembershipImpl
 import com.circaso.messaging.presentation.api.GroupReportsImpl
 import com.circaso.messaging.presentation.api.MessagingRealtimeInbound
 import com.circaso.messaging.presentation.api.MessagingRealtimeReplay
@@ -399,6 +401,8 @@ fun messagingModule(config: Config): Module =
 
         // messaging:api, for wallet and calls; the replay and phone frames the gateway hands over
         single<ChatDirectory> { ChatDirectoryImpl(get()) }
+        // identity:api's GroupMembership, for its group key backup (2026-11-12)
+        single<GroupMembership> { GroupMembershipImpl(get()) }
 
         // messaging:api's staff contract, for the ops module behind the ops gateway; never mounted on the app gateway
         // (decision 2026-11-08)

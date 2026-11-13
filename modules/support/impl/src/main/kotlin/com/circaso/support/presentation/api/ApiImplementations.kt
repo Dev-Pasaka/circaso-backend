@@ -5,6 +5,9 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.support.api.DiagnosticLogDesk
+import com.circaso.support.api.DiagnosticLogLine
+import com.circaso.support.api.DiagnosticLogText
 import com.circaso.support.api.NewTicket
 import com.circaso.support.api.OpenedTicket
 import com.circaso.support.api.SupportDesk
@@ -19,8 +22,11 @@ import com.circaso.support.api.TicketStatus
 import com.circaso.support.api.TicketSummary
 import com.circaso.support.presentation.mappers.parseCursor
 import com.circaso.support.presentation.mappers.toDetail
+import com.circaso.support.presentation.mappers.toLine
 import com.circaso.support.presentation.mappers.toPage
 import com.circaso.support.presentation.mappers.toSummary
+import com.circaso.support.presentation.mappers.toText
+import com.circaso.support.presentation.services.DiagnosticLogService
 import com.circaso.support.presentation.services.SupportDeskService
 import com.circaso.support.presentation.services.TicketService
 import java.util.UUID
@@ -71,4 +77,15 @@ class SupportDeskImpl(private val desk: SupportDeskService) : SupportDesk {
     private companion object {
         const val MAX_LIMIT = 200
     }
+}
+
+/** support:api's diagnostic logs for the ops module's staff routes (2026-11-13). */
+class DiagnosticLogDeskImpl(private val logs: DiagnosticLogService) : DiagnosticLogDesk {
+    override suspend fun byCode(code: String): Resource<List<DiagnosticLogLine>> =
+        logs.byCode(code).map { found -> found.map { it.toLine() } }
+
+    override suspend fun ofUser(userId: UserId, limit: Int): Resource<List<DiagnosticLogLine>> =
+        logs.ofUser(userId, limit).map { found -> found.map { it.toLine() } }
+
+    override suspend fun read(logId: UUID): Resource<DiagnosticLogText> = logs.read(logId).map { it.toText() }
 }

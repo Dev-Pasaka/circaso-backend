@@ -4,7 +4,11 @@ import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.data.tables.AccountsTable
 import com.circaso.identity.data.tables.DevicesTable
+import com.circaso.identity.data.tables.GroupKeyBackupsTable
+import com.circaso.identity.data.tables.KeyBackupRootsTable
+import com.circaso.identity.data.tables.PinVaultsTable
 import com.circaso.identity.data.tables.ProviderLinksTable
+import com.circaso.identity.data.tables.SavedNamesTable
 import com.circaso.identity.data.tables.SecurityLogTable
 import com.circaso.identity.data.tables.SessionsTable
 import com.circaso.identity.data.tables.SupportRecoveriesTable
@@ -192,6 +196,10 @@ class AccountRepositoryImpl(private val database: Database, private val clock: C
         SessionsTable.deleteWhere { SessionsTable.userId inList userIds }
         SecurityLogTable.deleteWhere { SecurityLogTable.userId inList userIds }
         SupportRecoveriesTable.deleteWhere { SupportRecoveriesTable.userId inList userIds }
+        PinVaultsTable.deleteWhere { PinVaultsTable.userId inList userIds }
+        KeyBackupRootsTable.deleteWhere { KeyBackupRootsTable.userId inList userIds }
+        GroupKeyBackupsTable.deleteWhere { GroupKeyBackupsTable.userId inList userIds }
+        SavedNamesTable.deleteWhere { SavedNamesTable.userId inList userIds }
     }
 }
 

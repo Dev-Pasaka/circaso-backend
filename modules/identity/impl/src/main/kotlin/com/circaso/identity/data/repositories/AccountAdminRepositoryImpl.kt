@@ -34,6 +34,7 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.javatime.JavaLocalDateColumnType
@@ -80,12 +81,18 @@ class AccountAdminRepositoryImpl(private val database: Database) : AccountAdminR
                 .distinct()
         }
 
-    override suspend fun newest(after: AccountKey?, limit: Int): List<Account> =
+    override suspend fun newest(
+        after: AccountKey?,
+        limit: Int,
+        includePending: Boolean,
+    ): List<Account> =
         database.tx("admin.newest-accounts") {
+            val page = after?.let(::before) ?: Op.TRUE
             AccountsTable
                 .selectAll()
-                .where { after?.let(::before) ?: Op.TRUE }
-                .orderBy(AccountsTable.createdAt to SortOrder.DESC, AccountsTable.userId to SortOrder.DESC)
+                .where {
+                    if (includePending) page else page and (AccountsTable.status neq AccountStatus.PENDING_PHONE.name)
+                }.orderBy(AccountsTable.createdAt to SortOrder.DESC, AccountsTable.userId to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toAccount() }
                 .toList()
@@ -115,6 +122,19 @@ class AccountAdminRepositoryImpl(private val database: Database) : AccountAdminR
                 .limit(limit)
                 .map { SessionRecord(it.toSession(), it[SessionsTable.expiresAt]) }
                 .toList()
+        }
+
+    override suspend fun pendingCount(createdBefore: Instant): Long =
+        database.tx("admin.pending-count") {
+            // The partial index accounts_pending_idx (created_at WHERE status = 'PENDING_PHONE') answers it.
+            val count = AccountsTable.userId.count()
+            AccountsTable
+                .select(count)
+                .where {
+                    (AccountsTable.status eq AccountStatus.PENDING_PHONE.name) and
+                        (AccountsTable.createdAt less createdBefore)
+                }.map { it[count] }
+                .single()
         }
 
     override suspend fun signUpTotal(): Long =

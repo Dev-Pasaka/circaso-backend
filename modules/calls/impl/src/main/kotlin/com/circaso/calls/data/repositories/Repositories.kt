@@ -3,12 +3,15 @@ package com.circaso.calls.data.repositories
 import com.circaso.calls.api.CallId
 import com.circaso.calls.data.tables.CallsTable
 import com.circaso.calls.data.tables.ParticipantsTable
+import com.circaso.calls.data.tables.ReportsTable
 import com.circaso.calls.data.tables.TracksTable
 import com.circaso.calls.domain.models.Call
 import com.circaso.calls.domain.models.CallKind
+import com.circaso.calls.domain.models.CallLine
 import com.circaso.calls.domain.models.CallState
 import com.circaso.calls.domain.models.CallTrack
 import com.circaso.calls.domain.models.EndReason
+import com.circaso.calls.domain.models.LeaveCause
 import com.circaso.calls.domain.models.Participant
 import com.circaso.calls.domain.models.ParticipantState
 import com.circaso.calls.domain.ports.CallsOutbox
@@ -20,8 +23,12 @@ import com.circaso.shared.UserId
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.count
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
@@ -30,10 +37,12 @@ import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.batchInsert
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
+import org.jetbrains.exposed.v1.r2dbc.select
 import org.jetbrains.exposed.v1.r2dbc.selectAll
 import org.jetbrains.exposed.v1.r2dbc.update
 import org.jetbrains.exposed.v1.r2dbc.upsert
 import java.time.Instant
+import java.util.UUID
 
 class CallRepositoryImpl(private val database: Database) : CallRepository {
     override suspend fun insert(call: Call): Boolean =
@@ -142,6 +151,68 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
                 .toList()
         }
 
+    override suspend fun ofUser(
+        userId: UserId,
+        before: CallId?,
+        limit: Int,
+    ): List<CallLine> =
+        database.tx("calls.of-user") {
+            val ids =
+                ParticipantsTable
+                    .select(ParticipantsTable.callId)
+                    .where {
+                        val mine = ParticipantsTable.userId eq userId.value
+                        if (before == null) mine else mine and (ParticipantsTable.callId less before.value)
+                    }.orderBy(ParticipantsTable.callId to SortOrder.DESC)
+                    .limit(limit)
+                    .map { it[ParticipantsTable.callId] }
+                    .toList()
+            if (ids.isEmpty()) return@tx emptyList()
+            val people = counts(ParticipantsTable, ParticipantsTable.callId, ids)
+            val reports = counts(ReportsTable, ReportsTable.callId, ids)
+            val rows =
+                CallsTable
+                    .selectAll()
+                    .where { CallsTable.callId inList ids }
+                    .map { it }
+                    .toList()
+                    .associateBy { it[CallsTable.callId] }
+            ids.mapNotNull { id ->
+                rows[id]?.toLine(people[id] ?: 0, reports[id] ?: 0)
+            }
+        }
+
+    private suspend fun counts(
+        table: Table,
+        column: Column<UUID>,
+        ids: List<UUID>,
+    ): Map<UUID, Int> {
+        val count = column.count()
+        return table
+            .select(column, count)
+            .where { column inList ids }
+            .groupBy(column)
+            .map { it[column] to it[count].toInt() }
+            .toList()
+            .toMap()
+    }
+
+    private fun ResultRow.toLine(participants: Int, reports: Int) =
+        CallLine(
+            callId = CallId(this[CallsTable.callId]),
+            chatId = ChatId(this[CallsTable.chatId]),
+            kind = CallKind.valueOf(this[CallsTable.kind]),
+            state = CallState.valueOf(this[CallsTable.state]),
+            endReason = this[CallsTable.endReason]?.let { EndReason.valueOf(it) },
+            isGroup = this[CallsTable.isGroup],
+            startedBy = UserId(this[CallsTable.startedBy]),
+            createdAt = this[CallsTable.createdAt],
+            startedAt = this[CallsTable.startedAt],
+            endedAt = this[CallsTable.endedAt],
+            participants = participants,
+            reports = reports,
+        )
+
     /** Writes one participant's row and replaces their tracks. */
     private suspend fun writeParticipant(callId: CallId, participant: Participant) {
         ParticipantsTable.upsert(ParticipantsTable.callId, ParticipantsTable.userId) {
@@ -155,6 +226,7 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
             it[updatedAt] = participant.updatedAt
             it[connectedAt] = participant.connectedAt
             it[screen] = participant.screen
+            it[leftCause] = participant.leftCause?.name
         }
         TracksTable.deleteWhere {
             (TracksTable.callId eq callId.value) and (TracksTable.userId eq participant.userId.value)
@@ -204,6 +276,7 @@ class CallRepositoryImpl(private val database: Database) : CallRepository {
             updatedAt = this[ParticipantsTable.updatedAt],
             connectedAt = this[ParticipantsTable.connectedAt],
             screen = this[ParticipantsTable.screen],
+            leftCause = this[ParticipantsTable.leftCause]?.let { LeaveCause.parse(it) },
         )
     }
 

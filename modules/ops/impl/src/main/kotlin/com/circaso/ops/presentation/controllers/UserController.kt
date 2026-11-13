@@ -4,6 +4,8 @@ import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.presentation.dto.GroupListResponse
 import com.circaso.ops.presentation.dto.HoldingsResponse
+import com.circaso.ops.presentation.dto.PendingSignUpsDeletedResponse
+import com.circaso.ops.presentation.dto.PendingSignUpsResponse
 import com.circaso.ops.presentation.dto.ReasonRequest
 import com.circaso.ops.presentation.dto.TicketListResponse
 import com.circaso.ops.presentation.dto.UserAccountResponse
@@ -48,7 +50,12 @@ fun Route.userController(
             get {
                 val result =
                     call.pageLimit(settings).flatMap { limit ->
-                        users.search(call.query("q").orEmpty(), call.query("cursor"), limit)
+                        users.search(
+                            call.query("q").orEmpty(),
+                            call.query("cursor"),
+                            limit,
+                            includePending = call.query("pending") == "true",
+                        )
                     }
                 call.respondDefault(
                     result.toDefaultResponse { page ->
@@ -61,7 +68,35 @@ fun Route.userController(
                 listOf(MALFORMED),
                 notes =
                     "${roles("any")} `q`: a user id, an @handle (prefix), a phone number (+254…, exact), an email " +
-                        "(exact) or a name (prefix). Empty: the newest accounts. $PAGED",
+                        "(exact) or a name (prefix). Empty: the newest accounts, without unfinished sign-ups (no " +
+                        "phone yet) unless `pending=true`. $PAGED",
+            )
+
+            get("pending-signups") {
+                call.respondDefault(
+                    users.pendingSignUps().toDefaultResponse { PendingSignUpsResponse(it) },
+                )
+            }.docs<NoBody, PendingSignUpsResponse>(
+                "OPS · Unfinished sign-ups",
+                TAG_USERS,
+                emptyList(),
+                notes =
+                    "${roles("any")} Accounts that signed in with Google or Apple but never verified a phone, " +
+                        "started over an hour ago: what a clean-up would delete now.",
+            )
+        }
+        staffOnly(Permission.USERS_CLEANUP.roles) {
+            post("pending-signups/delete") {
+                call.respondDefault(
+                    users.deletePendingSignUps(call.actor()).toDefaultResponse { PendingSignUpsDeletedResponse(it) },
+                )
+            }.docs<NoBody, PendingSignUpsDeletedResponse>(
+                "OPS · Delete unfinished sign-ups",
+                TAG_USERS,
+                listOf(FORBIDDEN),
+                notes =
+                    "${roles("ADMIN")} Audited. Deletes accounts still waiting for a phone that started over an hour " +
+                        "ago, with their logins, as the 30-day sweep would. Never activated, so nothing else knows them.",
             )
         }
         route("/{userId}") {
