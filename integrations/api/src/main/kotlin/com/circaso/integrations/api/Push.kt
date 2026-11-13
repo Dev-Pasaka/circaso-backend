@@ -74,6 +74,15 @@ data class PushPayload(
     val userId: String? = null,
     /** The support ticket a `support.ticket` push is about (added 2026-11-08): a tap opens it. */
     val ticketId: String? = null,
+    /**
+     * A new chat message (added 2026-11-13): who sent it, when, and the message's ciphertext for this phone as the inbox
+     * holds it (end-to-end encrypted: the server can't read it). iOS's Notification Service Extension opens it on the
+     * phone, so the notification shows the sender's name and photo and what was said without waking the app. The
+     * ciphertext is left out when it would push the payload past the vendors' 4 KB; the phone then words it by name.
+     */
+    val senderId: String? = null,
+    val sentAt: String? = null,
+    val ciphertext: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

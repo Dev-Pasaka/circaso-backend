@@ -60,6 +60,12 @@ private const val PUSH_BATCH = 100
 /** Messaging's pushes wake the app, which fetches and decrypts; this text shows only if it can't. */
 private const val NEW_MESSAGE = "New message"
 
+/**
+ * The most ciphertext a message push carries (base64 characters): APNs and FCM take 4 KB in all, and the ids, the
+ * alert and `aps` need the rest. A text message of a few hundred characters fits; a longer one is worded by name.
+ */
+private const val PUSH_CIPHERTEXT_MAX_CHARS = 2_800
+
 /** A support reply's push: from the team, as the app shows staff replies; a tap opens the ticket. */
 private const val SUPPORT_TITLE = "Circaso Support"
 private const val SUPPORT_TICKET_KIND = "support.ticket"
@@ -498,7 +504,16 @@ class GatewayRealtime(
     private fun newMessagePush(frame: MessageNewFrame): PushMessage? {
         if (frame.keyRequest) return metaKeyRequestPush(frame)
         if (!frame.pushable) return null
-        val ids = PushPayload(chatId = frame.chatId.toString(), messageId = frame.messageId.toString())
+        // The sender, the time and the ciphertext too (2026-11-13), for iOS's notification extension to open; the
+        // ciphertext only when the push stays inside APNs' and FCM's 4 KB.
+        val ids =
+            PushPayload(
+                chatId = frame.chatId.toString(),
+                messageId = frame.messageId.toString(),
+                senderId = frame.senderId.toString(),
+                sentAt = frame.sentAt.toString(),
+                ciphertext = frame.ciphertext?.takeIf { it.length <= PUSH_CIPHERTEXT_MAX_CHARS },
+            )
         return PushMessage("Circaso", NEW_MESSAGE, ids, dataOnly = true)
     }
 

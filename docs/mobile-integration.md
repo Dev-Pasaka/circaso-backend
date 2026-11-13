@@ -9,6 +9,11 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-13, message pushes carry the sender and the ciphertext; every iOS alert is mutable (additive; old apps keep working):**
+> 1. **A new-message push** (`chatId`, `messageId`, data-only) now also carries `senderId`, `sentAt` (ISO-8601) and `ciphertext`: this recipient's ciphertext exactly as the inbox (M13) would return it, base64 of the wire format. It is end-to-end encrypted; the server can't read it. Left out when it is over 2,800 characters (APNs and FCM take 4 KB in all): word that one by name only, or pull the inbox.
+> 2. **iOS:** every alert push (not only data-only ones) has `mutable-content: 1`, so the app's Notification Service Extension can word it: open the ciphertext, name the sender as the person saved them, add their photo as a communication notification, and honour Notification privacy for the server-worded ones too (`contact.joined`, `connection.added`, `moment.loved`, `wallet.setup`). A message push's `aps` also has `thread-id` = `chatId`.
+> 3. **Android** may ignore the new fields: it still pulls the inbox and words the message itself.
+
 > **Changed on 2026-11-12, saved names: the names you give your contacts are backed up, sealed (additive; old apps keep working):**
 > 1. **New KB6–KB7** (section 7, Account and security), scope `app`: `GET /v1/key-backup/saved-names` → `{ exists, version, ciphertext, updatedAt }` (with none saved: `exists: false`, `version: 0`, `ciphertext` and `updatedAt` null; 200, never 404); `PUT /v1/key-backup/saved-names` with an `Idempotency-Key` and `{ ciphertext, baseVersion }` → `{ version }` (= `baseVersion + 1`).
 > 2. **One opaque blob per account.** The phone keeps every saved name and seals the whole set (AES-256-GCM under the key backup root key, which the server never has) into `ciphertext`, standard base64 of 1 byte to 512 KiB decoded; each PUT replaces the whole blob.
