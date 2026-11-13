@@ -3,7 +3,7 @@ package com.circaso.integrations.api
 import com.circaso.shared.Resource
 
 interface PushGateway {
-    /** Used by the gateway only, when a user has no open socket. */
+    /** Used by the gateway only: when a user has no open socket, or their phone said Circaso is in the background. */
     suspend fun send(target: PushTarget, message: PushMessage): Resource<PushReceipt>
 }
 
