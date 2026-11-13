@@ -50,7 +50,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.KSerializer
+import net.logstash.logback.argument.StructuredArguments.kv
 import org.slf4j.LoggerFactory
+import java.time.Duration
+import java.time.Instant
 
 private val log = LoggerFactory.getLogger("com.circaso.gateway.realtime.GatewayRealtime")
 
@@ -74,8 +77,10 @@ private const val SUPPORT_TICKET_KIND = "support.ticket"
 private const val RING_TTL_SECONDS = 45L
 
 /**
- * What modules call to tell a user something now: to the socket when the user has one open, otherwise to push
- * when the frame is marked push-worthy. A frame that reaches neither is recovered by the module's replay when
+ * What modules call to tell a user something now: to the socket when the user has one open, and to push when the
+ * frame is marked push-worthy and either no socket is open or the phone said Circaso is in the background
+ * (`system/app.state`, 2026-11-13): a backgrounded app's socket stays open, so the frame arrived and was acked
+ * ("delivered") while nothing showed until the socket's ping timed out. Silent pushes stay socket-only then. A frame that reaches neither is recovered by the module's replay when
  * the phone reconnects. An incoming call is pushed whether or not a socket is open (2026-11-11); to an iPhone with a
  * PushKit token it rings through [voip] (decision 2026-11-08), and through [push] only when that is off or fails.
  */
@@ -91,12 +96,12 @@ class GatewayRealtime(
             stopIphoneRing(userId, envelope)
             return Resource.success(Unit)
         }
-        if (hub.deliver(userId, envelope)) {
-            ringWithSocket(userId, envelope)
-            return Resource.success(Unit)
-        }
+        val presence = hub.deliverTo(userId, envelope)
+        if (presence != SocketPresence.NONE) ringWithSocket(userId, envelope)
+        if (presence == SocketPresence.FOREGROUND) return Resource.success(Unit)
         val message = pushFor(envelope, userId) ?: return Resource.success(Unit)
-        pushTo(userId, message)
+        if (presence == SocketPresence.BACKGROUND && !pushedWhileAway(envelope, message)) return Resource.success(Unit)
+        pushTo(userId, message, envelope, presence)
         return Resource.success(Unit)
     }
 
@@ -109,27 +114,75 @@ class GatewayRealtime(
         // Only users this frame would push to are looked up, so receipts and typing cost one publish and no reads.
         val candidates = userIds.distinct().mapNotNull { userId -> pushFor(envelope, userId)?.let { userId to it } }
         if (candidates.isEmpty()) return Resource.success(Unit)
-        val offline = hub.withoutSocket(candidates.map { it.first }).toSet()
-        val pushes = candidates.filter { (userId, _) -> userId in offline }
+        // One pipelined read for the whole group: who has a socket, and who of those said Circaso is in the background.
+        val presence = hub.socketPresence(candidates.map { it.first })
+
+        fun of(userId: UserId) = presence[userId] ?: SocketPresence.NONE
+        val pushes =
+            candidates.filter { (userId, message) ->
+                when (of(userId)) {
+                    SocketPresence.NONE -> true
+                    SocketPresence.BACKGROUND -> pushedWhileAway(envelope, message)
+                    SocketPresence.FOREGROUND -> false
+                }
+            }
         candidates
             .filter { (userId, _) ->
-                userId !in offline
+                of(userId) != SocketPresence.NONE
             }.forEach { (userId, _) -> ringWithSocket(userId, envelope) }
         pushes.chunked(PUSH_BATCH).forEach { batch ->
             coroutineScope {
-                batch.map { (userId, message) -> async { pushTo(userId, message) } }.awaitAll()
+                batch.map { (userId, message) -> async { pushTo(userId, message, envelope, of(userId)) } }.awaitAll()
             }
         }
         return Resource.success(Unit)
     }
 
-    private suspend fun pushTo(userId: UserId, message: PushMessage) {
+    /**
+     * To a phone whose socket is open but whose app is in the background, everything that shows something is pushed
+     * (the app shows nothing for a frame alone, and iOS has suspended it). Not a silent push (key requests: the open
+     * socket already carries them), not a ring (pushed by [ringWithSocket]) and not a sign-out (the socket closes).
+     */
+    private fun pushedWhileAway(envelope: RealtimeEnvelope, message: PushMessage): Boolean =
+        !message.silent && !isRing(envelope) && !(envelope.module == "system" && envelope.type == "session.revoked")
+
+    private fun isRing(envelope: RealtimeEnvelope) =
+        envelope.module == CallFrames.MODULE && envelope.type == CallFrames.RINGING
+
+    /**
+     * [envelope] and [presence], when given, write a `push.sent` line: the push's kind and message id, why it went (no
+     * socket, or the app in the background), how long after the frame was made it was handed to the vendor
+     * (`afterFrameMs`) and how long the vendor took (`sendMs`). Ids only, never content.
+     */
+    private suspend fun pushTo(
+        userId: UserId,
+        message: PushMessage,
+        envelope: RealtimeEnvelope? = null,
+        presence: SocketPresence? = null,
+    ) {
         val target = registrations.pushTarget(userId) ?: return
         val platform = if (target.platform.equals("ios", ignoreCase = true)) PushPlatform.IOS else PushPlatform.ANDROID
         if (platform == PushPlatform.IOS && rangByVoip(userId, target.voipToken, message)) return
         val token = target.token ?: return
+        val started = System.nanoTime()
         val result = push.send(PushTarget(platform, token), message)
         if (result is Resource.Error) log.warn("push failed: code={}", result.error.code)
+        if (envelope != null && result is Resource.Success) {
+            log.info(
+                "push.sent",
+                kv("kind", "push"),
+                kv("frame", "${envelope.module}.${envelope.type}"),
+                kv("pushKind", message.data.kind),
+                kv("messageId", message.data.messageId),
+                kv("userId", userId.toString()),
+                kv("platform", platform.name.lowercase()),
+                kv("reason", if (presence == SocketPresence.BACKGROUND) "background" else "no-socket"),
+                kv("afterFrameMs", Duration.between(envelope.ts, Instant.now()).toMillis()),
+                // A chat message: from the moment the server took it (its `sentAt`) to the push handed over.
+                kv("afterSentMs", sentAt(envelope)?.let { Duration.between(it, Instant.now()).toMillis() }),
+                kv("sendMs", (System.nanoTime() - started) / 1_000_000),
+            )
+        }
     }
 
     /**
@@ -696,6 +749,13 @@ class GatewayRealtime(
             transferId = frame.transferId.toString(),
             walletId = frame.walletId?.toString(),
         )
+
+    private fun sentAt(envelope: RealtimeEnvelope): Instant? =
+        if (envelope.module == "messaging" && envelope.type == MessageNewFrame.TYPE) {
+            decode(MessageNewFrame.serializer(), envelope)?.sentAt
+        } else {
+            null
+        }
 
     /** A frame's `data` as its class, from the module's `api`; null (no push) when it doesn't decode. */
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =

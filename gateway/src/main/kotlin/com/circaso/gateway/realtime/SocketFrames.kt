@@ -28,3 +28,7 @@ internal data class PingFrame(val type: String = "ping")
 /** `system/session.revoked`: this phone's session ended (signed out, replaced or relinked); the socket closes next. */
 @Serializable
 internal data object SessionRevokedFrame
+
+/** `system/app.state` from the phone: `foreground` or `background` (2026-11-13). */
+@Serializable
+internal data class AppStateFrame(val state: String = "")
