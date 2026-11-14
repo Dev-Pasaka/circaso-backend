@@ -12,7 +12,7 @@ import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
 
-/** ST1. `kind` is `image`, `video` or `voice`; `sizeBytes` is the ciphertext's exact size, 1 B to 32 MiB. */
+/** ST1. `kind` is `image`, `video` or `voice`; `sizeBytes` is the ciphertext's exact size, 1 B to 64 MiB. */
 @Serializable
 data class PrepareMediaRequest(val sizeBytes: Long, val kind: String)
 

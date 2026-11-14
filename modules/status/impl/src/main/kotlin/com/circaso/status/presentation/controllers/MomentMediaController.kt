@@ -58,9 +58,9 @@ private fun Route.prepareRoute(media: MomentMediaService) {
         listOf(INVALID, MALFORMED),
         notes =
             "$SCOPE $IDEMPOTENT `kind` is `image`, `video` or `voice`; `sizeBytes` is the exact size of the " +
-                "ciphertext, 1 byte to 32 MiB (`status.media_invalid` otherwise). PUT the ciphertext to `uploadUrl` " +
-                "with exactly `uploadHeaders` before `expiresAt` (15 minutes), then ST2, then post it with ST3 " +
-                "within an hour, or it is deleted.",
+                "ciphertext, 1 byte to 64 MiB (`STATUS_MEDIA_MAX_BYTES`; `status.media_invalid` otherwise). PUT the " +
+                "ciphertext to `uploadUrl` with exactly `uploadHeaders` before `expiresAt` (an hour), then ST2, then " +
+                "post it with ST3 within two hours of ST1, or it is deleted.",
     )
 }
 

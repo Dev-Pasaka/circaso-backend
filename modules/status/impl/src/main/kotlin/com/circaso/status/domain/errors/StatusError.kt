@@ -24,7 +24,10 @@ sealed class StatusError(
         ErrorKind.INVALID,
     )
 
-    /** ST1's size or kind, ST2's object at another size than promised, or more than one file on a moment. */
+    /**
+     * ST1's size (1 B to `STATUS_MEDIA_MAX_BYTES`, 64 MiB) or kind, ST2's object at another size than promised, or
+     * more than one file on a moment.
+     */
     data object MediaInvalid : StatusError(
         "status.media_invalid",
         "This file can't be shared as a moment.",
