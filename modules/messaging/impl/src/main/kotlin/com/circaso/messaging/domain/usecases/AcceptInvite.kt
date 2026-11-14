@@ -9,6 +9,7 @@ import com.circaso.messaging.domain.models.Member
 import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.ChatRepository
+import com.circaso.messaging.domain.repositories.GroupLinkRepository
 import com.circaso.messaging.domain.repositories.InviteRepository
 import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.messaging.domain.support.ChatNotifier
@@ -37,6 +38,7 @@ import java.util.UUID
 class AcceptInvite(
     private val invites: InviteRepository,
     private val chats: ChatRepository,
+    private val links: GroupLinkRepository,
     private val transactor: Transactor,
     private val outbox: MessagingOutbox,
     private val membership: Membership,
@@ -83,6 +85,8 @@ class AcceptInvite(
                         ?: return@attempt Resource.error(MessagingError.GroupFull)
                 invites.decide(inviteId, InviteState.ACCEPTED, now)
                 chats.addMembers(listOf(Member(chat.chatId, caller, Role.MEMBER, now)))
+                // An admin brought them back: the join link works for them again (decision 2026-11-14).
+                links.clearRemoval(chat.chatId, caller)
                 val event = bus.envelope(MemberAdded(chat.chatId, caller, invite.invitedBy))
                 outbox.write(listOf(event))
                 Resource.success(InviteAccepted(reserved, invite, event))

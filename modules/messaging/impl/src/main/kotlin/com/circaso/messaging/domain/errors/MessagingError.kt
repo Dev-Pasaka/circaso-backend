@@ -159,6 +159,33 @@ sealed class MessagingError(
         ErrorKind.NOT_FOUND,
     )
 
+    /**
+     * Group join links (2026-11-14): no such link, or it was reset or turned off. All look the same, so a token
+     * teaches nothing about links that were.
+     */
+    data object LinkNotFound : MessagingError(
+        "messaging.link_not_found",
+        "This link no longer works. Ask an admin for a new one.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /**
+     * The person can't come in by link: an admin removed them, a block stands between them and one of the group's
+     * admins, or theirs is a support account. It never says which; an admin can still add them.
+     */
+    data object LinkNotAllowed : MessagingError(
+        "messaging.link_not_allowed",
+        "You can't join this group with a link. Ask an admin to add you.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    /** M29: the preview's name is missing or too long, the description is over 500, or the photo isn't a small image. */
+    data object LinkInvalid : MessagingError(
+        "messaging.link_invalid",
+        "The link's preview needs a name, a description of at most 500 characters and a small photo.",
+        ErrorKind.INVALID,
+    )
+
     /** Users' code, returned as-is when reach fails (Messaging → Error codes); it never says why. */
     data object NotReachable : MessagingError(
         "users.not_reachable",

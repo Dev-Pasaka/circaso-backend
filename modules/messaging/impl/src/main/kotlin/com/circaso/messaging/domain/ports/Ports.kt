@@ -53,3 +53,16 @@ interface RealtimeLog {
 }
 
 data class LoggedFrame(val seq: Long, val json: String)
+
+/**
+ * Counts what one person does with join links in an hour (`msg:link-rate:{action}:{userId}`), so tokens can't be
+ * walked from an account and nobody joins groups in bulk.
+ */
+interface LinkRateLimit {
+    /** Counts one [action] by [userId]; the seconds to wait when the hour's [max] is used up, else null. */
+    suspend fun take(
+        action: String,
+        userId: UserId,
+        max: Int,
+    ): Long?
+}

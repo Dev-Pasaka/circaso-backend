@@ -10,6 +10,23 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.messaging.api.ChatDirectory
+import com.circaso.messaging.api.GroupLinkPages
+import com.circaso.messaging.data.cache.RedisLinkRateLimit
+import com.circaso.messaging.data.repositories.GroupLinkRepositoryImpl
+import com.circaso.messaging.data.tables.GroupLinksTable
+import com.circaso.messaging.data.tables.GroupRemovalsTable
+import com.circaso.messaging.domain.ports.LinkRateLimit
+import com.circaso.messaging.domain.repositories.GroupLinkRepository
+import com.circaso.messaging.domain.usecases.GetGroupLink
+import com.circaso.messaging.domain.usecases.JoinByGroupLink
+import com.circaso.messaging.domain.usecases.LookUpGroupLink
+import com.circaso.messaging.domain.usecases.PublishGroupLink
+import com.circaso.messaging.domain.usecases.ReadGroupLinkPage
+import com.circaso.messaging.domain.usecases.ReadGroupLinkPhoto
+import com.circaso.messaging.domain.usecases.TurnOffGroupLink
+import com.circaso.messaging.presentation.api.GroupLinkPagesImpl
+import com.circaso.messaging.presentation.controllers.groupLinkController
+import com.circaso.messaging.presentation.services.GroupLinkService
 import com.circaso.messaging.api.GroupReports
 import com.circaso.messaging.data.cache.LiveFramesImpl
 import com.circaso.messaging.data.cache.REDIS_PREFIX
@@ -190,6 +207,8 @@ internal val messagingDatabaseSpec =
                 RealtimeTable,
                 AttachmentsTable,
                 InvitesTable,
+                GroupLinksTable,
+                GroupRemovalsTable,
             ),
         migrationsLocation = "classpath:db/messaging",
         outbox = true,
@@ -224,6 +243,8 @@ fun messagingModule(config: Config): Module =
                     config.long("messaging.max-attachment-bytes", MAX_ATTACHMENT_BYTES).also {
                         require(it > 0) { "MESSAGING_MAX_ATTACHMENT_BYTES must be positive (was $it)" }
                     },
+                // Join links are made on share's host, which draws their page (decision 2026-11-14).
+                linkBaseUrl = config.string("SHARE_BASE_URL", MessagingConfig().linkBaseUrl).trim().trimEnd('/'),
             )
         val background = backgroundScope()
 
@@ -237,6 +258,7 @@ fun messagingModule(config: Config): Module =
         single<KeyRepository> { KeyRepositoryImpl(get(named("messaging.database"))) }
         single<ChatRepository> { ChatRepositoryImpl(get(named("messaging.database"))) }
         single<InviteRepository> { InviteRepositoryImpl(get(named("messaging.database"))) }
+        single<GroupLinkRepository> { GroupLinkRepositoryImpl(get(named("messaging.database"))) }
         single<GroupReportRepository> { GroupReportRepositoryImpl(get(named("messaging.database"))) }
         single<DeliveryRepository> { DeliveryRepositoryImpl(get(named("messaging.database")), clock) }
         single<SettingsRepository> { SettingsRepositoryImpl(get(named("messaging.database"))) }
@@ -251,6 +273,7 @@ fun messagingModule(config: Config): Module =
             ScheduledJob("messaging.purge-attachments", ATTACHMENT_PURGE_INTERVAL) { attachments.purge() }
         }
         single<BundleRateLimit> { RedisBundleRateLimit(get<RedisScopes>().scope(REDIS_PREFIX)) }
+        single<LinkRateLimit> { RedisLinkRateLimit(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<MembersCache> { RedisMembersCache(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single {
             RealtimeFramesImpl(
@@ -281,7 +304,7 @@ fun messagingModule(config: Config): Module =
         single { ChatViews(get(), get<Profiles>()) }
         single { ChatNotifier(get()) }
         single { Invitations(get(), get(), get(), get<Profiles>(), messaging, clock) }
-        single { MemberRemoval(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { MemberRemoval(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { OrderedIds(clock) }
         single { DeliveryNotifier(get(), get(), messaging) }
         single { ReceiptBatcher(get(), get(), background, clock, messaging) }
@@ -302,10 +325,37 @@ fun messagingModule(config: Config): Module =
         single { UpdateGroup(get(), get(), get(), get(), get(), get(), messaging, clock) }
         single { AddMembers(get(), get(), get<ReachPolicy>(), get(), get(), get(), messaging) }
         single { ListMyInvites(get(), get(), get(), clock) }
-        single { AcceptInvite(get(), get(), get(), get(), get(), get(), get(), get(), get(), messaging, clock) }
+        single {
+            AcceptInvite(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), messaging, clock)
+        }
         single { DeclineInvite(get(), get(), clock) }
         single { ListChatInvites(get(), get(), get(), clock) }
         single { CancelInvite(get(), get(), get(), get(), clock) }
+        single { GetGroupLink(get(), get()) }
+        single { PublishGroupLink(get(), get(), get(), get(), get(), messaging, clock) }
+        single { TurnOffGroupLink(get(), get(), get(), get(), get(), messaging, clock) }
+        single { LookUpGroupLink(get(), get(), get(), messaging) }
+        single { ReadGroupLinkPage(get(), get()) }
+        single { ReadGroupLinkPhoto(get()) }
+        single {
+            JoinByGroupLink(
+                links = get(),
+                invites = get(),
+                chats = get(),
+                transactor = get(),
+                outbox = get(),
+                membership = get(),
+                views = get(),
+                notifier = get(),
+                invitations = get(),
+                reach = get(),
+                profiles = get(),
+                rateLimit = get(),
+                bus = get(),
+                config = messaging,
+                clock = clock,
+            )
+        }
         single { RemoveMember(get()) }
         single { LeaveGroup(get()) }
         single { SetRole(get(), get(), get(), get(), get()) }
@@ -368,6 +418,7 @@ fun messagingModule(config: Config): Module =
             )
         }
         single { InviteService(get(), get(), get(), get(), get()) }
+        single { GroupLinkService(get(), get(), get(), get(), get(), get(), get()) }
         single { RealtimeService(get()) }
         single { MessageService(get(), get(), get(), get(), get()) }
         single { PhoneFrameService(get(), get(), get()) }
@@ -381,6 +432,7 @@ fun messagingModule(config: Config): Module =
             val keys = get<KeyService>()
             val chats = get<ChatService>()
             val invites = get<InviteService>()
+            val links = get<GroupLinkService>()
             val messages = get<MessageService>()
             val attachments = get<AttachmentService>()
             val maps = get<MapService>()
@@ -390,6 +442,7 @@ fun messagingModule(config: Config): Module =
                 route.keyController(keys)
                 route.chatController(chats)
                 route.inviteController(invites)
+                route.groupLinkController(links, messaging)
                 route.messageController(messages, messaging.inboxPageMax)
                 route.presenceController(presence)
                 route.attachmentController(attachments)
@@ -401,6 +454,8 @@ fun messagingModule(config: Config): Module =
 
         // messaging:api, for wallet and calls; the replay and phone frames the gateway hands over
         single<ChatDirectory> { ChatDirectoryImpl(get()) }
+        // messaging:api for share, which draws a join link's public page (2026-11-14)
+        single<GroupLinkPages> { GroupLinkPagesImpl(get()) }
         // identity:api's GroupMembership, for its group key backup (2026-11-12)
         single<GroupMembership> { GroupMembershipImpl(get()) }
 

@@ -12,7 +12,8 @@ import java.util.UUID
 
 /**
  * The work of `messaging.purge-expired` (messaging.md → Data): deletes expired `client_messages` and group `invites`
- * (30 days after each was sent, answered or not) in chunks, and keeps
+ * (30 days after each was sent, answered or not) and reset or turned-off `group_links` (30 days after) in chunks, and
+ * keeps
  * the daily partitions one day ahead, dropping the message tables' 30 days and `realtime` and `outbox` 7 days after
  * each one ends. Once `message_records` partitions go, the `chat_heads` pointing into them go too, so a chat quiet
  * for 30 days shows no last message, as when the list read the records. Returns how many rows and partitions it
@@ -55,7 +56,7 @@ class MessagingExpiry(private val database: Database) {
     private companion object {
         const val RECORDS = "message_records"
         val DAY: DateTimeFormatter = DateTimeFormatter.BASIC_ISO_DATE
-        val EXPIRING = listOf("client_messages", "invites")
+        val EXPIRING = listOf("client_messages", "invites", "group_links")
         val PARTITIONED =
             listOf(
                 "inbox" to Duration.ofDays(30),

@@ -3,6 +3,7 @@ package com.circaso.messaging.data.cache
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.domain.ports.BundleRateLimit
+import com.circaso.messaging.domain.ports.LinkRateLimit
 import com.circaso.messaging.domain.ports.MembersCache
 import com.circaso.shared.UserId
 import java.time.Duration
@@ -20,6 +21,23 @@ class RedisBundleRateLimit(private val redis: RedisScope) : BundleRateLimit {
     override suspend fun retryAfter(userId: UserId): Duration? = redis.ttl(key(userId))
 
     private fun key(userId: UserId) = "bundle-rate:$userId"
+
+    private companion object {
+        val WINDOW: Duration = Duration.ofHours(1)
+    }
+}
+
+/** `msg:link-rate:{action}:{userId}`: a counter whose hour starts with the first lookup or join by link. */
+class RedisLinkRateLimit(private val redis: RedisScope) : LinkRateLimit {
+    override suspend fun take(
+        action: String,
+        userId: UserId,
+        max: Int,
+    ): Long? {
+        val key = "link-rate:$action:$userId"
+        if (redis.increment(key, WINDOW) <= max) return null
+        return redis.ttl(key)?.seconds?.coerceAtLeast(1) ?: WINDOW.seconds
+    }
 
     private companion object {
         val WINDOW: Duration = Duration.ofHours(1)
