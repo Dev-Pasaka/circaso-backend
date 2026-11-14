@@ -39,7 +39,10 @@ class TurnOffGroupLink(
                 Resource.success(links.revoke(chatId, now, now.plus(config.linkTombstone)))
             }
         return when (turnedOff) {
-            is Resource.Error -> turnedOff
+            is Resource.Error -> {
+                turnedOff
+            }
+
             is Resource.Success -> {
                 if (turnedOff.data) notifier.linkChanged(membership.admins(chatId), chatId)
                 Resource.success(Unit)

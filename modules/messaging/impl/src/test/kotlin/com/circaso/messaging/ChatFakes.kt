@@ -253,8 +253,13 @@ class RecordingFrames :
 }
 
 class FakeProfiles : Profiles {
+    /** Circaso's own support accounts, which are in no groups. */
+    val support: MutableSet<UserId> = ConcurrentHashMap.newKeySet()
+
     override suspend fun get(ids: Set<UserId>): Map<UserId, PublicProfile> =
-        ids.associateWith { PublicProfile(it, "Person ${it.toString().takeLast(4)}", null, null, null) }
+        ids.associateWith {
+            PublicProfile(it, "Person ${it.toString().takeLast(4)}", null, null, null, support = it in support)
+        }
 }
 
 class MemoryBus : EventBus {

@@ -20,18 +20,25 @@ import com.circaso.messaging.domain.usecases.DeclineInvite
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
 import com.circaso.messaging.domain.usecases.GetAdmins
 import com.circaso.messaging.domain.usecases.GetChat
+import com.circaso.messaging.domain.usecases.GetGroupLink
 import com.circaso.messaging.domain.usecases.GetMembers
 import com.circaso.messaging.domain.usecases.GetOwner
 import com.circaso.messaging.domain.usecases.IsGroup
+import com.circaso.messaging.domain.usecases.JoinByGroupLink
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChatInvites
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.ListGroupIds
 import com.circaso.messaging.domain.usecases.ListMyInvites
+import com.circaso.messaging.domain.usecases.LookUpGroupLink
 import com.circaso.messaging.domain.usecases.OpenDirectChat
+import com.circaso.messaging.domain.usecases.PublishGroupLink
+import com.circaso.messaging.domain.usecases.ReadGroupLinkPage
+import com.circaso.messaging.domain.usecases.ReadGroupLinkPhoto
 import com.circaso.messaging.domain.usecases.RemoveMember
 import com.circaso.messaging.domain.usecases.ReplayFrames
 import com.circaso.messaging.domain.usecases.SetRole
+import com.circaso.messaging.domain.usecases.TurnOffGroupLink
 import com.circaso.messaging.domain.usecases.UpdateGroup
 import com.circaso.messaging.presentation.api.ChatDirectoryImpl
 import com.circaso.messaging.presentation.services.ChatService
@@ -57,14 +64,15 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
     val keys = MemoryKeys()
     val clock = TestClock()
     val attachments = MemoryAttachments()
-    private val profiles = FakeProfiles()
+    val profiles = FakeProfiles()
     val invites = MemoryInvites(chats)
+    val links = MemoryGroupLinks(chats)
 
     val membership = Membership(chats, cache)
     private val views = ChatViews(chats, profiles)
     private val notifier = ChatNotifier(frames)
     private val invitations = Invitations(invites, membership, notifier, profiles, config, clock)
-    private val removal = MemberRemoval(chats, attachments, transactor, outbox, membership, notifier, bus, clock)
+    private val removal = MemberRemoval(chats, attachments, links, transactor, outbox, membership, notifier, bus, clock)
 
     val openDirectChat = OpenDirectChat(chats, transactor, outbox, reach, views, bus, clock)
     val createGroup =
@@ -85,6 +93,7 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
         AcceptInvite(
             invites,
             chats,
+            links,
             transactor,
             outbox,
             membership,
@@ -96,6 +105,30 @@ class ChatHarness(val config: MessagingConfig = MessagingConfig()) {
             clock,
         )
     val declineInvite = DeclineInvite(invites, invitations, clock)
+    val getGroupLink = GetGroupLink(chats, links)
+    val publishGroupLink = PublishGroupLink(chats, links, transactor, membership, notifier, config, clock)
+    val turnOffGroupLink = TurnOffGroupLink(chats, links, transactor, membership, notifier, config, clock)
+    val lookUpGroupLink = LookUpGroupLink(links, chats, MemoryLinkRateLimit(), config)
+    val readGroupLinkPage = ReadGroupLinkPage(links, chats)
+    val readGroupLinkPhoto = ReadGroupLinkPhoto(links)
+    val joinByGroupLink =
+        JoinByGroupLink(
+            links,
+            invites,
+            chats,
+            transactor,
+            outbox,
+            membership,
+            views,
+            notifier,
+            invitations,
+            reach,
+            profiles,
+            MemoryLinkRateLimit(),
+            bus,
+            config,
+            clock,
+        )
     val listChatInvites = ListChatInvites(invites, membership, views, clock)
     val cancelInvite = CancelInvite(invites, chats, notifier, invitations, clock)
     val listChats = ListChats(chats, views)

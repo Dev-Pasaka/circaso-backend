@@ -1,6 +1,8 @@
 package com.circaso.share.presentation.mappers
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.GroupLinkPage
+import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.api.ShareCode
 import com.circaso.share.domain.errors.ShareError
 import com.circaso.share.domain.models.CreateShareCommand
@@ -185,3 +187,25 @@ private fun OpenTarget.toDto(): OpenDto =
     }
 
 private const val USDC = "USDC"
+
+/**
+ * SH4 for a group join link, as an app from before them reads it (decision 2026-11-14): a kind it doesn't know, which
+ * it shows as a plain shared link with [title] and [summary], and nowhere to go (`open` null). Nothing else of the
+ * group: the current app reads the preview from messaging's M31.
+ */
+fun GroupLinkPage.toSharedLink(
+    token: GroupLinkToken,
+    config: ShareConfig,
+    now: Instant,
+): SharedLinkResponse =
+    SharedLinkResponse(
+        code = token.value,
+        url = config.urlOf(token.value),
+        kind = GROUP_KIND,
+        title = "Join $name on Circaso",
+        summary = "Update Circaso to join this group.",
+        createdAt = now.toString(),
+        mine = false,
+    )
+
+private const val GROUP_KIND = "group"

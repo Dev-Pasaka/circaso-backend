@@ -1,5 +1,6 @@
 package com.circaso.share.presentation.controllers
 
+import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.domain.support.ShareConfig
 import com.circaso.share.presentation.dto.CreateShareLinkRequest
 import com.circaso.share.presentation.dto.RevokedResponse
@@ -12,6 +13,7 @@ import com.circaso.share.presentation.mappers.parseLimit
 import com.circaso.share.presentation.mappers.toCommand
 import com.circaso.share.presentation.mappers.toDto
 import com.circaso.share.presentation.mappers.toResponse
+import com.circaso.share.presentation.mappers.toSharedLink
 import com.circaso.share.presentation.services.ShareService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
@@ -27,6 +29,7 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import java.time.Instant
 
 private const val TAG = "Share links"
 private const val SCOPE = "Scope: `app`."
@@ -98,6 +101,13 @@ private fun Route.collectionRoutes(shares: ShareService, config: ShareConfig) {
 private fun Route.linkRoutes(shares: ShareService, config: ShareConfig) {
     get {
         val caller = call.userId()
+        // A group join link (22 characters) from an app that predates them: its name, and a line saying to update.
+        val groupToken = GroupLinkToken.parse(call.parameters["code"])
+        if (groupToken != null) {
+            val group = shares.openGroup(groupToken)
+            call.respondDefault(group.toDefaultResponse { it.toSharedLink(groupToken, config, Instant.now()) })
+            return@get
+        }
         val result = parseCode(call.parameters["code"]).flatMap { shares.open(caller, it) }
         call.respondDefault(result.toDefaultResponse { it.toResponse(config) })
     }.docs<NoBody, SharedLinkResponse>(
@@ -109,7 +119,9 @@ private fun Route.linkRoutes(shares: ShareService, config: ShareConfig) {
                 "what the page shows, for the app to show natively, `mine` when you made it, and `open`, where your " +
                 "app may go from it: `transfer` (your own payment), `chama` (a group you are in), `invite` (connect " +
                 "with U11 `via: invite` and `inviteToken`), `pay` or `pay_address`; null when nowhere. Unknown, " +
-                "turned-off and ended links all answer `share.link_not_found`.",
+                "turned-off and ended links all answer `share.link_not_found`. A group join link (a 22-character " +
+                "token) is opened with messaging's M31 and M32 instead; sent here by an older app, it answers " +
+                "`kind: group` with the group's published name and no `open`.",
     )
 
     delete {
