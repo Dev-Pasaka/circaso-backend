@@ -137,6 +137,8 @@ Money starts and ends in the chat. There is no separate payment form.
 - The first time you reach Chats, Circaso asks once to use your contacts. Allow it and your phone contacts who are on
   Circaso show up straight away in New chat and search, and stay up to date. Only phone numbers are checked, never
   names. Said no? Chats → pencil → **Find from contacts** asks again.
+- Saved a new number in your phone's contacts? Nothing to do: Circaso notices on its own, and if that person is on
+  Circaso they're in New chat within a moment (a couple of minutes at most if you save several in a row).
 - Chats → pencil → find people by name, phone contacts already on Circaso, or their @username. Invite friends who
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
