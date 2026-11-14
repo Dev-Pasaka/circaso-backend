@@ -70,16 +70,21 @@ class DeliveryTest {
         }
 
     @Test
-    fun `a direct send needs reach both ways`() =
+    fun `a direct chat stays writable while either person still has the other, and not once neither does`() =
         runBlocking<Unit> {
             val chat = h.direct(amina, brian)
             h.chats.reach.pairs
                 .remove(brian to amina)
 
+            // brian removed amina (or lost her in an old block/unblock): their chat still works, as on WhatsApp
             val oneWay = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
+            assertNotNull(oneWay.data())
 
-            assertEquals("users.not_reachable", oneWay.errorCode())
-            assertTrue(h.delivery.inboxOf(brian).isEmpty())
+            h.chats.reach.pairs
+                .remove(amina to brian)
+            val neither = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
+            assertEquals("users.not_reachable", neither.errorCode())
+            assertEquals(1, h.delivery.inboxOf(brian).size)
         }
 
     @Test
@@ -93,10 +98,12 @@ class DeliveryTest {
             val sent = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
             h.chats.reach.pairs
                 .remove(brian to amina)
-            val oneWay = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
+            h.chats.reach.pairs
+                .remove(amina to brian)
+            val neither = h.sendMessage(command(amina, chat, recipients = listOf(RecipientCopy(brian, cipher()))))
 
             assertNotNull(sent.data())
-            assertEquals("users.not_reachable", oneWay.errorCode())
+            assertEquals("users.not_reachable", neither.errorCode())
         }
 
     @Test

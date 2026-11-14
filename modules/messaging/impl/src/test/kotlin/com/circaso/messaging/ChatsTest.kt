@@ -677,6 +677,28 @@ class ChatsTest {
             assertEquals("users.not_reachable", h.fetchKeyBundle(amina, brian).errorCode())
         }
 
+    @Test
+    fun `a direct chat the other person still reaches me in lets me fetch their keys`() =
+        runTest {
+            val h = ChatHarness()
+            h.keys.bundles[brian] =
+                KeyBundle(
+                    brian,
+                    DeviceId.new(),
+                    "BcF2",
+                    SignedPreKey(7, "BXa", "kq3"),
+                    KyberPreKey(3, "CAE", "9fQ"),
+                    Instant.now(),
+                )
+            h.connect(amina, brian)
+            h.openDirectChat(amina, brian).data()
+            // amina lost brian as a contact (2026-11-14: an old block/unblock); brian still has her
+            h.reach.pairs.remove(amina to brian)
+            h.reach.pairs.add(brian to amina)
+
+            assertEquals(brian, h.fetchKeyBundle(amina, brian).data().userId)
+        }
+
     // ---- replay ----
 
     @Test

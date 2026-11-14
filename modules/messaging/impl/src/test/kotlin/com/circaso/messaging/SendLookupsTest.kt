@@ -17,10 +17,11 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * M12's reads before the write: the chat row, the members and, for a direct message, reach both ways run at once
+ * M12's reads before the write: the chat row, the members and, for a direct message, reach either way run at once
  * rather than one after another, and still answer exactly as the one-at-a-time reads did.
  */
 class SendLookupsTest {
@@ -86,19 +87,23 @@ class SendLookupsTest {
         }
 
     @Test
-    fun `reach still has the last word on a direct send, either way`() =
+    fun `reach still has the last word on a direct send, once neither way is left`() =
         runBlocking<Unit> {
             val chat = h.direct(amina, brian)
             h.chats.reach.pairs
                 .remove(brian to amina)
+            assertNotNull(h.sendMessage(direct(chat)).data(), "amina still reaches brian")
 
-            assertEquals("users.not_reachable", h.sendMessage(direct(chat)).errorCode())
             h.chats.reach.pairs
                 .add(brian to amina)
             h.chats.reach.pairs
                 .remove(amina to brian)
+            assertNotNull(h.sendMessage(direct(chat)).data(), "brian still reaches amina")
+
+            h.chats.reach.pairs
+                .remove(brian to amina)
             assertEquals("users.not_reachable", h.sendMessage(direct(chat)).errorCode())
-            assertTrue(h.delivery.inboxOf(brian).isEmpty())
+            assertEquals(2, h.delivery.inboxOf(brian).size)
         }
 
     @Test

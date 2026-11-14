@@ -118,7 +118,7 @@ class SendMessage(
 
     /**
      * The chat and the other members, or the send's refusal. The chat row (a transaction), the members (the cache,
-     * the rows on a miss) and, for a request shaped as a direct message by a member, reach both ways are read at
+     * the rows on a miss) and, for a request shaped as a direct message by a member, reach either way is read at
      * once rather than one after another; the answers are then judged in the order they always were, so the same
      * request gets the same error. A read whose answer isn't needed is cancelled, and its failure never surfaces,
      * as when it was never made: in a supervisor scope only an awaited read's failure is the send's.
@@ -152,7 +152,7 @@ class SendMessage(
         val shapedDirect = command.ciphertext == null && command.kind != MessageKind.SENDER_KEY
         val recipient = command.recipients.singleOrNull()?.userId ?: return null
         if (!shapedDirect || members != setOf(command.sender, recipient)) return null
-        return reachableBothWays(command.sender, recipient)
+        return reachableEitherWay(command.sender, recipient)
     }
 
     private fun tooLarge(command: SendMessageCommand): Boolean {
@@ -197,12 +197,25 @@ class SendMessage(
             else -> null
         }
 
-    /** Both directions at once; the second is cancelled, and never fails the send, once the first says no. */
-    private suspend fun reachableBothWays(sender: UserId, other: UserId): Boolean =
-        bothTrue({ reach.canReach(sender, other) }, { reach.canReach(other, sender) })
+    /**
+     * A direct chat that exists stays writable while either person still has the other (decision 2026-11-14, as
+     * WhatsApp): one side removing the contact, or losing it in an old block/unblock, doesn't silence the chat for
+     * both. [ReachPolicy.canReach] includes blocks in both directions, so a block still stops every message.
+     */
+    private suspend fun reachableEitherWay(sender: UserId, other: UserId): Boolean =
+        supervisorScope {
+            // Both read at once; the second isn't waited for once the first says yes.
+            val back = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { reach.canReach(other, sender) }
+            if (reach.canReach(sender, other)) {
+                back.cancel()
+                true
+            } else {
+                back.await()
+            }
+        }
 
     /**
-     * A private chat via a space follows the space's rule (and blocks); any other direct chat, reach both ways, from
+     * A private chat via a space follows the space's rule (and blocks); any other direct chat, reach either way, from
      * [early] when that read was made for this pair (`recipientsMatch` has checked that [other] is the recipient).
      * Without spaces' guard (Spaces archived 2026-11-05, `SPACES_ENABLED` off) a chat via a space is an ordinary one.
      */
@@ -214,7 +227,7 @@ class SendMessage(
     ): Boolean {
         val via = chat.viaSpaceId
         val spaces = spaceChats
-        if (via == null || spaces == null) return early.await() ?: reachableBothWays(sender, other)
+        if (via == null || spaces == null) return early.await() ?: reachableEitherWay(sender, other)
         early.cancel()
         return bothTrue({ spaces.allowed(via, sender, other) }, { !reach.blockedEitherWay(sender, other) })
     }
