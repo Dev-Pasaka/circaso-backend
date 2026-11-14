@@ -66,24 +66,25 @@ Money starts and ends in the chat. There is no separate payment form.
    they are not in the group until they accept. You can cancel an invite from Group info.
 3. Group info (tap the group's name): members, roles (admins), photo, description, adding people, leaving.
 - Groups are end-to-end encrypted like chats.
-- **Group description:** admins can add one (up to 500 characters): Group info → tap the group's name → **Edit
-  group** → Description. Everyone in the group sees it under the name in Group info. It is end-to-end encrypted like
-  the name; Circaso can't read it.
+- **Group description:** admins can add one (up to 500 characters): Group info → **Edit group** → Description →
+  Save. Everyone in the group sees it under the name in Group info. It is end-to-end encrypted like the name;
+  Circaso can't read it. The same sheet changes the group's name.
 
 ### Inviting people with a link (moving a group over from WhatsApp)
 - An admin can make one **invite link** for a group, so people join by themselves and nobody has to be added one by
-  one: Group info → **Invite via link** → **Create link**. Then **Share** (pick WhatsApp or any app; the message is
-  ready), **Copy**, or show the **QR code**.
+  one: Group info → **Invite via link** → **Create Link**. Then **Share** (pick WhatsApp or any app; the message is
+  ready), **Copy**, or let people scan the **QR code** on that screen with their phone's camera.
 - Before it's made the app says it plainly: **anyone with the link can see the group's name, description and
   photo**, and how many members it has. That preview is published only for the link; members, messages and money
   are never shown. Changing the name, description or photo updates the link's preview.
-- **Reset link** makes a new link and the old one stops working. **Turn off link** stops it and deletes the
-  published preview; people who already joined stay. Only admins see these.
+- **Reset Link** makes a new link and the old one stops working. **Turn Off Link** stops it and deletes the
+  published preview; people who already joined stay. Only admins see these. The link, its QR code, Copy and Share
+  still work with no connection; making, resetting and turning it off need one.
 - Only admins can make or manage the link. There is one link per group; it doesn't expire until an admin resets it
   or turns it off.
 
 ### Joining a group from a link
-1. Tap the link. Circaso opens on the group's preview (photo, name, description, members) → **Join group**. You're in
+1. Tap the link. Circaso opens on the group's preview (photo, name, description, members) → **Join Group**. You're in
    straight away; there's no invite to accept. The chat says you joined using the group link.
 2. No Circaso yet? The link opens a web page with **Get Circaso**. Install, sign in, then **tap the same link
    again** to join.
