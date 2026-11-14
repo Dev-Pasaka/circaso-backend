@@ -5,6 +5,7 @@ import com.circaso.status.domain.errors.StatusError
 import com.circaso.status.domain.models.MediaKind
 import com.circaso.status.domain.models.MediaState
 import com.circaso.status.domain.models.PrepareMediaCommand
+import com.circaso.status.domain.support.StatusConfig
 import kotlinx.coroutines.test.runTest
 import java.time.Duration
 import java.util.UUID
@@ -23,18 +24,39 @@ class MomentMediaTest {
     private val baraka = UserId.new()
 
     @Test
-    fun `an upload is 1 byte to 32 MiB of ciphertext`() =
+    fun `an upload is 1 byte to 64 MiB of ciphertext`() =
         runTest {
             h.prepareMedia(PrepareMediaCommand(poster, 0, MediaKind.IMAGE)).assertError(StatusError.MediaInvalid)
             h
-                .prepareMedia(PrepareMediaCommand(poster, 32L * 1_024 * 1_024 + 1, MediaKind.VIDEO))
+                .prepareMedia(PrepareMediaCommand(poster, 64L * 1_024 * 1_024 + 1, MediaKind.VIDEO))
                 .assertError(StatusError.MediaInvalid)
 
-            val upload = h.prepareMedia(PrepareMediaCommand(poster, 32L * 1_024 * 1_024, MediaKind.VIDEO)).data()
+            val upload = h.prepareMedia(PrepareMediaCommand(poster, 64L * 1_024 * 1_024, MediaKind.VIDEO)).data()
 
             assertEquals("application/octet-stream", upload.contentType)
-            assertEquals(h.clock.now.plus(Duration.ofMinutes(15)), upload.expiresAt)
+            // The upload link lasts an hour (64 MiB on a slow connection), and the file two unless it is attached.
+            assertEquals(h.clock.now.plus(Duration.ofHours(1)), upload.expiresAt)
             assertEquals(MediaState.PENDING, h.media.find(upload.mediaId)?.state)
+            assertEquals(h.clock.now.plus(Duration.ofHours(2)), h.media.find(upload.mediaId)?.expiresAt)
+        }
+
+    @Test
+    fun `the old 32 MiB limit no longer refuses a video, and an older app's 32 MiB still goes`() =
+        runTest {
+            h.prepareMedia(PrepareMediaCommand(poster, 32L * 1_024 * 1_024 + 1, MediaKind.VIDEO)).data()
+            h.prepareMedia(PrepareMediaCommand(poster, 32L * 1_024 * 1_024 - 36, MediaKind.VIDEO)).data()
+        }
+
+    @Test
+    fun `the limit is the server's own setting`() =
+        runTest {
+            val small = StatusHarness(StatusConfig(mediaMaxBytes = 1_000))
+
+            small
+                .prepareMedia(
+                    PrepareMediaCommand(poster, 1_001, MediaKind.VIDEO),
+                ).assertError(StatusError.MediaInvalid)
+            small.prepareMedia(PrepareMediaCommand(poster, 1_000, MediaKind.VIDEO)).data()
         }
 
     @Test
@@ -91,13 +113,13 @@ class MomentMediaTest {
         }
 
     @Test
-    fun `the sweep deletes files unattached after an hour and those whose moment expired, and keeps the rest`() =
+    fun `the sweep deletes files unattached after two hours and those whose moment expired, and keeps the rest`() =
         runTest {
             val unattached = h.readyMedia(poster)
             val attached = h.readyMedia(poster)
             h.post(h.command(poster, listOf(amina), mediaIds = listOf(attached))).data()
 
-            h.clock.advance(Duration.ofMinutes(59))
+            h.clock.advance(Duration.ofMinutes(119))
             assertEquals(0, h.purgeMedia())
             h.clock.advance(Duration.ofMinutes(1))
             assertEquals(1, h.purgeMedia())

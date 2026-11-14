@@ -28,6 +28,7 @@ import com.circaso.status.domain.ports.RealtimeLog
 import com.circaso.status.domain.ports.Transactor
 import com.circaso.status.domain.repositories.MediaRepository
 import com.circaso.status.domain.repositories.MomentRepository
+import com.circaso.status.domain.support.MEDIA_MAX_BYTES
 import com.circaso.status.domain.support.MomentReach
 import com.circaso.status.domain.support.MomentRemoval
 import com.circaso.status.domain.support.OrderedIds
@@ -87,11 +88,16 @@ private val PURGE_INTERVAL: Duration = Duration.ofMinutes(10)
  * Status' Koin bindings: its database spec and sweep, moments (ST3-ST7) and their files (ST1, ST2, ST8), its
  * `events:identity` subscription and its replay (`RealtimeModule`).
  */
-@Suppress("UNUSED_PARAMETER")
 fun statusModule(config: Config): Module =
     module {
         val clock = Clock.systemUTC()
-        val status = StatusConfig()
+        val status =
+            StatusConfig(
+                mediaMaxBytes =
+                    config.long("status.media-max-bytes", MEDIA_MAX_BYTES).also {
+                        require(it > 0) { "STATUS_MEDIA_MAX_BYTES must be positive (was $it)" }
+                    },
+            )
         val background = backgroundScope()
 
         single { status }

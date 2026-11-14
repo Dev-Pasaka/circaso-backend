@@ -32,7 +32,7 @@ class PrepareMomentMedia(
         val now = clock.instant()
         val mediaId = Uuid7.generate()
         val url =
-            when (val signed = storage.prepareUpload(command.poster, mediaId, config.mediaUrlTtl)) {
+            when (val signed = storage.prepareUpload(command.poster, mediaId, config.mediaUploadUrlTtl)) {
                 is Resource.Success -> signed.data
                 is Resource.Error -> return signed
             }
@@ -49,6 +49,6 @@ class PrepareMomentMedia(
             )
         transactor.run("media.prepare") { media.insert(row) }
 
-        return Resource.success(MediaUpload(mediaId, url, MEDIA_CONTENT_TYPE, now.plus(config.mediaUrlTtl)))
+        return Resource.success(MediaUpload(mediaId, url, MEDIA_CONTENT_TYPE, now.plus(config.mediaUploadUrlTtl)))
     }
 }

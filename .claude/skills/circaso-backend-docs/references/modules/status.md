@@ -27,7 +27,7 @@ Built 2026-11-03 (Spaces phase 1). **Moments**: WhatsApp-style statuses that liv
 
 | ID | Route | Scope | Use case | Notes |
 | --- | --- | --- | --- | --- |
-| ST1 | `POST /moments/media` `{sizeBytes, kind}` | app | `PrepareMomentMedia` | `kind` `image` \| `video` \| `voice`; 1 B to 32 MiB of ciphertext; `{mediaId, uploadUrl, uploadHeaders: {Content-Type}, expiresAt}` (15 min); `PENDING` row expiring an hour later unless attached |
+| ST1 | `POST /moments/media` `{sizeBytes, kind}` | app | `PrepareMomentMedia` | `kind` `image` \| `video` \| `voice`; 1 B to 64 MiB of ciphertext (`STATUS_MEDIA_MAX_BYTES`; was 32 MiB until 2026-11-14); `{mediaId, uploadUrl, uploadHeaders: {Content-Type}, expiresAt}` (an hour); `PENDING` row expiring two hours later unless attached |
 | ST2 | `POST /moments/media/{mediaId}/complete` | app | `CompleteMomentMedia` | the poster only; the object must be there at exactly ST1's size (`status.media_invalid`); repeat answers the same |
 | ST3 | `POST /moments` `{clientMomentId, ciphertext, audience, keyCopies, mediaIds}` | app | `PostMoment` | validates shapes and sizes; (poster, clientMomentId) claim returns the first answer; 50 per 24 h; reach filter both ways, silently; moment + audience + file attach in one `attempt` (an unusable file rolls it all back); `status.posted` to the kept audience in the background |
 | ST4 | `GET /moments?after=&limit=` | app | `ListMoments` | shown-to-me (with my own `reaction`) and mine (with `viewCount` and `reactionCount`), each read a page by moment id and merged; `next` is the last id of a full page; default 50, at most 200 |
