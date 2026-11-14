@@ -128,6 +128,9 @@ Money starts and ends in the chat. There is no separate payment form.
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
   contacts' moments (a ring on their picture means new ones) and post your own with the + button.
 - Reply to a moment and it arrives in your chat with that person. Choose who sees your moments in Moments → privacy.
+- Send money for someone's moment: in the reply box under their moment, type **#** and the amount (for example
+  `#500 nice one`), then the arrow. It works like money in a chat (same PIN step), and arrives in your chat with them
+  as a money card with the moment attached. It isn't offered on your own moments.
 - Picking photos or videos (for a moment or a chat): the camera shows your newest photos and videos in a strip above
   the shutter; tap one to use it, or hold one to pick several. The gallery button beside the shutter opens **All**,
   **Photos** and **Videos**: everything on the phone, newest first. Tap one or several, then **Next**. Nothing needs
