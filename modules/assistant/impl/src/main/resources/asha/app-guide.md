@@ -134,7 +134,8 @@ Money starts and ends in the chat. There is no separate payment form.
   importing and there is no separate Google Photos or Photo Library picker.
 - The gallery needs access to your photos and videos. If it's off, the gallery shows **Allow access** (on iPhone,
   **Open Settings** → turn on Photos for Circaso). If you let Circaso see only some photos, a line above the grid
-  says so: tap **Allow all** (Android) or **Choose more** (iPhone).
+  says so: tap **Allow all in Settings** (Android: then Permissions → Photos and videos → Allow all) or **Choose
+  more** (iPhone).
 
 ## Contacts
 - The first time you reach Chats, Circaso asks once to use your contacts. Allow it and your phone contacts who are on
