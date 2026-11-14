@@ -2,6 +2,7 @@ package com.circaso.messaging.domain.support
 
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.ChatUpdatedFrame
+import com.circaso.messaging.api.GroupLinkChangedFrame
 import com.circaso.messaging.api.InviteReceivedFrame
 import com.circaso.messaging.api.InviteRemovedFrame
 import com.circaso.messaging.api.InvitesChangedFrame
@@ -27,7 +28,8 @@ class ChatNotifier(private val frames: RealtimeFrames) {
         added: Collection<UserId>,
         by: UserId,
         joined: Boolean = false,
-    ) = frames.send(recipients, MemberAddedFrame(chatId, added.sortedBy { it.toString() }, by, joined))
+        viaLink: Boolean = false,
+    ) = frames.send(recipients, MemberAddedFrame(chatId, added.sortedBy { it.toString() }, by, joined, viaLink))
 
     suspend fun memberRemoved(
         recipients: Collection<UserId>,
@@ -48,6 +50,10 @@ class ChatNotifier(private val frames: RealtimeFrames) {
 
     suspend fun inviteRemoved(invite: Invite) =
         frames.send(listOf(invite.userId), InviteRemovedFrame(invite.inviteId, invite.chatId))
+
+    /** To the group's admins: its join link was made, reset, republished or turned off. */
+    suspend fun linkChanged(recipients: Collection<UserId>, chatId: ChatId) =
+        frames.send(recipients, GroupLinkChangedFrame(chatId))
 
     suspend fun invitesChanged(recipients: Collection<UserId>, chatId: ChatId) =
         frames.send(recipients, InvitesChangedFrame(chatId))

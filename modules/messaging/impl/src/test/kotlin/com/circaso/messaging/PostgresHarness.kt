@@ -9,6 +9,7 @@ import com.circaso.messaging.data.repositories.AttachmentRepositoryImpl
 import com.circaso.messaging.data.repositories.ChatRepositoryImpl
 import com.circaso.messaging.data.repositories.DatabaseTransactor
 import com.circaso.messaging.data.repositories.DeliveryRepositoryImpl
+import com.circaso.messaging.data.repositories.GroupLinkRepositoryImpl
 import com.circaso.messaging.data.repositories.InviteRepositoryImpl
 import com.circaso.messaging.data.repositories.KeyRepositoryImpl
 import com.circaso.messaging.data.repositories.MessagingOutboxImpl
@@ -45,16 +46,19 @@ import com.circaso.messaging.domain.usecases.CreateGroup
 import com.circaso.messaging.domain.usecases.DeclineInvite
 import com.circaso.messaging.domain.usecases.DeleteForEveryone
 import com.circaso.messaging.domain.usecases.FetchKeyBundle
+import com.circaso.messaging.domain.usecases.JoinByGroupLink
 import com.circaso.messaging.domain.usecases.LeaveGroup
 import com.circaso.messaging.domain.usecases.ListChats
 import com.circaso.messaging.domain.usecases.MarkRead
 import com.circaso.messaging.domain.usecases.OpenDirectChat
+import com.circaso.messaging.domain.usecases.PublishGroupLink
 import com.circaso.messaging.domain.usecases.PublishKeys
 import com.circaso.messaging.domain.usecases.ReadInbox
 import com.circaso.messaging.domain.usecases.RemoveMember
 import com.circaso.messaging.domain.usecases.RetireReplacedPhone
 import com.circaso.messaging.domain.usecases.SendMessage
 import com.circaso.messaging.domain.usecases.SetRole
+import com.circaso.messaging.domain.usecases.TurnOffGroupLink
 import com.circaso.messaging.domain.usecases.UpdateGroup
 import com.circaso.shared.DeviceId
 import com.circaso.shared.Resource
@@ -87,6 +91,7 @@ class PostgresHarness(
     val transactor: Transactor = DatabaseTransactor(database)
     val chats: ChatRepository = ChatRepositoryImpl(database)
     val invites = InviteRepositoryImpl(database)
+    val links = GroupLinkRepositoryImpl(database)
     val keys = KeyRepositoryImpl(database)
     val delivery: DeliveryRepository = delivery(DeliveryRepositoryImpl(database, clock))
     val settings = SettingsRepositoryImpl(database)
@@ -107,7 +112,7 @@ class PostgresHarness(
     private val chatNotifier = ChatNotifier(frames)
     private val notifier = DeliveryNotifier(live, frames, config)
     private val removal =
-        MemberRemoval(chats, attachments, transactor, this.outbox, membership, chatNotifier, bus, clock)
+        MemberRemoval(chats, attachments, links, transactor, this.outbox, membership, chatNotifier, bus, clock)
     private val batcher = ReceiptBatcher(receipts, notifier, background, clock, config)
     private val inboxRemoval = InboxRemoval(this.delivery, pending)
     private val senders = MessageSenders(this.delivery)
@@ -123,6 +128,7 @@ class PostgresHarness(
         AcceptInvite(
             invites,
             chats,
+            links,
             transactor,
             this.outbox,
             membership,
@@ -134,6 +140,26 @@ class PostgresHarness(
             clock,
         )
     val declineInvite = DeclineInvite(invites, invitations, clock)
+    val publishGroupLink = PublishGroupLink(chats, links, transactor, membership, chatNotifier, config, clock)
+    val turnOffGroupLink = TurnOffGroupLink(chats, links, transactor, membership, chatNotifier, config, clock)
+    val joinByGroupLink =
+        JoinByGroupLink(
+            links,
+            invites,
+            chats,
+            transactor,
+            this.outbox,
+            membership,
+            views,
+            chatNotifier,
+            invitations,
+            reach,
+            FakeProfiles(),
+            MemoryLinkRateLimit(),
+            bus,
+            config,
+            clock,
+        )
     val removeMember = RemoveMember(removal)
     val leaveGroup = LeaveGroup(removal)
     val setRole = SetRole(chats, transactor, membership, views, chatNotifier)

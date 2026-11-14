@@ -1,6 +1,8 @@
 package com.circaso.share.domain.models
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.GroupLinkPage
+import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.api.ShareCode
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
@@ -144,4 +146,14 @@ sealed interface PageLookup {
     data object Missing : PageLookup
 
     data class Throttled(val retryAfterSeconds: Long) : PageLookup
+}
+
+/** What the public page of a group join link gets (decision 2026-11-14): the published preview, or why not. */
+sealed interface GroupPageLookup {
+    data class Live(val token: GroupLinkToken, val page: GroupLinkPage) : GroupPageLookup
+
+    /** Reset, turned off or never made: the page says the same for all three. */
+    data object Gone : GroupPageLookup
+
+    data class Throttled(val retryAfterSeconds: Long) : GroupPageLookup
 }

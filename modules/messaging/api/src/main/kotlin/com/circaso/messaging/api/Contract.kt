@@ -4,6 +4,7 @@ import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
 import com.circaso.shared.UuidIdSerializer
 import kotlinx.serialization.Serializable
+import java.security.SecureRandom
 import java.util.UUID
 
 /** Identifies one chat, direct or group. Ids come from `OrderedIds`, so chats and messages list in order. */
@@ -62,4 +63,54 @@ interface SpacePrivateChats {
         from: UserId,
         to: UserId,
     ): Boolean
+}
+
+/**
+ * The token that names a group's join link: the last segment of `<SHARE_BASE_URL>/s/<token>` (decision 2026-11-14).
+ * Twenty-two base62 characters from a secure random source (about 131 bits), so it can be handed out in a chat app
+ * but never guessed or walked. Its length sets it apart from a share code (12 characters), which is how the share
+ * host tells the two apart. Never logged: whoever has it can see the group's published preview and join.
+ */
+@JvmInline
+value class GroupLinkToken(val value: String) {
+    override fun toString(): String = "GroupLinkToken(***)"
+
+    companion object {
+        const val LENGTH = 22
+        private const val ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        private val random = SecureRandom()
+        private val shape = Regex("[0-9A-Za-z]{$LENGTH}")
+
+        fun new(): GroupLinkToken =
+            GroupLinkToken(String(CharArray(LENGTH) { ALPHABET[random.nextInt(ALPHABET.length)] }))
+
+        /** A token in the exact shape [new] makes, or null: anything else can't be a join link. */
+        fun parse(raw: String?): GroupLinkToken? = raw?.takeIf { shape.matches(it) }?.let(::GroupLinkToken)
+    }
+}
+
+/**
+ * What a group's join link shows to anyone who has it: the preview an admin's phone published for that link (the
+ * server can't read the group's sealed name), and how many people are in the group. Never members, messages or money.
+ * [photoVersion] changes whenever the published photo does, so a cached picture is never shown for a new one.
+ */
+data class GroupLinkPage(
+    val name: String,
+    val description: String?,
+    val hasPhoto: Boolean,
+    val photoVersion: Long,
+    val memberCount: Int,
+)
+
+/** A link's published photo: a small JPEG or PNG, as the admin's phone sent it. */
+class GroupLinkPhoto(val bytes: ByteArray, val contentType: String)
+
+/**
+ * The public side of group join links, for share, which draws the page at `/s/{token}` and serves its photo. A link
+ * that was reset or turned off looks the same as one that never was: null.
+ */
+interface GroupLinkPages {
+    suspend fun page(token: GroupLinkToken): GroupLinkPage?
+
+    suspend fun photo(token: GroupLinkToken): GroupLinkPhoto?
 }

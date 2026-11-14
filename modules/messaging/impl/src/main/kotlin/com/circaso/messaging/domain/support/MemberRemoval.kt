@@ -11,6 +11,7 @@ import com.circaso.messaging.domain.models.Role
 import com.circaso.messaging.domain.ports.Transactor
 import com.circaso.messaging.domain.repositories.AttachmentRepository
 import com.circaso.messaging.domain.repositories.ChatRepository
+import com.circaso.messaging.domain.repositories.GroupLinkRepository
 import com.circaso.messaging.domain.repositories.MessagingOutbox
 import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
@@ -34,12 +35,16 @@ import java.util.UUID
  *    made from the chat, the person and when they joined) and `GroupDeleted` to the outbox. A deleted group's photo
  *    is given an expiry of now, so the next `messaging.purge-attachments` removes it (decision 2026-11-05).
  *
+ * A removal by an admin is also noted in `group_removals`, in the same transaction, so the group's join link can't
+ * bring the person back; a leave isn't.
+ *
  * After the commit, everyone who was in it, the person included, gets `member.removed` so the remaining phones
  * rotate their sender keys; a new owner is announced with `chat.updated`.
  */
 class MemberRemoval(
     private val chats: ChatRepository,
     private val attachments: AttachmentRepository,
+    private val links: GroupLinkRepository,
     private val transactor: Transactor,
     private val outbox: MessagingOutbox,
     private val membership: Membership,
@@ -91,6 +96,8 @@ class MemberRemoval(
         }
 
         val member = chats.removeMember(chatId, target) ?: return Resource.error(MessagingError.ChatNotFound)
+        // Removed by an admin (not a leave): the group's join link won't bring them back (decision 2026-11-14).
+        if (target != by) links.recordRemoval(chatId, target, by, clock.instant())
         val remaining = chats.members(chatId)
         val removedEvent = removedEvent(member, by)
         if (remaining.isEmpty()) {

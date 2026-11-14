@@ -7,6 +7,10 @@ import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.UsdRate
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.messaging.api.ChatId
+import com.circaso.messaging.api.GroupLinkPage
+import com.circaso.messaging.api.GroupLinkPages
+import com.circaso.messaging.api.GroupLinkPhoto
+import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.api.ShareCode
 import com.circaso.share.domain.models.LinkCursor
 import com.circaso.share.domain.models.ShareContent
@@ -17,9 +21,12 @@ import com.circaso.share.domain.support.ShareConfig
 import com.circaso.share.domain.support.Snapshots
 import com.circaso.share.domain.usecases.CreateShareLink
 import com.circaso.share.domain.usecases.ListShareLinks
+import com.circaso.share.domain.usecases.OpenGroupLink
 import com.circaso.share.domain.usecases.OpenShareLink
 import com.circaso.share.domain.usecases.RemoveAccountLinks
 import com.circaso.share.domain.usecases.RevokeShareLink
+import com.circaso.share.domain.usecases.ViewGroupLinkPage
+import com.circaso.share.domain.usecases.ViewGroupLinkPhoto
 import com.circaso.share.domain.usecases.ViewSharePage
 import com.circaso.share.presentation.services.IdentityEventsService
 import com.circaso.share.presentation.services.SharePageService
@@ -194,6 +201,16 @@ class FakeChats : ChatDirectory {
     override suspend fun owner(chatId: ChatId): UserId? = null
 }
 
+/** Messaging's join links as share sees them: a page and a photo per live token. */
+class FakeGroupLinks : GroupLinkPages {
+    val pages = mutableMapOf<GroupLinkToken, GroupLinkPage>()
+    val photos = mutableMapOf<GroupLinkToken, GroupLinkPhoto>()
+
+    override suspend fun page(token: GroupLinkToken): GroupLinkPage? = pages[token]
+
+    override suspend fun photo(token: GroupLinkToken): GroupLinkPhoto? = photos[token]
+}
+
 /** The module wired over fakes, with a few people, a payment and a group. */
 class ShareHarness {
     val clock = TestClock()
@@ -204,6 +221,7 @@ class ShareHarness {
     val profiles = FakeProfiles()
     val invites = FakeInvites(clock)
     val chats = FakeChats()
+    val groupLinks = FakeGroupLinks()
     val config = ShareConfig(baseUrl = "https://sandbox.circaso.com", androidCertFingerprints = listOf("AA:BB"))
 
     val wanjiru = UserId.new()
@@ -218,8 +236,14 @@ class ShareHarness {
             ListShareLinks(links, clock),
             RevokeShareLink(links, config, clock),
             OpenShareLink(links, snapshots, wallets, chats, clock),
+            OpenGroupLink(groupLinks),
         )
-    val pages = SharePageService(ViewSharePage(links, snapshots, throttle, config, clock))
+    val pages =
+        SharePageService(
+            ViewSharePage(links, snapshots, throttle, config, clock),
+            ViewGroupLinkPage(groupLinks, throttle, config),
+            ViewGroupLinkPhoto(groupLinks, throttle, config),
+        )
     val identity = IdentityEventsService(RemoveAccountLinks(links))
 
     init {

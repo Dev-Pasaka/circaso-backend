@@ -112,7 +112,9 @@ data class KeysChangedFrame(val userId: UserId) : MessagingFrame {
 /**
  * [userIds] is everyone one action added, sorted; only they are pushed (decision 2026-10-26). [joined] (2026-11-09,
  * group invites): the one person in [userIds] accepted an invite from [byUserId], so phones say "X joined" rather
- * than "Y added X", and nobody is pushed, since the person who joined is the one who acted.
+ * than "Y added X", and nobody is pushed, since the person who joined is the one who acted. [viaLink] (2026-11-14,
+ * group join links): they joined with the group's link, which [byUserId] made; phones say so in the chat. An older
+ * app ignores it and says "X joined".
  */
 @Serializable
 data class MemberAddedFrame(
@@ -120,6 +122,7 @@ data class MemberAddedFrame(
     val userIds: List<UserId>,
     val byUserId: UserId,
     val joined: Boolean = false,
+    val viaLink: Boolean = false,
 ) : MessagingFrame {
     override val type: String get() = TYPE
 
@@ -220,4 +223,17 @@ object UuidSerializer : KSerializer<UUID> {
     override fun serialize(encoder: Encoder, value: UUID) = encoder.encodeString(value.toString())
 
     override fun deserialize(decoder: Decoder): UUID = UUID.fromString(decoder.decodeString())
+}
+
+/**
+ * A group's join link was made, reset, republished or turned off (2026-11-14), to the group's admins: their phones
+ * load it again (`GET /chats/{chatId}/link`). Carries nothing of the link itself.
+ */
+@Serializable
+data class GroupLinkChangedFrame(val chatId: ChatId) : MessagingFrame {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "link.changed"
+    }
 }

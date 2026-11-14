@@ -1,5 +1,7 @@
 package com.circaso.share.presentation.mappers
 
+import com.circaso.messaging.api.GroupLinkPage
+import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.domain.models.FiatRate
 import com.circaso.share.domain.models.ShareContent
 import com.circaso.share.domain.models.ShareKind
@@ -55,7 +57,13 @@ object SharePages {
         "default-src 'none'; style-src 'unsafe-inline'; img-src https://assets.circaso.com; " +
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
+    /** A group join link's page also loads its own published photo, from this host (`/s/{token}/photo`). */
+    const val GROUP_CONTENT_SECURITY_POLICY =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src https://assets.circaso.com 'self'; " +
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
     private const val ASSETS = "https://assets.circaso.com/brand"
+    private const val OG_DESCRIPTION_MAX = 200
 
     fun live(
         link: ShareLink,
@@ -79,10 +87,76 @@ object SharePages {
             config = config,
             kind = kindLabel(link.kind),
             main = body,
-            cta = actions(appUrl(link, config, platform), storeUrl(config, platform), primaryLabel(link.kind)),
+            cta = actions(appUrl(link.code.value, config, platform), storeUrl(config, platform), primaryLabel(link.kind)),
             footerHtml = "$LOCK<span>Shared from Circaso. Only what the sender chose to show is on this page.</span>",
         )
     }
+
+    /**
+     * A group join link (decision 2026-11-14): the name, description and photo an admin's phone published for it, and
+     * the member count, with "Join group" opening the app. Its Open Graph tags carry the same, so a chat app draws
+     * the group in the link's preview. Nothing else of the group is here, because nothing else is published.
+     */
+    fun group(
+        token: GroupLinkToken,
+        page: GroupLinkPage,
+        config: ShareConfig,
+        platform: Platform,
+    ): String {
+        val url = config.urlOf(token.value)
+        val photoUrl = if (page.hasPhoto) "$url/photo?v=${page.photoVersion}" else null
+        val members = if (page.memberCount == 1) "1 member" else "${page.memberCount} members"
+        val picture =
+            photoUrl?.let { "<img class=\"avatar avatar-xl join-photo\" src=\"${esc(it)}\" width=\"96\" height=\"96\" alt=\"\">" }
+                ?: "<span class=\"avatar avatar-xl group-avatar\" aria-hidden=\"true\">${initials(page.name)}</span>"
+        // Line by line, since [esc] drops control characters: the breaks the admin typed stay (`white-space: pre-line`).
+        val about =
+            page.description
+                ?.lines()
+                ?.joinToString("\n") { esc(it) }
+                ?.let { "<p class=\"about rise\">$it</p>" }
+                .orEmpty()
+        val summary =
+            page.description?.replace(SPACES, " ")?.trim()?.let {
+                if (it.length > OG_DESCRIPTION_MAX) it.take(OG_DESCRIPTION_MAX - 1).trimEnd() + "…" else it
+            } ?: "A group on Circaso with $members. Tap to join."
+        val main =
+            """
+            <section class="profile rise">
+              <span class="halo">$picture</span>
+              <h1>${esc(page.name)}</h1>
+              <p class="handle">Group · $members</p>
+            </section>
+            $about
+            <p class="lead rise">You're invited to this group on Circaso: messages, calls and money in one place.</p>
+            <p class="note rise">New to Circaso? Get the app and sign in, then tap this link again to join.</p>
+            """.trimIndent()
+        return document(
+            title = "Join ${page.name} on Circaso",
+            description = summary,
+            url = url,
+            config = config,
+            kind = "Group invitation",
+            main = main,
+            cta = actions(appUrl(token.value, config, platform), storeUrl(config, platform), "Join group"),
+            footerHtml =
+                "$LOCK<span>Shared from Circaso. This page shows only what the group's admins published: " +
+                    "its name, description and photo.</span>",
+            imageUrl = photoUrl,
+            imageAlt = page.name,
+        )
+    }
+
+    /** A join link that was reset or turned off, or never was: the three look the same. */
+    fun groupGone(config: ShareConfig, platform: Platform): String =
+        notice(
+            config,
+            platform,
+            glyph = GLYPH_OFF,
+            title = "This link no longer works",
+            lead = "The group's link was reset or turned off.",
+            note = "Ask an admin of the group for a new one.",
+        )
 
     /** A link its sharer turned off ([isRevoked]), or that reached the end they set. */
     fun gone(
@@ -464,9 +538,8 @@ object SharePages {
      * the store when the app isn't there, so the first tap never dead-ends. iOS: the scheme (Safari doesn't hand a
      * same-host https link to the app). A computer: nothing, there is no app to open.
      */
-    private fun appUrl(link: ShareLink, config: ShareConfig, platform: Platform): String? {
-        val code = link.code.value
-        return when (platform) {
+    private fun appUrl(code: String, config: ShareConfig, platform: Platform): String? =
+        when (platform) {
             Platform.ANDROID -> {
                 val fallback = URLEncoder.encode(config.androidStoreUrl, StandardCharsets.UTF_8)
                 "intent://s/$code#Intent;scheme=circaso;package=${config.androidPackage};" +
@@ -477,7 +550,6 @@ object SharePages {
 
             Platform.OTHER -> null
         }
-    }
 
     private fun storeUrl(config: ShareConfig, platform: Platform): String =
         when (platform) {
@@ -552,7 +624,10 @@ object SharePages {
         main: String,
         cta: String,
         footerHtml: String,
+        imageUrl: String? = null,
+        imageAlt: String = "Circaso",
     ): String {
+        val image = imageUrl ?: config.previewImageUrl
         val ogUrl = url?.let { "<meta property=\"og:url\" content=\"${esc(it)}\">" }.orEmpty()
         val kindChip = kind?.let { "<span class=\"kind\">${esc(it)}</span>" }.orEmpty()
         return """
@@ -574,13 +649,13 @@ object SharePages {
             <meta property="og:locale" content="en_US">
             <meta property="og:title" content="${esc(title)}">
             <meta property="og:description" content="${esc(description)}">
-            <meta property="og:image" content="${esc(config.previewImageUrl)}">
-            <meta property="og:image:alt" content="Circaso">
+            <meta property="og:image" content="${esc(image)}">
+            <meta property="og:image:alt" content="${esc(imageAlt)}">
             $ogUrl
             <meta name="twitter:card" content="summary">
             <meta name="twitter:title" content="${esc(title)}">
             <meta name="twitter:description" content="${esc(description)}">
-            <meta name="twitter:image" content="${esc(config.previewImageUrl)}">
+            <meta name="twitter:image" content="${esc(image)}">
             <link rel="icon" href="$ASSETS/circaso-icon-64.png">
             <link rel="apple-touch-icon" href="$ASSETS/circaso-icon-180.png">
             ${SharePageStyle.STYLE}

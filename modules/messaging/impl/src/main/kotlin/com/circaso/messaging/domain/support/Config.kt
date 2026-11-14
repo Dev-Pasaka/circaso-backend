@@ -77,7 +77,28 @@ data class MessagingConfig(
      * version, a few hundred bytes. The cap keeps a row small without depending on the wire format.
      */
     val maxInviteKeyBytes: Int = 8 * 1_024,
-)
+    /**
+     * Group join links (decision 2026-11-14). The origin a link is made on, without a trailing slash: share's
+     * `SHARE_BASE_URL`, since the link is `<base>/s/<token>` and share draws its page.
+     */
+    val linkBaseUrl: String = "http://localhost:8080",
+    /** A published preview's name, in characters. */
+    val maxLinkNameChars: Int = 100,
+    /** A group's description is at most this long; the preview's copy too. */
+    val maxLinkDescriptionChars: Int = 500,
+    /** A published preview's photo: the app sends a 256 px JPEG of a few KB. */
+    val maxLinkPhotoBytes: Int = 64 * 1_024,
+    /** M31: link lookups per person per hour. */
+    val linkLookupsPerHour: Int = 60,
+    /** M32: joins by link per person per hour. */
+    val linkJoinsPerHour: Int = 20,
+    /** How long a reset or turned-off link's row stays (without its preview) before the purge. */
+    val linkTombstone: Duration = Duration.ofDays(30),
+) {
+    fun linkUrl(token: String): String = "$linkBaseUrl/s/$token"
+
+    fun linkPhotoUrl(token: String, version: Long): String = "$linkBaseUrl/s/$token/photo?v=$version"
+}
 
 /** `MESSAGING_MAX_ATTACHMENT_BYTES` when unset: 100 MiB of ciphertext (decision 2026-11-07). */
 const val MAX_ATTACHMENT_BYTES: Long = 100L * 1_024 * 1_024

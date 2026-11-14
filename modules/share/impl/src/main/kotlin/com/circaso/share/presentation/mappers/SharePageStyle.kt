@@ -232,6 +232,9 @@ internal object SharePageStyle {
           .halo .avatar { position: relative; color: var(--on-money); box-shadow: var(--money-shadow);
             background: linear-gradient(135deg, var(--money-card) 0%, var(--money-card) 50%, var(--money-sheen) 100%); }
           .profile h1 { font: 700 28px/34px var(--font-sans); letter-spacing: 0.36px; overflow-wrap: anywhere; }
+          .join-photo { object-fit: cover; background: var(--card); }
+          .about { margin: 18px auto 0; max-width: 340px; text-align: center; white-space: pre-line; overflow-wrap: anywhere;
+            font: 400 17px/24px var(--font-sans); letter-spacing: -0.43px; }
           .handle { margin-top: 2px; font: 400 17px/22px var(--font-sans); color: var(--ink-2); overflow-wrap: anywhere; }
           .lead { margin: 18px auto 0; max-width: 340px; text-align: center; font: 400 17px/24px var(--font-sans); letter-spacing: -0.43px; color: var(--ink-2); }
           .note { margin: 10px auto 0; max-width: 340px; text-align: center; font: 400 15px/20px var(--font-sans); letter-spacing: -0.23px; color: var(--ink-2); }

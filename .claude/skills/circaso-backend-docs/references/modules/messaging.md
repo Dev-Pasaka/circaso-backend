@@ -272,6 +272,20 @@ Not in v1: multipart or resumable uploads (one streamed PUT up to 100 MiB), per-
 
 Each `sealed` is HK under AES-256-GCM with a key from HKDF over the PRF output or the recovery key. Turning on a new passkey or recovery key replaces the backup with the new set of wraps.
 
+### M28–M32 Group join links (2026-11-14)
+
+An admin makes one link per group; whoever has it joins without being added. See Decisions → 2026-11-14.
+
+| Call | Who | What |
+| --- | --- | --- |
+| `GET /chats/{chatId}/link` **M28** | admins | The live link (`token`, `url`, published `name`, `description`, `photoUrl`, `createdBy`, times) or `link: null`. |
+| `PUT /chats/{chatId}/link` **M29** | admins | `{ name, description?, photo? (base64 JPEG/PNG ≤ 64 KB), reset? }`. Makes the link, replaces its published preview (same token), or with `reset` revokes it and makes a new one. Under the chat's row lock. Admins get `link.changed`. |
+| `DELETE /chats/{chatId}/link` **M30** | admins | Revokes the link and deletes the published preview. Idempotent. |
+| `GET /chats/links/{token}` **M31** | anyone signed in | The preview and `memberCount`; `member` and `chatId` when already in. 60 an hour. |
+| `POST /chats/links/{token}/join` **M32** | anyone signed in | Joins as `MEMBER` (lock chat, re-read link, removal check, reserve seat, member row, `MemberAdded`). Already in: the group again. 20 an hour. |
+
+`messaging:api` gains `GroupLinkToken`, `GroupLinkPages` (`page`, `photo`) for share's public page. Tables: `group_links` (token PK, one live row per chat by partial unique index, preview columns nulled on revoke, `expires_at` for the purge) and `group_removals` (chat, user; written by an admin's removal, cleared by an accepted invite). Redis: `msg:link-rate:{lookup|join}:{userId}` (1 hour). Frames: `member.added.viaLink`, `link.changed`. Errors: `messaging.link_not_found` (404), `messaging.link_not_allowed` (403), `messaging.link_invalid` (400).
+
 ## Socket frames
 
 **Server to phone** (module `messaging`, through `Realtime.deliver`):
