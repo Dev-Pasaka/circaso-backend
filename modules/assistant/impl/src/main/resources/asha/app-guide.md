@@ -128,6 +128,10 @@ Money starts and ends in the chat. There is no separate payment form.
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
   contacts' moments (a ring on their picture means new ones) and post your own with the + button.
 - Reply to a moment and it arrives in your chat with that person. Choose who sees your moments in Moments → privacy.
+- Picking photos or videos (for a moment or a chat): the gallery's **All**, **Photos** and **Videos** show everything on
+  the phone Circaso may see, newest first. **Google Photos** beside them (on iPhone, **Photo Library**, which includes
+  iCloud) opens that picker to choose from your whole library and cloud. If you only let Circaso see some photos,
+  All shows just those: tap **⋯** → **Allow access to more photos**.
 
 ## Contacts
 - The first time you reach Chats, Circaso asks once to use your contacts. Allow it and your phone contacts who are on
