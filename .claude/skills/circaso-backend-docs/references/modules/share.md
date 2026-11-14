@@ -44,3 +44,8 @@ Built 2026-11-06. **Share links**: every share in the app (a payment receipt, a 
 ## Configuration
 
 `SHARE_BASE_URL` (no trailing slash; dev `https://sandbox.circaso.com`, production the short domain), `SHARE_ANDROID_PACKAGE`, `SHARE_ANDROID_CERT_SHA256` (comma separated), `SHARE_IOS_APP_IDS`, `SHARE_ANDROID_STORE_URL`, `SHARE_IOS_STORE_URL`, `SHARE_WEBSITE_URL`, `SHARE_PREVIEW_IMAGE_URL`, `SHARE_VIEWS_PER_MINUTE`.
+
+## Group join links (2026-11-14)
+
+Share also draws the public page of a group's join link, which is messaging's (M28 to M32): `GET /s/{token}` where the token has 22 characters (a share code has 12) shows the name, description, photo and member count the group's admin published, with "Join group" (`circaso://s/{token}`) and the same guards as every page (`noindex`, `no-store`, no script; the CSP also allows images from the page's own host). `GET /s/{token}/photo` serves the published photo (5-minute cache, `?v=` changes with the photo). Open Graph tags carry the group's name, description and photo. A reset, turned-off or unknown token answers 410 "This link no longer works". Views and photo fetches count against the per-address limit. SH4 answers a join token from an older app with `kind: "group"`, a title and "Update Circaso to join this group."; nothing is stored in `share.links` for it.
+

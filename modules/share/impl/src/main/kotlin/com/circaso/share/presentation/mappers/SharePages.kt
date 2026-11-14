@@ -109,7 +109,13 @@ object SharePages {
         val picture =
             photoUrl?.let { "<img class=\"avatar avatar-xl join-photo\" src=\"${esc(it)}\" width=\"96\" height=\"96\" alt=\"\">" }
                 ?: "<span class=\"avatar avatar-xl group-avatar\" aria-hidden=\"true\">${initials(page.name)}</span>"
-        val about = page.description?.let { "<p class=\"about rise\">${esc(it)}</p>" }.orEmpty()
+        // Line by line, since [esc] drops control characters: the breaks the admin typed stay (`white-space: pre-line`).
+        val about =
+            page.description
+                ?.lines()
+                ?.joinToString("\n") { esc(it) }
+                ?.let { "<p class=\"about rise\">$it</p>" }
+                .orEmpty()
         val summary =
             page.description?.replace(SPACES, " ")?.trim()?.let {
                 if (it.length > OG_DESCRIPTION_MAX) it.take(OG_DESCRIPTION_MAX - 1).trimEnd() + "…" else it
