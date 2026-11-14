@@ -12,8 +12,8 @@ import com.circaso.users.api.ReachPolicy
 
 /**
  * M3 `GET /keys/{userId}`: the person's bundle, using up one of their one-time prekeys. 60 fetches per caller per
- * hour, so nobody can drain someone's prekeys. The caller must reach the person, or share a group with them with
- * no block either way (group members need 1:1 sessions to hand each other sender keys). That is checked before the
+ * hour, so nobody can drain someone's prekeys. The caller must reach the person, share a group with them with
+ * no block either way, or have a direct chat with someone who still reaches them (group members need 1:1 sessions to hand each other sender keys). That is checked before the
  * bundle is looked up, so someone who qualifies neither way can't learn whether they have keys.
  */
 class FetchKeyBundle(
@@ -28,7 +28,7 @@ class FetchKeyBundle(
             val wait = rateLimit.retryAfter(caller)?.seconds?.coerceAtLeast(1) ?: SECONDS_PER_HOUR
             return Resource.error(MessagingError.RateLimited(wait))
         }
-        if (!reach.canReach(caller, target) && !sharesGroupUnblocked(caller, target)) {
+        if (!reach.canReach(caller, target) && !sharesChatUnblocked(caller, target)) {
             return Resource.error(MessagingError.NotReachable)
         }
 
@@ -39,9 +39,13 @@ class FetchKeyBundle(
         )
     }
 
-    /** A shared group stands in for reach, but never overrides a block (decision 2026-10-26). */
-    private suspend fun sharesGroupUnblocked(caller: UserId, target: UserId) =
-        chats.shareGroup(caller, target) && !reach.blockedEitherWay(caller, target)
+    /**
+     * A shared group (decision 2026-10-26) or an existing direct chat that the other person still reaches me in
+     * (2026-11-14, see SendMessage) stands in for reach, but never overrides a block.
+     */
+    private suspend fun sharesChatUnblocked(caller: UserId, target: UserId) =
+        (chats.shareGroup(caller, target) && !reach.blockedEitherWay(caller, target)) ||
+            (reach.canReach(target, caller) && chats.directChat(caller, target, null) != null)
 
     private companion object {
         const val SECONDS_PER_HOUR = 3_600L
