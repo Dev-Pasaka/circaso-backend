@@ -1,9 +1,14 @@
 name: Deploy to dev
 
 # Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
-# GitHub holds only the way in (the SSH key, the Docker Hub token) and the server's address. Everything the server
-# runs with lives on the server in /opt/circaso (docker-compose.yml, nginx, certs, .env): this workflow copies nothing
-# there. It logs in, runs the migrations once with the new image (the server reaches its PostgreSQL; a laptop does
+# GitHub holds only the way in (the SSH key, the Docker Hub token, the Infisical machine identity) and the server's
+# address. Everything the server runs with lives on the server in /opt/circaso (docker-compose.yml, nginx, certs,
+# .env): this workflow copies nothing there. The app's .env is written from Infisical at each deploy (2026-11-15):
+# variable INFISICAL_MODE is `off` (or unset: the .env on the server is used as it is), `check` (fetch and say which
+# names differ from the .env in use, change nothing) or `on` (fetch, then replace .env; the one before is kept as
+# .env.prev). Values are never printed. If Infisical can't be reached the deploy stops before anything is restarted.
+# postgres.env and backup.env stay on the server: they are read when the database is first created, not at deploy.
+# It logs in, runs the migrations once with the new image (the server reaches its PostgreSQL; a laptop does
 # not), starts the new image with the server's docker-compose.yml, waits for ready and prunes old images. A failed
 # migration stops the deploy before anything is restarted, so the old version keeps serving.
 on:
@@ -119,6 +124,8 @@ jobs:
           {
             printf 'REGISTRY_TOKEN=%q\nREGISTRY_USER=%q\nIMAGE=%q\nDOCS_IMAGE=%q\n' \
               "$REGISTRY_TOKEN" "$REGISTRY_USER" "$IMAGE" "$DOCS_IMAGE"
+            printf 'INFISICAL_MODE=%q\nINFISICAL_CLIENT_ID=%q\nINFISICAL_CLIENT_SECRET=%q\nINFISICAL_PROJECT=%q\nINFISICAL_ENV=%q\nINFISICAL_PATH=%q\nINFISICAL_API=%q\n' \
+              "${INFISICAL_MODE:-off}" "$INFISICAL_CLIENT_ID" "$INFISICAL_CLIENT_SECRET" "$INFISICAL_PROJECT" "${INFISICAL_ENV:-dev}" "${INFISICAL_PATH:-/}" "$INFISICAL_API"
             cat <<'REMOTE'
           set -euo pipefail
           cd /opt/circaso
@@ -129,6 +136,56 @@ jobs:
           echo "pulling $IMAGE and $DOCS_IMAGE"
           docker pull --quiet "$IMAGE" >/dev/null </dev/null
           docker pull --quiet "$DOCS_IMAGE" >/dev/null </dev/null
+
+          # The app's settings, from Infisical (see the top of this file). The identity's secret and the token live only
+          # in this shell; the fetched file is readable by the deploy user alone.
+          if [ "$INFISICAL_MODE" = check ] || [ "$INFISICAL_MODE" = on ]; then
+            echo "settings: fetching from Infisical ($INFISICAL_MODE)"
+            umask 077
+            if [ -n "$INFISICAL_API" ]; then export INFISICAL_DOMAIN="$INFISICAL_API"; fi
+            export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$INFISICAL_CLIENT_ID" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$INFISICAL_CLIENT_SECRET"
+            INFISICAL_TOKEN=$(infisical login --method=universal-auth --silent --plain </dev/null)
+            export INFISICAL_TOKEN
+            unset INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET INFISICAL_CLIENT_SECRET
+            trap 'rm -f /opt/circaso/.env.new /opt/circaso/.env-check.yml; docker logout >/dev/null 2>&1 || true' EXIT
+            # --expand=false: a $ in a value stays a $, as it is in the .env.
+            infisical export --silent --projectId "$INFISICAL_PROJECT" --env "$INFISICAL_ENV" --path "$INFISICAL_PATH" \
+              --format dotenv --expand=false </dev/null > .env.new
+            unset INFISICAL_TOKEN
+            # What the app and ops containers would be given, read the way Docker Compose reads it, against what they
+            # are given now. Names only. Fewer than half the values means the wrong project, environment or folder.
+            printf 'services:\n  app:\n    env_file: !override [.env.new]\n  ops:\n    env_file: !override [.env.new]\n' > .env-check.yml
+            python3 - <<'PY'
+          import json, subprocess, sys
+          def given(extra):
+              out = subprocess.run(["docker", "compose", "-f", "docker-compose.yml", *extra, "config", "--format", "json"],
+                                   check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout
+              return {s: json.loads(out)["services"][s].get("environment") or {} for s in ("app", "ops")}
+          now, new = given([]), given(["-f", ".env-check.yml"])
+          short = False
+          for s in ("app", "ops"):
+              a, b = now[s], new[s]
+              added, removed = sorted(set(b) - set(a)), sorted(set(a) - set(b))
+              changed = sorted(k for k in set(a) & set(b) if a[k] != b[k])
+              print(f"settings: {s}: {len(b)} values; added {len(added)}, removed {len(removed)}, changed {len(changed)}")
+              for label, names in (("added", added), ("removed", removed), ("changed", changed)):
+                  if names:
+                      print(f"settings:   {label}: {' '.join(names)}")
+              short = short or len(b) * 2 < len(a)
+          if short:
+              print("settings: Infisical returned fewer than half the values in use; nothing was changed")
+              sys.exit(1)
+          PY
+            rm -f .env-check.yml
+            if [ "$INFISICAL_MODE" = on ]; then
+              cp -p .env .env.prev
+              mv .env.new .env
+              echo "settings: .env replaced from Infisical (the one before is .env.prev)"
+            else
+              rm -f .env.new
+              echo "settings: check only, the .env on the server is unchanged"
+            fi
+          fi
 
           # The migrations run once, from the new image, with the server's .env and network, before any container is replaced.
           # They are idempotent; if they fail, set -e stops here and the old containers are untouched.
@@ -176,6 +233,13 @@ jobs:
             "${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}" bash -s
         env:
           REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          INFISICAL_MODE: ${{ vars.INFISICAL_MODE }}
+          INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+          INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          INFISICAL_PROJECT: ${{ vars.INFISICAL_PROJECT_ID }}
+          INFISICAL_ENV: ${{ vars.INFISICAL_ENV }}
+          INFISICAL_PATH: ${{ vars.INFISICAL_PATH }}
+          INFISICAL_API: ${{ vars.INFISICAL_DOMAIN }}
           REGISTRY_USER: ${{ vars.DOCKERHUB_USERNAME }}
           IMAGE: ${{ needs.image.outputs.image }}
           DOCS_IMAGE: ${{ needs.docs-image.outputs.image }}
