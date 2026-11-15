@@ -110,6 +110,9 @@ Money starts and ends in the chat. There is no separate payment form.
 ## Chats
 - Encrypted one-to-one and group chats, with read receipts, typing, delete for everyone, voice notes, photos,
   videos, documents and location (including live location for 15 minutes, 1 hour or 8 hours).
+- Open a shared location to see it on a map with your own position ("You"), the straight-line distance between
+  you, and buttons to fit both on screen. **Directions** hands over to the phone's maps app for the route; Circaso
+  doesn't draw the road route itself. Seeing your own position needs location access for Circaso.
 - Filters at the top of Chats: All, Unread, Groups, Moments.
 - Long-press a message to react with an emoji, or for its options (send again, delete).
 - To reply to a message, swipe it to the right (yours or theirs, including photos, voice notes and money cards). The
@@ -158,6 +161,14 @@ Money starts and ends in the chat. There is no separate payment form.
 - Short posts (text, photo, video or voice) your contacts can see for a day. Chats → **Moments** chip: see your
   contacts' moments (a ring on their picture means new ones) and post your own with the + button.
 - Reply to a moment and it arrives in your chat with that person. Choose who sees your moments in Moments → privacy.
+- Posting: tap **Post** and the preview closes straight away. A video is made smaller and uploaded in the
+  background; the ring around your picture in Moments fills as it goes, and you can keep using the app. If it fails,
+  your moment shows **Retry**. A long or heavy video is shrunk further by itself rather than refused; videos over
+  1 GB can't be picked.
+- Other people's moments download by themselves as they arrive, so they open at once. On Wi-Fi all of them; on mobile
+  data only photos, voice and short videos (long videos download when you open them). Turn it off or on in You →
+  **Moments** → **Download automatically**. Moments are removed from the phone when they end (24 hours after
+  posting), so they don't pile up.
 - Send money for someone's moment: in the reply box under their moment, type **#** and the amount (for example
   `#500 nice one`), then the arrow. It works like money in a chat (same PIN step), and arrives in your chat with them
   as a money card with the moment attached. It isn't offered on your own moments.
