@@ -124,8 +124,8 @@ jobs:
           {
             printf 'REGISTRY_TOKEN=%q\nREGISTRY_USER=%q\nIMAGE=%q\nDOCS_IMAGE=%q\n' \
               "$REGISTRY_TOKEN" "$REGISTRY_USER" "$IMAGE" "$DOCS_IMAGE"
-            printf 'INFISICAL_MODE=%q\nINFISICAL_CLIENT_ID=%q\nINFISICAL_CLIENT_SECRET=%q\nINFISICAL_PROJECT=%q\nINFISICAL_ENV=%q\nINFISICAL_PATH=%q\nINFISICAL_API=%q\n' \
-              "${INFISICAL_MODE:-off}" "$INFISICAL_CLIENT_ID" "$INFISICAL_CLIENT_SECRET" "$INFISICAL_PROJECT" "${INFISICAL_ENV:-dev}" "${INFISICAL_PATH:-/}" "$INFISICAL_API"
+            printf 'INFISICAL_MODE=%q\nINFISICAL_TOKEN=%q\nINFISICAL_CLIENT_ID=%q\nINFISICAL_CLIENT_SECRET=%q\nINFISICAL_PROJECT=%q\nINFISICAL_ENV=%q\nINFISICAL_PATH=%q\nINFISICAL_API=%q\n' \
+              "${INFISICAL_MODE:-off}" "$INFISICAL_TOKEN" "$INFISICAL_CLIENT_ID" "$INFISICAL_CLIENT_SECRET" "$INFISICAL_PROJECT" "${INFISICAL_ENV:-dev}" "${INFISICAL_PATH:-/}" "$INFISICAL_API"
             cat <<'REMOTE'
           set -euo pipefail
           cd /opt/circaso
@@ -143,10 +143,15 @@ jobs:
             echo "settings: fetching from Infisical ($INFISICAL_MODE)"
             umask 077
             if [ -n "$INFISICAL_API" ]; then export INFISICAL_DOMAIN="$INFISICAL_API"; fi
-            export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$INFISICAL_CLIENT_ID" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$INFISICAL_CLIENT_SECRET"
-            INFISICAL_TOKEN=$(infisical login --method=universal-auth --silent --plain </dev/null)
+            # The machine identity's access token (Token Auth, secret INFISICAL_TOKEN); without one, its Universal Auth
+            # client id and secret are exchanged for a token here. A token has an end date: a refused fetch after
+            # a quiet month means a new one is due.
+            if [ -z "$INFISICAL_TOKEN" ]; then
+              export INFISICAL_UNIVERSAL_AUTH_CLIENT_ID="$INFISICAL_CLIENT_ID" INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET="$INFISICAL_CLIENT_SECRET"
+              INFISICAL_TOKEN=$(infisical login --method=universal-auth --silent --plain </dev/null)
+            fi
             export INFISICAL_TOKEN
-            unset INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET INFISICAL_CLIENT_SECRET
+            unset INFISICAL_UNIVERSAL_AUTH_CLIENT_ID INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET INFISICAL_CLIENT_SECRET
             trap 'rm -f /opt/circaso/.env.new /opt/circaso/.env-check.yml; docker logout >/dev/null 2>&1 || true' EXIT
             # --expand=false: a $ in a value stays a $, as it is in the .env.
             infisical export --silent --projectId "$INFISICAL_PROJECT" --env "$INFISICAL_ENV" --path "$INFISICAL_PATH" \
@@ -234,6 +239,7 @@ jobs:
         env:
           REGISTRY_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           INFISICAL_MODE: ${{ vars.INFISICAL_MODE }}
+          INFISICAL_TOKEN: ${{ secrets.INFISICAL_TOKEN }}
           INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
           INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
           INFISICAL_PROJECT: ${{ vars.INFISICAL_PROJECT_ID }}
