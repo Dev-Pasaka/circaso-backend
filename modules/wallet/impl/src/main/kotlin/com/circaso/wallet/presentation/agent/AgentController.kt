@@ -114,8 +114,10 @@ fun Route.agentController(reads: WalletAgentService) {
                 ),
                 notes =
                     "$SCOPE Added 2026-11-05. Query: `amount` (whole units), `asset` (default USDC), " +
-                        "`blockchain`, exactly one of `toUserId`, `toAddress`, `toGroupId`, and optional " +
-                        "`walletId` (a group wallet) and `currency`. W17's numbers; no quote is held and nothing " +
+                        "`blockchain`, at most one of `toUserId`, `toAddress`, `toGroupId` (none, since " +
+                        "2026-11-17: an estimate for a person on Circaso, answered with `payee: ANY_PERSON`), " +
+                        "and optional `walletId` (a group wallet) and `currency`. " +
+                        "W17's numbers; no quote is held and nothing " +
                         "is written. The network estimate is cached a minute per wallet and payee.",
             )
 

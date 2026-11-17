@@ -66,6 +66,12 @@ sealed interface Payee {
 
     /** A space's wallet (Spaces phase 3): its members pay into it; [spaceId] is spaces' id. */
     data class Space(val spaceId: UUID) : Payee
+
+    /**
+     * Nobody yet (2026-11-17): Asha is asked what a payment would cost before the person has said who it is for. Only
+     * a fee estimate takes it, priced as a payment to a person on Circaso; a payment is never made to it.
+     */
+    data object Anyone : Payee
 }
 
 /** A transfer prepared by W4, from one of the sender's chain wallets. Amounts and addresses are never logged. */

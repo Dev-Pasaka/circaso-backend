@@ -105,9 +105,10 @@ fun AgentFeeParams.toCommand(userId: UserId): Resource<TransferCommand> {
 fun AgentFeeParams.currencyCode(): Resource<String?> = currencyCodeOf(currency)
 
 private fun AgentFeeParams.payee(): Resource<Payee> {
-    if (listOfNotNull(toUserId, toAddress, toGroupId).size != 1) {
-        return malformed("to", "needs exactly one of toUserId, toAddress and toGroupId")
-    }
+    val named = listOfNotNull(toUserId, toAddress, toGroupId).size
+    // Nobody named (2026-11-17): "what would sending 10 dollars cost?" is answered for a person on Circaso.
+    if (named == 0) return Resource.success(Payee.Anyone)
+    if (named != 1) return malformed("to", "takes at most one of toUserId, toAddress and toGroupId")
     toUserId?.let { raw ->
         return UserId.parse(raw.trim())?.let { Resource.success(Payee.Person(it)) }
             ?: malformed("toUserId", "is not an id")
@@ -179,6 +180,7 @@ fun FeeEstimate.toAgentResponse(): AgentFeeQuoteResponse {
                 moreAt = allowance.moreAt?.toString(),
             ),
         noFeeReason = quote.fee.reason?.name,
+        payee = if (isForAnyone) AgentFeeQuoteResponse.ANY_PERSON else null,
         problem = quote.problem?.name,
         fitsAt = if (quote.problem == QuoteProblem.DAILY_LIMIT) quote.fitsAt?.toString() else null,
         fiatAmount = fiat(quote.amount.amountMinor),

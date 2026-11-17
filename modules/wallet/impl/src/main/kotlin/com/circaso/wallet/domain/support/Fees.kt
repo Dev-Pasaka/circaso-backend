@@ -257,6 +257,10 @@ class FeeCalculator(
     ): FeeParties {
         val receiver: WalletOwnerType? =
             when {
+                destination.isAnyPerson -> {
+                    WalletOwnerType.PERSON
+                }
+
                 destination.toGroupId != null -> {
                     WalletOwnerType.GROUP
                 }

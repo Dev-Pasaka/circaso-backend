@@ -6,6 +6,7 @@ import com.circaso.assistant.domain.ports.VoiceFallbacks
 import com.circaso.assistant.domain.repositories.EntitlementRepository
 import com.circaso.assistant.domain.support.AssistantConfig
 import com.circaso.assistant.domain.support.DailyUsage
+import com.circaso.assistant.domain.support.SpokenText
 import com.circaso.assistant.domain.support.today
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.SpokenAudio
@@ -36,7 +37,8 @@ class SynthesizeSpeech(
         language: String?,
         voice: String? = null,
     ): Resource<SpokenAudio> {
-        val spoken = text.trim()
+        // a chat reply is markdown: read aloud without its marks, blocks and links (2026-11-17)
+        val spoken = if (text.length > config.maxSpeechChars) text else SpokenText.ofReply(text)
         if (spoken.isEmpty() || spoken.length > config.maxSpeechChars) {
             return Resource.error(
                 SharedError.Malformed("text", "must be 1 to ${config.maxSpeechChars} characters"),

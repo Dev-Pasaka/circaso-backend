@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.support
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
+import com.circaso.shared.UserId
 import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Allowance
@@ -99,17 +100,7 @@ class PaymentPlanner(
             limits.check(allowance, amountUsd, 0, most).let { if (it is Resource.Error) return it }
         }
         val destination =
-            when (
-                val resolved =
-                    payees.resolve(
-                        holder,
-                        command.payee,
-                        command.blockchain,
-                        command.chatId,
-                        actor = command.senderId,
-                        membership = membership,
-                    )
-            ) {
+            when (val resolved = destinationOf(holder, sender, command, membership, strict)) {
                 is Resource.Success -> resolved.data
                 is Resource.Error -> return resolved
             }
@@ -138,6 +129,33 @@ class PaymentPlanner(
                 }
             Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance, amount))
         }
+    }
+
+    /**
+     * Where the payment goes. An estimate for nobody yet ([Payee.Anyone], 2026-11-17) is priced as a payment to a
+     * person on Circaso, on a chain that still pays inside; the sender's own address stands in for the network
+     * estimate, which doesn't follow the payee. A payment ([strict]) always needs someone.
+     */
+    private suspend fun destinationOf(
+        holder: UserId,
+        sender: Sender,
+        command: TransferCommand,
+        membership: Boolean,
+        strict: Boolean,
+    ): Resource<Destination> {
+        if (command.payee !is Payee.Anyone) {
+            return payees.resolve(
+                holder,
+                command.payee,
+                command.blockchain,
+                command.chatId,
+                actor = command.senderId,
+                membership = membership,
+            )
+        }
+        if (strict) return Resource.error(WalletError.RecipientNoWallet)
+        if (!payees.receives(command.blockchain)) return Resource.error(WalletError.RecipientNotOnChain)
+        return Resource.success(Destination(recipientId = null, address = sender.wallet.address, isAnyPerson = true))
     }
 
     /**
@@ -221,5 +239,6 @@ class FeeQuotes(private val quotes: FeeQuoteRepository, private val clock: Clock
             is Payee.Group -> "group:${payee.chatId.value}"
             is Payee.Space -> "space:${payee.spaceId}"
             is Payee.Address -> "address:${Addresses.normalise(payee.address.trim())}"
+            Payee.Anyone -> "anyone"
         }
 }

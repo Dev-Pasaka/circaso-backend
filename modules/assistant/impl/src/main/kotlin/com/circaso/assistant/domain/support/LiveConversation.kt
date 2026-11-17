@@ -806,16 +806,21 @@ class LiveConversation(
     }
 
     /** Queues one sentence of turn [asked]'s reply with the voice, unless the user has talked over it since. */
-    private suspend fun queueSentence(asked: Int, sentence: String) =
+    private suspend fun queueSentence(asked: Int, sentence: String) {
+        // what the model wrote, without the marks a voice would read out (2026-11-17): nothing left, nothing said
+        val shown = SpokenText.shown(sentence)
+        val said = SpokenText.said(shown)
+        if (said.isEmpty()) return
         state.withLock {
             if (asked != generation.get() || ended.isCompleted) return@withLock
             val reply = speakingFor(asked)
-            reply.captions.add(Caption(sentence, reply.chars / SPOKEN_CHARS_PER_SECOND))
-            reply.chars += sentence.length + 1
-            remember(sentence)
+            reply.captions.add(Caption(shown, reply.chars / SPOKEN_CHARS_PER_SECOND))
+            reply.chars += said.length + 1
+            remember(said)
             clockOf(asked)?.takeIf { it.firstSentence < 0 }?.firstSentence = nowMillis()
-            line.speech.speak(sentence)
+            line.speech.speak(said)
         }
+    }
 
     /** The reply of turn [asked] still taking sentences, started if need be. Called with [state] held. */
     private suspend fun speakingFor(asked: Int): Speaking {

@@ -191,7 +191,8 @@ data class AgentLimitDto(
  * held. `fee` is Circaso's one fee, network cost included (`rateBps` its rate, `minimum` true when the minimum fee set it,
  * `noFeeReason` why none is charged); `total` is amount plus fee; `maxAmount` the most that can be sent with its fee.
  * `problem` is `INSUFFICIENT_FUNDS`, `PER_PAYMENT_LIMIT` or `DAILY_LIMIT` (then `fitsAt`, when it would fit). The
- * `fiat*` values are in `rate.currency` at today's rate, when a currency was asked.
+ * `fiat*` values are in `rate.currency` at today's rate, when a currency was asked. `payee` is `ANY_PERSON` when no
+ * payee was named (2026-11-17): the estimate is for paying a person on Circaso, and an outside address can differ.
  */
 @Serializable
 data class AgentFeeQuoteResponse(
@@ -212,7 +213,12 @@ data class AgentFeeQuoteResponse(
     val fiatFee: String? = null,
     val fiatTotal: String? = null,
     val rate: AgentRateDto? = null,
-)
+    val payee: String? = null,
+) {
+    companion object {
+        const val ANY_PERSON = "ANY_PERSON"
+    }
+}
 
 /**
  * A wallet the user can see (`/agent/wallet/wallets`): `type` `PERSON` (their own) or `GROUP` (a group's, with its

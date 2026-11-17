@@ -90,7 +90,7 @@ class AgentValueTest {
         assertMalformed(assetValueQuery((1..11).joinToString(",") { "A$it" }, null, null), "assets")
         val amina = UserId.new()
         assertMalformed(AgentFeeParams(amount = "1", toAddress = "0xabc").toCommand(amina), "blockchain")
-        assertMalformed(AgentFeeParams(amount = "1", blockchain = "BASE").toCommand(amina), "to")
+        assertEquals(Payee.Anyone, AgentFeeParams(amount = "1", blockchain = "BASE").toCommand(amina).data().payee)
         assertMalformed(
             AgentFeeParams(amount = "1", blockchain = "BASE", toUserId = "x", toAddress = "0x").toCommand(amina),
             "to",
@@ -135,6 +135,32 @@ class AgentValueTest {
             assertTrue(quotes.rows.isEmpty(), "nothing is held for an estimate")
             assertIs<Resource.Success<*>>(estimate(command, null))
             assertTrue(quotes.rows.isEmpty())
+        }
+
+    @Test
+    fun `with no payee named the estimate is for a person on Circaso, and a payment still needs someone`() =
+        runBlocking<Unit> {
+            val rules = MemoryRules().apply { seedFees() }
+            val quotes = MemoryFeeQuotes()
+            val h = Harness(ruleRows = rules, quoteRows = quotes)
+            val amina = UserId.new()
+            h.fund(amina, 400_000_000)
+            val estimate = EstimateFee(h.quoter, h.rates)
+            val command = AgentFeeParams(amount = "100", blockchain = "BASE-SEPOLIA").toCommand(amina).data()
+
+            val answer = estimate(command, null).data().toAgentResponse()
+
+            assertEquals("ANY_PERSON", answer.payee)
+            assertEquals("0.52", answer.fee, "the rate between Circaso people, as for a named person")
+            assertEquals(50, answer.rateBps)
+            assertEquals("100.52", answer.total)
+            assertEquals("400", answer.balance)
+            assertTrue(quotes.rows.isEmpty(), "nothing is held for an estimate")
+            val named =
+                AgentFeeParams(amount = "100", blockchain = "BASE-SEPOLIA", toAddress = "0xabc").toCommand(amina).data()
+            assertNull(estimate(named, null).data().toAgentResponse().payee)
+            val refused = assertIs<Resource.Error>(h.prepareTransfer(command))
+            assertEquals("wallet.recipient_no_wallet", refused.error.code, "a payment is never made to nobody")
         }
 
     private fun assertMalformed(result: Resource<*>, field: String) {

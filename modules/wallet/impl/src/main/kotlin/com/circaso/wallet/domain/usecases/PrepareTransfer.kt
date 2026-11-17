@@ -192,7 +192,7 @@ class PrepareTransfer(
                     approved.payeeAddress?.let { Addresses.normalise(it.trim()) } == Addresses.normalise(payee.address)
                 }
 
-                is Payee.Group, is Payee.Space -> {
+                is Payee.Group, is Payee.Space, Payee.Anyone -> {
                     false
                 }
             }
