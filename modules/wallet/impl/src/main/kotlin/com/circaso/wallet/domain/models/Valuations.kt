@@ -34,5 +34,8 @@ data class AssetValues(
     val rate: UsdRate?,
 )
 
-/** W17's numbers for a payment that may never be made, with [rate] for the display currency when one was asked. */
-data class FeeEstimate(val quote: TransferQuote, val rate: UsdRate?)
+/**
+ * W17's numbers for a payment that may never be made, with [rate] for the display currency when one was asked.
+ * [isForAnyone] when no payee was named: the estimate is for a payment to a person on Circaso.
+ */
+data class FeeEstimate(val quote: TransferQuote, val rate: UsdRate?, val isForAnyone: Boolean = false)

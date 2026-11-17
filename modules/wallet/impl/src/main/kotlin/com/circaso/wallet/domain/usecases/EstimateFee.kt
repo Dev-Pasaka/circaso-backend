@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.usecases
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.shared.Resource
 import com.circaso.wallet.domain.models.FeeEstimate
+import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.TransferCommand
 import com.circaso.wallet.domain.support.TransferQuoter
 
@@ -11,7 +12,8 @@ import com.circaso.wallet.domain.support.TransferQuoter
  * Asha is asked about, priced by the same rules and the same network estimate the payment would be. Unlike W17 it
  * never holds a quote: nothing is written, and the person still sees and confirms the real fee when they pay. The
  * network estimate is the fee calculator's, kept a minute per sending wallet and payee, so asking again costs Circle
- * nothing; the agent token's own rate limit bounds the rest.
+ * nothing; the agent token's own rate limit bounds the rest. With no payee named (2026-11-17) it is the estimate
+ * for paying a person on Circaso, so "what would sending 10 dollars cost?" has an answer before anyone is chosen.
  */
 class EstimateFee(private val quoter: TransferQuoter, private val rates: ExchangeRates) {
     suspend operator fun invoke(command: TransferCommand, currency: String?): Resource<FeeEstimate> {
@@ -21,6 +23,6 @@ class EstimateFee(private val quoter: TransferQuoter, private val rates: Exchang
                 is Resource.Error -> return read
             }
         val rate = currency?.takeIf { it != "USD" }?.let { rates.usdRate(it) }
-        return Resource.success(FeeEstimate(quoted, rate))
+        return Resource.success(FeeEstimate(quoted, rate, isForAnyone = command.payee is Payee.Anyone))
     }
 }

@@ -25,6 +25,8 @@ data class Destination(
     val toGroupId: ChatId? = null,
     /** Set when it pays a space's wallet (Spaces phase 3). */
     val toSpaceId: java.util.UUID? = null,
+    /** An estimate for nobody yet ([Payee.Anyone]): priced as a person on Circaso, whatever [address] stands in. */
+    val isAnyPerson: Boolean = false,
 ) {
     override fun toString(): String = "Destination($recipientId, ***)"
 }
@@ -84,9 +86,15 @@ class Payees(
     ): Resource<Destination> =
         when (payee) {
             is Payee.Person -> person(sender, payee.userId, blockchain, chatId, actor)
+
             is Payee.Address -> address(sender, payee.address, blockchain)
+
             is Payee.Group -> group(sender, payee.chatId, blockchain, actor)
+
             is Payee.Space -> space(sender, payee.spaceId, blockchain, actor, membership)
+
+            // Only the planner's estimate stands in for nobody; a payment needs someone.
+            Payee.Anyone -> Resource.error(WalletError.RecipientNoWallet)
         }
 
     /**

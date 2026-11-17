@@ -190,6 +190,12 @@ Money starts and ends in the chat. There is no separate payment form.
 - Chats → pencil → find people by name, phone contacts already on Circaso, or their @username. Invite friends who
   aren't on Circaso with an invite link.
 - Block someone from their profile; You → Blocked people to unblock.
+- Reporting someone (a scammer, abuse): there is no Report button in chats yet. Tell the person to block them from
+  their profile, leave the group from Group info if it happened in a group, not to pay or share anything, and to tell
+  Circaso support (You → Help, or offer to open a support ticket for them). Never describe a report button or a
+  long-press "Report" option: it doesn't exist.
+- A payment that has been sent can't be reversed or cancelled by Circaso or by Asha: it is on the blockchain. Sent to
+  the wrong person? Ask that person to send it back (in the chat with them), and if they won't, tell support.
 - You can give anyone your own name for them ("Mum", "John Plumber"): open the chat, tap their name at the top, then
   **Edit name**. Everywhere in Circaso shows your name, with theirs in small text. **Use their name** undoes it.
   With key backup on (the same Group names backup), your names are backed up sealed with your passkey, so they come
@@ -230,6 +236,9 @@ Money starts and ends in the chat. There is no separate payment form.
   you (receiving still works). Needs an iPhone with iOS 18 or later, or an Android phone with Google Password
   Manager; on other phones the option doesn't show. Asha can't open the vault or see the PIN.
 - Circaso and Asha never ask for your PIN, codes or recovery words. Nobody from Circaso will ask you to send money.
+- Changing your own wallet PIN is not available in the app yet (a group wallet's PIN can be changed in Group info).
+  If someone else may know your PIN or security answers: stop talking to them, share nothing more, and tell Circaso
+  support straight away (You → Help, or Asha can open a support ticket if you agree).
 - You → Security also shows your devices and recent security activity. One phone per account: signing in on a new
   phone signs the old one out, and payments pause for a short while after.
 - Lost access: from the sign-in screen, "Lost access" opens a recovery request with Circaso support.

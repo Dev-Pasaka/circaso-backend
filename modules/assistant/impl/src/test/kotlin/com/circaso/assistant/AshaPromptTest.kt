@@ -183,10 +183,29 @@ class AshaPromptTest {
     }
 
     @Test
+    fun `the voice test of 2026-11-16 - misheard Swahili, a fee for nobody yet, an exposed PIN, no report button`() {
+        val spoken = flat(voice)
+        assertTrue("reaches you as a transcript, which can mishear words, most of all Swahili" in spoken)
+        assertTrue("\"salio langu\", \"nina pesa ngapi\"" in spoken)
+        assertTrue("instead of greeting them again or listing what you can do" in spoken)
+        assertTrue("Never number steps and never write a word in capital letters" in spoken)
+        assertFalse("mishear" in flat(text), "a typed turn has no transcript")
+        listOf(text, voice).map(::flat).forEach { flat ->
+            assertTrue("It needs no payee" in flat)
+            assertTrue("call convertAmount first and pass the coins it gives" in flat)
+            assertTrue("a wallet PIN can't be changed in the app yet" in flat)
+            assertFalse("change it in the app if it may be exposed" in flat)
+            assertTrue("there is no Report button in chats yet" in flat)
+            assertTrue("can't be reversed or cancelled" in flat)
+        }
+        assertTrue("payee ANY_PERSON" in AshaPrompt.getFeeQuote.description)
+    }
+
+    @Test
     fun `the mascot tag is no longer asked for, in text or in voice`() {
         assertFalse("<mascot" in text)
         assertFalse("mascot" in voice.lowercase())
-        assertEquals("asha-2026-11-13-v1", AshaPrompt.VERSION)
+        assertEquals("asha-2026-11-17-v1", AshaPrompt.VERSION)
     }
 
     @Test
