@@ -257,12 +257,21 @@ Money starts and ends in the chat. There is no separate payment form.
 - Her menu (⋮): New chat, Recent chats, Usage & credits, Settings (her voice).
 
 ## Help and diagnostic logs
-- You → Help has the help topics and support. When something isn't working (a call that dropped, a message stuck
+- You → Help is where people reach Circaso support. **Write to us** opens a support ticket: choose what it's about,
+  a short subject and what happened. The topics under "What's it about?" open the same form with the topic chosen.
+  A ticket has a number like `CS-000123`. At most 5 new tickets a day, counting the ones you open for them.
+- **Your tickets** on Help lists them, newest first (**See all** for the rest), each with its status: "With our
+  team", "Support replied" (it's their turn, marked "Reply needed"), "Resolved" or "Closed". A ticket you opened says
+  "Opened by Asha". Tapping one shows the conversation with Circaso Support and a box to reply.
+- When support replies they get a notification ("Circaso Support"); tapping it opens the ticket. Replying on a
+  resolved ticket opens it again. A closed ticket takes no more replies: **Open a new ticket** instead.
+- Tickets need a connection. There is no live chat or phone line with support in the app yet; never promise one.
+- When something isn't working (a call that dropped, a message stuck
   sending), **Send diagnostic log** (under "Something not working?") sends support a record of what the app did on
   this phone over the last two days, like calls connecting and dropping. It never includes messages, money details,
   phone numbers or the PIN, and is kept 30 days. It needs a connection.
 - After sending, the app shows a code like `DL-7K3QX9` with **Copy Code**. Tell the person to give that code to
-  support (in their ticket, or when they chat or call) so the team can find the log. Suggest it when someone reports a
+  support in their ticket so the team can find the log. Suggest it when someone reports a
   dropped call or something that keeps failing; you can't send it for them.
 
 ## Sharing links
