@@ -6,6 +6,7 @@ import com.circaso.ops.domain.models.Permission
 import com.circaso.shared.StaffRole
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
@@ -38,6 +39,7 @@ class RolesTest {
     private val otherStaff = Uuid7.generate()
     private val droppedCall = harness.calls.dropped(user, UserId.new())
     private val log = harness.logs.add(user)
+    private val feeDestination = Uuid7.generate()
 
     init {
         harness.groups.groups[chat] = OpsGroup(chat, 3, user, EPOCH)
@@ -121,11 +123,30 @@ class RolesTest {
                 Permission.SUPPORT_ACCOUNTS_MANAGE,
                 """{"displayName":"Circaso","handle":"circaso"}""",
             ),
+            Call("GET", "/v1/ops/fee-wallets?network=MAINNET", Permission.FEES_WALLET_READ),
+            Call("GET", "/v1/ops/fee-wallets/destinations", Permission.FEES_WALLET_READ),
+            Call("GET", "/v1/ops/fee-wallets/withdrawals?network=TESTNET", Permission.FEES_WALLET_READ),
+            Call(
+                "POST",
+                "/v1/ops/fee-wallets/destinations",
+                Permission.FEES_WITHDRAW,
+                """{"network":"MAINNET","blockchain":"BASE","address":"0x00000000000000000000000000000000000000aa",""" +
+                    """"label":"Treasury","reason":"Company treasury"}""",
+            ),
+            Call("DELETE", "/v1/ops/fee-wallets/destinations/$feeDestination", Permission.FEES_WITHDRAW),
+            Call(
+                "POST",
+                "/v1/ops/fee-wallets/withdrawals",
+                Permission.FEES_WITHDRAW,
+                """{"network":"MAINNET","blockchain":"BASE","asset":"USDC","amountMinor":"1000000",""" +
+                    """"destinationId":"$feeDestination","reason":"Monthly sweep"}""",
+            ),
         )
 
     private suspend fun ApplicationTestBuilder.send(call: Call, role: StaffRole?): HttpResponse {
         val build: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
             role?.let { header(OpsHarness.ROLE_HEADER, it.name) }
+            header("Idempotency-Key", "roles-test")
             call.body?.let {
                 contentType(ContentType.Application.Json)
                 setBody(it)
@@ -135,6 +156,7 @@ class RolesTest {
             "GET" -> client.get(call.path, build)
             "POST" -> client.post(call.path, build)
             "PUT" -> client.put(call.path, build)
+            "DELETE" -> client.delete(call.path, build)
             else -> client.patch(call.path, build)
         }
     }

@@ -21,6 +21,8 @@ enum class AuditTarget(val wire: String) {
     FEE_BOUNDS("fee_bounds"),
     DIAGNOSTIC_LOG("diagnostic_log"),
     WALLET_NETWORK("wallet_network"),
+    FEE_DESTINATION("fee_destination"),
+    FEE_WITHDRAWAL("fee_withdrawal"),
     ;
 
     companion object {
@@ -51,6 +53,9 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     DIAGNOSTICS_READ("diagnostics.read", AuditTarget.DIAGNOSTIC_LOG),
     USER_NETWORK_ACCESS("user.network_access", AuditTarget.USER),
     WALLET_NETWORK_UPDATE("wallet_network.update", AuditTarget.WALLET_NETWORK),
+    FEE_DESTINATION_ADD("fee_destination.add", AuditTarget.FEE_DESTINATION),
+    FEE_DESTINATION_REMOVE("fee_destination.remove", AuditTarget.FEE_DESTINATION),
+    FEE_WITHDRAWAL_CREATE("fee_withdrawal.create", AuditTarget.FEE_WITHDRAWAL),
     ;
 
     companion object {

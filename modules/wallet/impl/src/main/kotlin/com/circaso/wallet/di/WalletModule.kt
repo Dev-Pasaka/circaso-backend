@@ -238,12 +238,12 @@ import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.wallet.presentation.warmup.WalletWarmUp
 import com.circaso.web.RouteContributor
 import com.circaso.web.unavailable
-import java.time.Clock
-import java.time.Duration
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
+import java.time.Clock
+import java.time.Duration
 
 /** Schema `wallet`: its tables, its Flyway scripts and its outbox, which is infrastructure's (`outbox = true`). */
 internal val walletDatabaseSpec =

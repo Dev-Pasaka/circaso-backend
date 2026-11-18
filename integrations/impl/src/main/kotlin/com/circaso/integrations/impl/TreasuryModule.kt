@@ -48,7 +48,11 @@ internal fun entitySecret(secrets: Secrets, network: Network): EntitySecret? {
     return EntitySecret.parse(raw) ?: run {
         LoggerFactory
             .getLogger("com.circaso.integrations.impl.TreasuryModule")
-            .error("secret '{}' isn't 64 hex characters; fee wallets on {} can't be created or withdrawn from", name, network)
+            .error(
+                "secret '{}' isn't 64 hex characters; fee wallets on {} can't be created or withdrawn from",
+                name,
+                network,
+            )
         null
     }
 }

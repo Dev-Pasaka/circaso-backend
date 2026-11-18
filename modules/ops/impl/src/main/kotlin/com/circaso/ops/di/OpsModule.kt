@@ -17,6 +17,7 @@ import com.circaso.ops.domain.support.StaffRoster
 import com.circaso.ops.domain.support.TicketViews
 import com.circaso.ops.domain.support.TransferParties
 import com.circaso.ops.domain.support.UserViews
+import com.circaso.ops.domain.usecases.AddFeeDestination
 import com.circaso.ops.domain.usecases.AddStaff
 import com.circaso.ops.domain.usecases.AssignTicket
 import com.circaso.ops.domain.usecases.ChangeFeeRule
@@ -33,6 +34,7 @@ import com.circaso.ops.domain.usecases.FindDiagnosticLogs
 import com.circaso.ops.domain.usecases.GetAiUsageReport
 import com.circaso.ops.domain.usecases.GetCallSheet
 import com.circaso.ops.domain.usecases.GetDashboard
+import com.circaso.ops.domain.usecases.GetFeeWallets
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
 import com.circaso.ops.domain.usecases.GetTicket
@@ -42,7 +44,9 @@ import com.circaso.ops.domain.usecases.GetUserDevices
 import com.circaso.ops.domain.usecases.GetUserWallets
 import com.circaso.ops.domain.usecases.GetWalletNetworks
 import com.circaso.ops.domain.usecases.ListAudit
+import com.circaso.ops.domain.usecases.ListFeeDestinations
 import com.circaso.ops.domain.usecases.ListFeeRules
+import com.circaso.ops.domain.usecases.ListFeeWithdrawals
 import com.circaso.ops.domain.usecases.ListGroups
 import com.circaso.ops.domain.usecases.ListLimitRules
 import com.circaso.ops.domain.usecases.ListPermissions
@@ -57,6 +61,7 @@ import com.circaso.ops.domain.usecases.ListUserTransfers
 import com.circaso.ops.domain.usecases.NoteOnTicket
 import com.circaso.ops.domain.usecases.OpenDiagnosticLog
 import com.circaso.ops.domain.usecases.RecordDevLogin
+import com.circaso.ops.domain.usecases.RemoveFeeDestination
 import com.circaso.ops.domain.usecases.ReplyToTicket
 import com.circaso.ops.domain.usecases.SearchUsers
 import com.circaso.ops.domain.usecases.SetUserNetworkAccess
@@ -66,12 +71,14 @@ import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.domain.usecases.UpdateWalletNetwork
+import com.circaso.ops.domain.usecases.WithdrawFees
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
 import com.circaso.ops.presentation.controllers.aiUsageController
 import com.circaso.ops.presentation.controllers.callController
 import com.circaso.ops.presentation.controllers.dashboardController
 import com.circaso.ops.presentation.controllers.diagnosticController
 import com.circaso.ops.presentation.controllers.feeController
+import com.circaso.ops.presentation.controllers.feeWalletController
 import com.circaso.ops.presentation.controllers.groupController
 import com.circaso.ops.presentation.controllers.meController
 import com.circaso.ops.presentation.controllers.moneyController
@@ -85,6 +92,7 @@ import com.circaso.ops.presentation.services.CallService
 import com.circaso.ops.presentation.services.DashboardService
 import com.circaso.ops.presentation.services.DiagnosticService
 import com.circaso.ops.presentation.services.FeeService
+import com.circaso.ops.presentation.services.FeeWalletService
 import com.circaso.ops.presentation.services.GroupService
 import com.circaso.ops.presentation.services.MeService
 import com.circaso.ops.presentation.services.MoneyService
@@ -238,6 +246,13 @@ fun opsModule(config: Config): Module =
         single { GetWalletNetworks(get()) }
         single { UpdateWalletNetwork(get(), get()) }
         single { NetworkService(get(), get(), get()) }
+        single { GetFeeWallets(get()) }
+        single { ListFeeDestinations(get()) }
+        single { AddFeeDestination(get(), get()) }
+        single { RemoveFeeDestination(get(), get()) }
+        single { ListFeeWithdrawals(get()) }
+        single { WithdrawFees(get(), get()) }
+        single { FeeWalletService(get(), get(), get(), get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -254,6 +269,7 @@ fun opsModule(config: Config): Module =
             val supportAccounts = get<SupportAccountService>()
             val fees = get<FeeService>()
             val networks = get<NetworkService>()
+            val feeWallets = get<FeeWalletService>()
             OpsRouteContributor { root ->
                 // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
                 root.networkFiltered {
@@ -270,6 +286,7 @@ fun opsModule(config: Config): Module =
                     route.staffController(staff, audit, supportAccounts, settings)
                     route.feeController(fees)
                     route.networkController(networks)
+                    route.feeWalletController(feeWallets, settings, clock)
                 }
             }
         }

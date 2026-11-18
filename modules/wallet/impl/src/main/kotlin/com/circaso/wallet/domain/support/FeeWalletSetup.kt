@@ -73,7 +73,12 @@ class FeeWalletSetup(
     private suspend fun run(network: Network): Outcome {
         val settings = networks.settings(network)
         val chains = feeChains(settings)
-        if (chains.isEmpty()) return Outcome(FeeWalletStatus.NOT_CREATED, "No enabled chain on $network can carry a fee.")
+        if (chains.isEmpty()) {
+            return Outcome(
+                FeeWalletStatus.NOT_CREATED,
+                "No enabled chain on $network can carry a fee.",
+            )
+        }
         val run =
             Run(
                 network = network,
@@ -160,7 +165,13 @@ class FeeWalletSetup(
         val searches =
             listOfNotNull<suspend () -> Resource<List<TreasuryWallet>>>(
                 { custody.findWallets(network, address = address, blockchain = chain) },
-                if (wanted != address) ({ custody.findWallets(network, address = wanted, blockchain = chain) }) else null,
+                if (wanted !=
+                    address
+                ) {
+                    ({ custody.findWallets(network, address = wanted, blockchain = chain) })
+                } else {
+                    null
+                },
                 { custody.findWallets(network, blockchain = chain, refId = FeeChains.REF_ID) },
             )
         for (search in searches) {
@@ -176,7 +187,11 @@ class FeeWalletSetup(
         fun missing() = run.chains.filter { run.rows[it] == null }
         if (missing().isEmpty()) return
         var anchor = run.rows.values.firstOrNull { it.circleWalletId != null }
-        if (anchor == null) anchor = adoptEarlier(run, custody) ?: if (run.failures.isEmpty()) create(run, custody) else null
+        if (anchor ==
+            null
+        ) {
+            anchor = adoptEarlier(run, custody) ?: if (run.failures.isEmpty()) create(run, custody) else null
+        }
         val source = anchor ?: return
         val sourceId = source.circleWalletId ?: return
         for (chain in missing()) {
@@ -271,7 +286,9 @@ class FeeWalletSetup(
                     made.data
                 }
             }
-        val first = run.defaultChain.takeIf { it in run.chains && run.rows[it] == null } ?: run.chains.first { run.rows[it] == null }
+        val first =
+            run.defaultChain.takeIf { it in run.chains && run.rows[it] == null }
+                ?: run.chains.first { run.rows[it] == null }
         val request =
             TreasuryWalletRequest(
                 walletSetId = setId,
@@ -313,16 +330,21 @@ class FeeWalletSetup(
         val parts = run.failures + run.notes
         val extra =
             when {
-                status == FeeWalletStatus.READY && !canSign && !noted ->
+                status == FeeWalletStatus.READY && !canSign && !noted -> {
                     listOf("${noSecret(run.network)} Fees are collected; withdrawals aren't available.")
+                }
 
-                status == FeeWalletStatus.READY && noted ->
+                status == FeeWalletStatus.READY && noted -> {
                     listOf("Fees are collected at the configured addresses; balances and withdrawals aren't available.")
+                }
 
-                status == FeeWalletStatus.NOT_CREATED && without.isNotEmpty() ->
+                status != FeeWalletStatus.READY && without.isNotEmpty() -> {
                     listOf("No fee is taken on ${without.joinToString(", ")} until it has a fee wallet.")
+                }
 
-                else -> emptyList()
+                else -> {
+                    emptyList()
+                }
             }
         val reason = (parts + extra).joinToString(" ").take(REASON_LENGTH).ifBlank { null }
         return Outcome(status, reason, run.walletSetId)

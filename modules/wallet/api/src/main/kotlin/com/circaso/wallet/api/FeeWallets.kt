@@ -14,11 +14,7 @@ import java.util.UUID
 /** The staff member acting, with their email as it is now (kept on what they add, for the lists). */
 data class OpsFeeStaff(val staffId: UUID, val email: String)
 
-data class OpsFeeBalance(
-    val symbol: String,
-    val amountMinor: BigInteger,
-    val decimals: Int,
-)
+data class OpsFeeBalance(val symbol: String, val amountMinor: BigInteger, val decimals: Int)
 
 /**
  * One chain's fee wallet. [balancesKnown] false: Circle couldn't be asked, so [balances] is empty and [nativeBalance]

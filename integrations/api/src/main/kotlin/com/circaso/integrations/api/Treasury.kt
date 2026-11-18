@@ -35,10 +35,7 @@ interface TreasuryCustody {
      * chains wallets that share a set and a `refId` share one address). The same [idempotencyKey] answers the same
      * wallets.
      */
-    suspend fun createWallets(
-        network: Network,
-        request: TreasuryWalletRequest,
-    ): Resource<List<TreasuryWallet>>
+    suspend fun createWallets(network: Network, request: TreasuryWalletRequest): Resource<List<TreasuryWallet>>
 
     /**
      * The wallet at [walletId]'s address on another EVM chain, created if it isn't there yet; asking again answers the

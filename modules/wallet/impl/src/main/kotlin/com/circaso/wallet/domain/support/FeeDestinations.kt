@@ -43,7 +43,11 @@ class FeeDestinations(
         val name = label.trim()
         val given = address.trim()
         if (name.length !in 1..LABEL_LENGTH) return invalid("label", "must be 1 to $LABEL_LENGTH characters")
-        if (chain.isEmpty() || Network.ofChain(chain) != network) return invalid("blockchain", "isn't a chain on $network")
+        if (chain.isEmpty() ||
+            Network.ofChain(chain) != network
+        ) {
+            return invalid("blockchain", "isn't a chain on $network")
+        }
         val known = networks.settings(network).chains.any { it.blockchain == chain }
         if (!known || !FeeChains.canCarryFee(chain)) {
             return invalid("blockchain", "isn't a chain fees are collected on")

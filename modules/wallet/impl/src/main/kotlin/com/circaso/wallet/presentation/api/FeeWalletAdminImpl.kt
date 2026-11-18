@@ -59,11 +59,19 @@ class FeeWalletAdminImpl(private val service: FeeWalletService) : FeeWalletAdmin
     override suspend fun destination(id: UUID): OpsFeeDestination? =
         service.destination(id)?.toOps(service.destinationDelay())
 
-    override suspend fun addDestination(destination: OpsNewFeeDestination, by: OpsFeeStaff): Resource<OpsFeeDestination> {
+    override suspend fun addDestination(
+        destination: OpsNewFeeDestination,
+        by: OpsFeeStaff,
+    ): Resource<OpsFeeDestination> {
         val delay = service.destinationDelay()
         return service
-            .addDestination(destination.network, destination.blockchain, destination.address, destination.label, by.toDomain())
-            .map { it.toOps(delay) }
+            .addDestination(
+                destination.network,
+                destination.blockchain,
+                destination.address,
+                destination.label,
+                by.toDomain(),
+            ).map { it.toOps(delay) }
     }
 
     override suspend fun removeDestination(id: UUID, by: OpsFeeStaff): Resource<OpsFeeDestination> {

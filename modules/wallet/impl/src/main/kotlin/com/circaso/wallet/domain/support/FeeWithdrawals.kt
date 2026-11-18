@@ -40,8 +40,8 @@ data class WithdrawalRequest(
  * Withdrawals of collected fees (decision 2026-11-18): from a fee wallet to a destination added at least the delay
  * ago, signed by Circle with the entity secret, so only on the ops server.
  *
- * `PENDING → SENT → CONFIRMED | FAILED`. The row is written `PENDING` before Circle is asked, with the idempotency key
- * every attempt will carry ([FeeWithdrawal.circleKey]). Then:
+ * `PENDING → SENT → CONFIRMED | FAILED`. The row is written `PENDING` before Circle is asked, with the idempotency
+ * key every attempt will carry ([FeeWithdrawal.circleKey]). Then:
  * - Circle accepts: `SENT`, with Circle's transaction id.
  * - Circle refuses: `FAILED`, and staff get `fees.withdrawal_refused`. Nothing was sent.
  * - Circle can't be reached, or its answer can't be read: it **stays `PENDING`**, because Circle may have it. [follow]
@@ -212,7 +212,8 @@ class FeeWithdrawals(
     }
 
     private suspend fun accepted(row: FeeWithdrawal, transaction: TreasuryTransaction) {
-        val change = WithdrawalChange(circleTxId = transaction.transactionId, txHash = transaction.txHash.ifEmpty { null })
+        val change =
+            WithdrawalChange(circleTxId = transaction.transactionId, txHash = transaction.txHash.ifEmpty { null })
         if (!move(row, WithdrawalState.PENDING, WithdrawalState.SENT, change)) return
         settle(row.id, transaction)
     }
@@ -322,7 +323,10 @@ class FeeWithdrawals(
         val decimals = native?.decimals ?: FeeChains.NATIVE_DECIMALS
         val fee =
             when (val estimate = custody.estimateTransfer(network, transfer)) {
-                is Resource.Success -> estimate.data
+                is Resource.Success -> {
+                    estimate.data
+                }
+
                 is Resource.Error -> {
                     if (estimate.error is IntegrationError.Unavailable) {
                         return Resource.error(FeeWalletError.CustodyUnavailable, estimate.cause)
@@ -337,7 +341,9 @@ class FeeWithdrawals(
                 if (coin.native) transfer.amountMinor else BigInteger.ZERO
         val left = (native?.amountMinor ?: BigInteger.ZERO) - nativeOut
         if (left < feeMinor) {
-            return Resource.error(FeeWalletError.InsufficientGas(FeeChains.nativeSymbol(wallet.blockchain), wallet.blockchain))
+            return Resource.error(
+                FeeWalletError.InsufficientGas(FeeChains.nativeSymbol(wallet.blockchain), wallet.blockchain),
+            )
         }
         return null
     }

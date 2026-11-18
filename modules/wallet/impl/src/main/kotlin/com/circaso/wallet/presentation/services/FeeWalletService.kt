@@ -61,7 +61,12 @@ class FeeWalletService(
     /** Every network's fee wallets, checked and created where they are missing; how many networks are `READY`. */
     suspend fun ensureWallets(): Int = ensureAll().count { it.status.name == "READY" }
 
-    suspend fun ensureAll(): List<FeeWalletNetwork> = Network.entries.map { network -> on(network) { setup.ensure(network) } }
+    suspend fun ensureAll(): List<FeeWalletNetwork> =
+        Network.entries.map { network ->
+            on(network) {
+                setup.ensure(network)
+            }
+        }
 
     suspend fun followWithdrawals(): Int = feeWithdrawals.follow()
 

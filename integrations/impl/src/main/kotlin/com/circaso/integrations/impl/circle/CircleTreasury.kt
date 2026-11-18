@@ -73,7 +73,10 @@ internal class CircleTreasury(
         signed<CreateWalletSetBody, WalletSetData>(network, "/v1/w3s/developer/walletSets", "create_wallet_set") {
             CreateWalletSetBody(idempotencyKey.toString(), it, name)
         }.flatMap { data ->
-            data.walletSet?.id?.takeIf { it.isNotEmpty() }?.let { Resource.success(it) } ?: unreadable()
+            data.walletSet
+                ?.id
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { Resource.success(it) } ?: unreadable()
         }
 
     override suspend fun createWallets(
@@ -326,7 +329,9 @@ internal class CircleTreasury(
     private fun stateOf(state: String): TreasuryTransactionState =
         when (state) {
             "CONFIRMED", "COMPLETE" -> TreasuryTransactionState.CONFIRMED
+
             "FAILED", "DENIED", "CANCELLED" -> TreasuryTransactionState.FAILED
+
             // INITIATED, CLEARED, QUEUED, SENT, STUCK, and any state Circle adds later: still on its way.
             else -> TreasuryTransactionState.IN_FLIGHT
         }

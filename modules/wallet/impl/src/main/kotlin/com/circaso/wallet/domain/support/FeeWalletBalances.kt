@@ -12,11 +12,7 @@ import com.circaso.wallet.domain.repositories.FeeWalletRepository
 import java.math.BigInteger
 
 /** A coin a fee wallet holds, in minor units. */
-data class FeeBalance(
-    val symbol: String,
-    val amountMinor: BigInteger,
-    val decimals: Int,
-)
+data class FeeBalance(val symbol: String, val amountMinor: BigInteger, val decimals: Int)
 
 /**
  * One chain's fee wallet as staff see it. [balancesKnown] false: Circle couldn't be asked (no wallet behind the
@@ -40,7 +36,7 @@ data class FeeWalletsView(
     val destinationDelayHours: Int,
 )
 
-/** The fee wallets of a network with what they hold now, read from Circle on each call (a staff page, not a hot path). */
+/** A network's fee wallets with what they hold now, read from Circle on each call: a staff page, not a hot path. */
 class FeeWalletBalances(
     private val treasury: TreasuryCustody?,
     private val networks: Networks,
@@ -77,13 +73,17 @@ class FeeWalletBalances(
     fun unavailable(wallet: FeeWallet): String? {
         val custody = treasury ?: return "this server's custody provider isn't Circle."
         return when {
-            wallet.circleWalletId == null ->
+            wallet.circleWalletId == null -> {
                 "the fee address on ${wallet.blockchain} isn't a wallet this server can reach at Circle."
+            }
 
-            !custody.canSign(wallet.network) ->
+            !custody.canSign(wallet.network) -> {
                 FeeWalletSetup.noSecret(wallet.network)
+            }
 
-            else -> null
+            else -> {
+                null
+            }
         }
     }
 

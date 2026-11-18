@@ -51,11 +51,7 @@ internal class CircleClient(private val http: HttpClient, private val apiKey: St
      * the shared client never sends the same bytes twice after a timeout: a body with an entity secret ciphertext is
      * single-use (Circle refuses a ciphertext it has seen), and its caller repeats it with a fresh one instead.
      */
-    class WrittenBody(
-        val idempotencyKey: String,
-        val text: String,
-        val repeatable: Boolean = true,
-    )
+    class WrittenBody(val idempotencyKey: String, val text: String, val repeatable: Boolean = true)
 
     suspend fun <R> exchange(
         method: HttpMethod,
