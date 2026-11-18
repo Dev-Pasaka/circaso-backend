@@ -13,7 +13,7 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
   `OpsRouteContributor`s (shared-web). `OpsSeparationTest` checks both.
 - **Contract (`ops:api`):** `StaffDirectory` (`signIn(email)`, `recordDevLogin`), implemented here, used by the ops gateway.
 - **Depends on:** identity (`AccountAdmin`, `SupportAccounts`), users (`ProfileAdmin`), messaging (`GroupReports`), wallet
-  (`WalletReports`, `FeeAdmin`), support (`SupportDesk`), assistant (`AssistantReports`), and integrations' `AiBilling`. Each is a staff-facing contract next to the module's own, never used by the app.
+  (`WalletReports`, `FeeAdmin`, `NetworkAdmin`, `FeeWalletAdmin`), support (`SupportDesk`), assistant (`AssistantReports`), and integrations' `AiBilling`. Each is a staff-facing contract next to the module's own, never used by the app.
 - **Schema** `ops`, no outbox (publishes nothing), no Redis keys of its own (the ops gateway uses `ogw:` for its limits and
   idempotency), no frames.
 
@@ -49,6 +49,8 @@ Built 2026-11-08 (Pasaka's decisions of that day; details made by the backend se
 | staff, audit, support accounts | ✓ | | |
 | fees and limits: read (`fees.read`) | ✓ | | ✓ |
 | fees and limits: change, fee bounds (`fees.manage`) | ✓ | | |
+| fee wallets: balances, destinations, withdrawals (`fees.wallet.read`) | ✓ | | ✓ |
+| fee wallets: add or remove a destination, withdraw (`fees.withdraw`) | ✓ | | |
 
 ## Endpoints (all under `/v1/ops`, on the ops gateway only)
 
@@ -111,6 +113,20 @@ Money exists on two networks, `MAINNET` and `TESTNET` (wallet.md → Networks). 
 - **`GET /users/{id}`** adds `networkAccess: [ { network, source, grantedBy, reason, at } ]`.
 - **`POST /users/{id}/network-access`** `{ network, enabled, reason }` → the user (with `networkAccess`). Permission `users.network` (ADMIN); audited as `user.network_access` (`grant TESTNET`, `revoke TESTNET`, with `(no change)` when nothing changed); `ops.reason_required` without a reason. Revoking never deletes a wallet or its funds.
 - **`GET /wallet/networks`** → `{ networks: [ { network, state, appId, defaultChain, chains: [ { blockchain, enabled, receiveEnabled, accountType, assets: [ { symbol, tokenAddress, decimals, usd } ] } ], version, custodyConfigured } ] }` and **`PUT /wallet/networks/{network}`** (the same object plus `reason`; `version` optional, a stale one answers `wallet.network_settings_changed`) → the network as saved. Permission `wallet.settings` (ADMIN) for both; the change is audited as `wallet_network.update` on target `wallet_network` with what changed (`v1→v2; state OFF→PREVIEW; added ARB`). The wallet's rules answer `wallet.network_settings_invalid` with the field. `custodyConfigured: false` means this server has no custody key for the network: it is off whatever `state` says. `tokenAddress` may be null or empty for a chain's own coin; `accountType` left out is `EOA` on Solana, `SCA` elsewhere.
-- **Permissions added**: `users.network` (ADMIN), `wallet.settings` (ADMIN), `fees.wallet.read` (ADMIN, FINANCE), `fees.withdraw` (ADMIN). The last two guard the fee-wallet routes, which are not built yet.
+- **Permissions added**: `users.network` (ADMIN), `wallet.settings` (ADMIN), `fees.wallet.read` (ADMIN, FINANCE), `fees.withdraw` (ADMIN). The last two guard the fee-wallet routes (below).
 - The ops gateway's CORS allows `GET, POST, PUT, PATCH, DELETE, OPTIONS`.
 
+## Fee wallets (decision 2026-11-18, built 2026-11-19)
+
+Circaso's fee wallets are the wallet's (wallet.md → Fee wallets): Circle developer-controlled wallets **this process creates itself when it starts** and checks every ten minutes. There is no create route and no button. The ops process is the only one that holds the entity secrets (`CIRCLE_ENTITY_SECRET`, `CIRCLE_MAINNET_ENTITY_SECRET`, read by integrations' `treasuryModule`, which only `OpsMain` loads), and so the only one that runs the wallet's two `OpsJob`s (`wallet.fee-wallets`, `wallet.fee-withdrawals`): `startOpsInfrastructure` runs each once at start-up and then on its interval under the scheduler's Redis lock. A missing secret or a failing Circle never stops the server.
+
+All under `/v1/ops/fee-wallets`, inside `networkFiltered { }`. Reads need `fees.wallet.read` (ADMIN, FINANCE); every write needs `fees.withdraw` (ADMIN) and an `Idempotency-Key` (the gateway's rule for every change).
+
+- **`GET /fee-wallets?network=MAINNET|TESTNET`** (`network` required: the answer is one network's) → `{ network, status: READY|NOT_CREATED|FAILED, reason?, destinationDelayHours, wallets: [ { blockchain, address, balances: [ { symbol, amountMinor, decimals } ], nativeBalance: { symbol, amountMinor, decimals } | null, balancesKnown, withdrawable, unavailableReason? } ] }`. Balances are read from Circle on each call. `balancesKnown: false` (no Circle wallet behind the address, or Circle is down): `balances` is empty and `nativeBalance` null, never a zero nobody measured. `nativeBalance` is the chain's own coin, which pays a withdrawal's network fee.
+- **`GET /fee-wallets/destinations?network=`** → `{ destinations: [ { id, network, blockchain, address, label, createdBy, createdById, createdAt, usableAt, usable } ] }`, newest first; without `network`, both. `createdBy` is the staff member's email.
+- **`POST /fee-wallets/destinations`** `{ network, blockchain, address, label, reason }` → the destination. Audited as `fee_destination.add` (`add MAINNET BASE 0x… (id), usable <instant>`).
+- **`DELETE /fee-wallets/destinations/{id}`** (`?reason=` optional) → the destination as it was. Audited as `fee_destination.remove` on the destination's id.
+- **`GET /fee-wallets/withdrawals?network=&cursor=&limit=`** → `{ items: [ { id, network, blockchain, asset, amountMinor, decimals, destination: { id, address, label }, state: PENDING|SENT|CONFIRMED|FAILED, txHash?, reason, failureReason?, by, byId, createdAt, updatedAt } ], nextCursor }`, newest first, at most 100 a page.
+- **`POST /fee-wallets/withdrawals`** `{ network, blockchain, asset, amountMinor, destinationId, reason }` → the withdrawal as it stands (`SENT`, or `PENDING` when Circle couldn't be reached: it is sent once, as soon as it can be). `amountMinor` is the whole amount in the coin's smallest unit **as text** (`"2500000"`), like every amount of the wallet's; a decimal, a sign or a JSON number is `request.malformed`. The request's `Idempotency-Key` is also the withdrawal's own key at the wallet. Audited as `fee_withdrawal.create` on the destination's id: the line is written before Circle is asked with what was asked (`MAINNET BASE 2500000 USDC (minor units) to destination <id>`), and finished with the outcome (`… to 0x… (label); withdrawal <id> SENT`) or the wallet's error code.
+
+Every write needs a `reason` (`ops.reason_required`), except removing a destination, where it is optional. Errors pass through from the wallet: `fees.destination_not_ready`, `fees.insufficient_balance`, `fees.insufficient_gas`, `fees.destination_not_found`, `fees.destination_exists`, `fees.destination_is_fee_wallet`, `fees.asset_unsupported`, `fees.withdrawals_unavailable`, `fees.withdrawal_refused`, `fees.custody_unavailable`, `fees.invalid`. Audit targets `fee_destination` and `fee_withdrawal`.

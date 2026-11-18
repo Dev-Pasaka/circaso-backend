@@ -11,6 +11,7 @@ import com.circaso.infrastructure.impl.database.installPostgres
 import com.circaso.infrastructure.impl.infrastructureModule
 import com.circaso.infrastructure.impl.startOpsInfrastructure
 import com.circaso.integrations.impl.integrationsModule
+import com.circaso.integrations.impl.treasuryModule
 import com.circaso.observability.impl.observabilityModule
 import com.circaso.opsgateway.installOpsGateway
 import com.circaso.opsgateway.opsGatewayModule
@@ -36,7 +37,9 @@ private const val STREAMS_CHECK = "streams"
  * The ops gateway's process (decision 2026-11-08, Pasaka: "separate endpoint, separate management, don't mix them
  * together"): the same image as the app, started with this main class, on its own port (`OPS_PORT`, default 8081) and
  * host. It runs the business modules (staff routes reach them through their contracts) and the ops gateway, and
- * nothing of the app gateway's edge: no app routes, no `/v1/ws`, no webhooks, no event consumers, no scheduled jobs.
+ * nothing of the app gateway's edge: no app routes, no `/v1/ws`, no webhooks, no event consumers, none of the app's
+ * scheduled jobs. It alone runs the modules' `OpsJob`s (the fee wallets: created at start-up, withdrawals followed),
+ * because it alone holds the fee wallets' signing secrets (decision 2026-11-18).
  * `./gradlew :app:runOps` serves it locally.
  */
 object OpsMain {
@@ -82,6 +85,8 @@ fun Application.circasoOpsServe(config: Config, secrets: Secrets) {
             observabilityModule,
             infrastructureModule(config, secrets),
             integrationsModule(config, secrets),
+            // The fee wallets' signing secrets, read here and nowhere in the app's processes (decision 2026-11-18).
+            treasuryModule(config, secrets),
             gatewayModule(config),
             opsGatewayModule(config, secrets),
         )

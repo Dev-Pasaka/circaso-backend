@@ -381,6 +381,58 @@ class CustodyUpdateTest {
         }
 
     @Test
+    fun `a fee wallet's own withdrawal is nobody's payment, with or without Circle's custody type`() =
+        runBlocking<Unit> {
+            val feeWallet =
+                h.walletOn(bob).copy(circleWalletId = "w-fee", address = FakeFeeConfig.FEE_WALLET)
+            val eventsBefore = (h.outbox as RecordingOutbox).written.size
+            val out = { state: CustodyTransactionState, refId: String ->
+                h.update(
+                    feeWallet,
+                    "",
+                    CustodyDirection.OUT,
+                    state,
+                    25_000_000,
+                    refId = refId,
+                    source = FakeFeeConfig.FEE_WALLET,
+                    destination = "0x00000000000000000000000000000000000000aa",
+                )
+            }
+
+            h
+                .applyUpdate(
+                    out(CustodyTransactionState.SUBMITTED, "circaso-fee-withdrawal:1").copy(developerWallet = true),
+                ).data()
+            h.applyUpdate(out(CustodyTransactionState.CONFIRMED, "circaso-fee-withdrawal:1")).data()
+            h.applyUpdate(out(CustodyTransactionState.FAILED, "")).data()
+
+            assertTrue(rows().isEmpty(), "no history row for anyone")
+            assertTrue(h.warnings.unknownWallets.isEmpty(), "and it isn't an unknown wallet's either")
+            assertEquals(eventsBefore, (h.outbox as RecordingOutbox).written.size, "and no event")
+        }
+
+    @Test
+    fun `a fee withdrawal that reaches a person's wallet is that person's incoming payment, once`() =
+        runBlocking<Unit> {
+            h.walletOn(bob)
+            val arrival =
+                h.update(
+                    h.walletOn(bob),
+                    h.circleUserOf(bob),
+                    CustodyDirection.IN,
+                    CustodyTransactionState.CONFIRMED,
+                    tenUsdc,
+                    circleTxId = "tx-fee-in",
+                    source = FakeFeeConfig.FEE_WALLET,
+                )
+
+            h.applyUpdate(arrival).data()
+            h.applyUpdate(arrival).data()
+
+            assertEquals(listOf(Direction.IN), rows().map { it.direction })
+        }
+
+    @Test
     fun `Circle being down while looking up an unknown wallet answers an error, so Circle delivers again`() =
         runBlocking<Unit> {
             h.create(bob).data()

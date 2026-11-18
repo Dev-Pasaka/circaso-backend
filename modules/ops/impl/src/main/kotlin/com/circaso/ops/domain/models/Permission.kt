@@ -50,10 +50,10 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     /** Reading and changing the wallet networks' settings: state, app id, chains and assets (2026-11-18). */
     WALLET_SETTINGS("wallet.settings", setOf(ADMIN)),
 
-    /** Circaso's fee wallets and their balances (2026-11-18; the routes arrive with the fee-wallet work). */
+    /** Circaso's fee wallets, their balances, the withdrawal destinations and the withdrawals (2026-11-18). */
     FEES_WALLET_READ("fees.wallet.read", setOf(ADMIN, FINANCE)),
 
-    /** Withdrawing collected fees to an allowed destination (2026-11-18; as above). */
+    /** Adding or removing a withdrawal destination, and withdrawing collected fees to one (2026-11-18). */
     FEES_WITHDRAW("fees.withdraw", setOf(ADMIN)),
     ;
 

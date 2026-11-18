@@ -161,6 +161,8 @@ internal data class TokenData(
     val tokenAddress: String = "",
     val symbol: String = "",
     val decimals: Int? = null,
+    /** True for the chain's own coin (ETH, POL), which has no contract. */
+    val isNative: Boolean = false,
 )
 
 @Serializable
@@ -248,3 +250,87 @@ internal data class NotificationFields(val notification: Map<String, JsonElement
 
 @Serializable
 internal data class NotificationKeyData(val publicKey: String = "")
+
+// Developer-controlled wallets: Circaso's own (the fee wallets), signed for with the entity secret (decision
+// 2026-11-18). Fields Circle must receive carry no default here: `circleJson` leaves a default value out.
+
+/** `GET /v1/w3s/config/entity/publicKey`. */
+@Serializable
+internal data class EntityPublicKeyData(val publicKey: String = "")
+
+/** `POST /v1/w3s/developer/walletSets`. */
+@Serializable
+internal data class CreateWalletSetBody(
+    override val idempotencyKey: String,
+    val entitySecretCiphertext: String,
+    val name: String,
+) : CircleWrite
+
+@Serializable
+internal data class WalletSetData(val walletSet: WalletSetPayload? = null)
+
+@Serializable
+internal data class WalletSetPayload(val id: String = "")
+
+/** `POST /v1/w3s/developer/wallets`: [count] wallets per chain; [metadata] has one entry per wallet. */
+@Serializable
+internal data class CreateDeveloperWalletsBody(
+    override val idempotencyKey: String,
+    val entitySecretCiphertext: String,
+    val walletSetId: String,
+    val blockchains: List<String>,
+    val count: Int,
+    val accountType: String,
+    val metadata: List<WalletMetadata>,
+) : CircleWrite
+
+@Serializable
+internal data class WalletMetadata(val name: String, val refId: String)
+
+/** `PUT /v1/w3s/developer/wallets/{id}/blockchains/{blockchain}`: no idempotency key and no ciphertext. */
+@Serializable
+internal data class DeriveWalletBody(val metadata: WalletMetadata)
+
+@Serializable
+internal data class DeveloperWalletData(val wallet: DeveloperWalletPayload? = null)
+
+@Serializable
+internal data class DeveloperWalletsData(val wallets: List<DeveloperWalletPayload> = emptyList())
+
+@Serializable
+internal data class DeveloperWalletPayload(
+    val id: String = "",
+    val address: String = "",
+    val blockchain: String = "",
+    val walletSetId: String = "",
+    val accountType: String = "",
+    val refId: String = "",
+    /** `DEVELOPER` for Circaso's own wallets, `ENDUSER` for a person's. */
+    val custodyType: String = "",
+)
+
+/** `POST /v1/w3s/developer/transactions/transfer`: the coin by Circle's token id, the amount as a decimal string. */
+@Serializable
+internal data class DeveloperTransferBody(
+    override val idempotencyKey: String,
+    val entitySecretCiphertext: String,
+    val walletId: String,
+    val tokenId: String,
+    val amounts: List<String>,
+    val destinationAddress: String,
+    val feeLevel: String,
+    val refId: String,
+) : CircleWrite
+
+/** What a created developer transaction answers: `{"id", "state"}` directly under `data`. */
+@Serializable
+internal data class DeveloperTransactionData(val id: String = "", val state: String = "")
+
+/** `POST /v1/w3s/transactions/transfer/estimateFee`: nothing is made, and no ciphertext is needed. */
+@Serializable
+internal data class EstimateTransferBody(
+    val walletId: String,
+    val tokenId: String,
+    val amounts: List<String>,
+    val destinationAddress: String,
+)

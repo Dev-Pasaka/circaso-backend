@@ -42,8 +42,10 @@ class CustodyUpdates(
     private val custody: StablecoinCustody? = null,
 ) {
     suspend fun apply(update: CustodyTransaction): Resource<Unit> {
-        // Circaso's own wallets (the fee wallets): their legs are settled by the payment's own update.
-        if (update.developerWallet) return Resource.success(Unit)
+        // Circaso's own wallets (the fee wallets): their legs are settled by the payment's own update, and what
+        // leaves them is a staff withdrawal, followed in `fee_withdrawals` by the ops server (2026-11-18), never
+        // anyone's payment.
+        if (update.developerWallet || isFeeWithdrawal(update)) return Resource.success(Unit)
         val change = changeOf(update)
         val next = stateOf(update.state)
         if (update.operation == CustodyOperation.CONTRACT_EXECUTION) return applyExecution(update, next, change)
@@ -122,6 +124,17 @@ class CustodyUpdates(
         update.direction == CustodyDirection.IN &&
             feeConfig?.feeAddress(update.blockchain)?.let { Addresses.normalise(it) } ==
             Addresses.normalise(update.destinationAddress)
+
+    /**
+     * A fee wallet's own outgoing transfer, told apart without Circle's `custodyType` (a webhook may leave it out): by
+     * the `refId` a withdrawal is sent with, or by leaving the chain's fee address.
+     */
+    private fun isFeeWithdrawal(update: CustodyTransaction): Boolean {
+        if (update.direction != CustodyDirection.OUT) return false
+        if (update.refId.startsWith(FeeWithdrawals.REF_PREFIX)) return true
+        val fee = feeConfig?.feeAddress(update.blockchain)?.let { Addresses.normalise(it) } ?: return false
+        return update.sourceAddress.isNotEmpty() && Addresses.normalise(update.sourceAddress) == fee
+    }
 
     private fun changeOf(update: CustodyTransaction): TransferChange {
         val failed = stateOf(update.state) == TransferState.FAILED

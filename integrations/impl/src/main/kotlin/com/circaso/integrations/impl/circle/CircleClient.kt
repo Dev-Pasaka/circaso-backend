@@ -46,8 +46,12 @@ internal class CircleClient(private val http: HttpClient, private val apiKey: St
         return exchange(method, path, operation, userToken, written, serializer<R>())
     }
 
-    /** A body already encoded, with the key it carries. */
-    class WrittenBody(val idempotencyKey: String, val text: String)
+    /**
+     * A body already encoded, with the key it carries. [repeatable] false keeps the `Idempotency-Key` header off, so
+     * the shared client never sends the same bytes twice after a timeout: a body with an entity secret ciphertext is
+     * single-use (Circle refuses a ciphertext it has seen), and its caller repeats it with a fresh one instead.
+     */
+    class WrittenBody(val idempotencyKey: String, val text: String, val repeatable: Boolean = true)
 
     suspend fun <R> exchange(
         method: HttpMethod,
@@ -64,7 +68,7 @@ internal class CircleClient(private val http: HttpClient, private val apiKey: St
                     operation(operation)
                     authorize(userToken)
                     body?.let {
-                        header(IDEMPOTENCY_KEY_HEADER, it.idempotencyKey)
+                        if (it.repeatable) header(IDEMPOTENCY_KEY_HEADER, it.idempotencyKey)
                         contentType(ContentType.Application.Json)
                         setBody(it.text)
                     }
