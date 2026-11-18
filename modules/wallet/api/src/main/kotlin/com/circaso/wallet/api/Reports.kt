@@ -1,6 +1,7 @@
 package com.circaso.wallet.api
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import java.math.BigInteger
@@ -26,7 +27,9 @@ data class OpsChainWallet(
     val address: String,
     val state: String,
     val balances: List<OpsBalance>,
-)
+) {
+    val network: Network get() = Network.ofChain(blockchain)
+}
 
 /**
  * A holder's wallets and balances, read from Circle (the source of truth for balances) through the wallet's short
@@ -74,7 +77,9 @@ data class OpsTransfer(
     val toGroupId: ChatId? = null,
     val feeAddress: String? = null,
     val toFeeWallet: Boolean = false,
-)
+) {
+    val network: Network get() = Network.ofChain(blockchain)
+}
 
 /** Every field optional; [from] inclusive, [to] exclusive, on the transfer's creation time. */
 data class TransferFilter(
@@ -84,6 +89,8 @@ data class TransferFilter(
     val userId: UserId? = null,
     val from: Instant? = null,
     val to: Instant? = null,
+    /** Only this network's transfers; null for both (2026-11-18). */
+    val network: Network? = null,
 )
 
 data class TransferPage(val items: List<OpsTransfer>, val nextCursor: String?)
@@ -93,6 +100,16 @@ enum class ReportBucket { DAY, WEEK, MONTH }
 /** One period (its first UTC day) of confirmed transfers: how many, their dollar weight, and the fees collected. */
 data class PeriodTotals(
     val period: LocalDate,
+    val count: Long,
+    val volumeUsdMicros: Long,
+    val feesUsdMicros: Long,
+    /** The network these totals are for: a period has one row per network asked for, never the two added up. */
+    val network: Network = Network.TESTNET,
+)
+
+/** One network's totals over the report's range (2026-11-18). */
+data class NetworkTotals(
+    val network: Network,
     val count: Long,
     val volumeUsdMicros: Long,
     val feesUsdMicros: Long,
@@ -107,7 +124,9 @@ data class ChainAssetTotals(
     val decimals: Int,
     val volumeUsdMicros: Long,
     val feesUsdMicros: Long,
-)
+) {
+    val network: Network get() = Network.ofChain(blockchain)
+}
 
 /**
  * Platform money over a range. Only `CONFIRMED` transfers count; the volume is each transfer's dollar weight (amount
@@ -120,6 +139,8 @@ data class FinanceReport(
     val count: Long,
     val volumeUsdMicros: Long,
     val feesUsdMicros: Long,
+    /** The totals per network asked for (2026-11-18); the three figures above add them up only when both were. */
+    val byNetwork: List<NetworkTotals> = emptyList(),
 )
 
 /** A group's wallet: [walletId] is also its holder id for [WalletReports.holdings]; [signerId] the one who signs. */
@@ -128,25 +149,27 @@ data class GroupWalletRef(
     val walletId: UUID,
     val signerId: UserId,
     val createdAt: Instant,
+    val network: Network = Network.TESTNET,
 )
 
 data class GroupWalletPage(val items: List<GroupWalletRef>, val nextCursor: String?)
 
+/**
+ * The wallet's staff reads. Every one takes an optional `network` (2026-11-18): only that network's rows, or both
+ * networks' when null. Rows carry their network, and no figure adds the two up unless both were asked for.
+ */
 interface WalletReports {
-    /** A person's wallet ([holderId] = their user id) or a group's ([GroupWalletRef.walletId]). */
-    suspend fun holdings(holderId: UUID): Resource<OpsHoldings>
+    suspend fun holdings(holderId: UUID, network: Network? = null): Resource<OpsHoldings>
 
-    /** Transfers [userId] sent or received, newest first. Error: `request.malformed` for a bad cursor. [limit] 1-200. */
     suspend fun transfersOf(
         userId: UserId,
         cursor: String?,
         limit: Int,
+        network: Network? = null,
     ): Resource<TransferPage>
 
-    /** Fees [userId] paid on collected fee legs, all time, in micro-dollars. */
-    suspend fun feesPaidBy(userId: UserId): Long
+    suspend fun feesPaidBy(userId: UserId, network: Network? = null): Long
 
-    /** Every transfer matching [filter], newest first. Same paging. */
     suspend fun transfers(
         filter: TransferFilter,
         cursor: String?,
@@ -155,18 +178,25 @@ interface WalletReports {
 
     suspend fun transfer(transferId: TransferId): OpsTransfer?
 
-    /** [from] inclusive, [to] exclusive; at most 366 days. */
     suspend fun report(
         from: Instant,
         to: Instant,
         bucket: ReportBucket,
+        network: Network? = null,
     ): FinanceReport
 
-    suspend fun groupWalletCount(): Long
+    suspend fun groupWalletCount(network: Network? = null): Long
 
-    /** Group wallets, newest first. Same paging. */
-    suspend fun groupWallets(cursor: String?, limit: Int): Resource<GroupWalletPage>
+    suspend fun groupWallets(
+        cursor: String?,
+        limit: Int,
+        network: Network? = null,
+    ): Resource<GroupWalletPage>
 
-    /** The wallets of those of [chatIds] that have one. */
-    suspend fun groupWalletsOf(chatIds: Set<ChatId>): Map<ChatId, GroupWalletRef>
+    /** Each group's wallet on [network]; with no network, its mainnet wallet when it has one, else its testnet one. */
+    suspend fun groupWalletsOf(chatIds: Set<ChatId>, network: Network? = null): Map<ChatId, GroupWalletRef>
+
+    /** Every wallet each group has on the networks asked for, mainnet first. */
+    suspend fun groupWalletsIn(chatIds: Set<ChatId>, network: Network? = null): Map<ChatId, List<GroupWalletRef>> =
+        groupWalletsOf(chatIds, network).mapValues { listOf(it.value) }
 }

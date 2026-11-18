@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.data.tables.TransactionsTable
 import com.circaso.wallet.domain.models.Direction
@@ -93,10 +94,11 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
 
     override suspend fun parties(since: Instant, limit: Int): List<UserId> =
         database.tx("transactions.parties") {
+            val network = currentNetwork().name
             val owners =
                 TransactionsTable
                     .select(TransactionsTable.userId)
-                    .where { TransactionsTable.occurredAt greaterEq since }
+                    .where { (TransactionsTable.occurredAt greaterEq since) and (TransactionsTable.network eq network) }
                     .withDistinct()
                     .limit(limit)
                     .map { UserId(it[TransactionsTable.userId]) }
@@ -105,7 +107,9 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                 TransactionsTable
                     .select(TransactionsTable.counterpartyId)
                     .where {
-                        (TransactionsTable.occurredAt greaterEq since) and TransactionsTable.counterpartyId.isNotNull()
+                        (TransactionsTable.occurredAt greaterEq since) and
+                            (TransactionsTable.network eq network) and
+                            TransactionsTable.counterpartyId.isNotNull()
                     }.withDistinct()
                     .limit(limit)
                     .mapNotNull { row -> row[TransactionsTable.counterpartyId]?.let(::UserId) }
@@ -129,11 +133,13 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
     ): List<WalletTransaction> {
         if (states.isEmpty()) return emptyList()
         return database.tx("transactions.history") {
+            val network = currentNetwork().name
             TransactionsTable
                 .selectAll()
                 .where {
                     var where =
                         (TransactionsTable.userId eq userId.value) and
+                            (TransactionsTable.network eq network) and
                             (TransactionsTable.state inList states.map { it.name })
                     from?.let { where = where and (TransactionsTable.occurredAt greaterEq it) }
                     until?.let { where = where and (TransactionsTable.occurredAt less it) }
@@ -149,10 +155,14 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
 
     override suspend fun find(userId: UserId, id: UUID): WalletTransaction? =
         database.tx("transactions.find") {
+            val network = currentNetwork().name
             TransactionsTable
                 .selectAll()
-                .where { (TransactionsTable.id eq id) and (TransactionsTable.userId eq userId.value) }
-                .map { it.toTransaction() }
+                .where {
+                    (TransactionsTable.id eq id) and
+                        (TransactionsTable.userId eq userId.value) and
+                        (TransactionsTable.network eq network)
+                }.map { it.toTransaction() }
                 .singleOrNull()
         }
 

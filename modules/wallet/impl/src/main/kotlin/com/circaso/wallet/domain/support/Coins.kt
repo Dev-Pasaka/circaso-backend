@@ -187,7 +187,8 @@ class PaymentCoins(
         if (requested.whole?.let { it.signum() <= 0 } == true) return Resource.error(WalletError.AmountInvalid)
         val chain = sender.wallet.blockchain
         val offered =
-            custody.supported
+            custody
+                .chains()
                 .find(chain)
                 ?.assets
                 ?.firstOrNull { it.symbol == requested.symbol }
@@ -224,7 +225,7 @@ class PaymentCoins(
         val trusted =
             lines.firstNotNullOfOrNull { line ->
                 CoinTrust
-                    .priceKey(custody.supported, chain, line.symbol, line.tokenAddress, line.usdPegged)
+                    .priceKey(custody.chains(), chain, line.symbol, line.tokenAddress, line.usdPegged)
                     ?.let { key -> line to key }
             } ?: return Resource.error(WalletError.AssetUnpriced)
         val (line, key) = trusted

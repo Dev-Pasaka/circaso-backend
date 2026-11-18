@@ -43,6 +43,18 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     SUPPORT_ACCOUNTS_MANAGE("support_accounts.manage", setOf(ADMIN)),
     FEES_READ("fees.read", setOf(ADMIN, FINANCE)),
     FEES_MANAGE("fees.manage", setOf(ADMIN)),
+
+    /** Granting or revoking a person's access to a wallet network (2026-11-18). */
+    USERS_NETWORK("users.network", setOf(ADMIN)),
+
+    /** Reading and changing the wallet networks' settings: state, app id, chains and assets (2026-11-18). */
+    WALLET_SETTINGS("wallet.settings", setOf(ADMIN)),
+
+    /** Circaso's fee wallets and their balances (2026-11-18; the routes arrive with the fee-wallet work). */
+    FEES_WALLET_READ("fees.wallet.read", setOf(ADMIN, FINANCE)),
+
+    /** Withdrawing collected fees to an allowed destination (2026-11-18; as above). */
+    FEES_WITHDRAW("fees.withdraw", setOf(ADMIN)),
     ;
 
     fun allows(role: StaffRole): Boolean = role in roles

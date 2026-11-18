@@ -6,11 +6,14 @@ import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.CustodyTransaction
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.Network
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.RealtimeReplay
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.WalletNetwork
 import com.circaso.shared.getOrNull
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.GroupWalletSummary
 import com.circaso.wallet.api.SpaceWalletSummary
 import com.circaso.wallet.api.TransferId
@@ -18,6 +21,7 @@ import com.circaso.wallet.api.TransferSummary
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.Wallets
 import com.circaso.wallet.presentation.services.WalletDirectoryService
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /** wallet:api for the assistant later. Every call goes through a service, like any other way in. */
@@ -28,8 +32,9 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
 
     override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = directory.groupWallet(chatId)
 
+    /** The chain says which of the person's two wallets is meant (2026-11-18), whatever the caller's network. */
     override suspend fun depositAddress(userId: UserId, blockchain: String): String? =
-        directory.depositAddress(userId, blockchain)
+        withContext(WalletNetwork(Network.ofChain(blockchain))) { directory.depositAddress(userId, blockchain) }
 
     override suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = directory.spaceWallet(spaceId)
 
@@ -43,7 +48,17 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
  * 2026-10-28), with its own `wallet.funds_remaining`, which reaches the app as is.
  */
 class WalletDeletionGuard(private val directory: WalletDirectoryService) : DeletionGuard {
-    override suspend fun canDelete(userId: UserId): Resource<Unit> = directory.canDelete(userId)
+    /**
+     * Both networks are checked (decision 2026-11-18): a person may hold money on either, and the first refusal is
+     * the answer. A network they never had a wallet on answers at once, without asking Circle.
+     */
+    override suspend fun canDelete(userId: UserId): Resource<Unit> {
+        for (network in Network.entries) {
+            val checked = withContext(WalletNetwork(network)) { directory.canDelete(userId) }
+            if (checked is Resource.Error) return checked
+        }
+        return Resource.success(Unit)
+    }
 }
 
 /**
@@ -51,7 +66,14 @@ class WalletDeletionGuard(private val directory: WalletDirectoryService) : Delet
  * error makes Circle deliver it again.
  */
 class WalletCustodyNotifications(private val directory: WalletDirectoryService) : CustodyNotifications {
-    override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> = directory.onTransaction(update)
+    /**
+     * Circle's webhook names the network of the account it came through; an update handed over without one (the dev
+     * custody, a test) is on the network its chain belongs to.
+     */
+    override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> {
+        val network = networkFilter() ?: Network.ofChain(update.blockchain)
+        return withContext(WalletNetwork(network)) { directory.onTransaction(update) }
+    }
 
     override suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> =
         directory.onWalletChallenge(challenge)

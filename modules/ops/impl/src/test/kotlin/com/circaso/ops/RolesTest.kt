@@ -10,6 +10,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -62,6 +63,22 @@ class RolesTest {
             Call("GET", "/v1/ops/users/$user/transfers", Permission.USERS_MONEY),
             Call("POST", "/v1/ops/users/$user/suspend", Permission.USERS_SUSPEND, """{"reason":"fraud report"}"""),
             Call("POST", "/v1/ops/users/$user/unsuspend", Permission.USERS_SUSPEND, """{"reason":"cleared"}"""),
+            Call(
+                "POST",
+                "/v1/ops/users/$user/network-access",
+                Permission.USERS_NETWORK,
+                """{"network":"TESTNET","enabled":true,"reason":"pilot tester"}""",
+            ),
+            Call("GET", "/v1/ops/wallet/networks", Permission.WALLET_SETTINGS),
+            Call(
+                "PUT",
+                "/v1/ops/wallet/networks/MAINNET",
+                Permission.WALLET_SETTINGS,
+                """{"state":"OFF","defaultChain":"BASE","chains":[{"blockchain":"BASE","assets":""" +
+                    """[{"symbol":"USDC","tokenAddress":null,"decimals":6,"usd":true}]}],"reason":"first settings"}""",
+            ),
+            Call("GET", "/v1/ops/transactions?network=MAINNET", Permission.TRANSACTIONS_READ),
+            Call("GET", "/v1/ops/finance?network=TESTNET", Permission.FINANCE_READ),
             Call("GET", "/v1/ops/transactions", Permission.TRANSACTIONS_READ),
             Call("GET", "/v1/ops/transactions/$transfer", Permission.TRANSACTIONS_READ),
             Call("GET", "/v1/ops/finance", Permission.FINANCE_READ),
@@ -117,6 +134,7 @@ class RolesTest {
         return when (call.method) {
             "GET" -> client.get(call.path, build)
             "POST" -> client.post(call.path, build)
+            "PUT" -> client.put(call.path, build)
             else -> client.patch(call.path, build)
         }
     }

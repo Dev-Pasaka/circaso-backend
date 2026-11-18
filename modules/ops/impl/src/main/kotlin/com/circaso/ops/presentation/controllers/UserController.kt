@@ -4,6 +4,7 @@ import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.presentation.dto.GroupListResponse
 import com.circaso.ops.presentation.dto.HoldingsResponse
+import com.circaso.ops.presentation.dto.NetworkAccessRequest
 import com.circaso.ops.presentation.dto.PendingSignUpsDeletedResponse
 import com.circaso.ops.presentation.dto.PendingSignUpsResponse
 import com.circaso.ops.presentation.dto.ReasonRequest
@@ -17,14 +18,18 @@ import com.circaso.ops.presentation.mappers.MALFORMED
 import com.circaso.ops.presentation.mappers.PAGED
 import com.circaso.ops.presentation.mappers.TAG_USERS
 import com.circaso.ops.presentation.mappers.actor
+import com.circaso.ops.presentation.mappers.malformed
 import com.circaso.ops.presentation.mappers.pageLimit
+import com.circaso.ops.presentation.mappers.parseEnum
 import com.circaso.ops.presentation.mappers.parseUserId
 import com.circaso.ops.presentation.mappers.query
 import com.circaso.ops.presentation.mappers.roles
 import com.circaso.ops.presentation.mappers.toDto
 import com.circaso.ops.presentation.mappers.toResponse
 import com.circaso.ops.presentation.services.MoneyService
+import com.circaso.ops.presentation.services.NetworkService
 import com.circaso.ops.presentation.services.UserService
+import com.circaso.shared.Network
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
 import com.circaso.web.docs
@@ -44,6 +49,7 @@ fun Route.userController(
     users: UserService,
     money: MoneyService,
     settings: OpsSettings,
+    networks: NetworkService,
 ) {
     route("/ops/users") {
         staffOnly(Permission.USERS_READ.roles) {
@@ -100,13 +106,13 @@ fun Route.userController(
             )
         }
         route("/{userId}") {
-            accountRoutes(users)
+            accountRoutes(users, networks)
             moneyRoutes(money, settings)
         }
     }
 }
 
-private fun Route.accountRoutes(users: UserService) {
+private fun Route.accountRoutes(users: UserService, networks: NetworkService) {
     staffOnly(Permission.USERS_READ.roles) {
         get {
             val result = parseUserId(call.parameters["userId"]).flatMap { users.account(it) }
@@ -143,6 +149,32 @@ private fun Route.accountRoutes(users: UserService) {
             TAG_USERS,
             listOf(NOT_FOUND, FORBIDDEN),
             roles("SUPPORT", "ADMIN"),
+        )
+    }
+    staffOnly(Permission.USERS_NETWORK.roles) {
+        post("network-access") {
+            val request = call.receive<NetworkAccessRequest>()
+            val result =
+                parseUserId(call.parameters["userId"]).flatMap { userId ->
+                    parseEnum<Network>(request.network, "network").flatMap { network ->
+                        if (network == null) {
+                            malformed("network", "must be MAINNET or TESTNET")
+                        } else {
+                            networks.setAccess(call.actor(), userId, network, request.enabled, request.reason)
+                        }
+                    }
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NetworkAccessRequest, UserAccountResponse>(
+            "OPS · Grant or revoke a person's access to a wallet network",
+            TAG_USERS,
+            listOf("ops.reason_required", NOT_FOUND, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("ADMIN")} Audited (`user.network_access`) with the reason. A TESTNET grant gives the person " +
+                    "the app's Mainnet | Testnet switch; their testnet wallet is created when they first switch to " +
+                    "it. A MAINNET grant lets them in while mainnet is in PREVIEW. Revoking hides the network; it " +
+                    "never deletes a wallet or its funds, and granting again brings the same wallet back. Answers " +
+                    "the person, with `networkAccess`.",
         )
     }
     staffOnly(Permission.USERS_SUSPEND.roles) {

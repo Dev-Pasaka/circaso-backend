@@ -1,6 +1,7 @@
 package com.circaso.wallet.domain.models
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.WalletOwnerType
@@ -35,6 +36,8 @@ sealed interface WalletOwner {
         override val signerId: UserId,
         val createdBy: UserId,
         val createdAt: Instant,
+        /** The network this wallet is on, as stored (2026-11-18): a group has one wallet per network. */
+        val network: Network = Network.TESTNET,
     ) : WalletOwner {
         override val type get() = WalletOwnerType.GROUP
     }

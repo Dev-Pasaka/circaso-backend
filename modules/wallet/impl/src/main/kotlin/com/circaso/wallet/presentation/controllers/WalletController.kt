@@ -22,11 +22,12 @@ import com.circaso.wallet.presentation.mappers.walletIdOf
 import com.circaso.wallet.presentation.mappers.walletQuery
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
+import com.circaso.web.walletNetwork
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
@@ -41,11 +42,13 @@ private const val CUSTODY = "wallet.custody_unavailable"
 /** The wallet itself (W1–W3) and the chains it is on (W12). */
 fun Route.walletController(wallets: WalletService) {
     route("/wallet") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get {
                 val parameters = call.request.queryParameters
                 val result = walletQuery(call.principal().userId, parameters["currency"], parameters["walletId"])
-                call.respondDefault(result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse() })
+                call.respondDefault(
+                    result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse(call.walletNetwork()) },
+                )
             }.docs<NoBody, WalletResponse>(
                 "W1 · Your wallet: status, each chain with its address and assets, totals, and the fiat value",
                 TAG,
@@ -192,7 +195,7 @@ fun Route.walletController(wallets: WalletService) {
                 get {
                     val userId = call.principal().userId
                     val result = groupIdOf(call.parameters["chatId"]).flatMap { wallets.groupWallet(userId, it) }
-                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                    call.respondDefault(result.toDefaultResponse { it.toResponse(call.walletNetwork()) })
                 }.docs<NoBody, GroupWalletResponse>(
                     "W15 · The group's wallet: none, being set up, or active",
                     TAG,
@@ -209,10 +212,10 @@ fun Route.walletController(wallets: WalletService) {
     }
 
     route("/wallets") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get {
                 val result = wallets.wallets(call.principal().userId)
-                call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                call.respondDefault(result.toDefaultResponse { it.toResponse(call.walletNetwork()) })
             }.docs<NoBody, WalletsResponse>(
                 "W16 · Every wallet you can see: yours, then your groups'",
                 TAG,

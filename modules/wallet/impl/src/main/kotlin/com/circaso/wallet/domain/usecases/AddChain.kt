@@ -50,7 +50,7 @@ class AddChain(
                 is Resource.Success -> request.copy(userId = access.data.owner.holder)
                 is Resource.Error -> return access
             }
-        val chain = custody.supported.find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
+        val chain = custody.chains().find(command.blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(command.userId) ?: return Resource.error(WalletError.NotFound)
 
         if (wallets.wallets(command.userId).isOn(command.blockchain)) return Resource.success(enabled(command))

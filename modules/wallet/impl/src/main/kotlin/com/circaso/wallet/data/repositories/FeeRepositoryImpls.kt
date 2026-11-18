@@ -1,6 +1,7 @@
 package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
@@ -67,6 +68,7 @@ internal fun ResultRow.toFeeRule() =
         senderType = ownerType(this[FeeRulesTable.senderType]),
         receiverType = ownerType(this[FeeRulesTable.receiverType]),
         blockchain = this[FeeRulesTable.blockchain],
+        network = this[FeeRulesTable.network]?.let(Network::valueOf),
         asset = asset(this[FeeRulesTable.asset]),
         walletId = this[FeeRulesTable.walletId]?.let(::WalletId),
         rateBps = this[FeeRulesTable.rateBps],
@@ -95,6 +97,7 @@ internal fun ResultRow.toLimitRule() =
         effectiveTo = this[LimitRulesTable.effectiveTo],
         note = this[LimitRulesTable.note],
         createdAt = this[LimitRulesTable.createdAt],
+        network = this[LimitRulesTable.network]?.let(Network::valueOf),
     )
 
 /** `fee_rules` and `limit_rules`: small tables read whole; the domain picks the versions in force. */

@@ -74,6 +74,7 @@ class RuleAdminRepositoryImpl(private val database: Database) : RuleAdminReposit
                     it[senderType] = rule.senderType?.name
                     it[receiverType] = rule.receiverType?.name
                     it[blockchain] = rule.blockchain
+                    it[network] = rule.network?.name
                     it[asset] = rule.asset
                     it[walletId] = rule.walletId?.value
                     it[rateBps] = rule.rateBps
@@ -145,6 +146,7 @@ class RuleAdminRepositoryImpl(private val database: Database) : RuleAdminReposit
                     it[ownerType] = rule.ownerType?.name
                     it[walletId] = rule.walletId?.value
                     it[asset] = rule.asset
+                    it[network] = rule.network?.name
                     it[perPaymentMaxUsd] = rule.perPaymentMaxMinor?.toDollars()
                     it[dailyMaxUsd] = rule.dailyMaxMinor?.toDollars()
                     it[windowHours] = rule.window.toHours().toInt()

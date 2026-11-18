@@ -26,6 +26,7 @@ import com.circaso.ops.domain.repositories.AuditRepository
 import com.circaso.ops.domain.repositories.StaffRepository
 import com.circaso.shared.DomainError
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -48,7 +49,12 @@ import com.circaso.users.api.ProfileIdPage
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.GroupWalletPage
 import com.circaso.wallet.api.GroupWalletRef
+import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.api.OpsHoldings
+import com.circaso.wallet.api.OpsNetworkAccess
+import com.circaso.wallet.api.OpsNetworkAccessChange
+import com.circaso.wallet.api.OpsNetworkSettings
+import com.circaso.wallet.api.OpsNetworkSettingsChange
 import com.circaso.wallet.api.OpsTransfer
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.TransferFilter
@@ -203,8 +209,12 @@ class FakeWallets : WalletReports {
     val holdingsAsked = CopyOnWriteArrayList<UUID>()
     val transfers = CopyOnWriteArrayList<OpsTransfer>()
 
-    override suspend fun holdings(holderId: UUID): Resource<OpsHoldings> {
+    /** The `network` each read was asked for, in order (null: both). */
+    val networksAsked = CopyOnWriteArrayList<Network?>()
+
+    override suspend fun holdings(holderId: UUID, network: Network?): Resource<OpsHoldings> {
         holdingsAsked += holderId
+        networksAsked += network
         return Resource.success(OpsHoldings(true, emptyList(), 0, true))
     }
 
@@ -212,17 +222,25 @@ class FakeWallets : WalletReports {
         userId: UserId,
         cursor: String?,
         limit: Int,
+        network: Network?,
     ) = Resource.success(
-        TransferPage(transfers.filter { it.senderId == userId || it.recipientId == userId }, null),
+        TransferPage(
+            transfers.filter {
+                (it.senderId == userId || it.recipientId == userId) && (network == null || it.network == network)
+            },
+            null,
+        ),
     )
 
-    override suspend fun feesPaidBy(userId: UserId) = 0L
+    override suspend fun feesPaidBy(userId: UserId, network: Network?) = 0L
 
     override suspend fun transfers(
         filter: TransferFilter,
         cursor: String?,
         limit: Int,
-    ) = Resource.success(TransferPage(transfers.toList(), null))
+    ) = Resource.success(
+        TransferPage(transfers.filter { filter.network == null || it.network == filter.network }, null),
+    )
 
     override suspend fun transfer(transferId: TransferId): OpsTransfer? =
         transfers.firstOrNull {
@@ -234,14 +252,22 @@ class FakeWallets : WalletReports {
         from: Instant,
         to: Instant,
         bucket: ReportBucket,
-    ) = FinanceReport(emptyList(), emptyList(), 0, 0, 0)
+        network: Network?,
+    ): FinanceReport {
+        networksAsked += network
+        return FinanceReport(emptyList(), emptyList(), 0, 0, 0)
+    }
 
-    override suspend fun groupWalletCount() = wallets.size.toLong()
+    override suspend fun groupWalletCount(network: Network?) = wallets.size.toLong()
 
-    override suspend fun groupWallets(cursor: String?, limit: Int) =
-        Resource.success(GroupWalletPage(wallets.values.toList(), null))
+    override suspend fun groupWallets(
+        cursor: String?,
+        limit: Int,
+        network: Network?,
+    ) = Resource.success(GroupWalletPage(wallets.values.toList(), null))
 
-    override suspend fun groupWalletsOf(chatIds: Set<ChatId>) = wallets.filterKeys { it in chatIds }
+    override suspend fun groupWalletsOf(chatIds: Set<ChatId>, network: Network?) =
+        wallets.filterKeys { it in chatIds }.filterValues { network == null || it.network == network }
 }
 
 class FakeDesk : SupportDesk {
@@ -409,4 +435,54 @@ class MemoryAudit : AuditRepository {
             .filter {
                 it.action == action && it.targetId == targetId && it.outcome == AuditOutcome.SUCCEEDED
             }.maxByOrNull { it.id }
+}
+
+/** The wallet's networks contract in memory: access rows per person, and settings that take whatever is saved. */
+class FakeNetworks : NetworkAdmin {
+    val rows = ConcurrentHashMap<UserId, List<OpsNetworkAccess>>()
+    val saved = CopyOnWriteArrayList<OpsNetworkSettings>()
+
+    @Volatile
+    var refusal: DomainError? = null
+
+    var current: List<OpsNetworkSettings> =
+        listOf(
+            OpsNetworkSettings(Network.MAINNET, "OFF", "", "BASE", emptyList(), version = 1),
+            OpsNetworkSettings(Network.TESTNET, "ON", "app", "BASE-SEPOLIA", emptyList(), version = 1),
+        )
+
+    override suspend fun access(userId: UserId) = rows[userId].orEmpty()
+
+    override suspend fun setAccess(
+        userId: UserId,
+        network: Network,
+        enabled: Boolean,
+        by: UUID,
+        reason: String,
+    ): OpsNetworkAccessChange {
+        val before = rows[userId].orEmpty()
+        val after =
+            if (enabled) {
+                if (before.any { it.network == network }) {
+                    before
+                } else {
+                    before + OpsNetworkAccess(network, "ADMIN", by, reason, Instant.parse("2026-11-18T00:00:00Z"))
+                }
+            } else {
+                before.filterNot { it.network == network }
+            }
+        rows[userId] = after
+        return OpsNetworkAccessChange(after, changed = after != before)
+    }
+
+    override suspend fun settings() = current
+
+    override suspend fun updateSettings(settings: OpsNetworkSettings, by: UUID): Resource<OpsNetworkSettingsChange> {
+        refusal?.let { return Resource.error(it) }
+        val before = current.first { it.network == settings.network }
+        val after = settings.copy(version = (before.version ?: 0) + 1)
+        saved += settings
+        current = current.map { if (it.network == settings.network) after else it }
+        return Resource.success(OpsNetworkSettingsChange(before, after))
+    }
 }

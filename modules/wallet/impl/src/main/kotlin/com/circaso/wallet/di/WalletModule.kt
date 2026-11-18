@@ -8,9 +8,13 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodySetups
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
+import com.circaso.shared.WalletNetworkGate
 import com.circaso.wallet.api.FeeAdmin
+import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.WalletReports
 import com.circaso.wallet.api.Wallets
@@ -29,9 +33,12 @@ import com.circaso.wallet.data.repositories.DatabaseTransactor
 import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
+import com.circaso.wallet.data.repositories.NetworkAccessRepositoryImpl
+import com.circaso.wallet.data.repositories.NetworkSettingsRepositoryImpl
 import com.circaso.wallet.data.repositories.PaymentHoldsImpl
 import com.circaso.wallet.data.repositories.RuleAdminRepositoryImpl
 import com.circaso.wallet.data.repositories.RuleRepositoryImpl
+import com.circaso.wallet.data.repositories.StoredFees
 import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
 import com.circaso.wallet.data.repositories.TransferRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletExpiry
@@ -39,12 +46,17 @@ import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletOwnerRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletReportRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
+import com.circaso.wallet.data.tables.ChainFeesTable
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.FeeBoundsTable
 import com.circaso.wallet.data.tables.FeeLedgerTable
 import com.circaso.wallet.data.tables.FeeQuotesTable
 import com.circaso.wallet.data.tables.FeeRulesTable
 import com.circaso.wallet.data.tables.LimitRulesTable
+import com.circaso.wallet.data.tables.NetworkAccessTable
+import com.circaso.wallet.data.tables.NetworkAssetsTable
+import com.circaso.wallet.data.tables.NetworkChainsTable
+import com.circaso.wallet.data.tables.NetworkSettingsTable
 import com.circaso.wallet.data.tables.PaymentHoldsTable
 import com.circaso.wallet.data.tables.RealtimeTable
 import com.circaso.wallet.data.tables.TransactionsTable
@@ -70,6 +82,8 @@ import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.CoinIconRepository
 import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.NetworkAccessRepository
+import com.circaso.wallet.domain.repositories.NetworkSettingsRepository
 import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
@@ -91,7 +105,9 @@ import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
+import com.circaso.wallet.domain.support.NetworkAccess
 import com.circaso.wallet.domain.support.NetworkCosts
+import com.circaso.wallet.domain.support.Networks
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
@@ -135,6 +151,8 @@ import com.circaso.wallet.domain.usecases.FindGroupWallets
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
 import com.circaso.wallet.domain.usecases.GetCoinIcon
 import com.circaso.wallet.domain.usecases.GetGroupWallet
+import com.circaso.wallet.domain.usecases.GetNetworkAccess
+import com.circaso.wallet.domain.usecases.GetNetworkSettings
 import com.circaso.wallet.domain.usecases.GetSpaceWallet
 import com.circaso.wallet.domain.usecases.GetStaffHoldings
 import com.circaso.wallet.domain.usecases.GetStaffTransfer
@@ -148,6 +166,7 @@ import com.circaso.wallet.domain.usecases.ListFeeRules
 import com.circaso.wallet.domain.usecases.ListGroupWallets
 import com.circaso.wallet.domain.usecases.ListLimitRules
 import com.circaso.wallet.domain.usecases.ListMyWallets
+import com.circaso.wallet.domain.usecases.ListNetworks
 import com.circaso.wallet.domain.usecases.ListStaffTransfers
 import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.ListTransfersOf
@@ -158,15 +177,18 @@ import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
+import com.circaso.wallet.domain.usecases.SetNetworkAccess
 import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SumFeesPaid
 import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.SweepWalletSetups
 import com.circaso.wallet.domain.usecases.UpdateFeeBounds
+import com.circaso.wallet.domain.usecases.UpdateNetworkSettings
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.domain.usecases.ValueAssets
 import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.FeeAdminImpl
+import com.circaso.wallet.presentation.api.NetworkAdminImpl
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
@@ -174,6 +196,7 @@ import com.circaso.wallet.presentation.api.WalletReportsImpl
 import com.circaso.wallet.presentation.api.WalletsImpl
 import com.circaso.wallet.presentation.controllers.coinIconController
 import com.circaso.wallet.presentation.controllers.historyController
+import com.circaso.wallet.presentation.controllers.networkController
 import com.circaso.wallet.presentation.controllers.recipientController
 import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
@@ -183,6 +206,7 @@ import com.circaso.wallet.presentation.services.CoinIconService
 import com.circaso.wallet.presentation.services.FeeAdminService
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.IdentityEventsService
+import com.circaso.wallet.presentation.services.NetworkService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.SpaceWalletService
 import com.circaso.wallet.presentation.services.TransferService
@@ -219,6 +243,11 @@ internal val walletDatabaseSpec =
                 FeeQuotesTable,
                 FeeLedgerTable,
                 PaymentHoldsTable,
+                NetworkAccessTable,
+                NetworkSettingsTable,
+                NetworkChainsTable,
+                NetworkAssetsTable,
+                ChainFeesTable,
             ),
         migrationsLocation = "classpath:db/wallet",
         outbox = true,
@@ -320,7 +349,13 @@ fun walletModule(config: Config): Module =
         single<FeeQuoteRepository> { FeeQuoteRepositoryImpl(get(named("wallet.database"))) }
         single<FeeLedgerRepository> { FeeLedgerRepositoryImpl(get(named("wallet.database"))) }
         single<WalletReportRepository> { WalletReportRepositoryImpl(get(named("wallet.database"))) }
-        single<FeeConfig> { fees }
+        // Networks (decision 2026-11-18): the settings live in the database, seeded once from the built-in defaults
+        // and the old variables; custody reads them back through CustodySetups, the fees through StoredFees.
+        single<NetworkSettingsRepository> { NetworkSettingsRepositoryImpl(get(named("wallet.database"))) }
+        single<NetworkAccessRepository> { NetworkAccessRepositoryImpl(get(named("wallet.database"))) }
+        single { Networks(get(), get(), fees, get(), get(), clock) } bind CustodySetups::class
+        single { NetworkAccess(get(), get(), clock) } bind WalletNetworkGate::class
+        single<FeeConfig> { StoredFees(get(), fees) }
         single<Reminders> { RedisReminders(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<PaymentHolds> { PaymentHoldsImpl(get(named("wallet.database")), clock) }
         single<WalletWarnings> { LogWalletWarnings() }
@@ -392,8 +427,8 @@ fun walletModule(config: Config): Module =
         single { HoldingPrices(get(), get()) }
         single { GetWallet(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { HoldAfterVaultOpened(get()) }
-        single { CreateWallet(get(), get()) }
-        single { CreateGroupWallet(get(), get(), get(), get(), get(), clock) }
+        single { CreateWallet(get(), get(), get()) }
+        single { CreateGroupWallet(get(), get(), get(), get(), get(), clock, get()) }
         single { GetGroupWallet(get(), get(), get(), get()) }
         single { ListMyWallets(get(), get(), get(), getOrNull()) }
         single { HeldFunds(get(), get(), get()) }
@@ -451,11 +486,17 @@ fun walletModule(config: Config): Module =
         single { ReconcileWallets(get(), get(), get(), jobs, clock) }
         single { ReplayFrames(get()) }
         single { LookupTransfer(get()) }
+        single { ListNetworks(get(), get()) }
+        single { GetNetworkAccess(get()) }
+        single { SetNetworkAccess(get(), clock) }
+        single { GetNetworkSettings(get()) }
+        single { UpdateNetworkSettings(get(), get(), get(), clock) }
 
         // presentation
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { TransferService(get(), get(), get(), get()) }
         single { HistoryService(get()) }
+        single { NetworkService(get(), get(), get(), get(), get()) }
         single<CoinIconRepository> { BundledCoinIcons() }
         single { GetCoinIcon(get()) }
         single { CoinIconService(get()) }
@@ -467,7 +508,11 @@ fun walletModule(config: Config): Module =
         single { FindDepositAddress(get()) }
         if (spacesEnabled) single { SpaceWalletService(get(), get()) }
         single { SettleSplitPayments(get(), get(), get(), get(), get(), jobs, clock) }
-        single { WalletJobsService(get(), get(), get(), get(), get()) }
+        single {
+            val custody = get<StablecoinCustody>()
+            val networks = get<Networks>()
+            WalletJobsService(get(), get(), get(), get(), get(), { custody.networks }, { networks.fresh() })
+        }
         single { IdentityEventsService(get()) }
         // `identity.PinVaultOpened` pauses the person's payments for 24 hours (2026-11-11).
         single<EventSubscription>(named("wallet.identity-events")) { IdentityEventHandler(get()).subscription() }
@@ -478,8 +523,10 @@ fun walletModule(config: Config): Module =
             val history = get<HistoryService>()
             val agent = get<WalletAgentService>()
             val coinIcons = get<CoinIconService>()
+            val networks = get<NetworkService>()
             val spaceWallets = if (spacesEnabled) get<SpaceWalletService>() else null
             RouteContributor { route ->
+                route.networkController(networks)
                 route.walletController(wallets)
                 if (spaceWallets != null) {
                     route.spaceWalletController(spaceWallets)
@@ -526,10 +573,15 @@ fun walletModule(config: Config): Module =
         single { EndLimitRule(get(), get(), clock) }
         single { FeeAdminService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<FeeAdmin> { FeeAdminImpl(get()) }
+        // wallet:api's networks staff contract (decision 2026-11-18): access rows and settings, ops gateway only
+        single<NetworkAdmin> { NetworkAdminImpl(get()) }
         single(named("wallet.deletion-guard")) { WalletDeletionGuard(get()) } bind DeletionGuard::class
         single<CustodyNotifications> { WalletCustodyNotifications(get()) }
         single(named("wallet.replay")) { RealtimeModule(WalletFrames.MODULE, WalletRealtimeReplay(get())) }
 
         // read-only and database-only (never Circle), run at start-up before the app reports ready
-        single<WarmUp>(named("wallet.warm-up")) { WalletWarmUp(get(), get(), get(), get(), get(), clock) }
+        single<WarmUp>(named("wallet.warm-up")) {
+            val networks = get<Networks>()
+            WalletWarmUp(get(), get(), get(), get(), get(), clock) { networks.fresh() }
+        }
     }

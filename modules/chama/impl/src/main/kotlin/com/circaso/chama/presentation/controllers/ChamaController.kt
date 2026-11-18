@@ -21,7 +21,7 @@ import com.circaso.chama.presentation.services.ChamaService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -50,7 +50,7 @@ private const val DEFAULT_LIMIT = 50
  */
 fun Route.chamaController(chamas: ChamaService) {
     route("/chama") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             route("/chats/{chatId}") {
                 get {
                     val userId = call.principal().userId

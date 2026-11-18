@@ -2,6 +2,7 @@ package com.circaso.wallet.domain.models
 
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
@@ -60,20 +61,27 @@ data class FeeRule(
     /** Why this version exists (staff's reason, or the seed's note). */
     val note: String? = null,
     val createdAt: Instant? = null,
+    /** The one network the rule is for (2026-11-18); null applies on both. */
+    val network: Network? = null,
 ) : VersionedRule {
     fun matches(parties: FeeParties): Boolean =
         (kind == null || kind == parties.kind) &&
+            (network == null || network == Network.ofChain(parties.blockchain)) &&
             (senderType == null || senderType == parties.senderType) &&
             (receiverType == null || receiverType == parties.receiverType) &&
             (blockchain == null || blockchain == parties.blockchain) &&
             (asset == null || asset == parties.asset.symbol) &&
             (walletId == null || walletId == parties.walletId)
 
-    /** The most specific rule wins: a wallet override above a chain, above an asset, above owner types, above kind. */
+    /**
+     * The most specific rule wins: a wallet override above a chain, above an asset, above owner types, above kind;
+     * between two alike, the one that names the network (2026-11-18).
+     */
     val specificity: Int
         get() =
-            (if (walletId != null) 32 else 0) + (if (blockchain != null) 16 else 0) + (if (asset != null) 8 else 0) +
-                (if (senderType != null) 2 else 0) + (if (receiverType != null) 2 else 0) + (if (kind != null) 1 else 0)
+            (if (walletId != null) 64 else 0) + (if (blockchain != null) 32 else 0) + (if (asset != null) 16 else 0) +
+                (if (senderType != null) 4 else 0) + (if (receiverType != null) 4 else 0) +
+                (if (kind != null) 2 else 0) + (if (network != null) 1 else 0)
 }
 
 /**
@@ -187,18 +195,25 @@ data class LimitRule(
     override val effectiveTo: Instant?,
     val note: String? = null,
     val createdAt: Instant? = null,
+    /** The one network the rule is for (2026-11-18); null applies on both, each counting its own spending. */
+    val network: Network? = null,
 ) : VersionedRule {
     fun matches(
         ownerType: WalletOwnerType,
         walletId: WalletId,
         asset: Asset,
+        network: Network = Network.TESTNET,
     ): Boolean =
         (this.ownerType == null || this.ownerType == ownerType) &&
             (this.walletId == null || this.walletId == walletId) &&
-            (this.asset == null || this.asset == asset.symbol)
+            (this.asset == null || this.asset == asset.symbol) &&
+            (this.network == null || this.network == network)
 
+    /** The order is what it was (wallet, owner type, asset); naming a network breaks a tie between two alike. */
     val specificity: Int
-        get() = (if (walletId != null) 4 else 0) + (if (ownerType != null) 2 else 0) + (if (asset != null) 1 else 0)
+        get() =
+            (if (walletId != null) 8 else 0) + (if (ownerType != null) 4 else 0) + (if (asset != null) 2 else 0) +
+                (if (network != null) 1 else 0)
 }
 
 /** One payment counted in a wallet's window: when it was prepared and what it takes out, fee included, in micro-dollars. */

@@ -4,6 +4,7 @@ import com.circaso.shared.Asset
 import com.circaso.shared.ErrorDetails
 import com.circaso.shared.FieldError
 import com.circaso.shared.Resource
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Allowance
 import com.circaso.wallet.domain.models.LimitRule
@@ -28,11 +29,13 @@ class Limits(private val rules: RuleRepository, private val transfers: TransferR
      * The rule for [owner]'s wallet and [asset] now, or null when no rule limits it. Its caps are micro-dollars whatever
      * the coin (2026-11-07): a payment in another coin counts at its price ([PaymentCoin.usdMinor]).
      */
-    suspend fun rule(owner: WalletOwner, asset: Asset): LimitRule? =
-        RuleVersions
+    suspend fun rule(owner: WalletOwner, asset: Asset): LimitRule? {
+        val network = currentNetwork()
+        return RuleVersions
             .currentLimits(rules.limitRules(), clock.instant())
-            .filter { it.matches(owner.type, owner.walletId, asset) }
+            .filter { it.matches(owner.type, owner.walletId, asset, network) }
             .maxWithOrNull(compareBy<LimitRule> { it.specificity }.thenBy { it.effectiveFrom }.thenBy { it.ruleId })
+    }
 
     /** Where [owner]'s wallet stands now; reads the window, so inside a transaction it sees the locked rows. */
     suspend fun allowance(owner: WalletOwner, asset: Asset): Allowance {

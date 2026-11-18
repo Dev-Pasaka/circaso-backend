@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.dto
 
+import com.circaso.shared.Network
 import io.ktor.openapi.JsonSchema
 import kotlinx.serialization.Serializable
 
@@ -20,6 +21,8 @@ data class ChainWalletDto(
     val address: String,
     val state: String,
     val balances: List<BalanceDto>,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -85,6 +88,8 @@ data class TransferDto(
     val failureReason: String? = null,
     val createdAt: String,
     val updatedAt: String,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -103,6 +108,17 @@ data class PeriodDto(
     val count: Long,
     val volumeUsdMicros: Long,
     val feesUsdMicros: Long,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): a period has one row per network asked for, never the two added. */
+    val network: String = "TESTNET",
+)
+
+/** One network's totals over the range (added 2026-11-18). */
+@Serializable
+data class NetworkTotalsDto(
+    val network: String,
+    val count: Long,
+    val volumeUsdMicros: Long,
+    val feesUsdMicros: Long,
 )
 
 @Serializable
@@ -114,6 +130,8 @@ data class ChainAssetDto(
     val decimals: Int,
     val volumeUsdMicros: Long,
     val feesUsdMicros: Long,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -131,4 +149,8 @@ data class FinanceResponse(
     val byChainAsset: List<ChainAssetDto>,
     val totals: FinanceTotalsDto,
     val groupWallets: GroupWalletsDto,
+    /** The totals per network (added 2026-11-18); `totals` adds them up only when no `?network=` was given. */
+    val byNetwork: List<NetworkTotalsDto> = emptyList(),
+    /** The `?network=` asked for, echoed; null when none was (both networks). */
+    val network: String? = null,
 )

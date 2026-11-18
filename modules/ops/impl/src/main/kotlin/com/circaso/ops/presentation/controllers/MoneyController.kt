@@ -22,6 +22,7 @@ import com.circaso.ops.presentation.services.MoneyService
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.TransferFilter
 import com.circaso.web.NoBody
@@ -77,6 +78,7 @@ fun Route.moneyController(money: MoneyService, settings: OpsSettings) {
         staffOnly(Permission.FINANCE_READ.roles) {
             get {
                 val result = call.financeQuery()
+                val network = networkFilter()
                 val response =
                     result.flatMap { (from, to, bucket) ->
                         money
@@ -84,7 +86,11 @@ fun Route.moneyController(money: MoneyService, settings: OpsSettings) {
                                 from,
                                 to,
                                 bucket,
-                            ).map { it.report.toResponse(from, to, bucket.name, it.groupWallets) }
+                            ).map {
+                                it.report
+                                    .toResponse(from, to, bucket.name, it.groupWallets)
+                                    .copy(network = network?.name)
+                            }
                     }
                 call.respondDefault(response.toDefaultResponse { it })
             }.docs<NoBody, FinanceResponse>(

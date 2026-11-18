@@ -18,8 +18,10 @@ import com.circaso.shared.EventSubscription
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeInboundModule
 import com.circaso.shared.RealtimeModule
+import com.circaso.shared.WalletNetworkGate
 import com.circaso.web.PageContributor
 import com.circaso.web.RouteContributor
+import com.circaso.web.WalletNetworkGateKey
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopping
 import io.ktor.server.application.install
@@ -97,6 +99,9 @@ fun Application.installGateway() {
 
     hub.start()
     monitor.subscribe(ApplicationStopping) { koin.get<CoroutineScope>().cancel() }
+
+    // The wallet decides which network a request is for (decision 2026-11-18); `walletNetwork { }` routes ask it.
+    koin.getOrNull<WalletNetworkGate>()?.let { attributes.put(WalletNetworkGateKey, it) }
 
     routing {
         route("/v1") {

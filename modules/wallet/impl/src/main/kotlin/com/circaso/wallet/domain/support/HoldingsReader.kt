@@ -52,8 +52,8 @@ class HoldingsReader(
         }
     }
 
-    private fun isConfigured(wallet: ChainWallet): Boolean {
-        if (custody.supported.find(wallet.blockchain) != null) return true
+    private suspend fun isConfigured(wallet: ChainWallet): Boolean {
+        if (custody.chains().find(wallet.blockchain) != null) return true
         warnings.chainNotConfigured(wallet.blockchain, wallet.circleWalletId)
         return false
     }

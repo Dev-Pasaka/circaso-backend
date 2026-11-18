@@ -92,6 +92,8 @@ data class PushPayload(
      */
     val momentId: String? = null,
     val reaction: String? = null,
+    /** `MAINNET` or `TESTNET` on a wallet push (added 2026-11-18): which of the person's wallets it is about. */
+    val network: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)

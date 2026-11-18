@@ -57,3 +57,8 @@ Consumes `events:wallet` `TransferConfirmed` (group `chama`): a contribution whe
 ## Not in v1
 
 A group-owned wallet (needs multi-party signing Circle's user-controlled wallets don't give); group invite links (messaging); business groups (D7); statements export.
+
+## Networks (decision 2026-11-18)
+
+A group's money is kept per wallet network (wallet.md → Networks): its mainnet wallet and its testnet wallet are different wallets, so a group has one target, one approval setting, and its own contributions, requests and direct payouts on each. V5 adds `network` (default `TESTNET`) to `goals` and `group_settings` (primary key `(chat_id, network)`), `contributions`, `requests` and `direct_payouts`; every read and write is for `currentNetwork()`. The routes are inside `authenticateOnNetwork` (the phone's `X-Wallet-Network`); the wallet's `TransferConfirmed` and `TransferSubmitted` are handled on the network of the transfer's chain; `chama.expire-requests` runs once per network. Every chama frame carries `network`.
+

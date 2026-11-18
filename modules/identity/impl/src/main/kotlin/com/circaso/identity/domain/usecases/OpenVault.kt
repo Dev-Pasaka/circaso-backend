@@ -20,6 +20,7 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.shared.envelope
 
 /**
@@ -46,7 +47,7 @@ class OpenVault(
         val userId = principal.userId
         if (cache.countVaultOpening(userId) > MAX_OPENINGS) return Resource.error(rateLimited(userId))
 
-        val opened = Changes(events = listOf(bus.envelope(PinVaultOpened(userId))))
+        val opened = Changes(events = listOf(bus.envelope(PinVaultOpened(userId, currentNetwork()))))
         val (vault, model) =
             transactor.run("vaults.open") {
                 accounts.lock(userId) ?: return@run null

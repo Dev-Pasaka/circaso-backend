@@ -101,3 +101,16 @@ token kinds, active users, cost, cost per active user, unpriced tokens), a serie
 `limit` (default 10, at most 50) costliest users with their names, the price table with its assumptions, and
 `anthropic`: Anthropic's own bill for the same days (`ok`), `off` without `OPS_ANTHROPIC_ADMIN_KEY`, or `unavailable`.
 Money is micro-dollars, computed in `BigDecimal` and rounded once.
+
+## Wallet networks (decision 2026-11-18)
+
+Money exists on two networks, `MAINNET` and `TESTNET` (wallet.md → Networks). On the ops API:
+
+- **`?network=MAINNET|TESTNET`** on any money read (`/users/{id}/wallets`, `/users/{id}/transfers`, `/transactions`, `/finance`, `/dashboard`, `/groups`, `/groups/{id}`, `/fees/rules`, `/limits/rules`): only that network. Without it, both, side by side: every wallet, transfer, chain-and-coin row, series row and group wallet carries `network`; `/finance` adds `byNetwork` totals, and `/finance` and `/dashboard` echo the filter as a top-level `network` (null when none). Any other value is `request.malformed`. It is one route group, `networkFiltered { }` (`shared-web`), around every ops controller: the handler runs with the network in its coroutine context and the use cases pass `networkFilter()` to `WalletReports`.
+- **Rules.** A fee or limit rule's `scope.network` names the one network it is for (null: both, as every rule from before). A create with `?network=` and no `scope.network` belongs to that network; `?network=` on the lists shows the rules that apply there (those that name it, or a chain on it, and those that name none). `?network=` on a version or an end is accepted and changes nothing: a rule's scope is fixed.
+- **`GET /users/{id}`** adds `networkAccess: [ { network, source, grantedBy, reason, at } ]`.
+- **`POST /users/{id}/network-access`** `{ network, enabled, reason }` → the user (with `networkAccess`). Permission `users.network` (ADMIN); audited as `user.network_access` (`grant TESTNET`, `revoke TESTNET`, with `(no change)` when nothing changed); `ops.reason_required` without a reason. Revoking never deletes a wallet or its funds.
+- **`GET /wallet/networks`** → `{ networks: [ { network, state, appId, defaultChain, chains: [ { blockchain, enabled, receiveEnabled, accountType, assets: [ { symbol, tokenAddress, decimals, usd } ] } ], version, custodyConfigured } ] }` and **`PUT /wallet/networks/{network}`** (the same object plus `reason`; `version` optional, a stale one answers `wallet.network_settings_changed`) → the network as saved. Permission `wallet.settings` (ADMIN) for both; the change is audited as `wallet_network.update` on target `wallet_network` with what changed (`v1→v2; state OFF→PREVIEW; added ARB`). The wallet's rules answer `wallet.network_settings_invalid` with the field. `custodyConfigured: false` means this server has no custody key for the network: it is off whatever `state` says. `tokenAddress` may be null or empty for a chain's own coin; `accountType` left out is `EOA` on Solana, `SCA` elsewhere.
+- **Permissions added**: `users.network` (ADMIN), `wallet.settings` (ADMIN), `fees.wallet.read` (ADMIN, FINANCE), `fees.withdraw` (ADMIN). The last two guard the fee-wallet routes, which are not built yet.
+- The ops gateway's CORS allows `GET, POST, PUT, PATCH, DELETE, OPTIONS`.
+

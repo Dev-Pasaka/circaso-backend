@@ -1,9 +1,11 @@
 package com.circaso.wallet.presentation.mappers
 
+import com.circaso.shared.Network
 import com.circaso.wallet.api.ChainAssetTotals
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.GroupWalletPage
 import com.circaso.wallet.api.GroupWalletRef
+import com.circaso.wallet.api.NetworkTotals
 import com.circaso.wallet.api.OpsBalance
 import com.circaso.wallet.api.OpsChainWallet
 import com.circaso.wallet.api.OpsHoldings
@@ -70,9 +72,10 @@ fun StaffTransfer.toOps() = transfer.toOps(toFeeWallet)
 
 fun TransferResults.toOps() = TransferPage(transfers.map { it.toOps(it.transferId in toFeeWallet) }, nextCursor)
 
-fun FinanceTotals.toOps() =
+/** One network's report: its series rows named for [network], and its totals as the one [NetworkTotals]. */
+fun FinanceTotals.toOps(network: Network) =
     FinanceReport(
-        series = series.map { PeriodTotals(it.period, it.count, it.volumeUsdMicros, it.feesUsdMicros) },
+        series = series.map { PeriodTotals(it.period, it.count, it.volumeUsdMicros, it.feesUsdMicros, network) },
         byChainAsset =
             byChainAsset.map {
                 ChainAssetTotals(
@@ -88,8 +91,38 @@ fun FinanceTotals.toOps() =
         count = count,
         volumeUsdMicros = volumeUsdMicros,
         feesUsdMicros = feesUsdMicros,
+        byNetwork = listOf(NetworkTotals(network, count, volumeUsdMicros, feesUsdMicros)),
     )
 
-fun WalletOwner.Group.toRef() = GroupWalletRef(chatId, walletId.value, signerId, createdAt)
+/** Several networks' reports as one: the rows side by side, each still naming its network. */
+fun List<FinanceReport>.combined() =
+    FinanceReport(
+        series = flatMap { it.series }.sortedWith(compareBy<PeriodTotals> { it.period }.thenBy { it.network }),
+        byChainAsset = flatMap { it.byChainAsset }.sortedByDescending { it.volumeUsdMicros },
+        count = sumOf { it.count },
+        volumeUsdMicros = sumOf { it.volumeUsdMicros },
+        feesUsdMicros = sumOf { it.feesUsdMicros },
+        byNetwork = flatMap { it.byNetwork },
+    )
 
-fun GroupWalletResults.toOps() = GroupWalletPage(owners.map { it.toRef() }, nextCursor)
+/** Several networks' holdings of one holder as one answer; a total only when every network's balances were read. */
+fun List<OpsHoldings>.combined() =
+    OpsHoldings(
+        hasWallet = any { it.hasWallet },
+        wallets = flatMap { it.wallets },
+        totalUsdMicros =
+            if (all {
+                    it.balancesAvailable
+                }
+            ) {
+                mapNotNull { it.totalUsdMicros }.takeIf { it.isNotEmpty() }?.sum()
+            } else {
+                null
+            },
+        balancesAvailable = all { it.balancesAvailable },
+    )
+
+fun WalletOwner.Group.toRef(network: Network = Network.TESTNET) =
+    GroupWalletRef(chatId, walletId.value, signerId, createdAt, network)
+
+fun GroupWalletResults.toOps() = GroupWalletPage(owners.map { it.toRef(it.network) }, nextCursor)

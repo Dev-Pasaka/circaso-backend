@@ -78,6 +78,7 @@ class CreateFeeRule(
         senderType = scope.senderType,
         receiverType = scope.receiverType,
         blockchain = scope.blockchain,
+        network = scope.network,
         asset = scope.asset,
         walletId = scope.walletId,
         rateBps = terms.rateBps,

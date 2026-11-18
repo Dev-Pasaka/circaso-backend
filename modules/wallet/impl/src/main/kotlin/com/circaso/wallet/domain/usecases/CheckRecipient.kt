@@ -24,7 +24,7 @@ class CheckRecipient(
     suspend operator fun invoke(query: RecipientQuery): Resource<RecipientCheck> {
         if (query.recipientId == query.senderId) return Resource.error(WalletError.SelfTransfer)
         support.refusal(query.recipientId)?.let { return it }
-        if (query.blockchain != null && custody.supported.find(query.blockchain) == null) {
+        if (query.blockchain != null && custody.chains().find(query.blockchain) == null) {
             return Resource.error(WalletError.ChainUnsupported)
         }
         if (!payees.canReach(query.senderId, query.recipientId, query.chatId)) {

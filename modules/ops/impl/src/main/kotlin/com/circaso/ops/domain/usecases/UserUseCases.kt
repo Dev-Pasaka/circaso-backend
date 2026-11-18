@@ -19,6 +19,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.shared.networkFilter
 import com.circaso.support.api.SupportDesk
 import com.circaso.users.api.ProfileAdmin
 import com.circaso.wallet.api.WalletReports
@@ -107,7 +108,7 @@ class ListUserGroups(
     suspend operator fun invoke(userId: UserId): Resource<List<GroupSummary>> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
         val found = groups.groupsOf(userId, MAX_GROUPS)
-        val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet())
+        val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet(), networkFilter())
         val owners = views.names(found.mapNotNull { it.ownerId }.toSet())
         return Resource.success(found.map { GroupSummary(it, it.ownerId?.let(owners::get), it.chatId in withWallet) })
     }

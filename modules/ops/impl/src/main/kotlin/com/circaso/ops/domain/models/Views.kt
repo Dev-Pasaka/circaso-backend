@@ -16,6 +16,7 @@ import com.circaso.users.api.AdminProfile
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.GroupWalletRef
 import com.circaso.wallet.api.OpsHoldings
+import com.circaso.wallet.api.OpsNetworkAccess
 import com.circaso.wallet.api.OpsTransfer
 import java.time.Instant
 import java.time.LocalDate
@@ -40,7 +41,13 @@ data class UserPage(val items: List<UserSummary>, val nextCursor: String?)
 /** The latest suspension's audit line, while the account is suspended: since when, why and by whom. */
 data class Suspension(val since: Instant, val reason: String?, val byEmail: String)
 
-data class UserAccount(val account: AdminAccount, val profile: AdminProfile?, val suspension: Suspension?)
+data class UserAccount(
+    val account: AdminAccount,
+    val profile: AdminProfile?,
+    val suspension: Suspension?,
+    /** The person's wallet network access rows (2026-11-18). */
+    val networkAccess: List<OpsNetworkAccess> = emptyList(),
+)
 
 data class UserDevices(val devices: List<AdminDevice>, val sessions: List<AdminSession>)
 

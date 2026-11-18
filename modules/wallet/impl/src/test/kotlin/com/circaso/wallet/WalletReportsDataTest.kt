@@ -5,6 +5,7 @@ import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.PeriodTotals
@@ -166,7 +167,7 @@ class WalletReportsDataTest {
             fee(ether, 35_000_000)
             fee(failed, 99_000, state = "VOID")
 
-            val report = reports.report(day, day.plusSeconds(3 * 86_400), ReportBucket.DAY)
+            val report = reports.report(day, day.plusSeconds(3 * 86_400), ReportBucket.DAY, Network.TESTNET)
 
             assertEquals(
                 listOf(
@@ -196,8 +197,8 @@ class WalletReportsDataTest {
             transfer(day.plusSeconds(7 * 86_400))
             transfer(Instant.parse("2026-11-02T10:00:00Z"))
 
-            val weeks = reports.report(day, Instant.parse("2026-11-03T00:00:00Z"), ReportBucket.WEEK)
-            val months = reports.report(day, Instant.parse("2026-11-03T00:00:00Z"), ReportBucket.MONTH)
+            val weeks = reports.report(day, Instant.parse("2026-11-03T00:00:00Z"), ReportBucket.WEEK, Network.TESTNET)
+            val months = reports.report(day, Instant.parse("2026-11-03T00:00:00Z"), ReportBucket.MONTH, Network.TESTNET)
 
             assertEquals(listOf(1L, 1L, 0L, 0L, 1L), weeks.series.map { it.count })
             assertEquals(LocalDate.of(2026, 11, 2), weeks.series.last().period)

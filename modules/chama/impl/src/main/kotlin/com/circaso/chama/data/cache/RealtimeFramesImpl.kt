@@ -15,9 +15,11 @@ import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.Network
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
@@ -47,11 +49,12 @@ class RealtimeFramesImpl(
     private val log = LoggerFactory.getLogger(RealtimeFramesImpl::class.java)
 
     override suspend fun send(userIds: Collection<UserId>, frame: ChamaFrame) {
+        val network = currentNetwork().name
         userIds.distinct().forEach { userId ->
             try {
                 val seq = redis.incrementRenewing("seq:$userId", SEQ_TTL)
                 val sentAt = clock.instant()
-                val envelope = frame.toEnvelope(seq, sentAt)
+                val envelope = frame.toEnvelope(seq, sentAt, network)
                 database.tx("realtime.keep") {
                     RealtimeTable.insert {
                         it[this.userId] = userId.value
@@ -96,14 +99,18 @@ class RealtimeFramesImpl(
 }
 
 /** The envelope for a frame the domain names, at [seq]: its wire `type` and its class from `chama:api`. */
-internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
+internal fun ChamaFrame.toEnvelope(
+    seq: Long,
+    ts: Instant,
+    network: String = Network.TESTNET.name,
+): RealtimeEnvelope =
     when (this) {
         is ChamaFrame.GoalUpdated -> {
             RealtimeEnvelope.of(
                 ChamaFrames.MODULE,
                 ChamaFrames.GOAL_UPDATED,
                 seq,
-                GoalUpdatedFrame(chatId, name, target, contributed, byUserId),
+                GoalUpdatedFrame(chatId, name, target, contributed, byUserId, network = network),
                 GoalUpdatedFrame.serializer(),
                 ts,
             )
@@ -114,7 +121,16 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ChamaFrames.MODULE,
                 ChamaFrames.CONTRIBUTION_ADDED,
                 seq,
-                ContributionAddedFrame(chatId, userId, displayName, goalName, amount, contributed, target),
+                ContributionAddedFrame(
+                    chatId,
+                    userId,
+                    displayName,
+                    goalName,
+                    amount,
+                    contributed,
+                    target,
+                    network = network,
+                ),
                 ContributionAddedFrame.serializer(),
                 ts,
             )
@@ -137,6 +153,7 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                     approvalsNeeded,
                     waitingOn,
                     signerId,
+                    network,
                 ),
                 RequestUpdatedFrame.serializer(),
                 ts,
@@ -148,7 +165,7 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ChamaFrames.MODULE,
                 ChamaFrames.GROUP_UPDATED,
                 seq,
-                GroupUpdatedFrame(chatId, byUserId),
+                GroupUpdatedFrame(chatId, byUserId, network = network),
                 GroupUpdatedFrame.serializer(),
                 ts,
             )
@@ -159,7 +176,7 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ChamaFrames.MODULE,
                 ChamaFrames.MONEY_UPDATED,
                 seq,
-                MoneyUpdatedFrame(chatId, transferId, kind, amount, userId, requestId, paid),
+                MoneyUpdatedFrame(chatId, transferId, kind, amount, userId, requestId, paid, network = network),
                 MoneyUpdatedFrame.serializer(),
                 ts,
             )
@@ -170,7 +187,7 @@ internal fun ChamaFrame.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
                 ChamaFrames.MODULE,
                 ChamaFrames.CONTRIBUTION_SUBMITTED,
                 seq,
-                ContributionSubmittedFrame(chatId, transferId, userId, displayName, paid, amount),
+                ContributionSubmittedFrame(chatId, transferId, userId, displayName, paid, amount, network = network),
                 ContributionSubmittedFrame.serializer(),
                 ts,
             )

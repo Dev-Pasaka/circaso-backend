@@ -9,7 +9,7 @@ import com.circaso.wallet.presentation.mappers.recipientQuery
 import com.circaso.wallet.presentation.mappers.toResponse
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -26,7 +26,7 @@ private const val MALFORMED = "request.malformed"
 /** Paying a person: whether they can be paid (W9), and reminding one without a wallet (W10). */
 fun Route.recipientController(recipients: RecipientService) {
     route("/wallet/recipients") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get("{userId}") {
                 val query =
                     recipientQuery(

@@ -22,6 +22,7 @@ import com.circaso.assistant.presentation.dto.LiveTranscriptFrame
 import com.circaso.assistant.presentation.dto.LiveTurnFrame
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
+import com.circaso.shared.Network
 import java.util.UUID
 
 fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
@@ -34,6 +35,7 @@ fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
         displayCurrencyOf(currency),
         voice = voice,
         conversationId = conversationId?.let { parseUuid(it) ?: UNKNOWN_CONVERSATION },
+        network = Network.parse(network),
     )
 
 /** What an `auth` frame's conversation id that isn't a UUID becomes: an id no conversation has, so turns are refused. */

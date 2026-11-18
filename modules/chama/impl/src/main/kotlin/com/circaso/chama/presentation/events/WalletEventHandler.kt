@@ -8,11 +8,14 @@ import com.circaso.shared.DomainException
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventHandler
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.Uuid7
+import com.circaso.shared.WalletNetwork
 import com.circaso.shared.decode
 import com.circaso.wallet.api.TransferConfirmed
 import com.circaso.wallet.api.TransferSubmitted
+import kotlinx.coroutines.withContext
 
 /**
  * Chama's consumer group on `events:wallet`: a confirmed transfer may be a contribution into a group's wallet, or the
@@ -70,7 +73,9 @@ class WalletEventHandler(private val events: ChamaEventsService) {
                 payoutRequestId = event.payoutRequestId?.let { Uuid7.parse(it) },
                 paid = paid,
             )
-        val result = events.transferConfirmed(transfer)
+        // The group's money is kept per network, and the transfer's chain says which (2026-11-18).
+        val result =
+            withContext(WalletNetwork(Network.ofChain(event.blockchain))) { events.transferConfirmed(transfer) }
         if (result is Resource.Error) throw DomainException(result.error, result.cause)
     }
 
@@ -89,7 +94,8 @@ class WalletEventHandler(private val events: ChamaEventsService) {
                 paid = PaidCoin(symbol, decimals, minor),
                 usdMinor = usd?.toLongOrNull(),
             )
-        val result = events.contributionSubmitted(payment)
+        val result =
+            withContext(WalletNetwork(Network.ofChain(event.blockchain))) { events.contributionSubmitted(payment) }
         if (result is Resource.Error) throw DomainException(result.error, result.cause)
     }
 }

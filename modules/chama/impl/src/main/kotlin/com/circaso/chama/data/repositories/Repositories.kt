@@ -27,6 +27,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.TransferId
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -62,17 +63,20 @@ private fun paidOf(
 class GoalRepositoryImpl(private val database: Database) : GoalRepository {
     override suspend fun find(chatId: ChatId): Goal? =
         database.tx("goals.find") {
+            val network = currentNetwork().name
             GoalsTable
                 .selectAll()
-                .where { GoalsTable.chatId eq chatId.value }
+                .where { (GoalsTable.chatId eq chatId.value) and (GoalsTable.network eq network) }
                 .map { it.toGoal() }
                 .singleOrNull()
         }
 
     override suspend fun save(goal: Goal) {
         database.tx("goals.save") {
+            val network = currentNetwork().name
             GoalsTable.upsert {
                 it[chatId] = goal.chatId.value
+                it[this.network] = network
                 it[name] = goal.name
                 it[targetMinor] = goal.targetMinor
                 it[asset] = USDC
@@ -87,7 +91,10 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
     }
 
     override suspend fun delete(chatId: ChatId): Boolean =
-        database.tx("goals.delete") { GoalsTable.deleteWhere { GoalsTable.chatId eq chatId.value } > 0 }
+        database.tx("goals.delete") {
+            val network = currentNetwork().name
+            GoalsTable.deleteWhere { (GoalsTable.chatId eq chatId.value) and (GoalsTable.network eq network) } > 0
+        }
 
     private fun ResultRow.toGoal() =
         Goal(
@@ -106,10 +113,12 @@ class GoalRepositoryImpl(private val database: Database) : GoalRepository {
 class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutRepository {
     override suspend fun insert(payout: DirectPayout): Boolean =
         database.tx("direct-payouts.insert") {
+            val network = currentNetwork().name
             DirectPayoutsTable
                 .insertIgnore {
                     it[transferId] = payout.transferId.value
                     it[chatId] = payout.chatId.value
+                    it[this.network] = network
                     it[amountMinor] = payout.amountMinor
                     it[asset] = USDC
                     it[at] = payout.at
@@ -121,9 +130,10 @@ class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutR
 
     override suspend fun total(chatId: ChatId): Long =
         database.tx("direct-payouts.total") {
+            val network = currentNetwork().name
             DirectPayoutsTable
                 .selectAll()
-                .where { DirectPayoutsTable.chatId eq chatId.value }
+                .where { (DirectPayoutsTable.chatId eq chatId.value) and (DirectPayoutsTable.network eq network) }
                 .map { it[DirectPayoutsTable.amountMinor] }
                 .toList()
                 .sum()
@@ -133,10 +143,12 @@ class DirectPayoutRepositoryImpl(private val database: Database) : DirectPayoutR
 class ContributionRepositoryImpl(private val database: Database) : ContributionRepository {
     override suspend fun insert(contribution: Contribution): Boolean =
         database.tx("contributions.insert") {
+            val network = currentNetwork().name
             ContributionsTable
                 .insertIgnore {
                     it[transferId] = contribution.transferId.value
                     it[chatId] = contribution.chatId.value
+                    it[this.network] = network
                     it[userId] = contribution.userId.value
                     it[amountMinor] = contribution.amountMinor
                     it[asset] = USDC
@@ -154,10 +166,11 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
         before: Instant?,
     ): List<Contribution> =
         database.tx("contributions.list") {
+            val network = currentNetwork().name
             ContributionsTable
                 .selectAll()
                 .where {
-                    (ContributionsTable.chatId eq chatId.value).let { c ->
+                    ((ContributionsTable.chatId eq chatId.value) and (ContributionsTable.network eq network)).let { c ->
                         if (before !=
                             null
                         ) {
@@ -174,10 +187,13 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
 
     override suspend fun totals(chatId: ChatId, since: Instant?): Map<UserId, Long> =
         database.tx("contributions.totals") {
+            val network = currentNetwork().name
             ContributionsTable
                 .selectAll()
                 .where {
-                    val counted = (ContributionsTable.chatId eq chatId.value) and (ContributionsTable.legacy eq false)
+                    val counted =
+                        ((ContributionsTable.chatId eq chatId.value) and (ContributionsTable.network eq network)) and
+                            (ContributionsTable.legacy eq false)
                     if (since != null) counted and (ContributionsTable.at greaterEq since) else counted
                 }.map { UserId(it[ContributionsTable.userId]) to it[ContributionsTable.amountMinor] }
                 .toList()
@@ -205,9 +221,10 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
 class SettingsRepositoryImpl(private val database: Database) : SettingsRepository {
     override suspend fun find(chatId: ChatId): GroupSettings =
         database.tx("group-settings.find") {
+            val network = currentNetwork().name
             GroupSettingsTable
                 .selectAll()
-                .where { GroupSettingsTable.chatId eq chatId.value }
+                .where { (GroupSettingsTable.chatId eq chatId.value) and (GroupSettingsTable.network eq network) }
                 .map {
                     GroupSettings(
                         chatId,
@@ -222,8 +239,10 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         val by = checkNotNull(settings.updatedBy) { "settings are saved by someone" }
         val at = checkNotNull(settings.updatedAt) { "settings are saved at a time" }
         database.tx("group-settings.save") {
+            val network = currentNetwork().name
             GroupSettingsTable.upsert {
                 it[chatId] = settings.chatId.value
+                it[this.network] = network
                 it[approvalPolicy] = settings.approvalPolicy.name
                 it[updatedBy] = by.value
                 it[updatedAt] = at
@@ -235,9 +254,11 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
 class RequestRepositoryImpl(private val database: Database) : RequestRepository {
     override suspend fun insert(request: Payout) {
         database.tx("requests.insert") {
+            val network = currentNetwork().name
             RequestsTable.insertIgnore {
                 it[requestId] = request.requestId.value
                 it[chatId] = request.chatId.value
+                it[this.network] = network
                 it[requestedBy] = request.requestedBy.value
                 it[payeeId] = request.payeeId?.value
                 it[payeeAddress] = request.payeeAddress
@@ -287,10 +308,11 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
 
     override suspend fun open(chatId: ChatId): List<Payout> =
         database.tx("requests.open") {
+            val network = currentNetwork().name
             RequestsTable
                 .selectAll()
                 .where {
-                    (RequestsTable.chatId eq chatId.value) and
+                    ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and
                         (RequestsTable.state inList listOf(RequestState.PENDING.name, RequestState.APPROVED.name))
                 }.orderBy(RequestsTable.createdAt to SortOrder.DESC)
                 .toList()
@@ -304,11 +326,14 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
         before: Instant?,
     ): List<Payout> =
         database.tx("requests.paid") {
+            val network = currentNetwork().name
             RequestsTable
                 .selectAll()
                 .where {
-                    ((RequestsTable.chatId eq chatId.value) and (RequestsTable.state eq RequestState.PAID.name))
-                        .let { c -> if (before != null) c and (RequestsTable.updatedAt less before) else c }
+                    (
+                        ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and
+                            (RequestsTable.state eq RequestState.PAID.name)
+                    ).let { c -> if (before != null) c and (RequestsTable.updatedAt less before) else c }
                 }.orderBy(RequestsTable.updatedAt to SortOrder.DESC)
                 .limit(limit)
                 .toList()
@@ -359,8 +384,10 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
 
     override suspend fun expire(now: Instant): Int =
         database.tx("requests.expire") {
+            val network = currentNetwork().name
             RequestsTable.update({
                 (RequestsTable.state eq RequestState.PENDING.name) and
+                    (RequestsTable.network eq network) and
                     (RequestsTable.expiresAt less now)
             }) {
                 it[state] = RequestState.EXPIRED.name
@@ -370,10 +397,13 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
 
     override suspend fun paidOutTotal(chatId: ChatId): Long =
         database.tx("requests.paid-out") {
+            val network = currentNetwork().name
             RequestsTable
                 .selectAll()
-                .where { (RequestsTable.chatId eq chatId.value) and (RequestsTable.state eq RequestState.PAID.name) }
-                .map { it[RequestsTable.amountMinor] }
+                .where {
+                    ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and
+                        (RequestsTable.state eq RequestState.PAID.name)
+                }.map { it[RequestsTable.amountMinor] }
                 .toList()
                 .sum()
         }

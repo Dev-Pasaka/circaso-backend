@@ -7,7 +7,7 @@ import com.circaso.wallet.presentation.mappers.historyQuery
 import com.circaso.wallet.presentation.mappers.toResponse
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -19,7 +19,7 @@ import io.ktor.server.routing.route
 /** The payment history (W6). */
 fun Route.historyController(history: HistoryService) {
     route("/wallet") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get("transactions") {
                 val parameters = call.request.queryParameters
                 val result =

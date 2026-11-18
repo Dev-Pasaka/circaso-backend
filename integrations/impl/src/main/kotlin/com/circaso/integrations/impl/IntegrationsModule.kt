@@ -12,6 +12,8 @@ import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CryptoMarkets
 import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodySeeds
+import com.circaso.integrations.api.CustodySetups
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
 import com.circaso.integrations.api.ExchangeRates
@@ -26,6 +28,7 @@ import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.StaticMaps
+import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.VoipPushGateway
@@ -38,11 +41,11 @@ import com.circaso.integrations.impl.apns.ApnsProviderToken
 import com.circaso.integrations.impl.apns.ApnsVoipPush
 import com.circaso.integrations.impl.apns.JdkApnsTransport
 import com.circaso.integrations.impl.brave.BraveWebSearch
+import com.circaso.integrations.impl.circle.CircleAccount
+import com.circaso.integrations.impl.circle.CircleAccounts
 import com.circaso.integrations.impl.circle.CircleClient
-import com.circaso.integrations.impl.circle.CircleCustody
-import com.circaso.integrations.impl.circle.CircleSettings
 import com.circaso.integrations.impl.circle.CircleWarmUp
-import com.circaso.integrations.impl.circle.CircleWebhook
+import com.circaso.integrations.impl.circle.toCircleSettings
 import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
 import com.circaso.integrations.impl.cloudflare.TurnKey
 import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
@@ -95,6 +98,7 @@ import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
+import com.circaso.shared.Network
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
@@ -133,8 +137,6 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     )
             return create()
         }
-
-        fun custodyChains() = CustodyChainsConfig.parse(integrations.section("custody")).supported
 
         single<SmsGateway> {
             pick(
@@ -282,19 +284,34 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        // Custody on both networks side by side (decision 2026-11-18). The chains, assets and app id start from the
+        // seeds (built-in defaults and the old variables) and are then read from the wallet's tables on every use.
+        val custodySettings = integrations.section("custody")
+        single<CustodySeeds> { ConfiguredCustodySeeds(custodySettings) }
         single<StablecoinCustody> {
+            val seeds = get<CustodySeeds>()
+
+            fun chainsOn(network: Network): () -> SupportedChains? =
+                { getOrNull<CustodySetups>()?.current(network)?.supported }
+
+            fun fakeOn(network: Network, autoCompleteSetup: Boolean) =
+                FakeCustody(
+                    supported = seeds.seed(network).supported,
+                    autoCompleteSetup = autoCompleteSetup,
+                    current = chainsOn(network),
+                )
             pick(
                 "custody",
                 providers =
                     mapOf(
-                        "log" to { LogCustody(FakeCustody(supported = custodyChains(), autoCompleteSetup = true)) },
-                        "fake" to { FakeCustody(supported = custodyChains()) },
-                        "circle" to { CircleCustody(get<CircleClient>(), get<CircleSettings>(), Clock.systemUTC()) },
+                        "log" to { NetworkCustody(Network.entries.associateWith { LogCustody(fakeOn(it, true)) }) },
+                        "fake" to { NetworkCustody(Network.entries.associateWith { fakeOn(it, false) }) },
+                        "circle" to { NetworkCustody(get<CircleAccounts>().custodies) },
                     ),
             )
         }
         if (integrations.string("custody.provider", "log") == "circle") {
-            circle(integrations.section("custody"), secrets)
+            circle(secrets)
         }
         // The wallet's fiat balance (decision 2026-10-28). The open endpoint needs no key; its table is kept in Redis
         // under `fx:` so every node shares one fetch a day.
@@ -465,30 +482,54 @@ fun integrationsModule(config: Config, secrets: Secrets) =
     }
 
 /**
- * Circle needs the secret `CIRCLE_API_KEY` (testnet and mainnet keys are separate) and `INTEGRATIONS_CUSTODY_APP_ID`
- * (handed to the phone's SDK); the chains and their assets are [CustodyChainsConfig]'s. The custody calls and the
- * webhook share one client. The webhook's listener, [CustodyNotifications], is bound by the wallet module and looked
- * up on each delivery, so integrations never depend on the wallet.
+ * Circle, one account per network (decision 2026-11-18): the testnet's needs the secret `CIRCLE_API_KEY`; the
+ * mainnet's exists only when `CIRCLE_MAINNET_API_KEY` is set, and without it the server starts all the same with
+ * mainnet unavailable. The app id, chains and assets are database settings (seeded from [CustodySeeds]). Each account
+ * has its own client, user tokens and webhook: `/v1/hooks/circle` and `/v1/hooks/circle-mainnet`. The webhooks'
+ * listener, [CustodyNotifications], is bound by the wallet module and looked up on each delivery, so integrations never
+ * depend on the wallet.
  */
-private fun Module.circle(custody: Config, secrets: Secrets) {
+private fun Module.circle(secrets: Secrets) {
     single {
-        val chains = CustodyChainsConfig.parse(custody)
-        CircleSettings(
-            appId = custody.requireString("app-id"),
-            supported = chains.supported,
-            accountTypes = chains.accountTypes,
+        val seeds = get<CustodySeeds>()
+        val http = get<HttpClients>()
+        val keys =
+            mapOf(
+                Network.TESTNET to secrets.require("circle.api-key"),
+                Network.MAINNET to secrets.get("circle.mainnet-api-key")?.takeIf { it.isNotBlank() },
+            )
+        CircleAccounts(
+            keys
+                .mapNotNull { (network, key) -> key?.let { network to it } }
+                .associate { (network, key) ->
+                    network to
+                        CircleAccount(
+                            network = network,
+                            client =
+                                CircleClient(
+                                    http = http.named(clientName(network)) { baseUrl = "https://api.circle.com" },
+                                    apiKey = key,
+                                ),
+                            settings = {
+                                (getOrNull<CustodySetups>()?.current(network) ?: seeds.seed(network)).toCircleSettings()
+                            },
+                        )
+                },
         )
     }
-    single {
-        CircleClient(
-            http = get<HttpClients>().named("circle") { baseUrl = "https://api.circle.com" },
-            apiKey = secrets.require("circle.api-key"),
-        )
+    single<WebhookVendor>(named("circle.webhook")) {
+        get<CircleAccounts>().webhook(Network.TESTNET) { getOrNull<CustodyNotifications>() }
     }
-    single { CircleWebhook(get(), get(), notifications = { getOrNull<CustodyNotifications>() }) } bind
-        WebhookVendor::class
-    single<WarmUp>(named("circle.warm-up")) { CircleWarmUp(get()) }
+    single<WebhookVendor>(named("circle.webhook.mainnet")) {
+        get<CircleAccounts>().webhook(Network.MAINNET) { getOrNull<CustodyNotifications>() }
+    }
+    single<WarmUp>(named("circle.warm-up")) {
+        CircleWarmUp(get<CircleAccounts>().accounts.getValue(Network.TESTNET).client)
+    }
 }
+
+/** The testnet keeps the client name it always had, so its metrics and circuit breaker carry on. */
+private fun clientName(network: Network) = if (network == Network.TESTNET) "circle" else "circle-mainnet"
 
 /**
  * Templates a server may start without (2026-11-11), so a deploy never waits on publishing one in Resend: until its id

@@ -33,6 +33,8 @@ data class GroupWalletDto(
     val balances: List<BalanceDto>,
     val totalUsdMicros: Long? = null,
     val balancesAvailable: Boolean,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): a group has one wallet per network; `?network=` picks. */
+    val network: String = "TESTNET",
 )
 
 @Serializable

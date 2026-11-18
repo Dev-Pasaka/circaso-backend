@@ -11,6 +11,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.StaffRole
 import com.circaso.shared.getOrNull
+import com.circaso.shared.networkFilter
 import com.circaso.support.api.SupportDesk
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.WalletReports
@@ -41,19 +42,25 @@ class GetDashboard(
         val seesUsers = Permission.DASHBOARD_USERS.allows(role)
         val seesMoney = Permission.DASHBOARD_MONEY.allows(role)
         val seesTickets = Permission.DASHBOARD_TICKETS.allows(role)
+        // `?network=` narrows the money figures to one network (2026-11-18); without it each row names its own.
+        val network = networkFilter()
         return coroutineScope {
             val users = async { if (seesUsers) accounts.signUps(from, to) else null }
             val active = async { if (seesUsers) accounts.activeUsers(now) else null }
             val money =
                 async {
-                    if (seesMoney) wallets.report(Ranges.startOf(from), Ranges.endOf(to), ReportBucket.DAY) else null
+                    if (seesMoney) {
+                        wallets.report(Ranges.startOf(from), Ranges.endOf(to), ReportBucket.DAY, network)
+                    } else {
+                        null
+                    }
                 }
             val groupTotals =
                 async {
                     if (seesUsers ||
                         seesMoney
                     ) {
-                        GroupTotals(groups.groupCount(), wallets.groupWalletCount())
+                        GroupTotals(groups.groupCount(), wallets.groupWalletCount(network))
                     } else {
                         null
                     }

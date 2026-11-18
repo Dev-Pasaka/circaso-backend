@@ -14,7 +14,7 @@ import com.circaso.wallet.domain.support.orCustodyUnavailable
  */
 class ValidateAddress(private val custody: StablecoinCustody) {
     suspend operator fun invoke(blockchain: String, address: String): Resource<AddressCheck> {
-        custody.supported.find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
+        custody.chains().find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         return when (val checked = custody.validateAddress(blockchain, address).orCustodyUnavailable()) {
             is Resource.Success -> {
                 Resource.success(

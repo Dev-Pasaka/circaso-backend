@@ -39,6 +39,7 @@ import com.circaso.ops.presentation.dto.GroupWalletsDto
 import com.circaso.ops.presentation.dto.GroupsTileDto
 import com.circaso.ops.presentation.dto.HoldingsResponse
 import com.circaso.ops.presentation.dto.MoneyDayDto
+import com.circaso.ops.presentation.dto.NetworkTotalsDto
 import com.circaso.ops.presentation.dto.PartyDto
 import com.circaso.ops.presentation.dto.PeriodDto
 import com.circaso.ops.presentation.dto.SessionDto
@@ -99,6 +100,7 @@ fun UserAccount.toResponse() =
         createdAt = account.createdAt.toString(),
         signIns = account.signIns.map { SignInDto(it.provider, it.maskedEmail, it.linkedAt.toString()) },
         suspension = suspension?.let { SuspensionDto(it.since.toString(), it.reason, it.byEmail) },
+        networkAccess = networkAccess.map { it.toDto() },
     )
 
 fun UserDevices.toResponse() =
@@ -182,7 +184,8 @@ fun FinanceReport.toResponse(
     from = from.toString(),
     to = to.toString(),
     bucket = bucket,
-    series = series.map { PeriodDto(it.period.toString(), it.count, it.volumeUsdMicros, it.feesUsdMicros) },
+    series =
+        series.map { PeriodDto(it.period.toString(), it.count, it.volumeUsdMicros, it.feesUsdMicros, it.network.name) },
     byChainAsset =
         byChainAsset.map {
             ChainAssetDto(
@@ -197,6 +200,7 @@ fun FinanceReport.toResponse(
         },
     totals = FinanceTotalsDto(count, volumeUsdMicros, feesUsdMicros),
     groupWallets = GroupWalletsDto(groupWallets),
+    byNetwork = byNetwork.map { NetworkTotalsDto(it.network.name, it.count, it.volumeUsdMicros, it.feesUsdMicros) },
 )
 
 fun GroupSummary.toDto() =
@@ -222,6 +226,7 @@ fun GroupDetail.toResponse() =
                     balances = holdings?.wallets?.flatMap { chain -> chain.balances.map { it.toDto() } }.orEmpty(),
                     totalUsdMicros = holdings?.totalUsdMicros,
                     balancesAvailable = holdings?.balancesAvailable ?: false,
+                    network = ref.network.name,
                 )
             },
     )
@@ -284,7 +289,10 @@ fun Dashboard.toResponse(): DashboardResponse {
                 TransactionsTileDto(
                     count = report.count,
                     volumeUsdMicros = report.volumeUsdMicros,
-                    series = report.series.map { MoneyDayDto(it.period.toString(), it.count, it.volumeUsdMicros) },
+                    series =
+                        report.series.map {
+                            MoneyDayDto(it.period.toString(), it.count, it.volumeUsdMicros, it.network.name)
+                        },
                 )
             },
         groups = groups?.let { GroupsTileDto(it.total, it.withWallet, (it.total - it.withWallet).coerceAtLeast(0)) },
@@ -292,7 +300,7 @@ fun Dashboard.toResponse(): DashboardResponse {
             money?.let { report ->
                 FeesTileDto(
                     report.feesUsdMicros,
-                    report.series.map { FeeDayDto(it.period.toString(), it.feesUsdMicros) },
+                    report.series.map { FeeDayDto(it.period.toString(), it.feesUsdMicros, it.network.name) },
                 )
             },
         tickets = tickets?.let { TicketsTileDto(it.open, it.pendingUser, it.unassigned) },

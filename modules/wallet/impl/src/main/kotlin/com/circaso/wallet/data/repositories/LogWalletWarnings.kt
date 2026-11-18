@@ -67,4 +67,8 @@ class LogWalletWarnings : WalletWarnings {
     override fun feeNotTaken(blockchain: String, reason: String) {
         log.warn("a fee rule applies but no fee can be taken: blockchain={} reason={}", blockchain, reason)
     }
+
+    override fun networkSettingsUnread(error: String) {
+        log.warn("network settings not read, keeping the ones in force: error={}", error)
+    }
 }

@@ -16,4 +16,7 @@ interface FeeConfig {
      * TODO(decision: crypto price source) configured prices until a live price feed is chosen.
      */
     fun nativeUsd(blockchain: String): BigDecimal
+
+    /** The price configured for [blockchain]'s own coin, or null when none is and [nativeUsd] falls back to a default. */
+    fun configuredNativeUsd(blockchain: String): BigDecimal? = null
 }

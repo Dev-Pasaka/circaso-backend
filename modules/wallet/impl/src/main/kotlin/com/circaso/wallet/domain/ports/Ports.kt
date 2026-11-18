@@ -52,6 +52,9 @@ interface WalletWarnings {
 
     /** A rule asks for a fee on [blockchain] but none can be taken there ([reason]); the payment goes without one. */
     fun feeNotTaken(blockchain: String, reason: String)
+
+    /** The network settings couldn't be read from the database ([error]); the ones read before stay in force. */
+    fun networkSettingsUnread(error: String) {}
 }
 
 /**

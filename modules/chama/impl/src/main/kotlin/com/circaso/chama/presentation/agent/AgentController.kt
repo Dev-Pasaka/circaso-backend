@@ -8,7 +8,7 @@ import com.circaso.chama.presentation.services.ChamaAgentService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
@@ -26,7 +26,7 @@ private const val SCOPE = "Scope: `agent` (read-only), the caller's own chamas o
  */
 fun Route.agentController(chamas: ChamaAgentService) {
     route("/agent/chama") {
-        authenticate(Scope.AGENT) {
+        authenticateOnNetwork(Scope.AGENT) {
             get {
                 val result = chamas.listChamas(call.userId())
                 call.respondDefault(result.toDefaultResponse { it.toAgentResponse() })

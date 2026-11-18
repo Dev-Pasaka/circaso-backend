@@ -64,9 +64,12 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.Network
 import com.circaso.shared.RealtimeModule
+import com.circaso.shared.WalletNetwork
 import com.circaso.wallet.api.PayoutApprovals
 import com.circaso.web.RouteContributor
+import kotlinx.coroutines.withContext
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -126,7 +129,10 @@ fun chamaModule(config: Config): Module =
         }
         single(named("chama.expire-requests")) {
             val events = get<ChamaEventsService>()
-            ScheduledJob("chama.expire-requests", EXPIRE_INTERVAL) { events.expire() }
+            // once per network (2026-11-18): a request and the wallet that would pay it are on one network
+            ScheduledJob("chama.expire-requests", EXPIRE_INTERVAL) {
+                Network.entries.sumOf { network -> withContext(WalletNetwork(network)) { events.expire() } }
+            }
         }
 
         // domain

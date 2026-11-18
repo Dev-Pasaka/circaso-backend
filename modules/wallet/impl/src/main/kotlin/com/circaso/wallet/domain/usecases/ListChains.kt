@@ -34,7 +34,7 @@ class ListChains(
             }
         val enabled = enabledChains(userId)
         val pending = adding.list(userId)
-        val supported = custody.supported
+        val supported = custody.chains()
         val options =
             supported.chains
                 .filter { it.receiveEnabled || it.blockchain in enabled }

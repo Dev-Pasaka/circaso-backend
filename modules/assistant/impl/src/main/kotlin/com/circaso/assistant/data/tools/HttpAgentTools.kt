@@ -11,6 +11,7 @@ import com.circaso.integrations.api.ToolSpec
 import com.circaso.messaging.api.AgentChatsResponse
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
+import com.circaso.shared.networkFilter
 import com.circaso.status.api.AgentMomentsResponse
 import com.circaso.users.api.AgentBlocksResponse
 import com.circaso.users.api.AgentContactDto
@@ -545,11 +546,15 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         path: String,
         token: String,
         query: HttpRequestBuilder.() -> Unit,
-    ): HttpResponse =
-        http.get("$baseUrl$path") {
+    ): HttpResponse {
+        // The wallet and group money routes answer for the network the user's own request named (2026-11-18).
+        val network = networkFilter()
+        return http.get("$baseUrl$path") {
             header(HttpHeaders.Authorization, "Bearer $token")
+            network?.let { header(WALLET_NETWORK_HEADER, it.name) }
             query()
         }
+    }
 
     /**
      * The route's data, read from its envelope. A refusal (a payment that isn't the user's, a malformed argument)
@@ -636,6 +641,7 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
     }
 
     private companion object {
+        const val WALLET_NETWORK_HEADER = "X-Wallet-Network"
         const val GET_PROFILE = "getProfile"
         const val SEARCH_CONTACTS = "searchContacts"
         const val LIST_CONTACTS = "listContacts"

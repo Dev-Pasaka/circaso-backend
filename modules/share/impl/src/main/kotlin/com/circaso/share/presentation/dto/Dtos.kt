@@ -1,5 +1,6 @@
 package com.circaso.share.presentation.dto
 
+import com.circaso.shared.Network
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -73,6 +74,8 @@ data class ReceiptDto(
     val at: String,
     val fromName: String? = null,
     val toName: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -115,6 +118,8 @@ data class AddressDto(
     val address: String,
     val asset: String,
     val name: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /**
@@ -132,6 +137,8 @@ data class OpenDto(
     val displayName: String? = null,
     val address: String? = null,
     val blockchain: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String? = blockchain?.let { Network.ofChain(it).name },
 )
 
 /** One statement of `/.well-known/assetlinks.json` (Android App Links). */

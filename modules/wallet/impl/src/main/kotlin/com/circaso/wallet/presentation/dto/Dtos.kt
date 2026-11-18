@@ -1,6 +1,7 @@
 package com.circaso.wallet.presentation.dto
 
 import com.circaso.shared.InstantSerializer
+import com.circaso.shared.Network
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
@@ -27,6 +28,8 @@ data class WalletResponse(
     val owner: WalletOwnerDto? = null,
     /** Whether you are the one who signs for it (your own wallet, or a group wallet whose PIN you set). */
     val canSign: Boolean = true,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network this wallet is on, the one the request named. */
+    val network: String = Network.TESTNET.name,
 )
 
 /**
@@ -67,6 +70,8 @@ data class WalletListingDto(
     val canSign: Boolean,
     /** The chains it can be paid on now. */
     val blockchains: List<String>,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18). */
+    val network: String = Network.TESTNET.name,
 )
 
 /** W15 `GET /wallet/groups/{chatId}`. */
@@ -76,6 +81,8 @@ data class GroupWalletResponse(
     /** `NONE` (no wallet yet: the owner may set one up), `SETTING_UP` or `ACTIVE`. */
     val status: String,
     val wallet: WalletListingDto? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network asked about; a group has one wallet on each. */
+    val network: String = Network.TESTNET.name,
 )
 
 /** W16 `GET /wallets`. */
@@ -83,6 +90,8 @@ data class GroupWalletResponse(
 data class WalletsResponse(
     /** Your own first, then your groups' wallets (those you sign for first). */
     val wallets: List<WalletListingDto>,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network these wallets are on, the one the request named. */
+    val network: String = Network.TESTNET.name,
 )
 
 @Serializable
@@ -94,6 +103,8 @@ data class ChainDto(
     val assets: List<AssetDto>,
     /** False on a chain retired from receiving: don't show its address to be paid; it can still send out. */
     val receiveEnabled: Boolean = true,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -180,6 +191,8 @@ data class ChainOptionDto(
     val status: String,
     /** False on a chain retired from receiving, listed only while the wallet is on it so it can be emptied. */
     val receiveEnabled: Boolean = true,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /** W12 `POST /wallet/chains`. */
@@ -196,4 +209,6 @@ data class AddChainResponse(
     val status: String,
     val challengeId: String? = null,
     val sdk: SdkDto? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )

@@ -36,18 +36,26 @@ import java.util.UUID
  */
 class CircleCustody internal constructor(
     private val client: CircleClient,
-    private val settings: CircleSettings,
+    private val settingsSource: () -> CircleSettings,
     clock: Clock,
 ) : StablecoinCustody {
+    internal constructor(
+        client: CircleClient,
+        settings: CircleSettings,
+        clock: Clock,
+    ) : this(client, { settings }, clock)
+
     constructor(
         http: HttpClient,
         apiKey: String,
         settings: CircleSettings,
         clock: Clock = Clock.systemUTC(),
-    ) : this(CircleClient(http, apiKey), settings, clock)
+    ) : this(CircleClient(http, apiKey), { settings }, clock)
 
+    /** Read on every use: the chains, assets and app id are database settings that staff can change (2026-11-18). */
+    private val settings: CircleSettings get() = settingsSource()
     private val tokens = CircleUserTokens(client, clock)
-    private val transactions = CircleTransactions(CircleTokens(client), settings)
+    private val transactions = CircleTransactions(CircleTokens(client), settingsSource)
 
     override val supported: SupportedChains get() = settings.supported
 
