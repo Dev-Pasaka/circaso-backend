@@ -19,7 +19,7 @@ import com.circaso.wallet.domain.models.FeeDestination
 import com.circaso.wallet.domain.models.FeeStaff
 import com.circaso.wallet.domain.models.FeeWithdrawal
 import com.circaso.wallet.domain.support.FeeBalance
-import com.circaso.wallet.domain.support.WithdrawalRequest
+import com.circaso.wallet.domain.models.WithdrawalOrder
 import com.circaso.wallet.presentation.services.FeeWalletService
 import java.time.Duration
 import java.util.UUID
@@ -103,7 +103,7 @@ class FeeWalletAdminImpl(private val service: FeeWalletService) : FeeWalletAdmin
     override suspend fun withdraw(withdrawal: OpsNewFeeWithdrawal, by: OpsFeeStaff): Resource<OpsFeeWithdrawal> =
         service
             .withdraw(
-                WithdrawalRequest(
+                WithdrawalOrder(
                     network = withdrawal.network,
                     blockchain = withdrawal.blockchain,
                     asset = withdrawal.asset,

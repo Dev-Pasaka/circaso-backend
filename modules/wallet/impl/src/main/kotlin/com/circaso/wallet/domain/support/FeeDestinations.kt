@@ -32,6 +32,9 @@ class FeeDestinations(
 
     suspend fun list(network: Network?): List<FeeDestination> = destinations.live(network)
 
+    /** One destination, removed or not. */
+    suspend fun find(id: UUID): FeeDestination? = destinations.find(id)
+
     suspend fun add(
         network: Network,
         blockchain: String,

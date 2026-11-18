@@ -14,7 +14,7 @@ import com.circaso.wallet.domain.models.WithdrawalState.FAILED
 import com.circaso.wallet.domain.models.WithdrawalState.PENDING
 import com.circaso.wallet.domain.models.WithdrawalState.SENT
 import com.circaso.wallet.domain.support.FeeWithdrawals
-import com.circaso.wallet.domain.support.WithdrawalRequest
+import com.circaso.wallet.domain.models.WithdrawalOrder
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -72,7 +72,7 @@ class FeeWithdrawalTest {
         asset: String = "USDC",
         key: String = UUID.randomUUID().toString(),
         chain: String = "BASE",
-    ) = WithdrawalRequest(Network.MAINNET, chain, asset, BigInteger(amount), destination, "Monthly sweep", key)
+    ) = WithdrawalOrder(Network.MAINNET, chain, asset, BigInteger(amount), destination, "Monthly sweep", key)
 
     private suspend fun withdraw(
         destination: UUID,

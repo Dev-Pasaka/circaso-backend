@@ -260,12 +260,24 @@ class FeeWithdrawalRepositoryImpl(private val database: Database) : FeeWithdrawa
         }
 
     override suspend fun byIdempotencyKey(requestedBy: UUID, idempotencyKey: String): FeeWithdrawal? =
-        one("fee-withdrawals.by-key") {
-            (FeeWithdrawalsTable.requestedBy eq requestedBy) and (FeeWithdrawalsTable.idempotencyKey eq idempotencyKey)
+        database.tx("fee-withdrawals.by-key") {
+            FeeWithdrawalsTable
+                .selectAll()
+                .where {
+                    (FeeWithdrawalsTable.requestedBy eq requestedBy) and
+                        (FeeWithdrawalsTable.idempotencyKey eq idempotencyKey)
+                }.map { it.toWithdrawal() }
+                .singleOrNull()
         }
 
     override suspend fun find(id: UUID): FeeWithdrawal? =
-        one("fee-withdrawals.find") { FeeWithdrawalsTable.withdrawalId eq id }
+        database.tx("fee-withdrawals.find") {
+            FeeWithdrawalsTable
+                .selectAll()
+                .where { FeeWithdrawalsTable.withdrawalId eq id }
+                .map { it.toWithdrawal() }
+                .singleOrNull()
+        }
 
     override suspend fun page(
         network: Network?,
@@ -340,15 +352,6 @@ class FeeWithdrawalRepositoryImpl(private val database: Database) : FeeWithdrawa
             }
         }
     }
-
-    private suspend fun one(operation: String, where: () -> Op<Boolean>): FeeWithdrawal? =
-        database.tx(operation) {
-            FeeWithdrawalsTable
-                .selectAll()
-                .where { where() }
-                .map { it.toWithdrawal() }
-                .singleOrNull()
-        }
 
     private fun ResultRow.toWithdrawal() =
         FeeWithdrawal(

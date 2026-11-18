@@ -10,6 +10,7 @@ import com.circaso.wallet.domain.models.FeeWalletNetwork
 import com.circaso.wallet.domain.models.FeeWalletOrigin
 import com.circaso.wallet.domain.models.FeeWalletStatus
 import com.circaso.wallet.domain.models.NetworkSettings
+import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.FeeWalletRepository
 import java.time.Clock
 import kotlin.coroutines.cancellation.CancellationException
@@ -38,6 +39,7 @@ class FeeWalletSetup(
     private val networks: Networks,
     private val repository: FeeWalletRepository,
     private val clock: Clock,
+    private val warnings: WalletWarnings? = null,
 ) {
     private class Outcome(val status: FeeWalletStatus, val reason: String?, val walletSetId: String? = null)
 
@@ -64,7 +66,12 @@ class FeeWalletSetup(
                 Outcome(FeeWalletStatus.FAILED, "The fee wallet check stopped on an error (${e::class.simpleName}).")
             }
         val row = FeeWalletNetwork(network, outcome.walletSetId, outcome.status, outcome.reason, clock.instant())
+        val before = repository.network(network)
         repository.saveNetwork(row)
+        // Said once per change, not on every ten-minute check.
+        if (before?.status != row.status || before.reason != row.reason) {
+            warnings?.feeWalletsChecked(network.name, row.status.name, row.reason)
+        }
         // A new fee address is in force in this process at once, and within seconds in the app's.
         networks.invalidate()
         return row

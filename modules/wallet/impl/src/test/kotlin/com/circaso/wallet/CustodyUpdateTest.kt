@@ -385,6 +385,7 @@ class CustodyUpdateTest {
         runBlocking<Unit> {
             val feeWallet =
                 h.walletOn(bob).copy(circleWalletId = "w-fee", address = FakeFeeConfig.FEE_WALLET)
+            val eventsBefore = (h.outbox as RecordingOutbox).written.size
             val out = { state: CustodyTransactionState, refId: String ->
                 h.update(
                     feeWallet,
@@ -407,7 +408,7 @@ class CustodyUpdateTest {
 
             assertTrue(rows().isEmpty(), "no history row for anyone")
             assertTrue(h.warnings.unknownWallets.isEmpty(), "and it isn't an unknown wallet's either")
-            assertTrue((h.outbox as RecordingOutbox).written.isEmpty())
+            assertEquals(eventsBefore, (h.outbox as RecordingOutbox).written.size, "and no event")
         }
 
     @Test

@@ -115,6 +115,18 @@ data class FeeWithdrawal(
     override fun toString(): String = "FeeWithdrawal($id, $blockchain, $state)"
 }
 
+/** What staff ask for: [amountMinor] of [asset] from [blockchain]'s fee wallet to a destination, and why. */
+data class WithdrawalOrder(
+    val network: Network,
+    val blockchain: String,
+    val asset: String,
+    val amountMinor: BigInteger,
+    val destinationId: UUID,
+    val reason: String,
+    /** The staff request's `Idempotency-Key`. */
+    val idempotencyKey: String,
+)
+
 /** What moving a withdrawal to another state records with it. */
 data class WithdrawalChange(
     val circleTxId: String? = null,

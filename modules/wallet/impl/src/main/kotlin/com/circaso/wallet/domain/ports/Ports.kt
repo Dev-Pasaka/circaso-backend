@@ -55,6 +55,16 @@ interface WalletWarnings {
 
     /** The network settings couldn't be read from the database ([error]); the ones read before stay in force. */
     fun networkSettingsUnread(error: String) {}
+
+    /**
+     * Where [network]'s fee wallets stand after a check, when that changed since the last one. [reason] names what is
+     * missing or Circle's status and code; never a secret.
+     */
+    fun feeWalletsChecked(
+        network: String,
+        status: String,
+        reason: String?,
+    ) {}
 }
 
 /**

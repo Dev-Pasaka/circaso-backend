@@ -15,6 +15,7 @@ import com.circaso.wallet.domain.models.FeeStaff
 import com.circaso.wallet.domain.models.FeeWallet
 import com.circaso.wallet.domain.models.FeeWithdrawal
 import com.circaso.wallet.domain.models.WithdrawalChange
+import com.circaso.wallet.domain.models.WithdrawalOrder
 import com.circaso.wallet.domain.models.WithdrawalState
 import com.circaso.wallet.domain.repositories.FeeDestinationRepository
 import com.circaso.wallet.domain.repositories.FeeWalletRepository
@@ -24,17 +25,6 @@ import java.math.RoundingMode
 import java.time.Clock
 import java.time.Duration
 import java.util.UUID
-
-/** What staff ask for: [amountMinor] of [asset] from [blockchain]'s fee wallet to a destination, and why. */
-data class WithdrawalRequest(
-    val network: Network,
-    val blockchain: String,
-    val asset: String,
-    val amountMinor: BigInteger,
-    val destinationId: UUID,
-    val reason: String,
-    val idempotencyKey: String,
-)
 
 /**
  * Withdrawals of collected fees (decision 2026-11-18): from a fee wallet to a destination added at least the delay
@@ -66,7 +56,7 @@ class FeeWithdrawals(
         limit: Int,
     ): List<FeeWithdrawal> = withdrawals.page(network, before, limit)
 
-    suspend fun request(request: WithdrawalRequest, by: FeeStaff): Resource<FeeWithdrawal> {
+    suspend fun request(request: WithdrawalOrder, by: FeeStaff): Resource<FeeWithdrawal> {
         // The same request again (a retry after a lost answer) is the same withdrawal, never a second one.
         withdrawals.byIdempotencyKey(by.staffId, request.idempotencyKey)?.let { return Resource.success(it) }
         val custody = treasury ?: return unavailable("this server's custody provider isn't Circle.")
@@ -283,12 +273,12 @@ class FeeWithdrawals(
     }
 
     /**
-     * The coin [WithdrawalRequest.asset] names in the wallet: the chain's own coin by its symbol, or a coin offered on
+     * The coin [WithdrawalOrder.asset] names in the wallet: the chain's own coin by its symbol, or a coin offered on
      * the chain, matched by its contract (anyone can send the wallet a token that calls itself USDC). A coin offered
      * but not held is a balance of zero.
      */
     private suspend fun coinOf(
-        request: WithdrawalRequest,
+        request: WithdrawalOrder,
         chain: String,
         held: List<TreasuryBalance>,
     ): Resource<TreasuryBalance> {

@@ -7,13 +7,12 @@ import com.circaso.wallet.domain.models.FeeDestination
 import com.circaso.wallet.domain.models.FeeStaff
 import com.circaso.wallet.domain.models.FeeWalletNetwork
 import com.circaso.wallet.domain.models.FeeWithdrawal
-import com.circaso.wallet.domain.repositories.FeeDestinationRepository
 import com.circaso.wallet.domain.support.FeeDestinations
 import com.circaso.wallet.domain.support.FeeWalletBalances
 import com.circaso.wallet.domain.support.FeeWalletSetup
 import com.circaso.wallet.domain.support.FeeWalletsView
 import com.circaso.wallet.domain.support.FeeWithdrawals
-import com.circaso.wallet.domain.support.WithdrawalRequest
+import com.circaso.wallet.domain.models.WithdrawalOrder
 import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.util.UUID
@@ -28,7 +27,6 @@ class FeeWalletService(
     private val setup: FeeWalletSetup,
     private val balances: FeeWalletBalances,
     private val feeDestinations: FeeDestinations,
-    private val destinationRows: FeeDestinationRepository,
     private val feeWithdrawals: FeeWithdrawals,
 ) {
     suspend fun wallets(network: Network): FeeWalletsView = on(network) { balances.view(network) }
@@ -37,7 +35,7 @@ class FeeWalletService(
 
     suspend fun destinations(network: Network?): List<FeeDestination> = feeDestinations.list(network)
 
-    suspend fun destination(id: UUID): FeeDestination? = destinationRows.find(id)
+    suspend fun destination(id: UUID): FeeDestination? = feeDestinations.find(id)
 
     suspend fun addDestination(
         network: Network,
@@ -55,7 +53,7 @@ class FeeWalletService(
         limit: Int,
     ): List<FeeWithdrawal> = feeWithdrawals.page(network, before, limit)
 
-    suspend fun withdraw(request: WithdrawalRequest, by: FeeStaff): Resource<FeeWithdrawal> =
+    suspend fun withdraw(request: WithdrawalOrder, by: FeeStaff): Resource<FeeWithdrawal> =
         on(request.network) { feeWithdrawals.request(request, by) }
 
     /** Every network's fee wallets, checked and created where they are missing; how many networks are `READY`. */

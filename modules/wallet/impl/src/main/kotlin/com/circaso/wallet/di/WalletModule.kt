@@ -616,11 +616,11 @@ fun walletModule(config: Config): Module =
         single<FeeWalletRepository> { FeeWalletRepositoryImpl(get(named("wallet.database"))) }
         single<FeeDestinationRepository> { FeeDestinationRepositoryImpl(get(named("wallet.database"))) }
         single<FeeWithdrawalRepository> { FeeWithdrawalRepositoryImpl(get(named("wallet.database"))) }
-        single { FeeWalletSetup(getOrNull<TreasuryCustody>(), get(), get(), clock) }
+        single { FeeWalletSetup(getOrNull<TreasuryCustody>(), get(), get(), clock, get()) }
         single { FeeWalletBalances(getOrNull<TreasuryCustody>(), get(), get()) }
         single { FeeDestinations(get(), get(), get(), get(), clock) }
         single { FeeWithdrawals(getOrNull<TreasuryCustody>(), get(), get(), get(), get(), get(), clock) }
-        single { FeeWalletService(get(), get(), get(), get(), get()) }
+        single { FeeWalletService(get(), get(), get(), get()) }
         single<FeeWalletAdmin> { FeeWalletAdminImpl(get()) }
         single(named("wallet.fee-wallets")) {
             val service = get<FeeWalletService>()
