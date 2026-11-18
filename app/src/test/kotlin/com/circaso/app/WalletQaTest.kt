@@ -20,6 +20,7 @@ import com.circaso.integrations.impl.dev.FakePush
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import com.circaso.wallet.domain.support.Networks
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.delete
@@ -46,6 +47,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.koin.core.Koin
 import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
@@ -56,6 +58,8 @@ import java.security.KeyPairGenerator
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -114,10 +118,125 @@ class WalletQaTest {
 
     private suspend fun HttpResponse.data(): JsonObject = obj()["data"]!!.jsonObject
 
+    private lateinit var koin: Koin
+
+    /**
+     * The network settings live in the database and are seeded from the environment only once (decision 2026-11-18), so
+     * a test that boots with its own custody variables, or opens mainnet, starts and ends with none stored.
+     */
+    @BeforeTest
+    @AfterTest
+    fun forgetNetworkSettings() {
+        TestPostgres.superuser { connection ->
+            connection.createStatement().use {
+                it.execute(
+                    "DO \$\$ BEGIN IF to_regclass('wallet.network_settings') IS NOT NULL THEN " +
+                        "TRUNCATE wallet.network_settings, wallet.network_chains, wallet.network_assets, " +
+                        "wallet.chain_fees CASCADE; END IF; END \$\$",
+                )
+            }
+        }
+    }
+
+    private suspend fun ApplicationTestBuilder.onNetwork(
+        network: String,
+        method: String,
+        path: String,
+        token: String,
+    ): HttpResponse {
+        val build: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
+            header("Authorization", "Bearer $token")
+            header("X-Client-Version", "android/1.0.0")
+            header("X-Wallet-Network", network)
+            if (method == "POST") {
+                header("Idempotency-Key", UUID.randomUUID().toString())
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+        }
+        return if (method == "POST") client.post(path, build) else client.get(path, build)
+    }
+
+    private suspend fun ApplicationTestBuilder.networks(token: String): List<Pair<String, String>> =
+        get("/v1/wallet/networks", token)
+            .data()["networks"]!!
+            .jsonArray
+            .map { it.jsonObject }
+            .map { it["network"]!!.jsonPrimitive.content to it["walletStatus"]!!.jsonPrimitive.content }
+
+    @Test
+    fun `mainnet is off until staff open it, then it is a second wallet beside the testnet one`() =
+        testApplication {
+            val fakes = boot()
+            val person = signUp(fakes.sms)
+            val mainnet = (koin.get<StablecoinCustody>() as NetworkCustody).on(Network.MAINNET) as FakeCustody
+
+            // Before launch: the testnet is all there is, whatever the app sends.
+            assertEquals(listOf("TESTNET" to "NONE"), networks(person.app))
+            assertEquals("TESTNET", get("/v1/wallet/networks", person.app).data()["default"]!!.jsonPrimitive.content)
+            val refused = onNetwork("MAINNET", "GET", "/v1/wallet", person.app)
+            assertEquals(HttpStatusCode.Forbidden, refused.status)
+            assertEquals("wallet.network_unavailable", refused.code())
+            assertEquals("request.malformed", onNetwork("base", "GET", "/v1/wallet", person.app).code())
+            assertEquals(
+                "wallet.network_unavailable",
+                onNetwork("MAINNET", "GET", "/v1/vault/status", person.app).code(),
+            )
+            activeWallet(fakes, person)
+            assertEquals("TESTNET", onNetwork("TESTNET", "GET", "/v1/wallet", person.app).data().str("network"))
+            assertEquals(listOf("TESTNET" to "ACTIVE"), networks(person.app))
+            assertEquals(
+                1,
+                count(
+                    "SELECT count(*) FROM wallet.network_access WHERE source = 'AUTO' AND user_id = ?::uuid",
+                    person.userId,
+                ),
+            )
+
+            // Staff open mainnet (the admin's PUT writes these columns).
+            TestPostgres.superuser { connection ->
+                connection.createStatement().use {
+                    it.execute(
+                        "UPDATE wallet.network_settings SET state = 'ON', app_id = 'main-app' WHERE network = 'MAINNET'",
+                    )
+                }
+            }
+            koin.get<Networks>().invalidate()
+
+            assertEquals(listOf("MAINNET" to "NONE", "TESTNET" to "ACTIVE"), networks(person.app))
+            assertEquals("MAINNET", get("/v1/wallet/networks", person.app).data()["default"]!!.jsonPrimitive.content)
+            val main = onNetwork("MAINNET", "GET", "/v1/wallet", person.app).data()
+            assertEquals("NONE", main.str("status"))
+            assertEquals("MAINNET", main.str("network"))
+            assertEquals("ACTIVE", get("/v1/wallet", person.app).data().str("status"), "no header: still the testnet")
+
+            assertEquals(HttpStatusCode.OK, onNetwork("MAINNET", "POST", "/v1/wallet", person.app).status)
+            val wallet = mainnet.completeSetup(mainnet.users.single())
+            assertEquals("BASE", wallet.blockchain)
+            val active = onNetwork("MAINNET", "GET", "/v1/wallet", person.app).data()
+            assertEquals("ACTIVE", active.str("status"))
+            assertEquals(
+                listOf("BASE" to "MAINNET"),
+                active["chains"]!!.jsonArray.map { it.jsonObject }.map { it.str("blockchain") to it.str("network") },
+            )
+            assertEquals(1, fakes.custody.users.size, "the testnet account never heard of the mainnet wallet")
+            assertEquals(2, count("SELECT count(*) FROM wallet.circle_users WHERE user_id = ?::uuid", person.userId))
+            assertEquals(listOf("MAINNET" to "ACTIVE", "TESTNET" to "ACTIVE"), networks(person.app))
+
+            // Someone who joins after launch is mainnet only, with or without the header.
+            val newcomer = signUp(fakes.sms)
+            assertEquals(listOf("MAINNET" to "NONE"), networks(newcomer.app))
+            assertEquals("MAINNET", get("/v1/wallet", newcomer.app).data().str("network"))
+            assertEquals("wallet.network_unavailable", onNetwork("TESTNET", "GET", "/v1/wallet", newcomer.app).code())
+        }
+
+    private fun JsonObject.str(name: String) = this[name]!!.jsonPrimitive.content
+
     private suspend fun ApplicationTestBuilder.boot(extra: Map<String, String> = emptyMap()): Fakes {
         lateinit var fakes: Fakes
         application {
             circasoServe(AppConfig(), EnvConfig(env(extra)), EnvSecrets(env(extra)))
+            koin = getKoin()
             fakes =
                 Fakes(
                     getKoin().get<SmsGateway>() as FakeSms,
