@@ -4,16 +4,19 @@ import com.circaso.identity.api.DeletionGuard
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
+import com.circaso.infrastructure.api.OpsJob
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.integrations.api.StablecoinCustody
+import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
 import com.circaso.shared.WalletNetworkGate
 import com.circaso.wallet.api.FeeAdmin
+import com.circaso.wallet.api.FeeWalletAdmin
 import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.WalletReports
@@ -30,8 +33,11 @@ import com.circaso.wallet.data.cache.RedisStuckNotices
 import com.circaso.wallet.data.repositories.BundledCoinIcons
 import com.circaso.wallet.data.repositories.ConfiguredFees
 import com.circaso.wallet.data.repositories.DatabaseTransactor
+import com.circaso.wallet.data.repositories.FeeDestinationRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
+import com.circaso.wallet.data.repositories.FeeWalletRepositoryImpl
+import com.circaso.wallet.data.repositories.FeeWithdrawalRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
 import com.circaso.wallet.data.repositories.NetworkAccessRepositoryImpl
 import com.circaso.wallet.data.repositories.NetworkSettingsRepositoryImpl
@@ -49,9 +55,14 @@ import com.circaso.wallet.data.repositories.WalletRepositoryImpl
 import com.circaso.wallet.data.tables.ChainFeesTable
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.FeeBoundsTable
+import com.circaso.wallet.data.tables.FeeDestinationsTable
 import com.circaso.wallet.data.tables.FeeLedgerTable
 import com.circaso.wallet.data.tables.FeeQuotesTable
 import com.circaso.wallet.data.tables.FeeRulesTable
+import com.circaso.wallet.data.tables.FeeWalletNetworksTable
+import com.circaso.wallet.data.tables.FeeWalletSettingsTable
+import com.circaso.wallet.data.tables.FeeWalletsTable
+import com.circaso.wallet.data.tables.FeeWithdrawalsTable
 import com.circaso.wallet.data.tables.LimitRulesTable
 import com.circaso.wallet.data.tables.NetworkAccessTable
 import com.circaso.wallet.data.tables.NetworkAssetsTable
@@ -80,8 +91,11 @@ import com.circaso.wallet.domain.ports.StuckNotices
 import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.CoinIconRepository
+import com.circaso.wallet.domain.repositories.FeeDestinationRepository
 import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.FeeWalletRepository
+import com.circaso.wallet.domain.repositories.FeeWithdrawalRepository
 import com.circaso.wallet.domain.repositories.NetworkAccessRepository
 import com.circaso.wallet.domain.repositories.NetworkSettingsRepository
 import com.circaso.wallet.domain.repositories.RuleAdminRepository
@@ -95,9 +109,13 @@ import com.circaso.wallet.domain.repositories.WalletRepository
 import com.circaso.wallet.domain.support.Counterparties
 import com.circaso.wallet.domain.support.CustodyUpdates
 import com.circaso.wallet.domain.support.FeeCalculator
+import com.circaso.wallet.domain.support.FeeDestinations
 import com.circaso.wallet.domain.support.FeeQuotes
 import com.circaso.wallet.domain.support.FeeSettlement
+import com.circaso.wallet.domain.support.FeeWalletBalances
+import com.circaso.wallet.domain.support.FeeWalletSetup
 import com.circaso.wallet.domain.support.FeeWallets
+import com.circaso.wallet.domain.support.FeeWithdrawals
 import com.circaso.wallet.domain.support.HeldFunds
 import com.circaso.wallet.domain.support.HolderFrames
 import com.circaso.wallet.domain.support.Holders
@@ -188,6 +206,7 @@ import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.domain.usecases.ValueAssets
 import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.FeeAdminImpl
+import com.circaso.wallet.presentation.api.FeeWalletAdminImpl
 import com.circaso.wallet.presentation.api.NetworkAdminImpl
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
@@ -204,6 +223,7 @@ import com.circaso.wallet.presentation.controllers.walletController
 import com.circaso.wallet.presentation.events.IdentityEventHandler
 import com.circaso.wallet.presentation.services.CoinIconService
 import com.circaso.wallet.presentation.services.FeeAdminService
+import com.circaso.wallet.presentation.services.FeeWalletService
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.IdentityEventsService
 import com.circaso.wallet.presentation.services.NetworkService
@@ -218,12 +238,12 @@ import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.wallet.presentation.warmup.WalletWarmUp
 import com.circaso.web.RouteContributor
 import com.circaso.web.unavailable
+import java.time.Clock
+import java.time.Duration
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
-import java.time.Clock
-import java.time.Duration
 
 /** Schema `wallet`: its tables, its Flyway scripts and its outbox, which is infrastructure's (`outbox = true`). */
 internal val walletDatabaseSpec =
@@ -248,6 +268,11 @@ internal val walletDatabaseSpec =
                 NetworkChainsTable,
                 NetworkAssetsTable,
                 ChainFeesTable,
+                FeeWalletNetworksTable,
+                FeeWalletsTable,
+                FeeDestinationsTable,
+                FeeWithdrawalsTable,
+                FeeWalletSettingsTable,
             ),
         migrationsLocation = "classpath:db/wallet",
         outbox = true,
@@ -258,6 +283,15 @@ private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 
 /** `wallet.expire-unsigned` runs every minute (the signing window is 15 minutes). */
 private val EXPIRE_INTERVAL: Duration = Duration.ofMinutes(1)
+
+/**
+ * `wallet.fee-wallets` (ops process): at start-up and then this often, so a chain staff enable gets its fee wallet
+ * without a restart and a failed creation is tried again.
+ */
+private val FEE_WALLETS_INTERVAL: Duration = Duration.ofMinutes(10)
+
+/** `wallet.fee-withdrawals` (ops process): how often open withdrawals are read from Circle. */
+private val FEE_WITHDRAWALS_INTERVAL: Duration = Duration.ofSeconds(15)
 
 /** `wallet.reconcile-daily` runs once a day. */
 private val DAILY_INTERVAL: Duration = Duration.ofDays(1)
@@ -575,6 +609,27 @@ fun walletModule(config: Config): Module =
         single<FeeAdmin> { FeeAdminImpl(get()) }
         // wallet:api's networks staff contract (decision 2026-11-18): access rows and settings, ops gateway only
         single<NetworkAdmin> { NetworkAdminImpl(get()) }
+        // Circaso's fee wallets (decision 2026-11-18): Circle developer-controlled wallets, their destinations and
+        // withdrawals. `TreasuryCustody` is bound in the ops process only (it holds the entity secrets); here, in
+        // the app's processes, it is absent and nothing below is ever called: the app gateway mounts none of it and
+        // collects no `OpsJob`.
+        single<FeeWalletRepository> { FeeWalletRepositoryImpl(get(named("wallet.database"))) }
+        single<FeeDestinationRepository> { FeeDestinationRepositoryImpl(get(named("wallet.database"))) }
+        single<FeeWithdrawalRepository> { FeeWithdrawalRepositoryImpl(get(named("wallet.database"))) }
+        single { FeeWalletSetup(getOrNull<TreasuryCustody>(), get(), get(), clock) }
+        single { FeeWalletBalances(getOrNull<TreasuryCustody>(), get(), get()) }
+        single { FeeDestinations(get(), get(), get(), get(), clock) }
+        single { FeeWithdrawals(getOrNull<TreasuryCustody>(), get(), get(), get(), get(), get(), clock) }
+        single { FeeWalletService(get(), get(), get(), get(), get()) }
+        single<FeeWalletAdmin> { FeeWalletAdminImpl(get()) }
+        single(named("wallet.fee-wallets")) {
+            val service = get<FeeWalletService>()
+            OpsJob("wallet.fee-wallets", FEE_WALLETS_INTERVAL) { service.ensureWallets() }
+        }
+        single(named("wallet.fee-withdrawals")) {
+            val service = get<FeeWalletService>()
+            OpsJob("wallet.fee-withdrawals", FEE_WITHDRAWALS_INTERVAL) { service.followWithdrawals() }
+        }
         single(named("wallet.deletion-guard")) { WalletDeletionGuard(get()) } bind DeletionGuard::class
         single<CustodyNotifications> { WalletCustodyNotifications(get()) }
         single(named("wallet.replay")) { RealtimeModule(WalletFrames.MODULE, WalletRealtimeReplay(get())) }
