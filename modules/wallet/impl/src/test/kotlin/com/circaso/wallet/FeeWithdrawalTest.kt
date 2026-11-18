@@ -8,13 +8,13 @@ import com.circaso.shared.Resource
 import com.circaso.wallet.domain.models.FeeDestination
 import com.circaso.wallet.domain.models.FeeStaff
 import com.circaso.wallet.domain.models.FeeWithdrawal
+import com.circaso.wallet.domain.models.WithdrawalOrder
 import com.circaso.wallet.domain.models.WithdrawalState
 import com.circaso.wallet.domain.models.WithdrawalState.CONFIRMED
 import com.circaso.wallet.domain.models.WithdrawalState.FAILED
 import com.circaso.wallet.domain.models.WithdrawalState.PENDING
 import com.circaso.wallet.domain.models.WithdrawalState.SENT
 import com.circaso.wallet.domain.support.FeeWithdrawals
-import com.circaso.wallet.domain.models.WithdrawalOrder
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.math.BigInteger
