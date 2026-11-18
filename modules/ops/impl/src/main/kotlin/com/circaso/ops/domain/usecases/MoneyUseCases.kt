@@ -1,6 +1,5 @@
 package com.circaso.ops.domain.usecases
 
-import com.circaso.shared.networkFilter
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Finance
@@ -14,6 +13,7 @@ import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.OpsHoldings
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.TransferFilter

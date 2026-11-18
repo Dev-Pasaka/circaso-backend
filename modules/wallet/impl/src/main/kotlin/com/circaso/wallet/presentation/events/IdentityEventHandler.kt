@@ -6,9 +6,9 @@ import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventHandler
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Resource
+import com.circaso.shared.WalletNetwork
 import com.circaso.shared.decode
 import com.circaso.wallet.presentation.services.IdentityEventsService
-import com.circaso.shared.WalletNetwork
 import kotlinx.coroutines.withContext
 
 /**

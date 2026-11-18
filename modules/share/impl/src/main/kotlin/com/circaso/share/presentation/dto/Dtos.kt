@@ -1,7 +1,7 @@
 package com.circaso.share.presentation.dto
 
-import kotlinx.serialization.SerialName
 import com.circaso.shared.Network
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**

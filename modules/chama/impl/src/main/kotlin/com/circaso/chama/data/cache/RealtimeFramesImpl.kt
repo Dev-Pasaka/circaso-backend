@@ -14,8 +14,8 @@ import com.circaso.chama.domain.ports.LoggedFrame
 import com.circaso.chama.domain.ports.RealtimeLog
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.RedisScope
-import com.circaso.shared.Network
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.Network
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
@@ -121,7 +121,16 @@ internal fun ChamaFrame.toEnvelope(
                 ChamaFrames.MODULE,
                 ChamaFrames.CONTRIBUTION_ADDED,
                 seq,
-                ContributionAddedFrame(chatId, userId, displayName, goalName, amount, contributed, target, network = network),
+                ContributionAddedFrame(
+                    chatId,
+                    userId,
+                    displayName,
+                    goalName,
+                    amount,
+                    contributed,
+                    target,
+                    network = network,
+                ),
                 ContributionAddedFrame.serializer(),
                 ts,
             )

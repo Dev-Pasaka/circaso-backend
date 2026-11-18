@@ -1,6 +1,5 @@
 package com.circaso.assistant.data.tools
 
-import com.circaso.shared.networkFilter
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.assistant.domain.support.AshaPrompt
@@ -12,6 +11,7 @@ import com.circaso.integrations.api.ToolSpec
 import com.circaso.messaging.api.AgentChatsResponse
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
+import com.circaso.shared.networkFilter
 import com.circaso.status.api.AgentMomentsResponse
 import com.circaso.users.api.AgentBlocksResponse
 import com.circaso.users.api.AgentContactDto

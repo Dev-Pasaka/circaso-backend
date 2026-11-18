@@ -78,8 +78,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     (FeeLedgerTable.holderId eq holder.value) and
                         collected() and
                         onNetwork(FeeLedgerTable.network, network)
-                }
-                .map { it[fees] ?: 0 }
+                }.map { it[fees] ?: 0 }
                 .single()
         }
 
@@ -100,8 +99,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     confirmed() and
                         createdIn(TransfersTable.createdAt, from, until) and
                         onNetwork(TransfersTable.network, network)
-                }
-                .groupBy(period)
+                }.groupBy(period)
                 .map { it[period] to PeriodSums(it[count], it[volume] ?: 0) }
                 .toList()
                 .toMap()
@@ -123,8 +121,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     collected() and
                         createdIn(FeeLedgerTable.createdAt, from, until) and
                         onNetwork(FeeLedgerTable.network, network)
-                }
-                .groupBy(period)
+                }.groupBy(period)
                 .map { it[period] to (it[fees] ?: 0) }
                 .toList()
                 .toMap()
@@ -148,8 +145,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     confirmed() and
                         createdIn(TransfersTable.createdAt, from, until) and
                         onNetwork(TransfersTable.network, network)
-                }
-                .groupBy(TransfersTable.blockchain, TransfersTable.asset, TransfersTable.assetDecimals)
+                }.groupBy(TransfersTable.blockchain, TransfersTable.asset, TransfersTable.assetDecimals)
                 .map {
                     ChainAssetSums(
                         blockchain = it[TransfersTable.blockchain],
@@ -172,8 +168,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     collected() and
                         createdIn(FeeLedgerTable.createdAt, from, until) and
                         onNetwork(FeeLedgerTable.network, network)
-                }
-                .groupBy(FeeLedgerTable.blockchain, FeeLedgerTable.asset)
+                }.groupBy(FeeLedgerTable.blockchain, FeeLedgerTable.asset)
                 .map { (it[FeeLedgerTable.blockchain] to it[FeeLedgerTable.asset]) to (it[fees] ?: 0) }
                 .toList()
                 .toMap()
@@ -200,8 +195,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     isGroup() and
                         (after?.let(::before) ?: Op.TRUE) and
                         onNetwork(WalletOwnersTable.network, network)
-                }
-                .orderBy(WalletOwnersTable.createdAt to SortOrder.DESC, WalletOwnersTable.walletId to SortOrder.DESC)
+                }.orderBy(WalletOwnersTable.createdAt to SortOrder.DESC, WalletOwnersTable.walletId to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toGroup() }
                 .toList()

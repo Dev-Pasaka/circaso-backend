@@ -27,8 +27,8 @@ import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SocialSignIn
 import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.StablecoinCustody
-import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.StaticMaps
+import com.circaso.integrations.api.SupportedChains
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.VoipPushGateway
@@ -291,7 +291,8 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         single<StablecoinCustody> {
             val seeds = get<CustodySeeds>()
 
-            fun chainsOn(network: Network): () -> SupportedChains? = { getOrNull<CustodySetups>()?.current(network)?.supported }
+            fun chainsOn(network: Network): () -> SupportedChains? =
+                { getOrNull<CustodySetups>()?.current(network)?.supported }
 
             fun fakeOn(network: Network, autoCompleteSetup: Boolean) =
                 FakeCustody(
@@ -522,7 +523,9 @@ private fun Module.circle(secrets: Secrets) {
     single<WebhookVendor>(named("circle.webhook.mainnet")) {
         get<CircleAccounts>().webhook(Network.MAINNET) { getOrNull<CustodyNotifications>() }
     }
-    single<WarmUp>(named("circle.warm-up")) { CircleWarmUp(get<CircleAccounts>().accounts.getValue(Network.TESTNET).client) }
+    single<WarmUp>(named("circle.warm-up")) {
+        CircleWarmUp(get<CircleAccounts>().accounts.getValue(Network.TESTNET).client)
+    }
 }
 
 /** The testnet keeps the client name it always had, so its metrics and circuit breaker carry on. */

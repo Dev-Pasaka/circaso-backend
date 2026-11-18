@@ -57,7 +57,9 @@ class VaultRepositoryImpl(private val database: Database) : VaultRepository {
     internal suspend fun delete(userId: UserId) {
         val network = currentNetwork().name
         database.tx("vaults.delete") {
-            PinVaultsTable.deleteWhere { (PinVaultsTable.userId eq userId.value) and (PinVaultsTable.network eq network) }
+            PinVaultsTable.deleteWhere {
+                (PinVaultsTable.userId eq userId.value) and (PinVaultsTable.network eq network)
+            }
         }
     }
 }

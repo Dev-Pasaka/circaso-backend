@@ -1,6 +1,5 @@
 package com.circaso.ops.presentation.mappers
 
-import com.circaso.ops.presentation.dto.NetworkTotalsDto
 import com.circaso.identity.api.AdminDevice
 import com.circaso.identity.api.AdminSession
 import com.circaso.ops.domain.models.AuditEntry
@@ -40,6 +39,7 @@ import com.circaso.ops.presentation.dto.GroupWalletsDto
 import com.circaso.ops.presentation.dto.GroupsTileDto
 import com.circaso.ops.presentation.dto.HoldingsResponse
 import com.circaso.ops.presentation.dto.MoneyDayDto
+import com.circaso.ops.presentation.dto.NetworkTotalsDto
 import com.circaso.ops.presentation.dto.PartyDto
 import com.circaso.ops.presentation.dto.PeriodDto
 import com.circaso.ops.presentation.dto.SessionDto
@@ -289,7 +289,8 @@ fun Dashboard.toResponse(): DashboardResponse {
                 TransactionsTileDto(
                     count = report.count,
                     volumeUsdMicros = report.volumeUsdMicros,
-                    series = report.series.map {
+                    series =
+                        report.series.map {
                             MoneyDayDto(it.period.toString(), it.count, it.volumeUsdMicros, it.network.name)
                         },
                 )

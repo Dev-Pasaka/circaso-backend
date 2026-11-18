@@ -44,8 +44,10 @@ class NetworkSettingsRepositoryImpl(private val database: Database) : NetworkSet
             val assets =
                 NetworkAssetsTable
                     .selectAll()
-                    .orderBy(NetworkAssetsTable.blockchain to SortOrder.ASC, NetworkAssetsTable.position to SortOrder.ASC)
-                    .map {
+                    .orderBy(
+                        NetworkAssetsTable.blockchain to SortOrder.ASC,
+                        NetworkAssetsTable.position to SortOrder.ASC,
+                    ).map {
                         it[NetworkAssetsTable.blockchain] to
                             CustodyAsset(
                                 symbol = it[NetworkAssetsTable.symbol],

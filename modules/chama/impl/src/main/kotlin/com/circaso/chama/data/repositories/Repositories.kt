@@ -191,7 +191,9 @@ class ContributionRepositoryImpl(private val database: Database) : ContributionR
             ContributionsTable
                 .selectAll()
                 .where {
-                    val counted = ((ContributionsTable.chatId eq chatId.value) and (ContributionsTable.network eq network)) and (ContributionsTable.legacy eq false)
+                    val counted =
+                        ((ContributionsTable.chatId eq chatId.value) and (ContributionsTable.network eq network)) and
+                            (ContributionsTable.legacy eq false)
                     if (since != null) counted and (ContributionsTable.at greaterEq since) else counted
                 }.map { UserId(it[ContributionsTable.userId]) to it[ContributionsTable.amountMinor] }
                 .toList()
@@ -328,8 +330,10 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
             RequestsTable
                 .selectAll()
                 .where {
-                    (((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and (RequestsTable.state eq RequestState.PAID.name))
-                        .let { c -> if (before != null) c and (RequestsTable.updatedAt less before) else c }
+                    (
+                        ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and
+                            (RequestsTable.state eq RequestState.PAID.name)
+                    ).let { c -> if (before != null) c and (RequestsTable.updatedAt less before) else c }
                 }.orderBy(RequestsTable.updatedAt to SortOrder.DESC)
                 .limit(limit)
                 .toList()
@@ -396,8 +400,10 @@ class RequestRepositoryImpl(private val database: Database) : RequestRepository 
             val network = currentNetwork().name
             RequestsTable
                 .selectAll()
-                .where { ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and (RequestsTable.state eq RequestState.PAID.name) }
-                .map { it[RequestsTable.amountMinor] }
+                .where {
+                    ((RequestsTable.chatId eq chatId.value) and (RequestsTable.network eq network)) and
+                        (RequestsTable.state eq RequestState.PAID.name)
+                }.map { it[RequestsTable.amountMinor] }
                 .toList()
                 .sum()
         }

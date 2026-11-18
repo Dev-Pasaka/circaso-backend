@@ -1,6 +1,5 @@
 package com.circaso.assistant.presentation.mappers
 
-import com.circaso.shared.Network
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
@@ -23,6 +22,7 @@ import com.circaso.assistant.presentation.dto.LiveTranscriptFrame
 import com.circaso.assistant.presentation.dto.LiveTurnFrame
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.DomainError
+import com.circaso.shared.Network
 import java.util.UUID
 
 fun LivePhoneFrame.Auth.toRequest(requestId: String?) =

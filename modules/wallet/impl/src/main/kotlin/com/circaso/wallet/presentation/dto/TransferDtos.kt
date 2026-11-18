@@ -1,9 +1,9 @@
 package com.circaso.wallet.presentation.dto
 
 import com.circaso.shared.InstantSerializer
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
-import com.circaso.shared.Network
 import kotlinx.serialization.Serializable
 import java.time.Instant
 

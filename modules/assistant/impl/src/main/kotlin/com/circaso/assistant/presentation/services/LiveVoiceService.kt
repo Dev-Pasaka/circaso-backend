@@ -1,7 +1,5 @@
 package com.circaso.assistant.presentation.services
 
-import com.circaso.shared.WalletNetwork
-import kotlinx.coroutines.withContext
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.models.TurnCommand
@@ -15,6 +13,8 @@ import com.circaso.assistant.domain.usecases.SaveLiveVoiceUsage
 import com.circaso.assistant.domain.usecases.StartTurn
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.shared.Resource
+import com.circaso.shared.WalletNetwork
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 

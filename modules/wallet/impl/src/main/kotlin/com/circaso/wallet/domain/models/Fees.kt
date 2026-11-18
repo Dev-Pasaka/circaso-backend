@@ -1,8 +1,8 @@
 package com.circaso.wallet.domain.models
 
-import com.circaso.shared.Network
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId

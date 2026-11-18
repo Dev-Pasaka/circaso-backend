@@ -1,7 +1,7 @@
 package com.circaso.wallet.presentation.mappers
 
-import com.circaso.wallet.api.ChainAssetTotals
 import com.circaso.shared.Network
+import com.circaso.wallet.api.ChainAssetTotals
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.GroupWalletPage
 import com.circaso.wallet.api.GroupWalletRef
@@ -110,7 +110,15 @@ fun List<OpsHoldings>.combined() =
     OpsHoldings(
         hasWallet = any { it.hasWallet },
         wallets = flatMap { it.wallets },
-        totalUsdMicros = if (all { it.balancesAvailable }) mapNotNull { it.totalUsdMicros }.takeIf { it.isNotEmpty() }?.sum() else null,
+        totalUsdMicros =
+            if (all {
+                    it.balancesAvailable
+                }
+            ) {
+                mapNotNull { it.totalUsdMicros }.takeIf { it.isNotEmpty() }?.sum()
+            } else {
+                null
+            },
         balancesAvailable = all { it.balancesAvailable },
     )
 

@@ -25,8 +25,7 @@ const val REDIS_PREFIX = "wal"
  * wallets never share a key. Keys named by an id that exists on one network only (a Circle wallet, a transfer) need
  * none.
  */
-internal suspend fun networkKey(key: String): String =
-    if (currentNetwork() == Network.TESTNET) key else "mainnet:$key"
+internal suspend fun networkKey(key: String): String = if (currentNetwork() == Network.TESTNET) key else "mainnet:$key"
 
 /** `wal:balance:{circleWalletId}`: one chain's holdings as JSON, for 15 seconds. */
 class RedisBalanceCache(private val redis: RedisScope) : BalanceCache {

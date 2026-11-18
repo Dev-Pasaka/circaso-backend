@@ -1,7 +1,7 @@
 package com.circaso.wallet.domain.support
 
-import com.circaso.shared.Network
 import com.circaso.shared.FieldError
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.wallet.api.FeeRuleKind
 import com.circaso.wallet.api.FeeRuleScope

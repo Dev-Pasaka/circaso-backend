@@ -1,6 +1,5 @@
 package com.circaso.ops.domain.usecases
 
-import com.circaso.shared.networkFilter
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.GroupReports
 import com.circaso.messaging.api.OpsGroup
@@ -14,6 +13,7 @@ import com.circaso.ops.domain.support.UserViews
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
 import com.circaso.shared.getOrNull
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.WalletReports
 
 // Groups, for every role. A group's name and photo are end-to-end encrypted, so staff see ids, sizes, owners and

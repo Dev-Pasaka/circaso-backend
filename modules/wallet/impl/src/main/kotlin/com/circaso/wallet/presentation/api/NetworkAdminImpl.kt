@@ -44,7 +44,9 @@ class NetworkAdminImpl(private val networks: NetworkService) : NetworkAdmin {
     override suspend fun updateSettings(settings: OpsNetworkSettings, by: UUID): Resource<OpsNetworkSettingsChange> {
         val state =
             NetworkState.entries.firstOrNull { it.name == settings.state.trim().uppercase() }
-                ?: return Resource.error(SharedError.Malformed(listOf(FieldError("state", "must be OFF, PREVIEW or ON"))))
+                ?: return Resource.error(
+                    SharedError.Malformed(listOf(FieldError("state", "must be OFF, PREVIEW or ON"))),
+                )
         val proposed =
             NetworkSettings(
                 network = settings.network,
@@ -73,7 +75,15 @@ class NetworkAdminImpl(private val networks: NetworkService) : NetworkAdmin {
                         enabled = chain.enabled,
                         receiveEnabled = chain.receiveEnabled,
                         accountType = chain.accountType,
-                        assets = chain.assets.map { OpsNetworkAsset(it.symbol, it.tokenAddress, it.decimals, it.usdPegged) },
+                        assets =
+                            chain.assets.map {
+                                OpsNetworkAsset(
+                                    it.symbol,
+                                    it.tokenAddress,
+                                    it.decimals,
+                                    it.usdPegged,
+                                )
+                            },
                     )
                 },
             version = version,

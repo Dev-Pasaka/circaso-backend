@@ -58,9 +58,12 @@ class Networks(
         }
     }
 
-    /** Forgets what was read, so the next [fresh] reads the tables (after a change made in this process). */
+    /**
+     * Makes the next [fresh] read the tables (after a change made in this process). What was read stays in force
+     * until then, so custody and the fees never fall back to the seeds in between.
+     */
     fun invalidate() {
-        loaded = null
+        loaded = loaded?.let { Loaded(it.snapshot, Instant.EPOCH) }
     }
 
     /** [network]'s settings now. */
@@ -73,7 +76,12 @@ class Networks(
     suspend fun state(network: Network): NetworkState =
         if (network in custody.networks) settings(network).state else NetworkState.OFF
 
-    override fun current(network: Network): CustodySetup? = loaded?.snapshot?.settings?.get(network)?.toSetup()
+    override fun current(network: Network): CustodySetup? =
+        loaded
+            ?.snapshot
+            ?.settings
+            ?.get(network)
+            ?.toSetup()
 
     /** The chain's fee settings as last read; null before the first read or when it has none. */
     fun feeOf(blockchain: String): ChainFee? = loaded?.snapshot?.fees?.get(blockchain)

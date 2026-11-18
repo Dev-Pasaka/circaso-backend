@@ -1,6 +1,5 @@
 package com.circaso.ops.presentation.controllers
 
-import com.circaso.shared.networkFilter
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.presentation.dto.FinanceResponse
@@ -23,6 +22,7 @@ import com.circaso.ops.presentation.services.MoneyService
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.TransferFilter
 import com.circaso.web.NoBody

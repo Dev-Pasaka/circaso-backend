@@ -39,7 +39,8 @@ class NetworkCustody(private val byNetwork: Map<Network, StablecoinCustody>) : S
 
     override val networks: Set<Network> get() = byNetwork.keys
 
-    override suspend fun chains(): SupportedChains = (byNetwork[currentNetwork()] ?: byNetwork.getValue(Network.TESTNET)).supported
+    override suspend fun chains(): SupportedChains =
+        (byNetwork[currentNetwork()] ?: byNetwork.getValue(Network.TESTNET)).supported
 
     override suspend fun createUser(circleUserId: String): Resource<Unit> = here { it.createUser(circleUserId) }
 
@@ -90,8 +91,10 @@ class NetworkCustody(private val byNetwork: Map<Network, StablecoinCustody>) : S
     override suspend fun estimateSplit(circleUserId: String, request: SplitTransferRequest): Resource<NetworkCost> =
         here { it.estimateSplit(circleUserId, request) }
 
-    override suspend fun prepareSplitTransfer(circleUserId: String, request: SplitTransferRequest): Resource<Challenge> =
-        here { it.prepareSplitTransfer(circleUserId, request) }
+    override suspend fun prepareSplitTransfer(
+        circleUserId: String,
+        request: SplitTransferRequest,
+    ): Resource<Challenge> = here { it.prepareSplitTransfer(circleUserId, request) }
 
     override suspend fun transaction(circleUserId: String, circleTxId: String): Resource<CustodyTransaction> =
         here { it.transaction(circleUserId, circleTxId) }

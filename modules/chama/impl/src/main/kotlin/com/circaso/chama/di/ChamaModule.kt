@@ -63,10 +63,10 @@ import com.circaso.infrastructure.api.Databases
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
-import com.circaso.shared.Network
-import com.circaso.shared.WalletNetwork
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.Network
 import com.circaso.shared.RealtimeModule
+import com.circaso.shared.WalletNetwork
 import com.circaso.wallet.api.PayoutApprovals
 import com.circaso.web.RouteContributor
 import kotlinx.coroutines.withContext

@@ -3,8 +3,8 @@ package com.circaso.wallet.presentation.api
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
-import com.circaso.shared.WalletNetwork
 import com.circaso.shared.UserId
+import com.circaso.shared.WalletNetwork
 import com.circaso.shared.getOrNull
 import com.circaso.shared.getOrThrow
 import com.circaso.shared.map
@@ -22,9 +22,9 @@ import com.circaso.wallet.presentation.mappers.combined
 import com.circaso.wallet.presentation.mappers.toOps
 import com.circaso.wallet.presentation.mappers.toRef
 import com.circaso.wallet.presentation.services.WalletReportService
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
-import kotlinx.coroutines.withContext
 
 /**
  * wallet:api's staff contract (decision 2026-11-08), bound for the ops module only: the app gateway never mounts it.

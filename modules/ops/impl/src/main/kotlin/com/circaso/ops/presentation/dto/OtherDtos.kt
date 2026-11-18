@@ -27,11 +27,7 @@ data class TransactionsTileDto(val count: Long, val volumeUsdMicros: Long, val s
 data class GroupsTileDto(val total: Long, val withWallet: Long, val withoutWallet: Long)
 
 @Serializable
-data class FeeDayDto(
-    val date: String,
-    val usdMicros: Long,
-    val network: String = "TESTNET",
-)
+data class FeeDayDto(val date: String, val usdMicros: Long, val network: String = "TESTNET")
 
 @Serializable
 data class FeesTileDto(val earnedUsdMicros: Long, val series: List<FeeDayDto>)

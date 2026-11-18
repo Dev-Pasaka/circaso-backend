@@ -8,13 +8,13 @@ import com.circaso.shared.DomainException
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventHandler
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.Uuid7
+import com.circaso.shared.WalletNetwork
 import com.circaso.shared.decode
 import com.circaso.wallet.api.TransferConfirmed
 import com.circaso.wallet.api.TransferSubmitted
-import com.circaso.shared.Network
-import com.circaso.shared.WalletNetwork
 import kotlinx.coroutines.withContext
 
 /**
@@ -74,7 +74,8 @@ class WalletEventHandler(private val events: ChamaEventsService) {
                 paid = paid,
             )
         // The group's money is kept per network, and the transfer's chain says which (2026-11-18).
-        val result = withContext(WalletNetwork(Network.ofChain(event.blockchain))) { events.transferConfirmed(transfer) }
+        val result =
+            withContext(WalletNetwork(Network.ofChain(event.blockchain))) { events.transferConfirmed(transfer) }
         if (result is Resource.Error) throw DomainException(result.error, result.cause)
     }
 

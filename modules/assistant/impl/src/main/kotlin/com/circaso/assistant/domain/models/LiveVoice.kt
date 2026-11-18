@@ -1,9 +1,9 @@
 package com.circaso.assistant.domain.models
 
-import com.circaso.shared.Network
 import com.circaso.integrations.api.LiveSpeechSession
 import com.circaso.integrations.api.LiveTranscriptionSession
 import com.circaso.shared.DomainError
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import java.time.Duration
 import java.util.UUID

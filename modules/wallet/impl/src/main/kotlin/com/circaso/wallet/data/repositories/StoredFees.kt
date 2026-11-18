@@ -14,7 +14,11 @@ import java.math.BigDecimal
 class StoredFees(private val networks: Networks, private val seed: FeeConfig) : FeeConfig {
     override fun feeAddress(blockchain: String): String? {
         if (!networks.isLoaded) return seed.feeAddress(blockchain)
-        return networks.feeOf(blockchain)?.feeAddress?.trim()?.takeIf { it.isNotEmpty() }
+        return networks
+            .feeOf(blockchain)
+            ?.feeAddress
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     override fun nativeUsd(blockchain: String): BigDecimal =

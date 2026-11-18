@@ -1,7 +1,7 @@
 package com.circaso.ops.presentation.dto
 
-import io.ktor.openapi.JsonSchema
 import com.circaso.shared.Network
+import io.ktor.openapi.JsonSchema
 import kotlinx.serialization.Serializable
 
 // Money: integer micro-dollars (`…UsdMicros`, 1 USD = 1_000_000) and exact coin amounts as strings in the coin's minor

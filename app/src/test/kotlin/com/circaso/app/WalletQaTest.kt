@@ -13,10 +13,12 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.StablecoinCustody
+import com.circaso.integrations.impl.NetworkCustody
 import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeExchangeRates
 import com.circaso.integrations.impl.dev.FakePush
 import com.circaso.integrations.impl.dev.FakeSms
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -119,7 +121,7 @@ class WalletQaTest {
             fakes =
                 Fakes(
                     getKoin().get<SmsGateway>() as FakeSms,
-                    getKoin().get<StablecoinCustody>() as FakeCustody,
+                    (getKoin().get<StablecoinCustody>() as NetworkCustody).on(Network.TESTNET) as FakeCustody,
                     getKoin().get<ExchangeRates>() as FakeExchangeRates,
                     getKoin().get<CustodyNotifications>(),
                     getKoin().get<PushGateway>() as FakePush,

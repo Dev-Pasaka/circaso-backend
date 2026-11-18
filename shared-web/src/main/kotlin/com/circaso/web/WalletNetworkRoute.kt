@@ -100,7 +100,10 @@ fun Route.networkFiltered(build: Route.() -> Unit): Route {
             },
         )
     node.intercept(ApplicationCallPipeline.Plugins) {
-        val raw = call.request.queryParameters["network"]?.trim()?.takeIf { it.isNotEmpty() }
+        val raw =
+            call.request.queryParameters["network"]
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
         if (raw == null) return@intercept
         val network = Network.parse(raw.uppercase())
         if (network == null) {

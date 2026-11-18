@@ -62,8 +62,18 @@ class NetworkAccess(
         }
         val network =
             Network.parse(named)
-                ?: return Resource.error(SharedError.Malformed(listOf(FieldError(HEADER, "must be MAINNET or TESTNET"))))
-        return if (mayUse(userId, network)) Resource.success(network) else Resource.error(WalletError.NetworkUnavailable)
+                ?: return Resource.error(
+                    SharedError.Malformed(listOf(FieldError(HEADER, "must be MAINNET or TESTNET"))),
+                )
+        return if (mayUse(
+                userId,
+                network,
+            )
+        ) {
+            Resource.success(network)
+        } else {
+            Resource.error(WalletError.NetworkUnavailable)
+        }
     }
 
     /**
@@ -81,13 +91,20 @@ class NetworkAccess(
         rows: Rows,
     ): Boolean =
         when (states.getValue(network)) {
-            NetworkState.OFF -> false
-            NetworkState.PREVIEW -> network in rows.load()
-            NetworkState.ON ->
+            NetworkState.OFF -> {
+                false
+            }
+
+            NetworkState.PREVIEW -> {
+                network in rows.load()
+            }
+
+            NetworkState.ON -> {
                 when (network) {
                     Network.MAINNET -> true
                     Network.TESTNET -> states.getValue(Network.MAINNET) != NetworkState.ON || network in rows.load()
                 }
+            }
         }
 
     /** The person's access rows, read only when a rule needs them: before launch no testnet request does. */

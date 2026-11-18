@@ -8,9 +8,13 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodySetups
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.RealtimeModule
+import com.circaso.shared.WalletNetworkGate
 import com.circaso.wallet.api.FeeAdmin
+import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.WalletReports
 import com.circaso.wallet.api.Wallets
@@ -29,9 +33,12 @@ import com.circaso.wallet.data.repositories.DatabaseTransactor
 import com.circaso.wallet.data.repositories.FeeLedgerRepositoryImpl
 import com.circaso.wallet.data.repositories.FeeQuoteRepositoryImpl
 import com.circaso.wallet.data.repositories.LogWalletWarnings
+import com.circaso.wallet.data.repositories.NetworkAccessRepositoryImpl
+import com.circaso.wallet.data.repositories.NetworkSettingsRepositoryImpl
 import com.circaso.wallet.data.repositories.PaymentHoldsImpl
 import com.circaso.wallet.data.repositories.RuleAdminRepositoryImpl
 import com.circaso.wallet.data.repositories.RuleRepositoryImpl
+import com.circaso.wallet.data.repositories.StoredFees
 import com.circaso.wallet.data.repositories.TransactionRepositoryImpl
 import com.circaso.wallet.data.repositories.TransferRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletExpiry
@@ -39,13 +46,13 @@ import com.circaso.wallet.data.repositories.WalletOutboxImpl
 import com.circaso.wallet.data.repositories.WalletOwnerRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletReportRepositoryImpl
 import com.circaso.wallet.data.repositories.WalletRepositoryImpl
+import com.circaso.wallet.data.tables.ChainFeesTable
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.FeeBoundsTable
 import com.circaso.wallet.data.tables.FeeLedgerTable
 import com.circaso.wallet.data.tables.FeeQuotesTable
 import com.circaso.wallet.data.tables.FeeRulesTable
 import com.circaso.wallet.data.tables.LimitRulesTable
-import com.circaso.wallet.data.tables.ChainFeesTable
 import com.circaso.wallet.data.tables.NetworkAccessTable
 import com.circaso.wallet.data.tables.NetworkAssetsTable
 import com.circaso.wallet.data.tables.NetworkChainsTable
@@ -75,6 +82,8 @@ import com.circaso.wallet.domain.ports.WalletWarnings
 import com.circaso.wallet.domain.repositories.CoinIconRepository
 import com.circaso.wallet.domain.repositories.FeeLedgerRepository
 import com.circaso.wallet.domain.repositories.FeeQuoteRepository
+import com.circaso.wallet.domain.repositories.NetworkAccessRepository
+import com.circaso.wallet.domain.repositories.NetworkSettingsRepository
 import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.repositories.TransactionRepository
@@ -96,7 +105,9 @@ import com.circaso.wallet.domain.support.HoldingPrices
 import com.circaso.wallet.domain.support.HoldingsReader
 import com.circaso.wallet.domain.support.IncomingUpdates
 import com.circaso.wallet.domain.support.Limits
+import com.circaso.wallet.domain.support.NetworkAccess
 import com.circaso.wallet.domain.support.NetworkCosts
+import com.circaso.wallet.domain.support.Networks
 import com.circaso.wallet.domain.support.OrderedIds
 import com.circaso.wallet.domain.support.OutgoingUpdates
 import com.circaso.wallet.domain.support.Payees
@@ -140,6 +151,8 @@ import com.circaso.wallet.domain.usecases.FindGroupWallets
 import com.circaso.wallet.domain.usecases.FindSpaceWallet
 import com.circaso.wallet.domain.usecases.GetCoinIcon
 import com.circaso.wallet.domain.usecases.GetGroupWallet
+import com.circaso.wallet.domain.usecases.GetNetworkAccess
+import com.circaso.wallet.domain.usecases.GetNetworkSettings
 import com.circaso.wallet.domain.usecases.GetSpaceWallet
 import com.circaso.wallet.domain.usecases.GetStaffHoldings
 import com.circaso.wallet.domain.usecases.GetStaffTransfer
@@ -153,6 +166,7 @@ import com.circaso.wallet.domain.usecases.ListFeeRules
 import com.circaso.wallet.domain.usecases.ListGroupWallets
 import com.circaso.wallet.domain.usecases.ListLimitRules
 import com.circaso.wallet.domain.usecases.ListMyWallets
+import com.circaso.wallet.domain.usecases.ListNetworks
 import com.circaso.wallet.domain.usecases.ListStaffTransfers
 import com.circaso.wallet.domain.usecases.ListTransactions
 import com.circaso.wallet.domain.usecases.ListTransfersOf
@@ -163,15 +177,18 @@ import com.circaso.wallet.domain.usecases.QuoteTransfer
 import com.circaso.wallet.domain.usecases.ReconcileWallets
 import com.circaso.wallet.domain.usecases.ReplayFrames
 import com.circaso.wallet.domain.usecases.RequestSetup
+import com.circaso.wallet.domain.usecases.SetNetworkAccess
 import com.circaso.wallet.domain.usecases.SettleSplitPayments
 import com.circaso.wallet.domain.usecases.SumFeesPaid
 import com.circaso.wallet.domain.usecases.SummariseTransactions
 import com.circaso.wallet.domain.usecases.SweepWalletSetups
 import com.circaso.wallet.domain.usecases.UpdateFeeBounds
+import com.circaso.wallet.domain.usecases.UpdateNetworkSettings
 import com.circaso.wallet.domain.usecases.ValidateAddress
 import com.circaso.wallet.domain.usecases.ValueAssets
 import com.circaso.wallet.presentation.agent.agentController
 import com.circaso.wallet.presentation.api.FeeAdminImpl
+import com.circaso.wallet.presentation.api.NetworkAdminImpl
 import com.circaso.wallet.presentation.api.WalletCustodyNotifications
 import com.circaso.wallet.presentation.api.WalletDeletionGuard
 import com.circaso.wallet.presentation.api.WalletRealtimeReplay
@@ -179,6 +196,7 @@ import com.circaso.wallet.presentation.api.WalletReportsImpl
 import com.circaso.wallet.presentation.api.WalletsImpl
 import com.circaso.wallet.presentation.controllers.coinIconController
 import com.circaso.wallet.presentation.controllers.historyController
+import com.circaso.wallet.presentation.controllers.networkController
 import com.circaso.wallet.presentation.controllers.recipientController
 import com.circaso.wallet.presentation.controllers.spaceWalletController
 import com.circaso.wallet.presentation.controllers.transferController
@@ -188,6 +206,7 @@ import com.circaso.wallet.presentation.services.CoinIconService
 import com.circaso.wallet.presentation.services.FeeAdminService
 import com.circaso.wallet.presentation.services.HistoryService
 import com.circaso.wallet.presentation.services.IdentityEventsService
+import com.circaso.wallet.presentation.services.NetworkService
 import com.circaso.wallet.presentation.services.RecipientService
 import com.circaso.wallet.presentation.services.SpaceWalletService
 import com.circaso.wallet.presentation.services.TransferService
@@ -197,25 +216,6 @@ import com.circaso.wallet.presentation.services.WalletJobsService
 import com.circaso.wallet.presentation.services.WalletReportService
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.wallet.presentation.warmup.WalletWarmUp
-import com.circaso.integrations.api.CustodySetups
-import com.circaso.integrations.api.StablecoinCustody
-import com.circaso.shared.WalletNetworkGate
-import com.circaso.wallet.api.NetworkAdmin
-import com.circaso.wallet.data.repositories.NetworkAccessRepositoryImpl
-import com.circaso.wallet.data.repositories.NetworkSettingsRepositoryImpl
-import com.circaso.wallet.data.repositories.StoredFees
-import com.circaso.wallet.domain.repositories.NetworkAccessRepository
-import com.circaso.wallet.domain.repositories.NetworkSettingsRepository
-import com.circaso.wallet.domain.support.NetworkAccess
-import com.circaso.wallet.domain.support.Networks
-import com.circaso.wallet.domain.usecases.GetNetworkAccess
-import com.circaso.wallet.domain.usecases.GetNetworkSettings
-import com.circaso.wallet.domain.usecases.ListNetworks
-import com.circaso.wallet.domain.usecases.SetNetworkAccess
-import com.circaso.wallet.domain.usecases.UpdateNetworkSettings
-import com.circaso.wallet.presentation.api.NetworkAdminImpl
-import com.circaso.wallet.presentation.controllers.networkController
-import com.circaso.wallet.presentation.services.NetworkService
 import com.circaso.web.RouteContributor
 import com.circaso.web.unavailable
 import org.koin.core.module.Module
@@ -580,5 +580,8 @@ fun walletModule(config: Config): Module =
         single(named("wallet.replay")) { RealtimeModule(WalletFrames.MODULE, WalletRealtimeReplay(get())) }
 
         // read-only and database-only (never Circle), run at start-up before the app reports ready
-        single<WarmUp>(named("wallet.warm-up")) { WalletWarmUp(get(), get(), get(), get(), get(), clock) }
+        single<WarmUp>(named("wallet.warm-up")) {
+            val networks = get<Networks>()
+            WalletWarmUp(get(), get(), get(), get(), get(), clock) { networks.fresh() }
+        }
     }

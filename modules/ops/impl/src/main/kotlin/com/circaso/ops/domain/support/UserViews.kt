@@ -1,6 +1,5 @@
 package com.circaso.ops.domain.support
 
-import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.identity.api.AccountStatus
 import com.circaso.ops.domain.models.AuditAction
@@ -10,6 +9,7 @@ import com.circaso.ops.domain.models.UserSummary
 import com.circaso.ops.domain.repositories.AuditRepository
 import com.circaso.shared.UserId
 import com.circaso.users.api.ProfileAdmin
+import com.circaso.wallet.api.NetworkAdmin
 
 /**
  * How people are shown to staff, shared by the user use cases: an account from identity, its profile from users, and,

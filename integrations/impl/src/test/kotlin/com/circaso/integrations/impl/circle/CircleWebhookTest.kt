@@ -10,7 +10,9 @@ import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import com.circaso.shared.currentNetwork
 import kotlinx.coroutines.runBlocking
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -63,6 +65,51 @@ class CircleWebhookTest {
     }
 
     private fun <T> Resource<T>.data(): T = (this as Resource.Success).data
+
+    @Test
+    fun `each Circle account has its own webhook path, and its notifications run on its own network`() =
+        runBlocking<Unit> {
+            val seen = mutableListOf<Network>()
+            val recording =
+                object : CustodyNotifications {
+                    override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> {
+                        seen += currentNetwork()
+                        return Resource.success(Unit)
+                    }
+                }
+            val accounts =
+                CircleAccounts(
+                    Network.entries.associateWith { CircleAccount(it, circle.client) { circle.settings } },
+                    circle.clock,
+                )
+            val testnet = accounts.webhook(Network.TESTNET) { recording }
+            val mainnet = accounts.webhook(Network.MAINNET) { recording }
+            val body = notification("transactions.inbound", transaction("INBOUND", "COMPLETE")).toByteArray()
+
+            assertEquals("circle", testnet.name)
+            assertEquals("circle-mainnet", mainnet.name)
+            assertTrue(mainnet.answersAfterTranslation)
+            assertTrue(mainnet.verifySignature(headers(body), body))
+            testnet.translate(body)
+            mainnet.translate(body)
+
+            assertEquals(listOf(Network.TESTNET, Network.MAINNET), seen)
+        }
+
+    @Test
+    fun `a network with no Circle account refuses every delivery at its path`() =
+        runBlocking<Unit> {
+            val accounts =
+                CircleAccounts(
+                    mapOf(Network.TESTNET to CircleAccount(Network.TESTNET, circle.client) { circle.settings }),
+                )
+            val mainnet = accounts.webhook(Network.MAINNET) { listener }
+            val body = notification("transactions.inbound", transaction("INBOUND", "COMPLETE")).toByteArray()
+
+            assertEquals("circle-mainnet", mainnet.name)
+            assertFalse(mainnet.verifySignature(headers(body), body))
+            assertEquals(setOf(Network.TESTNET), accounts.custodies.keys)
+        }
 
     private fun sign(body: ByteArray, keys: KeyPair = keyPair): String =
         Signature.getInstance("SHA256withECDSA").run {

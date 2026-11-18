@@ -18,9 +18,9 @@ import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
-import com.circaso.shared.currentNetwork
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.shared.envelope
 
 /**

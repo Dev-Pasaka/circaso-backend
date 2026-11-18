@@ -541,3 +541,8 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 | `identity.key_backup_off` | CONFLICT → 409 | KB7: key backup is off (no root) |
 | `identity.saved_names_ciphertext_invalid` | INVALID → 400 | KB7: `ciphertext` empty, not base64, or over 512 KiB |
 | `identity.saved_names_base_version_invalid` | INVALID → 400 | KB7: `baseVersion` below 0 |
+
+## PIN Vault and wallet networks (decision 2026-11-18)
+
+The mainnet wallet has its own PIN, so a person may keep one PIN Vault per wallet network. V9 adds `network` (default `TESTNET`) to `pin_vaults`, primary key `(user_id, network)`. V1 to V4 are inside `authenticateOnNetwork` (`X-Wallet-Network`, decided by the wallet's `WalletNetworkGate`; a missing header is the wallet's fallback) and read, save and delete the vault of `currentNetwork()`. `PinVaultOpened` carries `network`, and the wallet pauses payments on that network only. Deleting the account deletes both.
+

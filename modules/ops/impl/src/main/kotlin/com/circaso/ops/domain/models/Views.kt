@@ -1,6 +1,5 @@
 package com.circaso.ops.domain.models
 
-import com.circaso.wallet.api.OpsNetworkAccess
 import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.identity.api.ActiveCounts
@@ -17,6 +16,7 @@ import com.circaso.users.api.AdminProfile
 import com.circaso.wallet.api.FinanceReport
 import com.circaso.wallet.api.GroupWalletRef
 import com.circaso.wallet.api.OpsHoldings
+import com.circaso.wallet.api.OpsNetworkAccess
 import com.circaso.wallet.api.OpsTransfer
 import java.time.Instant
 import java.time.LocalDate

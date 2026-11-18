@@ -2,16 +2,16 @@ package com.circaso.wallet.domain.support
 
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.shared.WalletNetwork
 import com.circaso.wallet.domain.models.ChainWallet
 import com.circaso.wallet.domain.models.ChainWalletState
 import com.circaso.wallet.domain.models.CircleUser
 import com.circaso.wallet.domain.ports.PendingSetups
 import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.repositories.WalletRepository
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.UUID
-import com.circaso.shared.WalletNetwork
-import kotlinx.coroutines.withContext
 
 /**
  * A wallet being set up turns `ACTIVE` as soon as Circle has it, not at the next sweep. Circle creates the wallets once

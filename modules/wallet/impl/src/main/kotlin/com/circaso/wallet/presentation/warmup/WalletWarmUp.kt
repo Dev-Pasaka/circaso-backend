@@ -28,10 +28,13 @@ class WalletWarmUp(
     private val transactions: TransactionRepository,
     private val rules: RuleRepository,
     private val clock: Clock,
+    /** Reads the network settings (seeding them the first time), so the first request finds them in memory. */
+    private val readNetworkSettings: suspend () -> Unit = {},
 ) : WarmUp {
     override val name = "wallet"
 
     override suspend fun run() {
+        readNetworkSettings()
         val now = clock.instant()
         val userId = transactions.parties(now.minus(Duration.ofDays(30)), SAMPLE).randomOrNull() ?: UserId.new()
         wallets.circleUser(userId)

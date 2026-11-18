@@ -33,7 +33,10 @@ import java.util.UUID
 class ListNetworks(private val access: NetworkAccess, private val wallets: WalletRepository) {
     suspend operator fun invoke(userId: UserId): Resource<NetworkOptions> {
         val usable = access.usable(userId)
-        val options = usable.map { network -> NetworkOption(network, withContext(WalletNetwork(network)) { status(userId) }) }
+        val options =
+            usable.map { network ->
+                NetworkOption(network, withContext(WalletNetwork(network)) { status(userId) })
+            }
         val default = if (Network.MAINNET in usable) Network.MAINNET else Network.TESTNET
         return Resource.success(NetworkOptions(options, default))
     }
@@ -116,10 +119,17 @@ class UpdateNetworkSettings(
                 if (expectedVersion != null && expectedVersion != before.version) {
                     return@attempt Resource.error(WalletError.NetworkSettingsChanged)
                 }
-                val kept = cleaned.chains.filter { it.enabled }.map { it.blockchain }.toSet()
+                val kept =
+                    cleaned.chains
+                        .filter { it.enabled }
+                        .map { it.blockchain }
+                        .toSet()
                 val orphaned = repository.chainsInUse(cleaned.network).firstOrNull { it !in kept }
                 if (orphaned != null) {
-                    return@attempt invalid("chains", "$orphaned has wallets on it: retire it, don't remove or disable it")
+                    return@attempt invalid(
+                        "chains",
+                        "$orphaned has wallets on it: retire it, don't remove or disable it",
+                    )
                 }
                 val after = repository.replace(cleaned.copy(version = before.version), by, clock.instant())
                 Resource.success(before to after)
@@ -132,7 +142,13 @@ class UpdateNetworkSettings(
         copy(
             blockchain = blockchain.trim().uppercase(),
             accountType = accountType.trim().uppercase(),
-            assets = assets.map { it.copy(symbol = it.symbol.trim().uppercase(), tokenAddress = it.tokenAddress.trim()) },
+            assets =
+                assets.map {
+                    it.copy(
+                        symbol = it.symbol.trim().uppercase(),
+                        tokenAddress = it.tokenAddress.trim(),
+                    )
+                },
         )
 
     private fun shapeProblem(settings: NetworkSettings): Resource.Error? {
@@ -159,7 +175,11 @@ class UpdateNetworkSettings(
     }
 
     private fun chainProblem(chain: ChainSettings): Resource.Error? {
-        if (chain.accountType !in ACCOUNT_TYPES) return invalid("accountType", "${chain.blockchain}: must be SCA or EOA")
+        if (chain.accountType !in
+            ACCOUNT_TYPES
+        ) {
+            return invalid("accountType", "${chain.blockchain}: must be SCA or EOA")
+        }
         if (chain.accountType == SCA && !custodyAllowsSca(chain.blockchain)) {
             return invalid("accountType", "${chain.blockchain}: Solana wallets are EOA")
         }

@@ -485,7 +485,54 @@ Wallet implements `RealtimeReplay` with its `realtime` table, as users does.
 | `wallet.chain_unsupported` | INVALID → 400 | A blockchain that isn't in the supported list (W4, W9, W11, W12), or W12 adding a chain retired from receiving |
 | `wallet.funds_remaining` | CONFLICT → 409 | `DeletionGuard`: the US dollar stablecoins (USDC) the wallet holds, added up over every chain, come to 0.01 or more, or it holds any amount of another asset. Reaches the app as is (decision 2026-10-28) |
 | `wallet.support_account_has_no_wallet` | FORBIDDEN → 403 | W2, W12, W13 for a Circaso support account, and W4, W9, W10 with one on either side (decision 2026-10-31) |
+| `wallet.network_unavailable` | FORBIDDEN → 403 | The network in `X-Wallet-Network` isn't one this person may use now (off, in preview for staff, no custody key, or a testnet that was never theirs) |
+| `wallet.network_settings_invalid` / `wallet.network_settings_changed` | INVALID → 400 / CONFLICT → 409 | Staff's change to a network's settings breaks a rule (the field is named), or was built on a stale version |
 | `wallet.custody_unavailable` | UPSTREAM → 502 | Circle is down or the circuit is open; also the `DeletionGuard` when a wallet sits on a chain that is unconfigured (never done while funds are on it; its balance can't be read, so deletion is refused; a WARN names the chain and Circle's wallet id) |
+
+## Networks (decision 2026-11-18)
+
+One server talks to Circle's **testnet** and **mainnet** accounts side by side. Everything about money carries `network` (`MAINNET` | `TESTNET`, `shared.Network`); mainnet is a separate Circle user per holder (a new wallet, a new PIN). Everything above this section describes one network: read "the wallet" as "the wallet on the request's network". Decisions and reasons: decisions.md, 2026-11-18.
+
+**How the network reaches the code.** It is a coroutine context element, `WalletNetwork` (`shared`), read with `currentNetwork()`; with none set, work is for the testnet. It is set at every way in:
+
+| Way in | Sets it from |
+| --- | --- |
+| App and agent routes | `authenticateOnNetwork(scope) { }` (`shared-web`): `X-Wallet-Network` through the wallet's `WalletNetworkGate` (`NetworkAccess`), which the gateway puts on the application. Used by every wallet controller, chama's, identity's PIN Vault, and Asha's chat (her agent tools pass the header on) |
+| Jobs | `WalletJobsService.onEachNetwork`: each job once per network custody can reach |
+| Circle webhooks | The account: `/v1/hooks/circle` is testnet, `/v1/hooks/circle-mainnet` mainnet; `WalletCustodyNotifications` falls back to the update's chain |
+| Events | `PinVaultOpened.network`; chama reads a transfer event's chain |
+| Staff reads | `networkFiltered { }` on the ops routes: `?network=`; none means both (`networkFilter()` is null) |
+| `DeletionGuard` | Both networks, the first refusal wins |
+
+Repositories read it: `circle_users`, `wallets`, `wallet_owners`, `payment_holds`, a holder's `transactions`, `spentSince`, `lockHolder` and the jobs' lists are all filtered by it. Redis keys about a holder carry it on mainnet only (`wal:mainnet:adding:{userId}`, `…:active`, `…:setup:{holder}`, `…:setups`, `…:setupcheck:{holder}`, `…:remind:{from}:{to}`; testnet keys are unchanged). `StablecoinCustody` is `NetworkCustody` (integrations): one custody per network, each with its own API key, client (`circle`, `circle-mainnet`), user-token cache and webhook; `custody.chains()` is the network's chain list (`supported` is the testnet's, kept for old callers).
+
+**Who may use a network** (`NetworkAccess`). Mainnet: `ON` → everyone; `PREVIEW` → people with a mainnet row; `OFF`, or no `CIRCLE_MAINNET_API_KEY` → nobody. Testnet: `ON` → people with a testnet row, and everyone while mainnet isn't `ON`; `PREVIEW` → people with a row. A request names its network in `X-Wallet-Network`; one it may not use is `wallet.network_unavailable` (403), a value that is no network `request.malformed`. No header: testnet if usable, else mainnet if usable, else testnet. Starting a testnet wallet before mainnet is `ON` writes an `AUTO` row.
+
+**W20 `GET /wallet/networks`** (`ListNetworks`, scope `app`, outside the network group): `{ networks: [ { network, walletStatus } ], default }`, only the usable ones, mainnet first; `default` is mainnet when usable.
+
+**Data (V12__networks.sql).**
+
+```sql
+CREATE FUNCTION wallet.network_of(blockchain text) RETURNS text IMMUTABLE;   -- suffix SEPOLIA|AMOY|DEVNET|FUJI|TESTNET → TESTNET
+-- circle_users: + network (default TESTNET), PRIMARY KEY (user_id, network)
+-- wallets, transfers, transactions, fee_quotes, fee_ledger: + network GENERATED ALWAYS AS (wallet.network_of(blockchain)) STORED
+-- wallet_owners: + network; wallet_owners_chat_key and _space_key on (…, network)
+-- payment_holds: + network, PRIMARY KEY (user_id, network)
+-- limit_rules, fee_rules: + network NULL (null: both networks)
+CREATE TABLE wallet.network_access (user_id, network, source GRANDFATHERED|ADMIN|AUTO, granted_by, reason, created_at, PRIMARY KEY (user_id, network));
+CREATE TABLE wallet.network_settings (network PRIMARY KEY, state OFF|PREVIEW|ON, app_id, default_chain, version, updated_by, updated_at);
+CREATE TABLE wallet.network_chains (blockchain PRIMARY KEY, network, position, enabled, receive_enabled, account_type SCA|EOA);
+CREATE TABLE wallet.network_assets (blockchain, position, symbol, token_address, decimals, usd_pegged, PRIMARY KEY (blockchain, position));
+CREATE TABLE wallet.chain_fees (blockchain PRIMARY KEY, network GENERATED, fee_address, native_usd, updated_at);
+```
+
+V12 backfills `network_access` with a `GRANDFATHERED` testnet row for every person with a Circle user of their own and every group wallet's signer. Chama's V5 and identity's V9 add `network` to `goals`, `group_settings` (both keyed by chat and network), `contributions`, `requests`, `direct_payouts` and `pin_vaults` (keyed by user and network).
+
+**Settings** (`Networks`). The environment holds keys and secrets only: `CIRCLE_API_KEY`, `CIRCLE_MAINNET_API_KEY` (absent: mainnet unavailable, the server still starts). The state, app id, default chain, chains, assets, account types, receive switches and fee wallets are the tables above. A network with no row is seeded once from `CustodySeeds` (integrations: the built-in chains, mainnet `BASE` (default), `MATIC`, `ETH`, `SOL` with USDC, merged with the old `INTEGRATIONS_CUSTODY_*` variables and `INTEGRATIONS_CUSTODY_MAINNET_APP_ID`) and `WALLET_FEES_CHAIN_<CHAIN>_ADDRESS` / `_NATIVE_USD`; testnet starts `ON`, mainnet `OFF`. After that the tables win. They are read at most every 10 seconds per process; custody reads them through `CustodySetups`, the fees through `StoredFees` (`FeeConfig`). The `INTEGRATIONS_CUSTODY_*` table earlier in this document now describes the testnet's seed only.
+
+**Staff contract `NetworkAdmin`** (ops only): `access(userId)`, `setAccess(userId, network, enabled, by, reason)`, `settings()`, `updateSettings(settings, by)`. An update runs in one transaction under a lock on the network's row; refused with `wallet.network_settings_invalid` (400, field and problem) unless every chain belongs to the network and is named once, account types are `SCA`/`EOA` (Solana `EOA`), an enabled chain has an asset, the default chain is enabled and receiving, every chain a wallet is on is still there and enabled, and a network that isn't `OFF` has its app id; `wallet.network_settings_changed` (409) when the version sent is stale. `WalletReports` reads take `network` (null: both); rows carry it, a report's series has one row per period per network, and `byNetwork` has the totals.
+
+**For the fee-wallet follow-up.** The fee address the wallet charges to is `FeeConfig.feeAddress(blockchain)`, served by `StoredFees` from `wallet.chain_fees.fee_address` (in force within 10 s of a write, on both servers; null means no fee on that chain). Write addresses there (`INSERT … ON CONFLICT (blockchain) DO UPDATE`). The entity secrets (`CIRCLE_ENTITY_SECRET` for testnet where present, `CIRCLE_MAINNET_ENTITY_SECRET`) belong in integrations beside the API keys: read them with `Secrets` in `IntegrationsModule.circle()`, next to `circle.api-key` and `circle.mainnet-api-key`, and build the developer-controlled client per `CircleAccount`. Permissions `fees.wallet.read` and `fees.withdraw` exist in ops' table already; the routes don't.
 
 ## Not in v1
 

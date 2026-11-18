@@ -1,6 +1,5 @@
 package com.circaso.ops.domain.usecases
 
-import com.circaso.shared.networkFilter
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.domain.models.Dashboard
@@ -12,6 +11,7 @@ import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.StaffRole
 import com.circaso.shared.getOrNull
+import com.circaso.shared.networkFilter
 import com.circaso.support.api.SupportDesk
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.WalletReports

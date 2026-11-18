@@ -46,7 +46,9 @@ fun Route.walletController(wallets: WalletService) {
             get {
                 val parameters = call.request.queryParameters
                 val result = walletQuery(call.principal().userId, parameters["currency"], parameters["walletId"])
-                call.respondDefault(result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse(call.walletNetwork()) })
+                call.respondDefault(
+                    result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse(call.walletNetwork()) },
+                )
             }.docs<NoBody, WalletResponse>(
                 "W1 · Your wallet: status, each chain with its address and assets, totals, and the fiat value",
                 TAG,

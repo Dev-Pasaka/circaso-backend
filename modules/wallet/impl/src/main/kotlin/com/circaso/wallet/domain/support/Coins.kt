@@ -187,7 +187,8 @@ class PaymentCoins(
         if (requested.whole?.let { it.signum() <= 0 } == true) return Resource.error(WalletError.AmountInvalid)
         val chain = sender.wallet.blockchain
         val offered =
-            custody.chains()
+            custody
+                .chains()
                 .find(chain)
                 ?.assets
                 ?.firstOrNull { it.symbol == requested.symbol }

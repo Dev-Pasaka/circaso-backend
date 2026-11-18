@@ -16,6 +16,7 @@ import com.circaso.support.api.DiagnosticLogDesk
 import com.circaso.support.api.SupportDesk
 import com.circaso.users.api.ProfileAdmin
 import com.circaso.wallet.api.FeeAdmin
+import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.api.WalletReports
 import com.circaso.web.OpsRouteContributor
 import com.circaso.web.StaffPrincipal
@@ -50,6 +51,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
     val billing = FakeAiBilling()
     val calls = FakeCallsAdmin()
     val logs = FakeLogDesk()
+    val networks = FakeNetworks()
 
     val koin: Koin =
         koinApplication {
@@ -61,6 +63,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
                     single<ProfileAdmin> { profiles }
                     single<GroupReports> { groups }
                     single<WalletReports> { wallets }
+                    single<NetworkAdmin> { networks }
                     single<SupportDesk> { desk }
                     single<SupportAccounts> { supportAccounts }
                     single<StaffRepository> { staff }

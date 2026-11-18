@@ -162,8 +162,7 @@ class TransactionRepositoryImpl(private val database: Database) : TransactionRep
                     (TransactionsTable.id eq id) and
                         (TransactionsTable.userId eq userId.value) and
                         (TransactionsTable.network eq network)
-                }
-                .map { it.toTransaction() }
+                }.map { it.toTransaction() }
                 .singleOrNull()
         }
 

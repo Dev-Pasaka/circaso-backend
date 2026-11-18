@@ -1,6 +1,5 @@
 package com.circaso.ops.presentation.controllers
 
-import com.circaso.shared.networkFilter
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.presentation.dto.DashboardResponse
 import com.circaso.ops.presentation.mappers.MALFORMED
@@ -12,6 +11,7 @@ import com.circaso.ops.presentation.mappers.toResponse
 import com.circaso.ops.presentation.services.DashboardService
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
+import com.circaso.shared.networkFilter
 import com.circaso.web.NoBody
 import com.circaso.web.docs
 import com.circaso.web.respondDefault

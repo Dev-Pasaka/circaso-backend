@@ -1,11 +1,5 @@
 package com.circaso.ops.di
 
-import com.circaso.ops.domain.usecases.SetUserNetworkAccess
-import com.circaso.ops.domain.usecases.GetWalletNetworks
-import com.circaso.ops.domain.usecases.UpdateWalletNetwork
-import com.circaso.ops.presentation.services.NetworkService
-import com.circaso.ops.presentation.controllers.networkController
-import com.circaso.web.networkFiltered
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
@@ -46,6 +40,7 @@ import com.circaso.ops.domain.usecases.GetTransaction
 import com.circaso.ops.domain.usecases.GetUserAccount
 import com.circaso.ops.domain.usecases.GetUserDevices
 import com.circaso.ops.domain.usecases.GetUserWallets
+import com.circaso.ops.domain.usecases.GetWalletNetworks
 import com.circaso.ops.domain.usecases.ListAudit
 import com.circaso.ops.domain.usecases.ListFeeRules
 import com.circaso.ops.domain.usecases.ListGroups
@@ -64,11 +59,13 @@ import com.circaso.ops.domain.usecases.OpenDiagnosticLog
 import com.circaso.ops.domain.usecases.RecordDevLogin
 import com.circaso.ops.domain.usecases.ReplyToTicket
 import com.circaso.ops.domain.usecases.SearchUsers
+import com.circaso.ops.domain.usecases.SetUserNetworkAccess
 import com.circaso.ops.domain.usecases.SignInStaff
 import com.circaso.ops.domain.usecases.SuspendUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateStaff
+import com.circaso.ops.domain.usecases.UpdateWalletNetwork
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
 import com.circaso.ops.presentation.controllers.aiUsageController
 import com.circaso.ops.presentation.controllers.callController
@@ -78,6 +75,7 @@ import com.circaso.ops.presentation.controllers.feeController
 import com.circaso.ops.presentation.controllers.groupController
 import com.circaso.ops.presentation.controllers.meController
 import com.circaso.ops.presentation.controllers.moneyController
+import com.circaso.ops.presentation.controllers.networkController
 import com.circaso.ops.presentation.controllers.staffController
 import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
@@ -90,12 +88,14 @@ import com.circaso.ops.presentation.services.FeeService
 import com.circaso.ops.presentation.services.GroupService
 import com.circaso.ops.presentation.services.MeService
 import com.circaso.ops.presentation.services.MoneyService
+import com.circaso.ops.presentation.services.NetworkService
 import com.circaso.ops.presentation.services.StaffDirectoryService
 import com.circaso.ops.presentation.services.StaffService
 import com.circaso.ops.presentation.services.SupportAccountService
 import com.circaso.ops.presentation.services.TicketService
 import com.circaso.ops.presentation.services.UserService
 import com.circaso.web.OpsRouteContributor
+import com.circaso.web.networkFiltered
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.dsl.module

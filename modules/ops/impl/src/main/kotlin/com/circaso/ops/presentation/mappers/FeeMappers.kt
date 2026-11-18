@@ -1,6 +1,5 @@
 package com.circaso.ops.presentation.mappers
 
-import com.circaso.shared.Network
 import com.circaso.ops.presentation.dto.FeeBoundsChangeResponse
 import com.circaso.ops.presentation.dto.FeeBoundsDto
 import com.circaso.ops.presentation.dto.FeeRuleChangeResponse
@@ -16,6 +15,7 @@ import com.circaso.ops.presentation.dto.LimitRulesResponse
 import com.circaso.ops.presentation.dto.LimitScopeDto
 import com.circaso.ops.presentation.dto.LimitTermsDto
 import com.circaso.ops.presentation.dto.NetworkCostDto
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
 import com.circaso.shared.map
@@ -158,7 +158,13 @@ fun LimitRuleChange.toResponse() = LimitRuleChangeResponse(before?.toDto(), afte
 fun FeeRulesResponse.only(network: Network?): FeeRulesResponse {
     if (network == null) return this
     return copy(
-        rules = rules.filter { rule -> rule.versions.firstOrNull()?.scope?.network.let { it == null || it == network.name } },
+        rules =
+            rules.filter { rule ->
+                rule.versions.firstOrNull()?.scope?.network.let {
+                    it == null ||
+                        it == network.name
+                }
+            },
         networkCosts = networkCosts.filter { it.network == network.name },
     )
 }
@@ -166,6 +172,12 @@ fun FeeRulesResponse.only(network: Network?): FeeRulesResponse {
 fun LimitRulesResponse.only(network: Network?): LimitRulesResponse {
     if (network == null) return this
     return copy(
-        rules = rules.filter { rule -> rule.versions.firstOrNull()?.scope?.network.let { it == null || it == network.name } },
+        rules =
+            rules.filter { rule ->
+                rule.versions.firstOrNull()?.scope?.network.let {
+                    it == null ||
+                        it == network.name
+                }
+            },
     )
 }

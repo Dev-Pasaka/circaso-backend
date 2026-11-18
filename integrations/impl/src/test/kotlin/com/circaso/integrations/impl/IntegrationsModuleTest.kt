@@ -64,6 +64,7 @@ import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
+import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import io.ktor.client.engine.mock.respondOk
@@ -592,7 +593,9 @@ class IntegrationsModuleTest {
         runTest {
             val koin = koin()
             val custody = koin.get<StablecoinCustody>()
-            assertIs<LogCustody>(custody)
+            assertIs<NetworkCustody>(custody)
+            assertIs<LogCustody>(custody.on(Network.TESTNET))
+            assertEquals(Network.entries.toSet(), custody.networks, "the dev custody stands in for both networks")
             custody.createUser("u-1")
             assertTrue((custody.createWallet("u-1", UUID.randomUUID()) as Resource.Success).data.needsSignature)
             assertEquals(1, (custody.wallets("u-1") as Resource.Success).data.size)
@@ -615,7 +618,7 @@ class IntegrationsModuleTest {
                 koin("integrations.custody.provider" to "circle").get<StablecoinCustody>()
             }
         val messages = generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() }
-        assertTrue("circle.api-key" in messages || "app-id" in messages, messages)
+        assertTrue("circle.api-key" in messages, messages)
         stopKoin()
 
         val clients = FakeHttpClients { _ -> respondOk() }
@@ -643,9 +646,11 @@ class IntegrationsModuleTest {
             }.koin
 
         val custody = koin.get<StablecoinCustody>()
-        assertIs<CircleCustody>(custody)
+        assertIs<NetworkCustody>(custody)
+        assertIs<CircleCustody>(custody.on(Network.TESTNET))
+        assertEquals(setOf(Network.TESTNET), custody.networks, "no CIRCLE_MAINNET_API_KEY: mainnet is unavailable")
         assertEquals(listOf("BASE-SEPOLIA", "SOL-DEVNET"), custody.supported.chains.map { it.blockchain })
-        assertEquals(listOf("circle"), koin.getAll<WebhookVendor>().map { it.name })
+        assertEquals(listOf("circle", "circle-mainnet"), koin.getAll<WebhookVendor>().map { it.name }.sorted())
         assertEquals(listOf("circle"), clients.names)
         assertEquals("https://api.circle.com", clients.configs.getValue("circle").baseUrl)
     }

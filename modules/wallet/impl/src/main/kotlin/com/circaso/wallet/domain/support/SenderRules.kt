@@ -55,7 +55,8 @@ class SenderRules(
 
     /** The asset offered on [blockchain] under [symbol], or null. */
     suspend fun offered(blockchain: String, symbol: String): CustodyAsset? =
-        custody.chains()
+        custody
+            .chains()
             .find(blockchain)
             ?.assets
             ?.firstOrNull { it.symbol == symbol }
