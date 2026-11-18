@@ -18,7 +18,7 @@ import com.circaso.share.presentation.services.ShareService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
@@ -44,7 +44,8 @@ private const val MALFORMED = "request.malformed"
  */
 fun Route.shareController(shares: ShareService, config: ShareConfig) {
     route("/share/links") {
-        authenticate(Scope.APP) {
+        // A group's statement is its money on one network (2026-11-18): the phone's `X-Wallet-Network` says which.
+        authenticateOnNetwork(Scope.APP) {
             collectionRoutes(shares, config)
             route("/{code}") {
                 linkRoutes(shares, config)

@@ -32,8 +32,9 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
 
     override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = directory.groupWallet(chatId)
 
+    /** The chain says which of the person's two wallets is meant (2026-11-18), whatever the caller's network. */
     override suspend fun depositAddress(userId: UserId, blockchain: String): String? =
-        directory.depositAddress(userId, blockchain)
+        withContext(WalletNetwork(Network.ofChain(blockchain))) { directory.depositAddress(userId, blockchain) }
 
     override suspend fun spaceWallet(spaceId: UUID): SpaceWalletSummary? = directory.spaceWallet(spaceId)
 
