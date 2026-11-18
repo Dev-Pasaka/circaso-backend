@@ -150,6 +150,7 @@ class FcmPush(
                 ciphertext = ids.ciphertext,
                 momentId = ids.momentId,
                 reaction = ids.reaction,
+                network = ids.network,
                 title = message.title.takeIf { message.dataOnly && !message.silent && ids.kind != null },
                 body = message.body.takeIf { message.dataOnly && !message.silent && ids.kind != null },
             ).takeIf { it != FcmData() }
@@ -276,6 +277,7 @@ private data class FcmData(
     val ciphertext: String? = null,
     val momentId: String? = null,
     val reaction: String? = null,
+    val network: String? = null,
     val title: String? = null,
     val body: String? = null,
 )

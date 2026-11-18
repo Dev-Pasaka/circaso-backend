@@ -1,6 +1,7 @@
 package com.circaso.wallet.domain.models
 
 import com.circaso.integrations.api.SdkSession
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.WalletId
 import java.math.BigDecimal
@@ -18,7 +19,13 @@ enum class WalletStatus { NONE, SETTING_UP, ACTIVE }
 enum class ChainWalletState { ACTIVE, FROZEN, CLOSED }
 
 /** The link between a Circaso account and its Circle user; its existence is the wallet. */
-data class CircleUser(val userId: UserId, val circleUserId: UUID, val createdAt: Instant)
+data class CircleUser(
+    val userId: UserId,
+    val circleUserId: UUID,
+    val createdAt: Instant,
+    /** The network this Circle user is on, as stored (2026-11-18); a new one is written on the request's network. */
+    val network: Network = Network.TESTNET,
+)
 
 /** The user's wallet on one chain. [address] is stored normalised ([Addresses.normalise]). */
 data class ChainWallet(
@@ -29,7 +36,10 @@ data class ChainWallet(
     val address: String,
     val state: ChainWalletState,
     val createdAt: Instant,
-)
+) {
+    /** The network the wallet is on, which its chain decides. */
+    val network: Network get() = Network.ofChain(blockchain)
+}
 
 /**
  * What one wallet holds of one offered asset, in the asset's smallest unit, what one whole unit is worth in US

@@ -2,6 +2,7 @@ package com.circaso.identity.api
 
 import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainEvent
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import kotlinx.serialization.Serializable
 
@@ -93,7 +94,11 @@ data class SupportAccountCreated(val userId: UserId, val displayName: String, va
  * `occurredAt`, so whoever opened it can't empty the wallet before the owner hears about it.
  */
 @Serializable
-data class PinVaultOpened(val userId: UserId) : DomainEvent {
+data class PinVaultOpened(
+    val userId: UserId,
+    /** The wallet network whose vault was opened (2026-11-18); payments pause on that network only. */
+    val network: Network = Network.TESTNET,
+) : DomainEvent {
     override val type: String get() = TYPE
 
     companion object {

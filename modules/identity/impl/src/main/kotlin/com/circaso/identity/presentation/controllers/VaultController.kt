@@ -11,7 +11,7 @@ import com.circaso.identity.presentation.services.VaultService
 import com.circaso.shared.Scope
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -31,7 +31,7 @@ private const val TAG = "Account and security"
  */
 fun Route.vaultController(vaults: VaultService) {
     route("/vault") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get("status") {
                 val result = vaults.status(call.principal().userId)
                 call.respondDefault(result.toDefaultResponse { it.toStatusResponse() })

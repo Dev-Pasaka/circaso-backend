@@ -22,7 +22,7 @@ import com.circaso.wallet.presentation.mappers.walletIdOf
 import com.circaso.wallet.presentation.mappers.walletQuery
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -41,7 +41,7 @@ private const val CUSTODY = "wallet.custody_unavailable"
 /** The wallet itself (W1–W3) and the chains it is on (W12). */
 fun Route.walletController(wallets: WalletService) {
     route("/wallet") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get {
                 val parameters = call.request.queryParameters
                 val result = walletQuery(call.principal().userId, parameters["currency"], parameters["walletId"])
@@ -209,7 +209,7 @@ fun Route.walletController(wallets: WalletService) {
     }
 
     route("/wallets") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             get {
                 val result = wallets.wallets(call.principal().userId)
                 call.respondDefault(result.toDefaultResponse { it.toResponse() })

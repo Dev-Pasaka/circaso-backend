@@ -10,6 +10,8 @@ import com.circaso.wallet.domain.ports.SetupChecks
 import com.circaso.wallet.domain.repositories.WalletRepository
 import java.time.Instant
 import java.util.UUID
+import com.circaso.shared.WalletNetwork
+import kotlinx.coroutines.withContext
 
 /**
  * A wallet being set up turns `ACTIVE` as soon as Circle has it, not at the next sweep. Circle creates the wallets once
@@ -50,6 +52,11 @@ class SetupProgress(
     suspend fun onChallenge(circleUserId: String, completed: Boolean): Resource<Unit> {
         val id = runCatching { UUID.fromString(circleUserId) }.getOrNull() ?: return Resource.success(Unit)
         val user = wallets.circleUserByCircleId(id) ?: return Resource.success(Unit)
+        // The Circle user says which network this is (2026-11-18), whichever webhook path it came in on.
+        return withContext(WalletNetwork(user.network)) { finished(user, completed) }
+    }
+
+    private suspend fun finished(user: CircleUser, completed: Boolean): Resource<Unit> {
         // A failed challenge created nothing; the next "set up" tap starts a fresh one.
         if (!completed) {
             pending.clear(user.userId)

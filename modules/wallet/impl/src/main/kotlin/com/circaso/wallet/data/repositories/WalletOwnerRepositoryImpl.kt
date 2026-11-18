@@ -2,7 +2,9 @@ package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.WalletOwnerType
 import com.circaso.wallet.data.tables.WalletOwnersTable
@@ -26,20 +28,23 @@ import java.util.UUID
 class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRepository {
     override suspend fun find(walletId: WalletId): WalletOwner? =
         database.tx("wallet-owners.find") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
-                .where { WalletOwnersTable.walletId eq walletId.value }
+                .where { (WalletOwnersTable.walletId eq walletId.value) and (WalletOwnersTable.network eq network) }
                 .map { it.toOwner() }
                 .singleOrNull()
         }
 
     override suspend fun byChat(chatId: ChatId): WalletOwner.Group? =
         database.tx("wallet-owners.by-chat") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
                 .where {
                     (WalletOwnersTable.chatId eq chatId.value) and
-                        (WalletOwnersTable.ownerType eq WalletOwnerType.GROUP.name)
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.GROUP.name) and
+                        (WalletOwnersTable.network eq network)
                 }.map { it.toGroup() }
                 .singleOrNull()
         }
@@ -47,11 +52,13 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
     override suspend fun byChats(chatIds: Collection<ChatId>): List<WalletOwner.Group> {
         if (chatIds.isEmpty()) return emptyList()
         return database.tx("wallet-owners.by-chats") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
                 .where {
                     (WalletOwnersTable.chatId inList chatIds.map { it.value }) and
-                        (WalletOwnersTable.ownerType eq WalletOwnerType.GROUP.name)
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.GROUP.name) and
+                        (WalletOwnersTable.network eq network)
                 }.map { it.toGroup() }
                 .toList()
         }
@@ -59,20 +66,23 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
 
     override suspend fun bySigner(signerId: UserId): List<WalletOwner> =
         database.tx("wallet-owners.by-signer") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
-                .where { WalletOwnersTable.signerId eq signerId.value }
+                .where { (WalletOwnersTable.signerId eq signerId.value) and (WalletOwnersTable.network eq network) }
                 .map { it.toOwner() }
                 .toList()
         }
 
     override suspend fun bySpace(spaceId: UUID): WalletOwner.Space? =
         database.tx("wallet-owners.by-space") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
                 .where {
                     (WalletOwnersTable.spaceId eq spaceId) and
-                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name) and
+                        (WalletOwnersTable.network eq network)
                 }.map { it.toSpace() }
                 .singleOrNull()
         }
@@ -80,11 +90,13 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
     override suspend fun bySpaces(spaceIds: Collection<UUID>): List<WalletOwner.Space> {
         if (spaceIds.isEmpty()) return emptyList()
         return database.tx("wallet-owners.by-spaces") {
+            val network = currentNetwork().name
             WalletOwnersTable
                 .selectAll()
                 .where {
                     (WalletOwnersTable.spaceId inList spaceIds.distinct()) and
-                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name)
+                        (WalletOwnersTable.ownerType eq WalletOwnerType.SPACE.name) and
+                        (WalletOwnersTable.network eq network)
                 }.map { it.toSpace() }
                 .toList()
         }
@@ -92,12 +104,14 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
 
     override suspend fun insertSpace(owner: WalletOwner.Space): Boolean =
         database.tx("wallet-owners.insert-space") {
+            val network = currentNetwork().name
             val statement =
                 WalletOwnersTable.insertIgnore {
                     it[walletId] = owner.walletId.value
                     it[ownerType] = WalletOwnerType.SPACE.name
                     it[spaceId] = owner.spaceId
                     it[signerId] = owner.signerId.value
+                    it[this.network] = network
                     it[createdBy] = owner.createdBy.value
                     it[createdAt] = owner.createdAt
                 }
@@ -119,12 +133,14 @@ class WalletOwnerRepositoryImpl(private val database: Database) : WalletOwnerRep
 
     override suspend fun insert(owner: WalletOwner.Group): Boolean =
         database.tx("wallet-owners.insert") {
+            val network = currentNetwork().name
             val statement =
                 WalletOwnersTable.insertIgnore {
                     it[walletId] = owner.walletId.value
                     it[ownerType] = WalletOwnerType.GROUP.name
                     it[chatId] = owner.chatId.value
                     it[signerId] = owner.signerId.value
+                    it[this.network] = network
                     it[createdBy] = owner.createdBy.value
                     it[createdAt] = owner.createdAt
                 }
@@ -140,4 +156,5 @@ internal fun ResultRow.toGroup() =
         signerId = UserId(this[WalletOwnersTable.signerId]),
         createdBy = UserId(this[WalletOwnersTable.createdBy]),
         createdAt = this[WalletOwnersTable.createdAt],
+        network = Network.valueOf(this[WalletOwnersTable.network]),
     )

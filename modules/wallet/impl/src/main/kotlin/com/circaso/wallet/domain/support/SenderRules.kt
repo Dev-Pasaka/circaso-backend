@@ -42,7 +42,7 @@ class SenderRules(
     ): Resource<Sender> {
         support.refusal(signer)?.let { return it }
         if (accounts.status(signer) != AccountStatus.ACTIVE) return Resource.error(WalletError.AccountRestricted)
-        custody.supported.find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
+        custody.chains().find(blockchain) ?: return Resource.error(WalletError.ChainUnsupported)
         val user = wallets.circleUser(userId) ?: return Resource.error(WalletError.NotFound)
         val open = wallets.wallets(userId).filter { it.state != ChainWalletState.CLOSED }
         if (open.isEmpty()) return Resource.error(WalletError.NotReady)
@@ -54,8 +54,8 @@ class SenderRules(
     }
 
     /** The asset offered on [blockchain] under [symbol], or null. */
-    fun offered(blockchain: String, symbol: String): CustodyAsset? =
-        custody.supported
+    suspend fun offered(blockchain: String, symbol: String): CustodyAsset? =
+        custody.chains()
             .find(blockchain)
             ?.assets
             ?.firstOrNull { it.symbol == symbol }

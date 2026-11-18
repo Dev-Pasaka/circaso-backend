@@ -1,7 +1,9 @@
 package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.WalletsTable
 import com.circaso.wallet.domain.models.ChainWallet
@@ -24,14 +26,16 @@ import java.util.UUID
  * names by its primary key, and the wallet at an address through `wallets_address_key`.
  */
 class WalletRepositoryImpl(private val database: Database) : WalletRepository {
-    override suspend fun circleUser(userId: UserId): CircleUser? =
-        database.tx("circle-users.find") {
+    override suspend fun circleUser(userId: UserId): CircleUser? {
+        val network = currentNetwork().name
+        return database.tx("circle-users.find") {
             CircleUsersTable
                 .selectAll()
-                .where { CircleUsersTable.userId eq userId.value }
+                .where { (CircleUsersTable.userId eq userId.value) and (CircleUsersTable.network eq network) }
                 .map { it.toCircleUser() }
                 .singleOrNull()
         }
+    }
 
     override suspend fun circleUserByCircleId(circleUserId: UUID): CircleUser? =
         database.tx("circle-users.by-circle-id") {
@@ -42,26 +46,31 @@ class WalletRepositoryImpl(private val database: Database) : WalletRepository {
                 .singleOrNull()
         }
 
-    override suspend fun insertCircleUser(user: CircleUser): Boolean =
-        database.tx("circle-users.insert") {
+    override suspend fun insertCircleUser(user: CircleUser): Boolean {
+        val network = currentNetwork().name
+        return database.tx("circle-users.insert") {
             val statement =
                 CircleUsersTable.insertIgnore {
                     it[userId] = user.userId.value
+                    it[this.network] = network
                     it[circleUserId] = user.circleUserId
                     it[createdAt] = user.createdAt
                 }
             statement.insertedCount > 0
         }
+    }
 
-    override suspend fun wallets(userId: UserId): List<ChainWallet> =
-        database.tx("wallets.of-user") {
+    override suspend fun wallets(userId: UserId): List<ChainWallet> {
+        val network = currentNetwork().name
+        return database.tx("wallets.of-user") {
             WalletsTable
                 .selectAll()
-                .where { WalletsTable.userId eq userId.value }
+                .where { (WalletsTable.userId eq userId.value) and (WalletsTable.network eq network) }
                 .orderBy(WalletsTable.createdAt to SortOrder.ASC, WalletsTable.blockchain to SortOrder.ASC)
                 .map { it.toChainWallet() }
                 .toList()
         }
+    }
 
     override suspend fun wallet(circleWalletId: String): ChainWallet? =
         database.tx("wallets.find") {
@@ -101,6 +110,7 @@ class WalletRepositoryImpl(private val database: Database) : WalletRepository {
             userId = UserId(this[CircleUsersTable.userId]),
             circleUserId = this[CircleUsersTable.circleUserId],
             createdAt = this[CircleUsersTable.createdAt],
+            network = Network.valueOf(this[CircleUsersTable.network]),
         )
 
     private fun ResultRow.toChainWallet() =

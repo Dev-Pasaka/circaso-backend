@@ -6,6 +6,7 @@ import com.circaso.shared.CircasoJson
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.data.tables.RealtimeTable
 import com.circaso.wallet.domain.ports.FrameSender
 import com.circaso.wallet.domain.ports.LoggedFrame
@@ -42,7 +43,7 @@ class RealtimeFramesImpl(
         try {
             val seq = redis.incrementRenewing("seq:$userId", SEQ_TTL)
             val sentAt = clock.instant()
-            val envelope = frame.toEnvelope(seq, sentAt)
+            val envelope = frame.toEnvelope(seq, sentAt, currentNetwork())
             database.tx("realtime.keep") {
                 RealtimeTable.insert {
                     it[this.userId] = userId.value

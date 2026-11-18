@@ -21,7 +21,10 @@ import java.time.Instant
  * so the wallet can tell a real coin from someone's token of the same name. A token Circle doesn't describe (no
  * symbol or decimals) translates to null and is left alone.
  */
-internal class CircleTransactions(private val tokens: CircleTokens, private val settings: CircleSettings) {
+internal class CircleTransactions(private val tokens: CircleTokens, private val settingsSource: () -> CircleSettings) {
+    constructor(tokens: CircleTokens, settings: CircleSettings) : this(tokens, { settings })
+
+    private val settings: CircleSettings get() = settingsSource()
     private val log = LoggerFactory.getLogger(CircleTransactions::class.java)
 
     suspend fun translate(transaction: TransactionPayload): Resource<CustodyTransaction?> {

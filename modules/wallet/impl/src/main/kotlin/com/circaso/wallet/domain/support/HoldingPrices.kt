@@ -46,8 +46,8 @@ class HoldingPrices(private val prices: CryptoPrices, private val custody: Stabl
     }
 
     /** The symbol to price [holding] by, [DOLLAR] for a dollar stablecoin, or null when it mustn't be priced. */
-    private fun priceKey(blockchain: String, holding: Holding): String? =
-        CoinTrust.priceKey(custody.supported, blockchain, holding.symbol, holding.tokenAddress, holding.usdPegged)
+    private suspend fun priceKey(blockchain: String, holding: Holding): String? =
+        CoinTrust.priceKey(custody.chains(), blockchain, holding.symbol, holding.tokenAddress, holding.usdPegged)
 
     companion object {
         private const val DOLLAR = CoinTrust.DOLLAR

@@ -11,7 +11,10 @@ import org.jetbrains.exposed.v1.javatime.timestamp
  */
 object CircleUsersTable : Table("wallet.circle_users") {
     val userId = javaUUID("user_id")
+
+    /** V12 (2026-11-18): a holder has one Circle user per network; mainnet is another Circle account and PIN. */
+    val network = text("network")
     val circleUserId = javaUUID("circle_user_id").uniqueIndex("circle_users_circle_user_id_key")
     val createdAt = timestamp("created_at")
-    override val primaryKey = PrimaryKey(userId)
+    override val primaryKey = PrimaryKey(userId, network)
 }

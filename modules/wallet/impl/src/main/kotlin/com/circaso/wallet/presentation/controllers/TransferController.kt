@@ -15,7 +15,7 @@ import com.circaso.wallet.presentation.mappers.toResponse
 import com.circaso.wallet.presentation.mappers.transferIdOf
 import com.circaso.wallet.presentation.services.TransferService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -34,7 +34,7 @@ private const val MALFORMED = "request.malformed"
 /** Sending money (W4, W5) and checking an outside address first (W11). */
 fun Route.transferController(transfers: TransferService) {
     route("/wallet") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             route("/transfers") {
                 post {
                     val userId = call.principal().userId

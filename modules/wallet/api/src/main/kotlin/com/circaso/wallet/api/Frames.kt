@@ -1,5 +1,6 @@
 package com.circaso.wallet.api
 
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import kotlinx.serialization.Serializable
 
@@ -29,6 +30,8 @@ data class TransferUpdatedFrame(
     val failureReason: String? = null,
     /** The wallet it left when that is a group wallet (added 2026-11-03); null for your personal wallet. */
     val walletId: WalletId? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network the wallet is on, which [blockchain] decides. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /**
@@ -56,6 +59,8 @@ data class PaymentReceivedFrame(
     val transferId: TransferId? = null,
     /** The chat the sender paid from, when [transferId] is set and the payment was made in a chat (added 2026-11-05). */
     val chatId: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network the wallet is on, which [blockchain] decides. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /**
@@ -63,8 +68,18 @@ data class PaymentReceivedFrame(
  * group wallet it goes to every member, with [walletId] set (added 2026-11-03).
  */
 @Serializable
-data class WalletReadyFrame(val blockchain: String, val walletId: WalletId? = null)
+data class WalletReadyFrame(
+    val blockchain: String,
+    val walletId: WalletId? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network the wallet is on, which [blockchain] decides. */
+    val network: String = Network.ofChain(blockchain).name,
+)
 
 /** `wallet/setup.requested` (W10), to a contact without a wallet: [fromName] wants to pay them. Pushed. */
 @Serializable
-data class SetupRequestedFrame(val fromUserId: UserId, val fromName: String)
+data class SetupRequestedFrame(
+    val fromUserId: UserId,
+    val fromName: String,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network they want to pay on; set the wallet up there. */
+    val network: String = Network.TESTNET.name,
+)

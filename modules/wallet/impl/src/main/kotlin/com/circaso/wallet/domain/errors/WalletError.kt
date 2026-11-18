@@ -393,4 +393,30 @@ sealed class WalletError(
             ErrorKind.CONFLICT,
             ErrorDetails(fields = ruleIds.map { FieldError("ruleId", it.toString()) }),
         )
+
+    /**
+     * The network named in `X-Wallet-Network` isn't one this person may use now (decision 2026-11-18): it is off, in
+     * preview for staff only, has no custody configured, or (testnet after launch) was never theirs.
+     */
+    data object NetworkUnavailable : WalletError(
+        "wallet.network_unavailable",
+        "That network isn't available for your wallet.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    /** Network settings staff sent that can't be applied; [details] names the field and what is wrong with it. */
+    class NetworkSettingsInvalid(field: String, problem: String) :
+        WalletError(
+            "wallet.network_settings_invalid",
+            "Those network settings can't be saved.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError(field, problem))),
+        )
+
+    /** The settings changed since staff read them (another change landed first): read them again. */
+    data object NetworkSettingsChanged : WalletError(
+        "wallet.network_settings_changed",
+        "The settings were changed by someone else. Read them again.",
+        ErrorKind.CONFLICT,
+    )
 }

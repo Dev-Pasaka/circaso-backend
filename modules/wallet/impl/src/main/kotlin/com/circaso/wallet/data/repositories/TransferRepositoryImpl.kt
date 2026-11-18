@@ -4,6 +4,7 @@ import com.circaso.infrastructure.api.Database
 import com.circaso.messaging.api.ChatId
 import com.circaso.shared.Money
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.data.tables.CircleUsersTable
 import com.circaso.wallet.data.tables.TransfersTable
@@ -137,10 +138,12 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         limit: Int,
     ): List<Transfer> =
         database.tx("transfers.in-state") {
+            val network = currentNetwork().name
             TransfersTable
                 .selectAll()
                 .where {
                     (TransfersTable.state eq state.name) and
+                        (TransfersTable.network eq network) and
                         (TransfersTable.createdAt greaterEq createdAfter) and
                         (TransfersTable.createdAt less createdBefore)
                 }.orderBy(TransfersTable.createdAt to SortOrder.DESC)
@@ -167,11 +170,13 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
         limit: Int,
     ): List<Transfer> =
         database.tx("transfers.unsettled-splits") {
+            val network = currentNetwork().name
             TransfersTable
                 .selectAll()
                 .where {
                     val open =
                         TransfersTable.feeAddress.isNotNull() and
+                            (TransfersTable.network eq network) and
                             TransfersTable.circleTxId.isNull() and
                             (TransfersTable.state inList UNSETTLED) and
                             (TransfersTable.createdAt greaterEq createdAfter) and
@@ -185,9 +190,10 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
 
     override suspend fun lockHolder(holder: UserId) {
         database.tx("transfers.lock-holder") {
+            val network = currentNetwork().name
             CircleUsersTable
                 .select(CircleUsersTable.userId)
-                .where { CircleUsersTable.userId eq holder.value }
+                .where { (CircleUsersTable.userId eq holder.value) and (CircleUsersTable.network eq network) }
                 .forUpdate(ForUpdateOption.ForUpdate)
                 .toList()
         }
@@ -195,6 +201,8 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
 
     override suspend fun spentSince(holder: UserId, since: Instant): List<CountedTransfer> =
         database.tx("transfers.spent-since") {
+            // What was spent is counted per network (2026-11-18): testnet payments never use up a mainnet limit.
+            val network = currentNetwork().name
             TransfersTable
                 .select(
                     TransfersTable.createdAt,
@@ -202,6 +210,7 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     TransfersTable.state,
                 ).where {
                     (TransfersTable.senderId eq holder.value) and
+                        (TransfersTable.network eq network) and
                         (TransfersTable.createdAt greaterEq since) and
                         (TransfersTable.state inList COUNTED)
                 }.map {

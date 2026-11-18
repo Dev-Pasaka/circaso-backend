@@ -4,12 +4,14 @@ import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountStatus
 import com.circaso.messaging.api.ChatDirectory
 import com.circaso.shared.Resource
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.CreateGroupWalletCommand
 import com.circaso.wallet.domain.models.GroupWalletSetup
 import com.circaso.wallet.domain.models.WalletOwner
 import com.circaso.wallet.domain.repositories.WalletOwnerRepository
+import com.circaso.wallet.domain.support.NetworkAccess
 import com.circaso.wallet.domain.support.SupportAccountRule
 import com.circaso.wallet.domain.support.WalletCreation
 import java.time.Clock
@@ -32,6 +34,8 @@ class CreateGroupWallet(
     private val support: SupportAccountRule,
     private val creation: WalletCreation,
     private val clock: Clock,
+    /** Keeps the testnet for someone who starts a group's testnet wallet before mainnet opens (2026-11-18). */
+    private val access: NetworkAccess? = null,
 ) {
     suspend operator fun invoke(command: CreateGroupWalletCommand): Resource<GroupWalletSetup> {
         support.refusal(command.userId)?.let { return it }
@@ -48,6 +52,7 @@ class CreateGroupWallet(
                     is Resource.Error -> return claimed
                 }
         if (owner.signerId != command.userId) return Resource.error(WalletError.NotSigner)
+        access?.rememberTestnet(command.userId, currentNetwork())
         return when (val setup = creation.start(owner.holder, command.idempotencyKey)) {
             is Resource.Success -> Resource.success(GroupWalletSetup(owner, setup.data))
             is Resource.Error -> setup

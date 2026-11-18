@@ -2,7 +2,9 @@ package com.circaso.wallet.data.cache
 
 import com.circaso.infrastructure.api.RedisScope
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
+import com.circaso.shared.currentNetwork
 import com.circaso.wallet.domain.models.Holding
 import com.circaso.wallet.domain.ports.AddingChains
 import com.circaso.wallet.domain.ports.BalanceCache
@@ -16,6 +18,15 @@ import java.time.Duration
  * their slices.
  */
 const val REDIS_PREFIX = "wal"
+
+/**
+ * A key about a holder on the network the coroutine works for (decision 2026-11-18). Testnet keys are what they
+ * always were (`wal:adding:{userId}`); mainnet's carry the network (`wal:mainnet:adding:{userId}`), so a person's two
+ * wallets never share a key. Keys named by an id that exists on one network only (a Circle wallet, a transfer) need
+ * none.
+ */
+internal suspend fun networkKey(key: String): String =
+    if (currentNetwork() == Network.TESTNET) key else "mainnet:$key"
 
 /** `wal:balance:{circleWalletId}`: one chain's holdings as JSON, for 15 seconds. */
 class RedisBalanceCache(private val redis: RedisScope) : BalanceCache {
@@ -68,7 +79,7 @@ class RedisAddingChains(private val redis: RedisScope) : AddingChains {
         redis.hashDelete(key(userId), blockchain)
     }
 
-    private fun key(userId: UserId) = "adding:$userId"
+    private suspend fun key(userId: UserId) = networkKey("adding:$userId")
 
     private companion object {
         /** A challenge runs under a user token that lasts 60 minutes. */

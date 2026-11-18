@@ -8,6 +8,8 @@ import com.circaso.shared.EventSubscription
 import com.circaso.shared.Resource
 import com.circaso.shared.decode
 import com.circaso.wallet.presentation.services.IdentityEventsService
+import com.circaso.shared.WalletNetwork
+import kotlinx.coroutines.withContext
 
 /**
  * The wallet's consumer group on `events:identity`. A handler that fails throws, so the event is retried and finally
@@ -22,7 +24,13 @@ class IdentityEventHandler(private val events: IdentityEventsService) {
                 mapOf(
                     // the hold counts from the opening, so a retried or late delivery ends it at the same time
                     PinVaultOpened.TYPE to
-                        EventHandler { orThrow(events.vaultOpened(it.decode<PinVaultOpened>().userId, it.occurredAt)) },
+                        EventHandler {
+                            val opened = it.decode<PinVaultOpened>()
+                            // the vault holds one network's PIN, so payments pause on that network only
+                            withContext(WalletNetwork(opened.network)) {
+                                orThrow(events.vaultOpened(opened.userId, it.occurredAt))
+                            }
+                        },
                 ),
         )
 

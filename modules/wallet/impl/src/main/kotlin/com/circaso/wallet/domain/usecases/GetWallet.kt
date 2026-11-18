@@ -117,7 +117,7 @@ class GetWallet(
         )
     }
 
-    private fun receives(blockchain: String): Boolean = custody.supported.find(blockchain)?.receiveEnabled == true
+    private suspend fun receives(blockchain: String): Boolean = custody.chains().find(blockchain)?.receiveEnabled == true
 
     private fun empty(
         status: WalletStatus,

@@ -369,6 +369,7 @@ class GatewayRealtime(
                         transferId = received?.transferId?.toString(),
                         transactionId = received?.transactionId,
                         walletId = received?.walletId?.toString(),
+                        network = received?.network,
                     ),
                     dataOnly = true,
                     sound = MONEY_SOUND,
@@ -396,11 +397,12 @@ class GatewayRealtime(
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.SETUP_REQUESTED}" -> {
-                val name = decode(SetupRequestedFrame.serializer(), frame)?.fromName ?: "Someone"
+                val requested = decode(SetupRequestedFrame.serializer(), frame)
+                val name = requested?.fromName ?: "Someone"
                 PushMessage(
                     "Circaso",
                     "$name wants to send you money. Set up your wallet",
-                    PushPayload(kind = "wallet.setup"),
+                    PushPayload(kind = "wallet.setup", network = requested?.network),
                 )
             }
 
@@ -768,6 +770,7 @@ class GatewayRealtime(
             kind = "transfer.updated",
             transferId = frame.transferId.toString(),
             walletId = frame.walletId?.toString(),
+            network = frame.network,
         )
 
     private fun sentAt(envelope: RealtimeEnvelope): Instant? =

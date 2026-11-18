@@ -2,6 +2,7 @@ package com.circaso.integrations.api
 
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -17,8 +18,18 @@ import java.util.UUID
  * address. Which chains are supported, and which assets are offered on each, is server configuration ([supported]).
  */
 interface StablecoinCustody {
-    /** The chains a wallet may be on and the assets offered on each; a new wallet starts on the default one. */
+    /**
+     * The chains a wallet may be on and the assets offered on each; a new wallet starts on the default one. With two
+     * networks side by side (decision 2026-11-18) this is the testnet's list: code that serves a request reads
+     * [chains], which answers for the network the work is for.
+     */
     val supported: SupportedChains
+
+    /** [supported] for the network this coroutine works for (`currentNetwork()`), as the database has it now. */
+    suspend fun chains(): SupportedChains = supported
+
+    /** The networks this custody can reach: mainnet only when its own key is configured. */
+    val networks: Set<Network> get() = setOf(Network.TESTNET)
 
     /** Registers [circleUserId] with the vendor; a user that already exists is success. */
     suspend fun createUser(circleUserId: String): Resource<Unit>
@@ -350,4 +361,31 @@ enum class CustodyChallengeKind {
 
     /** A wallet on another chain (Circle: `challenges.createWallet`). */
     CREATE_WALLET,
+}
+
+/**
+ * What custody is set up with on one network: the vendor's app id (handed to the phone's SDK), the chains offered
+ * (only the enabled ones) with their assets, and the account type wallets are created with per chain.
+ */
+data class CustodySetup(
+    val appId: String,
+    val supported: SupportedChains,
+    val accountTypes: Map<String, String> = emptyMap(),
+)
+
+/**
+ * Where the settings start (decision 2026-11-18: the environment holds keys and secrets only; everything else lives in
+ * the database). Integrations answer the built-in defaults merged with the old `INTEGRATIONS_CUSTODY_*` variables;
+ * the wallet copies them into its tables once, and from then on the database wins.
+ */
+interface CustodySeeds {
+    fun seed(network: Network): CustodySetup
+}
+
+/**
+ * The settings in force, from the wallet's tables (bound by the wallet, looked up by integrations on each use, so
+ * integrations never depend on the wallet). Null until the wallet has read them: the seed is used meanwhile.
+ */
+fun interface CustodySetups {
+    fun current(network: Network): CustodySetup?
 }

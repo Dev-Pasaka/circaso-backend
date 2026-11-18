@@ -5,7 +5,10 @@ import com.circaso.integrations.api.CustodyChallengeKind
 import com.circaso.integrations.api.CustodyNotifications
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import com.circaso.shared.WalletNetwork
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
@@ -30,16 +33,26 @@ import java.util.Base64
  */
 class CircleWebhook internal constructor(
     client: CircleClient,
-    settings: CircleSettings,
+    settings: () -> CircleSettings,
     clock: Clock = Clock.systemUTC(),
     keyFetchesPerMinute: Int = CircleNotificationKeys.FETCHES_PER_MINUTE,
+    /** The `{vendor}` path: `circle` for the testnet account, `circle-mainnet` for the mainnet one (2026-11-18). */
+    override val name: String = TESTNET_NAME,
+    /** The network of the Circle account behind [client]: what every notification verified with its keys is for. */
+    private val network: Network = Network.TESTNET,
     private val notifications: () -> CustodyNotifications?,
 ) : WebhookVendor {
+    internal constructor(
+        client: CircleClient,
+        settings: CircleSettings,
+        clock: Clock = Clock.systemUTC(),
+        keyFetchesPerMinute: Int = CircleNotificationKeys.FETCHES_PER_MINUTE,
+        notifications: () -> CustodyNotifications?,
+    ) : this(client, { settings }, clock, keyFetchesPerMinute, TESTNET_NAME, Network.TESTNET, notifications)
+
     private val log = LoggerFactory.getLogger(CircleWebhook::class.java)
     private val keys = CircleNotificationKeys(client, clock, keyFetchesPerMinute)
     private val transactions = CircleTransactions(CircleTokens(client), settings)
-
-    override val name: String = "circle"
 
     override val answersAfterTranslation: Boolean = true
 
@@ -63,7 +76,14 @@ class CircleWebhook internal constructor(
     override fun deliveryId(headers: Map<String, String>, body: ByteArray): String? =
         decode<NotificationHeader>(body)?.notificationId?.takeIf { it.isNotEmpty() }
 
-    override suspend fun translate(body: ByteArray): Resource<Unit> {
+    /**
+     * The signature was checked against this account's keys, so the notification is for this account's network: the
+     * listener runs with it, and a mainnet update can never be applied to testnet rows or the other way round.
+     */
+    override suspend fun translate(body: ByteArray): Resource<Unit> =
+        withContext(WalletNetwork(network)) { translateOnNetwork(body) }
+
+    private suspend fun translateOnNetwork(body: ByteArray): Resource<Unit> {
         val header = decode<NotificationHeader>(body) ?: return unreadable()
         CHALLENGE_TYPES[header.notificationType]?.let { return challenge(body, it) }
         if (header.notificationType !in TRANSACTION_TYPES) return Resource.success(Unit)
@@ -131,6 +151,8 @@ class CircleWebhook internal constructor(
     }
 
     internal companion object {
+        const val TESTNET_NAME = "circle"
+        const val MAINNET_NAME = "circle-mainnet"
         const val KEY_ID_HEADER = "x-circle-key-id"
         const val SIGNATURE_HEADER = "x-circle-signature"
         val TRANSACTION_TYPES = setOf("transactions.inbound", "transactions.outbound")

@@ -16,6 +16,10 @@ class GatewayConfig(
         private val platforms = listOf("android", "ios")
         private val vendors = listOf("africastalking", "resend", "circle", "cloudflare")
 
+        /** Circle's mainnet account posts to its own path (2026-11-18) from the same addresses as its testnet one. */
+        private fun Map<String, Set<String>>.withMainnetCircle(): Map<String, Set<String>> =
+            this["circle"]?.let { this + ("circle-mainnet" to it) } ?: this
+
         fun from(config: Config): GatewayConfig {
             val gateway = config.section("gateway")
             val production = config.environment == Environment.PRODUCTION
@@ -57,7 +61,8 @@ class GatewayConfig(
                                         .filter { it.isNotEmpty() }
                                         .toSet()
                             }
-                        }.toMap(),
+                        }.toMap()
+                        .withMainnetCircle(),
             )
         }
     }

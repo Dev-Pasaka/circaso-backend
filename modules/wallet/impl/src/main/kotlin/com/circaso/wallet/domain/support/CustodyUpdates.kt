@@ -55,7 +55,7 @@ class CustodyUpdates(
 
         // Only a coin we trust is put in anyone's history (2026-11-07: Circle now reports every coin); anyone can
         // send a wallet a token that calls itself USDC.
-        val chains = custody?.supported
+        val chains = custody?.chains()
         if (chains != null &&
             !CoinTrust.trusted(chains, update.blockchain, update.amount.asset.symbol, update.tokenAddress)
         ) {

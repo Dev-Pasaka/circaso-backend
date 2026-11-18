@@ -32,8 +32,14 @@ import java.util.concurrent.atomic.AtomicInteger
 class FakeCustody(
     private val clock: Clock = Clock.systemUTC(),
     private val autoCompleteSetup: Boolean = false,
-    override val supported: SupportedChains = CustodyChainsConfig.TESTNETS,
+    supported: SupportedChains = CustodyChainsConfig.TESTNETS,
+    /** The chains as the database has them now, when something keeps them there; else the ones given above. */
+    private val current: () -> SupportedChains? = { null },
 ) : StablecoinCustody {
+    private val configured = supported
+
+    override val supported: SupportedChains get() = current() ?: configured
+
     data class PinRequest(val circleUserId: String, val kind: PinChallenge, val idempotencyKey: UUID)
 
     val users: MutableSet<String> = ConcurrentHashMap.newKeySet()

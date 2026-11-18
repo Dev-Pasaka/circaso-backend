@@ -21,7 +21,7 @@ import com.circaso.wallet.presentation.mappers.transactionQuery
 import com.circaso.wallet.presentation.mappers.walletQuery
 import com.circaso.wallet.presentation.services.WalletAgentService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
@@ -46,7 +46,7 @@ private const val FILTERS =
  */
 fun Route.agentController(reads: WalletAgentService) {
     route("/agent/wallet") {
-        authenticate(Scope.AGENT) {
+        authenticateOnNetwork(Scope.AGENT) {
             get {
                 val query = call.request.queryParameters
                 val result =

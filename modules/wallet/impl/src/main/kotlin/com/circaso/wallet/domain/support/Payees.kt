@@ -70,7 +70,7 @@ class Payees(
     data class Receiving(val active: List<ChainWallet>, val open: List<ChainWallet>)
 
     /** Whether [blockchain] is supported and not retired from receiving. */
-    fun receives(blockchain: String): Boolean = custody.supported.find(blockchain)?.receiveEnabled == true
+    suspend fun receives(blockchain: String): Boolean = custody.chains().find(blockchain)?.receiveEnabled == true
 
     /**
      * W4's payee checked and turned into a destination on [blockchain], in the order the rules list them. [sender]

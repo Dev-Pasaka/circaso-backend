@@ -9,7 +9,7 @@ import com.circaso.wallet.presentation.mappers.spaceIdOf
 import com.circaso.wallet.presentation.mappers.toResponse
 import com.circaso.wallet.presentation.services.SpaceWalletService
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
@@ -22,7 +22,7 @@ import io.ktor.server.routing.route
 /** A space's own wallet (Spaces phase 3): W18 set it up, W19 read where it stands. */
 fun Route.spaceWalletController(spaceWallets: SpaceWalletService) {
     route("/wallet/spaces/{spaceId}") {
-        authenticate(Scope.APP) {
+        authenticateOnNetwork(Scope.APP) {
             post {
                 val userId = call.principal().userId
                 val key = call.idempotencyKey()

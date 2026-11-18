@@ -18,6 +18,9 @@ object WalletOwnersTable : Table("wallet.wallet_owners") {
     /** SPACE (V5): spaces' id; one wallet per space (`wallet_owners_space_key`). */
     val spaceId = javaUUID("space_id").nullable()
     val signerId = javaUUID("signer_id")
+
+    /** V12 (2026-11-18): a group has one wallet per network (`wallet_owners_chat_key` is on the chat and this). */
+    val network = text("network")
     val createdBy = javaUUID("created_by")
     val createdAt = timestamp("created_at")
     override val primaryKey = PrimaryKey(walletId)

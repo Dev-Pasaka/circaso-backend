@@ -50,7 +50,7 @@ class AddMissingChains(
             }
         if (known.isEmpty()) return Resource.error(WalletError.NotReady)
         val missing =
-            custody.supported.chains
+            custody.chains().chains
                 .filter { it.receiveEnabled && known.none { w -> w.blockchain == it.blockchain } }
                 .map { it.blockchain }
         val additions = mutableListOf<ChainAddition>()

@@ -3,7 +3,9 @@ package com.circaso.integrations.impl
 import com.circaso.infrastructure.api.Config
 import com.circaso.integrations.api.CustodyAsset
 import com.circaso.integrations.api.CustodyChain
+import com.circaso.integrations.api.CustodySetup
 import com.circaso.integrations.api.SupportedChains
+import com.circaso.shared.Network
 
 /**
  * The chains a wallet can be on and the assets offered on each (decision 2026-10-28: Base, Polygon, Ethereum and
@@ -38,7 +40,17 @@ internal object CustodyChainsConfig {
             "SOL-DEVNET" to "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
         )
 
+    /** USDC on each mainnet, from the same page (decision 2026-11-18: Base, Polygon, Ethereum and Solana). */
+    private val MAINNET_USDC =
+        linkedMapOf(
+            "BASE" to "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "MATIC" to "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+            "ETH" to "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "SOL" to "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        )
+
     private const val DEFAULT_CHAIN = "BASE-SEPOLIA"
+    private const val MAINNET_DEFAULT_CHAIN = "BASE"
     private const val USDC_DECIMALS = 6
 
     val TESTNETS: SupportedChains =
@@ -46,6 +58,43 @@ internal object CustodyChainsConfig {
             default = DEFAULT_CHAIN,
             chains = TESTNET_USDC.map { (chain, address) -> CustodyChain(chain, listOf(usdc(address))) },
         )
+
+    val MAINNETS: SupportedChains =
+        SupportedChains(
+            default = MAINNET_DEFAULT_CHAIN,
+            chains = MAINNET_USDC.map { (chain, address) -> CustodyChain(chain, listOf(usdc(address))) },
+        )
+
+    /**
+     * What a network's settings start as, copied into the database once (decision 2026-11-18). Testnet: the old
+     * `INTEGRATIONS_CUSTODY_*` variables as [parse] reads them, when they name testnet chains (a list of mainnet
+     * names there can't seed the testnet; the built-in testnets do). Mainnet: the built-in chains with USDC and
+     * `INTEGRATIONS_CUSTODY_MAINNET_APP_ID`, empty until it is set.
+     */
+    fun seed(custody: Config, network: Network): CustodySetup =
+        when (network) {
+            Network.MAINNET -> {
+                CustodySetup(
+                    appId = custody.string("mainnet.app-id").orEmpty(),
+                    supported = MAINNETS,
+                    accountTypes = MAINNETS.chains.associate { it.blockchain to defaultAccountType(it.blockchain) },
+                )
+            }
+
+            Network.TESTNET -> {
+                val parsed = parse(custody)
+                val onTestnet = parsed.supported.chains.all { Network.ofChain(it.blockchain) == Network.TESTNET }
+                val supported = if (onTestnet) parsed.supported else TESTNETS
+                CustodySetup(
+                    appId = custody.string("app-id").orEmpty(),
+                    supported = supported,
+                    accountTypes =
+                        supported.chains.associate {
+                            it.blockchain to (parsed.accountTypes[it.blockchain] ?: defaultAccountType(it.blockchain))
+                        },
+                )
+            }
+        }
 
     fun parse(custody: Config): Parsed {
         val names =

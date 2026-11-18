@@ -19,6 +19,10 @@ import com.circaso.wallet.api.WalletFrames
 import com.circaso.wallet.api.Wallets
 import com.circaso.wallet.presentation.services.WalletDirectoryService
 import java.util.UUID
+import com.circaso.shared.Network
+import com.circaso.shared.WalletNetwork
+import com.circaso.shared.networkFilter
+import kotlinx.coroutines.withContext
 
 /** wallet:api for the assistant later. Every call goes through a service, like any other way in. */
 class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
@@ -43,7 +47,17 @@ class WalletsImpl(private val directory: WalletDirectoryService) : Wallets {
  * 2026-10-28), with its own `wallet.funds_remaining`, which reaches the app as is.
  */
 class WalletDeletionGuard(private val directory: WalletDirectoryService) : DeletionGuard {
-    override suspend fun canDelete(userId: UserId): Resource<Unit> = directory.canDelete(userId)
+    /**
+     * Both networks are checked (decision 2026-11-18): a person may hold money on either, and the first refusal is
+     * the answer. A network they never had a wallet on answers at once, without asking Circle.
+     */
+    override suspend fun canDelete(userId: UserId): Resource<Unit> {
+        for (network in Network.entries) {
+            val checked = withContext(WalletNetwork(network)) { directory.canDelete(userId) }
+            if (checked is Resource.Error) return checked
+        }
+        return Resource.success(Unit)
+    }
 }
 
 /**
@@ -51,7 +65,14 @@ class WalletDeletionGuard(private val directory: WalletDirectoryService) : Delet
  * error makes Circle deliver it again.
  */
 class WalletCustodyNotifications(private val directory: WalletDirectoryService) : CustodyNotifications {
-    override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> = directory.onTransaction(update)
+    /**
+     * Circle's webhook names the network of the account it came through; an update handed over without one (the dev
+     * custody, a test) is on the network its chain belongs to.
+     */
+    override suspend fun onTransaction(update: CustodyTransaction): Resource<Unit> {
+        val network = networkFilter() ?: Network.ofChain(update.blockchain)
+        return withContext(WalletNetwork(network)) { directory.onTransaction(update) }
+    }
 
     override suspend fun onWalletChallenge(challenge: CustodyChallenge): Resource<Unit> =
         directory.onWalletChallenge(challenge)

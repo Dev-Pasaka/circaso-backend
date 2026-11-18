@@ -2,6 +2,7 @@ package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.shared.UserId
+import com.circaso.shared.networkFilter
 import com.circaso.wallet.api.ReportBucket
 import com.circaso.wallet.api.WalletOwnerType
 import com.circaso.wallet.data.tables.FeeLedgerTable
@@ -54,11 +55,12 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
         limit: Int,
     ): List<Transfer> =
         database.tx("reports.transfers") {
+            val network = networkFilter()?.name
             // With a party, transfers_sender_idx or transfers_recipient_idx; without, transfers_newest_idx (or
             // transfers_confirmed_idx for confirmed ones). Every one is (…, created_at DESC, transfer_id DESC).
             TransfersTable
                 .selectAll()
-                .where { conditions(query, after) }
+                .where { conditions(query, after) and onNetwork(TransfersTable.network, network) }
                 .orderBy(TransfersTable.createdAt to SortOrder.DESC, TransfersTable.transferId to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toTransfer() }
@@ -67,11 +69,16 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
 
     override suspend fun feesPaidBy(holder: UserId): Long =
         database.tx("reports.fees-paid-by") {
+            val network = networkFilter()?.name
             // fee_ledger_collected_idx (holder_id WHERE state = 'COLLECTED').
             val fees = FeeLedgerTable.feeUsdMinor.sum()
             FeeLedgerTable
                 .select(fees)
-                .where { (FeeLedgerTable.holderId eq holder.value) and collected() }
+                .where {
+                    (FeeLedgerTable.holderId eq holder.value) and
+                        collected() and
+                        onNetwork(FeeLedgerTable.network, network)
+                }
                 .map { it[fees] ?: 0 }
                 .single()
         }
@@ -82,13 +89,18 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
         bucket: ReportBucket,
     ): Map<LocalDate, PeriodSums> =
         database.tx("reports.confirmed-by-period") {
+            val network = networkFilter()?.name
             // A range of transfers_confirmed_idx (created_at WHERE state = 'CONFIRMED').
             val period = UtcPeriod(TransfersTable.createdAt, bucket)
             val count = TransfersTable.transferId.count()
             val volume = TransfersTable.usdTotalMinor.sum()
             TransfersTable
                 .select(period, count, volume)
-                .where { confirmed() and createdIn(TransfersTable.createdAt, from, until) }
+                .where {
+                    confirmed() and
+                        createdIn(TransfersTable.createdAt, from, until) and
+                        onNetwork(TransfersTable.network, network)
+                }
                 .groupBy(period)
                 .map { it[period] to PeriodSums(it[count], it[volume] ?: 0) }
                 .toList()
@@ -101,12 +113,17 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
         bucket: ReportBucket,
     ): Map<LocalDate, Long> =
         database.tx("reports.fees-by-period") {
+            val network = networkFilter()?.name
             // A range of fee_ledger_report_idx (created_at, blockchain).
             val period = UtcPeriod(FeeLedgerTable.createdAt, bucket)
             val fees = FeeLedgerTable.feeUsdMinor.sum()
             FeeLedgerTable
                 .select(period, fees)
-                .where { collected() and createdIn(FeeLedgerTable.createdAt, from, until) }
+                .where {
+                    collected() and
+                        createdIn(FeeLedgerTable.createdAt, from, until) and
+                        onNetwork(FeeLedgerTable.network, network)
+                }
                 .groupBy(period)
                 .map { it[period] to (it[fees] ?: 0) }
                 .toList()
@@ -115,6 +132,7 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
 
     override suspend fun confirmedByChainAsset(from: Instant, until: Instant): List<ChainAssetSums> =
         database.tx("reports.confirmed-by-chain-asset") {
+            val network = networkFilter()?.name
             val count = TransfersTable.transferId.count()
             val amount = TransfersTable.amountMinor.sum()
             val volume = TransfersTable.usdTotalMinor.sum()
@@ -126,7 +144,11 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
                     count,
                     amount,
                     volume,
-                ).where { confirmed() and createdIn(TransfersTable.createdAt, from, until) }
+                ).where {
+                    confirmed() and
+                        createdIn(TransfersTable.createdAt, from, until) and
+                        onNetwork(TransfersTable.network, network)
+                }
                 .groupBy(TransfersTable.blockchain, TransfersTable.asset, TransfersTable.assetDecimals)
                 .map {
                     ChainAssetSums(
@@ -142,10 +164,15 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
 
     override suspend fun feesByChainAsset(from: Instant, until: Instant): Map<Pair<String, String>, Long> =
         database.tx("reports.fees-by-chain-asset") {
+            val network = networkFilter()?.name
             val fees = FeeLedgerTable.feeUsdMinor.sum()
             FeeLedgerTable
                 .select(FeeLedgerTable.blockchain, FeeLedgerTable.asset, fees)
-                .where { collected() and createdIn(FeeLedgerTable.createdAt, from, until) }
+                .where {
+                    collected() and
+                        createdIn(FeeLedgerTable.createdAt, from, until) and
+                        onNetwork(FeeLedgerTable.network, network)
+                }
                 .groupBy(FeeLedgerTable.blockchain, FeeLedgerTable.asset)
                 .map { (it[FeeLedgerTable.blockchain] to it[FeeLedgerTable.asset]) to (it[fees] ?: 0) }
                 .toList()
@@ -154,20 +181,26 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
 
     override suspend fun groupWalletCount(): Long =
         database.tx("reports.group-wallet-count") {
+            val network = networkFilter()?.name
             val count = WalletOwnersTable.walletId.count()
             WalletOwnersTable
                 .select(count)
-                .where { isGroup() }
+                .where { isGroup() and onNetwork(WalletOwnersTable.network, network) }
                 .map { it[count] }
                 .single()
         }
 
     override suspend fun groupWallets(after: GroupWalletKey?, limit: Int): List<WalletOwner.Group> =
         database.tx("reports.group-wallets") {
+            val network = networkFilter()?.name
             // wallet_owners_groups_newest_idx: (created_at DESC, wallet_id DESC) WHERE owner_type = 'GROUP'.
             WalletOwnersTable
                 .selectAll()
-                .where { isGroup() and (after?.let(::before) ?: Op.TRUE) }
+                .where {
+                    isGroup() and
+                        (after?.let(::before) ?: Op.TRUE) and
+                        onNetwork(WalletOwnersTable.network, network)
+                }
                 .orderBy(WalletOwnersTable.createdAt to SortOrder.DESC, WalletOwnersTable.walletId to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toGroup() }
@@ -218,6 +251,10 @@ class WalletReportRepositoryImpl(private val database: Database) : WalletReportR
     private fun confirmed(): Op<Boolean> = TransfersTable.state eq TransferState.CONFIRMED.name
 
     private fun collected(): Op<Boolean> = FeeLedgerTable.state eq FeeState.COLLECTED.name
+
+    /** Only [network]'s rows when staff named one (`?network=`); both networks' otherwise (2026-11-18). */
+    private fun onNetwork(column: Column<String>, network: String?): Op<Boolean> =
+        network?.let { column eq it } ?: Op.TRUE
 
     private fun isGroup(): Op<Boolean> = WalletOwnersTable.ownerType eq WalletOwnerType.GROUP.name
 }
