@@ -74,7 +74,10 @@ class Networks(
      * whatever its row says.
      */
     suspend fun state(network: Network): NetworkState =
-        if (network in custody.networks) settings(network).state else NetworkState.OFF
+        if (isReachable(network)) settings(network).state else NetworkState.OFF
+
+    /** Whether this server holds the custody key for [network]; without it the network is off whatever its row says. */
+    fun isReachable(network: Network): Boolean = network in custody.networks
 
     override fun current(network: Network): CustodySetup? =
         loaded

@@ -1,6 +1,5 @@
 package com.circaso.wallet.domain.usecases
 
-import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -80,7 +79,7 @@ class SetNetworkAccess(private val grants: NetworkAccessRepository, private val 
 class GetNetworkSettings(private val networks: Networks) {
     suspend operator fun invoke(): List<NetworkSettings> {
         networks.invalidate()
-        return Network.entries.map { networks.settings(it) }
+        return Network.entries.map { networks.settings(it).copy(custodyConfigured = networks.isReachable(it)) }
     }
 }
 
@@ -97,7 +96,6 @@ class UpdateNetworkSettings(
     private val repository: NetworkSettingsRepository,
     private val networks: Networks,
     private val transactor: Transactor,
-    private val custody: StablecoinCustody,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(
@@ -132,7 +130,10 @@ class UpdateNetworkSettings(
                     )
                 }
                 val after = repository.replace(cleaned.copy(version = before.version), by, clock.instant())
-                Resource.success(before to after)
+                val reachable = networks.isReachable(cleaned.network)
+                Resource.success(
+                    before.copy(custodyConfigured = reachable) to after.copy(custodyConfigured = reachable),
+                )
             }
         networks.invalidate()
         return result
@@ -197,9 +198,6 @@ class UpdateNetworkSettings(
 
     private fun invalid(field: String, problem: String) =
         Resource.Error(WalletError.NetworkSettingsInvalid(field, problem))
-
-    /** Whether this server holds the custody key for [network]. */
-    fun custodyConfigured(network: Network): Boolean = network in custody.networks
 
     private companion object {
         const val SCA = "SCA"

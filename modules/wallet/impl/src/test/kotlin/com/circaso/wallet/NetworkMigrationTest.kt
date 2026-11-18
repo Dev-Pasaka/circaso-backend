@@ -106,21 +106,22 @@ class NetworkMigrationTest {
             )
             assertEquals("MAINNET", db.one("SELECT network FROM $schema.wallets WHERE circle_wallet_id = 'cw-9'"))
             db.run(
-                "INSERT INTO $schema.wallet_owners (wallet_id, owner_type, chat_id, signer_id, created_by, created_at, " +
-                    "network) VALUES ('${UUID.randomUUID()}', 'GROUP', '$chat', '$bob', '$bob', now(), 'MAINNET')",
+                "INSERT INTO $schema.wallet_owners (wallet_id, owner_type, chat_id, signer_id, created_by, " +
+                    "created_at, network) VALUES ('${UUID.randomUUID()}', 'GROUP', '$chat', '$bob', '$bob', now(), 'MAINNET')",
             )
             assertFailsWith<java.sql.SQLException>("one wallet per group per network") {
                 db.run(
                     "INSERT INTO $schema.wallet_owners (wallet_id, owner_type, chat_id, signer_id, created_by, " +
-                        "created_at, network) VALUES ('${UUID.randomUUID()}', 'GROUP', '$chat', '$bob', '$bob', now(), 'MAINNET')",
+                        "created_at, network) " +
+                        "VALUES ('${UUID.randomUUID()}', 'GROUP', '$chat', '$bob', '$bob', now(), 'MAINNET')",
                 )
             }
             assertFailsWith<java.sql.SQLException>("a chain belongs to one network") {
                 db.run(
                     "INSERT INTO $schema.network_settings (network, state, app_id, default_chain, updated_at) " +
                         "VALUES ('MAINNET', 'OFF', '', 'BASE', now()); " +
-                        "INSERT INTO $schema.network_chains (blockchain, network, position, enabled, receive_enabled, " +
-                        "account_type) VALUES ('BASE-SEPOLIA', 'MAINNET', 0, true, true, 'SCA')",
+                        "INSERT INTO $schema.network_chains (blockchain, network, position, enabled, " +
+                        "receive_enabled, account_type) VALUES ('BASE-SEPOLIA', 'MAINNET', 0, true, true, 'SCA')",
                 )
             }
             db.run("DROP SCHEMA $schema CASCADE")

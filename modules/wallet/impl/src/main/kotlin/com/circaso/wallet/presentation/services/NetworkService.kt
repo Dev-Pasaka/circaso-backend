@@ -40,6 +40,4 @@ class NetworkService(
         expectedVersion: Long?,
         by: UUID,
     ): Resource<Pair<NetworkSettings, NetworkSettings>> = updateNetworkSettings(settings, expectedVersion, by)
-
-    fun custodyConfigured(network: Network): Boolean = updateNetworkSettings.custodyConfigured(network)
 }

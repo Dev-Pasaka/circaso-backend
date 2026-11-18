@@ -490,7 +490,7 @@ fun walletModule(config: Config): Module =
         single { GetNetworkAccess(get()) }
         single { SetNetworkAccess(get(), clock) }
         single { GetNetworkSettings(get()) }
-        single { UpdateNetworkSettings(get(), get(), get(), get(), clock) }
+        single { UpdateNetworkSettings(get(), get(), get(), clock) }
 
         // presentation
         single { WalletService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }

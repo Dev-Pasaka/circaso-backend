@@ -49,7 +49,7 @@ class NetworkActionsTest {
     }
 
     @Test
-    fun `a grant needs a reason, is audited, and shows on the person; a revoke takes it away again`() =
+    fun `a grant needs a reason, is audited, and shows on the person, and a revoke takes it away again`() =
         runTest {
             val user = harness.accounts.add()
             val set = koin.get<SetUserNetworkAccess>()
@@ -73,7 +73,7 @@ class NetworkActionsTest {
             assertTrue(lines.all { it.targetId == user.toString() && it.targetType == "user" })
             assertEquals(
                 listOf("grant TESTNET", "grant TESTNET (no change)", "revoke TESTNET"),
-                lines.sortedBy { it.id }.map { it.detail },
+                lines.map { it.detail },
             )
         }
 

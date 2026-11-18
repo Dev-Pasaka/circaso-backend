@@ -87,7 +87,7 @@ class NetworkAdminImpl(private val networks: NetworkService) : NetworkAdmin {
                     )
                 },
             version = version,
-            custodyConfigured = networks.custodyConfigured(network),
+            custodyConfigured = custodyConfigured,
         )
 
     private fun OpsNetworkChain.toDomain() =

@@ -36,6 +36,8 @@ data class NetworkSettings(
     val defaultChain: String,
     val chains: List<ChainSettings>,
     val version: Long = 1,
+    /** Set when shown to staff: whether this server holds the network's custody key. Never stored. */
+    val custodyConfigured: Boolean = true,
 ) {
     /** What custody runs on: the enabled chains only. Null when they don't make a valid set (never, once validated). */
     fun toSetup(): CustodySetup? =

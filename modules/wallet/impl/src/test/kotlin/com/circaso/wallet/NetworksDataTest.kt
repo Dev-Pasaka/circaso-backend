@@ -72,7 +72,7 @@ class NetworksDataTest {
         }
     private val seedFees = FakeFeeConfig()
     private val networks = Networks(settings, TestSeeds, seedFees, custody, RecordingWarnings(), clock)
-    private val update = UpdateNetworkSettings(settings, networks, DatabaseTransactor(database), custody, clock)
+    private val update = UpdateNetworkSettings(settings, networks, DatabaseTransactor(database), clock)
     private val staff = UUID.randomUUID()
 
     @BeforeTest
@@ -322,7 +322,7 @@ class NetworksDataTest {
             val saved = (update(open, current.version, staff) as Resource.Success).data.second
             assertEquals(current.version + 1, saved.version)
             assertEquals("main-app", saved.appId)
-            assertEquals(saved, networks.settings(Network.MAINNET))
+            assertEquals(saved, networks.settings(Network.MAINNET).copy(custodyConfigured = saved.custodyConfigured))
             assertEquals(NetworkState.PREVIEW, networks.state(Network.MAINNET))
             assertEquals(
                 listOf("BASE", "SOL", "ARB"),
