@@ -1,5 +1,6 @@
 package com.circaso.ops.domain.usecases
 
+import com.circaso.shared.networkFilter
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.domain.models.Dashboard
@@ -41,19 +42,25 @@ class GetDashboard(
         val seesUsers = Permission.DASHBOARD_USERS.allows(role)
         val seesMoney = Permission.DASHBOARD_MONEY.allows(role)
         val seesTickets = Permission.DASHBOARD_TICKETS.allows(role)
+        // `?network=` narrows the money figures to one network (2026-11-18); without it each row names its own.
+        val network = networkFilter()
         return coroutineScope {
             val users = async { if (seesUsers) accounts.signUps(from, to) else null }
             val active = async { if (seesUsers) accounts.activeUsers(now) else null }
             val money =
                 async {
-                    if (seesMoney) wallets.report(Ranges.startOf(from), Ranges.endOf(to), ReportBucket.DAY) else null
+                    if (seesMoney) {
+                        wallets.report(Ranges.startOf(from), Ranges.endOf(to), ReportBucket.DAY, network)
+                    } else {
+                        null
+                    }
                 }
             val groupTotals =
                 async {
                     if (seesUsers ||
                         seesMoney
                     ) {
-                        GroupTotals(groups.groupCount(), wallets.groupWalletCount())
+                        GroupTotals(groups.groupCount(), wallets.groupWalletCount(network))
                     } else {
                         null
                     }

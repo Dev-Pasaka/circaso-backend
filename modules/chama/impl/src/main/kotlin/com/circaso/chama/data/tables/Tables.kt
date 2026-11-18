@@ -7,6 +7,9 @@ import org.jetbrains.exposed.v1.javatime.timestamp
 /** One goal per group chat; `version` rises on every change so a stale write never wins. */
 object GoalsTable : Table("chama.goals") {
     val chatId = javaUUID("chat_id")
+
+    /** V5 (2026-11-18): the wallet network this row is about; a group's money is kept per network. */
+    val network = text("network")
     val name = text("name")
     val targetMinor = long("target_minor")
     val asset = text("asset")
@@ -18,7 +21,7 @@ object GoalsTable : Table("chama.goals") {
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
     val version = long("version").default(0)
-    override val primaryKey = PrimaryKey(chatId)
+    override val primaryKey = PrimaryKey(chatId, network)
 }
 
 /**
@@ -28,6 +31,9 @@ object GoalsTable : Table("chama.goals") {
 object ContributionsTable : Table("chama.contributions") {
     val transferId = javaUUID("transfer_id")
     val chatId = javaUUID("chat_id")
+
+    /** V5 (2026-11-18): the wallet network this row is about; a group's money is kept per network. */
+    val network = text("network")
     val userId = javaUUID("user_id")
     val amountMinor = long("amount_minor")
     val asset = text("asset")
@@ -48,6 +54,9 @@ object ContributionsTable : Table("chama.contributions") {
 object DirectPayoutsTable : Table("chama.direct_payouts") {
     val transferId = javaUUID("transfer_id")
     val chatId = javaUUID("chat_id")
+
+    /** V5 (2026-11-18): the wallet network this row is about; a group's money is kept per network. */
+    val network = text("network")
     val amountMinor = long("amount_minor")
     val asset = text("asset")
     val at = timestamp("at")
@@ -62,16 +71,22 @@ object DirectPayoutsTable : Table("chama.direct_payouts") {
 /** Who approves the group's payouts (decision 2026-11-03); no row means the default, two admins. */
 object GroupSettingsTable : Table("chama.group_settings") {
     val chatId = javaUUID("chat_id")
+
+    /** V5 (2026-11-18): the wallet network this row is about; a group's money is kept per network. */
+    val network = text("network")
     val approvalPolicy = text("approval_policy")
     val updatedBy = javaUUID("updated_by")
     val updatedAt = timestamp("updated_at")
-    override val primaryKey = PrimaryKey(chatId)
+    override val primaryKey = PrimaryKey(chatId, network)
 }
 
 /** A request to pay someone from the group; its state moves only by the transition guard. */
 object RequestsTable : Table("chama.requests") {
     val requestId = javaUUID("request_id")
     val chatId = javaUUID("chat_id")
+
+    /** V5 (2026-11-18): the wallet network this row is about; a group's money is kept per network. */
+    val network = text("network")
     val requestedBy = javaUUID("requested_by")
     val payeeId = javaUUID("payee_id").nullable()
     val payeeAddress = text("payee_address").nullable()

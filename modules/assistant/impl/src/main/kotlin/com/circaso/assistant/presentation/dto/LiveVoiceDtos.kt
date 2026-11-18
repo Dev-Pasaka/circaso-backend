@@ -29,6 +29,12 @@ sealed interface LivePhoneFrame {
          * one, as on A2. One that isn't the user's fails each turn with `assistant.conversation_not_found`.
          */
         val conversationId: String? = null,
+        /**
+         * `MAINNET` or `TESTNET` (added 2026-11-18): the wallet network Asha's wallet and group money tools answer
+         * for during this call, as `X-Wallet-Network` does on A2. Without it, the server's choice for an app that
+         * names none.
+         */
+        val network: String? = null,
     ) : LivePhoneFrame
 
     /** The answer to a `tool_request`. */

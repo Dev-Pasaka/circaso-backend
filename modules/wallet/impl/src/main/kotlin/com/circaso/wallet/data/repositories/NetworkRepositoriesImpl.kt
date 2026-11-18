@@ -205,7 +205,7 @@ class NetworkAccessRepositoryImpl(private val database: Database) : NetworkAcces
                     NetworkGrant(
                         userId = UserId(it[NetworkAccessTable.userId]),
                         network = Network.valueOf(it[NetworkAccessTable.network]),
-                        source = AccessSource.valueOf(it[NetworkAccessTable.source]),
+                        source = AccessSource.valueOf(it[NetworkAccessTable.grantSource]),
                         grantedBy = it[NetworkAccessTable.grantedBy],
                         reason = it[NetworkAccessTable.reason],
                         createdAt = it[NetworkAccessTable.createdAt],
@@ -219,7 +219,7 @@ class NetworkAccessRepositoryImpl(private val database: Database) : NetworkAcces
                 .insertIgnore {
                     it[userId] = grant.userId.value
                     it[network] = grant.network.name
-                    it[source] = grant.source.name
+                    it[grantSource] = grant.source.name
                     it[grantedBy] = grant.grantedBy
                     it[reason] = grant.reason
                     it[createdAt] = grant.createdAt

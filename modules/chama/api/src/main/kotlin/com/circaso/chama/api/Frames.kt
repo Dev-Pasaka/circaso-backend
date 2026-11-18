@@ -1,6 +1,7 @@
 package com.circaso.chama.api
 
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.WalletAmount
 import kotlinx.serialization.Serializable
@@ -39,6 +40,8 @@ data class MoneyUpdatedFrame(
      * value), so a group call can say "Amina +0.01 ETH". Null for payouts and before.
      */
     val paid: WalletAmount? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
 ) {
     companion object {
         const val CONTRIBUTION = "CONTRIBUTION"
@@ -62,6 +65,8 @@ data class ContributionSubmittedFrame(
     val displayName: String,
     val paid: WalletAmount,
     val amount: WalletAmount? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
 )
 
 /**
@@ -69,7 +74,12 @@ data class ContributionSubmittedFrame(
  * reload the group's money (CH7). No push.
  */
 @Serializable
-data class GroupUpdatedFrame(val chatId: ChatId, val byUserId: UserId)
+data class GroupUpdatedFrame(
+    val chatId: ChatId,
+    val byUserId: UserId,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
+)
 
 /** `chama/goal.updated`, to every member: the goal was set or changed; reload the chama. No push. */
 @Serializable
@@ -79,6 +89,8 @@ data class GoalUpdatedFrame(
     val target: WalletAmount,
     val contributed: WalletAmount,
     val byUserId: UserId,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
 )
 
 /** `chama/contribution.added`, to every member: [userId] put money in. Pushed to the others ("Wanjiru added to Holiday Fund"). */
@@ -91,6 +103,8 @@ data class ContributionAddedFrame(
     val amount: WalletAmount,
     val contributed: WalletAmount,
     val target: WalletAmount,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
 )
 
 /**
@@ -114,4 +128,6 @@ data class RequestUpdatedFrame(
     val waitingOn: List<UserId> = emptyList(),
     /** Who pays it once `APPROVED`: the group wallet's signer (added 2026-11-03), pushed then. */
     val signerId: UserId? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network of the group wallet this is about. */
+    val network: String = Network.TESTNET.name,
 )

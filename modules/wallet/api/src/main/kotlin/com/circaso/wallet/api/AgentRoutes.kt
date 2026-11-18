@@ -1,5 +1,6 @@
 package com.circaso.wallet.api
 
+import com.circaso.shared.Network
 import kotlinx.serialization.Serializable
 
 // What wallet's read-only agent routes (`/v1/agent/wallet/…`) answer. They live here, not in wallet's presentation,
@@ -14,6 +15,8 @@ data class AgentBalanceDto(
     val amount: String,
     val blockchain: String? = null,
     val fiat: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String? = blockchain?.let { Network.ofChain(it).name },
 )
 
 /**
@@ -26,6 +29,8 @@ data class AgentChainDto(
     val address: String,
     val state: String,
     val receiveEnabled: Boolean,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /** Today's rate: one US dollar is `usdRate` of `currency`, as published at `asOf` (ISO-8601). */
@@ -82,6 +87,8 @@ data class AgentTransactionDto(
     val transferId: String? = null,
     val origin: String? = null,
     val txHash: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -214,6 +221,8 @@ data class AgentFeeQuoteResponse(
     val fiatTotal: String? = null,
     val rate: AgentRateDto? = null,
     val payee: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 ) {
     companion object {
         const val ANY_PERSON = "ANY_PERSON"

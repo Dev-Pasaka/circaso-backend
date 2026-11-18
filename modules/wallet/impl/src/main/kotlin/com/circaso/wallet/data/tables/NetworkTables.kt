@@ -8,7 +8,7 @@ import org.jetbrains.exposed.v1.javatime.timestamp
 object NetworkAccessTable : Table("wallet.network_access") {
     val userId = javaUUID("user_id")
     val network = text("network")
-    val source = text("source")
+    val grantSource = text("source")
     val grantedBy = javaUUID("granted_by").nullable()
     val reason = text("reason").nullable()
     val createdAt = timestamp("created_at")

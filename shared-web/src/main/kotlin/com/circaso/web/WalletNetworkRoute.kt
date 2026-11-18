@@ -1,8 +1,10 @@
 package com.circaso.web
 
+import com.circaso.shared.FieldError
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.Scope
+import com.circaso.shared.SharedError
 import com.circaso.shared.WalletNetwork
 import com.circaso.shared.WalletNetworkGate
 import io.ktor.server.application.ApplicationCall
@@ -80,3 +82,34 @@ fun Route.walletNetwork(build: Route.() -> Unit): Route {
  */
 fun Route.authenticateOnNetwork(vararg scopes: Scope, build: Route.() -> Unit): Route =
     authenticate(*scopes) { walletNetwork(build) }
+
+/**
+ * A staff route group that may be narrowed to one network with `?network=MAINNET|TESTNET` (decision 2026-11-18): with
+ * it, the handler runs with that network in its coroutine context and the wallet's staff reads answer for it alone;
+ * without it they cover both networks. Any other value answers `request.malformed`.
+ */
+@Suppress("DEPRECATION")
+fun Route.networkFiltered(build: Route.() -> Unit): Route {
+    val node =
+        createChild(
+            object : RouteSelector() {
+                override suspend fun evaluate(context: RoutingResolveContext, segmentIndex: Int) =
+                    RouteSelectorEvaluation.Transparent
+
+                override fun toString() = "(network filter)"
+            },
+        )
+    node.intercept(ApplicationCallPipeline.Plugins) {
+        val raw = call.request.queryParameters["network"]?.trim()?.takeIf { it.isNotEmpty() }
+        if (raw == null) return@intercept
+        val network = Network.parse(raw.uppercase())
+        if (network == null) {
+            call.respondError(SharedError.Malformed(listOf(FieldError("network", "must be MAINNET or TESTNET"))))
+            finish()
+        } else {
+            withContext(WalletNetwork(network)) { proceed() }
+        }
+    }
+    node.build()
+    return node
+}

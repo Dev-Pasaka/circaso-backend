@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.controllers
 
+import com.circaso.shared.networkFilter
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.presentation.dto.DashboardResponse
 import com.circaso.ops.presentation.mappers.MALFORMED
@@ -31,8 +32,9 @@ fun Route.dashboardController(dashboard: DashboardService) {
                     call.query("days")?.let { raw ->
                         raw.toIntOrNull()?.let { Resource.success(it) } ?: malformed("days", "must be a number")
                     } ?: Resource.success(DEFAULT_DAYS)
+                val network = networkFilter()
                 val result = days.flatMap { dashboard.get(call.staff().role, it) }
-                call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                call.respondDefault(result.toDefaultResponse { it.toResponse().copy(network = network?.name) })
             }.docs<NoBody, DashboardResponse>(
                 "OPS · The dashboard",
                 TAG_DASHBOARD,

@@ -1,5 +1,6 @@
 package com.circaso.assistant.presentation.mappers
 
+import com.circaso.shared.Network
 import com.circaso.assistant.domain.errors.AssistantError
 import com.circaso.assistant.domain.models.LiveEnd
 import com.circaso.assistant.domain.models.LiveEvent
@@ -34,6 +35,7 @@ fun LivePhoneFrame.Auth.toRequest(requestId: String?) =
         displayCurrencyOf(currency),
         voice = voice,
         conversationId = conversationId?.let { parseUuid(it) ?: UNKNOWN_CONVERSATION },
+        network = Network.parse(network),
     )
 
 /** What an `auth` frame's conversation id that isn't a UUID becomes: an id no conversation has, so turns are refused. */

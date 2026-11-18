@@ -12,7 +12,13 @@ data class UsersTileDto(val total: Long, val newInRange: Long, val series: List<
 data class ActiveTileDto(val day1: Long, val day7: Long, val day30: Long)
 
 @Serializable
-data class MoneyDayDto(val date: String, val count: Long, val volumeUsdMicros: Long)
+data class MoneyDayDto(
+    val date: String,
+    val count: Long,
+    val volumeUsdMicros: Long,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): a day has one row per network asked for. */
+    val network: String = "TESTNET",
+)
 
 @Serializable
 data class TransactionsTileDto(val count: Long, val volumeUsdMicros: Long, val series: List<MoneyDayDto>)
@@ -21,7 +27,11 @@ data class TransactionsTileDto(val count: Long, val volumeUsdMicros: Long, val s
 data class GroupsTileDto(val total: Long, val withWallet: Long, val withoutWallet: Long)
 
 @Serializable
-data class FeeDayDto(val date: String, val usdMicros: Long)
+data class FeeDayDto(
+    val date: String,
+    val usdMicros: Long,
+    val network: String = "TESTNET",
+)
 
 @Serializable
 data class FeesTileDto(val earnedUsdMicros: Long, val series: List<FeeDayDto>)
@@ -41,6 +51,8 @@ data class DashboardResponse(
     val groups: GroupsTileDto? = null,
     val fees: FeesTileDto? = null,
     val tickets: TicketsTileDto? = null,
+    /** The `?network=` asked for, echoed (added 2026-11-18); null when none was (both networks). */
+    val network: String? = null,
 )
 
 @Serializable

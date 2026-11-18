@@ -1,5 +1,6 @@
 package com.circaso.ops.domain.support
 
+import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.identity.api.AccountStatus
 import com.circaso.ops.domain.models.AuditAction
@@ -18,6 +19,8 @@ class UserViews(
     private val accounts: AccountAdmin,
     private val profiles: ProfileAdmin,
     private val audit: AuditRepository,
+    /** The wallet's network access rows, shown on the person's page (2026-11-18). */
+    private val networks: NetworkAdmin? = null,
 ) {
     suspend fun account(userId: UserId): UserAccount? {
         val account = accounts.account(userId) ?: return null
@@ -30,7 +33,7 @@ class UserViews(
             } else {
                 null
             }
-        return UserAccount(account, profile, suspension)
+        return UserAccount(account, profile, suspension, networks?.access(userId).orEmpty())
     }
 
     /** Rows for [ids] in the order given; ids with no account are left out. */

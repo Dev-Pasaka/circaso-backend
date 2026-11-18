@@ -15,7 +15,7 @@ import com.circaso.shared.Scope
 import com.circaso.shared.SharedError
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
-import com.circaso.web.authenticate
+import com.circaso.web.authenticateOnNetwork
 import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
@@ -39,7 +39,8 @@ private const val AGENT_TOKEN_HEADER = "X-Agent-Token"
  * A1 and A5 cover every conversation; one conversation is C1 to C5 (ConversationController).
  */
 fun Route.chatController(chat: ChatService) {
-    authenticate(Scope.APP) {
+    // Asha's wallet tools answer for the network the phone names (`X-Wallet-Network`, decision 2026-11-18).
+    authenticateOnNetwork(Scope.APP) {
         route("/assistant/chat") {
             get {
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50

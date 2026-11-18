@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.mappers
 
+import com.circaso.shared.Network
 import com.circaso.ops.presentation.dto.FeeBoundsChangeResponse
 import com.circaso.ops.presentation.dto.FeeBoundsDto
 import com.circaso.ops.presentation.dto.FeeRuleChangeResponse
@@ -38,11 +39,16 @@ import java.time.Instant
 // Fees and limits between the wire and the wallet's staff contract: enums by name, ids parsed, times as instants. A
 // value that isn't one answers 400 request.malformed naming the field; the business rules are the wallet's.
 
-fun FeeScopeDto.toScope(): Resource<FeeRuleScope> =
+/** [asked] is the request's `?network=`: a new rule belongs to it unless its scope names one itself (2026-11-18). */
+fun FeeScopeDto.toScope(asked: Network? = null): Resource<FeeRuleScope> =
     parseEnum<FeeRuleKind>(kind, "scope.kind").flatMap { kind ->
         parseEnum<WalletOwnerType>(senderType, "scope.senderType").flatMap { sender ->
             parseEnum<WalletOwnerType>(receiverType, "scope.receiverType").flatMap { receiver ->
-                walletIdOf(walletId).map { wallet -> FeeRuleScope(kind, sender, receiver, blockchain, asset, wallet) }
+                parseEnum<Network>(network, "scope.network").flatMap { named ->
+                    walletIdOf(walletId).map { wallet ->
+                        FeeRuleScope(kind, sender, receiver, blockchain, asset, wallet, named ?: asked)
+                    }
+                }
             }
         }
     }
@@ -50,9 +56,11 @@ fun FeeScopeDto.toScope(): Resource<FeeRuleScope> =
 @Suppress("DEPRECATION")
 fun FeeTermsDto.toTerms() = FeeRuleTerms(rateBps, capBaseUsdMicros, minFeeUsdMicros, gasShareMaxBps, gasMarginBps)
 
-fun LimitScopeDto.toScope(): Resource<LimitRuleScope> =
+fun LimitScopeDto.toScope(asked: Network? = null): Resource<LimitRuleScope> =
     parseEnum<WalletOwnerType>(ownerType, "scope.ownerType").flatMap { owner ->
-        walletIdOf(walletId).map { wallet -> LimitRuleScope(owner, wallet, asset) }
+        parseEnum<Network>(network, "scope.network").flatMap { named ->
+            walletIdOf(walletId).map { wallet -> LimitRuleScope(owner, wallet, asset, named ?: asked) }
+        }
     }
 
 fun LimitTermsDto.toTerms() = LimitRuleTerms(perPaymentMaxUsdMicros, dailyMaxUsdMicros, windowHours)
@@ -86,6 +94,7 @@ fun FeeRuleVersion.toDto() =
                 blockchain = scope.blockchain,
                 asset = scope.asset,
                 walletId = scope.walletId?.toString(),
+                network = (scope.network ?: scope.blockchain?.let(Network::ofChain))?.name,
             ),
         terms =
             FeeTermsDto(
@@ -123,7 +132,7 @@ fun LimitRuleVersion.toDto() =
     LimitRuleVersionDto(
         ruleId = ruleId.toString(),
         version = version,
-        scope = LimitScopeDto(scope.ownerType?.name, scope.walletId?.toString(), scope.asset),
+        scope = LimitScopeDto(scope.ownerType?.name, scope.walletId?.toString(), scope.asset, scope.network?.name),
         terms = LimitTermsDto(terms.perPaymentMaxUsdMicros, terms.dailyMaxUsdMicros, terms.windowHours),
         effectiveFrom = effectiveFrom.toString(),
         effectiveTo = effectiveTo?.toString(),
@@ -141,3 +150,22 @@ fun LimitRuleBook.toResponse() =
     )
 
 fun LimitRuleChange.toResponse() = LimitRuleChangeResponse(before?.toDto(), after.toDto())
+
+/**
+ * `?network=` on the rule lists (2026-11-18): the rules that apply on [network], which are the ones that name it (or a
+ * chain on it) and the ones that name none; every rule when none is asked for.
+ */
+fun FeeRulesResponse.only(network: Network?): FeeRulesResponse {
+    if (network == null) return this
+    return copy(
+        rules = rules.filter { rule -> rule.versions.firstOrNull()?.scope?.network.let { it == null || it == network.name } },
+        networkCosts = networkCosts.filter { it.network == network.name },
+    )
+}
+
+fun LimitRulesResponse.only(network: Network?): LimitRulesResponse {
+    if (network == null) return this
+    return copy(
+        rules = rules.filter { rule -> rule.versions.firstOrNull()?.scope?.network.let { it == null || it == network.name } },
+    )
+}

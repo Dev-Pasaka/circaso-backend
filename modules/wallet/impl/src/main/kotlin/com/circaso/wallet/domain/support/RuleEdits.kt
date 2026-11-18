@@ -1,5 +1,6 @@
 package com.circaso.wallet.domain.support
 
+import com.circaso.shared.Network
 import com.circaso.shared.FieldError
 import com.circaso.shared.Resource
 import com.circaso.wallet.api.FeeRuleKind
@@ -183,6 +184,9 @@ object RuleChecks {
             buildList {
                 if (chain != null && !CHAIN.matches(chain)) add(FieldError("blockchain", "isn't a chain name"))
                 if (asset != null && !ASSET.matches(asset)) add(FieldError("asset", "isn't a coin symbol"))
+                if (chain != null && scope.network != null && Network.ofChain(chain) != scope.network) {
+                    add(FieldError("blockchain", "isn't a ${scope.network} chain"))
+                }
                 // Spaces were archived on 2026-11-05: no new rule may price a space wallet.
                 if (scope.senderType == WalletOwnerType.SPACE) add(FieldError("senderType", SPACES_CLOSED))
                 if (scope.receiverType == WalletOwnerType.SPACE) add(FieldError("receiverType", SPACES_CLOSED))
@@ -248,10 +252,11 @@ fun FeeRule.scope(): FeeRuleScope =
         blockchain = blockchain,
         asset = asset,
         walletId = walletId,
+        network = network,
     )
 
 fun FeeRuleKind.toFeeKind(): FeeKind = FeeKind.valueOf(name)
 
-fun LimitRule.scope(): LimitRuleScope = LimitRuleScope(ownerType, walletId, asset)
+fun LimitRule.scope(): LimitRuleScope = LimitRuleScope(ownerType, walletId, asset, network)
 
 fun LimitRule.terms(): LimitRuleTerms = LimitRuleTerms(perPaymentMaxMinor, dailyMaxMinor, window.toHours().toInt())

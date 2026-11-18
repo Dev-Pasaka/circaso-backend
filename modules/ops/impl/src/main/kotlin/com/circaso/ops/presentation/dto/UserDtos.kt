@@ -36,6 +36,8 @@ data class UserAccountResponse(
     val createdAt: String,
     val signIns: List<SignInDto>,
     val suspension: SuspensionDto? = null,
+    /** The person's wallet network access rows (added 2026-11-18). */
+    val networkAccess: List<NetworkAccessDto> = emptyList(),
 )
 
 @Serializable

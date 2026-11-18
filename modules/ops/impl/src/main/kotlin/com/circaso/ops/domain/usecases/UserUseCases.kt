@@ -1,5 +1,6 @@
 package com.circaso.ops.domain.usecases
 
+import com.circaso.shared.networkFilter
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.domain.errors.OpsError
@@ -107,7 +108,7 @@ class ListUserGroups(
     suspend operator fun invoke(userId: UserId): Resource<List<GroupSummary>> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
         val found = groups.groupsOf(userId, MAX_GROUPS)
-        val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet())
+        val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet(), networkFilter())
         val owners = views.names(found.mapNotNull { it.ownerId }.toSet())
         return Resource.success(found.map { GroupSummary(it, it.ownerId?.let(owners::get), it.chatId in withWallet) })
     }

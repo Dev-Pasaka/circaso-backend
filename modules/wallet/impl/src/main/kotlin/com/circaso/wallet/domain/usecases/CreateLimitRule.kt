@@ -70,6 +70,7 @@ class CreateLimitRule(
         ownerType = scope.ownerType,
         walletId = scope.walletId,
         asset = scope.asset,
+        network = scope.network,
         perPaymentMaxMinor = terms.perPaymentMaxUsdMicros,
         dailyMaxMinor = terms.dailyMaxUsdMicros,
         window = Duration.ofHours(terms.windowHours.toLong()),

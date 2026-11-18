@@ -1,5 +1,7 @@
 package com.circaso.assistant.presentation.services
 
+import com.circaso.shared.WalletNetwork
+import kotlinx.coroutines.withContext
 import com.circaso.assistant.domain.models.LiveVoiceLine
 import com.circaso.assistant.domain.models.LiveVoiceStart
 import com.circaso.assistant.domain.models.TurnCommand
@@ -44,16 +46,24 @@ class LiveVoiceService(
         return LiveConversation(
             line,
             ask = { text, agentToken, reply ->
-                startTurn(turn(line, text, agentToken, conversationId.get()), reply).also { asked ->
-                    if (asked is Resource.Success) conversationId.compareAndSet(null, asked.data.conversationId)
+                onNetwork(line) {
+                    startTurn(turn(line, text, agentToken, conversationId.get()), reply).also { asked ->
+                        if (asked is Resource.Success) conversationId.compareAndSet(null, asked.data.conversationId)
+                    }
                 }
             },
-            answerDevice = { result, reply -> continueTurn(result, reply, ModelPurpose.VOICE) },
+            answerDevice = { result, reply -> onNetwork(line) { continueTurn(result, reply, ModelPurpose.VOICE) } },
             meter = { seconds -> meterLiveVoice(line.userId, seconds, line.voiceSecondsPerDay) },
             checkSession = { access, agent -> checkLiveSession(line.userId, access, agent) is Resource.Success },
             saveUsage = { saveLiveVoiceUsage(line.userId) },
             timed = { recordLiveTiming(it) },
         )
+    }
+
+    /** A call's turns run for the wallet network its `auth` frame named, which Asha's tools pass on (2026-11-18). */
+    private suspend fun <T> onNetwork(line: LiveVoiceLine, block: suspend () -> T): T {
+        val network = line.start.network ?: return block()
+        return withContext(WalletNetwork(network)) { block() }
     }
 
     private fun turn(

@@ -1,5 +1,6 @@
 package com.circaso.wallet.api
 
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Instant
 import java.util.UUID
@@ -23,6 +24,8 @@ data class FeeRuleScope(
     val blockchain: String?,
     val asset: String?,
     val walletId: WalletId?,
+    /** The one network the rule is for (2026-11-18); null applies on both. */
+    val network: Network? = null,
 )
 
 /**
@@ -93,7 +96,13 @@ data class FeeRuleChange(val before: FeeRuleVersion?, val after: FeeRuleVersion)
 data class FeeBoundsChange(val before: FeeRateBounds, val after: FeeRateBounds)
 
 /** What a limit rule matches; a null field matches anything. */
-data class LimitRuleScope(val ownerType: WalletOwnerType?, val walletId: WalletId?, val asset: String?)
+data class LimitRuleScope(
+    val ownerType: WalletOwnerType?,
+    val walletId: WalletId?,
+    val asset: String?,
+    /** The one network the rule is for (2026-11-18); null applies on both. */
+    val network: Network? = null,
+)
 
 /** A null cap is no cap; [dailyMaxUsdMicros] counts what leaves the wallet, fees included, over [windowHours]. */
 data class LimitRuleTerms(val perPaymentMaxUsdMicros: Long?, val dailyMaxUsdMicros: Long?, val windowHours: Int)

@@ -52,6 +52,12 @@ ALTER TABLE wallet.payment_holds
 ALTER TABLE wallet.limit_rules
     ADD COLUMN network text CHECK (network IN ('MAINNET', 'TESTNET'));
 
+-- A fee rule may name one network too (staff create rules for the network they are looking at); NULL (every rule so
+-- far) applies on both. A rule that names a chain names it on its own network.
+ALTER TABLE wallet.fee_rules
+    ADD COLUMN network text CHECK (network IN ('MAINNET', 'TESTNET')),
+    ADD CHECK (network IS NULL OR blockchain IS NULL OR wallet.network_of(blockchain) = network);
+
 -- Reports and the jobs filter by network.
 CREATE INDEX transfers_network_newest_idx ON wallet.transfers (network, created_at DESC, transfer_id DESC);
 CREATE INDEX transactions_network_occurred_idx ON wallet.transactions (network, occurred_at);

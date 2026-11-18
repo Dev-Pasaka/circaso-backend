@@ -1,5 +1,6 @@
 package com.circaso.assistant.data.tools
 
+import com.circaso.shared.networkFilter
 import com.circaso.assistant.domain.ports.AgentTools
 import com.circaso.assistant.domain.ports.ToolContext
 import com.circaso.assistant.domain.support.AshaPrompt
@@ -545,11 +546,15 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
         path: String,
         token: String,
         query: HttpRequestBuilder.() -> Unit,
-    ): HttpResponse =
-        http.get("$baseUrl$path") {
+    ): HttpResponse {
+        // The wallet and group money routes answer for the network the user's own request named (2026-11-18).
+        val network = networkFilter()
+        return http.get("$baseUrl$path") {
             header(HttpHeaders.Authorization, "Bearer $token")
+            network?.let { header(WALLET_NETWORK_HEADER, it.name) }
             query()
         }
+    }
 
     /**
      * The route's data, read from its envelope. A refusal (a payment that isn't the user's, a malformed argument)
@@ -636,6 +641,7 @@ class HttpAgentTools(private val http: HttpClient, private val baseUrl: String) 
     }
 
     private companion object {
+        const val WALLET_NETWORK_HEADER = "X-Wallet-Network"
         const val GET_PROFILE = "getProfile"
         const val SEARCH_CONTACTS = "searchContacts"
         const val LIST_CONTACTS = "listContacts"

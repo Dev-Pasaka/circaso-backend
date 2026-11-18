@@ -1,5 +1,7 @@
 package com.circaso.ops.presentation.controllers
 
+import com.circaso.shared.networkFilter
+import com.circaso.ops.presentation.mappers.only
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.presentation.dto.ChangeFeeRuleRequest
 import com.circaso.ops.presentation.dto.ChangeLimitRuleRequest
@@ -71,7 +73,8 @@ fun Route.feeController(fees: FeeService) {
 
 private fun Route.feeReads(fees: FeeService) {
     get("rules") {
-        call.respondDefault(fees.feeRules().toDefaultResponse { it.toResponse() })
+        val network = networkFilter()
+        call.respondDefault(fees.feeRules().toDefaultResponse { it.toResponse().only(network) })
     }.docs<NoBody, FeeRulesResponse>(
         "OPS · Fee rules, every version",
         TAG_FEES,
@@ -91,7 +94,7 @@ private fun Route.feeWrites(fees: FeeService) {
     post("rules") {
         val request = call.receive<CreateFeeRuleRequest>()
         val result =
-            request.scope.toScope().flatMap { scope ->
+            request.scope.toScope(networkFilter()).flatMap { scope ->
                 parseWhen(request.effectiveFrom, "effectiveFrom").flatMap { from ->
                     fees.createFeeRule(call.actor(), scope, request.terms.toTerms(), from, request.reason)
                 }
@@ -161,7 +164,8 @@ private fun Route.feeWrites(fees: FeeService) {
 
 private fun Route.limitReads(fees: FeeService) {
     get {
-        call.respondDefault(fees.limitRules().toDefaultResponse { it.toResponse() })
+        val network = networkFilter()
+        call.respondDefault(fees.limitRules().toDefaultResponse { it.toResponse().only(network) })
     }.docs<NoBody, LimitRulesResponse>(
         "OPS · Limit rules, every version",
         TAG_FEES,
@@ -175,7 +179,7 @@ private fun Route.limitWrites(fees: FeeService) {
     post {
         val request = call.receive<CreateLimitRuleRequest>()
         val result =
-            request.scope.toScope().flatMap { scope ->
+            request.scope.toScope(networkFilter()).flatMap { scope ->
                 parseWhen(request.effectiveFrom, "effectiveFrom").flatMap { from ->
                     fees.createLimitRule(call.actor(), scope, request.terms.toTerms(), from, request.reason)
                 }

@@ -1,5 +1,6 @@
 package com.circaso.ops.domain.usecases
 
+import com.circaso.shared.networkFilter
 import com.circaso.identity.api.AccountAdmin
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Finance
@@ -32,7 +33,7 @@ private suspend fun TransferPage.named(parties: TransferParties): TransferViewPa
 class GetUserWallets(private val accounts: AccountAdmin, private val wallets: WalletReports) {
     suspend operator fun invoke(userId: UserId): Resource<OpsHoldings> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
-        return wallets.holdings(userId.value)
+        return wallets.holdings(userId.value, networkFilter())
     }
 }
 
@@ -48,8 +49,9 @@ class ListUserTransfers(
         limit: Int,
     ): Resource<UserTransfers> {
         accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
-        return wallets.transfersOf(userId, cursor, limit).flatMap { page ->
-            Resource.success(UserTransfers(page.named(parties), wallets.feesPaidBy(userId)))
+        val network = networkFilter()
+        return wallets.transfersOf(userId, cursor, limit, network).flatMap { page ->
+            Resource.success(UserTransfers(page.named(parties), wallets.feesPaidBy(userId, network)))
         }
     }
 }
@@ -59,7 +61,10 @@ class ListTransactions(private val wallets: WalletReports, private val parties: 
         filter: TransferFilter,
         cursor: String?,
         limit: Int,
-    ): Resource<TransferViewPage> = wallets.transfers(filter, cursor, limit).map { it.named(parties) }
+    ): Resource<TransferViewPage> =
+        wallets
+            .transfers(filter.copy(network = filter.network ?: networkFilter()), cursor, limit)
+            .map { it.named(parties) }
 }
 
 class GetTransaction(private val wallets: WalletReports, private val parties: TransferParties) {
@@ -81,6 +86,9 @@ class GetFinanceReport(private val wallets: WalletReports, private val settings:
                 SharedError.Malformed("to", "must be after from, at most ${settings.maxRangeDays} days"),
             )
         }
-        return Resource.success(Finance(wallets.report(from, to, bucket), wallets.groupWalletCount()))
+        val network = networkFilter()
+        return Resource.success(
+            Finance(wallets.report(from, to, bucket, network), wallets.groupWalletCount(network)),
+        )
     }
 }

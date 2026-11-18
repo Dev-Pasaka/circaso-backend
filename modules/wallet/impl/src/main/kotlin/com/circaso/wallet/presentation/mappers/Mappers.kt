@@ -2,6 +2,7 @@ package com.circaso.wallet.presentation.mappers
 
 import com.circaso.integrations.api.SdkSession
 import com.circaso.messaging.api.ChatId
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.UserId
@@ -120,8 +121,10 @@ internal fun circleKey(
 
 // ---- model → response ----
 
-fun WalletView.toResponse() =
+/** [network] is the one the request was for: a wallet with no chain yet has nothing else to say it. */
+fun WalletView.toResponse(network: Network = Network.TESTNET) =
     WalletResponse(
+        network = network.name,
         status = status.name,
         chains = chains.map { it.toDto() },
         totals = totals.map { it.toDto() },
@@ -150,13 +153,19 @@ fun GroupWalletSetup.toResponse() =
         sdk = setup.sdk.toDto(),
     )
 
-fun WalletListing.toDto() =
-    WalletListingDto(owner.walletId.toString(), owner.toDto(), status.name, canSign, blockchains)
+fun WalletListing.toDto(network: Network = Network.TESTNET) =
+    WalletListingDto(owner.walletId.toString(), owner.toDto(), status.name, canSign, blockchains, network.name)
 
-fun GroupWalletView.toResponse() =
-    GroupWalletResponse(chatId.toString(), listing?.status?.name ?: WalletStatus.NONE.name, listing?.toDto())
+fun GroupWalletView.toResponse(network: Network = Network.TESTNET) =
+    GroupWalletResponse(
+        chatId.toString(),
+        listing?.status?.name ?: WalletStatus.NONE.name,
+        listing?.toDto(network),
+        network.name,
+    )
 
-fun List<WalletListing>.toResponse() = WalletsResponse(map { it.toDto() })
+fun List<WalletListing>.toResponse(network: Network = Network.TESTNET) =
+    WalletsResponse(map { it.toDto(network) }, network.name)
 
 fun List<ChainOption>.toResponse() =
     ChainsResponse(

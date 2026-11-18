@@ -198,6 +198,7 @@ import com.circaso.wallet.presentation.services.WalletReportService
 import com.circaso.wallet.presentation.services.WalletService
 import com.circaso.wallet.presentation.warmup.WalletWarmUp
 import com.circaso.integrations.api.CustodySetups
+import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.shared.WalletNetworkGate
 import com.circaso.wallet.api.NetworkAdmin
 import com.circaso.wallet.data.repositories.NetworkAccessRepositoryImpl

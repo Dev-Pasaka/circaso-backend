@@ -3,6 +3,7 @@ package com.circaso.wallet.presentation.dto
 import com.circaso.shared.InstantSerializer
 import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
+import com.circaso.shared.Network
 import kotlinx.serialization.Serializable
 import java.time.Instant
 
@@ -98,6 +99,8 @@ data class PrepareTransferResponse(
     val walletId: String? = null,
     /** What leaves the wallet: the amount and the fee (added 2026-11-04). The payee gets exactly `amount`. */
     val total: AmountDto? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /**
@@ -149,6 +152,8 @@ data class QuoteTransferResponse(
     val usdPrice: String? = null,
     /** The amount and the fee in `USD` at [usdPrice]: what the payment counts against the limits (added 2026-11-07). */
     val totalUsd: AmountDto? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /** Who a transfer pays: [userId] for a Circaso user (null for an outside address), and the address on chain. */
@@ -191,6 +196,8 @@ data class TransferResponse(
     val toSpaceId: String? = null,
     /** The membership payment (SP13) it paid. */
     val spacePaymentId: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /** W9 `GET /wallet/recipients/{userId}`. */
@@ -221,6 +228,8 @@ data class ValidateAddressResponse(
     /** As it will be paid: EVM addresses in lowercase, Solana's exactly as given. */
     val address: String,
     val valid: Boolean,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /**
@@ -261,6 +270,8 @@ data class TransactionDto(
     val origin: String? = null,
     val txHash: String? = null,
     @Serializable(with = InstantSerializer::class) val occurredAt: Instant,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 /** W6 `GET /wallet/transactions`. */

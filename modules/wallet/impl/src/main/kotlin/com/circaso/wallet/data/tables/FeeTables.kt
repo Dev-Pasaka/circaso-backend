@@ -22,6 +22,9 @@ object FeeRulesTable : Table("wallet.fee_rules") {
     val senderType = text("sender_type").nullable()
     val receiverType = text("receiver_type").nullable()
     val blockchain = text("blockchain").nullable()
+
+    /** V12 (2026-11-18): the one network the rule is for; null applies on both. */
+    val network = text("network").nullable()
     val asset = text("asset").nullable()
     val walletId = javaUUID("wallet_id").nullable()
     val rateBps = integer("rate_bps")

@@ -1,5 +1,6 @@
 package com.circaso.ops.domain.usecases
 
+import com.circaso.shared.networkFilter
 import com.circaso.messaging.api.ChatId
 import com.circaso.messaging.api.GroupReports
 import com.circaso.messaging.api.OpsGroup
@@ -23,7 +24,7 @@ private suspend fun rowsOf(
     wallets: WalletReports,
     views: UserViews,
 ): List<GroupSummary> {
-    val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet())
+    val withWallet = wallets.groupWalletsOf(found.map { it.chatId }.toSet(), networkFilter())
     val owners = views.names(found.mapNotNull { it.ownerId }.toSet())
     return found.map { GroupSummary(it, it.ownerId?.let(owners::get), it.chatId in withWallet) }
 }
@@ -40,7 +41,7 @@ class ListGroups(private val groups: GroupReports, private val wallets: WalletRe
     ): Resource<GroupSummaryPage> =
         when (filter) {
             WalletFilter.WITH -> {
-                wallets.groupWallets(cursor, limit).flatMap { page ->
+                wallets.groupWallets(cursor, limit, networkFilter()).flatMap { page ->
                     val found = groups.groupsByIds(page.items.map { it.chatId }.toSet())
                     val ordered = page.items.mapNotNull { found[it.chatId] }
                     Resource.success(GroupSummaryPage(rowsOf(ordered, wallets, views), page.nextCursor))
@@ -63,8 +64,10 @@ class GetGroup(private val groups: GroupReports, private val wallets: WalletRepo
         val group = groups.groupsByIds(setOf(chatId))[chatId] ?: return Resource.error(OpsError.GroupNotFound)
         val members = groups.members(chatId, MAX_MEMBERS)
         val names = views.names(members.map { it.userId }.toSet() + listOfNotNull(group.ownerId))
-        val wallet = wallets.groupWalletsOf(setOf(chatId))[chatId]
-        val holdings = if (withMoney && wallet != null) wallets.holdings(wallet.walletId).getOrNull() else null
+        // A group has one wallet per network (2026-11-18): `?network=` picks; without it, mainnet's when it has one.
+        val wallet = wallets.groupWalletsOf(setOf(chatId), networkFilter())[chatId]
+        val holdings =
+            if (withMoney && wallet != null) wallets.holdings(wallet.walletId, wallet.network).getOrNull() else null
         val row = GroupSummary(group, group.ownerId?.let(names::get), wallet != null)
         return Resource.success(
             GroupDetail(

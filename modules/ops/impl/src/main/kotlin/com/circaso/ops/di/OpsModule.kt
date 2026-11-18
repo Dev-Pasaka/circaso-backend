@@ -1,5 +1,11 @@
 package com.circaso.ops.di
 
+import com.circaso.ops.domain.usecases.SetUserNetworkAccess
+import com.circaso.ops.domain.usecases.GetWalletNetworks
+import com.circaso.ops.domain.usecases.UpdateWalletNetwork
+import com.circaso.ops.presentation.services.NetworkService
+import com.circaso.ops.presentation.controllers.networkController
+import com.circaso.web.networkFiltered
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
@@ -163,7 +169,7 @@ fun opsModule(config: Config): Module =
         // domain
         single { StaffRoster(get(), settings) }
         single { AuditTrail(get(), clock) }
-        single { UserViews(get(), get(), get()) }
+        single { UserViews(get(), get(), get(), get()) }
         single { TicketViews(get(), get()) }
         single { TransferParties(get(), get()) }
         single { SignInStaff(get()) }
@@ -228,6 +234,10 @@ fun opsModule(config: Config): Module =
         single { AuditService(get()) }
         single { SupportAccountService(get(), get()) }
         single { FeeService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SetUserNetworkAccess(get(), get(), get(), get()) }
+        single { GetWalletNetworks(get()) }
+        single { UpdateWalletNetwork(get(), get()) }
+        single { NetworkService(get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -243,18 +253,24 @@ fun opsModule(config: Config): Module =
             val audit = get<AuditService>()
             val supportAccounts = get<SupportAccountService>()
             val fees = get<FeeService>()
-            OpsRouteContributor { route ->
-                route.meController(me, environment)
-                route.dashboardController(dashboard)
-                route.userController(users, money, settings)
-                route.moneyController(money, settings)
-                route.aiUsageController(aiUsage)
-                route.groupController(groups, settings)
-                route.ticketController(tickets, settings)
-                route.callController(calls, settings)
-                route.diagnosticController(diagnostics, settings)
-                route.staffController(staff, audit, supportAccounts, settings)
-                route.feeController(fees)
+            val networks = get<NetworkService>()
+            OpsRouteContributor { root ->
+                // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
+                root.networkFiltered {
+                    val route = this
+                    route.meController(me, environment)
+                    route.dashboardController(dashboard)
+                    route.userController(users, money, settings, networks)
+                    route.moneyController(money, settings)
+                    route.aiUsageController(aiUsage)
+                    route.groupController(groups, settings)
+                    route.ticketController(tickets, settings)
+                    route.callController(calls, settings)
+                    route.diagnosticController(diagnostics, settings)
+                    route.staffController(staff, audit, supportAccounts, settings)
+                    route.feeController(fees)
+                    route.networkController(networks)
+                }
             }
         }
     }

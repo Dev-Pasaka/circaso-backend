@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.dto
 
+import com.circaso.shared.Network
 import kotlinx.serialization.Serializable
 
 // Fees and limits (decision 2026-11-08). Dollar figures are integer micro-dollars (`…UsdMicros`, 1 USD = 1_000_000),
@@ -17,6 +18,11 @@ data class FeeScopeDto(
     val blockchain: String? = null,
     val asset: String? = null,
     val walletId: String? = null,
+    /**
+     * `MAINNET` or `TESTNET` (added 2026-11-18): the one network the rule is for; null applies on both. On a create,
+     * left out, it is the request's `?network=`.
+     */
+    val network: String? = null,
 )
 
 /**
@@ -47,6 +53,8 @@ data class NetworkCostDto(
     val source: String,
     val samples: Int,
     val at: String,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): the network `blockchain` belongs to. */
+    val network: String = Network.ofChain(blockchain).name,
 )
 
 @Serializable
@@ -114,7 +122,13 @@ data class UpdateFeeBoundsRequest(val minRateBps: Int, val maxRateBps: Int, val 
 
 /** `ownerType`: PERSON | GROUP | SPACE. */
 @Serializable
-data class LimitScopeDto(val ownerType: String? = null, val walletId: String? = null, val asset: String? = null)
+data class LimitScopeDto(
+    val ownerType: String? = null,
+    val walletId: String? = null,
+    val asset: String? = null,
+    /** `MAINNET` or `TESTNET` (added 2026-11-18): as on a fee rule's scope. */
+    val network: String? = null,
+)
 
 /** A null cap is no cap; the window cap counts what leaves the wallet, fees included, over `windowHours`. */
 @Serializable

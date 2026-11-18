@@ -27,6 +27,7 @@ import com.circaso.web.docs
 import com.circaso.web.principal
 import com.circaso.web.respondDefault
 import com.circaso.web.toDefaultResponse
+import com.circaso.web.walletNetwork
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
@@ -45,7 +46,7 @@ fun Route.walletController(wallets: WalletService) {
             get {
                 val parameters = call.request.queryParameters
                 val result = walletQuery(call.principal().userId, parameters["currency"], parameters["walletId"])
-                call.respondDefault(result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse() })
+                call.respondDefault(result.flatMap { wallets.wallet(it) }.toDefaultResponse { it.toResponse(call.walletNetwork()) })
             }.docs<NoBody, WalletResponse>(
                 "W1 · Your wallet: status, each chain with its address and assets, totals, and the fiat value",
                 TAG,
@@ -192,7 +193,7 @@ fun Route.walletController(wallets: WalletService) {
                 get {
                     val userId = call.principal().userId
                     val result = groupIdOf(call.parameters["chatId"]).flatMap { wallets.groupWallet(userId, it) }
-                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                    call.respondDefault(result.toDefaultResponse { it.toResponse(call.walletNetwork()) })
                 }.docs<NoBody, GroupWalletResponse>(
                     "W15 · The group's wallet: none, being set up, or active",
                     TAG,
@@ -212,7 +213,7 @@ fun Route.walletController(wallets: WalletService) {
         authenticateOnNetwork(Scope.APP) {
             get {
                 val result = wallets.wallets(call.principal().userId)
-                call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                call.respondDefault(result.toDefaultResponse { it.toResponse(call.walletNetwork()) })
             }.docs<NoBody, WalletsResponse>(
                 "W16 · Every wallet you can see: yours, then your groups'",
                 TAG,

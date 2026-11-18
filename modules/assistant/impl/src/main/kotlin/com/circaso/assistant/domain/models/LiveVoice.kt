@@ -1,5 +1,6 @@
 package com.circaso.assistant.domain.models
 
+import com.circaso.shared.Network
 import com.circaso.integrations.api.LiveSpeechSession
 import com.circaso.integrations.api.LiveTranscriptionSession
 import com.circaso.shared.DomainError
@@ -22,6 +23,8 @@ data class LiveVoiceStart(
     val voice: String? = null,
     /** The conversation the call's turns are saved in; null for the most recent one (or a new one), as on A2. */
     val conversationId: UUID? = null,
+    /** The wallet network the call's wallet tools answer for (2026-11-18); null leaves it to the wallet's fallback. */
+    val network: Network? = null,
 )
 
 /** An accepted live session: who is talking, the vendor sessions, and the allowance it runs against. */
