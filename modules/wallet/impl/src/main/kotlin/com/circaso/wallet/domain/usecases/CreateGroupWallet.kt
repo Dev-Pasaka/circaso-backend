@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.usecases
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountStatus
 import com.circaso.messaging.api.ChatDirectory
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.currentNetwork
 import com.circaso.wallet.api.WalletId
@@ -26,6 +27,11 @@ import java.time.Clock
  * once share one wallet. Asking again while it is `SETTING_UP` gives a fresh challenge (the set-up screen's "Finish
  * Wallet Setup", GW6b); once it is `ACTIVE`, `wallet.already_exists`. Only the signer can finish a set-up someone
  * started: if ownership of the group moved since, the new owner gets `wallet.not_signer`.
+ *
+ * Networks (Pasaka, 2026-11-19): **a new group has one wallet, on mainnet**. A group that already has a testnet wallet
+ * keeps it and may add a mainnet one (it then has both, like a person who had a testnet wallet). So a testnet wallet
+ * is only started for a group whose owner can't use mainnet yet (before launch, when the testnet is all there is);
+ * an owner who can gets `wallet.group_mainnet_only`. Finishing a testnet set-up already started is never refused.
  */
 class CreateGroupWallet(
     private val chats: ChatDirectory,
@@ -62,6 +68,9 @@ class CreateGroupWallet(
     /** Only the group's owner starts its wallet; of two starts at once, one row lands and both read it. */
     private suspend fun claim(command: CreateGroupWalletCommand): Resource<WalletOwner.Group> {
         if (chats.owner(command.chatId) != command.userId) return Resource.error(WalletError.NotGroupOwner)
+        if (currentNetwork() == Network.TESTNET && access?.mayUse(command.userId, Network.MAINNET) == true) {
+            return Resource.error(WalletError.GroupMainnetOnly)
+        }
         val fresh =
             WalletOwner.Group(
                 walletId = WalletId.new(),

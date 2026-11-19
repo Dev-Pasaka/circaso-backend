@@ -170,6 +170,11 @@ class Harness(
     private val creation = WalletCreation(wallets, transactor, custody, sync, clock, pendingSetups)
     val createWallet = CreateWallet(creation, support)
     val createGroupWallet = CreateGroupWallet(chats, owners, accounts, support, creation, clock)
+
+    /** W14 with the network rules in force (a new group's wallet is made on mainnet). */
+    fun createGroupWalletWith(access: com.circaso.wallet.domain.support.NetworkAccess) =
+        CreateGroupWallet(chats, owners, accounts, support, creation, clock, access)
+
     val getGroupWallet = GetGroupWallet(chats, owners, listings, progress)
     val listMyWallets = ListMyWallets(chats, owners, listings, spaces)
     val createSpaceWallet =

@@ -42,7 +42,7 @@ import com.circaso.integrations.api.ToolSpec
  * history (every member's contributions and what it paid out), and a payment with a group names the group.
  */
 object AshaPrompt {
-    const val VERSION = "asha-2026-11-18-v1"
+    const val VERSION = "asha-2026-11-19-v1"
 
     /**
      * The fixed prompt for one mode: what Asha is and does, then how she answers in that mode only. A spoken turn is

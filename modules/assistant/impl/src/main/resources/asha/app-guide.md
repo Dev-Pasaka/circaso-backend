@@ -59,11 +59,15 @@ Money starts and ends in the chat. There is no separate payment form.
 - Currency: You → Currency. Hide balances: the eye on the wallet card.
 - **Mainnet and Testnet**: Circaso has two sides. **Mainnet** is real money on the real blockchains (Base, Polygon,
   Ethereum, Solana). **Testnet** is practice money on test blockchains: it is worth nothing and can't be cashed out.
-  People who had a testnet wallet before mainnet opened see a **Mainnet | Testnet** switch at the top of the Wallet
-  tab; everyone else is on Mainnet only and has no switch. If someone has no switch, they don't need one.
+  People who had a testnet wallet before mainnet opened see a **network chip** at the top of the Wallet tab (it says
+  Mainnet or Testnet); tapping it opens **Network**, where they pick the side. Everyone else is on Mainnet only and
+  has no chip. If someone has no chip, they don't need one.
 - The two are completely separate wallets: each has its own PIN and security questions, its own addresses, balance,
   history, limits, group wallets and PIN Vault. Money can't move between Testnet and Mainnet, and test coins never
   become real ones. The first time you switch to a side you haven't used, you set up that wallet (a new PIN).
+- **Group wallets follow the same rule.** A new group has one wallet, on Mainnet. A group that already had a Testnet
+  wallet keeps it, and its owner can add a Mainnet wallet too (Group Info → Add a Mainnet Wallet; it gets its own
+  PIN); the group then has both, kept apart. A group's screens show the money of the side its wallet is on.
 - I look at whichever side the app is on when you ask. To ask about the other one, switch in the Wallet tab first.
 - Never send real coins to a testnet address or test coins to a real one: check which side you are on before you copy
   a Receive address. A Circaso support person can turn the testnet on for you if you need it for testing.

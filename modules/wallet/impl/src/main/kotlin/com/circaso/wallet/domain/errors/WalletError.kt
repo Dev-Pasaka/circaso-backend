@@ -404,6 +404,16 @@ sealed class WalletError(
         ErrorKind.FORBIDDEN,
     )
 
+    /**
+     * A new group's wallet is made on mainnet (Pasaka, 2026-11-19): its owner may use mainnet, so no testnet wallet is
+     * started for it. Groups that already have a testnet wallet keep it.
+     */
+    data object GroupMainnetOnly : WalletError(
+        "wallet.group_mainnet_only",
+        "New group wallets are made on Mainnet.",
+        ErrorKind.FORBIDDEN,
+    )
+
     /** Network settings staff sent that can't be applied; [details] names the field and what is wrong with it. */
     class NetworkSettingsInvalid(field: String, problem: String) :
         WalletError(
