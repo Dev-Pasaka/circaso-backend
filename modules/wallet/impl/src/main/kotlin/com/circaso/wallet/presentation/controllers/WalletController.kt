@@ -174,6 +174,7 @@ fun Route.walletController(wallets: WalletService) {
                     listOf(
                         "wallet.group_not_found",
                         "wallet.not_group_owner",
+                        "wallet.group_mainnet_only",
                         "wallet.not_signer",
                         "wallet.already_exists",
                         "wallet.account_restricted",

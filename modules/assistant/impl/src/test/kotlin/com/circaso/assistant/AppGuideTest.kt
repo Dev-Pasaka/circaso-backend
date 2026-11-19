@@ -61,7 +61,9 @@ class AppGuideTest {
             "Decline",
             "/asha", // summoning her
             "Show Asha my screen",
-            "Mainnet | Testnet", // the two wallets (2026-11-18)
+            "Mainnet and Testnet", // the two wallets (2026-11-18)
+            "network chip", // where the side is picked (2026-11-19)
+            "Add a Mainnet Wallet", // an old group's second wallet (2026-11-19)
             "not available yet", // honest about what isn't built
         ).forEach { assertTrue(it in guide, "the guide explains \"$it\"") }
     }
