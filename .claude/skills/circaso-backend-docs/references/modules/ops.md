@@ -62,8 +62,8 @@ Public: `GET auth/config`, `GET auth/handoff?return=`, `POST auth/dev-login`. Si
 `GET tickets/{id}`, `POST tickets/{id}/replies|notes|assign|status`, `GET|POST staff`, `PATCH staff/{id}`, `GET audit`,
 `GET|POST support-accounts` (OPS1, OPS2, moved here from the app gateway), `GET fees/rules`, `POST fees/rules`,
 `POST fees/rules/{ruleId}/versions`, `POST fees/rules/{ruleId}/end`, `GET|PATCH fees/bounds`, `GET limits/rules`,
-`POST limits/rules`, `POST limits/rules/{ruleId}/versions`, `POST limits/rules/{ruleId}/end`, and `GET openapi.json`
-outside production.
+`POST limits/rules`, `POST limits/rules/{ruleId}/versions`, `POST limits/rules/{ruleId}/end`, the ramp's routes
+(`ramp/…`, see "Ramp" below), and `GET openapi.json` outside production.
 
 **Transfers** on every staff route (`transactions`, `transactions/{id}`, `users/{id}/transfers`) carry `sender` and
 `recipient` as typed parties `{kind: USER | GROUP | EXTERNAL | FEE, id, name, memberCount}` and `fee` (the fee leg to
@@ -140,3 +140,19 @@ The environment holds keys and secrets only, so the id each email is sent with a
 - **`PUT /email-templates/{template}`** (`email_templates.manage`: ADMIN) `{ providerTemplateId, version, reason }` → the row. `version` is the one read (0 when none was set; left out, save over whatever is there). Audited as `email_template.set` on target `email_template` with the id before and after. Errors: `ops.reason_required`, `ops.email_template_not_found` (404), `ops.email_template_invalid` (400: blank, spaces or over 200 characters), `ops.email_template_changed` (409).
 
 The admin portal has no page for these routes yet.
+
+## Ramp (decision 2026-11-22)
+
+The ramp's staff routes, under `/v1/ops/ramp` inside `networkFiltered { }`, through `ramp:api`'s `RampAdmin` (ramp.md → "Staff routes as built"). Reads need `ramp.read` (FINANCE, ADMIN); writes need `ramp.manage` (ADMIN), a reason and an `Idempotency-Key`, and are audited (`ramp_merchant.approve|suspend`, `ramp_settings.update`, `user.ramp_preview_access`).
+
+- `GET merchants`, `POST merchants/{id}/approve|suspend`, `GET|PUT settings?network=`, `GET|POST preview-access`, `GET orders?state=REVIEW`.
+- **Settings** gained `providerFeeFloorMinor` (2026-11-22): the least a merchant's prepaid service wallet at the collections provider must hold for them to go online, KES cents as a string, `"0"` for no check. Always in the answer; a `PUT` that leaves it out keeps the current value, so the admin form works before it has the field. **The admin form needs the field.** The audit line names it when it changes.
+
+**Each merchant's activity (2026-11-22)**: three reads, `ramp.read`, `?network=MAINNET|TESTNET` required on each (`request.malformed` without it). `from` and `to` are **Nairobi calendar days** (East Africa Time), inclusive, at most a year apart; one without the other, a `to` before `from` or anything that isn't a date is `request.malformed`. Amounts are `{ unit, amountMinor, amount }` (`unit` KES or USDC). Every figure is added up by the ramp from the order and commission rows the merchant's own earnings overview and statement use, so the admin and the merchant portal always agree; the ops module only shapes the answer.
+
+- **`GET /ramp/overview?network=&from=&to=`** (default: this Nairobi month) → `{ network, from, to, totals: { orders, completed, failed, inReview, collected, sold, fees, merchantShare, circasoShare, circasoShareUsdc, swept, held }, merchants: [ { merchantId, displayName, state, online, orders, completed, successRatePercent, collected, sold, fees, merchantShare, circasoShare, circasoShareUsdc, held, lastOrderAt } ] }`. `totals` is the sum of the merchant rows. The rows are the approved merchants and any other with an order in the period.
+- **`GET /ramp/merchants/{merchantId}/summary?network=&from=&to=`** (default: this month) → `{ merchant: { merchantId, displayName, email, contactPhone, state, createdAt, approvedAt, online, onlineUntil, paymentsConnected, collectionsProvider, paymentsIssue: { code, since } | null }, network, from, to, wallet: { blockchain, address } | null, float: { balance, reserved, owedToCircaso, free } | null, orders: { total, completed, failed, expired, cancelled, inReview, open }, successRatePercent, collected, sold, fees, merchantShare, circasoShare, circasoShareUsdc, swept, held, daily: [ { day, orders, completed, collected, sold, fees, merchantShare, circasoShare } ], sweeps: [ { settlementId, day, amount, state, orders, txHash } ] }`. `float` is null when the custodian can't be read (never a zero nobody measured). `daily` is oldest first. `ramp.merchant_not_found` (404).
+- **`GET /ramp/merchants/{merchantId}/orders?network=&from=&to=&state=&cursor=&limit=`** → `{ orders: [ { orderId, createdAt, completedAt, state, direction, blockchain, maskedPhone, paid, released, rate, fee, merchantShare, circasoShare, circasoShareUsdc, failureReason, settlementId, txHash, collectionsProvider } ], nextCursor }`, newest first, keyset paged (default 50, at most 200; `nextCursor` is `<createdAt>~<orderId>`, null on the last page; a cursor that isn't one is `request.malformed`). Without `from`/`to`: every day. `state` is one of RESERVED, PAYMENT_REQUESTED, PAID, RELEASING, COMPLETED, EXPIRED, CANCELLED, FAILED, REVIEW (any case). The payer's phone is always masked: the whole number never reaches the ops module. `completedAt`, `merchantShare`, `circasoShare`, `circasoShareUsdc` and `settlementId` are null until the order completes. `ramp.merchant_not_found` (404).
+
+Counting: `completed` orders are counted on the day they completed, the others on the day they were made; `orders` is their sum and `successRatePercent` is completed out of it (`"0"` with none). `online` is the merchant's trading window.
+
