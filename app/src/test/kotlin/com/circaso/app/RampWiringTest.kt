@@ -7,10 +7,13 @@ import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
+import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.impl.dev.FakeEmail
+import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import com.circaso.shared.UserId
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -21,12 +24,15 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import org.koin.core.Koin
 import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.utility.DockerImageName
+import java.security.KeyPairGenerator
+import java.util.Base64
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -78,6 +84,189 @@ class RampWiringTest {
 
     private fun field(body: String, name: String): String = Regex("\"$name\":\"([^\"]+)\"").find(body)!!.groupValues[1]
 
+    private class Buyer(val token: String, val userId: String, val phone: String)
+
+    /** A person signs up the way the app does: social sign-in, their phone verified by SMS, a device registered. */
+    private suspend fun ApplicationTestBuilder.signUp(sms: FakeSms): Buyer {
+        val deviceId = UUID.randomUUID().toString()
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val address = "198.51.100.${(1..254).random()}"
+        val number = "+254712${(100000..999999).random()}"
+
+        suspend fun call(
+            path: String,
+            body: String,
+            token: String? = null,
+        ) = client.post(path) {
+            contentType(ContentType.Application.Json)
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            header("X-Client-Version", "android/1.0.0")
+            header("CF-Connecting-IP", address)
+            token?.let { header("Authorization", "Bearer $it") }
+            setBody(body)
+        }
+        val nonce = field(call("/v1/auth/nonce", "{}").bodyAsText(), "nonce")
+        val social =
+            """{"provider":"google","idToken":"dev:${UUID.randomUUID()}:buyer@example.com:Buyer","nonce":"$nonce",""" +
+                """"device":{"deviceId":"$deviceId","platform":"android","model":"Pixel","appVersion":"1.0.0"}}"""
+        val onboarding = field(call("/v1/auth/social", social).bodyAsText(), "accessToken")
+        val started = call("/v1/auth/phone/start", """{"phone":"$number"}""", onboarding).bodyAsText()
+        val code = Regex("[0-9]{6}").find(sms.sent.last().text)!!.value
+        val verify = """{"verificationId":"${field(started, "verificationId")}","code":"$code"}"""
+        call("/v1/auth/phone/verify", verify, onboarding)
+        val publicKey = Base64.getEncoder().encodeToString(pair.public.encoded)
+        val device =
+            """{"deviceId":"$deviceId","publicKey":"$publicKey","keyAlgorithm":"ES256",""" +
+                """"pushToken":"fcm:${UUID.randomUUID()}","model":"Pixel"}"""
+        val registered = call("/v1/devices", device, onboarding).bodyAsText()
+        return Buyer(field(registered, "accessToken"), field(registered, "userId"), number)
+    }
+
+    private fun HttpRequestBuilder.asBuyer(buyer: Buyer, body: String? = null) {
+        header("Authorization", "Bearer ${buyer.token}")
+        header("X-Client-Version", "android/1.0.0")
+        header("X-Wallet-Network", "TESTNET")
+        body?.let {
+            header("Idempotency-Key", UUID.randomUUID().toString())
+            contentType(ContentType.Application.Json)
+            setBody(it)
+        }
+    }
+
+    /**
+     * The whole path, booted for real in both processes, with identity verification required on the testnet and the
+     * `log` KYC provider a local server seeds (it approves at once; no test ever calls Didit): a merchant signs up
+     * and verifies, staff can't approve them before that and can after, the ops process makes their wallet, they go
+     * online; then a user goes from unverified (no quote, no order) to verified, and buys.
+     */
+    @Test
+    fun `with KYC required, a merchant and a user each verify with the log provider, and the user then buys`() {
+        var session = ""
+        var merchantId = ""
+
+        // the app's process: the merchant signs in, applies and verifies; staff can't approve before that
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+                koin = getKoin()
+            }
+            client.get("/health/live")
+            val admin = koin!!.get<RampAdmin>()
+            val seeded = admin.settings(Network.TESTNET)
+            assertEquals("log" to "SANDBOX", seeded.kycProvider to seeded.kycEnvironment, "the local seed")
+            assertEquals(listOf("didit", "log"), seeded.kycProviders, "what a local server offers")
+            assertEquals("a3cb5782-d5c1-4c35-832d-ed373d80a0ea", seeded.kycWorkflowUser)
+            assertEquals("dabdb52a-b4bc-435a-b2bf-a636bb17bad6", seeded.kycWorkflowMerchant)
+            val opened = admin.updateSettings(seeded.copy(state = "ON", kycRequired = true), UUID.randomUUID())
+            assertIs<Resource.Success<*>>(opened)
+
+            val asked = client.post("$BASE/auth/code") { json("""{"email":"$email"}""") }
+            assertEquals(HttpStatusCode.OK, asked.status, asked.bodyAsText())
+            val code = ((koin!!.get<EmailGateway>() as FakeEmail).sent.last().email as Email.MerchantSignInCode).code
+            val verified = client.post("$BASE/auth/verify") { json("""{"email":"$email","code":"$code"}""") }
+            session = field(verified.bodyAsText(), "sessionToken")
+            merchantId = field(verified.bodyAsText(), "merchantId")
+            client.put("$BASE/profile") { json("""{"displayName":"Crynce","contactPhone":"+254712000111"}""", session) }
+
+            // The change was made in this process, so it is in force here at once.
+            val before = client.get(BASE) { header("X-Merchant-Session", session) }.bodyAsText()
+            assertTrue("\"missing\":[\"kyc\"" in before, before)
+            assertTrue("\"kyc\":{\"status\":\"NONE\",\"required\":true,\"canStart\":true" in before, before)
+            val listed = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
+            val refused = admin.approve(listed.merchantId, UUID.randomUUID())
+            assertEquals("ramp.merchant_kyc_required", (refused as Resource.Error).error.code)
+
+            val kyc = client.post("$BASE/kyc") { json("{}", session) }
+            assertEquals(HttpStatusCode.OK, kyc.status, kyc.bodyAsText())
+            assertTrue("\"status\":\"VERIFIED\"" in kyc.bodyAsText(), "log approves at once: ${kyc.bodyAsText()}")
+            assertTrue("\"session\":null" in kyc.bodyAsText(), kyc.bodyAsText())
+        }
+
+        // the ops process: staff approve the verified merchant, and its job makes the float wallet
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoOpsServe(EnvConfig(env()), EnvSecrets(env()))
+                koin = getKoin()
+            }
+            client.get("/health/live")
+            val admin = koin!!.get<RampAdmin>()
+            val listed = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
+            assertEquals("VERIFIED", listed.verifications.single { it.environment == "SANDBOX" }.status)
+            assertIs<Resource.Success<*>>(admin.approve(listed.merchantId, UUID.randomUUID()))
+            koin!!.getAll<OpsJob>().first { it.name == "ramp.release" }.job()
+            val approved = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
+            assertTrue((Network.TESTNET to "BASE-SEPOLIA") in approved.wallets.map { it.network to it.blockchain })
+        }
+
+        // the app's process again: the merchant goes online; a user verifies and buys
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
+                koin = getKoin()
+            }
+            val account = """{"username":"api-user","password":"api-pass","channelId":"911","pin":"482913"}"""
+            assertEquals(HttpStatusCode.OK, client.put("$BASE/payments") { json(account, session) }.status)
+            val online = client.post("$BASE/session") { json("""{"pin":"482913","minutes":60}""", session) }
+            assertEquals(HttpStatusCode.OK, online.status, online.bodyAsText())
+
+            val buyer = signUp(koin!!.get<SmsGateway>() as FakeSms)
+            val wallet = client.post("/v1/wallet") { asBuyer(buyer, "{}") }
+            assertEquals(HttpStatusCode.OK, wallet.status, wallet.bodyAsText())
+            // The log custody's wallets appear as soon as they are asked for: reading the wallet picks them up.
+            val ready = client.get("/v1/wallet") { asBuyer(buyer) }.bodyAsText()
+            assertTrue("\"status\":\"ACTIVE\"" in ready, ready)
+
+            // Unverified: R1 says so in full, and neither a quote nor an order is given.
+            val unverified = client.get("/v1/ramp") { asBuyer(buyer) }.bodyAsText()
+            assertTrue(
+                "\"verification\":{\"status\":\"NONE\",\"required\":true,\"canStart\":true," +
+                    "\"reason\":null,\"retryAt\":null}" in unverified,
+                unverified,
+            )
+            assertTrue("\"kyc\":\"NONE\"" in unverified && "\"canTrade\":false" in unverified, unverified)
+            val quoteBody = """{"direction":"ON_RAMP","blockchain":"BASE-SEPOLIA","fiat":{"amount":"1300"}}"""
+            val early = client.post("/v1/ramp/quotes") { asBuyer(buyer, quoteBody) }
+            assertEquals(HttpStatusCode.Forbidden, early.status, early.bodyAsText())
+            assertTrue("ramp.kyc_required" in early.bodyAsText(), early.bodyAsText())
+            val noKey = client.post("/v1/ramp/kyc") { asBuyer(buyer) }
+            assertEquals(HttpStatusCode.BadRequest, noKey.status, "a state change needs an Idempotency-Key")
+
+            // R0: the log provider needs nothing from the person and approves at once.
+            val started = client.post("/v1/ramp/kyc") { asBuyer(buyer, "{}") }
+            assertEquals(HttpStatusCode.OK, started.status, started.bodyAsText())
+            assertTrue("\"status\":\"VERIFIED\"" in started.bodyAsText(), started.bodyAsText())
+            val read = client.get("/v1/ramp/kyc") { asBuyer(buyer) }.bodyAsText()
+            assertTrue("\"status\":\"VERIFIED\",\"required\":true,\"canStart\":false" in read, read)
+
+            // Verified: R1 says so, the merchant is online, and the purchase starts.
+            val verified = client.get("/v1/ramp") { asBuyer(buyer) }.bodyAsText()
+            assertTrue("\"verification\":{\"status\":\"VERIFIED\"" in verified, verified)
+            assertTrue("\"kyc\":\"VERIFIED\"" in verified && "\"blocked\":false" in verified, verified)
+            assertTrue("\"merchantOnline\":true" in verified && "\"canTrade\":true" in verified, verified)
+            val quote = client.post("/v1/ramp/quotes") { asBuyer(buyer, quoteBody) }
+            assertEquals(HttpStatusCode.OK, quote.status, quote.bodyAsText())
+            val order = """{"quoteId":"${field(quote.bodyAsText(), "quoteId")}","phone":"${buyer.phone}"}"""
+            val bought = client.post("/v1/ramp/onramp/orders") { asBuyer(buyer, order) }
+            assertEquals(HttpStatusCode.OK, bought.status, bought.bodyAsText())
+            assertTrue("\"state\":\"PAYMENT_REQUESTED\"" in bought.bodyAsText(), bought.bodyAsText())
+            assertTrue("\"merchantName\":\"Crynce\"" in bought.bodyAsText(), bought.bodyAsText())
+
+            // Staff see the user's verification, in the sandbox, with no identity kept there.
+            val seen = koin!!.get<RampAdmin>().userVerification(UserId(UUID.fromString(buyer.userId)))
+            val row = seen.verifications.single()
+            assertEquals(Triple("SANDBOX", "VERIFIED", false), Triple(row.environment, row.status, row.hasIdentity))
+            assertEquals("log", row.provider)
+
+            // The database outlives this test: leave the testnet as the other test expects to find it.
+            val admin = koin!!.get<RampAdmin>()
+            val left = admin.settings(Network.TESTNET).copy(state = "OFF", kycRequired = false)
+            assertIs<Resource.Success<*>>(admin.updateSettings(left, UUID.randomUUID()))
+        }
+    }
+
     @Test
     fun `a merchant signs up on the portal, the ops process makes their wallet, and they go online`() {
         var session = ""
@@ -90,6 +279,11 @@ class RampWiringTest {
                 circasoServe(AppConfig(), EnvConfig(env()), EnvSecrets(env()))
                 koin = getKoin()
             }
+            // This test is the ramp before identity checks are switched on, whatever ran before it.
+            client.get("/health/live")
+            val staff = koin!!.get<RampAdmin>()
+            staff.updateSettings(staff.settings(Network.TESTNET).copy(kycRequired = false), UUID.randomUUID())
+
             val asked = client.post("$BASE/auth/code") { json("""{"email":"$email"}""") }
             assertEquals(HttpStatusCode.OK, asked.status, asked.bodyAsText())
             val sent = (koin!!.get<EmailGateway>() as FakeEmail).sent.last()
