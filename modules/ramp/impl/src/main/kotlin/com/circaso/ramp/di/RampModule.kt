@@ -23,6 +23,7 @@ import com.circaso.ramp.data.cache.RedisSignInCodes
 import com.circaso.ramp.data.repositories.CommissionRepositoryImpl
 import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
+import com.circaso.ramp.data.repositories.InsightRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantWalletRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
@@ -70,6 +71,7 @@ import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.ports.UsdcContracts
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
+import com.circaso.ramp.domain.repositories.InsightRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
@@ -85,6 +87,7 @@ import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Gates
+import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PinGuard
@@ -99,7 +102,9 @@ import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetMerchant
+import com.circaso.ramp.domain.usecases.GetMerchantSummary
 import com.circaso.ramp.domain.usecases.GetOrder
+import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
@@ -113,6 +118,7 @@ import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
 import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
+import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.ReplayFrames
 import com.circaso.ramp.domain.usecases.RequestSignInCode
@@ -225,6 +231,7 @@ fun rampModule(config: Config): Module =
         single<CommissionRepository> { CommissionRepositoryImpl(get(named("ramp.database"))) }
         single<SettlementRepository> { SettlementRepositoryImpl(get(named("ramp.database"))) }
         single<StatementRepository> { StatementRepositoryImpl(get(named("ramp.database"))) }
+        single<InsightRepository> { InsightRepositoryImpl(get(named("ramp.database"))) }
         single<RampCounters> { RedisCounters(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<PinAttempts> { RedisPinAttempts(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<SignInCodes> { RedisSignInCodes(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -270,6 +277,7 @@ fun rampModule(config: Config): Module =
                 providers = get(),
                 sessions = get(),
                 settings = get(),
+                presence = get(),
                 clock = clock,
             )
         }
@@ -297,7 +305,7 @@ fun rampModule(config: Config): Module =
         single { ApplyAsMerchant(get(), get()) }
         single { StorePaymentAccount(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { RotateCallback(get(), get(), get(), get()) }
-        single { GoOnline(get(), get(), get(), get(), get(), get(), clock) }
+        single { GoOnline(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GoOffline(get()) }
         single { ChangePin(get(), get(), clock) }
         single { ListMerchantOrders(get()) }
@@ -312,6 +320,10 @@ fun rampModule(config: Config): Module =
         single { ListPreviewAccess(get()) }
         single { SetPreviewAccess(get(), clock) }
         single { ListReviewOrders(get(), get()) }
+        single { MerchantInsights(get(), get()) }
+        single { GetRampOverview(get(), get(), get(), clock) }
+        single { GetMerchantSummary(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { ListStaffMerchantOrders(get(), get()) }
         // The treasury only the ops process has: Circle's where custody is Circle, the named stand-in otherwise.
         single { ReleaseOrders(treasury(), get(), get(), get(), clock) }
         single { SettleFees(treasury(), get()) }
@@ -322,7 +334,21 @@ fun rampModule(config: Config): Module =
         single { MerchantService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { RampEventsService(get(), get(), get(), get(), get()) }
         single { RampOpsJobsService(get(), get()) }
-        single { RampAdminService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            RampAdminService(
+                listMerchants = get(),
+                decideMerchant = get(),
+                getSettings = get(),
+                updateSettingsUseCase = get(),
+                listPreviewAccess = get(),
+                setPreviewAccessUseCase = get(),
+                listReviewOrders = get(),
+                listCollectionProviders = get(),
+                getRampOverview = get(),
+                getMerchantSummary = get(),
+                listStaffMerchantOrders = get(),
+            )
+        }
         single<RouteContributor>(named("ramp.routes")) {
             val ramp = get<RampService>()
             val auth = get<MerchantAuthService>()

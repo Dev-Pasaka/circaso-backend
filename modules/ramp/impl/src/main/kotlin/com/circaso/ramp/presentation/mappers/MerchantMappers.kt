@@ -26,6 +26,7 @@ import com.circaso.ramp.presentation.dto.MerchantFloatDto
 import com.circaso.ramp.presentation.dto.MerchantOrderDto
 import com.circaso.ramp.presentation.dto.MerchantOrdersResponse
 import com.circaso.ramp.presentation.dto.MerchantPaymentsDto
+import com.circaso.ramp.presentation.dto.MerchantPaymentsIssueDto
 import com.circaso.ramp.presentation.dto.MerchantResponse
 import com.circaso.ramp.presentation.dto.MerchantStepsDto
 import com.circaso.ramp.presentation.dto.MerchantWalletDto
@@ -163,6 +164,8 @@ fun MerchantOverview.toResponse() =
         online = OnlineResponse(online, merchant.onlineUntil?.takeIf { online }?.toString()),
         canGoOnline = canGoOnline,
         missing = missing,
+        paymentsIssue =
+            merchant.paymentsIssue?.let { MerchantPaymentsIssueDto(it.name, merchant.paymentsIssueAt?.toString()) },
     )
 
 fun OnlineView.toResponse() = OnlineResponse(online, until?.toString())

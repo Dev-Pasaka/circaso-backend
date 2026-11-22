@@ -24,6 +24,7 @@ import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Gates
+import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PinGuard
@@ -38,7 +39,9 @@ import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetMerchant
+import com.circaso.ramp.domain.usecases.GetMerchantSummary
 import com.circaso.ramp.domain.usecases.GetOrder
+import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
@@ -49,6 +52,7 @@ import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
 import com.circaso.ramp.domain.usecases.ListReviewOrders
+import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResolveSession
@@ -121,6 +125,7 @@ class Harness {
         )
 
     private val transactor = DirectTransactor()
+    val presence = Presence(merchants, orders, sessions)
     val book = SettingsBook(settingsRows, alerts, providers, clock)
     val gates = Gates(book, preview, kyc)
     val flow =
@@ -137,6 +142,7 @@ class Harness {
             providers,
             sessions,
             book,
+            presence,
             clock,
         )
     val engine =
@@ -148,7 +154,6 @@ class Harness {
     val views =
         MerchantViews(merchantWallets, credentials, reservations, ledger, treasury, sessions, book, pricing, clock)
     val pins = PinGuard(vault, pinAttempts)
-    val presence = Presence(merchants, orders, sessions)
 
     val status = GetRampStatus(gates, accounts, orders, engine)
     val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock)
@@ -170,7 +175,8 @@ class Harness {
     val storePayments =
         StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock)
     val rotateCallback = RotateCallback(merchants, credentials, tokens, book)
-    val goOnline = GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, clock)
+    val goOnline =
+        GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, providers, book, clock)
     val goOffline = GoOffline(presence)
     val changePin = ChangePin(credentials, pins, clock)
     val merchantOrders = ListMerchantOrders(orders)
@@ -184,6 +190,22 @@ class Harness {
     val updateSettings = UpdateSettings(settingsRows, book, providers, clock)
     val setPreview = SetPreviewAccess(preview, clock)
     val reviewOrders = ListReviewOrders(orders, merchants)
+    val insights = MerchantInsights(ledger, ledger)
+    val overview = GetRampOverview(merchants, orders, insights, clock)
+    val merchantSummary =
+        GetMerchantSummary(
+            merchants,
+            merchantWallets,
+            credentials,
+            reservations,
+            ledger,
+            ledger,
+            ledger,
+            insights,
+            treasury,
+            clock,
+        )
+    val staffOrders = ListStaffMerchantOrders(merchants, ledger)
 
     val phone = PhoneNumber.parse("+254712345678")!!
     val amina: UserId

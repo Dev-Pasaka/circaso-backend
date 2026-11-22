@@ -4,11 +4,16 @@ import com.circaso.identity.api.AccountAdmin
 import com.circaso.ops.domain.errors.OpsError
 import com.circaso.ops.domain.models.Actor
 import com.circaso.ops.domain.models.AuditAction
+import com.circaso.ops.domain.models.RampMerchantOrdersQuery
 import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.Reasons
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsRampMerchantOrder
+import com.circaso.ramp.api.OpsRampMerchantSummary
 import com.circaso.ramp.api.OpsRampOrder
+import com.circaso.ramp.api.OpsRampOverview
+import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
@@ -99,6 +104,7 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         changed("kycRequired", before.kycRequired, after.kycRequired)
         changed("callbackBaseUrl", before.callbackBaseUrl, after.callbackBaseUrl)
         changed("collectionsProvider", before.collectionsProvider, after.collectionsProvider)
+        changed("providerFeeFloorMinor", before.providerFeeFloorMinor, after.providerFeeFloorMinor)
         return parts.joinToString("; ")
     }
 }
@@ -148,4 +154,28 @@ class GetRampReviewOrders(private val ramp: RampAdmin) {
         after: RampOrderId?,
         limit: Int,
     ): Resource<List<OpsRampOrder>> = Resource.success(ramp.ordersInReview(network, after, limit))
+}
+
+/**
+ * What every merchant did on a network in a period (Nairobi days; this month when none is given). The figures are the
+ * ramp's own, the same ones each merchant sees on their portal; the totals are the sum of the merchant rows.
+ */
+class GetRampOverview(private val ramp: RampAdmin) {
+    suspend operator fun invoke(network: Network, period: OpsRampPeriod?): Resource<OpsRampOverview> =
+        Resource.success(ramp.overview(network, period))
+}
+
+/** One merchant on a network in a period: the account, the float, the orders, the money, the days and the sweeps. */
+class GetRampMerchantSummary(private val ramp: RampAdmin) {
+    suspend operator fun invoke(
+        merchantId: MerchantId,
+        network: Network,
+        period: OpsRampPeriod?,
+    ): Resource<OpsRampMerchantSummary> = ramp.merchantSummary(merchantId, network, period)
+}
+
+/** A merchant's orders on a network, newest first, a page at a time. The payer's number arrives masked. */
+class GetRampMerchantOrders(private val ramp: RampAdmin) {
+    suspend operator fun invoke(query: RampMerchantOrdersQuery, limit: Int): Resource<List<OpsRampMerchantOrder>> =
+        ramp.merchantOrders(query.merchantId, query.network, query.period, query.state, query.after, limit)
 }

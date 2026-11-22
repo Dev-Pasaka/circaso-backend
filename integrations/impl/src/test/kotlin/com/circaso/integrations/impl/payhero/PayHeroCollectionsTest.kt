@@ -132,8 +132,57 @@ class PayHeroCollectionsTest {
 
             assertIs<IntegrationError.NotImplemented>((payHero.payout(merchant, payout) as Resource.Error).error)
             assertIs<IntegrationError.NotImplemented>((payHero.payoutStatus(merchant, "x") as Resource.Error).error)
-            assertIs<IntegrationError.NotImplemented>((payHero.balance(merchant) as Resource.Error).error)
             assertTrue(clients.requests.isEmpty())
+        }
+
+    @Test
+    fun `a prompt refused for the merchant's empty service wallet is told apart from any other refusal`() =
+        runBlocking<Unit> {
+            status = 400
+            reply =
+                """{"error_message":"merchant has insufficient balance to allow you complete this transaction",""" +
+                """"status_code":400}"""
+            assertIs<IntegrationError.ServiceBalanceLow>(
+                (payHero.requestPayment(merchant, prompt) as Resource.Error).error,
+            )
+
+            reply = """{"error_message":"The passed channel is not active"}"""
+            assertIs<IntegrationError.Rejected>((payHero.requestPayment(merchant, prompt) as Resource.Error).error)
+
+            status = 502
+            assertIs<IntegrationError.Unavailable>((payHero.requestPayment(merchant, prompt) as Resource.Error).error)
+        }
+
+    @Test
+    fun `the service wallet's balance is read as the fees balance, as a number or as text`() =
+        runBlocking<Unit> {
+            status = 200
+            reply =
+                """{"id":7,"account_id":12,"wallet_type":"service_wallet","available_balance":49.5,"currency":"KES"}"""
+
+            val balances = (payHero.balance(merchant) as Resource.Success).data
+
+            assertEquals("/api/v2/wallets", clients.last.url.encodedPath)
+            assertEquals("service_wallet", clients.last.url.parameters["wallet_type"])
+            assertEquals(FiatAmount(4_950, "KES"), balances.fees)
+            assertEquals(FiatAmount(0, "KES"), balances.payout)
+
+            reply = """{"wallet_type":"service_wallet","available_balance":"120"}"""
+            assertEquals(FiatAmount(12_000, "KES"), (payHero.balance(merchant) as Resource.Success).data.fees)
+        }
+
+    @Test
+    fun `a balance PayHero doesn't give, or can't be asked for, is an error and never a zero`() =
+        runBlocking<Unit> {
+            status = 200
+            reply = """{"wallet_type":"service_wallet"}"""
+            assertIs<IntegrationError.Unavailable>((payHero.balance(merchant) as Resource.Error).error)
+
+            status = 401
+            assertIs<IntegrationError.Rejected>((payHero.balance(merchant) as Resource.Error).error)
+
+            down = true
+            assertIs<IntegrationError.Unavailable>((payHero.balance(merchant) as Resource.Error).error)
         }
 
     @Test

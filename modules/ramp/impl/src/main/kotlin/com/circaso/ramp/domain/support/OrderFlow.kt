@@ -5,12 +5,14 @@ import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.CollectionRequest
 import com.circaso.integrations.api.CollectionState
 import com.circaso.integrations.api.CollectionStatus
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PaidOutcome
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RampCounters
@@ -48,12 +50,21 @@ class OrderFlow(
     private val providers: CollectionProviders,
     private val sessions: TradingSessions,
     private val settings: SettingsBook,
+    private val presence: Presence,
     private val clock: Clock,
 ) {
-    /** Sends the M-Pesa prompt for a reserved order. A prompt that can't be sent closes the order and frees the float. */
+    /**
+     * Sends the M-Pesa prompt for a reserved order. A prompt that can't be sent closes the order and frees the float.
+     *
+     * The two ways it can't be sent are told apart. The provider **out of reach** (`ramp.collections_unavailable`):
+     * whether a prompt went out is unknown, so nothing more is tried. The provider **refusing this merchant's
+     * request** (`ramp.merchant_unavailable`): nothing was sent, so the caller may ask the next merchant; the user is
+     * told nothing about the order that was closed, because they never saw it.
+     */
     suspend fun requestPayment(order: Order): Resource<Order> {
         val keys = keysFor(order)
-        val callbackKey = merchants.find(order.merchantId)?.callbackKey
+        val merchant = merchants.find(order.merchantId)
+        val callbackKey = merchant?.callbackKey
         if (keys == null || callbackKey == null) {
             close(order, OrderState.FAILED, "merchant_offline")
             return Resource.error(RampError.NoMerchantAvailable)
@@ -68,12 +79,12 @@ class OrderFlow(
         val request = CollectionRequest(order.payerPhone, order.fiat, order.orderId.toString(), callbackUrl)
         return when (val prompted = collections.requestPayment(keys, request)) {
             is Resource.Error -> {
-                // The prompt carries no idempotency key, so it is never repeated here; the user starts again.
-                close(order, OrderState.FAILED, "prompt_failed")
-                Resource.error(RampError.CollectionsUnavailable, prompted.cause)
+                notPrompted(order, prompted)
             }
 
             is Resource.Success -> {
+                // A prompt that went through shows whatever the provider refused before has been put right.
+                if (merchant?.paymentsIssue != null) merchants.setPaymentsIssue(order.merchantId, null, clock.instant())
                 val patch =
                     OrderPatch(
                         providerReference = prompted.data.providerReference,
@@ -88,6 +99,30 @@ class OrderFlow(
             }
         }
     }
+
+    private suspend fun notPrompted(order: Order, prompted: Resource.Error): Resource<Order> =
+        when (prompted.error) {
+            // The merchant's prepaid balance at the provider is empty: every prompt of theirs will be refused until
+            // they top it up, so the engine stops routing to them and they are told on the portal.
+            is IntegrationError.ServiceBalanceLow -> {
+                close(order, OrderState.FAILED, PROVIDER_BALANCE, tellUser = false)
+                merchants.setPaymentsIssue(order.merchantId, PaymentsIssue.SERVICE_BALANCE, clock.instant())
+                presence.goOffline(order.merchantId)
+                alerts.stuck("merchant ${order.merchantId} prompts", PROVIDER_BALANCE)
+                Resource.error(RampError.MerchantUnavailable, prompted.cause)
+            }
+
+            is IntegrationError.Rejected -> {
+                close(order, OrderState.FAILED, PROMPT_REFUSED, tellUser = false)
+                Resource.error(RampError.MerchantUnavailable, prompted.cause)
+            }
+
+            // The prompt carries no idempotency key, so it is never repeated here; the user starts again.
+            else -> {
+                close(order, OrderState.FAILED, "prompt_failed")
+                Resource.error(RampError.CollectionsUnavailable, prompted.cause)
+            }
+        }
 
     /**
      * Asks the provider what happened to the order's payment and applies the answer: nothing while it is still
@@ -155,12 +190,14 @@ class OrderFlow(
 
     /**
      * Ends an order that was never paid ([to] is `FAILED`, `EXPIRED` or `CANCELLED`) and gives its float back, in one
-     * transaction. Null when the order is already past waiting for its payment.
+     * transaction. Null when the order is already past waiting for its payment. [tellUser] is false for an order the
+     * user never saw (its merchant's provider refused the prompt and the next merchant is asked).
      */
     suspend fun close(
         order: Order,
         to: OrderState,
         reason: String,
+        tellUser: Boolean = true,
     ): Order? {
         val now = clock.instant()
         val failed = OrderFailed(order.orderId, order.userId, order.direction.name, reason, order.network.name)
@@ -177,7 +214,7 @@ class OrderFlow(
             } ?: return null
         bus.publish(event)
         counters.giveBackDaily(order.userId, order.network, Periods.day(order.createdAt), order.fiat.amountMinor)
-        frames.orderUpdated(closed)
+        if (tellUser) frames.orderUpdated(closed)
         return closed
     }
 
@@ -195,6 +232,12 @@ class OrderFlow(
     private suspend fun current(order: Order): Order = orders.find(order.orderId) ?: order
 
     companion object {
+        /** Why an order ended when its merchant's provider refused the prompt for their service balance. */
+        const val PROVIDER_BALANCE = "provider_balance"
+
+        /** Why an order ended when its merchant's provider refused the prompt for any other reason. */
+        const val PROMPT_REFUSED = "prompt_refused"
+
         val REVIEWABLE =
             setOf(OrderState.PAYMENT_REQUESTED, OrderState.EXPIRED, OrderState.PAID, OrderState.RELEASING)
     }

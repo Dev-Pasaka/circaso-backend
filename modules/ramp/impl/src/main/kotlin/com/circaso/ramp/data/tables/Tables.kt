@@ -22,6 +22,7 @@ object SettingsTable : Table("ramp.settings") {
     val kycRequired = bool("kyc_required")
     val callbackBaseUrl = text("callback_base_url")
     val collectionsProvider = text("collections_provider")
+    val providerFeeFloorMinor = long("provider_fee_floor_minor")
     val walletSetId = text("wallet_set_id").nullable()
     val updatedBy = text("updated_by").nullable()
     val updatedAt = timestamp("updated_at")
@@ -53,6 +54,8 @@ object MerchantsTable : Table("ramp.merchants") {
     val approvedAt = timestamp("approved_at").nullable()
     val createdAt = timestamp("created_at")
     val version = long("version").default(0)
+    val paymentsIssue = text("payments_issue").nullable()
+    val paymentsIssueAt = timestamp("payments_issue_at").nullable()
     override val primaryKey = PrimaryKey(merchantId)
 }
 
@@ -148,6 +151,7 @@ object OrdersTable : Table("ramp.orders") {
     val paymentDeadline = timestamp("payment_deadline")
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
+    val attempt = integer("attempt").default(1)
     override val primaryKey = PrimaryKey(orderId)
 }
 

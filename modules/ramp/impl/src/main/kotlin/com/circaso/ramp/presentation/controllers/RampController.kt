@@ -103,6 +103,7 @@ fun Route.rampController(ramp: RampService) {
                     "ramp.too_many_prompts",
                     "ramp.limit_exceeded",
                     "ramp.no_merchant_available",
+                    "ramp.merchant_unavailable",
                     "ramp.collections_unavailable",
                     "ramp.custody_unavailable",
                     MALFORMED,
@@ -111,7 +112,10 @@ fun Route.rampController(ramp: RampService) {
                     "$SCOPE Sends an M-Pesa prompt to `phone`, which must be your account's own verified number. " +
                         "Once M-Pesa confirms the payment, the USDC is sent to your wallet on the quote's chain " +
                         "(within a few seconds) and `ramp/order.updated` frames follow the order. Repeating the " +
-                        "request with the same quote returns the same order and sends no second prompt.",
+                        "request with the same quote returns the same order and sends no second prompt. " +
+                        "`ramp.merchant_unavailable` (409): the payment couldn't be started with any seller right " +
+                        "now and nothing was taken; ask for a new quote and try again in a moment. " +
+                        "`ramp.collections_unavailable` (502) is M-Pesa itself out of reach.",
             )
 
             route("/orders") {

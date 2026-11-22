@@ -1,23 +1,50 @@
 package com.circaso.ops.presentation.mappers
 
+import com.circaso.ops.presentation.dto.RampAmountDto
+import com.circaso.ops.presentation.dto.RampDayDto
+import com.circaso.ops.presentation.dto.RampFloatDto
 import com.circaso.ops.presentation.dto.RampMerchantDto
+import com.circaso.ops.presentation.dto.RampMerchantOrderDto
+import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
+import com.circaso.ops.presentation.dto.RampMerchantSummaryResponse
 import com.circaso.ops.presentation.dto.RampMerchantWalletDto
 import com.circaso.ops.presentation.dto.RampMerchantsResponse
+import com.circaso.ops.presentation.dto.RampOrderCountsDto
 import com.circaso.ops.presentation.dto.RampOrderDto
 import com.circaso.ops.presentation.dto.RampOrdersResponse
+import com.circaso.ops.presentation.dto.RampOverviewMerchantDto
+import com.circaso.ops.presentation.dto.RampOverviewResponse
+import com.circaso.ops.presentation.dto.RampOverviewTotalsDto
+import com.circaso.ops.presentation.dto.RampPaymentsIssueDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
+import com.circaso.ops.presentation.dto.RampSummaryMerchantDto
+import com.circaso.ops.presentation.dto.RampSummaryWalletDto
+import com.circaso.ops.presentation.dto.RampSweepDto
 import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsRampDay
+import com.circaso.ramp.api.OpsRampMerchantActivity
+import com.circaso.ramp.api.OpsRampMerchantOrder
+import com.circaso.ramp.api.OpsRampMerchantProfile
+import com.circaso.ramp.api.OpsRampMerchantSummary
 import com.circaso.ramp.api.OpsRampOrder
+import com.circaso.ramp.api.OpsRampOrderCursor
+import com.circaso.ramp.api.OpsRampOverview
+import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
+import com.circaso.ramp.api.RampAmount
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.api.RampOrderStates
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
 
 fun parseMerchantId(raw: String?, field: String = "merchantId"): Resource<MerchantId> =
     raw?.let(MerchantId::parse)?.let { Resource.success(it) } ?: malformed(field, "must be a merchant id")
@@ -73,6 +100,7 @@ fun OpsRampSettings.toDto() =
         kycRequired = kycRequired,
         callbackBaseUrl = callbackBaseUrl,
         collectionsProvider = collectionsProvider,
+        providerFeeFloorMinor = (providerFeeFloorMinor ?: 0).toString(),
         version = version,
         walletSetId = walletSetId,
         updatedBy = updatedBy,
@@ -89,6 +117,8 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             "dailyLimitMinor" to dailyLimitMinor,
         )
     val parsed = amounts.map { (field, raw) -> raw.trim().toLongOrNull() ?: return malformed(field, NOT_CENTS) }
+    val floor =
+        providerFeeFloorMinor?.let { it.trim().toLongOrNull() ?: return malformed("providerFeeFloorMinor", NOT_CENTS) }
     return Resource.success(
         OpsRampSettings(
             network = network,
@@ -106,6 +136,7 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             kycRequired = kycRequired,
             callbackBaseUrl = callbackBaseUrl.trim(),
             collectionsProvider = collectionsProvider.trim().lowercase(),
+            providerFeeFloorMinor = floor,
             version = version,
         ),
     )
@@ -142,4 +173,203 @@ fun List<OpsRampOrder>.toResponse(limit: Int) =
                 )
             },
         nextCursor = lastOrNull()?.takeIf { size >= limit }?.orderId?.toString(),
+    )
+
+// ---- each merchant's activity ----------------------------------------------------------------------------
+
+private const val CURSOR_SEPARATOR = "~"
+private const val MAX_PERIOD_DAYS = 366L
+
+/**
+ * `?from=&to=`: Nairobi calendar days, inclusive. Neither given is null (the ramp then takes this month, or for a list
+ * of orders every day); one alone, a `to` before `from`, or more than a year is refused.
+ */
+fun rampPeriod(from: String?, to: String?): Resource<OpsRampPeriod?> {
+    if (from == null && to == null) return Resource.success(null)
+    val first = from?.let(::dayOrNull) ?: return malformed("from", "must be a date (2026-11-01)")
+    val last = to?.let(::dayOrNull) ?: return malformed("to", "must be a date (2026-11-30)")
+    if (last.isBefore(first)) return malformed("to", "is before from")
+    if (ChronoUnit.DAYS.between(first, last) >= MAX_PERIOD_DAYS) return malformed("to", "more than a year after from")
+    return Resource.success(OpsRampPeriod(first, last))
+}
+
+private fun dayOrNull(raw: String): LocalDate? =
+    try {
+        LocalDate.parse(raw)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+
+/** `?state=`: one of the ramp's order states, in any case; absent is every state. */
+fun rampOrderState(raw: String?): Resource<String?> {
+    if (raw == null) return Resource.success(null)
+    val state = raw.uppercase()
+    return if (state in RampOrderStates.ALL) {
+        Resource.success(state)
+    } else {
+        malformed("state", "must be one of ${RampOrderStates.ALL.joinToString(", ")}")
+    }
+}
+
+/** A page's cursor: `<createdAt>~<orderId>` of its last order, as `nextCursor` gave it. */
+fun merchantOrderCursor(raw: String?): Resource<OpsRampOrderCursor?> {
+    if (raw == null) return Resource.success(null)
+    val parts = raw.split(CURSOR_SEPARATOR)
+    val at =
+        try {
+            parts.takeIf { it.size == 2 }?.let { Instant.parse(it[0]) }
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    val orderId = parts.getOrNull(1)?.let(RampOrderId::parse)
+    return if (at == null || orderId == null) {
+        malformed("cursor", "must be a nextCursor of this list")
+    } else {
+        Resource.success(OpsRampOrderCursor(at, orderId))
+    }
+}
+
+private fun RampAmount.toDto() = RampAmountDto(unit, amountMinor, amount)
+
+fun OpsRampOverview.toResponse() =
+    RampOverviewResponse(
+        network = network.name,
+        from = period.from.toString(),
+        to = period.to.toString(),
+        totals =
+            RampOverviewTotalsDto(
+                orders = orders.total,
+                completed = orders.completed,
+                failed = orders.failed,
+                inReview = orders.inReview,
+                collected = money.collected.toDto(),
+                sold = money.sold.toDto(),
+                fees = money.fees.toDto(),
+                merchantShare = money.merchantShare.toDto(),
+                circasoShare = money.circasoShare.toDto(),
+                circasoShareUsdc = money.circasoShareUsdc.toDto(),
+                swept = money.swept.toDto(),
+                held = money.held.toDto(),
+            ),
+        merchants = merchants.map { it.toDto() },
+    )
+
+private fun OpsRampMerchantActivity.toDto() =
+    RampOverviewMerchantDto(
+        merchantId = merchantId.toString(),
+        displayName = displayName,
+        state = state,
+        online = online,
+        orders = orders.total,
+        completed = orders.completed,
+        successRatePercent = successRatePercent,
+        collected = money.collected.toDto(),
+        sold = money.sold.toDto(),
+        fees = money.fees.toDto(),
+        merchantShare = money.merchantShare.toDto(),
+        circasoShare = money.circasoShare.toDto(),
+        circasoShareUsdc = money.circasoShareUsdc.toDto(),
+        held = money.held.toDto(),
+        lastOrderAt = lastOrderAt?.toString(),
+    )
+
+private fun OpsRampMerchantProfile.toDto() =
+    RampSummaryMerchantDto(
+        merchantId = merchantId.toString(),
+        displayName = displayName,
+        email = email,
+        contactPhone = contactPhone,
+        state = state,
+        createdAt = createdAt.toString(),
+        approvedAt = approvedAt?.toString(),
+        online = online,
+        onlineUntil = onlineUntil?.toString(),
+        paymentsConnected = paymentsConnected,
+        collectionsProvider = collectionsProvider,
+        paymentsIssue = paymentsIssue?.let { RampPaymentsIssueDto(it.code, it.since?.toString()) },
+    )
+
+private fun OpsRampDay.toDto() =
+    RampDayDto(
+        day = day.toString(),
+        orders = orders,
+        completed = completed,
+        collected = collected.toDto(),
+        sold = sold.toDto(),
+        fees = fees.toDto(),
+        merchantShare = merchantShare.toDto(),
+        circasoShare = circasoShare.toDto(),
+    )
+
+fun OpsRampMerchantSummary.toResponse() =
+    RampMerchantSummaryResponse(
+        merchant = merchant.toDto(),
+        network = network.name,
+        from = period.from.toString(),
+        to = period.to.toString(),
+        wallet = wallet?.let { RampSummaryWalletDto(it.blockchain, it.address) },
+        float =
+            float?.let {
+                RampFloatDto(it.balance.toDto(), it.reserved.toDto(), it.owedToCircaso.toDto(), it.free.toDto())
+            },
+        orders =
+            RampOrderCountsDto(
+                total = orders.total,
+                completed = orders.completed,
+                failed = orders.failed,
+                expired = orders.expired,
+                cancelled = orders.cancelled,
+                inReview = orders.inReview,
+                open = orders.open,
+            ),
+        successRatePercent = successRatePercent,
+        collected = money.collected.toDto(),
+        sold = money.sold.toDto(),
+        fees = money.fees.toDto(),
+        merchantShare = money.merchantShare.toDto(),
+        circasoShare = money.circasoShare.toDto(),
+        circasoShareUsdc = money.circasoShareUsdc.toDto(),
+        swept = money.swept.toDto(),
+        held = money.held.toDto(),
+        daily = daily.map { it.toDto() },
+        sweeps =
+            sweeps.map {
+                RampSweepDto(
+                    settlementId = it.settlementId.toString(),
+                    day = it.day.toString(),
+                    amount = it.amount.toDto(),
+                    state = it.state,
+                    orders = it.orders,
+                    txHash = it.txHash,
+                )
+            },
+    )
+
+private fun OpsRampMerchantOrder.toDto() =
+    RampMerchantOrderDto(
+        orderId = orderId.toString(),
+        createdAt = createdAt.toString(),
+        completedAt = completedAt?.toString(),
+        state = state,
+        direction = direction,
+        blockchain = blockchain,
+        maskedPhone = maskedPhone,
+        paid = paid.toDto(),
+        released = released.toDto(),
+        rate = rate,
+        fee = fee.toDto(),
+        merchantShare = merchantShare?.toDto(),
+        circasoShare = circasoShare?.toDto(),
+        circasoShareUsdc = circasoShareUsdc?.toDto(),
+        failureReason = failureReason,
+        settlementId = settlementId?.toString(),
+        txHash = txHash,
+        collectionsProvider = collectionsProvider,
+    )
+
+/** A page of a merchant's orders; `nextCursor` continues after its last order, null on the last page. */
+fun List<OpsRampMerchantOrder>.toMerchantOrdersResponse(limit: Int) =
+    RampMerchantOrdersResponse(
+        orders = map { it.toDto() },
+        nextCursor = lastOrNull()?.takeIf { size >= limit }?.let { "${it.createdAt}$CURSOR_SEPARATOR${it.orderId}" },
     )

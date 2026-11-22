@@ -54,6 +54,7 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.EventId
 import com.circaso.shared.EventSubscription
+import com.circaso.shared.FiatAmount
 import com.circaso.shared.Money
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
@@ -246,6 +247,13 @@ class FakeCollections : MobileCollections {
     var failure: IntegrationError? = null
     var rejectCredentials = false
 
+    /** Whose prompts the provider refuses, by API username, and how. */
+    val refusals = mutableMapOf<String, IntegrationError>()
+
+    /** The service wallet's balance by API username; a merchant not named here can't be read. */
+    val serviceBalances = mutableMapOf<String, Long>()
+    val balanceQueries = mutableListOf<CollectionCredentials>()
+
     fun referenceOf(order: Order): String =
         "PH-${prompts.indexOfFirst { it.reference == order.orderId.toString() } + 1}"
 
@@ -264,6 +272,7 @@ class FakeCollections : MobileCollections {
         request: CollectionRequest,
     ): Resource<CollectionReceipt> {
         failure?.let { return Resource.error(it) }
+        refusals[credentials.username]?.let { return Resource.error(it) }
         prompts += request
         promptedWith += credentials
         val reference = "PH-${prompts.size}"
@@ -288,8 +297,12 @@ class FakeCollections : MobileCollections {
         providerReference: String,
     ): Resource<CollectionStatus> = Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
 
-    override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> =
-        Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+    override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> {
+        balanceQueries += credentials
+        val fees =
+            serviceBalances[credentials.username] ?: return Resource.error(IntegrationError.Unavailable("PayHero"))
+        return Resource.success(CollectionBalances(FiatAmount(0, "KES"), FiatAmount(fees, "KES")))
+    }
 
     override suspend fun verify(credentials: CollectionCredentials): Resource<Unit> {
         failure?.let { return Resource.error(it) }

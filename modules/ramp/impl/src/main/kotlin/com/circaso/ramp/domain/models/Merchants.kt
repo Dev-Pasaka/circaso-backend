@@ -17,9 +17,19 @@ import java.util.UUID
 enum class MerchantState { NEW, APPLIED, APPROVED, SUSPENDED }
 
 /**
+ * Something at the merchant's payment provider that only the merchant can put right. While one is set the engine gives
+ * them no order.
+ */
+enum class PaymentsIssue {
+    /** The provider refused a prompt because the merchant's prepaid service balance there can't pay its fee. */
+    SERVICE_BALANCE,
+}
+
+/**
  * A partner merchant: an account of its own, signed in to by [email]. [onlineUntil] is the end of the trading window,
  * null when offline. [callbackKey] is the end of the merchant's own callback address, null until they connect a
- * payment account.
+ * payment account. [paymentsIssue] is set when the provider refused a prompt for a reason the merchant must fix, and
+ * cleared when they go online again or a later prompt goes through.
  */
 data class Merchant(
     val merchantId: MerchantId,
@@ -33,6 +43,8 @@ data class Merchant(
     val approvedBy: String?,
     val approvedAt: Instant?,
     val createdAt: Instant,
+    val paymentsIssue: PaymentsIssue? = null,
+    val paymentsIssueAt: Instant? = null,
 ) {
     /** Approved, and inside a trading window that lasts past [until]. */
     fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && onlineUntil?.isAfter(until) == true
@@ -141,7 +153,10 @@ data class MerchantOverview(
     /** A PIN exists once a payment account has been sealed under one. */
     val pinSet: Boolean get() = payments != null
 
-    /** `kyc` joins this list with Didit; a float the custodian can't report isn't counted as missing. */
+    /**
+     * `kyc` joins this list with Didit; a float the custodian can't report isn't counted as missing.
+     * `provider_balance` is the provider having refused a prompt for the merchant's service balance.
+     */
     val missing: List<String>
         get() =
             listOfNotNull(
@@ -150,9 +165,18 @@ data class MerchantOverview(
                 "wallet".takeIf { wallet == null },
                 "payments".takeIf { payments == null || !paymentsCurrent },
                 "float".takeIf { float != null && (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor) },
+                PROVIDER_BALANCE.takeIf { merchant.paymentsIssue == PaymentsIssue.SERVICE_BALANCE },
             )
 
-    val canGoOnline: Boolean get() = missing.isEmpty()
+    /**
+     * Whether RM6 is worth trying. A provider balance issue doesn't stand in the way: going online is what checks
+     * the balance again and clears it.
+     */
+    val canGoOnline: Boolean get() = missing.all { it == PROVIDER_BALANCE }
+
+    companion object {
+        const val PROVIDER_BALANCE = "provider_balance"
+    }
 }
 
 data class OnlineView(val online: Boolean, val until: Instant?)
@@ -222,9 +246,21 @@ data class StatementTotals(
     val sweptAssetMinor: Long,
 ) {
     val heldAssetMinor: Long get() = platformAssetMinor - sweptAssetMinor
+
+    operator fun plus(other: StatementTotals) =
+        StatementTotals(
+            orders = orders + other.orders,
+            collectedMinor = collectedMinor + other.collectedMinor,
+            soldMinor = soldMinor + other.soldMinor,
+            feesMinor = feesMinor + other.feesMinor,
+            merchantMinor = merchantMinor + other.merchantMinor,
+            platformMinor = platformMinor + other.platformMinor,
+            platformAssetMinor = platformAssetMinor + other.platformAssetMinor,
+            sweptAssetMinor = sweptAssetMinor + other.sweptAssetMinor,
+        )
 }
 
-/** The days a statement or an overview covers, both inclusive, as UTC days. */
+/** The days a statement or an overview covers, both inclusive: Nairobi calendar days. */
 data class Period(val from: LocalDate, val to: LocalDate)
 
 /** RM8. */

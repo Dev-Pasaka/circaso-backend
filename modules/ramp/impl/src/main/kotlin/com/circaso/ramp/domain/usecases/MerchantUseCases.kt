@@ -1,5 +1,6 @@
 package com.circaso.ramp.domain.usecases
 
+import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
@@ -12,6 +13,7 @@ import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentAccountCommand
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.CredentialVault
@@ -135,6 +137,11 @@ class RotateCallback(
  * RM6: goes online for a trading window. The PIN unwraps the payment keys **into this node's memory only**; the
  * merchant must be approved, with a float wallet on the network and a payment account. A float the custodian reports
  * as too small for the smallest order refuses too; one it can't report doesn't.
+ *
+ * **The provider's service balance is checked before going online**: the prepaid wallet the provider takes its fee
+ * from, per prompt. Below the network's floor (`provider_fee_floor_minor`, 0 for no check) the provider would refuse
+ * the merchant's prompts, so RM6 refuses first, naming `provider_balance`. A balance the provider can't report never
+ * blocks. Going online clears a payments issue left by an earlier refusal.
  */
 class GoOnline(
     private val merchants: MerchantRepository,
@@ -143,6 +150,8 @@ class GoOnline(
     private val views: MerchantViews,
     private val pins: PinGuard,
     private val sessions: TradingSessions,
+    private val providers: CollectionProviders,
+    private val settings: SettingsBook,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(
@@ -163,10 +172,35 @@ class GoOnline(
                 is Resource.Error -> return opened
                 is Resource.Success -> opened.data
             }
-        val until = clock.instant().plus(Duration.ofMinutes(minutes.toLong()))
+        if (serviceBalanceLow(merchant, sealed.provider, keys, network)) {
+            return Resource.error(RampError.ProviderBalanceLow)
+        }
+        val now = clock.instant()
+        val until = now.plus(Duration.ofMinutes(minutes.toLong()))
         sessions.unlock(merchantId, UnlockedKeys(sealed.provider, keys), until)
+        if (merchant.paymentsIssue != null) merchants.setPaymentsIssue(merchantId, null, now)
         merchants.setOnlineUntil(merchantId, until)
         return Resource.success(OnlineView(online = true, until = until))
+    }
+
+    /**
+     * Whether the provider reports a service balance under the floor. A merchant the provider already refused for
+     * their balance needs something in it whatever the floor, or the first prompt would be refused again.
+     */
+    private suspend fun serviceBalanceLow(
+        merchant: Merchant,
+        provider: String,
+        keys: CollectionCredentials,
+        network: Network,
+    ): Boolean {
+        val refusedBefore = merchant.paymentsIssue == PaymentsIssue.SERVICE_BALANCE
+        val floor = settings.of(network).providerFeeFloorMinor.coerceAtLeast(if (refusedBefore) 1 else 0)
+        if (floor <= 0) return false
+        val collections = providers.named(provider) ?: return false
+        return when (val read = collections.balance(keys)) {
+            is Resource.Success -> read.data.fees.amountMinor < floor
+            is Resource.Error -> false
+        }
     }
 }
 

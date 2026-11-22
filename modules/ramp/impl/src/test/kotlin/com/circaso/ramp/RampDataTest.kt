@@ -11,6 +11,7 @@ import com.circaso.ramp.data.cache.RampExpiry
 import com.circaso.ramp.data.repositories.CommissionRepositoryImpl
 import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
+import com.circaso.ramp.data.repositories.InsightRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantWalletRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
@@ -35,6 +36,7 @@ import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaidOutcome
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.Quote
@@ -43,11 +45,13 @@ import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
+import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.Periods
+import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.shared.FiatAmount
@@ -59,8 +63,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
+import java.sql.SQLException
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.test.BeforeTest
@@ -93,6 +99,7 @@ class RampDataTest {
     private val commissions = CommissionRepositoryImpl(database)
     private val settlements = SettlementRepositoryImpl(database)
     private val statements = StatementRepositoryImpl(database)
+    private val insights = InsightRepositoryImpl(database)
     private val transactor = DatabaseTransactor(database)
     private val now: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
     private val clock = TestClock(now)
@@ -120,6 +127,7 @@ class RampDataTest {
             providers,
             sessions,
             book,
+            Presence(merchants, orders, sessions),
             clock,
         )
     private val releases =
@@ -193,6 +201,7 @@ class RampDataTest {
         quoteId: QuoteId = QuoteId.new(),
         state: OrderState = OrderState.RESERVED,
         at: Instant = now,
+        attempt: Int = 1,
     ) = Order(
         orderId = RampOrderId.new(),
         userId = userId,
@@ -220,11 +229,12 @@ class RampDataTest {
         paymentDeadline = at.plusSeconds(120),
         createdAt = at,
         updatedAt = at,
+        attempt = attempt,
     )
 
     private suspend fun reserve(userId: UserId = UserId.new()): Resource<Order> =
         engine.reserve(TESTNET, CHAIN, 9_800_000, settings) { candidate: Candidate ->
-            order(candidate.merchant.merchantId, userId)
+            order(candidate.merchant.merchantId, userId, at = clock.instant())
         }
 
     /** A reserved order with its prompt sent, as R3 leaves it. */
@@ -818,6 +828,169 @@ class RampDataTest {
             val before = Period(period.from.minusDays(9), period.from.minusDays(1))
             assertEquals(0, statements.totals(merchant.merchantId, TESTNET, before).orders)
             assertTrue(statements.lines(merchant.merchantId, TESTNET, before, null, 10).isEmpty())
+        }
+
+    // After the first real test: attempts, the payments issue, the provider fee floor, and staff's view
+
+    @Test
+    fun `a quote makes one order per attempt, and the latest attempt is the quote's order`() =
+        runBlocking<Unit> {
+            val merchant = merchant()
+            val other = merchant("Other")
+            val first = order(merchant.merchantId)
+            assertTrue(orders.insert(first))
+            assertEquals(1, orders.find(first.orderId)!!.attempt)
+            orders.move(
+                first.orderId,
+                OrderState.FAILED,
+                OrderState.AWAITING_PAYMENT,
+                OrderPatch(failureReason = "prompt_refused"),
+                now,
+            )
+
+            val second = order(other.merchantId, userId = first.userId, quoteId = first.quoteId, attempt = 2)
+            assertTrue(orders.insert(second), "the next merchant, for the same quote")
+            assertFalse(
+                orders.insert(order(merchant.merchantId, quoteId = first.quoteId, attempt = 2)),
+                "an attempt is made once",
+            )
+            assertFalse(orders.insert(order(merchant.merchantId, quoteId = first.quoteId)), "and so was the first")
+
+            val latest = orders.byQuote(first.quoteId)!!
+            assertEquals(second.orderId to 2, latest.orderId to latest.attempt)
+            assertEquals(0, rows("orders", "attempt < 1"))
+        }
+
+    @Test
+    fun `a merchant with a payments issue is nobody's candidate until it is cleared`() =
+        runBlocking<Unit> {
+            val merchant = merchant()
+            val at = now.minusSeconds(5)
+
+            merchants.setPaymentsIssue(merchant.merchantId, PaymentsIssue.SERVICE_BALANCE, at)
+
+            val marked = merchants.find(merchant.merchantId)!!
+            assertEquals(PaymentsIssue.SERVICE_BALANCE to at, marked.paymentsIssue to marked.paymentsIssueAt)
+            assertTrue(merchants.candidates(TESTNET, CHAIN, now.plusSeconds(120)).isEmpty())
+            assertEquals(RampError.NoMerchantAvailable, (reserve() as Resource.Error).error)
+            assertEquals(0, count("SELECT count(*) FROM ramp.orders"))
+            assertFailsWith<SQLException>("only an issue the code knows") {
+                TestPostgres.superuser { connection ->
+                    connection.createStatement().use {
+                        it.executeUpdate("UPDATE ramp.merchants SET payments_issue = 'SOMETHING_ELSE'")
+                    }
+                }
+            }
+
+            merchants.setPaymentsIssue(merchant.merchantId, null, now)
+
+            val cleared = merchants.find(merchant.merchantId)!!
+            assertNull(cleared.paymentsIssue)
+            assertNull(cleared.paymentsIssueAt)
+            assertEquals(1, merchants.candidates(TESTNET, CHAIN, now.plusSeconds(120)).size)
+        }
+
+    @Test
+    fun `the provider fee floor is a setting - seeded at 50 shillings, changed by staff, never negative`() =
+        runBlocking<Unit> {
+            val testnet = settingsRows.load().getValue(TESTNET)
+            assertEquals(5_000, testnet.providerFeeFloorMinor)
+
+            val saved = settingsRows.update(testnet.copy(providerFeeFloorMinor = 0), testnet.version, "staff", now)
+            assertEquals(0, saved?.providerFeeFloorMinor)
+            assertEquals(0, settingsRows.load().getValue(TESTNET).providerFeeFloorMinor)
+            assertEquals(5_000, settingsRows.load().getValue(Network.MAINNET).providerFeeFloorMinor)
+            assertFailsWith<DatabaseException> {
+                settingsRows.update(testnet.copy(providerFeeFloorMinor = -1), null, "staff", now)
+            }
+        }
+
+    @Test
+    fun `staff's days and orders are read from the statement's own rows, a Nairobi day at a time`() =
+        runBlocking<Unit> {
+            val merchant = merchant()
+            revenue.insert(RevenueWallet(TESTNET, CHAIN, "w-revenue", "0xrevenue"), now)
+            treasury.addresses["w-revenue"] = "0xrevenue"
+            // 20:30 UTC is 23:30 in Nairobi; an hour later is the next day there
+            val lateEvening = Instant.parse("2026-11-21T20:30:00Z")
+            clock.now = lateEvening
+            val first = completed()
+            clock.advance(1)
+            val second = completed()
+            sweeps.run(treasury, TESTNET)
+            treasury.settleAll()
+            sweeps.run(treasury, TESTNET)
+            clock.now = lateEvening.plusSeconds(3_600)
+            val third = completed()
+            clock.advance(1)
+            val waiting = prompted()
+            clock.advance(1)
+            val lost = prompted()
+            flow.close(lost, OrderState.FAILED, "payment_failed")
+            val id = merchant.merchantId
+            val both = Period(LocalDate.parse("2026-11-21"), LocalDate.parse("2026-11-22"))
+            val the21st = Period(both.from, both.from)
+
+            val days = insights.completedByDay(id, TESTNET, both)
+            assertEquals(listOf("2026-11-21" to 2, "2026-11-22" to 1), days.map { it.day.toString() to it.completed })
+            val totals = statements.totals(id, TESTNET, both)
+            assertEquals(totals.orders, days.sumOf { it.completed })
+            assertEquals(totals.collectedMinor, days.sumOf { it.collectedMinor })
+            assertEquals(totals.soldMinor, days.sumOf { it.soldMinor })
+            assertEquals(totals.feesMinor, days.sumOf { it.feesMinor })
+            assertEquals(totals.merchantMinor, days.sumOf { it.merchantMinor })
+            assertEquals(totals.platformMinor, days.sumOf { it.platformMinor })
+            val oneDay = insights.completedByDay(id, TESTNET, the21st).single()
+            assertEquals(statements.totals(id, TESTNET, the21st).collectedMinor, oneDay.collectedMinor)
+
+            assertEquals(
+                mapOf(OrderState.PAYMENT_REQUESTED to 1, OrderState.FAILED to 1),
+                insights.unfinished(id, TESTNET, both),
+            )
+            assertEquals(mapOf(both.to to 2), insights.unfinishedByDay(id, TESTNET, both))
+            assertTrue(insights.unfinished(id, TESTNET, the21st).isEmpty())
+            assertTrue(insights.unfinished(id, Network.MAINNET, both).isEmpty())
+            assertTrue(insights.completedByDay(MerchantId.new(), TESTNET, both).isEmpty())
+
+            val everything = StaffOrderFilter(id, TESTNET, null, null)
+            val page = insights.orders(everything, null, 3)
+            val last = page.last().order
+            val rest = insights.orders(everything, PageCursor(last.createdAt, last.orderId.value), 3)
+            assertEquals(
+                listOf(lost, waiting, third, second, first).map { it.orderId },
+                (page + rest).map { it.order.orderId },
+            )
+            val byId = (page + rest).associateBy { it.order.orderId }
+            assertNull(byId.getValue(waiting.orderId).commission)
+            assertNull(byId.getValue(lost.orderId).commission)
+            val swept = byId.getValue(first.orderId).commission!!
+            assertEquals(
+                Triple(1_820L, 780L, 60_000L),
+                Triple(swept.merchantMinor, swept.platformMinor, swept.platformAssetMinor),
+            )
+            assertNotNull(swept.settlementId, "the confirmed sweep collected it")
+            assertNull(byId.getValue(third.orderId).commission!!.settlementId, "still held")
+            val lines = statements.lines(id, TESTNET, both, null, 10).associateBy { it.orderId }
+            listOf(first, second, third).forEach { order ->
+                val commission = byId.getValue(order.orderId).commission!!
+                val line = lines.getValue(order.orderId)
+                assertEquals(line.completedAt, commission.earnedAt)
+                assertEquals(
+                    line.merchantMinor to line.platformMinor,
+                    commission.merchantMinor to commission.platformMinor,
+                )
+                assertEquals(line.settlementId, commission.settlementId)
+            }
+
+            assertEquals(
+                listOf(third.orderId, second.orderId, first.orderId),
+                insights.orders(everything.copy(state = OrderState.COMPLETED), null, 10).map { it.order.orderId },
+            )
+            assertEquals(
+                listOf(second.orderId, first.orderId),
+                insights.orders(everything.copy(period = the21st), null, 10).map { it.order.orderId },
+            )
+            assertTrue(insights.orders(everything.copy(network = Network.MAINNET), null, 10).isEmpty())
         }
 
     @Test

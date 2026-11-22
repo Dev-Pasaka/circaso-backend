@@ -1,10 +1,14 @@
 package com.circaso.ops.presentation.controllers
 
 import com.circaso.ops.domain.models.Permission
+import com.circaso.ops.domain.models.RampMerchantOrdersQuery
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.presentation.dto.RampMerchantDto
+import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
+import com.circaso.ops.presentation.dto.RampMerchantSummaryResponse
 import com.circaso.ops.presentation.dto.RampMerchantsResponse
 import com.circaso.ops.presentation.dto.RampOrdersResponse
+import com.circaso.ops.presentation.dto.RampOverviewResponse
 import com.circaso.ops.presentation.dto.RampPreviewAccessRequest
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
@@ -17,17 +21,22 @@ import com.circaso.ops.presentation.mappers.TAG_RAMP
 import com.circaso.ops.presentation.mappers.actor
 import com.circaso.ops.presentation.mappers.malformed
 import com.circaso.ops.presentation.mappers.merchantCursor
+import com.circaso.ops.presentation.mappers.merchantOrderCursor
 import com.circaso.ops.presentation.mappers.orderCursor
 import com.circaso.ops.presentation.mappers.pageLimit
 import com.circaso.ops.presentation.mappers.parseEnum
 import com.circaso.ops.presentation.mappers.parseMerchantId
 import com.circaso.ops.presentation.mappers.parseUserId
 import com.circaso.ops.presentation.mappers.query
+import com.circaso.ops.presentation.mappers.rampOrderState
+import com.circaso.ops.presentation.mappers.rampPeriod
 import com.circaso.ops.presentation.mappers.roles
 import com.circaso.ops.presentation.mappers.toDto
+import com.circaso.ops.presentation.mappers.toMerchantOrdersResponse
 import com.circaso.ops.presentation.mappers.toResponse
 import com.circaso.ops.presentation.mappers.toSettings
 import com.circaso.ops.presentation.services.RampService
+import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.flatMap
@@ -38,6 +47,7 @@ import com.circaso.web.docs
 import com.circaso.web.respondDefault
 import com.circaso.web.staffOnly
 import com.circaso.web.toDefaultResponse
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -57,8 +67,8 @@ private suspend fun requiredNetwork(): Resource<Network> =
 
 /**
  * The ramp for staff (decision 2026-11-22): the partner merchants and their approval, each network's ramp settings
- * (which live in the database, not the environment), who may trade while the ramp is in PREVIEW, and the orders
- * waiting for a person. FINANCE and ADMIN read (`ramp.read`); ADMIN changes (`ramp.manage`). Every change is audited.
+ * (which live in the database, not the environment), who may trade while the ramp is in PREVIEW, the orders
+ * waiting for a person, and what each merchant did (the overview, one merchant's summary and their orders). FINANCE and ADMIN read (`ramp.read`); ADMIN changes (`ramp.manage`). Every change is audited.
  */
 fun Route.rampController(
     ramp: RampService,
@@ -116,6 +126,8 @@ private fun Route.rampReads(
         notes = "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required.",
     )
 
+    rampInsights(ramp, settings)
+
     get("orders") {
         val state = call.query("state") ?: REVIEW
         val result =
@@ -139,6 +151,104 @@ private fun Route.rampReads(
                 "`paid_after_expiry`, `release_refused`, `release_failed`, …). Its float stays reserved.",
     )
 }
+
+private const val PERIOD =
+    "`?from=&to=` are Nairobi calendar days (East Africa Time), both inclusive, at most a year apart"
+
+private const val SAME_FIGURES =
+    "Every amount is added up by the ramp from the order and commission rows the merchant's own earnings overview " +
+        "and statement use, so staff and the merchant always see the same numbers. Amounts are " +
+        "`{ unit, amountMinor, amount }`: `unit` is KES or USDC, `amountMinor` exact, `amount` for display."
+
+/** The `?from=&to=` of a request, when it names a period. */
+private fun ApplicationCall.period(): Resource<OpsRampPeriod?> = rampPeriod(query("from"), query("to"))
+
+/** Each merchant's activity (2026-11-22): the network's overview, one merchant in depth, and their orders. */
+private fun Route.rampInsights(ramp: RampService, settings: OpsSettings) {
+    get("overview") {
+        val result =
+            requiredNetwork().flatMap { network ->
+                call.period().flatMap { ramp.overview(network, it) }
+            }
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<NoBody, RampOverviewResponse>(
+        "OPS · What each ramp merchant did in a period",
+        TAG_RAMP,
+        listOf(MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required. $PERIOD; without them, this " +
+                "month. `merchants` are the approved merchants and any other with an order in the period; " +
+                "`totals` is the sum of those rows. `orders` counts completed orders on the day they completed " +
+                "and the rest on the day they were made; `successRatePercent` is completed out of all of them " +
+                "(`0` with none). `online` is the merchant's trading window. `lastOrderAt` is their latest order " +
+                "on the network, whatever the period. $SAME_FIGURES",
+    )
+
+    route("/merchants/{merchantId}") {
+        get("summary") {
+            val result =
+                parseMerchantId(call.parameters["merchantId"]).flatMap { merchantId ->
+                    requiredNetwork().flatMap { network ->
+                        call.period().flatMap { ramp.merchantSummary(merchantId, network, it) }
+                    }
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, RampMerchantSummaryResponse>(
+            "OPS · One ramp merchant: account, float, orders, money, days and sweeps",
+            TAG_RAMP,
+            listOf(MERCHANT_NOT_FOUND, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required. $PERIOD; without them, this " +
+                    "month. `wallet` is null until the ops server has made the float wallet on this network; " +
+                    "`float` is null without one or when the custodian can't be read (never a zero nobody " +
+                    "measured): `reserved` is what open orders hold, `owedToCircaso` what is held until the next " +
+                    "daily sweep, `free` the rest. `orders.completed` are counted on the day they completed, the " +
+                    "other counts on the day the order was made. `daily` has one row per Nairobi day with " +
+                    "activity, oldest first. `merchant.paymentsIssue` (`code`: `SERVICE_BALANCE`) says the " +
+                    "provider refused a prompt because the merchant's prepaid service wallet is empty: no order is " +
+                    "routed to them until they top it up and go online again. $SAME_FIGURES",
+        )
+
+        get("orders") {
+            val result =
+                call.pageLimit(settings).flatMap { limit ->
+                    call.merchantOrdersQuery().flatMap { ramp.merchantOrders(it, limit) }.map {
+                        it.toMerchantOrdersResponse(limit)
+                    }
+                }
+            call.respondDefault(result.toDefaultResponse { it })
+        }.docs<NoBody, RampMerchantOrdersResponse>(
+            "OPS · A ramp merchant's orders",
+            TAG_RAMP,
+            listOf(MERCHANT_NOT_FOUND, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("FINANCE", "ADMIN")} Newest first. `?network=MAINNET|TESTNET` is required. $PERIOD, by " +
+                    "the day the order was made; without them, every day. `?state=` narrows to one of RESERVED, " +
+                    "PAYMENT_REQUESTED, PAID, RELEASING, COMPLETED, EXPIRED, CANCELLED, FAILED, REVIEW. $PAGED " +
+                    "`maskedPhone` is the payer's number, always masked. `released` is the USDC the order is for: " +
+                    "it reached the buyer only when `state` is COMPLETED. `completedAt`, `merchantShare`, " +
+                    "`circasoShare`, `circasoShareUsdc` and `settlementId` are null until the order completes " +
+                    "(`settlementId` until the sweep that took Circaso's share is confirmed). `failureReason`: " +
+                    "`payment_failed`, `prompt_failed` (the provider couldn't be reached), `prompt_refused` and " +
+                    "`provider_balance` (the provider refused the merchant's prompt; the buyer was passed to the " +
+                    "next merchant), `merchant_offline`, and the review reasons. $SAME_FIGURES",
+        )
+    }
+}
+
+/** The path's merchant with the query's network, period, state and cursor, each checked. */
+private suspend fun ApplicationCall.merchantOrdersQuery(): Resource<RampMerchantOrdersQuery> =
+    parseMerchantId(parameters["merchantId"]).flatMap { merchantId ->
+        requiredNetwork().flatMap { network ->
+            period().flatMap { period ->
+                rampOrderState(query("state")).flatMap { state ->
+                    merchantOrderCursor(query("cursor")).map { cursor ->
+                        RampMerchantOrdersQuery(merchantId, network, period, state, cursor)
+                    }
+                }
+            }
+        }
+    }
 
 private fun Route.rampWrites(ramp: RampService, clock: Clock) {
     route("/merchants/{merchantId}") {
@@ -191,7 +301,10 @@ private fun Route.rampWrites(ramp: RampService, clock: Clock) {
                 "changed. The fee is 0 to 500 basis points and the merchant's share 0 to 10000; KYC can't be " +
                 "switched off on MAINNET; every chain must be the network's own; `collectionsProvider` must be " +
                 "one of `collectionsProviders` (what this server offers). A change applies to quotes made " +
-                "after it; an order already prompted keeps the provider that prompted it. Both servers use the new settings within about ten seconds.",
+                "after it; an order already prompted keeps the provider that prompted it. " +
+                "`providerFeeFloorMinor` (KES cents as a string, `\"0\"` for no check) is the least a merchant's " +
+                "prepaid service wallet at the provider must hold for them to go online; left out, it stays as it " +
+                "is. Both servers use the new settings within about ten seconds.",
     )
 
     post("preview-access") {

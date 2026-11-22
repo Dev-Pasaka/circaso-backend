@@ -95,6 +95,11 @@ data class Order(
     val paymentDeadline: Instant,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /**
+     * Which try of its quote this order is: 1, and one more each time the provider refused the merchant before it and
+     * the next merchant was asked. A quote has one order per attempt.
+     */
+    val attempt: Int = 1,
 ) {
     override fun toString(): String = "Order($orderId, $state)"
 }

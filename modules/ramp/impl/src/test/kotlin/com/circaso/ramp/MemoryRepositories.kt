@@ -4,6 +4,8 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.models.Candidate
+import com.circaso.ramp.domain.models.CommissionFigures
+import com.circaso.ramp.domain.models.DayTotals
 import com.circaso.ramp.domain.models.FeeSplit
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
@@ -14,6 +16,7 @@ import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaidOutcome
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.Quote
@@ -22,11 +25,14 @@ import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
+import com.circaso.ramp.domain.models.StaffOrder
+import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.Stamped
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
+import com.circaso.ramp.domain.repositories.InsightRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
@@ -151,7 +157,8 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
         until: Instant,
     ) = rows.values.mapNotNull { merchant ->
         val wallet = wallets.rows[merchant.merchantId to network]?.takeIf { it.blockchain == blockchain }
-        if (wallet != null && merchant.isTradingUntil(until)) Candidate(merchant, wallet) else null
+        val trading = merchant.isTradingUntil(until) && merchant.paymentsIssue == null
+        if (wallet != null && trading) Candidate(merchant, wallet) else null
     }
 
     override suspend fun lock(merchantId: MerchantId): Merchant? {
@@ -198,6 +205,12 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
 
     override suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?) =
         change(merchantId) { it.copy(onlineUntil = until) }
+
+    override suspend fun setPaymentsIssue(
+        merchantId: MerchantId,
+        issue: PaymentsIssue?,
+        at: Instant,
+    ) = change(merchantId) { it.copy(paymentsIssue = issue, paymentsIssueAt = at.takeIf { issue != null }) }
 
     override suspend fun endPassedWindows(now: Instant): Int {
         val passed = rows.values.filter { it.onlineUntil?.isBefore(now) == true }
@@ -273,20 +286,24 @@ private fun <T> List<T>.after(
         cursor == null || at(it).isBefore(cursor.at) || (at(it) == cursor.at && id(it) < cursor.id)
     }
 
-/** Orders in memory, with the same claims the tables make: one order per quote, one open order per user, one receipt. */
+/**
+ * Orders in memory, with the same claims the tables make: one order per quote and attempt, one open order per user,
+ * one receipt.
+ */
 class MemoryOrders : OrderRepository {
     val rows = linkedMapOf<RampOrderId, Order>()
 
     override suspend fun insert(order: Order): Boolean {
-        val taken = rows.values.any { it.quoteId == order.quoteId || (it.userId == order.userId && it.state.isOpen) }
-        if (taken) return false
+        val sameAttempt = rows.values.any { it.quoteId == order.quoteId && it.attempt == order.attempt }
+        if (sameAttempt || rows.values.any { it.userId == order.userId && it.state.isOpen }) return false
         rows[order.orderId] = order
         return true
     }
 
     override suspend fun find(orderId: RampOrderId) = rows[orderId]
 
-    override suspend fun byQuote(quoteId: QuoteId) = rows.values.firstOrNull { it.quoteId == quoteId }
+    override suspend fun byQuote(quoteId: QuoteId) =
+        rows.values.filter { it.quoteId == quoteId }.maxByOrNull { it.attempt }
 
     override suspend fun openOf(userId: UserId) = rows.values.firstOrNull { it.userId == userId && it.state.isOpen }
 
@@ -402,7 +419,8 @@ class MemoryReservations : ReservationRepository {
 class MemoryLedger(private val orders: MemoryOrders) :
     CommissionRepository,
     SettlementRepository,
-    StatementRepository {
+    StatementRepository,
+    InsightRepository {
     data class Commission(
         val order: Order,
         val split: FeeSplit,
@@ -569,4 +587,71 @@ class MemoryLedger(private val orders: MemoryOrders) :
             sweptAssetMinor = rows.filter { it.settledAt != null }.sumOf { it.split.platformAssetMinor },
         )
     }
+
+    private fun unfinishedIn(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ) = orders.rows.values.filter {
+        it.merchantId == merchantId && it.network == network && it.state != OrderState.COMPLETED &&
+            !it.createdAt.isBefore(Periods.start(period)) && it.createdAt.isBefore(Periods.end(period))
+    }
+
+    override suspend fun unfinished(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ) = unfinishedIn(merchantId, network, period).groupingBy { it.state }.eachCount()
+
+    override suspend fun unfinishedByDay(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ) = unfinishedIn(merchantId, network, period).groupingBy { Periods.merchantDay(it.createdAt) }.eachCount()
+
+    override suspend fun completedByDay(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ) = inPeriod(merchantId, network, period)
+        .groupBy { Periods.merchantDay(it.earnedAt) }
+        .toSortedMap()
+        .map { (day, rows) ->
+            DayTotals(
+                day = day,
+                completed = rows.size,
+                collectedMinor = rows.sumOf { it.order.fiat.amountMinor },
+                soldMinor = rows.sumOf { it.order.assetMinor },
+                feesMinor = rows.sumOf { it.order.feeMinor },
+                merchantMinor = rows.sumOf { it.split.merchantMinor },
+                platformMinor = rows.sumOf { it.split.platformMinor },
+            )
+        }
+
+    override suspend fun orders(
+        filter: StaffOrderFilter,
+        after: PageCursor?,
+        limit: Int,
+    ) = orders.rows.values
+        .filter { it.merchantId == filter.merchantId && it.network == filter.network }
+        .filter { filter.state == null || it.state == filter.state }
+        .filter { order ->
+            filter.period?.let {
+                !order.createdAt.isBefore(Periods.start(it)) && order.createdAt.isBefore(Periods.end(it))
+            } ?: true
+        }.after(after, { it.createdAt }, { it.orderId.value })
+        .take(limit)
+        .map { order ->
+            val commission =
+                commissions[order.orderId]?.let {
+                    CommissionFigures(
+                        earnedAt = it.earnedAt,
+                        merchantMinor = it.split.merchantMinor,
+                        platformMinor = it.split.platformMinor,
+                        platformAssetMinor = it.split.platformAssetMinor,
+                        settlementId = it.settlementId.takeIf { _ -> it.settledAt != null },
+                    )
+                }
+            StaffOrder(order, commission)
+        }
 }

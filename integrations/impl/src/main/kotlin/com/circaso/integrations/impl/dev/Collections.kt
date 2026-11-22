@@ -19,7 +19,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * Tests: an in-memory collections provider that records every prompt. A prompt is `QUEUED` until the test says what
  * the payer did ([pay], [fail]); [statuses] may be set directly to answer anything at all (a wrong amount, another
- * payer). While [failure] is set, every call fails with it.
+ * payer). While [failure] is set, every call fails with it. [feeBalanceMinor] is the service balance [balance]
+ * reports.
  */
 class FakeCollections : MobileCollections {
     val prompts: MutableList<CollectionRequest> = CopyOnWriteArrayList()
@@ -28,6 +29,9 @@ class FakeCollections : MobileCollections {
 
     @Volatile
     var failure: IntegrationError? = null
+
+    @Volatile
+    var feeBalanceMinor: Long = DEFAULT_FEE_BALANCE_MINOR
 
     /** The provider's reference for the prompt we named [reference]. */
     fun referenceOf(reference: String): String = "PH-${prompts.indexOfFirst { it.reference == reference } + 1}"
@@ -74,11 +78,16 @@ class FakeCollections : MobileCollections {
     ): Resource<CollectionStatus> = Resource.error(IntegrationError.NotImplemented("MobileCollections payouts", "fake"))
 
     override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> =
-        Resource.success(CollectionBalances(FiatAmount(0, "KES"), FiatAmount(0, "KES")))
+        Resource.success(CollectionBalances(FiatAmount(0, "KES"), FiatAmount(feeBalanceMinor, "KES")))
 
     override suspend fun verify(credentials: CollectionCredentials): Resource<Unit> {
         failure?.let { return Resource.error(it) }
         return Resource.success(Unit)
+    }
+
+    private companion object {
+        /** KES 1 000: above any floor a network is likely to set, so a local merchant can always go online. */
+        const val DEFAULT_FEE_BALANCE_MINOR = 100_000L
     }
 }
 

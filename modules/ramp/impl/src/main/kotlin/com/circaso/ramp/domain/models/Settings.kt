@@ -33,6 +33,11 @@ data class RampSettings(
     val callbackBaseUrl: String,
     /** Which collections provider sends this network's prompts; one of the names integrations offers. */
     val collectionsProvider: String,
+    /**
+     * The least a merchant's prepaid service balance at the provider must hold for them to go online, in KES minor
+     * units; 0 switches the check off. Below it the provider refuses their prompts.
+     */
+    val providerFeeFloorMinor: Long,
     val walletSetId: String?,
     val updatedBy: String?,
     val updatedAt: Instant,
@@ -54,6 +59,9 @@ data class RampSettings(
         const val ASSET_DECIMALS = 6
         const val MAX_FEE_BPS = 500
         const val ALL_BPS = 10_000
+
+        /** KES 50: a few dozen prompts' worth of the provider's fees. */
+        const val DEFAULT_PROVIDER_FEE_FLOOR_MINOR = 5_000L
 
         /** How long after a step the sweep waits before asking the vendor itself (a lost callback). */
         val RECHECK_AFTER: Duration = Duration.ofSeconds(30)
@@ -87,6 +95,7 @@ data class RampSettings(
                 kycRequired = network == Network.MAINNET,
                 callbackBaseUrl = "https://api.circaso.com",
                 collectionsProvider = collectionsProvider,
+                providerFeeFloorMinor = DEFAULT_PROVIDER_FEE_FLOOR_MINOR,
                 walletSetId = null,
                 updatedBy = null,
                 updatedAt = at,

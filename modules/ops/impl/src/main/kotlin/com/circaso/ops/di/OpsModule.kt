@@ -46,7 +46,10 @@ import com.circaso.ops.domain.usecases.GetEmailTemplateId
 import com.circaso.ops.domain.usecases.GetFeeWallets
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
+import com.circaso.ops.domain.usecases.GetRampMerchantOrders
+import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchants
+import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
 import com.circaso.ops.domain.usecases.GetRampSettings
@@ -293,7 +296,10 @@ fun opsModule(config: Config): Module =
         single { GetRampPreviewAccess(get()) }
         single { SetRampPreviewAccess(get(), get(), get()) }
         single { GetRampReviewOrders(get()) }
-        single { RampService(get(), get(), get(), get(), get(), get(), get()) }
+        single { GetRampOverview(get()) }
+        single { GetRampMerchantSummary(get()) }
+        single { GetRampMerchantOrders(get()) }
+        single { RampService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
