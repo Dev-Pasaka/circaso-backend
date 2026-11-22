@@ -182,6 +182,26 @@ const mails: Mail[] = [
     },
     variables: [],
   },
+  {
+    // The one email that carries a code: a ramp merchant signs in to the merchant portal with their email and a
+    // one-time code (decision 2026-11-22). It is short-lived and useless without the browser that asked for it.
+    file: 'merchant-sign-in-code.html',
+    subject: 'Your Circaso Merchants sign-in code',
+    preheader: 'Use this code to sign in to the Circaso merchant portal. It works once and expires soon.',
+    eyebrow: 'Merchant portal',
+    title: 'Your sign-in code',
+    intro: ['Enter this code on the Circaso merchant portal to sign in.'],
+    facts: [['Code', '{{{CODE}}}']],
+    outro: ['The code works once and expires in {{{MINUTES}}} minutes.'],
+    notYou: {
+      heading: 'Did not ask for this?',
+      text:
+        'You can ignore this email: nobody can sign in without the code. ' +
+        'Never share it with anyone, including people who say they are from Circaso. We will never ask for it.',
+      button: 'Contact support',
+    },
+    variables: ['CODE', 'MINUTES'],
+  },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------

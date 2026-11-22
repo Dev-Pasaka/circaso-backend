@@ -70,6 +70,8 @@ dependencies {
     implementation(project(":modules:ops:impl"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:assistant:impl"))
+    implementation(project(":modules:ramp:api"))
+    implementation(project(":modules:ramp:impl"))
 
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.content.negotiation)

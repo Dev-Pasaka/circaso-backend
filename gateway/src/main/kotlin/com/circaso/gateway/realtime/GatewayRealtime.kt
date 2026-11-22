@@ -22,6 +22,8 @@ import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.messaging.api.InviteReceivedFrame
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageNewFrame
+import com.circaso.ramp.api.OrderUpdatedFrame
+import com.circaso.ramp.api.RampFrames
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.Resource
@@ -340,6 +342,11 @@ class GatewayRealtime(
 
             "${WalletFrames.MODULE}.${WalletFrames.TRANSFER_UPDATED}" -> {
                 decode(TransferUpdatedFrame.serializer(), frame)?.let(::transferPush)
+            }
+
+            // The end of a purchase with M-Pesa (decision 2026-11-22), to the buyer. Never an amount on the lock screen.
+            "${RampFrames.MODULE}.${RampFrames.ORDER_UPDATED}" -> {
+                decode(OrderUpdatedFrame.serializer(), frame)?.let(::rampOrderPush)
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.PAYMENT_RECEIVED}" -> {
@@ -757,6 +764,15 @@ class GatewayRealtime(
         }
     }
 
+    private fun rampOrderPush(frame: OrderUpdatedFrame): PushMessage? {
+        val ids = PushPayload(kind = RAMP_ORDER_KIND, orderId = frame.orderId.toString())
+        return when (frame.state) {
+            "COMPLETED" -> PushMessage("Circaso", "Your USDC has arrived", ids)
+            "FAILED", "EXPIRED" -> PushMessage("Circaso", "Your top-up didn't go through", ids)
+            else -> null
+        }
+    }
+
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {
             "CONFIRMED" -> PushMessage("Circaso", "Payment sent", transferIds(frame))
@@ -784,6 +800,9 @@ class GatewayRealtime(
     private fun <T> decode(serializer: KSerializer<T>, frame: RealtimeEnvelope): T? =
         runCatching { frame.decodeData(serializer) }.getOrNull()
 }
+
+/** A ramp order ended (`ramp` / `order.updated`): arrived, or didn't go through. A tap opens the order. */
+private const val RAMP_ORDER_KIND = "ramp.order"
 
 /** An incoming call's push; to an iPhone with a PushKit token it goes through APNs as a VoIP push. */
 private const val RINGING_KIND = "call.ringing"

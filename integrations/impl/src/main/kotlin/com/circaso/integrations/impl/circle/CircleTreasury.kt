@@ -38,7 +38,8 @@ internal class TreasuryAccount(val client: CircleClient, val secret: EntitySecre
  * - `GET /v1/w3s/config/entity/publicKey` → `data.publicKey` (PEM); kept for [KEY_KEPT_FOR] per account.
  * - `POST /v1/w3s/developer/walletSets` `{idempotencyKey, entitySecretCiphertext, name}` → `data.walletSet.id`.
  * - `POST /v1/w3s/developer/wallets` `{idempotencyKey, entitySecretCiphertext, walletSetId, blockchains, count,
- *   accountType, metadata[{name, refId}]}` → `data.wallets[]`.
+ *   accountType, metadata[{name, refId}]}` → `data.wallets[]`. `accountType` is `EOA` for the fee wallets and `SCA`
+ *   for the ramp's merchant float (Gas Station then pays its network fees).
  * - `PUT /v1/w3s/developer/wallets/{id}/blockchains/{blockchain}` `{metadata}` → `data.wallet` (EVM only; neither a
  *   key nor a ciphertext; 200 when it already exists).
  * - `GET /v1/w3s/wallets?address=&blockchain=&refId=&pageSize=` → `data.wallets[]`.
@@ -94,7 +95,7 @@ internal class CircleTreasury(
                 walletSetId = request.walletSetId,
                 blockchains = request.blockchains,
                 count = 1,
-                accountType = EOA,
+                accountType = if (request.accountType == TreasuryWalletRequest.ACCOUNT_SCA) SCA else EOA,
                 metadata = listOf(WalletMetadata(request.name, request.refId)),
             )
         }.flatMap { data ->
@@ -338,6 +339,7 @@ internal class CircleTreasury(
 
     internal companion object {
         const val EOA = "EOA"
+        const val SCA = "SCA"
         const val FEE_LEVEL = "MEDIUM"
         const val DEVELOPER = "DEVELOPER"
         const val PAGE_SIZE = 50

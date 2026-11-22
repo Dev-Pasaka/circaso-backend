@@ -62,6 +62,26 @@ sealed class OpsError(override val code: String, override val message: String, o
         ErrorKind.INVALID,
     )
 
+    data object EmailTemplateNotFound : OpsError(
+        "ops.email_template_not_found",
+        "There is no such email template.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** A template id is the provider's own id: not blank, no spaces, at most 200 characters. */
+    data object EmailTemplateInvalid : OpsError(
+        "ops.email_template_invalid",
+        "That isn't a template id.",
+        ErrorKind.INVALID,
+    )
+
+    /** The template's id changed since it was read; reload and try again. */
+    data object EmailTemplateChanged : OpsError(
+        "ops.email_template_changed",
+        "Someone else changed this template just now. Reload and try again.",
+        ErrorKind.CONFLICT,
+    )
+
     /** The staff list changed since it was read; reload and try again. */
     data object StaffChanged : OpsError(
         "ops.staff_changed",

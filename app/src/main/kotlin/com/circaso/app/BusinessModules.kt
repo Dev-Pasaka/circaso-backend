@@ -7,6 +7,7 @@ import com.circaso.identity.di.identityModule
 import com.circaso.infrastructure.api.Config
 import com.circaso.messaging.di.messagingModule
 import com.circaso.ops.di.opsModule
+import com.circaso.ramp.di.rampModule
 import com.circaso.share.di.shareModule
 import com.circaso.spaces.di.spacesModule
 import com.circaso.status.di.statusModule
@@ -34,4 +35,5 @@ fun businessModules(config: Config): List<Module> =
         spacesModule(config),
         opsModule(config),
         assistantModule(config),
+        rampModule(config),
     )

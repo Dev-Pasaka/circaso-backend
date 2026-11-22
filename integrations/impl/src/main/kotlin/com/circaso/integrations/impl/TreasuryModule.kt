@@ -2,13 +2,17 @@ package com.circaso.integrations.impl
 
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.DEV_TREASURY
 import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.integrations.impl.circle.CircleAccounts
 import com.circaso.integrations.impl.circle.CircleTreasury
 import com.circaso.integrations.impl.circle.EntitySecret
 import com.circaso.integrations.impl.circle.TreasuryAccount
+import com.circaso.integrations.impl.dev.FakeTreasury
+import com.circaso.integrations.impl.dev.LogTreasury
 import com.circaso.shared.Network
 import org.koin.core.module.Module
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
 
@@ -24,10 +28,19 @@ import org.slf4j.LoggerFactory
  *
  * Bound only when custody is Circle (`integrations.custody.provider = circle`); with `log` or `fake` there is no
  * treasury and the fee wallets report `NOT_CREATED`.
+ *
+ * With `log` or `fake` a stand-in is bound under the name [DEV_TREASURY] instead (decision 2026-11-22), for the ramp
+ * alone: its release must run end to end locally with no money anywhere. It is named, so a plain
+ * `get<TreasuryCustody>()` still finds nothing and the fee wallets behave exactly as before.
  */
 fun treasuryModule(config: Config, secrets: Secrets): Module =
     module {
-        if (config.section("integrations").string("custody.provider", "log") == "circle") {
+        val provider = config.section("integrations").string("custody.provider", "log")
+        if (provider == "fake") single<TreasuryCustody>(named(DEV_TREASURY)) { get<FakeTreasury>() }
+        if (provider == "log") {
+            single<TreasuryCustody>(named(DEV_TREASURY)) { LogTreasury(usdcContracts(get())) }
+        }
+        if (provider == "circle") {
             single<TreasuryCustody> {
                 val accounts = get<CircleAccounts>().accounts
                 CircleTreasury(

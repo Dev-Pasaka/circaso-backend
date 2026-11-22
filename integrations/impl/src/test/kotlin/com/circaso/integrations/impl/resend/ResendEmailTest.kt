@@ -2,6 +2,7 @@ package com.circaso.integrations.impl.resend
 
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailTemplate
+import com.circaso.integrations.api.EmailTemplateIds
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.impl.FakeHttpClients
 import com.circaso.integrations.impl.FakeHttpClients.Companion.json
@@ -29,6 +30,8 @@ class ResendEmailTest {
     @Serializable
     private data class Variables(
         @SerialName("DEVICE_MODEL") val deviceModel: String? = null,
+        @SerialName("CODE") val code: String? = null,
+        @SerialName("MINUTES") val minutes: Int? = null,
     )
 
     private var status = 200
@@ -36,7 +39,13 @@ class ResendEmailTest {
     private var down = false
 
     private val clients = FakeHttpClients { _ -> if (down) throw IOException("down") else json(reply, status) }
-    private val templates = EmailTemplate.entries.associateWith { "tpl_${it.name.lowercase()}" }
+    private val ids = EmailTemplate.entries.associateWith { "tpl_${it.name.lowercase()}" }.toMutableMap()
+
+    /** The ids as the admin has them now: asked on every send, so a change needs no restart. */
+    private val templates =
+        object : EmailTemplateIds {
+            override suspend fun idOf(template: EmailTemplate): String? = ids[template]
+        }
     private val email =
         ResendEmail(
             "re_key",
@@ -85,21 +94,43 @@ class ResendEmailTest {
         }
 
     @Test
-    fun `a template with no id configured is refused without calling Resend`() =
+    fun `a merchant's sign-in code goes out under its own template, with the code and how long it lasts`() =
         runBlocking<Unit> {
-            val unpublished =
-                ResendEmail(
-                    "re_key",
-                    "Circaso <no-reply@circaso.com>",
-                    templates - EmailTemplate.PIN_VAULT_OPENED,
-                    clients.named("resend") { baseUrl = "https://api.resend.com" },
-                )
+            email.send("pay@crynce.co.ke", Email.MerchantSignInCode("482913", 10))
+
+            assertEquals(
+                Template("tpl_merchant_sign_in_code", Variables(code = "482913", minutes = 10)),
+                Json.decodeFromString<Sent>(clients.last.text()).template,
+            )
+            assertEquals("MerchantSignInCode(***)", Email.MerchantSignInCode("482913", 10).toString())
+        }
+
+    @Test
+    fun `a template with no id fails that one send as unavailable, without calling Resend, and the rest go`() =
+        runBlocking<Unit> {
+            ids.remove(EmailTemplate.MERCHANT_SIGN_IN_CODE)
+            ids[EmailTemplate.PIN_VAULT_OPENED] = " "
             val before = clients.requests.size
 
-            val result = unpublished.send("sam@example.com", Email.PinVaultOpened("iPhone 16"))
+            val code = email.send("pay@crynce.co.ke", Email.MerchantSignInCode("482913", 10))
+            val vault = email.send("sam@example.com", Email.PinVaultOpened("iPhone 16"))
 
-            assertIs<Resource.Error>(result)
+            assertIs<IntegrationError.Unavailable>((code as Resource.Error).error)
+            assertIs<IntegrationError.Unavailable>((vault as Resource.Error).error)
             assertEquals(before, clients.requests.size, "nothing was sent")
+            assertIs<Resource.Success<*>>(email.send("sam@example.com", Email.Welcome))
+        }
+
+    @Test
+    fun `an id set in the admin is used by the very next send`() =
+        runBlocking<Unit> {
+            ids.remove(EmailTemplate.WELCOME)
+            assertIs<Resource.Error>(email.send("sam@example.com", Email.Welcome))
+
+            ids[EmailTemplate.WELCOME] = "tpl_welcome_v2"
+            assertIs<Resource.Success<*>>(email.send("sam@example.com", Email.Welcome))
+
+            assertEquals("tpl_welcome_v2", Json.decodeFromString<Sent>(clients.last.text()).template.id)
         }
 
     @Test

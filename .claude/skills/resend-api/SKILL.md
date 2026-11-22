@@ -59,7 +59,7 @@ Body (what we send):
 - The wording and layout live in the Resend dashboard; code names a template (`EmailTemplate`) and passes variables. Never build HTML in code.
 - Never log the address or the variables; log the template name and status only.
 - Emails are security notices: no codes, no sign-in links, no phone numbers (see `docs/email-templates.md`).
-- Adding an `EmailTemplate` entry means a new `INTEGRATIONS_EMAIL_TEMPLATES_<NAME>` setting; startup stops if one is missing.
+- Template ids are rows staff set in the admin (`ops.email_templates`, decision 2026-11-22), read by `ResendEmail` through `EmailTemplateIds` on each send; the old `INTEGRATIONS_EMAIL_TEMPLATES_<NAME>` variables are import-once seeds. Adding an `EmailTemplate` entry needs no setting: until its id is set in the admin that one email isn't sent, and the server starts all the same.
 
 ## Templates (dashboard)
 

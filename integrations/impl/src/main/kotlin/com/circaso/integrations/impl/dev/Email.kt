@@ -8,7 +8,11 @@ import org.slf4j.LoggerFactory
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** Local runs: prints the template name to the console; the address and variables stay out of the log. */
+/**
+ * Local runs: prints the template name to the console; the address and variables stay out of the log. The one
+ * exception is a merchant's sign-in code, printed as `LogSms` prints a phone's code: with no real email there is no
+ * other way for a developer to read it. A real provider never logs it.
+ */
 class LogEmail : EmailGateway {
     private val log = LoggerFactory.getLogger(LogEmail::class.java)
 
@@ -17,7 +21,11 @@ class LogEmail : EmailGateway {
         email: Email,
         idempotencyKey: String?,
     ): Resource<EmailReceipt> {
-        log.info("email: {}", email.template)
+        if (email is Email.MerchantSignInCode) {
+            log.info("email: {} code={} (valid {} min)", email.template, email.code, email.minutes)
+        } else {
+            log.info("email: {}", email.template)
+        }
         return Resource.success(EmailReceipt(UUID.randomUUID().toString(), "log"))
     }
 }

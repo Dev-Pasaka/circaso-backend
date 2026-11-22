@@ -366,6 +366,38 @@ internal object ApiDocsCatalog {
                             "- **Turning off** (SH3) deletes what the page showed at once; a deleted account's " +
                             "links go with it.",
                     ),
+                    DocTag(
+                        "Ramp",
+                        "Buying USDC with M-Pesa from a partner merchant. Circaso's engine matches the order to a " +
+                            "merchant who is online with enough USDC; you never pick or see a list of merchants.\n\n" +
+                            "- **Who can use it:** each network's ramp is `OFF`, `PREVIEW` (only people staff let " +
+                            "in) or `ON`. Anyone else gets `ramp.unavailable` on R1, R2 and R3: hide the feature.\n" +
+                            "- **Quote, then order:** R2 prices an amount (the fee is inside what you pay, and the " +
+                            "quote shows it); R3 sends an M-Pesa prompt to your own verified number.\n" +
+                            "- **Nothing is released on a guess:** the USDC is sent only after M-Pesa's own " +
+                            "records confirm the payment and it matches the order; it then reaches your wallet " +
+                            "on the quote's chain within seconds, as an ordinary incoming payment.\n" +
+                            "- **Following an order:** `ramp` / `order.updated` frames at every step (a push when " +
+                            "it arrives or doesn't go through, never an amount), or R4.\n" +
+                            "- **One order at a time**; selling (USDC to M-Pesa) isn't open yet.",
+                    ),
+                    DocTag(
+                        "Merchant portal",
+                        "For `merchants.circaso.com`, not the app: a partner merchant's own account, which supplies " +
+                            "the USDC float and their own M-Pesa (PayHero) account, and does nothing per trade.\n\n" +
+                            "- **Sign in** with an email and a one-time code (MA1, MA2). The session goes in " +
+                            "`X-Merchant-Session`, never `Authorization`; it lasts 12 hours.\n" +
+                            "- **Set up:** your profile (RM1), then staff approve you and the float wallet to " +
+                            "fund appears on RM2; connect PayHero under a 6-digit PIN (RM5) and paste the " +
+                            "callback address it answers into PayHero.\n" +
+                            "- **Your PayHero credentials are yours:** they are sealed under your PIN, and " +
+                            "Circaso can't read them without it. Going online (RM6) unlocks them for a trading " +
+                            "window only.\n" +
+                            "- **Money:** RM7 your orders, RM8 what you made in a period and what Circaso's share " +
+                            "was, RM15 the statement line by line. Circaso's share is held in your float and " +
+                            "swept once a day.\n" +
+                            "- Every state change takes an `Idempotency-Key`; money routes take `X-Wallet-Network`.",
+                    ),
                 ),
             ),
             DocGroup(

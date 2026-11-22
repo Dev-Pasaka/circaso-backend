@@ -1,6 +1,7 @@
 package com.circaso.integrations.api
 
 import com.circaso.shared.ErrorKind
+import com.circaso.shared.Money
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.math.BigDecimal
@@ -31,7 +32,8 @@ interface TreasuryCustody {
     ): Resource<String>
 
     /**
-     * Creates one externally owned wallet per chain of [blockchains] in [walletSetId], all under [refId] (on EVM
+     * Creates one wallet per chain of [blockchains] in [walletSetId], of [TreasuryWalletRequest.accountType]
+     * (externally owned unless the request says otherwise), all under [refId] (on EVM
      * chains wallets that share a set and a `refId` share one address). The same [idempotencyKey] answers the same
      * wallets.
      */
@@ -89,7 +91,17 @@ data class TreasuryWalletRequest(
     val name: String,
     val refId: String,
     val idempotencyKey: UUID,
-)
+    /**
+     * `EOA` (pays its own network fee; the fee wallets) or `SCA` (a smart-contract account, whose fee the provider's
+     * gas sponsorship pays; the ramp's merchant float, decision 2026-11-22).
+     */
+    val accountType: String = ACCOUNT_EOA,
+) {
+    companion object {
+        const val ACCOUNT_EOA = "EOA"
+        const val ACCOUNT_SCA = "SCA"
+    }
+}
 
 /** One of Circaso's own wallets at the provider. [developerOwned] false is a user's wallet in the same account. */
 data class TreasuryWallet(
@@ -155,3 +167,21 @@ class TreasuryRefusal(val status: Int, val providerCode: Int?) :
         "The custody provider refused the request (HTTP $status${providerCode?.let { ", code $it" }.orEmpty()}).",
         ErrorKind.INVALID,
     )
+
+/**
+ * The Koin name a stand-in [TreasuryCustody] is bound under when custody isn't a real provider (`log`, `fake`). It is
+ * named, never the plain binding, so the fee wallets (which ask for the plain one) keep reporting that there is no
+ * treasury; the ramp, which must run end to end locally with no money anywhere, asks for this one when the plain one
+ * is absent.
+ */
+const val DEV_TREASURY = "treasury.dev"
+
+/**
+ * A merchant float wallet's USDC as the provider holds it now (the ramp, decision 2026-11-22). Needs the account's API
+ * key only, so it is bound in both processes: the app reads float to route an order, and never holds the signing
+ * secret. [TreasuryCustody] stays in the ops process.
+ */
+interface MerchantFloat {
+    /** The USDC in [walletId]; zero when it holds none. `Unavailable` when the provider can't say. */
+    suspend fun balance(network: Network, walletId: String): Resource<Money>
+}

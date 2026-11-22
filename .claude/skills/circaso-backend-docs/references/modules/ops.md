@@ -80,6 +80,7 @@ Every change needs an `Idempotency-Key`; limits: `OPS_RATE_LIMIT_PER_MINUTE` per
 ## Data
 
 - `ops.staff` (staff_id, email unique lowercased, role, active, added_by, created_at, updated_at, version).
+- `ops.email_templates` (template primary key, provider_template_id, updated_by, updated_at, version; `V2__email_templates.sql`): the provider's template id for each email (decision 2026-11-22). A change is `version = version + 1 WHERE version = ?`.
 - `ops.audit_log` (entry_id UUIDv7, actor id/email/role, action, target type/id, reason, detail, outcome
   PENDING|SUCCEEDED|FAILED, error_code, request_id, at, finished_at), indexed by actor, action and target, newest first.
   A line is written `PENDING` before the action and finished after: no action without its line.
@@ -130,3 +131,12 @@ All under `/v1/ops/fee-wallets`, inside `networkFiltered { }`. Reads need `fees.
 - **`POST /fee-wallets/withdrawals`** `{ network, blockchain, asset, amountMinor, destinationId, reason }` → the withdrawal as it stands (`SENT`, or `PENDING` when Circle couldn't be reached: it is sent once, as soon as it can be). `amountMinor` is the whole amount in the coin's smallest unit **as text** (`"2500000"`), like every amount of the wallet's; a decimal, a sign or a JSON number is `request.malformed`. The request's `Idempotency-Key` is also the withdrawal's own key at the wallet. Audited as `fee_withdrawal.create` on the destination's id: the line is written before Circle is asked with what was asked (`MAINNET BASE 2500000 USDC (minor units) to destination <id>`), and finished with the outcome (`… to 0x… (label); withdrawal <id> SENT`) or the wallet's error code.
 
 Every write needs a `reason` (`ops.reason_required`), except removing a destination, where it is optional. Errors pass through from the wallet: `fees.destination_not_ready`, `fees.insufficient_balance`, `fees.insufficient_gas`, `fees.destination_not_found`, `fees.destination_exists`, `fees.destination_is_fee_wallet`, `fees.asset_unsupported`, `fees.withdrawals_unavailable`, `fees.withdrawal_refused`, `fees.custody_unavailable`, `fees.invalid`. Audit targets `fee_destination` and `fee_withdrawal`.
+
+## Email templates (decision 2026-11-22)
+
+The environment holds keys and secrets only, so the id each email is sent with at the provider (Resend) is a row staff set here. `integrations:api` declares `EmailTemplateIds` and this module answers it in both processes (`StoredEmailTemplateIds`), behind `EmailTemplateBook`: one read of `ops.email_templates` at most every ten seconds per process; on a database error the last read stays in force. The first time an email has no row, the old `INTEGRATIONS_EMAIL_TEMPLATES_<NAME>` variable is copied in once if it is still set (`EmailTemplateSeeds`, from integrations), and never read for that email again. An email with no id is not sent; nothing stops a server from starting.
+
+- **`GET /email-templates`** (`email_templates.read`: FINANCE, ADMIN) → `{ templates: [ { template, providerTemplateId, set, version, updatedBy, updatedAt } ] }`: every `EmailTemplate`, `set: false` and `version: 0` while it has no id; `updatedBy` null for an imported one.
+- **`PUT /email-templates/{template}`** (`email_templates.manage`: ADMIN) `{ providerTemplateId, version, reason }` → the row. `version` is the one read (0 when none was set; left out, save over whatever is there). Audited as `email_template.set` on target `email_template` with the id before and after. Errors: `ops.reason_required`, `ops.email_template_not_found` (404), `ops.email_template_invalid` (400: blank, spaces or over 200 characters), `ops.email_template_changed` (409).
+
+The admin portal has no page for these routes yet.

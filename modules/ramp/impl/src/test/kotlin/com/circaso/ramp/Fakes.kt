@@ -1,0 +1,538 @@
+package com.circaso.ramp
+
+import com.circaso.identity.api.AccountDirectory
+import com.circaso.identity.api.AccountKind
+import com.circaso.identity.api.AccountStatus
+import com.circaso.integrations.api.CollectionBalances
+import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.CollectionProviders
+import com.circaso.integrations.api.CollectionReceipt
+import com.circaso.integrations.api.CollectionRequest
+import com.circaso.integrations.api.CollectionState
+import com.circaso.integrations.api.CollectionStatus
+import com.circaso.integrations.api.Email
+import com.circaso.integrations.api.EmailGateway
+import com.circaso.integrations.api.EmailReceipt
+import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.MerchantFloat
+import com.circaso.integrations.api.MobileCollections
+import com.circaso.integrations.api.PayoutReceipt
+import com.circaso.integrations.api.PayoutRequest
+import com.circaso.integrations.api.TreasuryAccess
+import com.circaso.integrations.api.TreasuryBalance
+import com.circaso.integrations.api.TreasuryCustody
+import com.circaso.integrations.api.TreasuryRefusal
+import com.circaso.integrations.api.TreasuryTransaction
+import com.circaso.integrations.api.TreasuryTransactionState
+import com.circaso.integrations.api.TreasuryTransfer
+import com.circaso.integrations.api.TreasuryWallet
+import com.circaso.integrations.api.TreasuryWalletRequest
+import com.circaso.messaging.api.ChatId
+import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.CodeCheck
+import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.Order
+import com.circaso.ramp.domain.models.OrderState
+import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.UnlockedKeys
+import com.circaso.ramp.domain.ports.FrameSender
+import com.circaso.ramp.domain.ports.KycGate
+import com.circaso.ramp.domain.ports.PinAttempts
+import com.circaso.ramp.domain.ports.Pricing
+import com.circaso.ramp.domain.ports.RampAlerts
+import com.circaso.ramp.domain.ports.RampCounters
+import com.circaso.ramp.domain.ports.RampOutbox
+import com.circaso.ramp.domain.ports.SignInCodes
+import com.circaso.ramp.domain.ports.TradingSessions
+import com.circaso.ramp.domain.ports.Transactor
+import com.circaso.ramp.domain.ports.UsdcContracts
+import com.circaso.ramp.domain.support.MerchantSignIn
+import com.circaso.ramp.domain.support.PinGuard
+import com.circaso.shared.Asset
+import com.circaso.shared.DomainEvent
+import com.circaso.shared.EventBus
+import com.circaso.shared.EventEnvelope
+import com.circaso.shared.EventId
+import com.circaso.shared.EventSubscription
+import com.circaso.shared.Money
+import com.circaso.shared.Network
+import com.circaso.shared.PhoneNumber
+import com.circaso.shared.Resource
+import com.circaso.shared.UserId
+import com.circaso.wallet.api.GroupWalletSummary
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.TransferSummary
+import com.circaso.wallet.api.Wallets
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.Json
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.util.UUID
+
+const val USDC_CONTRACT = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+
+/** A clock the test moves by hand. */
+class TestClock(var now: Instant = Instant.parse("2026-11-22T12:00:00Z")) : Clock() {
+    override fun getZone(): ZoneId = ZoneOffset.UTC
+
+    override fun withZone(zone: ZoneId?): Clock = this
+
+    override fun instant(): Instant = now
+
+    fun advance(seconds: Long) {
+        now = now.plusSeconds(seconds)
+    }
+}
+
+/** Runs the block as it is; an error from `attempt` is simply returned (the memory repositories have nothing to undo). */
+class DirectTransactor : Transactor {
+    override suspend fun <T> run(operation: String, block: suspend () -> T): T = block()
+
+    override suspend fun <T> attempt(operation: String, block: suspend () -> Resource<T>): Resource<T> = block()
+}
+
+class RecordingOutbox : RampOutbox {
+    val written = mutableListOf<EventEnvelope>()
+
+    override suspend fun write(envelope: EventEnvelope) {
+        written += envelope
+    }
+}
+
+class MemoryBus : EventBus {
+    val published = mutableListOf<EventEnvelope>()
+
+    override fun <E : DomainEvent> envelope(event: E, eventSerializer: KSerializer<E>): EventEnvelope =
+        EventEnvelope(
+            EventId.new(),
+            event.type,
+            1,
+            Instant.now(),
+            "ramp",
+            null,
+            Json.encodeToJsonElement(eventSerializer, event),
+        )
+
+    override suspend fun publish(envelope: EventEnvelope) {
+        published += envelope
+    }
+
+    override fun subscribe(subscription: EventSubscription) = Unit
+
+    fun types(): List<String> = published.map { it.type }
+}
+
+class RecordingFrames : FrameSender {
+    val states = mutableListOf<OrderState>()
+
+    override suspend fun orderUpdated(order: Order) {
+        states += order.state
+    }
+}
+
+class RecordingAlerts : RampAlerts {
+    val reasons = mutableListOf<String>()
+    val stuck = mutableListOf<String>()
+
+    override fun needsReview(order: Order, reason: String) {
+        reasons += reason
+    }
+
+    override fun stuck(what: String, reason: String) {
+        stuck += reason
+    }
+}
+
+class MemoryCounters : RampCounters {
+    val prompts = mutableMapOf<UserId, Long>()
+    val daily = mutableMapOf<Pair<UserId, Network>, Long>()
+
+    override suspend fun countPrompt(userId: UserId): Long = prompts.merge(userId, 1, Long::plus)!!
+
+    override suspend fun reserveDaily(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+        limitMinor: Long,
+    ): Boolean {
+        val total = (daily[userId to network] ?: 0) + fiatMinor
+        if (total > limitMinor) return false
+        daily[userId to network] = total
+        return true
+    }
+
+    override suspend fun giveBackDaily(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+    ) {
+        daily[userId to network] = (daily[userId to network] ?: 0) - fiatMinor
+    }
+}
+
+class FakeAccounts : AccountDirectory {
+    val statuses = mutableMapOf<UserId, AccountStatus>()
+    val phones = mutableMapOf<PhoneNumber, UserId>()
+
+    override suspend fun status(userId: UserId) = statuses[userId]
+
+    override suspend fun kind(userId: UserId): AccountKind? = null
+
+    override suspend fun resolvePhones(phones: Set<PhoneNumber>) =
+        phones.mapNotNull { number -> this.phones[number]?.let { number to it } }.toMap()
+}
+
+class FakeWallets : Wallets {
+    val addresses = mutableMapOf<Pair<UserId, String>, String>()
+
+    override suspend fun hasWallet(userId: UserId) = addresses.keys.any { it.first == userId }
+
+    override suspend fun transfer(transferId: TransferId): TransferSummary? = null
+
+    override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = null
+
+    override suspend fun depositAddress(userId: UserId, blockchain: String) = addresses[userId to blockchain]
+}
+
+class FakeKyc(var verified: Boolean = false) : KycGate {
+    override suspend fun isVerified(userId: UserId) = verified
+}
+
+/** 130 shillings a dollar; the fee is the settings' rate of what is paid: 1 300 at 2 % is a fee of 26, buying 9.8 USDC. */
+class FixedPricing : Pricing {
+    var failure: Resource.Error? = null
+
+    override suspend fun price(
+        direction: Direction,
+        fiatMinor: Long?,
+        assetMinor: Long?,
+        feeBps: Int,
+    ): Resource<Priced> {
+        failure?.let { return it }
+        val paid = fiatMinor ?: (assetMinor!! * 130 / 10_000)
+        val fee = paid * feeBps / 10_000
+        return Resource.success(Priced(paid, (paid - fee) * 10_000 / 130, BigDecimal("130"), fee))
+    }
+}
+
+class FixedUsdc(var contract: String? = USDC_CONTRACT) : UsdcContracts {
+    override fun contractOn(network: Network, blockchain: String): String? = contract
+}
+
+/** The collections providers a pretend server offers, by name. */
+class FakeProviders(private val offered: Map<String, MobileCollections>) : CollectionProviders {
+    override val names: List<String> get() = offered.keys.toList()
+
+    override fun named(name: String): MobileCollections? = offered[name]
+}
+
+/** The payment provider: a prompt is `QUEUED` until the test says what the payer did, or sets any status at all. */
+class FakeCollections : MobileCollections {
+    val prompts = mutableListOf<CollectionRequest>()
+    val promptedWith = mutableListOf<CollectionCredentials>()
+    val statuses = mutableMapOf<String, CollectionStatus>()
+    val statusQueries = mutableListOf<String>()
+    val verified = mutableListOf<CollectionCredentials>()
+    var failure: IntegrationError? = null
+    var rejectCredentials = false
+
+    fun referenceOf(order: Order): String =
+        "PH-${prompts.indexOfFirst { it.reference == order.orderId.toString() } + 1}"
+
+    fun pay(order: Order, receipt: String? = "SKL${order.orderId.toString().takeLast(6)}") {
+        val prompt = prompts.first { it.reference == order.orderId.toString() }
+        statuses[referenceOf(order)] =
+            CollectionStatus(CollectionState.SUCCESS, prompt.amount, prompt.payer, prompt.reference, receipt)
+    }
+
+    fun fail(order: Order) {
+        statuses[referenceOf(order)] = CollectionStatus(CollectionState.FAILED, null, null, null, null)
+    }
+
+    override suspend fun requestPayment(
+        credentials: CollectionCredentials,
+        request: CollectionRequest,
+    ): Resource<CollectionReceipt> {
+        failure?.let { return Resource.error(it) }
+        prompts += request
+        promptedWith += credentials
+        val reference = "PH-${prompts.size}"
+        statuses[reference] = CollectionStatus(CollectionState.QUEUED, null, null, request.reference, null)
+        return Resource.success(CollectionReceipt(reference, "ws_CO_${prompts.size}"))
+    }
+
+    override suspend fun paymentStatus(
+        credentials: CollectionCredentials,
+        providerReference: String,
+    ): Resource<CollectionStatus> {
+        failure?.let { return Resource.error(it) }
+        statusQueries += providerReference
+        return Resource.success(statuses.getValue(providerReference))
+    }
+
+    override suspend fun payout(credentials: CollectionCredentials, request: PayoutRequest): Resource<PayoutReceipt> =
+        Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+
+    override suspend fun payoutStatus(
+        credentials: CollectionCredentials,
+        providerReference: String,
+    ): Resource<CollectionStatus> = Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+
+    override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> =
+        Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+
+    override suspend fun verify(credentials: CollectionCredentials): Resource<Unit> {
+        failure?.let { return Resource.error(it) }
+        if (rejectCredentials) return Resource.error(IntegrationError.Rejected("Wrong username or password."))
+        verified += credentials
+        return Resource.success(Unit)
+    }
+}
+
+/**
+ * The custodian's own wallets in memory, and the float reader over the same balances. A send stays in flight until
+ * the test settles it; the same key never sends twice. A wallet may also hold a token that only calls itself USDC.
+ */
+class FakeTreasury :
+    TreasuryCustody,
+    MerchantFloat {
+    val balances = mutableMapOf<String, Long>()
+    val impostors = mutableMapOf<String, Long>()
+    val sends = mutableListOf<TreasuryTransfer>()
+    val walletRequests = mutableListOf<TreasuryWalletRequest>()
+    val walletSets = mutableListOf<String>()
+    val transactions = mutableMapOf<String, TreasuryTransaction>()
+    val addresses = mutableMapOf<String, String>()
+    var failure: IntegrationError? = null
+    var access = TreasuryAccess.FULL
+    private val byKey = mutableMapOf<UUID, String>()
+
+    fun settle(
+        transactionId: String,
+        state: TreasuryTransactionState = TreasuryTransactionState.CONFIRMED,
+    ): TreasuryTransaction {
+        val hash = if (state == TreasuryTransactionState.CONFIRMED) "0xhash-$transactionId" else ""
+        val settled = transactions.getValue(transactionId).copy(state = state, txHash = hash)
+        transactions[transactionId] = settled
+        return settled
+    }
+
+    fun settleAll() = transactions.keys.toList().forEach { settle(it) }
+
+    override fun access(network: Network): TreasuryAccess = access
+
+    override suspend fun createWalletSet(
+        network: Network,
+        name: String,
+        idempotencyKey: UUID,
+    ): Resource<String> {
+        failure?.let { return Resource.error(it) }
+        walletSets += name
+        return Resource.success("set-${network.name.lowercase()}")
+    }
+
+    override suspend fun createWallets(
+        network: Network,
+        request: TreasuryWalletRequest,
+    ): Resource<List<TreasuryWallet>> {
+        failure?.let { return Resource.error(it) }
+        walletRequests += request
+        return Resource.success(
+            request.blockchains.map { chain ->
+                val id = "w-${request.refId}-$chain"
+                addresses[id] = "0x$id"
+                TreasuryWallet(id, request.walletSetId, chain, "0x$id", request.accountType, request.refId, true)
+            },
+        )
+    }
+
+    override suspend fun deriveWallet(
+        network: Network,
+        walletId: String,
+        blockchain: String,
+        name: String,
+        refId: String,
+    ): Resource<TreasuryWallet> = Resource.error(IntegrationError.NotImplemented("deriveWallet", "fake"))
+
+    override suspend fun findWallets(
+        network: Network,
+        address: String?,
+        blockchain: String?,
+        refId: String?,
+    ): Resource<List<TreasuryWallet>> = Resource.success(emptyList())
+
+    override suspend fun balances(network: Network, walletId: String): Resource<List<TreasuryBalance>> {
+        failure?.let { return Resource.error(it) }
+        val real =
+            balances[walletId]?.let {
+                TreasuryBalance(
+                    "usdc",
+                    "USDC",
+                    USDC_CONTRACT,
+                    6,
+                    false,
+                    it.toBigInteger(),
+                )
+            }
+        val fake = impostors[walletId]?.let { TreasuryBalance("scam", "USDC", "0xbad", 6, false, it.toBigInteger()) }
+        return Resource.success(listOfNotNull(fake, real))
+    }
+
+    override suspend fun balance(network: Network, walletId: String): Resource<Money> {
+        failure?.let { return Resource.error(it) }
+        return Resource.success(Money(balances[walletId] ?: 0, Asset.USDC))
+    }
+
+    override suspend fun estimateTransfer(network: Network, transfer: TreasuryTransfer): Resource<BigDecimal> =
+        Resource.success(BigDecimal.ZERO)
+
+    override suspend fun send(network: Network, transfer: TreasuryTransfer): Resource<TreasuryTransaction> {
+        failure?.let { return Resource.error(it) }
+        byKey[transfer.idempotencyKey]?.let { return Resource.success(transactions.getValue(it)) }
+        val held = balances[transfer.walletId] ?: 0
+        if (transfer.tokenId != "usdc" || BigInteger.valueOf(held) < transfer.amountMinor) {
+            return Resource.error(TreasuryRefusal(400, null))
+        }
+        balances[transfer.walletId] = held - transfer.amountMinor.toLong()
+        addresses.entries.firstOrNull { it.value == transfer.destinationAddress }?.let { (id, _) ->
+            balances[id] = (balances[id] ?: 0) + transfer.amountMinor.toLong()
+        }
+        sends += transfer
+        val transaction = TreasuryTransaction("tx-${sends.size}", TreasuryTransactionState.IN_FLIGHT, "", "")
+        transactions[transaction.transactionId] = transaction
+        byKey[transfer.idempotencyKey] = transaction.transactionId
+        return Resource.success(transaction)
+    }
+
+    override suspend fun transaction(network: Network, transactionId: String): Resource<TreasuryTransaction> {
+        failure?.let { return Resource.error(it) }
+        return Resource.success(transactions.getValue(transactionId))
+    }
+}
+
+class RecordingEmail : EmailGateway {
+    val sent = mutableListOf<Pair<String, Email>>()
+    var failure: IntegrationError? = null
+
+    fun lastCode(): String = (sent.last().second as Email.MerchantSignInCode).code
+
+    override suspend fun send(
+        to: String,
+        email: Email,
+        idempotencyKey: String?,
+    ): Resource<EmailReceipt> {
+        failure?.let { return Resource.error(it) }
+        sent += to to email
+        return Resource.success(EmailReceipt("m-${sent.size}", "fake"))
+    }
+}
+
+/** Unlocked keys in memory, as the node keeps them; [marks] stands in for the `rmp:session` keys in Redis. */
+class MemorySessions : TradingSessions {
+    val keys = mutableMapOf<MerchantId, UnlockedKeys>()
+    val marks = mutableMapOf<MerchantId, Instant>()
+
+    override suspend fun unlock(
+        merchantId: MerchantId,
+        keys: UnlockedKeys,
+        until: Instant,
+    ) {
+        this.keys[merchantId] = keys
+        marks[merchantId] = until
+    }
+
+    override fun of(merchantId: MerchantId): UnlockedKeys? = keys[merchantId]
+
+    override fun replace(merchantId: MerchantId, keys: UnlockedKeys) {
+        if (merchantId in this.keys) this.keys[merchantId] = keys
+    }
+
+    override suspend fun end(merchantId: MerchantId, keepKeys: Boolean) {
+        if (!keepKeys) keys.remove(merchantId)
+        marks.remove(merchantId)
+    }
+
+    override fun held(): Set<MerchantId> = keys.keys.toSet()
+
+    /** The node restarted: nothing it held survives. */
+    fun restart() = keys.clear()
+}
+
+class MemoryPinAttempts(private val clock: Clock) : PinAttempts {
+    private class Tries(var count: Long, val until: Instant)
+
+    private val tries = mutableMapOf<MerchantId, Tries>()
+
+    private fun live(merchantId: MerchantId): Tries? = tries[merchantId]?.takeIf { it.until.isAfter(clock.instant()) }
+
+    override suspend fun lockedFor(merchantId: MerchantId): Duration? =
+        live(merchantId)?.takeIf { it.count >= PinGuard.MAX_TRIES }?.let { Duration.between(clock.instant(), it.until) }
+
+    override suspend fun failed(merchantId: MerchantId): Long {
+        val current = live(merchantId) ?: Tries(0, clock.instant().plusSeconds(PinGuard.LOCK_SECONDS))
+        current.count += 1
+        tries[merchantId] = current
+        return current.count
+    }
+
+    override suspend fun clear(merchantId: MerchantId) {
+        tries.remove(merchantId)
+    }
+}
+
+/** The sign-in code rules in memory: one request a minute and three in ten per email, ten an hour per address. */
+class MemorySignInCodes(private val clock: Clock) : SignInCodes {
+    private val codes = mutableMapOf<String, Pair<String, Instant>>()
+    private val tries = mutableMapOf<String, Int>()
+    private val asked = mutableMapOf<String, MutableList<Instant>>()
+    private val from = mutableMapOf<String, MutableList<Instant>>()
+
+    override suspend fun admit(emailKey: String, address: String): Duration? {
+        val now = clock.instant()
+        val fromAddress =
+            from
+                .getOrPut(
+                    address,
+                ) { mutableListOf() }
+                .apply { removeIf { it.isBefore(now.minusSeconds(3_600)) } }
+        fromAddress += now
+        if (fromAddress.size > 10) return Duration.between(now, fromAddress.first().plusSeconds(3_600))
+        val byEmail =
+            asked
+                .getOrPut(
+                    emailKey,
+                ) { mutableListOf() }
+                .apply { removeIf { it.isBefore(now.minusSeconds(600)) } }
+        byEmail.lastOrNull()?.plusSeconds(MerchantSignIn.RESEND_SECONDS)?.takeIf { it.isAfter(now) }?.let {
+            return Duration.between(now, it)
+        }
+        byEmail += now
+        if (byEmail.size > 3) return Duration.between(now, byEmail.first().plusSeconds(600))
+        return null
+    }
+
+    override suspend fun keep(emailKey: String, codeDigest: String) {
+        codes[emailKey] = codeDigest to clock.instant().plusSeconds(600)
+        tries.remove(emailKey)
+    }
+
+    override suspend fun check(emailKey: String, codeDigest: String): CodeCheck {
+        val (kept, until) = codes[emailKey] ?: return CodeCheck.WRONG
+        if (!until.isAfter(clock.instant())) return CodeCheck.WRONG
+        if (tries.merge(emailKey, 1, Int::plus)!! > 5) {
+            codes.remove(emailKey)
+            return CodeCheck.LOCKED
+        }
+        if (kept != codeDigest) return CodeCheck.WRONG
+        codes.remove(emailKey)
+        return CodeCheck.MATCH
+    }
+}

@@ -7,10 +7,13 @@ import com.circaso.identity.api.SupportAccounts
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.integrations.api.AiBilling
+import com.circaso.integrations.api.EmailTemplateSeeds
 import com.circaso.messaging.api.GroupReports
 import com.circaso.ops.di.opsModule
 import com.circaso.ops.domain.repositories.AuditRepository
+import com.circaso.ops.domain.repositories.EmailTemplateRepository
 import com.circaso.ops.domain.repositories.StaffRepository
+import com.circaso.ramp.api.RampAdmin
 import com.circaso.shared.StaffRole
 import com.circaso.support.api.DiagnosticLogDesk
 import com.circaso.support.api.SupportDesk
@@ -38,7 +41,11 @@ import org.koin.dsl.module
 import java.util.UUID
 
 /** The whole ops module over fakes of every contract it reaches, the way `app` wires it, minus the database. */
-class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOTSTRAP)) {
+class OpsHarness(
+    env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOTSTRAP),
+    val emailTemplates: MemoryEmailTemplates = MemoryEmailTemplates(),
+    val emailSeeds: EnvSeeds = EnvSeeds(),
+) {
     val accounts = FakeAccounts()
     val profiles = FakeProfiles()
     val groups = FakeGroups()
@@ -54,6 +61,7 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
     val logs = FakeLogDesk()
     val networks = FakeNetworks()
     val feeWallets = FakeFeeWallets()
+    val ramp = FakeRampAdmin()
 
     val koin: Koin =
         koinApplication {
@@ -67,6 +75,9 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
                     single<WalletReports> { wallets }
                     single<NetworkAdmin> { networks }
                     single<FeeWalletAdmin> { feeWallets }
+                    single<RampAdmin> { ramp }
+                    single<EmailTemplateRepository> { emailTemplates }
+                    single<EmailTemplateSeeds> { emailSeeds }
                     single<SupportDesk> { desk }
                     single<SupportAccounts> { supportAccounts }
                     single<StaffRepository> { staff }
@@ -102,6 +113,10 @@ class OpsHarness(env: Map<String, String> = mapOf("OPS_BOOTSTRAP_ADMINS" to BOOT
     companion object {
         const val ROLE_HEADER = "X-Test-Role"
         const val BOOTSTRAP = "founder@circaso.com"
+
+        /** Another process over the same table and the same environment. */
+        fun withEmailTemplates(rows: MemoryEmailTemplates, seeds: EnvSeeds) =
+            OpsHarness(emailTemplates = rows, emailSeeds = seeds)
     }
 }
 

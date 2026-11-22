@@ -33,3 +33,14 @@ interface WebhookVendor {
     /** Turns the verified body into a Circaso event (`SmsDelivered`). */
     suspend fun translate(body: ByteArray): Resource<Unit>
 }
+
+/**
+ * A vendor whose callbacks carry a key in the address, `/v1/hooks/{name}/{key}` (decision 2026-11-22): the ramp gives
+ * each merchant a callback address of their own for a provider that signs nothing, so the unguessable key is the
+ * shared secret. The gateway runs its usual guards on [keyed]'s vendor; a callback on the plain `/v1/hooks/{name}`
+ * goes to this vendor itself, which refuses it.
+ */
+interface KeyedWebhookVendor : WebhookVendor {
+    /** This vendor for one delivery on the address that ends in [key]. */
+    fun keyed(key: String): WebhookVendor
+}

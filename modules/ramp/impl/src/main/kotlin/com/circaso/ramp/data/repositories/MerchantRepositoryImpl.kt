@@ -1,0 +1,372 @@
+package com.circaso.ramp.data.repositories
+
+import com.circaso.infrastructure.api.Database
+import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.data.tables.MerchantCredentialsTable
+import com.circaso.ramp.data.tables.MerchantSessionsTable
+import com.circaso.ramp.data.tables.MerchantWalletsTable
+import com.circaso.ramp.data.tables.MerchantsTable
+import com.circaso.ramp.data.tables.RevenueWalletsTable
+import com.circaso.ramp.domain.models.Candidate
+import com.circaso.ramp.domain.models.Merchant
+import com.circaso.ramp.domain.models.MerchantSession
+import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.RevenueWallet
+import com.circaso.ramp.domain.models.SealedCredentials
+import com.circaso.ramp.domain.repositories.CredentialRepository
+import com.circaso.ramp.domain.repositories.MerchantRepository
+import com.circaso.ramp.domain.repositories.MerchantWalletRepository
+import com.circaso.ramp.domain.repositories.RevenueWalletRepository
+import com.circaso.ramp.domain.repositories.SessionRepository
+import com.circaso.shared.Network
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.singleOrNull
+import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.JoinType
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.r2dbc.deleteWhere
+import org.jetbrains.exposed.v1.r2dbc.insertIgnore
+import org.jetbrains.exposed.v1.r2dbc.select
+import org.jetbrains.exposed.v1.r2dbc.selectAll
+import org.jetbrains.exposed.v1.r2dbc.update
+import org.jetbrains.exposed.v1.r2dbc.upsert
+import java.time.Instant
+
+class MerchantRepositoryImpl(private val database: Database) : MerchantRepository {
+    override suspend fun find(merchantId: MerchantId): Merchant? =
+        database.tx("merchants.find") { one { MerchantsTable.merchantId eq merchantId.value } }
+
+    override suspend fun byEmail(email: String): Merchant? =
+        database.tx("merchants.by-email") { one { MerchantsTable.contactEmail eq email } }
+
+    override suspend fun byCallbackKey(callbackKey: String): Merchant? =
+        database.tx("merchants.by-callback-key") { one { MerchantsTable.callbackKey eq callbackKey } }
+
+    override suspend fun insert(merchant: Merchant): Boolean =
+        database.tx("merchants.insert") {
+            MerchantsTable
+                .insertIgnore {
+                    it[merchantId] = merchant.merchantId.value
+                    it[contactEmail] = merchant.email
+                    it[displayName] = merchant.displayName
+                    it[contactPhone] = merchant.contactPhone
+                    it[state] = merchant.state.name
+                    it[callbackKey] = merchant.callbackKey
+                    it[onlineUntil] = merchant.onlineUntil
+                    it[lastAssignedAt] = merchant.lastAssignedAt
+                    it[approvedBy] = merchant.approvedBy
+                    it[approvedAt] = merchant.approvedAt
+                    it[createdAt] = merchant.createdAt
+                }.insertedCount > 0
+        }
+
+    override suspend fun page(before: MerchantId?, limit: Int): List<Merchant> =
+        database.tx("merchants.page") {
+            MerchantsTable
+                .selectAll()
+                .where { if (before == null) Op.TRUE else MerchantsTable.merchantId less before.value }
+                .orderBy(MerchantsTable.merchantId to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toMerchant() }
+                .toList()
+        }
+
+    override suspend fun candidates(
+        network: Network,
+        blockchain: String,
+        until: Instant,
+    ): List<Candidate> =
+        database.tx("merchants.candidates") {
+            MerchantsTable
+                .join(MerchantWalletsTable, JoinType.INNER, MerchantsTable.merchantId, MerchantWalletsTable.merchantId)
+                .selectAll()
+                .where {
+                    (MerchantsTable.state eq MerchantState.APPROVED.name) and
+                        (MerchantsTable.onlineUntil greater until) and
+                        (MerchantWalletsTable.network eq network.name) and
+                        (MerchantWalletsTable.blockchain eq blockchain)
+                }.map { Candidate(it.toMerchant(), it.toWallet()) }
+                .toList()
+        }
+
+    override suspend fun lock(merchantId: MerchantId): Merchant? =
+        database.tx("merchants.lock") {
+            MerchantsTable
+                .selectAll()
+                .where { MerchantsTable.merchantId eq merchantId.value }
+                .forUpdate(ForUpdateOption.ForUpdate)
+                .map { it.toMerchant() }
+                .singleOrNull()
+        }
+
+    override suspend fun markAssigned(merchantId: MerchantId, at: Instant) {
+        database.tx("merchants.mark-assigned") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) { it[lastAssignedAt] = at }
+        }
+    }
+
+    override suspend fun setProfile(
+        merchantId: MerchantId,
+        displayName: String,
+        contactPhone: String,
+    ) {
+        database.tx("merchants.set-profile") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[MerchantsTable.displayName] = displayName
+                it[MerchantsTable.contactPhone] = contactPhone
+            }
+            MerchantsTable.update({
+                (MerchantsTable.merchantId eq merchantId.value) and (MerchantsTable.state eq MerchantState.NEW.name)
+            }) {
+                it[state] = MerchantState.APPLIED.name
+            }
+        }
+    }
+
+    override suspend fun setState(
+        merchantId: MerchantId,
+        to: MerchantState,
+        from: Set<MerchantState>,
+        by: String,
+        at: Instant,
+    ): Boolean =
+        database.tx("merchants.set-state") {
+            MerchantsTable.update({
+                (MerchantsTable.merchantId eq merchantId.value) and (MerchantsTable.state inList from.map { it.name })
+            }) {
+                it[state] = to.name
+                if (to == MerchantState.APPROVED) {
+                    it[approvedBy] = by
+                    it[approvedAt] = at
+                }
+            } > 0
+        }
+
+    override suspend fun setCallbackKey(merchantId: MerchantId, callbackKey: String) {
+        database.tx("merchants.set-callback-key") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[MerchantsTable.callbackKey] = callbackKey
+            }
+        }
+    }
+
+    override suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?) {
+        database.tx("merchants.set-online") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) { it[onlineUntil] = until }
+        }
+    }
+
+    override suspend fun endPassedWindows(now: Instant): Int =
+        database.tx("merchants.end-passed-windows") {
+            MerchantsTable.update({ MerchantsTable.onlineUntil less now }) { it[onlineUntil] = null }
+        }
+
+    private suspend fun one(where: () -> Op<Boolean>): Merchant? =
+        MerchantsTable
+            .selectAll()
+            .where { where() }
+            .map { it.toMerchant() }
+            .singleOrNull()
+}
+
+private fun ResultRow.toMerchant() =
+    Merchant(
+        merchantId = MerchantId(this[MerchantsTable.merchantId]),
+        email = this[MerchantsTable.contactEmail],
+        displayName = this[MerchantsTable.displayName],
+        contactPhone = this[MerchantsTable.contactPhone],
+        state = MerchantState.valueOf(this[MerchantsTable.state]),
+        callbackKey = this[MerchantsTable.callbackKey],
+        onlineUntil = this[MerchantsTable.onlineUntil],
+        lastAssignedAt = this[MerchantsTable.lastAssignedAt],
+        approvedBy = this[MerchantsTable.approvedBy],
+        approvedAt = this[MerchantsTable.approvedAt],
+        createdAt = this[MerchantsTable.createdAt],
+    )
+
+private fun ResultRow.toWallet() =
+    MerchantWallet(
+        merchantId = MerchantId(this[MerchantWalletsTable.merchantId]),
+        network = Network.valueOf(this[MerchantWalletsTable.network]),
+        blockchain = this[MerchantWalletsTable.blockchain],
+        custodyWalletId = this[MerchantWalletsTable.custodyWalletId],
+        address = this[MerchantWalletsTable.walletAddress],
+    )
+
+class MerchantWalletRepositoryImpl(private val database: Database) : MerchantWalletRepository {
+    override suspend fun find(merchantId: MerchantId, network: Network): MerchantWallet? =
+        database.tx("merchant-wallets.find") {
+            MerchantWalletsTable
+                .selectAll()
+                .where {
+                    (MerchantWalletsTable.merchantId eq merchantId.value) and
+                        (MerchantWalletsTable.network eq network.name)
+                }.map { it.toWallet() }
+                .singleOrNull()
+        }
+
+    override suspend fun ofMerchant(merchantId: MerchantId): List<MerchantWallet> =
+        database.tx("merchant-wallets.of-merchant") {
+            MerchantWalletsTable
+                .selectAll()
+                .where { MerchantWalletsTable.merchantId eq merchantId.value }
+                .map { it.toWallet() }
+                .toList()
+        }
+
+    override suspend fun insert(wallet: MerchantWallet, at: Instant): Boolean =
+        database.tx("merchant-wallets.insert") {
+            MerchantWalletsTable
+                .insertIgnore {
+                    it[merchantId] = wallet.merchantId.value
+                    it[network] = wallet.network.name
+                    it[blockchain] = wallet.blockchain
+                    it[custodyWalletId] = wallet.custodyWalletId
+                    it[walletAddress] = wallet.address
+                    it[createdAt] = at
+                }.insertedCount > 0
+        }
+
+    override suspend fun approvedWithout(network: Network, limit: Int): List<MerchantId> =
+        database.tx("merchant-wallets.approved-without") {
+            MerchantsTable
+                .join(
+                    MerchantWalletsTable,
+                    JoinType.LEFT,
+                    MerchantsTable.merchantId,
+                    MerchantWalletsTable.merchantId,
+                    additionalConstraint = { MerchantWalletsTable.network eq network.name },
+                ).select(MerchantsTable.merchantId)
+                .where {
+                    (MerchantsTable.state eq MerchantState.APPROVED.name) and
+                        MerchantWalletsTable.merchantId.isNull()
+                }.limit(limit)
+                .map { MerchantId(it[MerchantsTable.merchantId]) }
+                .toList()
+        }
+}
+
+class RevenueWalletRepositoryImpl(private val database: Database) : RevenueWalletRepository {
+    override suspend fun find(network: Network): RevenueWallet? =
+        database.tx("revenue-wallets.find") {
+            RevenueWalletsTable
+                .selectAll()
+                .where { RevenueWalletsTable.network eq network.name }
+                .map {
+                    RevenueWallet(
+                        network,
+                        it[RevenueWalletsTable.blockchain],
+                        it[RevenueWalletsTable.custodyWalletId],
+                        it[RevenueWalletsTable.walletAddress],
+                    )
+                }.singleOrNull()
+        }
+
+    override suspend fun insert(wallet: RevenueWallet, at: Instant): Boolean =
+        database.tx("revenue-wallets.insert") {
+            RevenueWalletsTable
+                .insertIgnore {
+                    it[network] = wallet.network.name
+                    it[blockchain] = wallet.blockchain
+                    it[custodyWalletId] = wallet.custodyWalletId
+                    it[walletAddress] = wallet.address
+                    it[createdAt] = at
+                }.insertedCount > 0
+        }
+}
+
+/** `ramp.merchant_credentials`: one sealed row per merchant, replaced whole. Nothing in it is plaintext but the till. */
+class CredentialRepositoryImpl(private val database: Database) : CredentialRepository {
+    override suspend fun find(merchantId: MerchantId): SealedCredentials? =
+        database.tx("credentials.find") {
+            MerchantCredentialsTable
+                .selectAll()
+                .where { MerchantCredentialsTable.merchantId eq merchantId.value }
+                .map {
+                    SealedCredentials(
+                        provider = it[MerchantCredentialsTable.provider],
+                        channelId = it[MerchantCredentialsTable.channelId],
+                        sealed = it[MerchantCredentialsTable.sealed],
+                        wrappedKey = it[MerchantCredentialsTable.wrappedKey],
+                        pinSalt = it[MerchantCredentialsTable.pinSalt],
+                        kdfParams = it[MerchantCredentialsTable.kdfParams],
+                    )
+                }.singleOrNull()
+        }
+
+    override suspend fun save(
+        merchantId: MerchantId,
+        sealed: SealedCredentials,
+        at: Instant,
+    ) {
+        database.tx("credentials.save") {
+            MerchantCredentialsTable.upsert(keys = arrayOf(MerchantCredentialsTable.merchantId)) {
+                it[MerchantCredentialsTable.merchantId] = merchantId.value
+                it[provider] = sealed.provider
+                it[channelId] = sealed.channelId
+                it[MerchantCredentialsTable.sealed] = sealed.sealed
+                it[wrappedKey] = sealed.wrappedKey
+                it[pinSalt] = sealed.pinSalt
+                it[kdfParams] = sealed.kdfParams
+                it[updatedAt] = at
+            }
+        }
+    }
+}
+
+/** `ramp.merchant_sessions`: found by the token's hash; an expired row is gone to every read. */
+class SessionRepositoryImpl(private val database: Database) : SessionRepository {
+    override suspend fun insert(
+        tokenHash: ByteArray,
+        merchantId: MerchantId,
+        now: Instant,
+        expiresAt: Instant,
+    ) {
+        database.tx("sessions.insert") {
+            MerchantSessionsTable.insertIgnore {
+                it[MerchantSessionsTable.tokenHash] = tokenHash
+                it[MerchantSessionsTable.merchantId] = merchantId.value
+                it[createdAt] = now
+                it[MerchantSessionsTable.expiresAt] = expiresAt
+            }
+        }
+    }
+
+    override suspend fun find(tokenHash: ByteArray, now: Instant): MerchantSession? =
+        database.tx("sessions.find") {
+            MerchantSessionsTable
+                .selectAll()
+                .where {
+                    (MerchantSessionsTable.tokenHash eq tokenHash) and
+                        (MerchantSessionsTable.expiresAt greater now)
+                }.map {
+                    MerchantSession(
+                        MerchantId(it[MerchantSessionsTable.merchantId]),
+                        it[MerchantSessionsTable.expiresAt],
+                    )
+                }.singleOrNull()
+        }
+
+    override suspend fun extend(tokenHash: ByteArray, expiresAt: Instant) {
+        database.tx("sessions.extend") {
+            MerchantSessionsTable.update({ MerchantSessionsTable.tokenHash eq tokenHash }) {
+                it[MerchantSessionsTable.expiresAt] = expiresAt
+            }
+        }
+    }
+
+    override suspend fun delete(tokenHash: ByteArray): Boolean =
+        database.tx("sessions.delete") {
+            MerchantSessionsTable.deleteWhere { MerchantSessionsTable.tokenHash eq tokenHash } > 0
+        }
+}

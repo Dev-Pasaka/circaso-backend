@@ -94,6 +94,8 @@ data class PushPayload(
     val reaction: String? = null,
     /** `MAINNET` or `TESTNET` on a wallet push (added 2026-11-18): which of the person's wallets it is about. */
     val network: String? = null,
+    /** The ramp order a `ramp.order` push is about (added 2026-11-22): a tap opens it. */
+    val orderId: String? = null,
 )
 
 data class PushReceipt(val messageId: String, val provider: String)
