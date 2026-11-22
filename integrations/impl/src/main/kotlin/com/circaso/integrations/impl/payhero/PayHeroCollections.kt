@@ -168,7 +168,12 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
                     }
 
                     else -> {
-                        log.warn("payhero refused: operation={} status={}", operation, status)
+                        log.warn(
+                            "payhero refused: operation={} status={} reason={}",
+                            operation,
+                            status,
+                            refusalReason(text),
+                        )
                         rejected("The payment provider refused the request.")
                     }
                 }
@@ -204,6 +209,26 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
         private const val FORBIDDEN = 403
         private const val TOO_MANY = 429
         private const val SERVER_ERROR = 500
+
+        /**
+         * Why PayHero refused, for the log: its own short message ("The passed channel is not active"), which is what
+         * tells an operator what the merchant must fix. It is PayHero's wording about the request, not the request:
+         * every run of digits is masked in case it echoes a number, and it is cut short. Never the body itself.
+         */
+        internal fun refusalReason(body: String): String {
+            val refusal = runCatching { payHeroJson.decodeFromString(RefusalBody.serializer(), body) }.getOrNull()
+            val said = listOfNotNull(refusal?.errorCode, refusal?.errorMessage ?: refusal?.message).joinToString(": ")
+            if (said.isBlank()) return "not given"
+            return said
+                .replace(DIGIT_RUN, "#")
+                .replace(WHITESPACE, " ")
+                .trim()
+                .take(MAX_REASON)
+        }
+
+        private val DIGIT_RUN = Regex("""\d{4,}""")
+        private val WHITESPACE = Regex("""\s+""")
+        private const val MAX_REASON = 160
 
         /** PayHero's examples use the local form (`0712345678`); a number outside Kenya goes as its digits. */
         internal fun localNumber(phone: PhoneNumber): String =

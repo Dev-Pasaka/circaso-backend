@@ -137,6 +137,23 @@ class PayHeroCollectionsTest {
         }
 
     @Test
+    fun `a refusal's reason is PayHero's own words, with any number masked and cut short`() {
+        assertEquals(
+            "The passed channel is not active",
+            PayHeroCollections.refusalReason("""{"error_message":"The passed channel is not active"}"""),
+        )
+        assertEquals(
+            "INVALID: phone # is not valid",
+            PayHeroCollections.refusalReason(
+                """{"error_code":"INVALID","error_message":"phone 254712345678 is  not valid","status_code":400}""",
+            ),
+        )
+        assertEquals("not given", PayHeroCollections.refusalReason("<html>Bad Request</html>"))
+        assertEquals("not given", PayHeroCollections.refusalReason("{}"))
+        assertEquals(160, PayHeroCollections.refusalReason("""{"error_message":"${"x".repeat(400)}"}""").length)
+    }
+
+    @Test
     fun `credentials never show in a string`() {
         assertEquals("CollectionCredentials(***)", merchant.toString())
     }

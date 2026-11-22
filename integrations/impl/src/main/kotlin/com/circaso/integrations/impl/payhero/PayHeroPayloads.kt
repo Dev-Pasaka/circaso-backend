@@ -58,3 +58,14 @@ internal data class CallbackResult(
     @SerialName("ExternalReference") val externalReference: String = "",
     @SerialName("CheckoutRequestID") val checkoutRequestId: String = "",
 )
+
+/**
+ * What PayHero says when it refuses a request. The docs show `error_message` alone on one site and
+ * `error_code` / `error_message` / `status_code` on the other, so both are read.
+ */
+@Serializable
+internal data class RefusalBody(
+    @SerialName("error_message") val errorMessage: String? = null,
+    @SerialName("error_code") val errorCode: String? = null,
+    val message: String? = null,
+)
