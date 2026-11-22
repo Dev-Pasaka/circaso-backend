@@ -75,7 +75,10 @@ interface Pricing {
 
 /** The ramp's counters in Redis: prompts per user per hour, and shillings traded per user per day on a network. */
 interface RampCounters {
-    /** Counts one more prompt this hour; the answer is the count including it. */
+    /** How many M-Pesa prompts reached this user's phone in the last hour. */
+    suspend fun promptsThisHour(userId: UserId): Long
+
+    /** Counts a prompt the provider accepted (one that reached the phone); an attempt that sent nothing never counts. */
     suspend fun countPrompt(userId: UserId): Long
 
     /** Adds [fiatMinor] to the user's day when it fits under [limitMinor]; false (and nothing added) when it doesn't. */

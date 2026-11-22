@@ -78,7 +78,7 @@ data class RampSettings(
                 orderMinMinor = 1_000,
                 orderMaxMinor = 500_000,
                 dailyLimitMinor = 2_000_000,
-                promptsPerHour = 5,
+                promptsPerHour = 0,
                 feeBps = 150,
                 merchantShareBps = 7_000,
                 feeSettleHourUtc = 21,

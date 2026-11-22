@@ -153,6 +153,8 @@ class MemoryCounters : RampCounters {
     val prompts = mutableMapOf<UserId, Long>()
     val daily = mutableMapOf<Pair<UserId, Network>, Long>()
 
+    override suspend fun promptsThisHour(userId: UserId): Long = prompts[userId] ?: 0
+
     override suspend fun countPrompt(userId: UserId): Long = prompts.merge(userId, 1, Long::plus)!!
 
     override suspend fun reserveDaily(
