@@ -74,6 +74,13 @@ sealed class IntegrationError(override val code: String, override val message: S
             ErrorKind.INVALID,
         )
 
+    /**
+     * This server holds no keys for what was asked (a KYC provider's sandbox or live side whose secrets aren't set).
+     * Nothing was sent, and trying again changes nothing until the keys are there.
+     */
+    class NotConfigured(what: String) :
+        IntegrationError("integrations.not_configured", "$what is not configured on this server.", ErrorKind.UPSTREAM)
+
     /** The configured provider has no implementation yet; only placeholders return this. */
     class NotImplemented(contract: String, provider: String) :
         IntegrationError(
