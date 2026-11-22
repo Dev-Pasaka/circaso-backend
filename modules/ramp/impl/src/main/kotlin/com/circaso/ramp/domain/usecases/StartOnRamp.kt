@@ -2,6 +2,7 @@ package com.circaso.ramp.domain.usecases
 
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountStatus
+import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Candidate
@@ -30,6 +31,9 @@ import java.time.Instant
  * R3: buys USDC with M-Pesa. Checks the gates, picks a merchant and reserves its float in one transaction, then
  * sends the M-Pesa prompt to the user's own verified number. The order and its reservation are written before the
  * provider is asked, so a repeated request (the same quote) finds the same order and sends no second prompt.
+ *
+ * When the provider refuses the picked merchant's prompt, the next merchant is asked (a new order for the same
+ * quote, the refused one closed and its float freed); a repeated request finds the quote's latest order.
  */
 class StartOnRamp(
     private val gates: Gates,
@@ -91,30 +95,56 @@ class StartOnRamp(
             counters.giveBackDaily(command.userId, quote.network, day, paid)
             return Resource.error(RampError.TooManyPrompts(PROMPT_WINDOW_SECONDS))
         }
+        return promptNextMerchant(command, quote, settings, address, now)
+    }
 
-        val reserved =
-            engine.reserve(quote.network, quote.blockchain, quote.assetMinor, settings) { candidate ->
-                order(quote, command, candidate, address, settings, now)
-            }
-        val order =
-            when (reserved) {
+    /**
+     * Reserves with a merchant and prompts; when the provider refuses that merchant's request (nothing was sent), the
+     * order is closed and the next merchant is asked with a new order for the same quote, until one takes it or none
+     * is left (`ramp.merchant_unavailable`). The day's limit is counted once: a closed attempt gives its amount back,
+     * so each new attempt takes it again.
+     */
+    private suspend fun promptNextMerchant(
+        command: StartOnRampCommand,
+        quote: Quote,
+        settings: RampSettings,
+        address: String,
+        now: Instant,
+    ): Resource<OrderView> {
+        val day = Periods.day(now)
+        val paid = quote.fiat.amountMinor
+        val refused = mutableSetOf<MerchantId>()
+        while (true) {
+            val attempt = refused.size + 1
+            val reserved =
+                engine.reserve(quote.network, quote.blockchain, quote.assetMinor, settings, refused) { candidate ->
+                    order(quote, command, candidate, address, settings, now, attempt)
+                }
+            val order =
+                when (reserved) {
+                    is Resource.Success -> {
+                        reserved.data
+                    }
+
+                    is Resource.Error -> {
+                        counters.giveBackDaily(command.userId, quote.network, day, paid)
+                        val nobodyLeft = refused.isNotEmpty() && reserved.error == RampError.NoMerchantAvailable
+                        return if (nobodyLeft) Resource.error(RampError.MerchantUnavailable) else reserved
+                    }
+                }
+            when (val prompted = flow.requestPayment(order)) {
                 is Resource.Success -> {
-                    reserved.data
+                    counters.countPrompt(command.userId)
+                    return view(prompted.data)
                 }
 
                 is Resource.Error -> {
-                    counters.giveBackDaily(command.userId, quote.network, day, paid)
-                    return reserved
+                    if (prompted.error != RampError.MerchantUnavailable) return prompted
+                    refused += order.merchantId
+                    if (!counters.reserveDaily(command.userId, quote.network, day, paid, settings.dailyLimitMinor)) {
+                        return Resource.error(RampError.LimitExceeded)
+                    }
                 }
-            }
-        return when (val prompted = flow.requestPayment(order)) {
-            is Resource.Error -> {
-                prompted
-            }
-
-            is Resource.Success -> {
-                counters.countPrompt(command.userId)
-                view(prompted.data)
             }
         }
     }
@@ -126,6 +156,7 @@ class StartOnRamp(
         address: String,
         settings: RampSettings,
         now: Instant,
+        attempt: Int,
     ) = Order(
         orderId = RampOrderId.new(),
         userId = command.userId,
@@ -153,6 +184,7 @@ class StartOnRamp(
         paymentDeadline = now.plus(settings.paymentWindow),
         createdAt = now,
         updatedAt = now,
+        attempt = attempt,
     )
 
     private suspend fun view(order: Order): Resource<OrderView> =

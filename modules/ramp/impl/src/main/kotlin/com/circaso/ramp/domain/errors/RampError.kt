@@ -104,6 +104,13 @@ sealed class RampError(
         ErrorKind.UPSTREAM,
     )
 
+    /** The provider refused the prompt for every merchant who could have taken the order; nothing was sent. */
+    data object MerchantUnavailable : RampError(
+        "ramp.merchant_unavailable",
+        "We couldn't start this payment right now. Nothing was taken. Please try again in a moment.",
+        ErrorKind.CONFLICT,
+    )
+
     data object CustodyUnavailable : RampError(
         "ramp.custody_unavailable",
         "We couldn't reach the wallet service. Try again in a moment.",
@@ -166,6 +173,14 @@ sealed class RampError(
         "ramp.merchant_setup_incomplete",
         "Finish setting up first: a funded float wallet and a payment account.",
         ErrorKind.CONFLICT,
+    )
+
+    /** RM6 with the provider's service balance under the network's floor: the same code, the field says which step. */
+    data object ProviderBalanceLow : RampError(
+        "ramp.merchant_setup_incomplete",
+        "Top up your service wallet at your payment provider before you go online.",
+        ErrorKind.CONFLICT,
+        ErrorDetails(fields = listOf(FieldError("provider_balance", "below the minimum needed to send prompts"))),
     )
 
     data object PinInvalid : RampError("ramp.pin_invalid", "That PIN isn't right.", ErrorKind.INVALID)

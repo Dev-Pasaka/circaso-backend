@@ -49,16 +49,21 @@ class Engine(
         settings: RampSettings,
     ): Boolean = candidates(network, blockchain, settings).isNotEmpty()
 
-    /** The order [draft] makes for the merchant picked, written with its reservation; or why nobody could take it. */
+    /**
+     * The order [draft] makes for the merchant picked, written with its reservation; or why nobody could take it.
+     * [excluding] are merchants already tried for this purchase (their provider refused the prompt).
+     */
     suspend fun reserve(
         network: Network,
         blockchain: String,
         assetMinor: Long,
         settings: RampSettings,
+        excluding: Set<MerchantId> = emptySet(),
         draft: (Candidate) -> Order,
     ): Resource<Order> {
         var custodyDown = false
         for (candidate in candidates(network, blockchain, settings)) {
+            if (candidate.merchant.merchantId in excluding) continue
             val balance =
                 when (val held = float.balance(network, candidate.wallet.custodyWalletId)) {
                     is Resource.Success -> {
@@ -107,7 +112,7 @@ class Engine(
                     Resource.error(RampError.NoMerchantAvailable)
                 }
 
-                !merchant.isTradingUntil(now.plus(settings.paymentWindow)) -> {
+                !merchant.isTradingUntil(now.plus(settings.paymentWindow)) || merchant.paymentsIssue != null -> {
                     Resource.error(RampError.NoMerchantAvailable)
                 }
 

@@ -12,6 +12,7 @@ import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.repositories.CredentialRepository
@@ -93,6 +94,7 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
                 .where {
                     (MerchantsTable.state eq MerchantState.APPROVED.name) and
                         (MerchantsTable.onlineUntil greater until) and
+                        MerchantsTable.paymentsIssue.isNull() and
                         (MerchantWalletsTable.network eq network.name) and
                         (MerchantWalletsTable.blockchain eq blockchain)
                 }.map { Candidate(it.toMerchant(), it.toWallet()) }
@@ -166,6 +168,19 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
         }
     }
 
+    override suspend fun setPaymentsIssue(
+        merchantId: MerchantId,
+        issue: PaymentsIssue?,
+        at: Instant,
+    ) {
+        database.tx("merchants.set-payments-issue") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[paymentsIssue] = issue?.name
+                it[paymentsIssueAt] = at.takeIf { issue != null }
+            }
+        }
+    }
+
     override suspend fun endPassedWindows(now: Instant): Int =
         database.tx("merchants.end-passed-windows") {
             MerchantsTable.update({ MerchantsTable.onlineUntil less now }) { it[onlineUntil] = null }
@@ -192,6 +207,8 @@ private fun ResultRow.toMerchant() =
         approvedBy = this[MerchantsTable.approvedBy],
         approvedAt = this[MerchantsTable.approvedAt],
         createdAt = this[MerchantsTable.createdAt],
+        paymentsIssue = this[MerchantsTable.paymentsIssue]?.let(PaymentsIssue::valueOf),
+        paymentsIssueAt = this[MerchantsTable.paymentsIssueAt],
     )
 
 private fun ResultRow.toWallet() =

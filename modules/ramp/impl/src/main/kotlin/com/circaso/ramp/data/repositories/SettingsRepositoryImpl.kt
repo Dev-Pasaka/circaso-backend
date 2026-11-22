@@ -99,6 +99,7 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.kycRequired] = settings.kycRequired
         this[SettingsTable.callbackBaseUrl] = settings.callbackBaseUrl
         this[SettingsTable.collectionsProvider] = settings.collectionsProvider
+        this[SettingsTable.providerFeeFloorMinor] = settings.providerFeeFloorMinor
     }
 
     private fun ResultRow.toSettings(): RampSettings? {
@@ -119,6 +120,7 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             kycRequired = this[SettingsTable.kycRequired],
             callbackBaseUrl = this[SettingsTable.callbackBaseUrl],
             collectionsProvider = this[SettingsTable.collectionsProvider],
+            providerFeeFloorMinor = this[SettingsTable.providerFeeFloorMinor],
             walletSetId = this[SettingsTable.walletSetId],
             updatedBy = this[SettingsTable.updatedBy],
             updatedAt = this[SettingsTable.updatedAt],

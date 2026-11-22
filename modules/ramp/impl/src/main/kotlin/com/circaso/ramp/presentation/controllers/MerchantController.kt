@@ -133,7 +133,12 @@ private fun Route.accountRoutes(merchants: MerchantService) {
         notes =
             "$MONEY State, what is set up, the float wallet to fund and what it holds (`reserved` is open orders " +
                 "plus Circaso's share not yet swept), and `missing`: what still stands between you and going " +
-                "online (`profile`, `approval`, `wallet`, `payments`, `float`).",
+                "online (`profile`, `approval`, `wallet`, `payments`, `float`, `provider_balance`). " +
+                "`paymentsIssue` (`{ code, since }`, null when there is none) says your payment provider refused a " +
+                "prompt for a reason only you can fix: `SERVICE_BALANCE` is an empty prepaid service wallet " +
+                "(\"Top up your PayHero service wallet\"). It takes you offline and puts `provider_balance` in " +
+                "`missing`; `canGoOnline` stays true, because going online again (RM6) checks the balance and " +
+                "clears it.",
     )
 
     put("profile") {
@@ -220,7 +225,10 @@ private fun Route.tradingRoutes(merchants: MerchantService) {
             listOf(INVALID, "ramp.merchant_not_approved", SETUP, PIN_INVALID, PIN_LOCKED, VAULT, MALFORMED),
             notes =
                 "$MONEY Your PIN and a trading window in `minutes` (15 to 720). Needs approval, a float wallet with " +
-                    "enough USDC for the smallest order, and a connected payment account.",
+                    "enough USDC for the smallest order, and a connected payment account. Your provider's prepaid " +
+                    "service wallet (what its fee per prompt is taken from) is checked first: below the network's " +
+                    "floor the answer is `$SETUP` with the field `provider_balance`; top it up and try again. A " +
+                    "balance the provider can't report never blocks. Going online clears `paymentsIssue`.",
         )
 
         delete {

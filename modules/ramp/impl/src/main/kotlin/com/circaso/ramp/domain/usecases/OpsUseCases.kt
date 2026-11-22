@@ -130,8 +130,8 @@ class GetSettings(private val rows: SettingsRepository, private val book: Settin
 /**
  * RO5: replaces one network's ramp settings, version-checked. What a constraint of the table would refuse is refused
  * here first, naming the field: the fee at most 5 %, the split at most the whole fee, KYC never off on mainnet, every
- * chain one of the network's own, and a collections provider this server offers (so `log`, which reports every prompt
- * paid, can be chosen on a developer's machine only).
+ * chain one of the network's own, a collections provider this server offers (so `log`, which reports every prompt
+ * paid, can be chosen on a developer's machine only), and a provider fee floor that isn't negative.
  */
 class UpdateSettings(
     private val rows: SettingsRepository,
@@ -228,6 +228,10 @@ class UpdateSettings(
                     "collectionsProvider" to "must be one of ${providers.names.joinToString(", ")}"
                 }
 
+                s.providerFeeFloorMinor !in 0..MAX_PROVIDER_FEE_FLOOR -> {
+                    "providerFeeFloorMinor" to "must be 0 (no check) to $MAX_PROVIDER_FEE_FLOOR"
+                }
+
                 else -> {
                     null
                 }
@@ -243,6 +247,9 @@ class UpdateSettings(
         const val MAX_QUOTE_SECONDS = 600
         const val MIN_WINDOW = 60
         const val MAX_WINDOW = 900
+
+        /** KES 10 000: far above any provider's fees for a day of prompts; a larger floor is a typing mistake. */
+        const val MAX_PROVIDER_FEE_FLOOR = 1_000_000L
     }
 }
 

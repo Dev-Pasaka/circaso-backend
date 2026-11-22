@@ -100,7 +100,8 @@ internal fun after(
 ): Op<Boolean> = (time less cursor.at) or ((time eq cursor.at) and (key less cursor.id))
 
 /**
- * `ramp.orders`. A quote makes one order (`quote_id` is unique) and a user has one open order
+ * `ramp.orders`. A quote makes one order per attempt (`orders_quote_attempt_key`; a second attempt exists only after
+ * the provider refused the first merchant's prompt) and a user has one open order
  * (`orders_user_open_key`), so an insert that finds either adds nothing. A state moves only by the guard
  * `WHERE order_id = ? AND state IN (<allowed predecessors>)`: whoever's update finds the row made the step.
  */
@@ -131,6 +132,7 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                     it[paymentDeadline] = order.paymentDeadline
                     it[createdAt] = order.createdAt
                     it[updatedAt] = order.updatedAt
+                    it[attempt] = order.attempt
                 }.insertedCount > 0
         }
 
@@ -141,6 +143,8 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
             OrdersTable
                 .selectAll()
                 .where { OrdersTable.quoteId eq quoteId.value }
+                .orderBy(OrdersTable.attempt to SortOrder.DESC)
+                .limit(1)
                 .map { it.toOrder() }
                 .singleOrNull()
         }
@@ -318,6 +322,7 @@ internal fun ResultRow.toOrder() =
         paymentDeadline = this[OrdersTable.paymentDeadline],
         createdAt = this[OrdersTable.createdAt],
         updatedAt = this[OrdersTable.updatedAt],
+        attempt = this[OrdersTable.attempt],
     )
 
 internal fun payer(stored: String): PhoneNumber =

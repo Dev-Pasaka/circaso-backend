@@ -4,6 +4,9 @@ import com.circaso.ops.domain.models.AuditOutcome
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsRampOrder
+import com.circaso.ramp.api.OpsRampOrderCursor
+import com.circaso.ramp.api.OpsRampPaymentsIssue
+import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.shared.Network
 import com.circaso.shared.StaffRole
@@ -21,6 +24,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -90,16 +94,19 @@ class RampRoutesTest {
     }
 
     @Test
-    fun `finance and admin read the merchants, settings, preview list and review queue, and support none of it`() =
+    fun `finance and admin read the merchants, their activity, settings and queues, and support none of it`() =
         testApplication {
             application { harness.install(this) }
-            ramp.add()
+            val merchant = ramp.add()
 
             for (path in listOf(
                 "/merchants",
                 "/settings?network=TESTNET",
                 "/preview-access?network=MAINNET",
                 "/orders?state=REVIEW",
+                "/overview?network=TESTNET",
+                "/merchants/$merchant/summary?network=TESTNET",
+                "/merchants/$merchant/orders?network=TESTNET",
             )) {
                 assertEquals(HttpStatusCode.OK, read(path, StaffRole.FINANCE).status, path)
                 assertEquals(HttpStatusCode.OK, read(path, StaffRole.ADMIN).status, path)
@@ -328,5 +335,223 @@ class RampRoutesTest {
             assertEquals(listOf(null, Network.MAINNET), ramp.reviewAsked.toList())
             assertEquals(HttpStatusCode.BadRequest, read("/orders?state=PAID").status)
             assertEquals(HttpStatusCode.BadRequest, read("/orders?cursor=nope").status)
+        }
+
+    // What each merchant did (2026-11-22)
+
+    @Test
+    fun `the provider fee floor is a setting - shown, changed with the rest, and left alone by an older form`() =
+        testApplication {
+            application { harness.install(this) }
+
+            assertTrue("\"providerFeeFloorMinor\":\"5000\"" in read("/settings?network=TESTNET").bodyAsText())
+
+            val older = putSettings("TESTNET", settingsBody())
+            assertEquals(HttpStatusCode.OK, older.status, older.bodyAsText())
+            assertNull(ramp.saved.last().providerFeeFloorMinor, "a form that doesn't know the field changes nothing")
+            assertTrue("\"providerFeeFloorMinor\":\"5000\"" in older.bodyAsText())
+
+            val floor = "\"providerFeeFloorMinor\":\"10000\","
+            val body = settingsBody(version = 2).replace("\"version\"", "$floor\"version\"")
+            val changed = putSettings("TESTNET", body)
+            assertEquals(HttpStatusCode.OK, changed.status, changed.bodyAsText())
+            assertEquals(10_000L, ramp.saved.last().providerFeeFloorMinor)
+            assertTrue("\"providerFeeFloorMinor\":\"10000\"" in changed.bodyAsText())
+            assertTrue("providerFeeFloorMinor 5000→10000" in lines("ramp_settings.update").last().detail.orEmpty())
+
+            val bad = putSettings("TESTNET", body.replace("\"10000\"", "\"fifty\""))
+            assertEquals(HttpStatusCode.BadRequest, bad.status)
+            assertTrue("providerFeeFloorMinor" in bad.bodyAsText())
+        }
+
+    @Test
+    fun `the overview is one network's, for the period asked or this month, in the agreed shape`() =
+        testApplication {
+            application { harness.install(this) }
+            val merchant = ramp.add("APPROVED")
+
+            assertEquals(HttpStatusCode.BadRequest, read("/overview").status, "the network is required")
+            val response = read("/overview?network=TESTNET")
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+
+            assertTrue("\"network\":\"TESTNET\",\"from\":\"2026-11-01\",\"to\":\"2026-11-30\"" in body, body)
+            assertTrue(
+                "\"totals\":{\"orders\":42,\"completed\":40,\"failed\":1,\"inReview\":1," +
+                    "\"collected\":{\"unit\":\"KES\",\"amountMinor\":\"5460000\",\"amount\":\"54600\"}," +
+                    "\"sold\":{\"unit\":\"USDC\",\"amountMinor\":\"415800000\",\"amount\":\"415.8\"}" in body,
+                body,
+            )
+            for (field in listOf("fees", "merchantShare", "circasoShare", "circasoShareUsdc", "swept", "held")) {
+                assertTrue("\"$field\":{\"unit\":" in body, field)
+            }
+            assertTrue(
+                "\"merchants\":[{\"merchantId\":\"$merchant\",\"displayName\":\"Crynce\",\"state\":\"APPROVED\"," +
+                    "\"online\":true,\"orders\":42,\"completed\":40,\"successRatePercent\":\"95.2\"," in body,
+                body,
+            )
+            assertTrue("\"lastOrderAt\":\"2026-11-22T12:00:00Z\"" in body)
+            assertEquals(FakeRampAdmin.Asked(null, Network.TESTNET, null), ramp.asked.single())
+
+            read("/overview?network=MAINNET&from=2026-10-01&to=2026-10-31")
+            val october = OpsRampPeriod(LocalDate.parse("2026-10-01"), LocalDate.parse("2026-10-31"))
+            assertEquals(FakeRampAdmin.Asked(null, Network.MAINNET, october), ramp.asked.last())
+
+            for (query in listOf(
+                "from=2026-10-01",
+                "to=2026-10-31",
+                "from=2026-10-31&to=2026-10-01",
+                "from=1st&to=2026-10-31",
+                "from=2025-01-01&to=2026-10-31",
+            )) {
+                val refused = read("/overview?network=TESTNET&$query")
+                assertEquals(HttpStatusCode.BadRequest, refused.status, query)
+                assertTrue("request.malformed" in refused.bodyAsText())
+            }
+            assertEquals(2, ramp.asked.size, "a malformed period asks the ramp nothing")
+        }
+
+    @Test
+    fun `a merchant's summary shows the account, float, orders, money, days and sweeps in the agreed shape`() =
+        testApplication {
+            application { harness.install(this) }
+            val merchant = ramp.add("APPROVED")
+
+            val response = read("/merchants/$merchant/summary?network=TESTNET&from=2026-11-01&to=2026-11-30")
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+
+            assertTrue(
+                "\"merchant\":{\"merchantId\":\"$merchant\",\"displayName\":\"Crynce\"," +
+                    "\"email\":\"pay@crynce.co.ke\",\"contactPhone\":\"+254712000111\",\"state\":\"APPROVED\"," +
+                    "\"createdAt\":\"2026-11-22T12:00:00Z\",\"approvedAt\":\"2026-11-22T12:00:00Z\"," +
+                    "\"online\":true,\"onlineUntil\":\"2026-11-22T13:00:00Z\"," +
+                    "\"paymentsConnected\":true,\"collectionsProvider\":\"payhero\",\"paymentsIssue\":null}" in body,
+                body,
+            )
+            assertTrue("\"wallet\":{\"blockchain\":\"BASE-SEPOLIA\",\"address\":\"0xfloat\"}" in body, body)
+            assertTrue(
+                "\"float\":{\"balance\":{\"unit\":\"USDC\",\"amountMinor\":\"100000000\",\"amount\":\"100\"}," +
+                    "\"reserved\":{\"unit\":\"USDC\",\"amountMinor\":\"9800000\",\"amount\":\"9.8\"}," +
+                    "\"owedToCircaso\":{\"unit\":\"USDC\",\"amountMinor\":\"120000\",\"amount\":\"0.12\"}," +
+                    "\"free\":{" in body,
+                body,
+            )
+            assertTrue(
+                "\"orders\":{\"total\":42,\"completed\":40,\"failed\":1,\"expired\":0,\"cancelled\":0," +
+                    "\"inReview\":1,\"open\":0},\"successRatePercent\":\"95.2\",\"collected\":{" in body,
+                body,
+            )
+            val money = listOf("sold", "fees", "merchantShare", "circasoShare", "circasoShareUsdc", "swept", "held")
+            for (field in money) {
+                assertTrue("\"$field\":{\"unit\":" in body, field)
+            }
+            assertTrue("\"daily\":[{\"day\":\"2026-11-21\",\"orders\":9,\"completed\":9,\"collected\":{" in body, body)
+            assertTrue(
+                "\"sweeps\":[{\"settlementId\":\"${FakeRampAdmin.SWEEP}\"," +
+                    "\"day\":\"2026-11-21\",\"amount\":{" in body &&
+                    "\"state\":\"CONFIRMED\",\"orders\":9,\"txHash\":\"0xsweep\"}" in body,
+                body,
+            )
+            assertFalse("password" in body || "username" in body || "channel" in body.lowercase())
+            assertEquals(FakeRampAdmin.Asked(merchant, Network.TESTNET, FakeRampAdmin.MONTH), ramp.asked.single())
+
+            // a custodian that can't be read is a null float, never a zero; no wallet on the network is a null wallet
+            ramp.floatReadable = false
+            val down = read("/merchants/$merchant/summary?network=TESTNET").bodyAsText()
+            assertTrue("\"float\":null" in down && "\"wallet\":{" in down, down)
+            ramp.floatReadable = null
+            val none = read("/merchants/$merchant/summary?network=MAINNET").bodyAsText()
+            assertTrue("\"wallet\":null,\"float\":null" in none, none)
+
+            // a merchant whose provider refused them for their service balance says so
+            ramp.issue = OpsRampPaymentsIssue("SERVICE_BALANCE", FakeRampAdmin.AT)
+            val marked = read("/merchants/$merchant/summary?network=TESTNET").bodyAsText()
+            assertTrue(
+                "\"paymentsIssue\":{\"code\":\"SERVICE_BALANCE\",\"since\":\"2026-11-22T12:00:00Z\"}" in marked,
+                marked,
+            )
+
+            assertEquals(HttpStatusCode.BadRequest, read("/merchants/$merchant/summary").status)
+            assertEquals(HttpStatusCode.BadRequest, read("/merchants/nope/summary?network=TESTNET").status)
+            val missing = read("/merchants/${MerchantId.new()}/summary?network=TESTNET")
+            assertEquals(HttpStatusCode.NotFound, missing.status)
+            assertTrue("ramp.merchant_not_found" in missing.bodyAsText())
+        }
+
+    @Test
+    fun `a merchant's orders page newest first with the payer masked, narrowed by period and state`() =
+        testApplication {
+            application { harness.install(this) }
+            val merchant = ramp.add("APPROVED")
+            val done = ramp.order("COMPLETED")
+            val lost = ramp.order("FAILED", FakeRampAdmin.AT.minusSeconds(600))
+
+            val body = read("/merchants/$merchant/orders?network=TESTNET").bodyAsText()
+
+            assertTrue(
+                "\"orders\":[{\"orderId\":\"${done.orderId}\",\"createdAt\":\"2026-11-22T12:00:00Z\"," +
+                    "\"completedAt\":\"2026-11-22T12:04:10Z\",\"state\":\"COMPLETED\",\"direction\":\"ON_RAMP\"," +
+                    "\"blockchain\":\"BASE-SEPOLIA\",\"maskedPhone\":\"+254 7•• ••• 324\"," +
+                    "\"paid\":{\"unit\":\"KES\",\"amountMinor\":\"130000\",\"amount\":\"1300\"}," +
+                    "\"released\":{\"unit\":\"USDC\",\"amountMinor\":\"9800000\",\"amount\":\"9.8\"}," +
+                    "\"rate\":\"129.96\",\"fee\":{" in body,
+                body,
+            )
+            assertTrue(
+                "\"failureReason\":null,\"settlementId\":\"${FakeRampAdmin.SWEEP}\",\"txHash\":\"0xrelease\"," +
+                    "\"collectionsProvider\":\"payhero\"}" in body,
+                body,
+            )
+            assertTrue(
+                "\"completedAt\":null,\"state\":\"FAILED\"" in body &&
+                    "\"merchantShare\":null,\"circasoShare\":null,\"circasoShareUsdc\":null," +
+                    "\"failureReason\":\"payment_failed\",\"settlementId\":null,\"txHash\":null" in body,
+                body,
+            )
+            assertTrue("\"nextCursor\":null" in body)
+            assertFalse("payerPhone" in body || "+2547" in body, "the payer's number is only ever masked")
+            assertEquals(
+                FakeRampAdmin.Asked(merchant, Network.TESTNET, null, null, null, 50),
+                ramp.asked.single(),
+                "every day, every state, the first page of 50",
+            )
+
+            // a full page hands out a cursor, and the cursor comes back as the ramp's own
+            val first = read("/merchants/$merchant/orders?network=TESTNET&limit=1").bodyAsText()
+            val cursor = "2026-11-22T12:00:00Z~${done.orderId}"
+            assertTrue("\"nextCursor\":\"$cursor\"" in first, first)
+            val narrowed = "limit=1&cursor=$cursor&state=failed&from=2026-11-01&to=2026-11-30"
+            read("/merchants/$merchant/orders?network=TESTNET&$narrowed")
+            assertEquals(
+                FakeRampAdmin.Asked(
+                    merchant,
+                    Network.TESTNET,
+                    FakeRampAdmin.MONTH,
+                    "FAILED",
+                    OpsRampOrderCursor(FakeRampAdmin.AT, done.orderId),
+                    1,
+                ),
+                ramp.asked.last(),
+            )
+            val failed = read("/merchants/$merchant/orders?network=TESTNET&state=FAILED").bodyAsText()
+            assertTrue("\"orderId\":\"${lost.orderId}\"" in failed && "\"orderId\":\"${done.orderId}\"" !in failed)
+
+            val asked = ramp.asked.size
+            for (query in listOf(
+                "",
+                "network=TESTNET&state=DONE",
+                "network=TESTNET&cursor=nope",
+                "network=TESTNET&cursor=2026-11-22T12:00:00Z~nope",
+                "network=TESTNET&from=2026-11-01",
+                "network=TESTNET&limit=0",
+                "network=SOLANA",
+            )) {
+                val refused = read("/merchants/$merchant/orders?$query")
+                assertEquals(HttpStatusCode.BadRequest, refused.status, query)
+            }
+            assertEquals(asked, ramp.asked.size, "a malformed request asks the ramp nothing")
+            val missing = read("/merchants/${MerchantId.new()}/orders?network=TESTNET")
+            assertEquals(HttpStatusCode.NotFound, missing.status)
         }
 }

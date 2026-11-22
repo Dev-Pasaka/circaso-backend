@@ -49,13 +49,22 @@ data class MerchantPaymentsDto(
 data class OnlineResponse(val online: Boolean, val until: String?)
 
 /**
+ * Something at the merchant's payment provider only they can put right. `code`: `SERVICE_BALANCE` (the provider
+ * refused a prompt because the prepaid service wallet its fees are taken from is empty: "Top up your PayHero service
+ * wallet"). `since` is when it was noticed.
+ */
+@Serializable
+data class MerchantPaymentsIssueDto(val code: String, val since: String?)
+
+/**
  * RM2 (also MA2's `merchant` and RM1's answer). `state`: NEW | APPLIED | APPROVED | SUSPENDED. `displayName` and
  * `contactPhone` are null until the profile is given. `wallet` is null until the ops server has made it; `float` is
  * null without a wallet or when the custodian can't be asked; `payments` is null until a payment account is stored.
  * `payments.connected` is false (and `missing` says `payments`) when the stored account is at another provider than
  * the one the network uses now: connect again with RM5.
  * `missing` lists what stands between the merchant and going online: `profile`, `approval`, `wallet`, `payments`,
- * `float`.
+ * `float`, `provider_balance`. The last comes with `paymentsIssue` and takes the merchant offline; it doesn't make
+ * `canGoOnline` false, because going online again (RM6) is what checks the balance and clears it.
  */
 @Serializable
 data class MerchantResponse(
@@ -73,6 +82,7 @@ data class MerchantResponse(
     val online: OnlineResponse,
     val canGoOnline: Boolean,
     val missing: List<String>,
+    val paymentsIssue: MerchantPaymentsIssueDto? = null,
 )
 
 /** RM1 request. */

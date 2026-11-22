@@ -3,16 +3,25 @@ package com.circaso.ramp.presentation.services
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.models.MerchantRecord
+import com.circaso.ramp.domain.models.MerchantSummary
 import com.circaso.ramp.domain.models.OrderView
+import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
+import com.circaso.ramp.domain.models.RampOverview
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.SettingsChange
+import com.circaso.ramp.domain.models.StaffOrder
+import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.usecases.DecideMerchant
+import com.circaso.ramp.domain.usecases.GetMerchantSummary
+import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.ListCollectionProviders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
+import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.shared.Network
@@ -29,7 +38,24 @@ class RampAdminService(
     private val setPreviewAccessUseCase: SetPreviewAccess,
     private val listReviewOrders: ListReviewOrders,
     private val listCollectionProviders: ListCollectionProviders,
+    private val getRampOverview: GetRampOverview,
+    private val getMerchantSummary: GetMerchantSummary,
+    private val listStaffMerchantOrders: ListStaffMerchantOrders,
 ) {
+    suspend fun overview(network: Network, period: Period?): Resource<RampOverview> = getRampOverview(network, period)
+
+    suspend fun merchantSummary(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period?,
+    ): Resource<MerchantSummary> = getMerchantSummary(merchantId, network, period)
+
+    suspend fun merchantOrders(
+        filter: StaffOrderFilter,
+        after: PageCursor?,
+        limit: Int,
+    ): Resource<List<StaffOrder>> = listStaffMerchantOrders(filter, after, limit)
+
     suspend fun merchants(before: MerchantId?, limit: Int): Resource<List<MerchantRecord>> =
         listMerchants(before, limit)
 

@@ -2,20 +2,26 @@ package com.circaso.ramp.domain.repositories
 
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Candidate
+import com.circaso.ramp.domain.models.DayTotals
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.models.Settlement
+import com.circaso.ramp.domain.models.StaffOrder
+import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.Stamped
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.shared.Network
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 
 interface MerchantRepository {
@@ -33,7 +39,8 @@ interface MerchantRepository {
     suspend fun page(before: MerchantId?, limit: Int): List<Merchant>
 
     /**
-     * Approved merchants with a float wallet on [network] and [blockchain] whose trading window lasts past [until].
+     * Approved merchants with a float wallet on [network] and [blockchain] whose trading window lasts past [until]
+     * and who have no payments issue to fix.
      */
     suspend fun candidates(
         network: Network,
@@ -65,6 +72,13 @@ interface MerchantRepository {
     suspend fun setCallbackKey(merchantId: MerchantId, callbackKey: String)
 
     suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?)
+
+    /** Marks what the merchant must fix at their provider ([issue]), or clears it (null). */
+    suspend fun setPaymentsIssue(
+        merchantId: MerchantId,
+        issue: PaymentsIssue?,
+        at: Instant,
+    )
 
     /** Clears the trading window of every merchant whose window ended before [now]; how many. */
     suspend fun endPassedWindows(now: Instant): Int
@@ -190,4 +204,38 @@ interface StatementRepository {
         network: Network,
         period: Period,
     ): StatementTotals
+}
+
+/**
+ * A merchant's activity for staff, read from the same order and commission rows as the statement
+ * ([StatementRepository]): what didn't complete, the days, and the orders one by one.
+ */
+interface InsightRepository {
+    /** The merchant's orders made in [period] that are not `COMPLETED`, counted by state. */
+    suspend fun unfinished(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ): Map<OrderState, Int>
+
+    /** The same orders, counted by the Nairobi day they were made. */
+    suspend fun unfinishedByDay(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ): Map<LocalDate, Int>
+
+    /** The exchanges completed in [period], added up per Nairobi day: the statement's totals, a day at a time. */
+    suspend fun completedByDay(
+        merchantId: MerchantId,
+        network: Network,
+        period: Period,
+    ): List<DayTotals>
+
+    /** The merchant's orders, newest first, after [after], each with its commission when it completed. */
+    suspend fun orders(
+        filter: StaffOrderFilter,
+        after: PageCursor?,
+        limit: Int,
+    ): List<StaffOrder>
 }

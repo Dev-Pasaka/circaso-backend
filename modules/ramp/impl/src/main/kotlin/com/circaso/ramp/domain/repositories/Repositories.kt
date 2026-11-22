@@ -59,13 +59,14 @@ interface QuoteRepository {
 
 interface OrderRepository {
     /**
-     * True when the order was added. False when its quote already made an order, or the user already has an open
-     * one: the caller tells them apart with [byQuote].
+     * True when the order was added. False when its quote already made an order for this attempt, or the user already
+     * has an open one: the caller tells them apart with [byQuote].
      */
     suspend fun insert(order: Order): Boolean
 
     suspend fun find(orderId: RampOrderId): Order?
 
+    /** The quote's order: its latest attempt, when the provider refused earlier ones. */
     suspend fun byQuote(quoteId: QuoteId): Order?
 
     suspend fun openOf(userId: UserId): Order?

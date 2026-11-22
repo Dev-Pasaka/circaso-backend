@@ -55,6 +55,11 @@ data class OpsRampSettings(
     val callbackBaseUrl: String,
     /** Which collections provider sends this network's M-Pesa prompts: one of [collectionsProviders]. */
     val collectionsProvider: String,
+    /**
+     * The least a merchant's prepaid service balance at the provider must hold for them to go online, in KES minor
+     * units; 0 switches the check off. Always set on a read; null on an update leaves it as it is.
+     */
+    val providerFeeFloorMinor: Long? = null,
     val version: Long? = null,
     val walletSetId: String? = null,
     val updatedBy: String? = null,
@@ -134,4 +139,49 @@ interface RampAdmin {
         after: RampOrderId?,
         limit: Int,
     ): List<OpsRampOrder>
+
+    /**
+     * What every merchant did on [network] in [period] (this Nairobi month when null): the approved merchants, and
+     * any other with an order in the period. The totals are the sum of the rows.
+     */
+    suspend fun overview(network: Network, period: OpsRampPeriod?): OpsRampOverview
+
+    /**
+     * One merchant on [network] in [period] (this Nairobi month when null), with the same figures their own earnings
+     * overview shows. `ramp.merchant_not_found` when there is no such merchant.
+     */
+    suspend fun merchantSummary(
+        merchantId: MerchantId,
+        network: Network,
+        period: OpsRampPeriod?,
+    ): Resource<OpsRampMerchantSummary>
+
+    /**
+     * The merchant's orders on [network], newest first: made in [period] (any day when null), in [state] (any when
+     * null; an [RampOrderStates] name). [after] is the last order of the previous page.
+     */
+    suspend fun merchantOrders(
+        merchantId: MerchantId,
+        network: Network,
+        period: OpsRampPeriod?,
+        state: String?,
+        after: OpsRampOrderCursor?,
+        limit: Int,
+    ): Resource<List<OpsRampMerchantOrder>>
+}
+
+/** The states an order can be in, as [RampAdmin.merchantOrders] takes them. */
+object RampOrderStates {
+    val ALL: List<String> =
+        listOf(
+            "RESERVED",
+            "PAYMENT_REQUESTED",
+            "PAID",
+            "RELEASING",
+            "COMPLETED",
+            "EXPIRED",
+            "CANCELLED",
+            "FAILED",
+            "REVIEW",
+        )
 }

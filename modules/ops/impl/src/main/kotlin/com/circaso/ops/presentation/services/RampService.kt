@@ -1,8 +1,12 @@
 package com.circaso.ops.presentation.services
 
 import com.circaso.ops.domain.models.Actor
+import com.circaso.ops.domain.models.RampMerchantOrdersQuery
 import com.circaso.ops.domain.usecases.DecideRampMerchant
+import com.circaso.ops.domain.usecases.GetRampMerchantOrders
+import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchants
+import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
 import com.circaso.ops.domain.usecases.GetRampSettings
@@ -10,7 +14,11 @@ import com.circaso.ops.domain.usecases.SetRampPreviewAccess
 import com.circaso.ops.domain.usecases.UpdateRampSettings
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsRampMerchantOrder
+import com.circaso.ramp.api.OpsRampMerchantSummary
 import com.circaso.ramp.api.OpsRampOrder
+import com.circaso.ramp.api.OpsRampOverview
+import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
@@ -28,7 +36,22 @@ class RampService(
     private val getRampPreviewAccess: GetRampPreviewAccess,
     private val setRampPreviewAccess: SetRampPreviewAccess,
     private val getRampReviewOrders: GetRampReviewOrders,
+    private val getRampOverview: GetRampOverview,
+    private val getRampMerchantSummary: GetRampMerchantSummary,
+    private val getRampMerchantOrders: GetRampMerchantOrders,
 ) {
+    suspend fun overview(network: Network, period: OpsRampPeriod?): Resource<OpsRampOverview> =
+        getRampOverview(network, period)
+
+    suspend fun merchantSummary(
+        merchantId: MerchantId,
+        network: Network,
+        period: OpsRampPeriod?,
+    ): Resource<OpsRampMerchantSummary> = getRampMerchantSummary(merchantId, network, period)
+
+    suspend fun merchantOrders(query: RampMerchantOrdersQuery, limit: Int): Resource<List<OpsRampMerchantOrder>> =
+        getRampMerchantOrders(query, limit)
+
     suspend fun merchants(before: MerchantId?, limit: Int): Resource<List<OpsMerchant>> =
         getRampMerchants(before, limit)
 
