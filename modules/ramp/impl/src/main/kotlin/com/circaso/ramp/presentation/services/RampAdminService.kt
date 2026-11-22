@@ -9,6 +9,7 @@ import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.SettingsChange
 import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.GetSettings
+import com.circaso.ramp.domain.usecases.ListCollectionProviders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
@@ -27,6 +28,7 @@ class RampAdminService(
     private val listPreviewAccess: ListPreviewAccess,
     private val setPreviewAccessUseCase: SetPreviewAccess,
     private val listReviewOrders: ListReviewOrders,
+    private val listCollectionProviders: ListCollectionProviders,
 ) {
     suspend fun merchants(before: MerchantId?, limit: Int): Resource<List<MerchantRecord>> =
         listMerchants(before, limit)
@@ -38,6 +40,8 @@ class RampAdminService(
     ): Resource<MerchantRecord> = decideMerchant(merchantId, approve, by)
 
     suspend fun settings(network: Network): Resource<RampSettings> = getSettings(network)
+
+    suspend fun collectionProviders(): Resource<List<String>> = listCollectionProviders()
 
     suspend fun updateSettings(
         settings: RampSettings,

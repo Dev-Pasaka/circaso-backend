@@ -5,6 +5,7 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.CodeCheck
 import com.circaso.ramp.domain.models.Rewrapped
 import com.circaso.ramp.domain.models.SealedCredentials
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.models.Unsealed
 import java.time.Duration
 import java.time.Instant
@@ -15,9 +16,10 @@ import java.time.Instant
  * alone, opens nothing. A wrong PIN is told apart from a missing master key.
  */
 interface CredentialVault {
-    /** Seals [credentials] under [pin] for [merchantId]; null when the server has no master key. */
+    /** Seals [credentials], an account at [provider], under [pin]; null when the server has no master key. */
     suspend fun seal(
         merchantId: MerchantId,
+        provider: String,
         credentials: CollectionCredentials,
         pin: String,
     ): SealedCredentials?
@@ -46,18 +48,18 @@ interface CredentialVault {
  * routes work to another node yet.
  */
 interface TradingSessions {
-    /** Keeps [credentials] in this node's memory and marks the merchant online on it until [until]. */
+    /** Keeps [keys] in this node's memory and marks the merchant online on it until [until]. */
     suspend fun unlock(
         merchantId: MerchantId,
-        credentials: CollectionCredentials,
+        keys: UnlockedKeys,
         until: Instant,
     )
 
     /** The merchant's keys when this node holds them; null otherwise: then nothing is asked of the provider. */
-    fun of(merchantId: MerchantId): CollectionCredentials?
+    fun of(merchantId: MerchantId): UnlockedKeys?
 
     /** Swaps the keys this node holds for the merchant, if it holds any (they stored a new payment account). */
-    fun replace(merchantId: MerchantId, credentials: CollectionCredentials)
+    fun replace(merchantId: MerchantId, keys: UnlockedKeys)
 
     /**
      * The merchant is no longer online anywhere (the Redis mark goes). The keys leave this node's memory too unless

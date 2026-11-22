@@ -69,11 +69,13 @@ class RampRoutesTest {
         state: String = "PREVIEW",
         feeBps: Int = 200,
         version: Int = 1,
+        provider: String = "payhero",
         reason: String = "Opening the testnet to the pilot group",
     ) = """{"state":"$state","chains":["BASE-SEPOLIA"],"orderMinMinor":"1000","orderMaxMinor":"500000",""" +
         """"dailyLimitMinor":"2000000","promptsPerHour":5,"feeBps":$feeBps,"merchantShareBps":7000,""" +
         """"feeSettleHourUtc":21,"quoteSeconds":60,"paymentWindowSeconds":120,"kycRequired":false,""" +
-        """"callbackBaseUrl":"https://sandbox.circaso.com","version":$version,"reason":"$reason"}"""
+        """"callbackBaseUrl":"https://sandbox.circaso.com","collectionsProvider":"$provider",""" +
+        """"version":$version,"reason":"$reason"}"""
 
     private fun lines(action: String) = harness.audit.entries.filter { it.action == action }
 
@@ -229,6 +231,34 @@ class RampRoutesTest {
                 )
             assertEquals(HttpStatusCode.BadRequest, notANumber.status)
             assertTrue("orderMinMinor" in notANumber.bodyAsText())
+        }
+
+    @Test
+    fun `the collections provider is a setting staff switch, among what the server offers, and it is audited`() =
+        testApplication {
+            application { harness.install(this) }
+
+            val before = read("/settings?network=TESTNET").bodyAsText()
+            assertTrue("\"collectionsProvider\":\"payhero\"" in before, before)
+            assertTrue("\"collectionsProviders\":[\"payhero\",\"daraja\"]" in before, before)
+
+            val switched = putSettings("TESTNET", settingsBody(state = "OFF", feeBps = 150, provider = "daraja"))
+            assertEquals(HttpStatusCode.OK, switched.status, switched.bodyAsText())
+            assertTrue("\"collectionsProvider\":\"daraja\"" in switched.bodyAsText())
+            assertEquals("daraja", ramp.saved.single().collectionsProvider)
+            val line = lines("ramp_settings.update").single()
+            assertTrue("collectionsProvider payhero→daraja" in line.detail.orEmpty(), line.detail)
+
+            // `log` reports every prompt as paid: a server doesn't offer it, so it can't be chosen
+            val refused = putSettings("TESTNET", settingsBody(version = 2, provider = "log"))
+            assertEquals(HttpStatusCode.BadRequest, refused.status)
+            assertTrue("ramp.settings_invalid" in refused.bodyAsText())
+            assertEquals(1, ramp.saved.size, "nothing was saved")
+            val failed = lines("ramp_settings.update").last()
+            assertEquals(AuditOutcome.FAILED to "ramp.settings_invalid", failed.outcome to failed.errorCode)
+
+            val missing = putSettings("TESTNET", settingsBody().replace("\"collectionsProvider\":\"payhero\",", ""))
+            assertEquals(HttpStatusCode.BadRequest, missing.status, "the provider is part of the settings")
         }
 
     @Test

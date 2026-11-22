@@ -189,8 +189,9 @@ private fun Route.rampWrites(ramp: RampService, clock: Clock) {
         notes =
             "${roles("ADMIN")} `?network=` is required. Replaces the settings; audited with the reason and what " +
                 "changed. The fee is 0 to 500 basis points and the merchant's share 0 to 10000; KYC can't be " +
-                "switched off on MAINNET; every chain must be the network's own. A change applies to quotes made " +
-                "after it. Both servers use the new settings within about ten seconds.",
+                "switched off on MAINNET; every chain must be the network's own; `collectionsProvider` must be " +
+                "one of `collectionsProviders` (what this server offers). A change applies to quotes made " +
+                "after it; an order already prompted keeps the provider that prompted it. Both servers use the new settings within about ten seconds.",
     )
 
     post("preview-access") {

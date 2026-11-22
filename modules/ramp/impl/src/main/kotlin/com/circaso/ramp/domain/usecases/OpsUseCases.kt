@@ -1,5 +1,6 @@
 package com.circaso.ramp.domain.usecases
 
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.RampOrderId
@@ -129,9 +130,15 @@ class GetSettings(private val rows: SettingsRepository, private val book: Settin
 /**
  * RO5: replaces one network's ramp settings, version-checked. What a constraint of the table would refuse is refused
  * here first, naming the field: the fee at most 5 %, the split at most the whole fee, KYC never off on mainnet, every
- * chain one of the network's own.
+ * chain one of the network's own, and a collections provider this server offers (so `log`, which reports every prompt
+ * paid, can be chosen on a developer's machine only).
  */
-class UpdateSettings(private val rows: SettingsRepository, private val book: SettingsBook, private val clock: Clock) {
+class UpdateSettings(
+    private val rows: SettingsRepository,
+    private val book: SettingsBook,
+    private val providers: CollectionProviders,
+    private val clock: Clock,
+) {
     suspend operator fun invoke(
         settings: RampSettings,
         expectedVersion: Long?,
@@ -215,6 +222,12 @@ class UpdateSettings(private val rows: SettingsRepository, private val book: Set
                     "callbackBaseUrl" to "must be an origin only"
                 }
 
+                // Only what this server offers: `log` reports every prompt paid, and is offered on a developer's
+                // machine alone.
+                s.collectionsProvider !in providers.names -> {
+                    "collectionsProvider" to "must be one of ${providers.names.joinToString(", ")}"
+                }
+
                 else -> {
                     null
                 }
@@ -231,6 +244,11 @@ class UpdateSettings(private val rows: SettingsRepository, private val book: Set
         const val MIN_WINDOW = 60
         const val MAX_WINDOW = 900
     }
+}
+
+/** The collections providers this server offers, for staff to choose a network's from. */
+class ListCollectionProviders(private val providers: CollectionProviders) {
+    suspend operator fun invoke(): Resource<List<String>> = Resource.success(providers.names)
 }
 
 /** Who may trade on a network while its ramp is in `PREVIEW`. */

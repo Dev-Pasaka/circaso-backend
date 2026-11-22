@@ -31,6 +31,28 @@ interface MobileCollections {
     suspend fun verify(credentials: CollectionCredentials): Resource<Unit>
 }
 
+/**
+ * Every collections provider this server offers, by name (decision 2026-11-22: which one the ramp uses is not a
+ * start-up line but a setting staff switch in the admin, per network, at any time). Integrations binds them all at
+ * once; the ramp names the one its settings say on each call, so a switch needs no restart and integrations never
+ * depends on the ramp.
+ *
+ * Real providers (`payhero`) are always offered. `log`, which reports every prompt as paid, is offered only where
+ * the server runs in the local environment: anywhere else it would release USDC for nothing.
+ */
+interface CollectionProviders {
+    /** The names offered here, real providers first. */
+    val names: List<String>
+
+    /** The provider called [name], or null when this server doesn't offer it. */
+    fun named(name: String): MobileCollections?
+
+    companion object {
+        const val PAYHERO = "payhero"
+        const val LOG = "log"
+    }
+}
+
 /** A merchant's account at the provider. The string form hides everything: it never reaches a log line. */
 class CollectionCredentials(
     val username: String,

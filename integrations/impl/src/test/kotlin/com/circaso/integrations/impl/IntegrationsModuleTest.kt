@@ -9,11 +9,14 @@ import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioSpan
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.CryptoMarkets
 import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.DEV_TREASURY
+import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
+import com.circaso.integrations.api.EmailTemplateSeeds
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
@@ -54,6 +57,7 @@ import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeTreasury
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
+import com.circaso.integrations.impl.dev.LogCollections
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
@@ -64,6 +68,7 @@ import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.llm.RetryingLanguageModel
 import com.circaso.integrations.impl.llm.RoutedLanguageModel
 import com.circaso.integrations.impl.llm.UnavailableLanguageModel
+import com.circaso.integrations.impl.payhero.PayHeroCollections
 import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
@@ -110,6 +115,11 @@ class IntegrationsModuleTest {
 
     @AfterTest
     fun tearDown() = stopKoin()
+
+    private val noSecrets =
+        object : Secrets {
+            override fun get(name: String): String? = null
+        }
 
     private fun koin(vararg values: Pair<String, String>) = koin(emptyMap(), *values)
 
@@ -561,7 +571,7 @@ class IntegrationsModuleTest {
         }
 
     @Test
-    fun `resend refuses to start without its key, sender and a template for every email`() {
+    fun `resend refuses to start without its key and sender`() {
         val e =
             assertFailsWith<Exception> {
                 koin("integrations.email.provider" to "resend").get<EmailGateway>()
@@ -572,19 +582,33 @@ class IntegrationsModuleTest {
     }
 
     @Test
-    fun `resend starts without the merchant sign-in code's template, which is optional until it is published`() {
-        val required =
-            EmailTemplate.entries
-                .filter { it != EmailTemplate.PIN_VAULT_OPENED && it != EmailTemplate.MERCHANT_SIGN_IN_CODE }
-                .map { "integrations.email.templates.${it.name.lowercase()}" to "tpl_${it.name.lowercase()}" }
-        val settings =
-            required + ("integrations.email.provider" to "resend") +
-                ("integrations.email.from" to "no-reply@circaso.com")
+    fun `resend starts with no template id anywhere, and the old variables are only seeds`() =
+        runTest {
+            val key = mapOf("resend.api-key" to "re_key")
+            val bare =
+                koin(
+                    key,
+                    "integrations.email.provider" to "resend",
+                    "integrations.email.from" to "no-reply@circaso.com",
+                )
+            val gateway = bare.get<EmailGateway>()
+            assertIs<ResendEmail>(gateway)
+            assertTrue(EmailTemplate.entries.all { bare.get<EmailTemplateSeeds>().seed(it) == null })
+            val unsent = gateway.send("sam@example.com", Email.Welcome)
+            assertIs<IntegrationError.Unavailable>((unsent as Resource.Error).error, "that one email, not the server")
+            stopKoin()
 
-        val gateway = koin(mapOf("resend.api-key" to "re_key"), *settings.toTypedArray()).get<EmailGateway>()
-
-        assertIs<ResendEmail>(gateway)
-    }
+            val seeded =
+                koin(
+                    key,
+                    "integrations.email.provider" to "resend",
+                    "integrations.email.from" to "no-reply@circaso.com",
+                    "integrations.email.templates.welcome" to " tpl_welcome ",
+                )
+            val seeds = seeded.get<EmailTemplateSeeds>()
+            assertEquals("tpl_welcome", seeds.seed(EmailTemplate.WELCOME))
+            assertNull(seeds.seed(EmailTemplate.MERCHANT_SIGN_IN_CODE))
+        }
 
     @Test
     fun `the float reader follows the custody provider, and the app's wiring has no treasury under either name`() =
@@ -630,7 +654,7 @@ class IntegrationsModuleTest {
     }
 
     @Test
-    fun `custody defaults to log, whose wallets appear at once, and binds no webhook`() =
+    fun `custody defaults to log, whose wallets appear at once, and binds no webhook of its own`() =
         runTest {
             val koin = koin()
             val custody = koin.get<StablecoinCustody>()
@@ -640,8 +664,38 @@ class IntegrationsModuleTest {
             custody.createUser("u-1")
             assertTrue((custody.createWallet("u-1", UUID.randomUUID()) as Resource.Success).data.needsSignature)
             assertEquals(1, (custody.wallets("u-1") as Resource.Success).data.size)
-            assertTrue(koin.getAll<WebhookVendor>().isEmpty())
+            assertEquals(
+                listOf("payhero"),
+                koin.getAll<WebhookVendor>().map { it.name },
+                "only PayHero's, always served",
+            )
         }
+
+    @Test
+    fun `every collections provider is bound at once - payhero everywhere, log on a developer's machine only`() {
+        val local = koin().get<CollectionProviders>()
+        assertEquals(listOf("payhero", "log"), local.names)
+        assertIs<PayHeroCollections>(local.named("payhero"))
+        assertIs<LogCollections>(local.named("log"))
+        assertNull(local.named("fake"), "the in-memory provider is never offered by the module")
+        assertNull(local.named("nope"))
+        stopKoin()
+
+        for (environment in listOf(Environment.STAGING, Environment.PRODUCTION)) {
+            val server =
+                startKoin {
+                    modules(
+                        integrationsModule(MapConfig(emptyMap(), environment = environment), noSecrets),
+                        module { single<HttpClients> { FakeHttpClients { _ -> respondOk() } } },
+                    )
+                }.koin
+            val offered = server.get<CollectionProviders>()
+            assertEquals(listOf("payhero"), offered.names, "$environment")
+            assertNull(offered.named("log"), "log reports every prompt paid: never on a server")
+            assertEquals(listOf("payhero"), server.getAll<WebhookVendor>().map { it.name })
+            stopKoin()
+        }
+    }
 
     @Test
     fun `exchange rates default to log, which knows a few currencies and no others`() =
@@ -691,7 +745,8 @@ class IntegrationsModuleTest {
         assertIs<CircleCustody>(custody.on(Network.TESTNET))
         assertEquals(setOf(Network.TESTNET), custody.networks, "no CIRCLE_MAINNET_API_KEY: mainnet is unavailable")
         assertEquals(listOf("BASE-SEPOLIA", "SOL-DEVNET"), custody.supported.chains.map { it.blockchain })
-        assertEquals(listOf("circle", "circle-mainnet"), koin.getAll<WebhookVendor>().map { it.name }.sorted())
+        val webhooks = koin.getAll<WebhookVendor>().map { it.name }.sorted()
+        assertEquals(listOf("circle", "circle-mainnet", "payhero"), webhooks)
         assertEquals(listOf("circle"), clients.names)
         assertEquals("https://api.circle.com", clients.configs.getValue("circle").baseUrl)
     }

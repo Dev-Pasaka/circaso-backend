@@ -10,6 +10,7 @@ import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CollectionNotifications
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.CryptoMarkets
 import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyNotifications
@@ -17,6 +18,8 @@ import com.circaso.integrations.api.CustodySeeds
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailTemplate
+import com.circaso.integrations.api.EmailTemplateIds
+import com.circaso.integrations.api.EmailTemplateSeeds
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
@@ -56,7 +59,6 @@ import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
 import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeCallMedia
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
-import com.circaso.integrations.impl.dev.FakeCollections
 import com.circaso.integrations.impl.dev.FakeCryptoMarkets
 import com.circaso.integrations.impl.dev.FakeCryptoPrices
 import com.circaso.integrations.impl.dev.FakeCustody
@@ -172,6 +174,7 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     ),
             )
         }
+        single<EmailTemplateSeeds> { ConfiguredEmailTemplateSeeds(integrations.section("email")) }
         single<EmailGateway> {
             pick(
                 "email",
@@ -339,27 +342,29 @@ fun integrationsModule(config: Config, secrets: Secrets) =
             )
         }
         // The ramp's shillings (decision 2026-11-22): M-Pesa prompts through the merchant's own PayHero account. The
-        // merchant's credentials are passed per call, so nothing here comes from Secrets. With PayHero chosen, its
-        // callback is served too: it only rings the ramp's bell.
-        single<MobileCollections> {
-            pick(
-                "collections",
-                providers =
-                    mapOf(
-                        "log" to { LogCollections() },
-                        "fake" to { FakeCollections() },
-                        "payhero" to {
-                            PayHeroCollections(
-                                get<HttpClients>().named("payhero") { baseUrl = PayHeroCollections.BASE_URL },
-                            )
-                        },
-                    ),
+        // merchant's credentials are passed per call, so nothing here comes from Secrets. Which provider the ramp uses
+        // is NOT a start-up line: it is a row staff switch in the admin (`ramp.settings.collections_provider`), so
+        // every provider is bound at once and the ramp names the one it wants on each call. `log` reports every prompt
+        // as paid, so it is offered on a developer's machine only.
+        single<CollectionProviders> {
+            val payHero =
+                PayHeroCollections(get<HttpClients>().named("payhero") { baseUrl = PayHeroCollections.BASE_URL })
+            OfferedCollections(
+                real = mapOf(CollectionProviders.PAYHERO to payHero),
+                local =
+                    if (config.environment.isLocal) {
+                        mapOf(
+                            CollectionProviders.LOG to LogCollections(),
+                        )
+                    } else {
+                        emptyMap()
+                    },
             )
         }
-        if (integrations.string("collections.provider", "log") == "payhero") {
-            single<WebhookVendor>(named("payhero.webhook")) {
-                PayHeroWebhook(notifications = { getOrNull<CollectionNotifications>() })
-            }
+        // PayHero's callback is always served: the provider can be switched on at any time. It only rings the ramp's
+        // bell, and a callback on an address no merchant was given is ignored.
+        single<WebhookVendor>(named("payhero.webhook")) {
+            PayHeroWebhook(notifications = { getOrNull<CollectionNotifications>() })
         }
         // The wallet's fiat balance (decision 2026-10-28). The open endpoint needs no key; its table is kept in Redis
         // under `fx:` so every node shares one fetch a day.
@@ -577,6 +582,20 @@ private fun Module.circle(secrets: Secrets) {
 }
 
 /**
+ * The collections providers a server offers ([CollectionProviders]): the [real] ones always, and the [local] stand-ins
+ * only where the module was given any (a developer's machine). Tests that want an in-memory provider build one of
+ * these themselves with it; the module never offers `fake`.
+ */
+class OfferedCollections(
+    private val real: Map<String, MobileCollections>,
+    private val local: Map<String, MobileCollections> = emptyMap(),
+) : CollectionProviders {
+    override val names: List<String> = real.keys.toList() + local.keys
+
+    override fun named(name: String): MobileCollections? = real[name] ?: local[name]
+}
+
+/**
  * The USDC contract on a chain as custody's settings name it (the database's once the wallet has read them, the seeds
  * until then): what the stand-in treasuries report a wallet's USDC under, so callers that match the contract find it.
  */
@@ -596,33 +615,40 @@ internal fun Scope.usdcContracts(seeds: CustodySeeds): (Network, String) -> Stri
 private fun clientName(network: Network) = if (network == Network.TESTNET) "circle" else "circle-mainnet"
 
 /**
- * Templates a server may start without (2026-11-11), so a deploy never waits on publishing one in Resend: until its id
- * is set, that email is refused (`Rejected`) and the use case, which sends it best effort, carries on.
+ * Resend needs `RESEND_API_KEY` and `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified
+ * domain); either missing stops startup, naming it. Template ids are not settings of the environment any more
+ * (decision 2026-11-22): they are rows staff set in the admin, read back through [EmailTemplateIds], which the ops
+ * module binds and this looks up on each send. A template with no id yet fails that one send; the server starts with
+ * none at all. Where nothing binds [EmailTemplateIds] (integrations wired alone), the seeds stand in.
  */
-private val OPTIONAL_TEMPLATES = setOf(EmailTemplate.PIN_VAULT_OPENED, EmailTemplate.MERCHANT_SIGN_IN_CODE)
-
-/**
- * Resend needs `RESEND_API_KEY`, `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified domain) and
- * one template id per [EmailTemplate] (`INTEGRATIONS_EMAIL_TEMPLATES_<NAME>`). Anything missing stops startup, naming
- * it, except the [OPTIONAL_TEMPLATES].
- */
-private fun resendEmail(
+private fun Scope.resendEmail(
     email: Config,
     secrets: Secrets,
     clients: HttpClients,
-): ResendEmail =
-    ResendEmail(
+): ResendEmail {
+    val seeds = get<EmailTemplateSeeds>()
+    return ResendEmail(
         apiKey = secrets.require("resend.api-key"),
         from = email.requireString("from"),
         templates =
-            EmailTemplate.entries
-                .mapNotNull { template ->
-                    val key = "templates.${template.name.lowercase()}"
-                    val id = if (template in OPTIONAL_TEMPLATES) email.string(key) else email.requireString(key)
-                    id?.let { template to it }
-                }.toMap(),
+            object : EmailTemplateIds {
+                override suspend fun idOf(template: EmailTemplate): String? {
+                    val stored = getOrNull<EmailTemplateIds>() ?: return seeds.seed(template)
+                    return stored.idOf(template)
+                }
+            },
         http = clients.named("resend") { baseUrl = email.string("base-url", "https://api.resend.com") },
     )
+}
+
+/**
+ * The old `INTEGRATIONS_EMAIL_TEMPLATES_<NAME>` variables, as import-once seeds (decision 2026-11-22): the ops module
+ * copies one into its table the first time a template has no row, and never reads it again.
+ */
+internal class ConfiguredEmailTemplateSeeds(private val email: Config) : EmailTemplateSeeds {
+    override fun seed(template: EmailTemplate): String? =
+        email.string("templates.${template.name.lowercase()}")?.trim()?.takeIf { it.isNotEmpty() }
+}
 
 /**
  * Google and Apple ID tokens are verified here, so each needs the client ids its tokens are issued for:

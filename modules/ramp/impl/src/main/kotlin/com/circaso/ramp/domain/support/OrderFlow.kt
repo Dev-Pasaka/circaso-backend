@@ -1,9 +1,10 @@
 package com.circaso.ramp.domain.support
 
+import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.CollectionRequest
 import com.circaso.integrations.api.CollectionState
 import com.circaso.integrations.api.CollectionStatus
-import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Order
@@ -44,18 +45,23 @@ class OrderFlow(
     private val frames: FrameSender,
     private val counters: RampCounters,
     private val alerts: RampAlerts,
-    private val collections: MobileCollections,
+    private val providers: CollectionProviders,
     private val sessions: TradingSessions,
     private val settings: SettingsBook,
     private val clock: Clock,
 ) {
     /** Sends the M-Pesa prompt for a reserved order. A prompt that can't be sent closes the order and frees the float. */
     suspend fun requestPayment(order: Order): Resource<Order> {
-        val keys = sessions.of(order.merchantId)
+        val keys = keysFor(order)
         val callbackKey = merchants.find(order.merchantId)?.callbackKey
         if (keys == null || callbackKey == null) {
             close(order, OrderState.FAILED, "merchant_offline")
             return Resource.error(RampError.NoMerchantAvailable)
+        }
+        val collections = providers.named(order.collectionsProvider)
+        if (collections == null) {
+            close(order, OrderState.FAILED, "provider_unavailable")
+            return Resource.error(RampError.CollectionsUnavailable)
         }
         // The merchant's own callback address goes with every prompt made for them (decision 2026-11-22).
         val callbackUrl = Callbacks.url(settings.of(order.network).callbackBaseUrl, callbackKey)
@@ -94,7 +100,9 @@ class OrderFlow(
             return Checked(order, false)
         }
         val reference = order.providerReference ?: return Checked(order, false)
-        val keys = sessions.of(order.merchantId) ?: return Checked(order, false)
+        val keys = keysFor(order) ?: return Checked(order, false)
+        // The provider that prompted it, whatever the settings name now: a switch mid-order never asks the wrong one.
+        val collections = providers.named(order.collectionsProvider) ?: return Checked(order, false)
         val status =
             when (val asked = collections.paymentStatus(keys, reference)) {
                 is Resource.Error -> return Checked(order, false)
@@ -108,6 +116,10 @@ class OrderFlow(
             }
         return Checked(after, asked = true)
     }
+
+    /** The merchant's keys when this node holds them **and** they are an account at the order's provider. */
+    private fun keysFor(order: Order): CollectionCredentials? =
+        sessions.of(order.merchantId)?.takeIf { it.provider == order.collectionsProvider }?.credentials
 
     /** An order after [verify], and whether the provider actually answered. */
     data class Checked(val order: Order, val asked: Boolean)

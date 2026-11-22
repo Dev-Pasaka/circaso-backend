@@ -51,6 +51,7 @@ class EnvelopeVault(
 ) : CredentialVault {
     override suspend fun seal(
         merchantId: MerchantId,
+        provider: String,
         credentials: CollectionCredentials,
         pin: String,
     ): SealedCredentials? {
@@ -59,7 +60,7 @@ class EnvelopeVault(
             val dataKey = bytes(KEY_BYTES)
             val salt = bytes(SALT_BYTES)
             SealedCredentials(
-                provider = PROVIDER,
+                provider = provider,
                 channelId = credentials.collectionChannelId,
                 sealed = encrypt(dataKey, encode(credentials), aad(merchantId, SEALED)),
                 wrappedKey = encrypt(kek(master, pin, salt, cost), dataKey, aad(merchantId, WRAPPED)),
@@ -190,7 +191,6 @@ class EnvelopeVault(
     override fun toString(): String = "EnvelopeVault(***)"
 
     companion object {
-        const val PROVIDER = "payhero"
         const val MASTER_KEY_SECRET = "ramp.credentials-master-key"
         private const val MASTER_KEY_VERSION = 1
         private const val KEY_BYTES = 32

@@ -87,8 +87,16 @@ class FakeRampAdmin : RampAdmin {
 
     override suspend fun updateSettings(settings: OpsRampSettings, by: UUID): Resource<OpsRampSettingsChange> {
         refused()?.let { return it }
+        if (settings.collectionsProvider !in OFFERED) {
+            return Resource.Error(RampRefusal("ramp.settings_invalid", ErrorKind.INVALID))
+        }
         val before = current.getValue(settings.network)
-        val after = settings.copy(version = (before.version ?: 0) + 1, updatedBy = by.toString())
+        val after =
+            settings.copy(
+                version = (before.version ?: 0) + 1,
+                updatedBy = by.toString(),
+                collectionsProviders = OFFERED,
+            )
         saved += settings
         current = current + (settings.network to after)
         return Resource.success(OpsRampSettingsChange(before, after))
@@ -125,6 +133,9 @@ class FakeRampAdmin : RampAdmin {
     companion object {
         val AT: Instant = Instant.parse("2026-11-22T12:00:00Z")
 
+        /** What this pretend server offers: PayHero, and a second real provider to switch to. */
+        val OFFERED = listOf("payhero", "daraja")
+
         fun settingsOf(network: Network) =
             OpsRampSettings(
                 network = network,
@@ -141,7 +152,9 @@ class FakeRampAdmin : RampAdmin {
                 paymentWindowSeconds = 120,
                 kycRequired = network == Network.MAINNET,
                 callbackBaseUrl = "https://api.circaso.com",
+                collectionsProvider = "payhero",
                 version = 1,
+                collectionsProviders = OFFERED,
             )
     }
 }

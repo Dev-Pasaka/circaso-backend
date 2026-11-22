@@ -25,6 +25,7 @@ enum class AuditTarget(val wire: String) {
     FEE_WITHDRAWAL("fee_withdrawal"),
     RAMP_MERCHANT("ramp_merchant"),
     RAMP_SETTINGS("ramp_settings"),
+    EMAIL_TEMPLATE("email_template"),
     ;
 
     companion object {
@@ -62,6 +63,7 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     RAMP_MERCHANT_SUSPEND("ramp_merchant.suspend", AuditTarget.RAMP_MERCHANT),
     RAMP_SETTINGS_UPDATE("ramp_settings.update", AuditTarget.RAMP_SETTINGS),
     RAMP_PREVIEW_ACCESS("user.ramp_preview_access", AuditTarget.USER),
+    EMAIL_TEMPLATE_SET("email_template.set", AuditTarget.EMAIL_TEMPLATE),
     ;
 
     companion object {

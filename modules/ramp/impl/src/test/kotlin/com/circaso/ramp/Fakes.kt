@@ -5,6 +5,7 @@ import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
 import com.circaso.integrations.api.CollectionBalances
 import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.CollectionReceipt
 import com.circaso.integrations.api.CollectionRequest
 import com.circaso.integrations.api.CollectionState
@@ -33,6 +34,7 @@ import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.PinAttempts
@@ -223,6 +225,13 @@ class FixedPricing : Pricing {
 
 class FixedUsdc(var contract: String? = USDC_CONTRACT) : UsdcContracts {
     override fun contractOn(network: Network, blockchain: String): String? = contract
+}
+
+/** The collections providers a pretend server offers, by name. */
+class FakeProviders(private val offered: Map<String, MobileCollections>) : CollectionProviders {
+    override val names: List<String> get() = offered.keys.toList()
+
+    override fun named(name: String): MobileCollections? = offered[name]
 }
 
 /** The payment provider: a prompt is `QUEUED` until the test says what the payer did, or sets any status at all. */
@@ -428,22 +437,22 @@ class RecordingEmail : EmailGateway {
 
 /** Unlocked keys in memory, as the node keeps them; [marks] stands in for the `rmp:session` keys in Redis. */
 class MemorySessions : TradingSessions {
-    val keys = mutableMapOf<MerchantId, CollectionCredentials>()
+    val keys = mutableMapOf<MerchantId, UnlockedKeys>()
     val marks = mutableMapOf<MerchantId, Instant>()
 
     override suspend fun unlock(
         merchantId: MerchantId,
-        credentials: CollectionCredentials,
+        keys: UnlockedKeys,
         until: Instant,
     ) {
-        keys[merchantId] = credentials
+        this.keys[merchantId] = keys
         marks[merchantId] = until
     }
 
-    override fun of(merchantId: MerchantId): CollectionCredentials? = keys[merchantId]
+    override fun of(merchantId: MerchantId): UnlockedKeys? = keys[merchantId]
 
-    override fun replace(merchantId: MerchantId, credentials: CollectionCredentials) {
-        if (merchantId in keys) keys[merchantId] = credentials
+    override fun replace(merchantId: MerchantId, keys: UnlockedKeys) {
+        if (merchantId in this.keys) this.keys[merchantId] = keys
     }
 
     override suspend fun end(merchantId: MerchantId, keepKeys: Boolean) {

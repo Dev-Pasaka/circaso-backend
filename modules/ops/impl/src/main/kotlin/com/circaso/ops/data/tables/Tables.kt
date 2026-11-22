@@ -45,3 +45,13 @@ object AuditLogTable : Table("ops.audit_log") {
         index("audit_log_target_idx", false, targetType, targetId, entryId)
     }
 }
+
+/** The provider's template id for each email; one row per template that has one. */
+object EmailTemplatesTable : Table("ops.email_templates") {
+    val template = text("template")
+    val providerTemplateId = text("provider_template_id")
+    val updatedBy = text("updated_by").nullable()
+    val updatedAt = timestamp("updated_at")
+    val version = long("version").default(1)
+    override val primaryKey = PrimaryKey(template)
+}

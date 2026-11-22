@@ -5,7 +5,7 @@ import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailReceipt
-import com.circaso.integrations.api.EmailTemplate
+import com.circaso.integrations.api.EmailTemplateIds
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.Resource
@@ -108,7 +108,8 @@ private fun <V> encode(
 
 /**
  * Sends through Resend's `POST /emails` with a stored template: the subject, wording and layout live in the Resend dashboard, and this
- * class only names the template and fills its variables. [http] is the shared `HttpClients.named("resend")` client (base URL
+ * class only names the template and fills its variables. The template's id is asked from [templates] on each send (a row staff
+ * set in the admin; decision 2026-11-22); one with no id yet fails that send alone with `Unavailable`, and nothing stops the server. [http] is the shared `HttpClients.named("resend")` client (base URL
  * `https://api.resend.com`, with the `User-Agent` Resend insists on), so timeouts, the circuit breaker and the vendor metrics come with
  * it. A request with an [idempotencyKey] is retried safely (Resend delivers it once); one without is not retried. Neither the address nor
  * the variables are logged. A request the vendor refuses (`4xx`, except `401`, `403` and `429`) is `Rejected`; our own bad key or sender
@@ -117,7 +118,7 @@ private fun <V> encode(
 class ResendEmail(
     private val apiKey: String,
     private val from: String,
-    private val templates: Map<EmailTemplate, String>,
+    private val templates: EmailTemplateIds,
     private val http: HttpClient,
 ) : EmailGateway {
     private val log = LoggerFactory.getLogger(ResendEmail::class.java)
@@ -128,9 +129,12 @@ class ResendEmail(
         idempotencyKey: String?,
     ): Resource<EmailReceipt> {
         val template = email.template
-        val templateId =
-            templates[template]
-                ?: return Resource.error(IntegrationError.Rejected("No Resend template is configured for $template."))
+        val templateId = templates.idOf(template)?.takeIf { it.isNotBlank() }
+        if (templateId == null) {
+            // Not set in the admin yet: this one email isn't sent; nothing else is affected, and Resend isn't asked.
+            log.warn("resend template id not set: template={}", template)
+            return Resource.error(IntegrationError.Unavailable("Resend", isTransient = false))
+        }
         val body = sendBody(from, to, templateId, email)
 
         val (status, text) =

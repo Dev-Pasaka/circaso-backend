@@ -17,6 +17,9 @@ import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.StartOnRampCommand
+import com.circaso.ramp.domain.models.UnlockedKeys
+import com.circaso.ramp.domain.support.Providers
+import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
@@ -222,7 +225,7 @@ class RampTest {
             assertEquals(OrderState.PAYMENT_REQUESTED, ramp.now(order).state, "not expired, not paid: it waits")
             assertTrue(ramp.collections.statusQueries.isEmpty())
 
-            ramp.sessions.keys[ramp.crynce.merchantId] = ramp.collections.promptedWith.single()
+            ramp.sessions.keys[ramp.crynce.merchantId] = UnlockedKeys(PAYHERO, ramp.collections.promptedWith.single())
             ramp.collections.failure = IntegrationError.Unavailable("PayHero")
             ramp.callback(order)
             assertEquals(OrderState.PAYMENT_REQUESTED, ramp.now(order).state)
@@ -231,6 +234,84 @@ class RampTest {
             ramp.collections.failure = null
             ramp.callback(order)
             assertEquals(OrderState.PAID, ramp.now(order).state)
+        }
+
+    // The collections provider is a setting
+
+    @Test
+    fun `an order keeps the provider that prompted it - a switch mid-order never asks the wrong one`() =
+        runTest {
+            val order = ramp.prompted()
+            assertEquals(PAYHERO, order.collectionsProvider)
+
+            ramp.settingsRows.set(TESTNET) { it.copy(collectionsProvider = DARAJA) }
+            ramp.book.invalidate()
+            ramp.collections.pay(order)
+            ramp.callback(order)
+
+            assertEquals(OrderState.PAID, ramp.now(order).state)
+            assertEquals(listOf("PH-1"), ramp.collections.statusQueries, "asked where it was prompted")
+            assertTrue(ramp.daraja.statusQueries.isEmpty() && ramp.daraja.prompts.isEmpty())
+        }
+
+    @Test
+    fun `a switch applies to the next order, and only merchants connected to the new provider take it`() =
+        runTest {
+            ramp.settingsRows.set(TESTNET) { it.copy(collectionsProvider = DARAJA) }
+            ramp.book.invalidate()
+
+            assertEquals(RampError.NoMerchantAvailable, ramp.buy().error(), "Crynce's keys are PayHero's")
+            assertFalse(ramp.status(ramp.amina, TESTNET).getOrNull()!!.merchantOnline)
+            assertTrue(ramp.collections.prompts.isEmpty() && ramp.daraja.prompts.isEmpty())
+
+            // the merchant reconnects under the new provider, and the next order is prompted there
+            val keys = UnlockedKeys(DARAJA, ramp.sessions.of(ramp.crynce.merchantId)!!.credentials)
+            ramp.sessions.keys[ramp.crynce.merchantId] = keys
+            val order = ramp.prompted()
+
+            assertEquals(DARAJA, order.collectionsProvider)
+            assertEquals(
+                order.orderId.toString(),
+                ramp.daraja.prompts
+                    .single()
+                    .reference,
+            )
+            assertTrue(ramp.collections.prompts.isEmpty())
+            ramp.daraja.pay(order)
+            ramp.callback(order)
+            assertEquals(OrderState.PAID, ramp.now(order).state)
+        }
+
+    @Test
+    fun `an order whose provider this server no longer offers waits - it is never settled on a guess`() =
+        runTest {
+            val order = ramp.prompted()
+            ramp.collections.pay(order)
+            ramp.offered.remove(PAYHERO)
+
+            ramp.callback(order)
+            ramp.clock.advance(3_600)
+            ramp.sweep(TESTNET)
+            assertEquals(OrderState.PAYMENT_REQUESTED, ramp.now(order).state)
+
+            ramp.offered[PAYHERO] = ramp.collections
+            ramp.callback(order)
+            assertEquals(OrderState.PAID, ramp.now(order).state)
+        }
+
+    @Test
+    fun `a network starts on PayHero, and on log only where the server offers it - a developer's machine`() =
+        runTest {
+            val server = SettingsBook(MemorySettings(), RecordingAlerts(), ramp.providers, ramp.clock)
+            assertEquals(PAYHERO, server.of(TESTNET).collectionsProvider)
+            assertEquals(PAYHERO, server.of(Network.MAINNET).collectionsProvider)
+
+            val local = FakeProviders(mapOf(PAYHERO to FakeCollections(), "log" to FakeCollections()))
+            val rows = MemorySettings()
+            val laptop = SettingsBook(rows, RecordingAlerts(), local, ramp.clock)
+            assertEquals("log", laptop.of(TESTNET).collectionsProvider)
+            assertEquals("log", rows.rows.getValue(TESTNET).collectionsProvider, "written once as the row")
+            assertEquals("log" to PAYHERO, Providers.seed(local) to Providers.seed(ramp.providers))
         }
 
     // The sweep

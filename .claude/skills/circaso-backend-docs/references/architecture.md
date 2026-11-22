@@ -998,7 +998,7 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | Contract | Does | Used by | Implementation now | Can swap to |
 | --- | --- | --- | --- | --- |
 | `SmsGateway` | Send a text message | identity | Africa's Talking (REST) | Twilio, Infobip |
-| `EmailGateway` | Send a templated email | identity, later others | Resend (REST) | Amazon SES, Postmark |
+| `EmailGateway` | Send a templated email. The template's id at the provider is not config: it is a row staff set in the admin (`ops.email_templates`), which the vendor reads on each send through `EmailTemplateIds`, declared here and answered by the ops module (decision 2026-11-22). An email with no id isn't sent; the server starts with none | identity, ramp, later others | Resend (REST) | Amazon SES, Postmark |
 | `SocialSignIn` | Verify a Google or Apple ID token; revoke Apple tokens on account deletion | identity | Google and Apple public keys and REST | — |
 | `CarrierPhoneVerification` | Turn a carrier token into a verified number | identity | Firebase PNV (Admin SDK) | — |
 | `PushGateway` | Push a notification to a device | gateway only (when a user has no open socket) | FCM (Firebase Admin SDK), APNs (HTTP/2) | — |

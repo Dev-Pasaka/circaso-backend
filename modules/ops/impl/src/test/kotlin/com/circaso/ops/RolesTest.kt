@@ -135,6 +135,13 @@ class RolesTest {
                     """"label":"Treasury","reason":"Company treasury"}""",
             ),
             Call("DELETE", "/v1/ops/fee-wallets/destinations/$feeDestination", Permission.FEES_WITHDRAW),
+            Call("GET", "/v1/ops/email-templates", Permission.EMAIL_TEMPLATES_READ),
+            Call(
+                "PUT",
+                "/v1/ops/email-templates/WELCOME",
+                Permission.EMAIL_TEMPLATES_MANAGE,
+                """{"providerTemplateId":"tpl_welcome","reason":"published in Resend"}""",
+            ),
             Call("GET", "/v1/ops/ramp/merchants", Permission.RAMP_READ),
             Call("GET", "/v1/ops/ramp/settings?network=TESTNET", Permission.RAMP_READ),
             Call("GET", "/v1/ops/ramp/preview-access?network=TESTNET", Permission.RAMP_READ),
@@ -285,7 +292,8 @@ class RolesTest {
             """{"state":"PREVIEW","chains":["BASE-SEPOLIA"],"orderMinMinor":"1000","orderMaxMinor":"500000",""" +
                 """"dailyLimitMinor":"2000000","promptsPerHour":5,"feeBps":150,"merchantShareBps":7000,""" +
                 """"feeSettleHourUtc":21,"quoteSeconds":60,"paymentWindowSeconds":120,"kycRequired":false,""" +
-                """"callbackBaseUrl":"https://api.circaso.com","reason":"opening the testnet"}"""
+                """"callbackBaseUrl":"https://api.circaso.com","collectionsProvider":"payhero",""" +
+                """"reason":"opening the testnet"}"""
         const val NEW_FEE_RULE =
             """{"scope":{"kind":"EXTERNAL","blockchain":"BASE"},"terms":$TERMS,"reason":"Base launch"}"""
         const val FEE_CHANGE = """{"baseVersion":1,"terms":$TERMS,"reason":"Q4 pricing"}"""

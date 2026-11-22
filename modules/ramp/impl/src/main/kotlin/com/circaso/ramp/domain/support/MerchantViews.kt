@@ -49,6 +49,7 @@ class MerchantViews(
             wallet = wallet,
             float = wallet?.let { floatOf(it) },
             payments = payments,
+            paymentsCurrent = sealed?.provider == current.collectionsProvider,
             online = isOnline(merchant),
             floatFloorMinor = floatFloor(current),
         )

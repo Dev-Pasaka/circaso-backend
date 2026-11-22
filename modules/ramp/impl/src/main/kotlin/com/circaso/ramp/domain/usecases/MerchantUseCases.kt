@@ -1,7 +1,7 @@
 package com.circaso.ramp.domain.usecases
 
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.integrations.api.IntegrationError
-import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.CallbackView
@@ -13,6 +13,7 @@ import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.ProfileCommand
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.TradingSessions
@@ -58,13 +59,14 @@ class ApplyAsMerchant(private val merchants: MerchantRepository, private val vie
 /**
  * RM5: stores the merchant's payment account (decision 2026-11-22: the credentials are the merchant's, and are only
  * ever entered here). They are checked with the provider first, then sealed under the PIN: set by this call the first
- * time, and required to match the one already set afterwards. The answer is the merchant's own callback address to
+ * time, and required to match the one already set afterwards. The account is at the collections provider the network
+ * uses now (a setting), so after staff switch provider the merchant connects again here. The answer is the merchant's own callback address to
  * paste into the provider. Allowed once the merchant has applied, before or after approval.
  */
 class StorePaymentAccount(
     private val merchants: MerchantRepository,
     private val credentials: CredentialRepository,
-    private val collections: MobileCollections,
+    private val providers: CollectionProviders,
     private val vault: CredentialVault,
     private val pins: PinGuard,
     private val sessions: TradingSessions,
@@ -88,6 +90,10 @@ class StorePaymentAccount(
             val opened = pins.open(merchantId, existing, command.pin)
             if (opened is Resource.Error) return opened
         }
+        // The account is at whichever provider the network uses now, and is sealed as that provider's.
+        val current = settings.of(network)
+        val collections =
+            providers.named(current.collectionsProvider) ?: return Resource.error(RampError.CollectionsUnavailable)
         val checked = collections.verify(command.credentials)
         if (checked is Resource.Error) {
             val down = checked.error is IntegrationError.Unavailable
@@ -95,12 +101,12 @@ class StorePaymentAccount(
             return Resource.error(error, checked.cause)
         }
         val sealed =
-            vault.seal(merchantId, command.credentials, command.pin)
+            vault.seal(merchantId, current.collectionsProvider, command.credentials, command.pin)
                 ?: return Resource.error(RampError.VaultUnavailable)
         credentials.save(merchantId, sealed, clock.instant())
-        sessions.replace(merchantId, command.credentials)
+        sessions.replace(merchantId, UnlockedKeys(current.collectionsProvider, command.credentials))
         val key = merchant.callbackKey ?: newKey(merchant)
-        return Resource.success(CallbackView(Callbacks.url(settings.of(network).callbackBaseUrl, key)))
+        return Resource.success(CallbackView(Callbacks.url(current.callbackBaseUrl, key)))
     }
 
     private suspend fun newKey(merchant: Merchant): String =
@@ -149,16 +155,16 @@ class GoOnline(
         if (merchant.state != MerchantState.APPROVED) return Resource.error(RampError.MerchantNotApproved)
         val sealed = credentials.find(merchantId) ?: return Resource.error(RampError.MerchantSetupIncomplete)
         wallets.find(merchantId, network) ?: return Resource.error(RampError.MerchantSetupIncomplete)
-        if ("float" in views.overview(merchant, network).missing) {
-            return Resource.error(RampError.MerchantSetupIncomplete)
-        }
+        // A payment account at another provider than the network's current one must be reconnected first.
+        val missing = views.overview(merchant, network).missing
+        if ("float" in missing || "payments" in missing) return Resource.error(RampError.MerchantSetupIncomplete)
         val keys =
             when (val opened = pins.open(merchantId, sealed, pin)) {
                 is Resource.Error -> return opened
                 is Resource.Success -> opened.data
             }
         val until = clock.instant().plus(Duration.ofMinutes(minutes.toLong()))
-        sessions.unlock(merchantId, keys, until)
+        sessions.unlock(merchantId, UnlockedKeys(sealed.provider, keys), until)
         merchants.setOnlineUntil(merchantId, until)
         return Resource.success(OnlineView(online = true, until = until))
     }

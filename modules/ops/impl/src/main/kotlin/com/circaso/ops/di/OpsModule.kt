@@ -3,15 +3,22 @@ package com.circaso.ops.di
 import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.Databases
+import com.circaso.integrations.api.EmailTemplateIds
 import com.circaso.ops.api.StaffDirectory
 import com.circaso.ops.data.repositories.AuditRepositoryImpl
+import com.circaso.ops.data.repositories.EmailTemplateRepositoryImpl
+import com.circaso.ops.data.repositories.LoggedEmailTemplateWarnings
 import com.circaso.ops.data.repositories.StaffRepositoryImpl
 import com.circaso.ops.data.tables.AuditLogTable
+import com.circaso.ops.data.tables.EmailTemplatesTable
 import com.circaso.ops.data.tables.StaffTable
+import com.circaso.ops.domain.ports.EmailTemplateWarnings
 import com.circaso.ops.domain.repositories.AuditRepository
+import com.circaso.ops.domain.repositories.EmailTemplateRepository
 import com.circaso.ops.domain.repositories.StaffRepository
 import com.circaso.ops.domain.support.AiPricing
 import com.circaso.ops.domain.support.AuditTrail
+import com.circaso.ops.domain.support.EmailTemplateBook
 import com.circaso.ops.domain.support.OpsSettings
 import com.circaso.ops.domain.support.StaffRoster
 import com.circaso.ops.domain.support.TicketViews
@@ -35,6 +42,7 @@ import com.circaso.ops.domain.usecases.FindDiagnosticLogs
 import com.circaso.ops.domain.usecases.GetAiUsageReport
 import com.circaso.ops.domain.usecases.GetCallSheet
 import com.circaso.ops.domain.usecases.GetDashboard
+import com.circaso.ops.domain.usecases.GetEmailTemplateId
 import com.circaso.ops.domain.usecases.GetFeeWallets
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
@@ -49,6 +57,7 @@ import com.circaso.ops.domain.usecases.GetUserDevices
 import com.circaso.ops.domain.usecases.GetUserWallets
 import com.circaso.ops.domain.usecases.GetWalletNetworks
 import com.circaso.ops.domain.usecases.ListAudit
+import com.circaso.ops.domain.usecases.ListEmailTemplates
 import com.circaso.ops.domain.usecases.ListFeeDestinations
 import com.circaso.ops.domain.usecases.ListFeeRules
 import com.circaso.ops.domain.usecases.ListFeeWithdrawals
@@ -69,6 +78,7 @@ import com.circaso.ops.domain.usecases.RecordDevLogin
 import com.circaso.ops.domain.usecases.RemoveFeeDestination
 import com.circaso.ops.domain.usecases.ReplyToTicket
 import com.circaso.ops.domain.usecases.SearchUsers
+import com.circaso.ops.domain.usecases.SetEmailTemplate
 import com.circaso.ops.domain.usecases.SetRampPreviewAccess
 import com.circaso.ops.domain.usecases.SetUserNetworkAccess
 import com.circaso.ops.domain.usecases.SignInStaff
@@ -80,10 +90,12 @@ import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.domain.usecases.UpdateWalletNetwork
 import com.circaso.ops.domain.usecases.WithdrawFees
 import com.circaso.ops.presentation.api.StaffDirectoryImpl
+import com.circaso.ops.presentation.api.StoredEmailTemplateIds
 import com.circaso.ops.presentation.controllers.aiUsageController
 import com.circaso.ops.presentation.controllers.callController
 import com.circaso.ops.presentation.controllers.dashboardController
 import com.circaso.ops.presentation.controllers.diagnosticController
+import com.circaso.ops.presentation.controllers.emailTemplateController
 import com.circaso.ops.presentation.controllers.feeController
 import com.circaso.ops.presentation.controllers.feeWalletController
 import com.circaso.ops.presentation.controllers.groupController
@@ -99,6 +111,7 @@ import com.circaso.ops.presentation.services.AuditService
 import com.circaso.ops.presentation.services.CallService
 import com.circaso.ops.presentation.services.DashboardService
 import com.circaso.ops.presentation.services.DiagnosticService
+import com.circaso.ops.presentation.services.EmailTemplateService
 import com.circaso.ops.presentation.services.FeeService
 import com.circaso.ops.presentation.services.FeeWalletService
 import com.circaso.ops.presentation.services.GroupService
@@ -120,11 +133,11 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.LocalDate
 
-/** Schema `ops`: the staff list and the audit log. It publishes no events, so it has no outbox. */
+/** Schema `ops`: the staff list, the audit log and the email template ids. It publishes no events, so it has no outbox. */
 internal val opsDatabaseSpec =
     DatabaseModuleSpec(
         schema = "ops",
-        tables = listOf(StaffTable, AuditLogTable),
+        tables = listOf(StaffTable, AuditLogTable, EmailTemplatesTable),
         migrationsLocation = "classpath:db/ops",
     )
 
@@ -182,6 +195,8 @@ fun opsModule(config: Config): Module =
         single(named("ops.database")) { get<Databases>().scope(opsDatabaseSpec.schema) }
         single<StaffRepository> { StaffRepositoryImpl(get(named("ops.database"))) }
         single<AuditRepository> { AuditRepositoryImpl(get(named("ops.database"))) }
+        single<EmailTemplateRepository> { EmailTemplateRepositoryImpl(get(named("ops.database"))) }
+        single<EmailTemplateWarnings> { LoggedEmailTemplateWarnings() }
 
         // domain
         single { StaffRoster(get(), settings) }
@@ -262,6 +277,14 @@ fun opsModule(config: Config): Module =
         single { ListFeeWithdrawals(get()) }
         single { WithdrawFees(get(), get()) }
         single { FeeWalletService(get(), get(), get(), get(), get(), get()) }
+        // Email template ids (decision 2026-11-22): rows staff set, read back by the email vendor through
+        // integrations:api's EmailTemplateIds, which this module answers in both processes
+        single { EmailTemplateBook(get(), get(), get(), clock) }
+        single { GetEmailTemplateId(get()) }
+        single { ListEmailTemplates(get()) }
+        single { SetEmailTemplate(get(), get(), get(), clock) }
+        single { EmailTemplateService(get(), get(), get()) }
+        single<EmailTemplateIds> { StoredEmailTemplateIds(get()) }
         // The ramp for staff (decision 2026-11-22), through ramp:api's RampAdmin
         single { GetRampMerchants(get()) }
         single { DecideRampMerchant(get(), get()) }
@@ -289,6 +312,7 @@ fun opsModule(config: Config): Module =
             val networks = get<NetworkService>()
             val feeWallets = get<FeeWalletService>()
             val ramp = get<RampService>()
+            val emailTemplates = get<EmailTemplateService>()
             OpsRouteContributor { root ->
                 // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
                 root.networkFiltered {
@@ -307,6 +331,7 @@ fun opsModule(config: Config): Module =
                     route.networkController(networks)
                     route.feeWalletController(feeWallets, settings, clock)
                     route.rampController(ramp, settings, clock)
+                    route.emailTemplateController(emailTemplates)
                 }
             }
         }

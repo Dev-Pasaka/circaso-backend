@@ -36,7 +36,7 @@ data class OpsMerchant(
 /**
  * One network's ramp settings. [state] is `OFF`, `PREVIEW` or `ON`. Amounts are KES minor units. [version] rises on
  * each change: sent back with an update, a change made meanwhile is refused instead of overwritten (null: save over
- * whatever is there). [walletSetId], [updatedBy] and [updatedAt] are read-only.
+ * whatever is there). [walletSetId], [updatedBy], [updatedAt] and [collectionsProviders] are read-only.
  */
 data class OpsRampSettings(
     val network: Network,
@@ -53,10 +53,14 @@ data class OpsRampSettings(
     val paymentWindowSeconds: Int,
     val kycRequired: Boolean,
     val callbackBaseUrl: String,
+    /** Which collections provider sends this network's M-Pesa prompts: one of [collectionsProviders]. */
+    val collectionsProvider: String,
     val version: Long? = null,
     val walletSetId: String? = null,
     val updatedBy: String? = null,
     val updatedAt: Instant? = null,
+    /** Read-only: the providers this server offers, to choose [collectionsProvider] from. */
+    val collectionsProviders: List<String> = emptyList(),
 )
 
 data class OpsRampSettingsChange(val before: OpsRampSettings, val after: OpsRampSettings)
@@ -109,7 +113,8 @@ interface RampAdmin {
 
     /**
      * Replaces one network's settings. A chain must belong to the network; the fee is 0 to 500 basis points, the
-     * merchant's share 0 to 10 000; KYC can't be switched off on mainnet. In force everywhere within ten seconds.
+     * merchant's share 0 to 10 000; KYC can't be switched off on mainnet; the collections provider must be one this
+     * server offers. In force everywhere within ten seconds, with no restart.
      */
     suspend fun updateSettings(settings: OpsRampSettings, by: UUID): Resource<OpsRampSettingsChange>
 

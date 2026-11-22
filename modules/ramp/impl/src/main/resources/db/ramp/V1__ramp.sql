@@ -20,6 +20,7 @@ CREATE TABLE ramp.settings (                             -- one row per network;
     payment_window_seconds integer     NOT NULL CHECK (payment_window_seconds > 0),
     kyc_required           boolean     NOT NULL,         -- false only on the testnet, until Didit is built
     callback_base_url      text        NOT NULL,         -- the public origin merchants' callback addresses are made on
+    collections_provider   text        NOT NULL,         -- who sends the M-Pesa prompts (payhero); switched in the admin
     wallet_set_id          text,                         -- the merchants' wallet set at the custodian; ops writes it once
     updated_by             text,
     updated_at             timestamptz NOT NULL,
@@ -84,7 +85,7 @@ CREATE TABLE ramp.revenue_wallets (                      -- Circaso's own ramp w
 
 CREATE TABLE ramp.merchant_credentials (                 -- sealed; never plaintext
     merchant_id  uuid        PRIMARY KEY,
-    provider     text        NOT NULL,                   -- payhero
+    provider     text        NOT NULL,                   -- whose account these are (payhero): the network's provider when sealed
     channel_id   text        NOT NULL,                   -- the till or paybill, for display: not a secret
     sealed       bytea       NOT NULL,                   -- AES-256-GCM(data key) over the credentials
     wrapped_key  bytea       NOT NULL,                   -- the data key under KDF(master key, Argon2id(PIN, salt))
@@ -128,6 +129,7 @@ CREATE TABLE ramp.orders (
     fee_minor           bigint      NOT NULL,
     fee_bps             integer     NOT NULL,            -- its quote's: a later change of the settings doesn't touch it
     merchant_share_bps  integer     NOT NULL,
+    collections_provider text       NOT NULL,            -- the provider that prompted it: its status is asked there
     payer_phone         text        NOT NULL,            -- E.164: needed to match the payment; never logged
     destination_address text        NOT NULL,            -- on-ramp: the user's wallet
     provider_reference  text,                            -- the provider's reference for the prompt: the status query's key

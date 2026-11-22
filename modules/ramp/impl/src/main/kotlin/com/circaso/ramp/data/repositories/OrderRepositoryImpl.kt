@@ -125,6 +125,7 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                     it[feeMinor] = order.feeMinor
                     it[feeBps] = order.feeBps
                     it[merchantShareBps] = order.merchantShareBps
+                    it[collectionsProvider] = order.collectionsProvider
                     it[payerPhone] = order.payerPhone.e164
                     it[destinationAddress] = order.destinationAddress
                     it[paymentDeadline] = order.paymentDeadline
@@ -305,6 +306,7 @@ internal fun ResultRow.toOrder() =
         feeMinor = this[OrdersTable.feeMinor],
         feeBps = this[OrdersTable.feeBps],
         merchantShareBps = this[OrdersTable.merchantShareBps],
+        collectionsProvider = this[OrdersTable.collectionsProvider],
         payerPhone = payer(this[OrdersTable.payerPhone]),
         destinationAddress = this[OrdersTable.destinationAddress],
         providerReference = this[OrdersTable.providerReference],

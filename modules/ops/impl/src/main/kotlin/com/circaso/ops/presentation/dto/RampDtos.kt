@@ -28,9 +28,10 @@ data class RampMerchantsResponse(val merchants: List<RampMerchantDto>, val nextC
 /**
  * One network's ramp settings. `state`: OFF | PREVIEW | ON. The three limits are KES minor units (cents) as strings.
  * `feeBps` is what a buyer pays (0 to 500), `merchantShareBps` the merchant's part of it (0 to 10000).
- * `feeSettleHourUtc` is the hour of the daily sweep of Circaso's share. `version` rises on each change; sent back on
+ * `feeSettleHourUtc` is the hour of the daily sweep of Circaso's share. `collectionsProvider` is who sends the M-Pesa
+ * prompts, one of `collectionsProviders` (read-only: what this server offers). `version` rises on each change; sent back on
  * an update, a change made meanwhile answers `ramp.settings_changed`. `walletSetId`, `updatedBy` and `updatedAt` are
- * read-only.
+ * read-only too.
  */
 @Serializable
 data class RampSettingsDto(
@@ -48,10 +49,12 @@ data class RampSettingsDto(
     val paymentWindowSeconds: Int,
     val kycRequired: Boolean,
     val callbackBaseUrl: String,
+    val collectionsProvider: String,
     val version: Long? = null,
     val walletSetId: String? = null,
     val updatedBy: String? = null,
     val updatedAt: String? = null,
+    val collectionsProviders: List<String> = emptyList(),
 )
 
 /** `PUT /ops/ramp/settings?network=`: the settings and why they change. Read-only fields are ignored when sent. */
@@ -70,12 +73,14 @@ data class UpdateRampSettingsRequest(
     val paymentWindowSeconds: Int,
     val kycRequired: Boolean,
     val callbackBaseUrl: String,
+    val collectionsProvider: String,
     val version: Long? = null,
     val reason: String = "",
     val network: String? = null,
     val walletSetId: String? = null,
     val updatedBy: String? = null,
     val updatedAt: String? = null,
+    val collectionsProviders: List<String>? = null,
 )
 
 @Serializable

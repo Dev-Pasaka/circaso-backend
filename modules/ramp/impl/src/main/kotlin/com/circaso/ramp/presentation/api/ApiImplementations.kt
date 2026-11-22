@@ -70,15 +70,20 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
     override suspend fun suspend(merchantId: MerchantId, by: UUID): Resource<OpsMerchant> =
         admin.decide(merchantId, approve = false, by = by.toString()).map { it.toOps() }
 
-    override suspend fun settings(network: Network): OpsRampSettings =
-        admin.settings(network).getOrNull()?.toOps() ?: RampSettings.defaults(network, Instant.EPOCH).toOps()
+    override suspend fun settings(network: Network): OpsRampSettings {
+        val settings = admin.settings(network).getOrNull() ?: RampSettings.defaults(network, Instant.EPOCH)
+        return settings.toOps(offered())
+    }
 
     override suspend fun updateSettings(settings: OpsRampSettings, by: UUID): Resource<OpsRampSettingsChange> =
         settings.toDomain().flatMap { wanted ->
+            val offered = offered()
             admin
                 .updateSettings(wanted, settings.version, by.toString())
-                .map { OpsRampSettingsChange(it.before.toOps(), it.after.toOps()) }
+                .map { OpsRampSettingsChange(it.before.toOps(offered), it.after.toOps(offered)) }
         }
+
+    private suspend fun offered(): List<String> = admin.collectionProviders().getOrNull().orEmpty()
 
     override suspend fun previewAccess(network: Network): List<OpsRampPreviewAccess> =
         admin
@@ -140,7 +145,7 @@ private fun OrderView.toOps() =
         updatedAt = order.updatedAt,
     )
 
-private fun RampSettings.toOps() =
+private fun RampSettings.toOps(offered: List<String>) =
     OpsRampSettings(
         network = network,
         state = state.name,
@@ -156,10 +161,12 @@ private fun RampSettings.toOps() =
         paymentWindowSeconds = paymentWindowSeconds,
         kycRequired = kycRequired,
         callbackBaseUrl = callbackBaseUrl,
+        collectionsProvider = collectionsProvider,
         version = version,
         walletSetId = walletSetId,
         updatedBy = updatedBy,
         updatedAt = updatedAt,
+        collectionsProviders = offered,
     )
 
 /** Staff's settings as the domain's; the read-only fields are whatever the row has. */
@@ -183,6 +190,7 @@ private fun OpsRampSettings.toDomain(): Resource<RampSettings> {
             paymentWindowSeconds = paymentWindowSeconds,
             kycRequired = kycRequired,
             callbackBaseUrl = callbackBaseUrl.trim(),
+            collectionsProvider = collectionsProvider.trim().lowercase(),
             walletSetId = null,
             updatedBy = null,
             updatedAt = Instant.EPOCH,

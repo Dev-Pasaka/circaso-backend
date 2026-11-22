@@ -43,6 +43,7 @@ import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.OrderFlow
@@ -101,7 +102,8 @@ class RampDataTest {
     private val bus = MemoryBus()
     private val alerts = RecordingAlerts()
     private val outbox = RampOutboxImpl(database)
-    private val book = SettingsBook(settingsRows, alerts, clock)
+    private val providers = FakeProviders(mapOf(PAYHERO to collections))
+    private val book = SettingsBook(settingsRows, alerts, providers, clock)
     private val engine =
         Engine(merchants, merchantWallets, reservations, commissions, orders, transactor, treasury, sessions, clock)
     private val flow =
@@ -115,7 +117,7 @@ class RampDataTest {
             RecordingFrames(),
             MemoryCounters(),
             alerts,
-            collections,
+            providers,
             sessions,
             book,
             clock,
@@ -181,7 +183,7 @@ class RampDataTest {
         )
         treasury.balances[walletId] = floatMinor
         treasury.addresses[walletId] = "0x$walletId"
-        sessions.keys[merchant.merchantId] = CollectionCredentials("user", "pass", "911")
+        sessions.keys[merchant.merchantId] = UnlockedKeys(PAYHERO, CollectionCredentials("user", "pass", "911"))
         return merchant
     }
 
@@ -214,6 +216,7 @@ class RampDataTest {
         custodyTxId = null,
         txHash = null,
         failureReason = null,
+        collectionsProvider = PAYHERO,
         paymentDeadline = at.plusSeconds(120),
         createdAt = at,
         updatedAt = at,
@@ -247,6 +250,7 @@ class RampDataTest {
             assertEquals(Network.entries.toSet(), seeded.keys)
             assertEquals(RampState.OFF, seeded.getValue(Network.MAINNET).state)
             assertEquals(listOf("BASE-SEPOLIA"), seeded.getValue(TESTNET).chains)
+            assertEquals(PAYHERO, seeded.getValue(TESTNET).collectionsProvider)
 
             settingsRows.seed(seeded.getValue(TESTNET).copy(feeBps = 499))
             assertEquals(150, settingsRows.load().getValue(TESTNET).feeBps, "a second seed changes nothing")
@@ -255,10 +259,15 @@ class RampDataTest {
                 seeded
                     .getValue(
                         TESTNET,
-                    ).copy(state = RampState.PREVIEW, chains = listOf("BASE-SEPOLIA", "ETH-SEPOLIA"))
+                    ).copy(
+                        state = RampState.PREVIEW,
+                        chains = listOf("BASE-SEPOLIA", "ETH-SEPOLIA"),
+                        collectionsProvider = DARAJA,
+                    )
             val saved = settingsRows.update(wanted, expectedVersion = 0, by = "staff-1", at = now)
             assertEquals(1L to "staff-1", saved?.version to saved?.updatedBy)
             assertEquals(wanted.chains, saved?.chains)
+            assertEquals(DARAJA, saved?.collectionsProvider, "the provider is a column staff change")
             assertNull(settingsRows.update(wanted.copy(feeBps = 10), expectedVersion = 0, by = "staff-2", at = now))
             assertEquals(150, settingsRows.load().getValue(TESTNET).feeBps, "the stale write changed nothing")
 
@@ -411,6 +420,7 @@ class RampDataTest {
             val sealed =
                 vault.seal(
                     merchant.merchantId,
+                    PAYHERO,
                     CollectionCredentials("api-user", "api-pass", "911"),
                     "482913",
                 )!!

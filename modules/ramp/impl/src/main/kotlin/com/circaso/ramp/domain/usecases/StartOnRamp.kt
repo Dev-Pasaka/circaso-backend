@@ -91,7 +91,7 @@ class StartOnRamp(
 
         val reserved =
             engine.reserve(quote.network, quote.blockchain, quote.assetMinor, settings) { candidate ->
-                order(quote, command, candidate, address, now.plus(settings.paymentWindow), now)
+                order(quote, command, candidate, address, settings, now)
             }
         val order =
             when (reserved) {
@@ -115,7 +115,7 @@ class StartOnRamp(
         command: StartOnRampCommand,
         candidate: Candidate,
         address: String,
-        deadline: Instant,
+        settings: RampSettings,
         now: Instant,
     ) = Order(
         orderId = RampOrderId.new(),
@@ -132,6 +132,7 @@ class StartOnRamp(
         feeMinor = quote.feeMinor,
         feeBps = quote.feeBps,
         merchantShareBps = quote.merchantShareBps,
+        collectionsProvider = settings.collectionsProvider,
         payerPhone = command.phone,
         destinationAddress = address,
         providerReference = null,
@@ -140,7 +141,7 @@ class StartOnRamp(
         custodyTxId = null,
         txHash = null,
         failureReason = null,
-        paymentDeadline = deadline,
+        paymentDeadline = now.plus(settings.paymentWindow),
         createdAt = now,
         updatedAt = now,
     )

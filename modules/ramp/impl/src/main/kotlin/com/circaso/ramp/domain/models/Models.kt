@@ -82,6 +82,8 @@ data class Order(
     val feeMinor: Long,
     val feeBps: Int,
     val merchantShareBps: Int,
+    /** The collections provider that sent its prompt: its payment status is asked there, whatever is set later. */
+    val collectionsProvider: String,
     val payerPhone: PhoneNumber,
     val destinationAddress: String,
     val providerReference: String?,

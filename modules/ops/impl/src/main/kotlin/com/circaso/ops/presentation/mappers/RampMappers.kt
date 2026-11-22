@@ -72,10 +72,12 @@ fun OpsRampSettings.toDto() =
         paymentWindowSeconds = paymentWindowSeconds,
         kycRequired = kycRequired,
         callbackBaseUrl = callbackBaseUrl,
+        collectionsProvider = collectionsProvider,
         version = version,
         walletSetId = walletSetId,
         updatedBy = updatedBy,
         updatedAt = updatedAt?.toString(),
+        collectionsProviders = collectionsProviders,
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -103,6 +105,7 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             paymentWindowSeconds = paymentWindowSeconds,
             kycRequired = kycRequired,
             callbackBaseUrl = callbackBaseUrl.trim(),
+            collectionsProvider = collectionsProvider.trim().lowercase(),
             version = version,
         ),
     )

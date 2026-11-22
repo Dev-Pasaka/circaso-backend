@@ -2,6 +2,7 @@ package com.circaso.ramp
 
 import com.circaso.identity.api.AccountStatus
 import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.EnvelopeVault
@@ -18,6 +19,7 @@ import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.StartOnRampCommand
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
@@ -67,6 +69,8 @@ import java.time.Duration
 
 const val CHAIN = "BASE-SEPOLIA"
 val TESTNET = Network.TESTNET
+const val PAYHERO = "payhero"
+const val DARAJA = "daraja"
 const val MASTER_KEY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 /**
@@ -98,6 +102,11 @@ class Harness {
     val pricing = FixedPricing()
     val usdc = FixedUsdc()
     val collections = FakeCollections()
+
+    /** A second real provider staff can switch a network to. */
+    val daraja = FakeCollections()
+    val offered = linkedMapOf<String, MobileCollections>(PAYHERO to collections, DARAJA to daraja)
+    val providers = FakeProviders(offered)
     val treasury = FakeTreasury()
     val email = RecordingEmail()
     val sessions = MemorySessions()
@@ -112,7 +121,7 @@ class Harness {
         )
 
     private val transactor = DirectTransactor()
-    val book = SettingsBook(settingsRows, alerts, clock)
+    val book = SettingsBook(settingsRows, alerts, providers, clock)
     val gates = Gates(book, preview, kyc)
     val flow =
         OrderFlow(
@@ -125,7 +134,7 @@ class Harness {
             frames,
             counters,
             alerts,
-            collections,
+            providers,
             sessions,
             book,
             clock,
@@ -159,7 +168,7 @@ class Harness {
     val getMerchant = GetMerchant(merchants, views)
     val applyAsMerchant = ApplyAsMerchant(merchants, views)
     val storePayments =
-        StorePaymentAccount(merchants, credentials, collections, vault, pins, sessions, tokens, book, clock)
+        StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock)
     val rotateCallback = RotateCallback(merchants, credentials, tokens, book)
     val goOnline = GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, clock)
     val goOffline = GoOffline(presence)
@@ -172,7 +181,7 @@ class Harness {
     val listMerchants = ListMerchants(merchants, merchantWallets, credentials)
     val decideMerchant = DecideMerchant(merchants, merchantWallets, credentials, presence, clock)
     val getSettings = GetSettings(settingsRows, book)
-    val updateSettings = UpdateSettings(settingsRows, book, clock)
+    val updateSettings = UpdateSettings(settingsRows, book, providers, clock)
     val setPreview = SetPreviewAccess(preview, clock)
     val reviewOrders = ListReviewOrders(orders, merchants)
 
@@ -220,7 +229,7 @@ class Harness {
         merchantWallets.rows[id to TESTNET] = MerchantWallet(id, TESTNET, CHAIN, walletId, "0x$walletId")
         treasury.balances[walletId] = floatMinor
         treasury.addresses[walletId] = "0x$walletId"
-        sessions.keys[id] = CollectionCredentials("$name-user", "$name-pass", "911")
+        sessions.keys[id] = UnlockedKeys(PAYHERO, CollectionCredentials("$name-user", "$name-pass", "911"))
         return merchant
     }
 

@@ -302,6 +302,80 @@ class MerchantTest {
         }
 
     @Test
+    fun `after staff switch the network's provider, a merchant reconnects under it before trading again`() =
+        runTest {
+            val id = ready()
+            ramp.merchants.rows.remove(ramp.crynce.merchantId)
+            ramp.goOnline(id, TESTNET, pin, 240)
+            assertEquals(
+                PAYHERO,
+                ramp.credentials.rows
+                    .getValue(id)
+                    .provider,
+            )
+
+            val current = ramp.getSettings(TESTNET).getOrNull()!!
+            val switched = current.copy(collectionsProvider = DARAJA)
+            assertIs<Resource.Success<*>>(ramp.updateSettings(switched, current.version, "staff-1"))
+
+            // the account they stored is PayHero's: it shows, but it no longer counts as connected
+            val stale = ramp.getMerchant(id, TESTNET).getOrNull()!!
+            assertEquals(listOf("payments"), stale.missing)
+            assertEquals(PAYHERO, stale.payments?.provider)
+            assertFalse(stale.paymentsCurrent || stale.canGoOnline)
+            assertTrue(stale.pinSet, "the PIN is still theirs")
+            assertEquals(RampError.NoMerchantAvailable, ramp.buy().error(), "not a candidate, though still online")
+            ramp.goOffline(id)
+            assertEquals(RampError.MerchantSetupIncomplete, ramp.goOnline(id, TESTNET, pin, 60).error())
+
+            // RM5 checks the new account with the new provider and seals it as that provider's, under the same PIN
+            val account = CollectionCredentials("daraja-key", "daraja-secret", "174379")
+            assertEquals(
+                RampError.PinInvalid,
+                ramp.storePayments(id, TESTNET, PaymentAccountCommand(account, "000000")).error(),
+            )
+            assertIs<Resource.Success<*>>(ramp.storePayments(id, TESTNET, PaymentAccountCommand(account, pin)))
+            assertEquals(
+                "daraja-key",
+                ramp.daraja.verified
+                    .single()
+                    .username,
+            )
+            assertEquals(1, ramp.collections.verified.size, "PayHero was asked only the first time")
+            assertEquals(
+                DARAJA to "174379",
+                ramp.credentials.rows
+                    .getValue(id)
+                    .let { it.provider to it.channelId },
+            )
+            assertEquals(emptyList(), ramp.getMerchant(id, TESTNET).getOrNull()!!.missing)
+
+            assertIs<Resource.Success<*>>(ramp.goOnline(id, TESTNET, pin, 60))
+            val order = ramp.prompted()
+            assertEquals(DARAJA, order.collectionsProvider)
+            assertEquals(
+                "daraja-key",
+                ramp.daraja.promptedWith
+                    .single()
+                    .username,
+            )
+        }
+
+    @Test
+    fun `payment credentials can't be stored while the network's provider isn't one this server offers`() =
+        runTest {
+            val id = idOf(signIn())
+            ramp.applyAsMerchant(id, TESTNET, ProfileCommand("Crynce", PhoneNumber.parse("+254712000111")!!))
+            ramp.settingsRows.set(TESTNET) { it.copy(collectionsProvider = "gone") }
+            ramp.book.invalidate()
+
+            val refused = ramp.storePayments(id, TESTNET, PaymentAccountCommand(payhero, pin))
+
+            assertEquals(RampError.CollectionsUnavailable, refused.error())
+            assertNull(ramp.credentials.rows[id])
+        }
+
+    @Test
     fun `a new callback address replaces the old one at once`() =
         runTest {
             val id = ready()
@@ -366,7 +440,7 @@ class MerchantTest {
             val keys = ramp.sessions.of(id)!!
             assertEquals(
                 Triple("api-user", "api-pass", "911"),
-                Triple(keys.username, keys.password, keys.collectionChannelId),
+                keys.credentials.let { Triple(it.username, it.password, it.collectionChannelId) },
             )
             assertEquals(
                 online.until,
@@ -421,7 +495,14 @@ class MerchantTest {
             assertTrue(sealedBefore.sealed.contentEquals(sealedAfter.sealed), "only the data key is re-wrapped")
             assertFalse(sealedBefore.wrappedKey.contentEquals(sealedAfter.wrappedKey))
             assertEquals(RampError.PinInvalid, ramp.goOnline(id, TESTNET, pin, 60).error())
-            assertEquals("api-pass", ramp.goOnline(id, TESTNET, "771204", 60).let { ramp.sessions.of(id)!!.password })
+            assertEquals(
+                "api-pass",
+                ramp.goOnline(id, TESTNET, "771204", 60).let {
+                    ramp.sessions
+                        .of(id)!!
+                        .credentials.password
+                },
+            )
 
             val bare = idOf(signIn("bare@example.com"))
             assertEquals(RampError.MerchantSetupIncomplete, ramp.changePin(bare, pin, "771204").error())
@@ -610,6 +691,8 @@ class MerchantTest {
             refused("orderMaxMinor") { it.copy(orderMaxMinor = it.orderMinMinor - 100) }
             refused("orderMinMinor") { it.copy(orderMinMinor = 150) }
             refused("feeSettleHourUtc") { it.copy(feeSettleHourUtc = 24) }
+            refused("collectionsProvider") { it.copy(collectionsProvider = "log") }
+            refused("collectionsProvider") { it.copy(collectionsProvider = "fake") }
             refused("callbackBaseUrl") { it.copy(callbackBaseUrl = "api.circaso.com") }
             refused("callbackBaseUrl") { it.copy(callbackBaseUrl = "https://api.circaso.com/") }
             refused("kycRequired") { it.copy(network = Network.MAINNET, chains = listOf("BASE"), kycRequired = false) }

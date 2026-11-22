@@ -76,6 +76,14 @@ class SealedCredentials(
     override fun toString(): String = "SealedCredentials($provider, ***)"
 }
 
+/**
+ * A merchant's payment keys as a node holds them while the merchant is online: the credentials, and the [provider]
+ * they are an account at. A prompt or a status query for another provider never uses them.
+ */
+class UnlockedKeys(val provider: String, val credentials: CollectionCredentials) {
+    override fun toString(): String = "UnlockedKeys($provider, ***)"
+}
+
 /** What opening the envelope with a PIN gave. */
 sealed interface Unsealed {
     class Opened(val credentials: CollectionCredentials) : Unsealed
@@ -124,6 +132,8 @@ data class MerchantOverview(
     /** Null without a wallet, or when the custodian can't be asked. */
     val float: FloatView?,
     val payments: PaymentsView?,
+    /** Whether the stored payment account is at the provider the network uses now; false means reconnect. */
+    val paymentsCurrent: Boolean,
     val online: Boolean,
     /** The least free float worth going online with: what the smallest order buys. Zero when it can't be priced. */
     val floatFloorMinor: Long,
@@ -138,7 +148,7 @@ data class MerchantOverview(
                 "profile".takeIf { merchant.state == MerchantState.NEW },
                 "approval".takeIf { merchant.state != MerchantState.APPROVED },
                 "wallet".takeIf { wallet == null },
-                "payments".takeIf { payments == null },
+                "payments".takeIf { payments == null || !paymentsCurrent },
                 "float".takeIf { float != null && (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor) },
             )
 

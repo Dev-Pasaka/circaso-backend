@@ -14,7 +14,7 @@ Four rules already decided on `main` reshape the first draft. Each is followed h
 
 - **Secrets only in the environment:** nothing new for Circle (`CIRCLE_API_KEY`, `CIRCLE_MAINNET_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_MAINNET_ENTITY_SECRET` exist), `RAMP_CREDENTIALS_MASTER_KEY` (the envelope's master half, with the portal), and `DIDIT_API_KEY` and `DIDIT_WEBHOOK_SECRET` (with Didit). **A merchant's PayHero credentials are never in the environment and never supplied by Circaso** (Pasaka, 2026-11-22): they belong to the merchant, who enters them on the portal, and they exist only sealed in `merchant_credentials`.
 - **Everything else is a row:** `ramp.settings`, one row per network (Data), seeded once from built-in defaults, read at most every 10 seconds per process as the wallet's network settings are, and edited by staff through the ops server (RO5). That covers the ramp's state (`OFF` | `PREVIEW` | `ON`), the chains it delivers on, the limits, the prompts per hour, the fee, the quote lifetime, the payment window, whether KYC is enforced, and the origin callback addresses are made on. None of the `RAMP_*` or `INTEGRATIONS_MERCHANT_CUSTODY_*` variables of the first draft exist.
-- **Providers follow main's pattern:** which implementation a contract uses is a start-up line like every other one, `INTEGRATIONS_COLLECTIONS_PROVIDER` (`log` | `fake` | `payhero`), beside `INTEGRATIONS_CUSTODY_PROVIDER`. The merchant float has no provider line of its own: it uses the treasury (below), which follows the custody provider and the keys present.
+- **The collections provider is a database setting too (decided by Pasaka, 2026-11-22; replaces the first version of this rule, which made it a start-up line).** There is no `INTEGRATIONS_COLLECTIONS_PROVIDER`. `ramp.settings.collections_provider` names it per network; staff switch it in the admin (RO5) at any time and it applies within the settings cache's 10 seconds, with no restart. Integrations binds every implementation at once behind `CollectionProviders` (`named(name)`, `names`) and the ramp names the one it wants on each call, so integrations never depends on the ramp. Real providers (`payhero` today) are always offered; `log`, which reports every prompt as paid, is offered only where the process runs in the local environment, and `fake` only where a test builds it. **This is the one place the ramp differs from the other `INTEGRATIONS_*_PROVIDER` start-up lines.** An order keeps the provider that prompted it (`orders.collections_provider`), so a switch mid-order never asks the wrong provider for its status; a merchant's sealed credentials name the provider they are an account at (`merchant_credentials.provider`), and a merchant whose account is at another provider than the network's current one is not a candidate and reconnects (RM5; RM2 `missing` says `payments`). The merchant float has no provider setting of its own: it uses the treasury (below), which follows the custody provider and the keys present.
 
 **2. Everything about money carries `network` (`MAINNET` | `TESTNET`), and a new way in must set it (decision 2026-11-18).**
 
@@ -284,7 +284,7 @@ interface CollectionNotifications {                  // implemented by ramp, wir
 
 | Setting | Example | Purpose |
 | --- | --- | --- |
-| `INTEGRATIONS_COLLECTIONS_PROVIDER` (start-up, as every provider line) | `log` \| `fake` \| `payhero` | `log` locally, `fake` in tests |
+| `ramp.settings.collections_provider` (database, per network) | `payhero` (a server); `log` (seeded and offered on a local run only) | Who sends the M-Pesa prompts; switched in the admin with no restart. `fake` exists only where a test builds it |
 | `ramp.settings.callback_base_url` (database) | `https://api.circaso.com` | The public origin callback addresses are made on; edited in the admin |
 | A merchant's callback address (generated, RM5) | `https://api.circaso.com/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s` | The merchant's own: shown on the portal to paste into PayHero, and sent with every prompt of theirs |
 
@@ -509,6 +509,7 @@ CREATE TABLE ramp.settings (                             -- one row per network;
     payment_window_seconds integer     NOT NULL,         -- 120
     kyc_required           boolean     NOT NULL,         -- false only while Didit isn't built; never false on MAINNET (CHECK)
     callback_base_url      text        NOT NULL,         -- the public origin merchants' callback addresses are made on
+    collections_provider   text        NOT NULL,         -- who sends the M-Pesa prompts (payhero); switched in the admin
     wallet_set_id          text,                         -- the merchants' wallet set at Circle; written once by the ops process
     updated_by             text,
     updated_at             timestamptz NOT NULL,
@@ -587,7 +588,7 @@ CREATE UNIQUE INDEX verifications_identity_key ON ramp.verifications (subject_ki
 
 CREATE TABLE ramp.merchant_credentials (                 -- sealed; never plaintext
     merchant_id  uuid        PRIMARY KEY,
-    provider     text        NOT NULL,                   -- payhero
+    provider     text        NOT NULL,                   -- whose account these are (payhero): the network's provider when sealed
     sealed       bytea       NOT NULL,                   -- AES-256-GCM(data key) over the credentials
     wrapped_key  bytea       NOT NULL,                   -- the data key under KDF(master key, Argon2id(PIN, salt))
     pin_salt     bytea       NOT NULL,
@@ -623,6 +624,7 @@ CREATE TABLE ramp.orders (
     asset_amount_minor bigint      NOT NULL,
     rate               text        NOT NULL,
     fee_minor          bigint      NOT NULL,
+    collections_provider text      NOT NULL,             -- the provider that prompted it: its status is asked there
     payer_phone        text        NOT NULL,             -- E.164: needed to match the payment; never logged
     destination_address text       NOT NULL,             -- on-ramp: the user's wallet; off-ramp: the merchant's
     provider_reference text,                             -- PayHero's reference for the prompt: the status query's key
@@ -833,6 +835,8 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 **Where an order completes, and who tells the user.** The ops process's `ramp.release` does all of it: it sends `PAID` orders, then reads each `RELEASING` order's transaction on every run (5 s) and completes it (reservation consumed, commission row, `ramp.OnRampCompleted` in the outbox, one transaction), publishes the event and sends `ramp/order.updated`. The frame goes out from the ops process through the gateway's `Realtime`, which that process already binds so a staff reply reaches a user: the sequence (`rmp:seq`) and the kept frame (`ramp.realtime`) are shared, and delivery crosses to the app's node over Redis. Circle's webhook is not used for the ramp, and the app consumes no `events:ramp` event. The app's processes only verify the payment (`PAID`).
 
 **Settings and the gate.** `ramp.settings.chains` is comma-separated `text`, not `text[]`. The table also checks the state's values, the limits' order and `kyc_required OR network = 'TESTNET'`; code enforces KYC on mainnet whatever the row says. Built-in seed: `OFF`, a 1.5 % fee split 70/30, 10 to 5 000 shillings an order, 20 000 a day, 5 prompts an hour, sweep at 21:00 UTC, callback origin `https://api.circaso.com`. The state gate (`ramp.unavailable`) is on R1, R2 and R3; R4, R5 and R6 stay open so an order made before the ramp was switched off can still be read and cancelled.
+
+**The collections provider.** `integrations:api` has `CollectionProviders`; `OfferedCollections` (integrations) offers `payhero` everywhere and `log` only when `config.environment.isLocal`; it never offers `fake`. PayHero's webhook vendor is always bound, since the provider can be switched on at any time. The built-in seed of `collections_provider` is `payhero`, or `log` where the server offers it (a developer's machine), so a local order still completes end to end. `OrderFlow` asks `named(order.collectionsProvider)` for the prompt and for every status query; when that provider isn't offered any more the order waits untouched. The engine takes only merchants whose unlocked keys are for the network's current provider (the node keeps the provider beside the keys). RM5 checks the account with the network's current provider and seals it as that provider's, under the PIN already set; RM6 refuses (`ramp.merchant_setup_incomplete`) while the stored account is at another provider. RO5 refuses a provider this server doesn't offer (`ramp.settings_invalid`, field `collectionsProvider`), which is what keeps `log` off every server, and answers the offered names as `collectionsProviders` (read-only).
 
 **Merchants.** `merchants.state` has `NEW` (signed in, no profile yet) before `APPLIED`; `display_name` and `contact_phone` are empty until RM1, and the API answers them as `null`. The float wallet's columns are in `merchant_wallets` only; `merchants.callback_key` is the end of the callback address. Portal sign-ins are `ramp.merchant_sessions (token_hash bytea PRIMARY KEY, merchant_id, created_at, expires_at)`. `merchant_credentials.channel_id` keeps the till or paybill in plaintext beside the sealed blob, because RM2 shows it while the merchant is offline; it is not a secret. RM2 also answers `pinSet`. RM5 is allowed in `APPLIED` or `APPROVED`. `missing` is `profile`, `approval`, `wallet`, `payments`, `float` (free float below what the smallest order buys; a float the custodian can't report is not counted). RM6 takes 15 to 720 minutes.
 

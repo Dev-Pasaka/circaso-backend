@@ -54,7 +54,7 @@ class GetRampSettings(private val ramp: RampAdmin) {
 
 /**
  * Replaces one network's ramp settings (state, chains, limits, fee and split, sweep hour, windows, KYC, callback
- * origin). A reason is required; the audit line says what changed, by name, never a secret (there is none here).
+ * origin, collections provider). A reason is required; the audit line says what changed, by name, never a secret (there is none here).
  */
 class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTrail) {
     suspend operator fun invoke(
@@ -98,6 +98,7 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         changed("paymentWindowSeconds", before.paymentWindowSeconds, after.paymentWindowSeconds)
         changed("kycRequired", before.kycRequired, after.kycRequired)
         changed("callbackBaseUrl", before.callbackBaseUrl, after.callbackBaseUrl)
+        changed("collectionsProvider", before.collectionsProvider, after.collectionsProvider)
         return parts.joinToString("; ")
     }
 }

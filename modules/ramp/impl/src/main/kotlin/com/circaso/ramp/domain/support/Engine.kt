@@ -20,7 +20,8 @@ import java.time.Clock
 
 /**
  * The merchant engine, in its simple first version: the candidates are approved merchants with a float wallet on the
- * order's network and chain whose trading window outlasts the order **and whose payment keys this node holds**, taken
+ * order's network and chain whose trading window outlasts the order **and whose payment keys this node holds, for
+ * the collections provider the network uses now**, taken
  * least recently assigned first so equal merchants take turns. (Ranking by recent success rate, splitting an order and
  * handing work to the node that holds a merchant's keys arrive later: with one node, a merchant unlocked elsewhere is
  * simply not a candidate here.)
@@ -86,7 +87,7 @@ class Engine(
     ): List<Candidate> =
         merchants
             .candidates(network, blockchain, until = clock.instant().plus(settings.paymentWindow))
-            .filter { sessions.of(it.merchant.merchantId) != null }
+            .filter { sessions.of(it.merchant.merchantId)?.provider == settings.collectionsProvider }
             .sortedWith(compareBy(nullsFirst()) { it.merchant.lastAssignedAt })
 
     private suspend fun reserveWith(

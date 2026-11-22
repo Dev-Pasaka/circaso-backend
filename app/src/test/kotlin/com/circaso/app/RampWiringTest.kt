@@ -35,7 +35,8 @@ import kotlin.test.assertTrue
 
 /**
  * The ramp across its two processes, booted for real (Koin, every module, the gateway, Redis and PostgreSQL), with
- * the `log` custody and the fake email (decision 2026-11-22). The app serves the merchant portal; only the ops process
+ * the `log` custody and the fake email (decision 2026-11-22). No line of the environment names a collections provider:
+ * it is a row of `ramp.settings`, seeded `log` on a developer's machine, which is what this test is. The app serves the merchant portal; only the ops process
  * can make a wallet. A merchant signs up on the portal, staff approve them, the ops process's job makes their float
  * wallet, and the merchant then connects a payment account under a PIN and goes online, with no money anywhere.
  */
@@ -63,7 +64,6 @@ class RampWiringTest {
             "REDIS_URL" to "redis://${redis.host}:${redis.getMappedPort(6379)}",
             "INTEGRATIONS_SMS_PROVIDER" to "fake",
             "INTEGRATIONS_EMAIL_PROVIDER" to "fake",
-            "INTEGRATIONS_COLLECTIONS_PROVIDER" to "fake",
             "RAMP_CREDENTIALS_MASTER_KEY" to MASTER_KEY,
             "WARMUP_WORKERS" to "1",
             "WARMUP_ROUNDS" to "1",
@@ -126,7 +126,9 @@ class RampWiringTest {
             assertIs<Resource.Success<*>>(admin.approve(listed.merchantId, UUID.randomUUID()))
 
             val jobs = koin!!.getAll<OpsJob>().associateBy { it.name }
-            assertTrue(jobs.getValue("ramp.release").job() >= 1, "it made the merchant's wallet")
+            // The process's own scheduler may already have run the job since the approval (it does on a slow
+            // machine), so what is asserted is the wallet below, not how much this particular run found to do.
+            jobs.getValue("ramp.release").job()
             jobs.getValue("ramp.settle-fees").job()
 
             val approved = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
@@ -135,7 +137,10 @@ class RampWiringTest {
                 listOf(Network.TESTNET to "BASE-SEPOLIA"),
                 approved.wallets.map { it.network to it.blockchain }.take(1),
             )
-            assertTrue(admin.settings(Network.TESTNET).walletSetId != null, "the ramp's wallet set was made")
+            val settings = admin.settings(Network.TESTNET)
+            assertTrue(settings.walletSetId != null, "the ramp's wallet set was made")
+            assertEquals("log", settings.collectionsProvider, "the local seed")
+            assertEquals(listOf("payhero", "log"), settings.collectionsProviders, "what a local server offers")
         }
 
         // the app's process again (a new node): the wallet shows, and the merchant connects payments and goes online
@@ -151,6 +156,9 @@ class RampWiringTest {
             val payments = client.put("$BASE/payments") { json(account, session) }
             assertEquals(HttpStatusCode.OK, payments.status, payments.bodyAsText())
             assertTrue("/v1/hooks/payhero/crynce-" in payments.bodyAsText())
+            assertTrue(
+                "\"provider\":\"log\"" in client.get(BASE) { header("X-Merchant-Session", session) }.bodyAsText(),
+            )
 
             val wrong = client.post("$BASE/session") { json("""{"pin":"000000","minutes":60}""", session) }
             assertTrue("ramp.pin_invalid" in wrong.bodyAsText(), wrong.bodyAsText())

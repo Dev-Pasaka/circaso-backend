@@ -1,8 +1,8 @@
 package com.circaso.ramp.data.cache
 
 import com.circaso.infrastructure.api.RedisScope
-import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.TradingSessions
 import java.time.Clock
 import java.time.Duration
@@ -20,22 +20,22 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class NodeTradingSessions(private val redis: RedisScope, private val nodeId: String, private val clock: Clock) :
     TradingSessions {
-    private val keys = ConcurrentHashMap<MerchantId, CollectionCredentials>()
+    private val keys = ConcurrentHashMap<MerchantId, UnlockedKeys>()
 
     override suspend fun unlock(
         merchantId: MerchantId,
-        credentials: CollectionCredentials,
+        keys: UnlockedKeys,
         until: Instant,
     ) {
-        keys[merchantId] = credentials
+        this.keys[merchantId] = keys
         val window = Duration.between(clock.instant(), until).takeIf { !it.isNegative && !it.isZero } ?: return
         redis.set(mark(merchantId), nodeId, window)
     }
 
-    override fun of(merchantId: MerchantId): CollectionCredentials? = keys[merchantId]
+    override fun of(merchantId: MerchantId): UnlockedKeys? = keys[merchantId]
 
-    override fun replace(merchantId: MerchantId, credentials: CollectionCredentials) {
-        keys.computeIfPresent(merchantId) { _, _ -> credentials }
+    override fun replace(merchantId: MerchantId, keys: UnlockedKeys) {
+        this.keys.computeIfPresent(merchantId) { _, _ -> keys }
     }
 
     override suspend fun end(merchantId: MerchantId, keepKeys: Boolean) {

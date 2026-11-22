@@ -52,6 +52,8 @@ data class OnlineResponse(val online: Boolean, val until: String?)
  * RM2 (also MA2's `merchant` and RM1's answer). `state`: NEW | APPLIED | APPROVED | SUSPENDED. `displayName` and
  * `contactPhone` are null until the profile is given. `wallet` is null until the ops server has made it; `float` is
  * null without a wallet or when the custodian can't be asked; `payments` is null until a payment account is stored.
+ * `payments.connected` is false (and `missing` says `payments`) when the stored account is at another provider than
+ * the one the network uses now: connect again with RM5.
  * `missing` lists what stands between the merchant and going online: `profile`, `approval`, `wallet`, `payments`,
  * `float`.
  */

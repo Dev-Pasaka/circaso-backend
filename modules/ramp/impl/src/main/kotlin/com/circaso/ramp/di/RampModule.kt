@@ -107,6 +107,7 @@ import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
 import com.circaso.ramp.domain.usecases.HandlePaymentCallback
 import com.circaso.ramp.domain.usecases.HasOpenOrder
+import com.circaso.ramp.domain.usecases.ListCollectionProviders
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
@@ -190,7 +191,8 @@ private suspend fun onEachNetwork(job: suspend (Network) -> Int): Int =
  * listener integrations ring for a payment callback, its replay and its jobs.
  *
  * It reads no setting from the environment (decision 2026-11-18): everything staff can change lives in
- * `ramp.settings`. The one secret is `RAMP_CREDENTIALS_MASTER_KEY`, the master half of the credential envelope, read
+ * `ramp.settings`, the collections provider included (decision 2026-11-22: integrations offers every provider at
+ * once, and the ramp names the one the network's row says on each call). The one secret is `RAMP_CREDENTIALS_MASTER_KEY`, the master half of the credential envelope, read
  * when a merchant stores or unlocks a payment account; the server starts without it.
  *
  * Both processes load the module. The app runs the routes, the callback listener and the `ScheduledJob`s; the ops
@@ -251,7 +253,7 @@ fun rampModule(config: Config): Module =
         }
 
         // domain
-        single { SettingsBook(get(), get(), clock) }
+        single { SettingsBook(get(), get(), get(), clock) }
         single { Gates(get(), get(), get()) }
         single { Engine(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single {
@@ -265,7 +267,7 @@ fun rampModule(config: Config): Module =
                 frames = get(),
                 counters = get(),
                 alerts = get(),
-                collections = get(),
+                providers = get(),
                 sessions = get(),
                 settings = get(),
                 clock = clock,
@@ -305,7 +307,8 @@ fun rampModule(config: Config): Module =
         single { ListMerchants(get(), get(), get()) }
         single { DecideMerchant(get(), get(), get(), get(), clock) }
         single { GetSettings(get(), get()) }
-        single { UpdateSettings(get(), get(), clock) }
+        single { UpdateSettings(get(), get(), get(), clock) }
+        single { ListCollectionProviders(get()) }
         single { ListPreviewAccess(get()) }
         single { SetPreviewAccess(get(), clock) }
         single { ListReviewOrders(get(), get()) }
@@ -319,7 +322,7 @@ fun rampModule(config: Config): Module =
         single { MerchantService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { RampEventsService(get(), get(), get(), get(), get()) }
         single { RampOpsJobsService(get(), get()) }
-        single { RampAdminService(get(), get(), get(), get(), get(), get(), get()) }
+        single { RampAdminService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single<RouteContributor>(named("ramp.routes")) {
             val ramp = get<RampService>()
             val auth = get<MerchantAuthService>()

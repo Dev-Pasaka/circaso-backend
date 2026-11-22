@@ -1,5 +1,6 @@
 package com.circaso.ramp.domain.support
 
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.repositories.SettingsRepository
@@ -18,6 +19,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class SettingsBook(
     private val repository: SettingsRepository,
     private val alerts: RampAlerts,
+    private val providers: CollectionProviders,
     private val clock: Clock,
     private val maxAge: Duration = MAX_AGE,
 ) {
@@ -27,7 +29,7 @@ class SettingsBook(
     private var loaded: Loaded? = null
 
     /** [network]'s settings now (at most [maxAge] old). */
-    suspend fun of(network: Network): RampSettings = fresh()[network] ?: RampSettings.defaults(network, clock.instant())
+    suspend fun of(network: Network): RampSettings = fresh()[network] ?: defaults(network)
 
     /** Makes the next read go to the table (after a change made in this process). */
     fun invalidate() {
@@ -53,9 +55,16 @@ class SettingsBook(
         val stored = repository.load()
         val missing = Network.entries.filter { it !in stored }
         if (missing.isEmpty()) return stored
-        missing.forEach { repository.seed(RampSettings.defaults(it, clock.instant())) }
+        missing.forEach { repository.seed(defaults(it)) }
         return repository.load()
     }
+
+    /**
+     * What a network starts as. The prompts are PayHero's, except on a developer's machine, where integrations also
+     * offers `log` (every prompt reported paid) and the seed takes it so an order completes end to end.
+     */
+    private fun defaults(network: Network): RampSettings =
+        RampSettings.defaults(network, clock.instant(), Providers.seed(providers))
 
     companion object {
         val MAX_AGE: Duration = Duration.ofSeconds(10)

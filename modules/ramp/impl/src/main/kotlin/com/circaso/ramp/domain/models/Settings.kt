@@ -1,5 +1,6 @@
 package com.circaso.ramp.domain.models
 
+import com.circaso.integrations.api.CollectionProviders
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import java.time.Duration
@@ -30,6 +31,8 @@ data class RampSettings(
     val paymentWindowSeconds: Int,
     val kycRequired: Boolean,
     val callbackBaseUrl: String,
+    /** Which collections provider sends this network's prompts; one of the names integrations offers. */
+    val collectionsProvider: String,
     val walletSetId: String?,
     val updatedBy: String?,
     val updatedAt: Instant,
@@ -60,9 +63,14 @@ data class RampSettings(
 
         /**
          * What a network starts as, written once when its row is missing: off (shillings are real on both networks, so
-         * staff open it on purpose), a 1.5 % fee split 70/30, and KYC required everywhere but the testnet.
+         * staff open it on purpose), a 1.5 % fee split 70/30, KYC required everywhere but the testnet, and PayHero
+         * for the prompts (on a developer's machine the caller passes `log`, so an order completes end to end).
          */
-        fun defaults(network: Network, at: Instant): RampSettings =
+        fun defaults(
+            network: Network,
+            at: Instant,
+            collectionsProvider: String = CollectionProviders.PAYHERO,
+        ): RampSettings =
             RampSettings(
                 network = network,
                 state = RampState.OFF,
@@ -78,6 +86,7 @@ data class RampSettings(
                 paymentWindowSeconds = 120,
                 kycRequired = network == Network.MAINNET,
                 callbackBaseUrl = "https://api.circaso.com",
+                collectionsProvider = collectionsProvider,
                 walletSetId = null,
                 updatedBy = null,
                 updatedAt = at,

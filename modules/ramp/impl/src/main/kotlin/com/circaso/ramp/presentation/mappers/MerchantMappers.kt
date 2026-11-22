@@ -144,7 +144,7 @@ fun MerchantOverview.toResponse() =
                 profile = merchant.state != MerchantState.NEW,
                 approved = merchant.state == MerchantState.APPROVED,
                 wallet = wallet != null,
-                payments = payments != null,
+                payments = payments != null && paymentsCurrent,
             ),
         wallet = wallet?.let { MerchantWalletDto(it.blockchain, it.address) },
         float =
@@ -155,7 +155,10 @@ fun MerchantOverview.toResponse() =
                     free = Amounts.usdc(it.freeMinor),
                 )
             },
-        payments = payments?.let { MerchantPaymentsDto(it.provider, connected = true, it.channelId, it.callbackUrl) },
+        payments =
+            payments?.let {
+                MerchantPaymentsDto(it.provider, connected = paymentsCurrent, it.channelId, it.callbackUrl)
+            },
         pinSet = pinSet,
         online = OnlineResponse(online, merchant.onlineUntil?.takeIf { online }?.toString()),
         canGoOnline = canGoOnline,
