@@ -133,9 +133,10 @@ class RampWiringTest {
 
             val approved = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
             assertEquals("APPROVED", approved.state)
-            assertEquals(
-                listOf(Network.TESTNET to "BASE-SEPOLIA"),
-                approved.wallets.map { it.network to it.blockchain }.take(1),
+            // One wallet per network, in no promised order: the testnet's is the one this test goes on to use.
+            assertTrue(
+                (Network.TESTNET to "BASE-SEPOLIA") in approved.wallets.map { it.network to it.blockchain },
+                "the testnet float wallet was made",
             )
             val settings = admin.settings(Network.TESTNET)
             assertTrue(settings.walletSetId != null, "the ramp's wallet set was made")
