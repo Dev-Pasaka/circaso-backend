@@ -10,7 +10,14 @@ import com.circaso.shared.Resource
  * keys don't come from `Secrets`. Nothing here is a provider's shape, so another provider is a new implementation.
  */
 interface MobileCollections {
-    /** Sends the payment prompt (M-Pesa STK push) to [CollectionRequest.payer]. Never retried by the client. */
+    /**
+     * Sends the payment prompt (M-Pesa STK push) to [CollectionRequest.payer]. Never retried by the client.
+     *
+     * The failures are told apart, because the caller acts differently on each: `Unavailable` is the provider out of
+     * reach (the outcome is unknown; nothing else is tried), `Rejected` is the provider refusing **this merchant's**
+     * request (nothing was sent; another merchant may be asked), and `ServiceBalanceLow` is that refusal when the
+     * reason is the merchant's own prepaid balance at the provider (they must top it up first).
+     */
     suspend fun requestPayment(
         credentials: CollectionCredentials,
         request: CollectionRequest,
@@ -24,7 +31,10 @@ interface MobileCollections {
 
     suspend fun payoutStatus(credentials: CollectionCredentials, providerReference: String): Resource<CollectionStatus>
 
-    /** The merchant's balances at the provider: what payouts can spend, and what the provider's fees are paid from. */
+    /**
+     * The merchant's balances at the provider: what payouts can spend, and what the provider's fees are paid from
+     * ([CollectionBalances.fees]: PayHero's service wallet). A provider with no payouts answers zero for the first.
+     */
     suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances>
 
     /** Whether the credentials work, for the portal's "connect your account" step. */

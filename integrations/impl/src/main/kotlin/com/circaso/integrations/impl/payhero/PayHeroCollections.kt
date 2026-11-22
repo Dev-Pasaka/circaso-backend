@@ -29,6 +29,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
+import java.math.BigDecimal
 import java.util.Base64
 import kotlin.math.roundToLong
 
@@ -41,8 +42,10 @@ import kotlin.math.roundToLong
  * client never repeats it; after a timeout the caller asks [paymentStatus]. Bodies are never logged: they carry phone
  * numbers and amounts.
  *
- * Payouts: PayHero has none today (decision 2026-11-22), so [payout], [payoutStatus] and [balance] answer
- * `NotImplemented`.
+ * Payouts: PayHero has none today (decision 2026-11-22), so [payout] and [payoutStatus] answer `NotImplemented`.
+ * [balance] reads the **service wallet**, the prepaid float PayHero's per-transaction fees are taken from: when it is
+ * empty PayHero refuses the prompt (`400 … merchant has insufficient balance …`, seen in the first real test), which
+ * [requestPayment] answers as `ServiceBalanceLow`.
  */
 class PayHeroCollections(private val http: HttpClient) : MobileCollections {
     private val log = LoggerFactory.getLogger(PayHeroCollections::class.java)
@@ -109,16 +112,26 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
         providerReference: String,
     ): Resource<CollectionStatus> = noPayouts()
 
-    override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> = noPayouts()
+    /** The service wallet's available balance as `fees`; `payout` is zero, since PayHero pays nothing out. */
+    override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> =
+        serviceWallet("service_wallet_balance", credentials).flatMapBody("service_wallet_balance") { text ->
+            payHeroJson.decodeFromString(WalletReply.serializer(), text).availableBalance?.let { shillings ->
+                val fees = BigDecimal.valueOf(shillings).movePointRight(FiatAmount.MINOR_DIGITS).toLong()
+                CollectionBalances(payout = FiatAmount(0, KES), fees = FiatAmount(fees, KES))
+            }
+        }
 
     override suspend fun verify(credentials: CollectionCredentials): Resource<Unit> =
-        call("verify_credentials") {
+        serviceWallet("verify_credentials", credentials).flatMapBody("verify_credentials") { }
+
+    private suspend fun serviceWallet(operation: String, credentials: CollectionCredentials) =
+        call(operation) {
             http.get("/api/v2/wallets") {
-                operation("verify_credentials")
+                operation(operation)
                 authorize(credentials)
                 parameter("wallet_type", "service_wallet")
             }
-        }.flatMapBody("verify_credentials") { }
+        }
 
     private fun HttpRequestBuilder.authorize(credentials: CollectionCredentials) {
         val basic = Base64.getEncoder().encodeToString("${credentials.username}:${credentials.password}".toByteArray())
@@ -168,13 +181,13 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
                     }
 
                     else -> {
-                        log.warn(
-                            "payhero refused: operation={} status={} reason={}",
-                            operation,
-                            status,
-                            refusalReason(text),
-                        )
-                        rejected("The payment provider refused the request.")
+                        val reason = refusalReason(text)
+                        log.warn("payhero refused: operation={} status={} reason={}", operation, status, reason)
+                        if (isBalanceRefusal(reason)) {
+                            Resource.error(IntegrationError.ServiceBalanceLow())
+                        } else {
+                            rejected("The payment provider refused the request.")
+                        }
                     }
                 }
             }
@@ -226,6 +239,14 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
                 .take(MAX_REASON)
         }
 
+        /**
+         * Whether a refusal is PayHero saying the merchant's service wallet can't pay its fee ("merchant has
+         * insufficient balance to allow you complete this transaction"). Read from PayHero's words because it gives
+         * no code for it; the words themselves go no further than the log.
+         */
+        internal fun isBalanceRefusal(reason: String): Boolean = INSUFFICIENT_BALANCE.containsMatchIn(reason)
+
+        private val INSUFFICIENT_BALANCE = Regex("""insufficient\s+(\w+\s+){0,2}balance""", RegexOption.IGNORE_CASE)
         private val DIGIT_RUN = Regex("""\d{4,}""")
         private val WHITESPACE = Regex("""\s+""")
         private const val MAX_REASON = 160

@@ -69,3 +69,12 @@ internal data class RefusalBody(
     @SerialName("error_code") val errorCode: String? = null,
     val message: String? = null,
 )
+
+/**
+ * `GET /api/v2/wallets?wallet_type=service_wallet`: the prepaid wallet PayHero takes its per-transaction fees from.
+ * Only the balance is read; it comes as a number or as text.
+ */
+@Serializable
+internal data class WalletReply(
+    @SerialName("available_balance") val availableBalance: Double? = null,
+)
