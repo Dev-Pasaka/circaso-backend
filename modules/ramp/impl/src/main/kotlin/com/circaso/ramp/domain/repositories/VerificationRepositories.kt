@@ -69,13 +69,6 @@ interface VerificationRepository {
         limit: Int,
     ): List<Verification>
 
-    /** The status of each of [ids] (subjects of [kind]) in [environment]; a subject with no row is absent. */
-    suspend fun statuses(
-        kind: SubjectKind,
-        ids: Collection<UUID>,
-        environment: KycEnvironment,
-    ): Map<UUID, VerificationStatus>
-
     /** Removes the subject's row in [environment], freeing its identity key; the row that was there, or null. */
     suspend fun delete(subject: Subject, environment: KycEnvironment): Verification?
 }

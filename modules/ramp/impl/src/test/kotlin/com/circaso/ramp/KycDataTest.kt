@@ -318,29 +318,6 @@ class KycDataTest {
         }
 
     @Test
-    fun `statuses are read for many subjects of a kind at once`() =
-        runBlocking<Unit> {
-            val one = started(Subject.merchant(MerchantId.new()))
-            val two = started(Subject.merchant(MerchantId.new()))
-            rows.verify(two.subject, two.environment, two.sessionId!!, null, now)
-            started(Subject(SubjectKind.USER, one.subject.id), KycEnvironment.LIVE)
-
-            val read =
-                rows.statuses(
-                    SubjectKind.MERCHANT,
-                    listOf(one.subject.id, two.subject.id, Uuid7.generate()),
-                    KycEnvironment.LIVE,
-                )
-
-            assertEquals(
-                mapOf(one.subject.id to VerificationStatus.PENDING, two.subject.id to VerificationStatus.VERIFIED),
-                read,
-            )
-            assertTrue(rows.statuses(SubjectKind.MERCHANT, emptyList(), KycEnvironment.LIVE).isEmpty())
-            assertTrue(rows.statuses(SubjectKind.MERCHANT, listOf(one.subject.id), KycEnvironment.SANDBOX).isEmpty())
-        }
-
-    @Test
     fun `the table refuses a status, an environment or a kind the code doesn't know`() {
         runBlocking { started(user()) }
 

@@ -752,14 +752,6 @@ class MemoryVerifications : VerificationRepository {
         .sortedBy { it.checkedAt }
         .take(limit)
 
-    override suspend fun statuses(
-        kind: SubjectKind,
-        ids: Collection<UUID>,
-        environment: KycEnvironment,
-    ) = rows.values
-        .filter { it.subject.kind == kind && it.environment == environment && it.subject.id in ids }
-        .associate { it.subject.id to it.status }
-
     override suspend fun delete(subject: Subject, environment: KycEnvironment) = rows.remove(subject to environment)
 }
 

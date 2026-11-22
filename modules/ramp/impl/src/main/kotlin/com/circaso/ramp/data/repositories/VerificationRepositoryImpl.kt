@@ -177,25 +177,6 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
                 .toList()
         }
 
-    override suspend fun statuses(
-        kind: SubjectKind,
-        ids: Collection<UUID>,
-        environment: KycEnvironment,
-    ): Map<UUID, VerificationStatus> {
-        if (ids.isEmpty()) return emptyMap()
-        return database.tx("verifications.statuses") {
-            VerificationsTable
-                .selectAll()
-                .where {
-                    (VerificationsTable.subjectKind eq kind.name) and
-                        (VerificationsTable.environment eq environment.name) and
-                        (VerificationsTable.subjectId inList ids.toList())
-                }.map { it[VerificationsTable.subjectId] to VerificationStatus.valueOf(it[VerificationsTable.status]) }
-                .toList()
-                .toMap()
-        }
-    }
-
     override suspend fun delete(subject: Subject, environment: KycEnvironment): Verification? =
         database.tx("verifications.delete") {
             VerificationsTable
