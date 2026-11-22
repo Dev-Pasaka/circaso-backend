@@ -858,6 +858,8 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 
 **Not built in this slice:** the Didit integration (`KycGate` answers "not verified", so only a network whose settings don't require KYC trades), blocks, withdrawals, the off-ramp, `ramp.reconcile`, the `rmp:float` cache and success-rate ranking, the PayHero service-wallet floor on RM6, metrics, and the agent route.
 
+**The hourly prompt limit is optional (2026-11-22, Pasaka: limits must not frustrate a buyer).** `settings.prompts_per_hour` 0 means no limit, which is the default (V2). When staff set one, only prompts the provider accepted (ones that reached the phone) are counted: an attempt that was refused, failed, or found no merchant never counts. It remains as a tool for protecting a merchant's account at the provider, which blocks a number after repeated failed prompts.
+
 ## To check against the vendor before building on it
 
 - **PayHero, payouts:** PayHero's written answer that it has no payouts today (and whether or when they return). Until then the off-ramp waits on a payout provider.

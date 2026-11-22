@@ -20,6 +20,8 @@ import java.time.LocalDate
  * order and given back when it ends unpaid).
  */
 class RedisCounters(private val redis: RedisScope) : RampCounters {
+    override suspend fun promptsThisHour(userId: UserId): Long = redis.get("prompts:$userId")?.toLongOrNull() ?: 0
+
     override suspend fun countPrompt(userId: UserId): Long = redis.increment("prompts:$userId", PROMPT_WINDOW)
 
     override suspend fun reserveDaily(

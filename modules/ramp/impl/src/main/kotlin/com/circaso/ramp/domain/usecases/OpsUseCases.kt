@@ -186,8 +186,8 @@ class UpdateSettings(
                     "dailyLimitMinor" to "must be at least the minimum"
                 }
 
-                s.promptsPerHour !in 1..MAX_PROMPTS -> {
-                    "promptsPerHour" to "must be 1 to $MAX_PROMPTS"
+                s.promptsPerHour !in 0..MAX_PROMPTS -> {
+                    "promptsPerHour" to "must be 0 (no limit) to $MAX_PROMPTS"
                 }
 
                 s.feeBps !in 0..RampSettings.MAX_FEE_BPS -> {

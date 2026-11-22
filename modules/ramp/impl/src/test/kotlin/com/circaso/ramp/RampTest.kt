@@ -12,6 +12,7 @@ import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycStanding
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.OrderState
+import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.QuoteCommand
@@ -565,6 +566,29 @@ class RampTest {
             assertEquals(RampError.QuoteExpired, ramp.startOnRamp(command).error())
             assertTrue(ramp.orders.rows.isEmpty())
             assertTrue(ramp.collections.prompts.isEmpty())
+        }
+
+    @Test
+    fun `only prompts that reached the phone count, and a limit of 0 is no limit`() =
+        runTest {
+            ramp.settingsRows.set(TESTNET) { it.copy(promptsPerHour = 1) }
+            ramp.collections.failure = IntegrationError.Unavailable("PayHero")
+            repeat(3) { assertEquals(RampError.CollectionsUnavailable, ramp.buy().error()) }
+            assertEquals(0, ramp.counters.promptsThisHour(ramp.amina), "an attempt that sent nothing is not counted")
+
+            ramp.collections.failure = null
+            val reached = assertIs<Resource.Success<OrderView>>(ramp.buy(), "step 1").data.order
+            ramp.collections.fail(reached)
+            ramp.callback(reached)
+            assertIs<RampError.TooManyPrompts>(ramp.buy().error())
+
+            ramp.settingsRows.set(TESTNET) { it.copy(promptsPerHour = 0) }
+            ramp.clock.advance(11) // past the settings cache
+            repeat(3) { round ->
+                val order = assertIs<Resource.Success<OrderView>>(ramp.buy(), "no limit, round $round").data.order
+                ramp.collections.fail(order)
+                ramp.callback(order)
+            }
         }
 
     @Test

@@ -84,7 +84,10 @@ class StartOnRamp(
         if (!counters.reserveDaily(command.userId, quote.network, day, paid, settings.dailyLimitMinor)) {
             return Resource.error(RampError.LimitExceeded)
         }
-        if (counters.countPrompt(command.userId) > settings.promptsPerHour) {
+        // Off when the setting is 0. Only prompts that reached the phone count (below), so a refused or failed
+        // attempt, or one with no merchant to take it, never locks anybody out.
+        val limited = settings.promptsPerHour > 0
+        if (limited && counters.promptsThisHour(command.userId) >= settings.promptsPerHour) {
             counters.giveBackDaily(command.userId, quote.network, day, paid)
             return Resource.error(RampError.TooManyPrompts(PROMPT_WINDOW_SECONDS))
         }
@@ -105,8 +108,14 @@ class StartOnRamp(
                 }
             }
         return when (val prompted = flow.requestPayment(order)) {
-            is Resource.Error -> prompted
-            is Resource.Success -> view(prompted.data)
+            is Resource.Error -> {
+                prompted
+            }
+
+            is Resource.Success -> {
+                counters.countPrompt(command.userId)
+                view(prompted.data)
+            }
         }
     }
 
