@@ -372,6 +372,12 @@ internal object ApiDocsCatalog {
                             "merchant who is online with enough USDC; you never pick or see a list of merchants.\n\n" +
                             "- **Who can use it:** each network's ramp is `OFF`, `PREVIEW` (only people staff let " +
                             "in) or `ON`. Anyone else gets `ramp.unavailable` on R1, R2 and R3: hide the feature.\n" +
+                            "- **Verify once:** before a first purchase, where the network asks for it, the person " +
+                            "passes an identity check (R0): an ID document, a liveness selfie and a face match, run " +
+                            "by the identity provider's SDK from the `sessionToken` R0 answers. R1's `verification` " +
+                            "says where it stands, whether a check may be started and why it was declined, so the " +
+                            "app never guesses; `ramp` / `kyc.updated` frames follow it. One identity verifies one " +
+                            "account. Until then R2 and R3 answer `ramp.kyc_required`.\n" +
                             "- **Quote, then order:** R2 prices an amount (the fee is inside what you pay, and the " +
                             "quote shows it); R3 sends an M-Pesa prompt to your own verified number.\n" +
                             "- **Nothing is released on a guess:** the USDC is sent only after M-Pesa's own " +
@@ -387,8 +393,9 @@ internal object ApiDocsCatalog {
                             "the USDC float and their own M-Pesa (PayHero) account, and does nothing per trade.\n\n" +
                             "- **Sign in** with an email and a one-time code (MA1, MA2). The session goes in " +
                             "`X-Merchant-Session`, never `Authorization`; it lasts 12 hours.\n" +
-                            "- **Set up:** your profile (RM1), then staff approve you and the float wallet to " +
-                            "fund appears on RM2; connect PayHero under a 6-digit PIN (RM5) and paste the " +
+                            "- **Set up:** your profile (RM1) and your identity check (RM3: ID, selfie, face match " +
+                            "and screening, on the provider's hosted page), then staff approve you and the float " +
+                            "wallet to fund appears on RM2; connect PayHero under a 6-digit PIN (RM5) and paste the " +
                             "callback address it answers into PayHero.\n" +
                             "- **Your PayHero credentials are yours:** they are sealed under your PIN, and " +
                             "Circaso can't read them without it. Going online (RM6) unlocks them for a trading " +

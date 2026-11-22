@@ -4,6 +4,7 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.CallbackView
 import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Earnings
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
@@ -25,6 +26,7 @@ import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.SignOut
+import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.shared.Network
@@ -63,7 +65,11 @@ class MerchantService(
     private val listMerchantOrders: ListMerchantOrders,
     private val getEarnings: GetEarnings,
     private val getStatement: GetStatement,
+    private val startMerchantKyc: StartMerchantKyc,
 ) {
+    suspend fun startKyc(merchantId: MerchantId, network: Network): Resource<KycView> =
+        startMerchantKyc(merchantId, network)
+
     suspend fun merchant(merchantId: MerchantId, network: Network): Resource<MerchantOverview> =
         getMerchant(merchantId, network)
 

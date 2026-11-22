@@ -236,8 +236,8 @@ class MerchantTest {
             assertEquals(emptyList(), unknown.missing)
             ramp.treasury.failure = null
 
-            // on mainnet the same account has no wallet yet
-            assertEquals(listOf("wallet"), ramp.getMerchant(id, Network.MAINNET).getOrNull()!!.missing)
+            // on mainnet the same account has no wallet yet, and mainnet always asks for a (live) identity check
+            assertEquals(listOf("kyc", "wallet"), ramp.getMerchant(id, Network.MAINNET).getOrNull()!!.missing)
             assertEquals(RampError.MerchantNotFound, ramp.getMerchant(MerchantId.new(), TESTNET).error())
         }
 

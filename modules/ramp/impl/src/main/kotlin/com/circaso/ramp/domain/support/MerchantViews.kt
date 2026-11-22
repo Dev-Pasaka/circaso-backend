@@ -8,6 +8,7 @@ import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.PaymentsView
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.ports.Pricing
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.CommissionRepository
@@ -32,6 +33,7 @@ class MerchantViews(
     private val sessions: TradingSessions,
     private val settings: SettingsBook,
     private val pricing: Pricing,
+    private val verifications: Verifications,
     private val clock: Clock,
 ) {
     suspend fun overview(merchant: Merchant, network: Network): MerchantOverview {
@@ -52,6 +54,7 @@ class MerchantViews(
             paymentsCurrent = sealed?.provider == current.collectionsProvider,
             online = isOnline(merchant),
             floatFloorMinor = floatFloor(current),
+            kyc = verifications.view(Subject.merchant(merchant.merchantId), current),
         )
     }
 

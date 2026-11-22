@@ -67,8 +67,51 @@ data class LimitsDto(
 )
 
 /**
- * R1 response. `canTrade` is every gate at once; the other fields say which one is missing. `kyc` is `VERIFIED`,
- * `NONE` or `NOT_REQUIRED` (the testnet, until identity checks are built).
+ * Identity verification as the app shows it (R1's `verification`, R0's answer, the `ramp/kyc.updated` frame).
+ *
+ * - `status`: `NONE` (never started) | `PENDING` (a check is open: finish it) | `IN_REVIEW` (being reviewed: wait) |
+ *   `VERIFIED` | `DECLINED` | `EXPIRED`.
+ * - `required`: whether this network asks for verification before trading.
+ * - `canStart`: whether R0 will hand out a check now: start one (`NONE`), continue the open one (`PENDING`), or try
+ *   again (`DECLINED`, `EXPIRED`). False while in review, once verified, when the reason can't be fixed by trying
+ *   again, and when today's tries are used up (`retryAt` says when they come back).
+ * - `reason`: a code to word, never the provider's text: `document`, `document_expired`, `document_unreadable`,
+ *   `liveness`, `face_match`, `not_approved`, `declined`, `identity_in_use`, `blocked`, `session_expired`,
+ *   `resubmission_requested`.
+ */
+@Serializable
+data class VerificationDto(
+    val status: String,
+    val required: Boolean,
+    val canStart: Boolean,
+    val reason: String? = null,
+    val retryAt: String? = null,
+)
+
+/**
+ * An open check's link. `sessionToken` starts the provider's native SDK; `url` is its hosted page, the fallback.
+ * Both stop working at `expiresAt`. The string form hides them.
+ */
+@Serializable
+data class KycSessionDto(val sessionToken: String?, val url: String?, val expiresAt: String?) {
+    override fun toString(): String = "KycSessionDto(***)"
+}
+
+/** R0 (and RM3) response: the state, and `session` while a check is open for the person to do. */
+@Serializable
+data class KycResponse(
+    val status: String,
+    val required: Boolean,
+    val canStart: Boolean,
+    val reason: String? = null,
+    val retryAt: String? = null,
+    val session: KycSessionDto? = null,
+)
+
+/**
+ * R1 response. `canTrade` is every gate at once; the other fields say which one is missing. `verification` is the
+ * identity check in full. `kyc` is the short form older apps read: `VERIFIED`, `NONE` (not verified, whatever the
+ * state) or `NOT_REQUIRED`. `blocked` is a bar on this account or its identity: nothing the app can do lifts it.
  */
 @Serializable
 data class RampStatusResponse(
@@ -83,4 +126,6 @@ data class RampStatusResponse(
     val limits: LimitsDto,
     /** The fee on a purchase as a percentage ("1.5"), inside what is paid. */
     val feePercent: String,
+    val verification: VerificationDto,
+    val blocked: Boolean = false,
 )

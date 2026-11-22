@@ -1,6 +1,7 @@
 package com.circaso.ramp.domain.support
 
 import com.circaso.integrations.api.CollectionProviders
+import com.circaso.integrations.api.KycProviders
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.repositories.SettingsRepository
@@ -20,6 +21,7 @@ class SettingsBook(
     private val repository: SettingsRepository,
     private val alerts: RampAlerts,
     private val providers: CollectionProviders,
+    private val kycProviders: KycProviders,
     private val clock: Clock,
     private val maxAge: Duration = MAX_AGE,
 ) {
@@ -61,10 +63,11 @@ class SettingsBook(
 
     /**
      * What a network starts as. The prompts are PayHero's, except on a developer's machine, where integrations also
-     * offers `log` (every prompt reported paid) and the seed takes it so an order completes end to end.
+     * offers `log` (every prompt reported paid) and the seed takes it so an order completes end to end. The identity
+     * checks are Didit's, with the same exception (`log` approves at once).
      */
     private fun defaults(network: Network): RampSettings =
-        RampSettings.defaults(network, clock.instant(), Providers.seed(providers))
+        RampSettings.defaults(network, clock.instant(), Providers.seed(providers), Providers.seedKyc(kycProviders))
 
     companion object {
         val MAX_AGE: Duration = Duration.ofSeconds(10)

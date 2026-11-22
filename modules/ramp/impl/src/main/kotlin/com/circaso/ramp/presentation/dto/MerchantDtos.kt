@@ -26,6 +26,8 @@ data class SignedInResponse(val sessionToken: String, val expiresAt: String, val
 @Serializable
 data class MerchantStepsDto(
     val profile: Boolean,
+    /** Identity verified, or not asked for on this network. */
+    val kyc: Boolean,
     val approved: Boolean,
     val wallet: Boolean,
     val payments: Boolean,
@@ -62,8 +64,10 @@ data class MerchantPaymentsIssueDto(val code: String, val since: String?)
  * null without a wallet or when the custodian can't be asked; `payments` is null until a payment account is stored.
  * `payments.connected` is false (and `missing` says `payments`) when the stored account is at another provider than
  * the one the network uses now: connect again with RM5.
- * `missing` lists what stands between the merchant and going online: `profile`, `approval`, `wallet`, `payments`,
- * `float`, `provider_balance`. The last comes with `paymentsIssue` and takes the merchant offline; it doesn't make
+ * `missing` lists what stands between the merchant and going online: `profile`, `kyc`, `approval`, `wallet`,
+ * `payments`, `float`, `provider_balance`. `kyc` (identity verification, RM3) comes before approval: staff can't
+ * approve a merchant who hasn't passed it. The last comes with `paymentsIssue` and takes the merchant offline; it
+ * doesn't make
  * `canGoOnline` false, because going online again (RM6) is what checks the balance and clears it.
  */
 @Serializable
@@ -83,6 +87,8 @@ data class MerchantResponse(
     val canGoOnline: Boolean,
     val missing: List<String>,
     val paymentsIssue: MerchantPaymentsIssueDto? = null,
+    /** The merchant's identity verification on this network: start or continue it with RM3. */
+    val kyc: VerificationDto,
 )
 
 /** RM1 request. */

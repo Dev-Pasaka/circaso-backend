@@ -73,8 +73,8 @@ fun Route.webhookRoutes(
                     "a timestamp inside a 5-minute window and a delivery id not seen before, and come from the " +
                     "vendor's allowlisted address where it publishes one. " +
                     "A repeated delivery is acknowledged but processed once. Answers `200` at once and handles the " +
-                    "body afterwards, except for `circle`: it waits, and answers the error when the update can't be " +
-                    "applied, so Circle delivers it again.",
+                    "body afterwards, except for `circle` and `didit`: it waits, and answers the error when the " +
+                    "update can't be applied, so the vendor delivers it again.",
         )
         // A callback address with a key in it (a ramp merchant's own; decision 2026-11-22). Same guards, and the
         // vendor is handed the key: an address that isn't one it gave out is refused by the vendor's listener.

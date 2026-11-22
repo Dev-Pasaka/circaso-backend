@@ -55,7 +55,7 @@ class StartOnRamp(
                 is Resource.Success -> open.data
             }
         if (accounts.status(command.userId) != AccountStatus.ACTIVE) return Resource.error(RampError.AccountRestricted)
-        if (gates.kyc(command.userId, settings) == KycStanding.NONE) return Resource.error(RampError.KycRequired)
+        gates.refusal(command.userId, settings)?.let { return Resource.error(it) }
 
         orders.byQuote(command.quoteId)?.let { existing ->
             return if (existing.userId == command.userId) view(existing) else Resource.error(RampError.QuoteNotFound)

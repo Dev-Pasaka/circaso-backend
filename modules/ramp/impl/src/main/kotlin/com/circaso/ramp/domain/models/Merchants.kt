@@ -149,18 +149,22 @@ data class MerchantOverview(
     val online: Boolean,
     /** The least free float worth going online with: what the smallest order buys. Zero when it can't be priced. */
     val floatFloorMinor: Long,
+    /** The merchant's identity verification as [network]'s settings see it. */
+    val kyc: KycView = KycView(KycState.NONE, required = false, canStart = true, reason = null, retryAt = null),
 ) {
     /** A PIN exists once a payment account has been sealed under one. */
     val pinSet: Boolean get() = payments != null
 
     /**
-     * `kyc` joins this list with Didit; a float the custodian can't report isn't counted as missing.
-     * `provider_balance` is the provider having refused a prompt for the merchant's service balance.
+     * `kyc` is identity verification not passed where the network requires it. A float the custodian can't report
+     * isn't counted as missing. `provider_balance` is the provider having refused a prompt for the merchant's
+     * service balance.
      */
     val missing: List<String>
         get() =
             listOfNotNull(
                 "profile".takeIf { merchant.state == MerchantState.NEW },
+                KYC.takeIf { kyc.blocksTrading },
                 "approval".takeIf { merchant.state != MerchantState.APPROVED },
                 "wallet".takeIf { wallet == null },
                 "payments".takeIf { payments == null || !paymentsCurrent },
@@ -176,6 +180,7 @@ data class MerchantOverview(
 
     companion object {
         const val PROVIDER_BALANCE = "provider_balance"
+        const val KYC = "kyc"
     }
 }
 
@@ -281,5 +286,13 @@ data class Statement(
     val totals: StatementTotals,
 )
 
-/** A merchant as staff see it: the account, its float wallets, and whether a payment account is stored. */
-data class MerchantRecord(val merchant: Merchant, val wallets: List<MerchantWallet>, val paymentsConnected: Boolean)
+/**
+ * A merchant as staff see it: the account, its float wallets, whether a payment account is stored, and their
+ * identity verification in each provider environment they have one.
+ */
+data class MerchantRecord(
+    val merchant: Merchant,
+    val wallets: List<MerchantWallet>,
+    val paymentsConnected: Boolean,
+    val verifications: List<Verification> = emptyList(),
+)

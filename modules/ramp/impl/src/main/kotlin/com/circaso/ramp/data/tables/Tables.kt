@@ -23,6 +23,13 @@ object SettingsTable : Table("ramp.settings") {
     val callbackBaseUrl = text("callback_base_url")
     val collectionsProvider = text("collections_provider")
     val providerFeeFloorMinor = long("provider_fee_floor_minor")
+    val kycProvider = text("kyc_provider")
+    val kycEnvironment = text("kyc_environment")
+    val kycWorkflowUser = text("kyc_workflow_user")
+    val kycWorkflowMerchant = text("kyc_workflow_merchant")
+    val merchantPortalUrl = text("merchant_portal_url")
+    val kycAttemptsPerDay = integer("kyc_attempts_per_day")
+    val kycPendingHours = integer("kyc_pending_hours")
     val walletSetId = text("wallet_set_id").nullable()
     val updatedBy = text("updated_by").nullable()
     val updatedAt = timestamp("updated_at")
@@ -208,4 +215,44 @@ object RealtimeTable : Table("ramp.realtime") {
     val frame = text("frame")
     val sentAt = timestamp("sent_at")
     override val primaryKey = PrimaryKey(userId, seq, sentAt)
+}
+
+/**
+ * Who passed KYC for the ramp: one row per subject and provider environment, with the provider's current session and,
+ * once verified live, the identity key. Never a document.
+ */
+object VerificationsTable : Table("ramp.verifications") {
+    val subjectKind = text("subject_kind")
+    val subjectId = javaUUID("subject_id")
+    val environment = text("environment")
+    val status = text("status")
+    val reason = text("reason").nullable()
+    val provider = text("provider")
+    val sessionId = text("session_id").nullable()
+    val sessionToken = text("session_token").nullable()
+    val sessionUrl = text("session_url").nullable()
+    val sessionExpiresAt = timestamp("session_expires_at").nullable()
+    val identityKey = text("identity_key").nullable()
+    val attempts = integer("attempts").default(0)
+    val attemptDay = date("attempt_day").nullable()
+    val attemptsOnDay = integer("attempts_on_day").default(0)
+    val startedAt = timestamp("started_at").nullable()
+    val checkedAt = timestamp("checked_at")
+    val verifiedAt = timestamp("verified_at").nullable()
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(subjectKind, subjectId, environment)
+}
+
+/** Who is barred from the ramp: a user, or a KYC identity key. Exactly one of the two is set on a row. */
+object BlocksTable : Table("ramp.blocks") {
+    val blockId = javaUUID("block_id")
+    val userId = javaUUID("user_id").nullable()
+    val identityKey = text("identity_key").nullable()
+    val reason = text("reason")
+    val note = text("note").default("")
+    val sourceUserId = javaUUID("source_user_id").nullable()
+    val createdBy = text("created_by")
+    val createdAt = timestamp("created_at")
+    override val primaryKey = PrimaryKey(blockId)
 }

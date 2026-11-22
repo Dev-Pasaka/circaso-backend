@@ -1,5 +1,7 @@
 package com.circaso.ramp
 
+import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -56,6 +58,7 @@ class MerchantRoutesTest {
             ramp.merchantOrders,
             ramp.earnings,
             ramp.statement,
+            ramp.startMerchantKyc,
         )
     private val base = "/v1/ramp/merchant"
 
@@ -157,8 +160,13 @@ class MerchantRoutesTest {
             assertEquals(JsonNull, merchant.getValue("contactPhone"))
             listOf("wallet", "float", "payments").forEach { assertEquals(JsonNull, merchant.getValue(it), it) }
             assertEquals(
-                """{"profile":false,"approved":false,"wallet":false,"payments":false}""",
+                """{"profile":false,"kyc":true,"approved":false,"wallet":false,"payments":false}""",
                 merchant.getValue("steps").toString(),
+                "the testnet doesn't ask for an identity check here, so that step is done",
+            )
+            assertEquals(
+                """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null}""",
+                merchant.getValue("kyc").toString(),
             )
             assertEquals("""{"online":false,"until":null}""", merchant.getValue("online").toString())
             assertFalse(merchant.getValue("pinSet").jsonPrimitive.boolean)
@@ -303,6 +311,70 @@ class MerchantRoutesTest {
                     }.data()
             assertEquals("MAINNET", mainnet.text("network"))
             assertEquals(JsonNull, mainnet.getValue("wallet"))
+        }
+
+    @Test
+    fun `the identity check answers the hosted page's link, and RM2's kyc is what the portal shows after it`() =
+        testApplication {
+            serve()
+            ramp.requireKyc()
+            val session = signIn("pay@juma.co.ke")
+
+            val early = client.post("$base/kyc") { json("{}", session) }
+            assertEquals(HttpStatusCode.Conflict, early.status, "a profile comes first")
+            assertEquals("ramp.merchant_setup_incomplete", early.envelope().text("code"))
+
+            val profile = """{"displayName":"Juma","contactPhone":"+254711000111"}"""
+            val applied = client.put("$base/profile") { json(profile, session) }.data()
+            assertEquals(
+                """{"profile":true,"kyc":false,"approved":false,"wallet":false,"payments":false}""",
+                applied.getValue("steps").toString(),
+            )
+            assertEquals("""["kyc","approval","wallet","payments"]""", applied.getValue("missing").toString())
+            assertEquals(
+                """{"status":"NONE","required":true,"canStart":true,"reason":null,"retryAt":null}""",
+                applied.getValue("kyc").toString(),
+            )
+
+            val started = client.post("$base/kyc") { json("{}", session) }
+            assertEquals(HttpStatusCode.OK, started.status)
+            val expires = ramp.clock.instant().plusSeconds(24 * 3_600)
+            assertEquals(
+                """{"status":"PENDING","required":true,"canStart":true,"reason":null,"retryAt":null,""" +
+                    """"session":{"sessionToken":"token-1","url":"https://verify.test/session/token-1",""" +
+                    """"expiresAt":"$expires"}}""",
+                started.data().toString(),
+            )
+            assertEquals(
+                "https://merchants.circaso.com/kyc/done",
+                ramp.didit.started
+                    .single()
+                    .callbackUrl,
+            )
+            val again = client.post("$base/kyc") { json("{}", session) }.data()
+            assertEquals(started.data().getValue("session"), again.getValue("session"), "the same open check")
+
+            // The hosted page sends the merchant back; the provider has approved; the portal reads RM2.
+            val merchantId = MerchantId.parse(applied.text("merchantId"))!!
+            ramp.didit.approve(ramp.sessionOf(Subject.merchant(merchantId)))
+            ramp.clock.advance(6)
+            val account = client.get(base) { header("X-Merchant-Session", session) }.data()
+            assertEquals(
+                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,"retryAt":null}""",
+                account.getValue("kyc").toString(),
+            )
+            assertEquals("""["approval","wallet","payments"]""", account.getValue("missing").toString())
+            assertTrue(
+                account
+                    .getValue("steps")
+                    .jsonObject
+                    .getValue("kyc")
+                    .jsonPrimitive.boolean,
+            )
+
+            val done = client.post("$base/kyc") { json("{}", session) }.data()
+            assertEquals("VERIFIED", done.text("status"))
+            assertEquals(JsonNull, done.getValue("session"), "nothing left to do")
         }
 
     @Test

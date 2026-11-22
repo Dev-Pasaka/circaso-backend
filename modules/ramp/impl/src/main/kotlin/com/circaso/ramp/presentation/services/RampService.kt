@@ -1,6 +1,7 @@
 package com.circaso.ramp.presentation.services
 
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Quote
@@ -11,13 +12,15 @@ import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.CreateQuote
 import com.circaso.ramp.domain.usecases.GetOrder
 import com.circaso.ramp.domain.usecases.GetRampStatus
+import com.circaso.ramp.domain.usecases.GetUserKyc
 import com.circaso.ramp.domain.usecases.ListOrders
 import com.circaso.ramp.domain.usecases.StartOnRamp
+import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 
-/** What the app asks the ramp (R1–R6). No logic of its own: each method is one use case. */
+/** What the app asks the ramp (R0–R6). No logic of its own: each method is one use case. */
 class RampService(
     private val getStatus: GetRampStatus,
     private val createQuote: CreateQuote,
@@ -25,7 +28,13 @@ class RampService(
     private val getOrder: GetOrder,
     private val listOrders: ListOrders,
     private val cancelOrder: CancelOrder,
+    private val startUserKyc: StartUserKyc,
+    private val getUserKyc: GetUserKyc,
 ) {
+    suspend fun startKyc(userId: UserId, network: Network): Resource<KycView> = startUserKyc(userId, network)
+
+    suspend fun kyc(userId: UserId, network: Network): Resource<KycView> = getUserKyc(userId, network)
+
     suspend fun status(userId: UserId, network: Network): Resource<RampStatus> = getStatus(userId, network)
 
     suspend fun quote(command: QuoteCommand): Resource<Quote> = createQuote(command)

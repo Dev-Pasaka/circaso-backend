@@ -63,6 +63,10 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     RAMP_MERCHANT_SUSPEND("ramp_merchant.suspend", AuditTarget.RAMP_MERCHANT),
     RAMP_SETTINGS_UPDATE("ramp_settings.update", AuditTarget.RAMP_SETTINGS),
     RAMP_PREVIEW_ACCESS("user.ramp_preview_access", AuditTarget.USER),
+    RAMP_BLOCK("user.ramp_block", AuditTarget.USER),
+    RAMP_UNBLOCK("user.ramp_unblock", AuditTarget.USER),
+    RAMP_VERIFICATION_RESET("user.ramp_verification_reset", AuditTarget.USER),
+    RAMP_MERCHANT_VERIFICATION_RESET("ramp_merchant.verification_reset", AuditTarget.RAMP_MERCHANT),
     EMAIL_TEMPLATE_SET("email_template.set", AuditTarget.EMAIL_TEMPLATE),
     ;
 

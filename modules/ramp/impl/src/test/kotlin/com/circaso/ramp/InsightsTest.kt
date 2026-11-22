@@ -1,5 +1,6 @@
 package com.circaso.ramp
 
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsRampOrderCursor
 import com.circaso.ramp.api.OpsRampPeriod
@@ -13,8 +14,11 @@ import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.support.Periods
+import com.circaso.ramp.domain.usecases.GetMerchantVerification
 import com.circaso.ramp.domain.usecases.ListCollectionProviders
+import com.circaso.ramp.domain.usecases.ListKycProviders
 import com.circaso.ramp.domain.usecases.ListPreviewAccess
+import com.circaso.ramp.domain.usecases.ResetMerchantVerification
 import com.circaso.ramp.presentation.api.RampAdminImpl
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.ramp.presentation.services.RampAdminService
@@ -53,6 +57,14 @@ class InsightsTest {
                 getRampOverview = ramp.overview,
                 getMerchantSummary = ramp.merchantSummary,
                 listStaffMerchantOrders = ramp.staffOrders,
+                listKycProviders = ListKycProviders(ramp.kycProviders),
+                getUserVerifications = ramp.userVerifications,
+                getMerchantVerification = GetMerchantVerification(ramp.verificationRows, ramp.book),
+                listBlocks = ramp.listBlocks,
+                blockUser = ramp.blockUser,
+                unblockUser = ramp.unblockUser,
+                resetVerification = ramp.resetVerification,
+                resetMerchantVerificationUseCase = ResetMerchantVerification(ramp.merchants, ramp.verificationRows),
             ),
         )
     private var buyers = 1

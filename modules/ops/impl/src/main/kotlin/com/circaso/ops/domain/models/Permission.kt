@@ -56,10 +56,16 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
     /** Adding or removing a withdrawal destination, and withdrawing collected fees to one (2026-11-18). */
     FEES_WITHDRAW("fees.withdraw", setOf(ADMIN)),
 
-    /** The ramp's merchants, its settings, its preview list and the orders waiting for a person (2026-11-22). */
+    /**
+     * The ramp's merchants, its settings, its preview list, the orders waiting for a person, a user's identity
+     * verification and the block list (2026-11-22).
+     */
     RAMP_READ("ramp.read", setOf(ADMIN, FINANCE)),
 
-    /** Approving or suspending a merchant, changing the ramp's settings, and its preview list (2026-11-22). */
+    /**
+     * Approving or suspending a merchant, changing the ramp's settings and its preview list, barring a user from the
+     * ramp or lifting that, and resetting a verification (2026-11-22).
+     */
     RAMP_MANAGE("ramp.manage", setOf(ADMIN)),
 
     /** Reading which provider template each email is sent with (2026-11-22). */

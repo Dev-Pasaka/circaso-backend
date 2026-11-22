@@ -2,10 +2,13 @@ package com.circaso.ramp
 
 import com.circaso.identity.api.AccountStatus
 import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.KycDocument
+import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.EnvelopeVault
+import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Merchant
@@ -15,10 +18,12 @@ import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
+import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.StartOnRampCommand
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
@@ -31,7 +36,9 @@ import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
+import com.circaso.ramp.domain.usecases.BlockUser
 import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
@@ -45,9 +52,13 @@ import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
+import com.circaso.ramp.domain.usecases.GetUserKyc
+import com.circaso.ramp.domain.usecases.GetUserVerifications
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
+import com.circaso.ramp.domain.usecases.HandleKycNotification
 import com.circaso.ramp.domain.usecases.HandlePaymentCallback
+import com.circaso.ramp.domain.usecases.ListBlocks
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
@@ -55,14 +66,19 @@ import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
+import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
+import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartOnRamp
+import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
+import com.circaso.ramp.domain.usecases.SweepVerifications
+import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.shared.Network
@@ -75,6 +91,8 @@ const val CHAIN = "BASE-SEPOLIA"
 val TESTNET = Network.TESTNET
 const val PAYHERO = "payhero"
 const val DARAJA = "daraja"
+const val DIDIT = "didit"
+const val INSTANT = "instant"
 const val MASTER_KEY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 /**
@@ -102,7 +120,10 @@ class Harness {
     val counters = MemoryCounters()
     val accounts = FakeAccounts()
     val wallets = FakeWallets()
-    val kyc = FakeKyc()
+    val verificationRows = MemoryVerifications()
+    val blocks = MemoryBlocks()
+    val didit = FakeKycProvider(clock)
+    val kycProviders = FakeKycProviders(linkedMapOf(DIDIT to didit, INSTANT to InstantKycProvider()))
     val pricing = FixedPricing()
     val usdc = FixedUsdc()
     val collections = FakeCollections()
@@ -124,9 +145,16 @@ class Harness {
             Argon2Cost(memoryKb = 64, iterations = 1, parallelism = 1),
         )
 
+    val identities = HmacIdentityKeys { EnvelopeVault.masterKey(masterKey) }
+
     private val transactor = DirectTransactor()
     val presence = Presence(merchants, orders, sessions)
-    val book = SettingsBook(settingsRows, alerts, providers, clock)
+    val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
+    val verifications =
+        Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
+
+    /** The gate with a switch: `kyc.verified = true` waves everybody through; otherwise the real rows answer. */
+    val kyc = FakeKyc(verifications)
     val gates = Gates(book, preview, kyc)
     val flow =
         OrderFlow(
@@ -146,16 +174,37 @@ class Harness {
             clock,
         )
     val engine =
-        Engine(merchants, merchantWallets, reservations, ledger, orders, transactor, treasury, sessions, clock)
+        Engine(merchants, merchantWallets, reservations, ledger, orders, transactor, treasury, sessions, kyc, clock)
     val releases =
         Releases(orders, merchantWallets, reservations, ledger, transactor, outbox, bus, frames, alerts, usdc, clock)
     val floatWallets = FloatWallets(book, settingsRows, merchantWallets, revenue, alerts, clock)
     val sweeps = FeeSweeps(ledger, merchantWallets, revenue, releases, book, transactor, alerts, clock)
     val views =
-        MerchantViews(merchantWallets, credentials, reservations, ledger, treasury, sessions, book, pricing, clock)
+        MerchantViews(
+            merchantWallets,
+            credentials,
+            reservations,
+            ledger,
+            treasury,
+            sessions,
+            book,
+            pricing,
+            verifications,
+            clock,
+        )
     val pins = PinGuard(vault, pinAttempts)
 
-    val status = GetRampStatus(gates, accounts, orders, engine)
+    val status = GetRampStatus(gates, accounts, orders, engine, verifications)
+    val startKyc = StartUserKyc(gates, accounts, verifications)
+    val getKyc = GetUserKyc(gates, verificationRows, verifications)
+    val startMerchantKyc = StartMerchantKyc(merchants, book, verifications)
+    val kycNotification = HandleKycNotification(verificationRows, verifications, alerts)
+    val sweepVerifications = SweepVerifications(verificationRows, verifications, book, clock)
+    val userVerifications = GetUserVerifications(verificationRows, blocks)
+    val listBlocks = ListBlocks(blocks)
+    val blockUser = BlockUser(verificationRows, blocks, transactor, clock)
+    val unblockUser = UnblockUser(blocks)
+    val resetVerification = ResetVerification(verificationRows)
     val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock)
     val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, flow, clock)
     val getOrder = GetOrder(orders, merchants)
@@ -170,7 +219,7 @@ class Harness {
     val verifyCode = VerifySignInCode(codes, tokens, merchants, portalSessions, views, clock)
     val resolveSession = ResolveSession(portalSessions, tokens, clock)
     val signOut = SignOut(portalSessions, tokens, presence, clock)
-    val getMerchant = GetMerchant(merchants, views)
+    val getMerchant = GetMerchant(merchants, views, verificationRows, verifications, book)
     val applyAsMerchant = ApplyAsMerchant(merchants, views)
     val storePayments =
         StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock)
@@ -184,10 +233,11 @@ class Harness {
     val earnings = GetEarnings(ledger, ledger, book, clock)
     val statement = GetStatement(ledger, clock)
 
-    val listMerchants = ListMerchants(merchants, merchantWallets, credentials)
-    val decideMerchant = DecideMerchant(merchants, merchantWallets, credentials, presence, clock)
+    val listMerchants = ListMerchants(merchants, merchantWallets, credentials, verificationRows)
+    val decideMerchant =
+        DecideMerchant(merchants, merchantWallets, credentials, presence, book, verificationRows, clock)
     val getSettings = GetSettings(settingsRows, book)
-    val updateSettings = UpdateSettings(settingsRows, book, providers, clock)
+    val updateSettings = UpdateSettings(settingsRows, book, providers, kycProviders, clock)
     val setPreview = SetPreviewAccess(preview, clock)
     val reviewOrders = ListReviewOrders(orders, merchants)
     val insights = MerchantInsights(ledger, ledger)
@@ -292,6 +342,35 @@ class Harness {
         collections.pay(order)
         callback(order)
         return now(order)
+    }
+
+    /** Requires KYC on the testnet, as staff do once Didit is set up: verification in the sandbox. */
+    fun requireKyc(network: Network = TESTNET, change: (RampSettings) -> RampSettings = { it }) {
+        settingsRows.set(network) { change(it.copy(kycRequired = true, kycProvider = DIDIT)) }
+        book.invalidate()
+    }
+
+    /** The session the provider has open for [subject], as the app's SDK or the hosted page would finish it. */
+    fun sessionOf(subject: Subject): String = didit.sessionOf(subject)
+
+    /** The provider's webhook for [sessionId], already verified by integrations. */
+    suspend fun webhook(sessionId: String, environment: KycEnvironment = KycEnvironment.SANDBOX) =
+        kycNotification(environment, sessionId)
+
+    /** [userId] starts a check and the provider approves it: verified in the testnet's environment. */
+    suspend fun verified(userId: UserId, document: KycDocument? = KycDocument("KEN", "Identity Card", "12345678")) {
+        startKyc(userId, TESTNET)
+        val session = sessionOf(Subject.user(userId))
+        didit.approve(session, document)
+        webhook(session, book.of(TESTNET).kycEnvironment)
+    }
+
+    /** [merchant] passes the merchant check on the portal: verified in the testnet's environment. */
+    suspend fun verified(merchant: Merchant, document: KycDocument? = KycDocument("KEN", "Passport", "M0001")) {
+        startMerchantKyc(merchant.merchantId, TESTNET)
+        val session = sessionOf(Subject.merchant(merchant.merchantId))
+        didit.approve(session, document)
+        webhook(session, book.of(TESTNET).kycEnvironment)
     }
 
     /** One run of the ops process's `ramp.release` on the testnet. */

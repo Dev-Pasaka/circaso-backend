@@ -2,15 +2,18 @@ package com.circaso.ramp.data.cache
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.RedisScope
+import com.circaso.ramp.api.KycUpdatedFrame
 import com.circaso.ramp.api.OrderUpdatedFrame
 import com.circaso.ramp.api.RampFrames
 import com.circaso.ramp.data.tables.RealtimeTable
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.ports.RealtimeLog
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.shared.CircasoJson
+import com.circaso.shared.Network
 import com.circaso.shared.Realtime
 import com.circaso.shared.RealtimeEnvelope
 import com.circaso.shared.UserId
@@ -29,7 +32,8 @@ import java.time.Duration
 import java.time.Instant
 
 /**
- * The user gets `ramp/order.updated` at their next `seq` (`rmp:seq:{userId}`), kept for 7 days in `ramp.realtime`,
+ * The user gets `ramp/order.updated` and `ramp/kyc.updated` at their next `seq` (`rmp:seq:{userId}`), kept for 7 days
+ * in `ramp.realtime`,
  * then the gateway delivers it (socket, or push where it words one). It works the same from the ops process, which
  * completes an order: the sequence and the kept frame are shared, and delivery crosses to the app's node over Redis,
  * as a staff reply to a ticket does. A failure is logged and dropped: the frame is a doorbell, and the phone reads
@@ -62,6 +66,52 @@ class RealtimeFramesImpl(
             throw e
         } catch (e: Exception) {
             log.warn("ramp frame not sent: state={} error={}", order.state, e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * `ramp/kyc.updated`: the user's verification on [network] as the app shows it. Never the check's link, the
+     * provider's words or anything personal.
+     */
+    override suspend fun kycUpdated(
+        userId: UserId,
+        network: Network,
+        view: KycView,
+    ) {
+        try {
+            val seq = redis.incrementRenewing("seq:$userId", SEQ_TTL)
+            val sentAt = clock.instant()
+            val frame =
+                KycUpdatedFrame(
+                    network = network.name,
+                    status = view.state.name,
+                    required = view.required,
+                    canStart = view.canStart,
+                    reason = view.reason?.code,
+                    retryAt = view.retryAt?.toString(),
+                )
+            val envelope =
+                RealtimeEnvelope.of(
+                    RampFrames.MODULE,
+                    RampFrames.KYC_UPDATED,
+                    seq,
+                    frame,
+                    KycUpdatedFrame.serializer(),
+                    sentAt,
+                )
+            database.tx("realtime.keep-kyc") {
+                RealtimeTable.insert {
+                    it[RealtimeTable.userId] = userId.value
+                    it[this.seq] = seq
+                    it[RealtimeTable.frame] = CircasoJson.encodeToString(RealtimeEnvelope.serializer(), envelope)
+                    it[this.sentAt] = sentAt
+                }
+            }
+            realtime.deliver(userId, envelope)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("ramp frame not sent: kyc={} error={}", view.state, e.javaClass.simpleName)
         }
     }
 

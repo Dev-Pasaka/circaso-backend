@@ -1,8 +1,12 @@
 package com.circaso.ramp.domain.ports
 
+import com.circaso.integrations.api.KycDocument
+import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
@@ -29,6 +33,13 @@ interface RampOutbox {
 /** Tells the user their order moved: to their socket, or as a push where the gateway words one. */
 interface FrameSender {
     suspend fun orderUpdated(order: Order)
+
+    /** Tells the user their identity verification changed on [network], with the whole state the app shows. */
+    suspend fun kycUpdated(
+        userId: UserId,
+        network: Network,
+        view: KycView,
+    )
 }
 
 /** Tells the people on call that something needs a person. Never carries an amount, a phone number or a credential. */
@@ -53,11 +64,27 @@ interface RealtimeLog {
 data class LoggedFrame(val seq: Long, val json: String)
 
 /**
- * Whether the user passed KYC for the ramp (decision 2026-11-22). Didit arrives behind this port; until it does,
- * nobody is verified, and only a network whose settings don't require KYC (the testnet) lets anyone trade.
+ * The ramp's identity gate (decision 2026-11-22): whether a subject passed KYC in the provider environment a network
+ * trusts, and whether a user is barred. Answered from the ramp's own rows; the provider is never asked here.
  */
 interface KycGate {
-    suspend fun isVerified(userId: UserId): Boolean
+    suspend fun isVerified(subject: Subject, environment: KycEnvironment): Boolean
+
+    /** Whether [userId] is barred from the ramp: as a user, or as the identity they verified with in [environment]. */
+    suspend fun isBlocked(userId: UserId, environment: KycEnvironment): Boolean
+}
+
+/**
+ * The KYC identity key: `HMAC-SHA256(key, issuing country | document type | document number)` of an approved
+ * document, normalised, under a key derived from the ramp's master key. It is what makes "one identity, one account"
+ * and a block by identity possible without keeping a document. The document goes in once and is never stored.
+ */
+interface IdentityKeys {
+    /** Whether this server can compute keys at all (it has the master key). */
+    val isAvailable: Boolean
+
+    /** The key for [document], or null when the server has no master key. */
+    fun of(document: KycDocument): String?
 }
 
 /**

@@ -14,6 +14,7 @@ import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampStatus
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.ports.Pricing
 import com.circaso.ramp.domain.ports.RealtimeLog
@@ -23,6 +24,7 @@ import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.OrderFlow
+import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
@@ -30,14 +32,16 @@ import com.circaso.shared.UserId
 import java.time.Clock
 
 /**
- * R1: whether this user can trade on [Network] now: KYC, the account, the limits, and whether anybody is online. No
- * merchant is named. Answers `ramp.unavailable` when the ramp isn't open to them there.
+ * R1: whether this user can trade on [Network] now: identity verification in full (state, whether it is required,
+ * whether a check may be started, why it was declined), a block, the account, the limits, and whether anybody is
+ * online. No merchant is named. Answers `ramp.unavailable` when the ramp isn't open to them there.
  */
 class GetRampStatus(
     private val gates: Gates,
     private val accounts: AccountDirectory,
     private val orders: OrderRepository,
     private val engine: Engine,
+    private val verifications: Verifications,
 ) {
     suspend operator fun invoke(userId: UserId, network: Network): Resource<RampStatus> {
         val settings =
@@ -45,6 +49,8 @@ class GetRampStatus(
                 is Resource.Error -> return open
                 is Resource.Success -> open.data
             }
+        val blocked = gates.isBlocked(userId, settings)
+        val verification = verifications.view(Subject.user(userId), settings)
         return Resource.success(
             RampStatus(
                 network = network,
@@ -55,6 +61,9 @@ class GetRampStatus(
                 openOrderId = orders.openOf(userId)?.orderId,
                 limits = settings.limits,
                 feeBps = settings.feeBps,
+                // Someone barred has nothing to start: a check wouldn't let them trade.
+                verification = if (blocked) verification.copy(canStart = false) else verification,
+                blocked = blocked,
             ),
         )
     }
@@ -82,7 +91,7 @@ class CreateQuote(
         if (!offered) return Resource.error(RampError.ChainUnsupported)
         if ((command.fiatMinor == null) == (command.assetMinor == null)) return Resource.error(RampError.AmountInvalid)
         if (accounts.status(command.userId) != AccountStatus.ACTIVE) return Resource.error(RampError.AccountRestricted)
-        if (gates.kyc(command.userId, settings) == KycStanding.NONE) return Resource.error(RampError.KycRequired)
+        gates.refusal(command.userId, settings)?.let { return Resource.error(it) }
 
         val asked = pricing.price(command.direction, command.fiatMinor, command.assetMinor, settings.feeBps)
         val priced =
