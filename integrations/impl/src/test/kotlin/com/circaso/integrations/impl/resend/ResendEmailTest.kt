@@ -29,6 +29,8 @@ class ResendEmailTest {
     @Serializable
     private data class Variables(
         @SerialName("DEVICE_MODEL") val deviceModel: String? = null,
+        @SerialName("CODE") val code: String? = null,
+        @SerialName("MINUTES") val minutes: Int? = null,
     )
 
     private var status = 200
@@ -82,6 +84,35 @@ class ResendEmailTest {
                 Template("tpl_pin_vault_opened", Variables("iPhone 16")),
                 Json.decodeFromString<Sent>(clients.last.text()).template,
             )
+        }
+
+    @Test
+    fun `a merchant's sign-in code goes out under its own template, with the code and how long it lasts`() =
+        runBlocking<Unit> {
+            email.send("pay@crynce.co.ke", Email.MerchantSignInCode("482913", 10))
+
+            assertEquals(
+                Template("tpl_merchant_sign_in_code", Variables(code = "482913", minutes = 10)),
+                Json.decodeFromString<Sent>(clients.last.text()).template,
+            )
+            assertEquals("MerchantSignInCode(***)", Email.MerchantSignInCode("482913", 10).toString())
+        }
+
+    @Test
+    fun `a sign-in code whose template isn't set up yet is refused, and every other email still goes`() =
+        runBlocking<Unit> {
+            val unpublished =
+                ResendEmail(
+                    "re_key",
+                    "Circaso <no-reply@circaso.com>",
+                    templates - EmailTemplate.MERCHANT_SIGN_IN_CODE,
+                    clients.named("resend") { baseUrl = "https://api.resend.com" },
+                )
+            val before = clients.requests.size
+
+            assertIs<Resource.Error>(unpublished.send("pay@crynce.co.ke", Email.MerchantSignInCode("482913", 10)))
+            assertEquals(before, clients.requests.size, "nothing was sent")
+            assertIs<Resource.Success<*>>(unpublished.send("sam@example.com", Email.Welcome))
         }
 
     @Test

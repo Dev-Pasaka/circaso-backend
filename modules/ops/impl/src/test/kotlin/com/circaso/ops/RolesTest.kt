@@ -40,6 +40,7 @@ class RolesTest {
     private val droppedCall = harness.calls.dropped(user, UserId.new())
     private val log = harness.logs.add(user)
     private val feeDestination = Uuid7.generate()
+    private val merchant = harness.ramp.add()
 
     init {
         harness.groups.groups[chat] = OpsGroup(chat, 3, user, EPOCH)
@@ -134,6 +135,19 @@ class RolesTest {
                     """"label":"Treasury","reason":"Company treasury"}""",
             ),
             Call("DELETE", "/v1/ops/fee-wallets/destinations/$feeDestination", Permission.FEES_WITHDRAW),
+            Call("GET", "/v1/ops/ramp/merchants", Permission.RAMP_READ),
+            Call("GET", "/v1/ops/ramp/settings?network=TESTNET", Permission.RAMP_READ),
+            Call("GET", "/v1/ops/ramp/preview-access?network=TESTNET", Permission.RAMP_READ),
+            Call("GET", "/v1/ops/ramp/orders?state=REVIEW", Permission.RAMP_READ),
+            Call("POST", "/v1/ops/ramp/merchants/$merchant/approve", Permission.RAMP_MANAGE, """{"reason":"vetted"}"""),
+            Call("POST", "/v1/ops/ramp/merchants/$merchant/suspend", Permission.RAMP_MANAGE, """{"reason":"paused"}"""),
+            Call("PUT", "/v1/ops/ramp/settings?network=TESTNET", Permission.RAMP_MANAGE, RAMP_SETTINGS),
+            Call(
+                "POST",
+                "/v1/ops/ramp/preview-access",
+                Permission.RAMP_MANAGE,
+                """{"userId":"$user","network":"TESTNET","enabled":true,"reason":"staff tester"}""",
+            ),
             Call(
                 "POST",
                 "/v1/ops/fee-wallets/withdrawals",
@@ -267,6 +281,11 @@ class RolesTest {
         const val FEE_RULE = "0195f2f0-0000-7000-8000-000000000001"
         const val LIMIT_RULE = "0195f2f0-0000-7000-8000-000000000101"
         const val TERMS = """{"rateBps":75,"capBaseUsdMicros":10000000000,"gasShareMaxBps":2500,"gasMarginBps":2000}"""
+        const val RAMP_SETTINGS =
+            """{"state":"PREVIEW","chains":["BASE-SEPOLIA"],"orderMinMinor":"1000","orderMaxMinor":"500000",""" +
+                """"dailyLimitMinor":"2000000","promptsPerHour":5,"feeBps":150,"merchantShareBps":7000,""" +
+                """"feeSettleHourUtc":21,"quoteSeconds":60,"paymentWindowSeconds":120,"kycRequired":false,""" +
+                """"callbackBaseUrl":"https://api.circaso.com","reason":"opening the testnet"}"""
         const val NEW_FEE_RULE =
             """{"scope":{"kind":"EXTERNAL","blockchain":"BASE"},"terms":$TERMS,"reason":"Base launch"}"""
         const val FEE_CHANGE = """{"baseVersion":1,"terms":$TERMS,"reason":"Q4 pricing"}"""

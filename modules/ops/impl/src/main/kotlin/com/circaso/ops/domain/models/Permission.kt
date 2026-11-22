@@ -55,6 +55,12 @@ enum class Permission(val wire: String, val roles: Set<StaffRole>) {
 
     /** Adding or removing a withdrawal destination, and withdrawing collected fees to one (2026-11-18). */
     FEES_WITHDRAW("fees.withdraw", setOf(ADMIN)),
+
+    /** The ramp's merchants, its settings, its preview list and the orders waiting for a person (2026-11-22). */
+    RAMP_READ("ramp.read", setOf(ADMIN, FINANCE)),
+
+    /** Approving or suspending a merchant, changing the ramp's settings, and its preview list (2026-11-22). */
+    RAMP_MANAGE("ramp.manage", setOf(ADMIN)),
     ;
 
     fun allows(role: StaffRole): Boolean = role in roles

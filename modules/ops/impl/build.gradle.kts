@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":modules:support:api"))
     implementation(project(":modules:assistant:api"))
     implementation(project(":modules:calls:api"))
+    implementation(project(":modules:ramp:api"))
     implementation(project(":integrations:api"))
     implementation(libs.ktor.server.core)
     implementation(libs.koin.core)

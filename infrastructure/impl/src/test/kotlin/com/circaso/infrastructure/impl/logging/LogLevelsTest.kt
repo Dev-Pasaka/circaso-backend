@@ -27,6 +27,7 @@ class LogLevelsTest {
             "LOG_LEVEL_SHARE",
             "LOG_LEVEL_SUPPORT",
             "LOG_LEVEL_ASSISTANT",
+            "LOG_LEVEL_RAMP",
             "LOG_LEVEL_OPS",
             "LOG_LEVEL_INTEGRATIONS",
             "LOG_LEVEL_CIRCLE",
@@ -202,6 +203,13 @@ class LogLevelsTest {
         configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_WALLET" to "DEBUG")
         assertEquals(Level.DEBUG, levelOf("com.circaso.wallet.domain.usecases.GetWallet"))
         assertEquals(Level.WARN, levelOf("com.circaso.users.domain.usecases.SyncContacts"))
+    }
+
+    @Test
+    fun `LOG_LEVEL_RAMP moves the ramp module alone`() {
+        configure("LOG_FORMAT" to "PRETTY", "LOG_LEVEL" to "WARN", "LOG_LEVEL_RAMP" to "DEBUG")
+        assertEquals(Level.DEBUG, levelOf("com.circaso.ramp.domain.usecases.StartOnRamp"))
+        assertEquals(Level.WARN, levelOf("com.circaso.wallet.domain.usecases.GetWallet"))
     }
 
     @Test

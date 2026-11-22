@@ -9,6 +9,7 @@ import com.circaso.integrations.api.AiBilling
 import com.circaso.integrations.api.AudioEncoding
 import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
+import com.circaso.integrations.api.CollectionNotifications
 import com.circaso.integrations.api.CryptoMarkets
 import com.circaso.integrations.api.CryptoPrices
 import com.circaso.integrations.api.CustodyNotifications
@@ -20,6 +21,8 @@ import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
+import com.circaso.integrations.api.MerchantFloat
+import com.circaso.integrations.api.MobileCollections
 import com.circaso.integrations.api.NoVendorVerification
 import com.circaso.integrations.api.PhoneVerificationGateway
 import com.circaso.integrations.api.PushGateway
@@ -44,6 +47,7 @@ import com.circaso.integrations.impl.brave.BraveWebSearch
 import com.circaso.integrations.impl.circle.CircleAccount
 import com.circaso.integrations.impl.circle.CircleAccounts
 import com.circaso.integrations.impl.circle.CircleClient
+import com.circaso.integrations.impl.circle.CircleMerchantFloat
 import com.circaso.integrations.impl.circle.CircleWarmUp
 import com.circaso.integrations.impl.circle.toCircleSettings
 import com.circaso.integrations.impl.cloudflare.CloudflareRealtime
@@ -52,6 +56,7 @@ import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
 import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeCallMedia
 import com.circaso.integrations.impl.dev.FakeCarrierPhoneVerification
+import com.circaso.integrations.impl.dev.FakeCollections
 import com.circaso.integrations.impl.dev.FakeCryptoMarkets
 import com.circaso.integrations.impl.dev.FakeCryptoPrices
 import com.circaso.integrations.impl.dev.FakeCustody
@@ -65,13 +70,16 @@ import com.circaso.integrations.impl.dev.FakeSocialSignIn
 import com.circaso.integrations.impl.dev.FakeSpeechToText
 import com.circaso.integrations.impl.dev.FakeStaticMaps
 import com.circaso.integrations.impl.dev.FakeTextToSpeech
+import com.circaso.integrations.impl.dev.FakeTreasury
 import com.circaso.integrations.impl.dev.FakeVisionModel
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
+import com.circaso.integrations.impl.dev.LogCollections
 import com.circaso.integrations.impl.dev.LogCryptoPrices
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.LogMerchantFloat
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
 import com.circaso.integrations.impl.dev.LogStaticMaps
@@ -84,6 +92,8 @@ import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
 import com.circaso.integrations.impl.googlemaps.GoogleStaticMaps
+import com.circaso.integrations.impl.payhero.PayHeroCollections
+import com.circaso.integrations.impl.payhero.PayHeroWebhook
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
 import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.social.AppleRevocation
@@ -101,6 +111,7 @@ import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
 import com.circaso.shared.Network
 import org.koin.core.module.Module
 import org.koin.core.qualifier.named
+import org.koin.core.scope.Scope
 import org.koin.dsl.bind
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
@@ -312,6 +323,43 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         }
         if (integrations.string("custody.provider", "log") == "circle") {
             circle(secrets)
+        }
+        // The ramp's read of a merchant's float (decision 2026-11-22): the API key alone, so both processes have it.
+        // With `fake` it is the one in-memory treasury a test's ops side signs with; with `log` it is always 1 000 USDC.
+        single { FakeTreasury(usdcContract = usdcContracts(get())) }
+        single<MerchantFloat> {
+            pick(
+                "custody",
+                providers =
+                    mapOf(
+                        "log" to { LogMerchantFloat() },
+                        "fake" to { get<FakeTreasury>() },
+                        "circle" to { CircleMerchantFloat(get<CircleAccounts>().accounts) },
+                    ),
+            )
+        }
+        // The ramp's shillings (decision 2026-11-22): M-Pesa prompts through the merchant's own PayHero account. The
+        // merchant's credentials are passed per call, so nothing here comes from Secrets. With PayHero chosen, its
+        // callback is served too: it only rings the ramp's bell.
+        single<MobileCollections> {
+            pick(
+                "collections",
+                providers =
+                    mapOf(
+                        "log" to { LogCollections() },
+                        "fake" to { FakeCollections() },
+                        "payhero" to {
+                            PayHeroCollections(
+                                get<HttpClients>().named("payhero") { baseUrl = PayHeroCollections.BASE_URL },
+                            )
+                        },
+                    ),
+            )
+        }
+        if (integrations.string("collections.provider", "log") == "payhero") {
+            single<WebhookVendor>(named("payhero.webhook")) {
+                PayHeroWebhook(notifications = { getOrNull<CollectionNotifications>() })
+            }
         }
         // The wallet's fiat balance (decision 2026-10-28). The open endpoint needs no key; its table is kept in Redis
         // under `fx:` so every node shares one fetch a day.
@@ -528,6 +576,22 @@ private fun Module.circle(secrets: Secrets) {
     }
 }
 
+/**
+ * The USDC contract on a chain as custody's settings name it (the database's once the wallet has read them, the seeds
+ * until then): what the stand-in treasuries report a wallet's USDC under, so callers that match the contract find it.
+ */
+internal fun Scope.usdcContracts(seeds: CustodySeeds): (Network, String) -> String =
+    { network, blockchain ->
+        (getOrNull<CustodySetups>()?.current(network) ?: seeds.seed(network))
+            .supported
+            .find(blockchain)
+            ?.assets
+            ?.firstOrNull { it.symbol == "USDC" }
+            ?.tokenAddress
+            ?.takeIf { it.isNotBlank() }
+            ?: FakeTreasury.USDC_CONTRACT
+    }
+
 /** The testnet keeps the client name it always had, so its metrics and circuit breaker carry on. */
 private fun clientName(network: Network) = if (network == Network.TESTNET) "circle" else "circle-mainnet"
 
@@ -535,7 +599,7 @@ private fun clientName(network: Network) = if (network == Network.TESTNET) "circ
  * Templates a server may start without (2026-11-11), so a deploy never waits on publishing one in Resend: until its id
  * is set, that email is refused (`Rejected`) and the use case, which sends it best effort, carries on.
  */
-private val OPTIONAL_TEMPLATES = setOf(EmailTemplate.PIN_VAULT_OPENED)
+private val OPTIONAL_TEMPLATES = setOf(EmailTemplate.PIN_VAULT_OPENED, EmailTemplate.MERCHANT_SIGN_IN_CODE)
 
 /**
  * Resend needs `RESEND_API_KEY`, `integrations.email.from` (`INTEGRATIONS_EMAIL_FROM`, a sender on a verified domain) and

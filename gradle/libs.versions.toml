@@ -22,6 +22,8 @@ testcontainers = "1.21.4"
 grpc = "1.85.1"
 # JetBrains Koog: only its Anthropic client and the Ktor transport it rides on (decision 2026-11-07)
 koog = "1.3.0"
+# Bouncy Castle: only its Argon2id, for the ramp's credential envelope (decision 2026-11-22)
+bouncycastle = "1.82"
 
 [libraries]
 # build-logic
@@ -102,6 +104,9 @@ ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.re
 # Koog (Asha's model client): the Anthropic Messages client, and the transport that runs it on our Ktor client
 koog-anthropic-client = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
 koog-http-client-ktor = { module = "ai.koog:http-client-ktor", version.ref = "koog" }
+
+# crypto: Argon2id for the ramp's merchant PIN (the JDK has AES-GCM and HMAC, but no Argon2)
+bouncycastle-provider = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

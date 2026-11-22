@@ -13,6 +13,7 @@ const val TAG_CALLS = "Ops · Calls"
 const val TAG_DIAGNOSTICS = "Ops · Diagnostic logs"
 const val TAG_STAFF = "Ops · Staff and audit"
 const val TAG_FEES = "Ops · Fees and limits"
+const val TAG_RAMP = "Ops · Ramp"
 
 const val MALFORMED = "request.malformed"
 const val FORBIDDEN = "ops.role_forbidden"

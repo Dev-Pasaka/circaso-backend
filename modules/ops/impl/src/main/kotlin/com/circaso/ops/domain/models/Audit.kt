@@ -23,6 +23,8 @@ enum class AuditTarget(val wire: String) {
     WALLET_NETWORK("wallet_network"),
     FEE_DESTINATION("fee_destination"),
     FEE_WITHDRAWAL("fee_withdrawal"),
+    RAMP_MERCHANT("ramp_merchant"),
+    RAMP_SETTINGS("ramp_settings"),
     ;
 
     companion object {
@@ -56,6 +58,10 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     FEE_DESTINATION_ADD("fee_destination.add", AuditTarget.FEE_DESTINATION),
     FEE_DESTINATION_REMOVE("fee_destination.remove", AuditTarget.FEE_DESTINATION),
     FEE_WITHDRAWAL_CREATE("fee_withdrawal.create", AuditTarget.FEE_WITHDRAWAL),
+    RAMP_MERCHANT_APPROVE("ramp_merchant.approve", AuditTarget.RAMP_MERCHANT),
+    RAMP_MERCHANT_SUSPEND("ramp_merchant.suspend", AuditTarget.RAMP_MERCHANT),
+    RAMP_SETTINGS_UPDATE("ramp_settings.update", AuditTarget.RAMP_SETTINGS),
+    RAMP_PREVIEW_ACCESS("user.ramp_preview_access", AuditTarget.USER),
     ;
 
     companion object {

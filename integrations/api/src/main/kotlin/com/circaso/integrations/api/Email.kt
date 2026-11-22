@@ -17,7 +17,16 @@ interface EmailGateway {
 }
 
 /** The emails identity sends: security notices, and one welcome when an account first becomes active. Each maps to a provider template id in config (`integrations.email.templates.<name>`). */
-enum class EmailTemplate { NEW_PHONE_SIGN_IN, RECOVERY_STARTED, RECOVERY_COMPLETED, WELCOME, PIN_VAULT_OPENED }
+enum class EmailTemplate {
+    NEW_PHONE_SIGN_IN,
+    RECOVERY_STARTED,
+    RECOVERY_COMPLETED,
+    WELCOME,
+    PIN_VAULT_OPENED,
+
+    /** The ramp's merchant portal sign-in code (decision 2026-11-22). */
+    MERCHANT_SIGN_IN_CODE,
+}
 
 /**
  * One email to send, a class per [EmailTemplate] carrying exactly that template's variables (decision 2026-10-27:
@@ -49,6 +58,16 @@ sealed interface Email {
      */
     data class PinVaultOpened(val deviceModel: String) : Email {
         override val template = EmailTemplate.PIN_VAULT_OPENED
+    }
+
+    /**
+     * The one-time code a ramp merchant signs in to the portal with (decision 2026-11-22). [code] is 6 digits and
+     * lasts [minutes]; the string form hides it, so it never reaches a log line.
+     */
+    class MerchantSignInCode(val code: String, val minutes: Int) : Email {
+        override val template = EmailTemplate.MERCHANT_SIGN_IN_CODE
+
+        override fun toString(): String = "MerchantSignInCode(***)"
     }
 }
 

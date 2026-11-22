@@ -150,6 +150,28 @@ class CircleTreasuryTest {
         }
 
     @Test
+    fun `a wallet asked for as a smart-contract account is created as one, so its gas can be sponsored`() =
+        runBlocking<Unit> {
+            circle.reply("POST $WALLETS", """{"data":{"wallets":[${wallet("BASE")}]}}""", 201)
+            val request =
+                TreasuryWalletRequest(
+                    walletSetId = "set-ramp",
+                    blockchains = listOf("BASE"),
+                    name = "Ramp merchant float",
+                    refId = "merchant-1",
+                    idempotencyKey = UUID.randomUUID(),
+                    accountType = TreasuryWalletRequest.ACCOUNT_SCA,
+                )
+
+            treasury.createWallets(Network.MAINNET, request).data()
+
+            val body = circle.requests("POST $WALLETS").single().sent<CreateDeveloperWalletsBody>()
+            assertEquals("SCA", body.accountType)
+            assertEquals(listOf(WalletMetadata("Ramp merchant float", "merchant-1")), body.metadata)
+            assertEquals("EOA", TreasuryWalletRequest("s", listOf("BASE"), "n", "r", UUID.randomUUID()).accountType)
+        }
+
+    @Test
     fun `deriving on another chain is a PUT with the metadata and no secret at all`() =
         runBlocking<Unit> {
             val route = "PUT /v1/w3s/developer/wallets/$walletId/blockchains/MATIC"

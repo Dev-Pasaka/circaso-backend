@@ -16,11 +16,11 @@ Twelve rules every module follows; a change to any of them is an architecture de
 4. **Vendors live behind contracts.** Every third-party service is reached through an interface in `integrations:api`. Swapping Africa's Talking for Twilio is a new implementation and a config change; no business module notices.
 5. **One module, one schema.** Each module owns a PostgreSQL schema, reached through its own database role, and is the only code that reads or writes it.
 6. **Modules meet only through contracts.** Another module's `api` (interfaces, data types, events) is the only thing a module may depend on. Never its internals.
-7. **No cross-module transactions.** Work that spans modules happens through durable events: each event is written to an outbox in the same transaction as the change that caused it, then delivered through Redis Streams, and every handler is idempotent. There is no workflow engine: wallets are user-controlled, so the backend never moves money itself, and work that must run on a schedule (stuck transactions, audits) is a plain scheduled job.
+7. **No cross-module transactions.** Work that spans modules happens through durable events: each event is written to an outbox in the same transaction as the change that caused it, then delivered through Redis Streams, and every handler is idempotent. There is no workflow engine: wallets are user-controlled, so the backend never moves money itself, and work that must run on a schedule (stuck transactions, audits) is a plain scheduled job. **One exception (decision 2026-11-22, proposed with the ramp design): the ramp module alone may move money itself, only out of a partner merchant's own float (their developer-controlled wallet) and only against a payment it has verified; users' wallets stay user-signed, and the ramp's orders are still rows moved by transition guards and scheduled jobs, not a workflow engine.**
 8. **Tables are designed around queries.** Every read is served by a primary key or an index, never a scan; data is duplicated across modules where reads need it.
 9. **Commands over HTTP, signals over the socket.** Anything that changes state, above all money, is an HTTP call with an idempotency key. The WebSocket carries delivery and lightweight signals.
 10. **The socket is a doorbell, not the mailbox.** Every pushed event also lives in its module's data, so a missed frame is recovered on reconnect.
-11. **Circle holds the money.** Our database records transactions for statements and audit; Circle is the source of truth for balances.
+11. **Circle holds the money.** Our database records transactions for statements and audit; Circle is the source of truth for balances (a merchant's float in the ramp included: free float is Circle's balance minus our open reservations).
 12. **Costs stay low.** Managed where running it ourselves would cost more than it saves (Cloudflare, Circle, SMS; the production database host is decided before launch), self-hosted where it is cheap to run (PostgreSQL on the sandbox, Redis, the Grafana stack), and nothing added before a feature needs it.
 
 ## System at a glance
@@ -28,6 +28,8 @@ Twelve rules every module follows; a change to any of them is an architecture de
 > **Diagram:** system layers · gateway, modules, infrastructure, external services (see the diagram in the Claude Docs version of this document)
 
 Requests come down through Cloudflare and the gateway into a module's api. Modules reach the database, cache and event streams through handles that infrastructure scopes to them, and reach every outside service through an integration contract; the vendor implementations behind those contracts make their calls with infrastructure's shared HTTP client.
+
+**The ramp (draft, decision 2026-11-22)** sits beside the other business modules and is the only one with a money flow of its own: the app asks it for a quote and an order, it picks a partner merchant and reserves that merchant's USDC float, collects shillings through the merchant's own M-Pesa account (`MobileCollections`, PayHero), verifies the payment with the provider, and the ops process releases USDC from the merchant's developer-controlled wallet (`TreasuryCustody`, Circle) to the user's own wallet; selling is designed the other way (the user signs a normal transfer, the merchant's side pays shillings out) and waits on a payout provider. Users pass KYC once (`KycProvider`, Didit) before their first trade; nothing else in the app asks for it. Merchants reach it from a web portal (`merchants.circaso.com`), never the mobile app. It depends on identity and wallet; nothing depends on it. See Modules → Ramp.
 
 ## Project structure
 
@@ -56,7 +58,8 @@ circaso-backend/
 │  ├─ api/                       the only thing exposed: contracts such as SmsGateway,
 │  │                             EmailGateway, SocialSignIn, CarrierPhoneVerification,
 │  │                             PushGateway, StablecoinCustody, ExchangeRates, CallMedia,
-│  │                             WebSearch
+│  │                             WebSearch,
+│  │                             MerchantFloat, MobileCollections, KycProvider (ramp, draft)
 │  └─ impl/                      vendor code, one package per vendor, never visible outside
 │     ├─ sms/africastalking/
 │     ├─ sms/twilio/             (later, same SmsGateway contract)
@@ -65,7 +68,9 @@ circaso-backend/
 │     ├─ social/apple/
 │     ├─ firebase/               phone verification, FCM push
 │     ├─ push/apns/
-│     ├─ circle/
+│     ├─ circle/                 user-controlled (StablecoinCustody) and developer-controlled (TreasuryCustody: fee wallets, ramp merchant float)
+│     ├─ payhero/                M-Pesa collections and payouts (MobileCollections; ramp, draft)
+│     ├─ didit/                  KYC (KycProvider; draft)
 │     ├─ exchangerate/           open.er-api.com (ExchangeRates)
 │     ├─ coingecko/              api.coingecko.com (CryptoPrices, CryptoMarkets)
 │     ├─ tavily/                 Tavily search API (WebSearch, Asha)
@@ -84,7 +89,7 @@ circaso-backend/
 │  ├─ users/
 │  │  ├─ api/
 │  │  └─ impl/
-│  └─ (messaging, wallet, chama, calls, status, assistant — same shape)
+│  └─ (messaging, wallet, chama, calls, status, ramp, assistant — same shape)
 │
 ├─ app/                          main(): `serve` loads config, picks vendor implementations,
 │                                wires modules, starts the server; `Migrate` runs migrations
@@ -401,7 +406,8 @@ An event must never be lost between the change that caused it and the module tha
 | --- | --- | --- |
 | `events:identity` | identity | `users`, `gateway`, `messaging` |
 | `events:users` | users | `gateway` (later `messaging`, `calls`) |
-| `events:wallet` | wallet (`WalletCreated`, `TransferConfirmed`, `TransferFailed`) | none yet (later `assistant`, the auditor) |
+| `events:wallet` | wallet (`WalletCreated`, `TransferConfirmed`, `TransferFailed`) | `chama`; `ramp` (draft: `TransferConfirmed` with `rampOrderId`, for the off-ramp); later `assistant`, the auditor |
+| `events:ramp` | ramp (draft: `OnRampCompleted`, `OffRampCompleted`, `OrderFailed`, `UserBlocked`) | none yet (the auditor) |
 | `events:dlq` | the consumer runtime | alerting, manual replay |
 
 **Delivery, step by step**
@@ -489,7 +495,7 @@ The gateway is the only door into the backend: every request is authenticated, l
 
 The gateway also hosts the WebSocket hub (see Realtime and push), because the socket is an edge concern: it authenticates the same way and only delivers what modules hand it.
 
-**Webhooks.** Vendor callbacks enter at `/v1/hooks/{vendor}` and belong to the gateway. They skip the user-token check but pass their own guards: the vendor's signature (or a shared secret where the vendor offers nothing better), a timestamp window against replays, a Redis record of event ids so a repeated delivery is processed once, and an IP allowlist where the vendor publishes one. The gateway answers `200` quickly (except a vendor that sets `answersAfterTranslation`, today Circle: it answers after translating, so a failure returns non-200 and the vendor retries), then hands the verified body to that vendor's module in integrations, which translates it into a Circaso event (`SmsDelivered`, `CustodyTransferSettled`).
+**Webhooks.** Vendor callbacks enter at `/v1/hooks/{vendor}` and belong to the gateway. They skip the user-token check but pass their own guards: the vendor's signature (or a shared secret where the vendor offers nothing better), a timestamp window against replays, a Redis record of event ids so a repeated delivery is processed once, and an IP allowlist where the vendor publishes one. The gateway answers `200` quickly (except a vendor that sets `answersAfterTranslation`, today Circle: it answers after translating, so a failure returns non-200 and the vendor retries), then hands the verified body to that vendor's module in integrations, which translates it into a Circaso event (`SmsDelivered`, `CustodyTransferSettled`). A vendor whose callbacks carry **no signature at all** (PayHero, decision 2026-11-22) is treated as a doorbell: nothing in the body is trusted, only a reference is handed on, and the module re-reads the truth from the vendor's API before it acts.
 
 ## API documentation
 
@@ -543,7 +549,7 @@ Infrastructure installs the libraries, opens the connections, manages their life
 | --- | --- | --- | --- |
 | Database | PostgreSQL 18 through Exposed 1.6 (DSL, non-blocking R2DBC, r2dbc-pool pools) | `Database.tx { }`: a transaction under the module's role, over the module's own `Table` objects | The module's own schema and role, declared in its `DatabaseModuleSpec` (`identity`, `users`) |
 | Schema migrations | Flyway (over JDBC, the only JDBC in the system), one run per schema in the `Migrate` main, before the new containers start | Module ships plain SQL in `src/main/resources/db/<module>` (`V<n>__<what>.sql`) | Own Flyway history table per schema, versioned and checksummed |
-| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`, `msg:`, `wal:`); `fx:` belongs to integrations (the exchange-rate table, `fx:usd`; confirmed 2026-10-28) |
+| Cache, counters, presence, locks | Redis (Valkey compatible), append-only persistence | `RedisScope` | Key prefix per module (`idn:`, `usr:`, `msg:`, `wal:`, `cha:`, `rmp:` for the ramp); `fx:` belongs to integrations (the exchange-rate table, `fx:usd`; confirmed 2026-10-28) |
 | Events | Outbox table per schema plus Redis Streams, with a relay and consumer groups | `EventBus` (from `shared`) | A stream per publishing module, a consumer group per subscriber |
 | Scheduled jobs | A small scheduler in the app (single-leader via a Redis lock) | `ScheduledJob(name, interval, job)` bound in the module's Koin module, which infrastructure registers at start (run on the jobs pool); `Scheduler` | Jobs named per module (pending-account sweep, stuck-transaction checks, audits) |
 | Files | Cloudflare R2 (S3 compatible) | `ObjectStore` | A bucket prefix per module; uploads by pre-signed URL |
@@ -1001,7 +1007,9 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | `CryptoPrices` / `CryptoMarkets` | A coin's US dollar price (display and typing only, never a payment or fee), and any coin's market data and trending coins for Asha (no answer is null, never an error) | wallet, assistant | CoinGecko Demo API (`x-cg-demo-api-key`, secret `COINGECKO_API_KEY`; tables kept in Redis under `px:`), chosen by `INTEGRATIONS_PRICES_PROVIDER` (`coingecko`, `off`, `log`, `fake`; default `coingecko` with a key, else `off`) | CoinMarketCap, Chainlink |
 | `WebSearch` | Search the public web for Asha's answers about public facts (fees, how USDC or M-Pesa work); only the query is sent | assistant | Tavily (`POST https://api.tavily.com/search`, Bearer key, secret `TAVILY_API_KEY`), chosen by `INTEGRATIONS_SEARCH_PROVIDER` (`tavily`, `log`, `fake`; default `fake`) | Brave Search API |
 | `CallMedia` | Create call sessions and join tokens | calls (later) | Cloudflare Realtime (REST) | LiveKit |
-| Later: `MobileMoney`, `KycProvider` | Cash-out to M-PESA; identity checks | cash-out, compliance | Daraja; a KYC vendor | — |
+| `MerchantFloat` (draft, decision 2026-11-22) | A partner merchant's float balance, read-only (API key only). Creating the wallet and sending from it go through `TreasuryCustody`, in the ops process | ramp | Circle (REST) | — |
+| `MobileCollections` (draft; the planned `MobileMoney` slot) | Mobile-money payment prompt (M-Pesa STK push), payment status, payout to a phone (no provider yet: PayHero has no payouts). Credentials are passed per call: each merchant brings their own account | ramp | PayHero (REST) | Daraja direct, another aggregator |
+| `KycProvider` (draft) | Start a hosted identity check and read its decision | ramp (the KYC gate before a first on- or off-ramp, and merchant KYC) | Didit (REST, hosted session) | Another KYC vendor |
 
 **Rules**
 
@@ -1009,7 +1017,7 @@ data class SmsReceipt(val messageId: String, val provider: String)
 - **One integrations module, one package per vendor,** inside integrations:impl. Only integrations:api is visible to the rest of the backend, so vendor SDKs and classes stay sealed inside, and removing a vendor deletes one package.
 - **Chosen in config:** `integrations.sms.provider = africastalking | twilio | log | fake`. Local development uses `log` (codes printed to the console, no SMS bill); tests use `fake` (messages recorded for assertions).
 - **REST implementations use the infrastructure HTTP client.** SDK implementations wrap each SDK call in the same timeout and circuit breaker, since the SDK brings its own HTTP stack.
-- **Credentials come from `Secrets`,** one section per vendor, never in code or config files.
+- **Credentials come from `Secrets`,** one section per vendor, never in code or config files. One exception (decision 2026-11-22): a ramp merchant's own PayHero credentials are stored per merchant, envelope-encrypted under the ramp master key (from `Secrets`) and the merchant's PIN, and passed to `MobileCollections` per call; they are never plaintext in the database, Redis or a log.
 - **Webhooks are received by the gateway, understood here.** The gateway owns the endpoint and its signature, replay and duplicate checks; the vendor module only translates a verified body into a Circaso event. Business modules react to the event, never to the raw webhook.
 - **No business logic.** Integrations never decide what to send or when. Identity generates, stores and counts the OTP and words the message; `SmsGateway` only delivers it.
 - **Failover later, same contract.** A routing implementation can wrap two providers (Africa's Talking first, Twilio when it fails or for non-Kenyan numbers) and still be just an `SmsGateway`.
@@ -1065,7 +1073,7 @@ The wallet's frames (`transfer.updated`, `payment.received`, `wallet.ready`, `se
 
 ## Modules
 
-Each business module has its own sub-tab under Modules, in the same shape: overview, endpoints, data, events, error codes. Designed so far: Identity and Users. The Modules tab also holds the module map and the checklist for adding a module.
+Each business module has its own sub-tab under Modules, in the same shape: overview, endpoints, data, events, error codes. Designed so far: Identity, Users, Messaging, Wallet, Chama, Calls and the assistant; Ramp is a draft awaiting approval. The Modules tab also holds the module map and the checklist for adding a module.
 
 ## Sign-up end to end
 

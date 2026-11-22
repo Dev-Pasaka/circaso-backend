@@ -40,6 +40,13 @@ private data class DeviceModelVariables(
     @SerialName("DEVICE_MODEL") val deviceModel: String,
 )
 
+/** `merchant-sign-in-code`'s variables: the code, and how many minutes it lasts. */
+@Serializable
+private data class SignInCodeVariables(
+    @SerialName("CODE") val code: String,
+    @SerialName("MINUTES") val minutes: Int,
+)
+
 /** A template that takes no variables: `{}`. */
 @Serializable
 private data object NoVariables
@@ -69,6 +76,16 @@ private fun sendBody(
                 templateId,
                 DeviceModelVariables(email.deviceModel),
                 DeviceModelVariables.serializer(),
+            )
+        }
+
+        is Email.MerchantSignInCode -> {
+            encode(
+                from,
+                to,
+                templateId,
+                SignInCodeVariables(email.code, email.minutes),
+                SignInCodeVariables.serializer(),
             )
         }
 

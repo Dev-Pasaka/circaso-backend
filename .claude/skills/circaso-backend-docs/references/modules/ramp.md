@@ -1,0 +1,885 @@
+# Ramp module
+
+Ramp answers "how do I turn shillings into USDC and back": it is an automated P2P merchant desk for USDC ↔ KES over M-Pesa. Vetted partner merchants supply the USDC float and their own M-Pesa collection account and earn commission; Circaso's merchant engine runs every trade, so a merchant does nothing per trade. Schema `ramp`, Redis prefix `rmp:`, stream `events:ramp`.
+
+Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
+
+**This is the one module that moves money.** Everywhere else the backend prepares and the user signs (principle 7, principle 11). Ramp sends USDC on its own, but only from a partner merchant's developer-controlled wallet, and only against a payment it has verified itself (decision 2026-11-22). It never signs for a user's wallet: an off-ramp is still an ordinary W4 transfer signed with the user's PIN.
+
+## How this fits main (revised 2026-11-22; approved by Pasaka the same day)
+
+Four rules already decided on `main` reshape the first draft. Each is followed here. **Decided by Pasaka on 2026-11-22:** the release is signed in the ops process; merchant wallets are `SCA` with Gas Station paying the gas; merchants sign in to the portal with their email and a one-time code; the portal's first version is the essentials (sign up, connect PayHero under a PIN with a generated callback address, the float wallet to fund, online and offline, orders) with partner approval in the admin, and Didit KYC next; a merchant's PayHero credentials are the merchant's and are only ever entered on the portal. Items still marked **Proposed** below are the backend session's calls, for him to confirm.
+
+**1. The environment holds only keys and secrets; every other setting lives in the database and is edited in the admin (decision 2026-11-18).**
+
+- **Secrets only in the environment:** nothing new for Circle (`CIRCLE_API_KEY`, `CIRCLE_MAINNET_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_MAINNET_ENTITY_SECRET` exist), `RAMP_CREDENTIALS_MASTER_KEY` (the envelope's master half, with the portal), and `DIDIT_API_KEY` and `DIDIT_WEBHOOK_SECRET` (with Didit). **A merchant's PayHero credentials are never in the environment and never supplied by Circaso** (Pasaka, 2026-11-22): they belong to the merchant, who enters them on the portal, and they exist only sealed in `merchant_credentials`.
+- **Everything else is a row:** `ramp.settings`, one row per network (Data), seeded once from built-in defaults, read at most every 10 seconds per process as the wallet's network settings are, and edited by staff through the ops server (RO5). That covers the ramp's state (`OFF` | `PREVIEW` | `ON`), the chains it delivers on, the limits, the prompts per hour, the fee, the quote lifetime, the payment window, whether KYC is enforced, and the origin callback addresses are made on. None of the `RAMP_*` or `INTEGRATIONS_MERCHANT_CUSTODY_*` variables of the first draft exist.
+- **Providers follow main's pattern:** which implementation a contract uses is a start-up line like every other one, `INTEGRATIONS_COLLECTIONS_PROVIDER` (`log` | `fake` | `payhero`), beside `INTEGRATIONS_CUSTODY_PROVIDER`. The merchant float has no provider line of its own: it uses the treasury (below), which follows the custody provider and the keys present.
+
+**2. Everything about money carries `network` (`MAINNET` | `TESTNET`), and a new way in must set it (decision 2026-11-18).**
+
+- A quote, an order, a reservation and a commission carry `network`, derived from the order's chain (`Network.ofChain`); a merchant has **one float wallet per network** (`merchant_wallets`), each in that network's Circle account.
+- The app's ramp routes sit in the gateway's `walletNetwork { }` group (`X-Wallet-Network`), so the user's deposit address, the limits and the settings are that network's. Each job runs once per network; the PayHero callback takes the network from the order it names; a Circle update from the account it came through.
+- **Shillings are real on both networks.** On the testnet a user pays real KES for test USDC, so the testnet ramp is for staff testing only: `PREVIEW` (people on an allow-list in `ramp.preview_access`) until it is switched `OFF` again. Mainnet starts `OFF`. (**Proposed.**)
+
+**3. Only the ops process holds the entity secrets, and `TreasuryCustody` is the contract for wallets Circaso signs for (decision 2026-11-19).**
+
+The first draft's `MerchantCustody` duplicated it and put the secret in the app. Revised:
+
+- **No `MerchantCustody` contract.** A merchant's float wallet is a developer-controlled wallet in a wallet set of its own, created, read and sent from through the existing `TreasuryCustody` (`createWallets`, `balances`, `send`, `transaction`), with the existing `EntitySecret`.
+- **The release is signed in the ops process (decided 2026-11-22).** The app verifies the payment and moves the order to `PAID`; an `OpsJob`, `ramp.release` (every 5 seconds, each network), sends `PAID` orders through `TreasuryCustody.send` with a key derived from the order and moves them to `RELEASING`. The internet-facing gateway never holds the secret that can move every merchant's float, which is the reason the secret is in the ops process at all. The cost is up to 5 seconds between a verified payment and the send. The alternative, giving the app process the entity secret, would be a new exception to the 2026-11-19 decision.
+- **Confirmation** reaches the app through Circle's webhook as today (the notification names `custodyType: DEVELOPER`, which the wallet already uses to leave Circaso's own wallets alone): the ramp takes the ones whose `refId` is an order, completes the order and tells the user. `ramp.release` also re-reads each `RELEASING` order every 15 seconds, as fee withdrawals are followed, for a lost webhook.
+- **Reading float in the app.** The engine needs a merchant's balance when it routes. Reading needs only the API key, which the app already has: a small read-only contract, `MerchantFloat.balance(network, walletId)`, bound in both processes (**Proposed**; `TreasuryCustody` stays ops-only).
+- **Account type: SCA (decided 2026-11-22).** `TreasuryCustody.createWallets` makes EOA wallets, which pay their own gas: fine for a fee wallet staff top up, wrong for a merchant, who would have to keep ETH on Base for every release. Proposed: `TreasuryWalletRequest.accountType` (additive, default `EOA`), with merchant wallets created as `SCA` so Circle Gas Station sponsors the gas, as for user wallets. The alternative is EOA with a native balance the merchant funds and the engine checks.
+- **Local runs and tests:** with the `log` or `fake` custody provider there is no treasury today (an open question on main). The ramp needs one: a `FakeTreasury` and a logging one in `dev`, bound by `treasuryModule` when the provider isn't `circle`.
+
+**4. Admin is the ops server (decision 2026-11-08).** The ramp's staff routes (RO1–RO5) are in the `ops` module on the ops gateway, behind its roles, and call a staff contract in `ramp:api` (`RampAdmin`), as wallet's `FeeAdmin` does. Every write is audited (`ops.audit_log`).
+
+**What does not change:** the rule that USDC is released only against a payment the ramp verified itself; pick and reserve in one transaction under the merchant's row lock; transition guards; `MobileCollections` and the unsigned PayHero callback as a doorbell; the KYC gate; the off-ramp waiting on a payout provider. `Wallets.depositAddress(userId, blockchain)` already exists on main, so the wallet needs no change for the on-ramp.
+
+## Overview
+
+### Owns
+
+- **Merchants**: the partner's own merchant account (independent of any personal Circaso account the same person has), its KYC and approval state, its float wallet, its payment account, whether it is online and until when.
+- **Ramp verification**: who has passed KYC for the ramp (users and merchants), as a status and a KYC identity key; never a document.
+- **Merchant credentials**: each merchant's PayHero API username, password and channel id, encrypted at rest; plaintext exists only in one node's memory while that merchant is online.
+- **Orders**: one on-ramp or off-ramp trade, from quote to its final state, with the merchant the engine picked.
+- **Float reservations**: the part of a merchant's float promised to open orders (USDC), so two orders never spend the same float.
+- **Commissions**: what each completed order earned its merchant (and Circaso, once the fee model is decided).
+- **Ramp blocks**: users, and their KYC identities, barred from the ramp (M-Pesa reversals).
+- **Withdrawals**: a merchant taking unreserved float out.
+- Its realtime frames (`ramp/*`) and their push wording.
+
+Circle stays the source of truth for a merchant's balance (principle 11); the M-Pesa side's source of truth is PayHero's status query, never a callback body.
+
+### Who is who
+
+| Party | Uses | Signs or holds |
+| --- | --- | --- |
+| User | The existing mobile app | Their own user-controlled wallet (PIN). Pays or receives M-Pesa on their verified number |
+| Merchant | The web portal `merchants.circaso.com` only; no mobile app. A merchant account of its own, not their user account | Nothing per trade. Holds a PIN that unlocks their PayHero keys for a trading window |
+| Circaso (ramp) | — | The Circle entity secret for the merchants' developer-controlled wallets; the master key half of the credential envelope |
+| Ops | The admin portal (`ops` scope) | Approves and suspends merchants, resolves orders in `REVIEW`, lifts blocks |
+
+### Gates before anyone trades
+
+**Users (decided 2026-11-22, Pasaka):** a user passes Didit KYC **once**, and only before their first on- or off-ramp; the rest of the app stays KYC-free. Ramp checks the status on every quote and order and refuses with `ramp.kyc_required` until it is `VERIFIED`. Blocks are by user **and by KYC identity**, so a banned person can't come back on a new account: a second account that verifies with a blocked identity is refused at once.
+
+**Merchants:** a merchant can't trade until **all** of: KYC approved (ID, liveness, face match and AML), approved by Circaso as a partner (ops), a float wallet created, a payment account stored and checked, and online inside a trading window.
+
+**The ramp owns this gate (Proposed).** KYC is required for the ramp only, and a merchant is not an identity account, so ramp keeps the result itself (`verifications`) and is the one module that calls `KycProvider`. `identity.accounts.verification` (used by support recovery) is left alone; whether an approved ramp KYC should also set it is an Open question.
+
+- **Flow.** R0 (users) or RM3 (merchants) creates a Didit session (`vendor_data` = `user:<id>` or `merchant:<id>`) and returns its hosted URL. The result arrives at `/v1/hooks/didit`; ramp re-reads the decision from Didit before trusting `Approved`, then writes the status and the identity key.
+- **The KYC identity key** is `HMAC-SHA256(server key, issuing country | document type | document number)` of the approved document, like `phoneHmac`. No document, number, name or image is stored or put on a stream; Didit keeps the record.
+- **One identity, one ramp user.** The identity key is unique among verified users: a second account presenting the same document is refused (`ramp.identity_in_use`), which is also what makes a block stick.
+- **Workflows** (in the Didit sandbox application today; nothing was created or changed):
+
+| Who | Proposed workflow | Checks | List price |
+| --- | --- | --- | --- |
+| Merchant | "ID, selfie and AML" (exists in sandbox, published) | ID document, liveness, face match, AML screening | $0.50 a session |
+| User | "Basic KYC" (exists in sandbox, draft) | ID document, liveness, face match, device and IP analysis | $0.33 a session |
+
+  Whether users are also AML-screened (the merchant workflow, $0.50) is part of the tiers question. The live application has only drafts and no webhook destination yet; both are set up with the Didit work, on Pasaka's go-ahead.
+- **Tiered limits (Open question):** a lower limit on the basic check and a higher one after AML or proof of address; settings until decided.
+
+### Fees: how the merchant and Circaso earn (decided 2026-11-22, Pasaka)
+
+Circaso earns on every trade, and staff set the numbers in the admin.
+
+- **Two settings per network, edited in the admin (RO5):** the **fee rate** the user pays on an on-ramp (`fee_bps`; 1 % to 2 % to start, never above 5 %: a `CHECK` of 0 to 500), and the **merchant's share** of that fee (`merchant_share_bps`, for example 7000 for 70/30). A change applies to quotes made after it; an order keeps the fee and the split of its quote.
+- **The fee is inside what the user pays.** Paying 1 300 shillings at 2 % is a fee of 26 shillings; the user receives the USDC that 1 274 shillings buy at the quoted rate. The quote shows the fee.
+- **The shillings all land in the merchant's till**, so the merchant already holds the whole fee in KES. Circaso's share therefore comes out of the merchant's **USDC float**: at 70/30, 7.80 of those 26 shillings, converted at the order's rate.
+- **Circaso's ramp wallet:** one more developer-controlled wallet, Circaso's own, per network (`ramp.revenue_wallets`, created by the ops process in the merchants' wallet set under `refId` `ramp-revenue`; separate from the wallet's transfer-fee wallets, so ramp income is counted on its own). Staff withdraw from it as they do from the fee wallets (later).
+- **Collected in one daily sweep (decided 2026-11-22, Pasaka).** Each completed order adds Circaso's share to what the merchant owes (`commissions.platform_asset_minor`), **held in the merchant's float** so it can't be traded or withdrawn. Once a day (`settings.fee_settle_hour_utc`, default 21, which is midnight in Nairobi) the ops job `ramp.settle-fees` sends each merchant's whole owed total to Circaso's wallet in one transfer, with an idempotency key per settlement, and marks the orders it covered. There is no threshold: every day's share is collected that day. A sweep that can't be sent (Circle down) is tried again on the job's next runs until it goes.
+- **Transparency for the merchant (decided 2026-11-22, Pasaka).** A merchant sees exactly what they made and what Circaso took for providing the service:
+  - **Overview (RM8)** for any period: orders completed, shillings collected, USDC sold, the fees charged, **their share** and **Circaso's share** (in shillings and in the USDC it was taken as), how much of Circaso's share has been swept and how much is still held, and each daily sweep with its amount and on-chain hash.
+  - **Statement (RM15)** for a period: one line per exchange (when, the order, shillings in, USDC out, rate, fee, their share, Circaso's share, the sweep that collected it, the release's hash), then the sweeps, then the totals. The portal shows it and exports it (CSV, and a printable page).
+  - Every number comes from the order and commission rows, so the overview, the statement and the admin's figures always agree.
+- **Still open:** the same two numbers for the off-ramp when it exists; a fee or share per merchant (a rule that names a merchant, as the wallet's fee rules name a scope); a minimum fee in shillings.
+
+### How an on-ramp runs
+
+1. **Quote (R2).** The user asks for an amount. Ramp checks the gates, prices it (rate and fee: Open questions) and returns a quote good for 60 s. A quote reserves nothing.
+2. **Order (R3).** The engine picks a merchant and reserves the USDC in one transaction (below). The order is `RESERVED`.
+3. **STK push.** `MobileCollections.requestPayment` with that merchant's credentials sends the M-Pesa prompt to the user's verified number, `external_reference` = the order id. The order is `PAYMENT_REQUESTED`. The POST is never retried (PayHero documents no idempotency key).
+4. **Callback.** PayHero posts to `/v1/hooks/payhero`. The callback is **unsigned**, so it is only a doorbell: its body decides nothing.
+5. **Verify.** Ramp asks PayHero itself (`MobileCollections.paymentStatus`, by the reference PayHero returned for the STK push) with the merchant's credentials. The order becomes `PAID` only if PayHero says `SUCCESS` **and** the amount, the paying number and our order reference all match the order. Anything else that isn't a clean failure sends the order to `REVIEW`; nothing is released.
+6. **Release.** The move to `PAID` is a transition guard, so exactly one caller wins it. The ops process's `ramp.release` job then sends USDC from the merchant's developer-controlled wallet to the user's Circaso wallet on the order's chain (`TreasuryCustody.send`, idempotency key derived from the order id, since Circle wants a UUID v4 and ours are v7; `refId` = the order id). The order is `RELEASING`. A repeat sends nothing twice: Circle answers a replayed key with the same transaction.
+7. **Confirm.** Circle's webhook reports the outbound transaction; ramp finds the order by `refId` and moves it to `COMPLETED`, closes the reservation as `CONSUMED`, writes the commission row and `ramp.OnRampCompleted` in one transaction, then sends `order.updated`. The user's wallet module sees the same money arrive as an ordinary inbound transaction (`payment.received`).
+
+**On-ramp states.** `RESERVED` → `PAYMENT_REQUESTED` → `PAID` → `RELEASING` → `COMPLETED`. Side exits: `EXPIRED` (no payment), `FAILED` (PayHero says the payment failed or was cancelled, or Circle failed the release), `CANCELLED` (R6, before payment), `REVIEW` (a person must look). States move only by transition guards, as wallet transfers do (`WHERE order_id = ? AND state IN (<allowed predecessors>) RETURNING …`).
+
+| Next state | Allowed predecessors |
+| --- | --- |
+| `PAYMENT_REQUESTED` | `RESERVED` |
+| `PAID` | `PAYMENT_REQUESTED`, `EXPIRED` (the user paid after all: the money is right) |
+| `RELEASING` | `PAID` |
+| `COMPLETED` | `RELEASING` |
+| `EXPIRED` | `RESERVED`, `PAYMENT_REQUESTED` |
+| `CANCELLED` | `RESERVED`, `PAYMENT_REQUESTED` (only once PayHero confirms nothing was paid) |
+| `FAILED` | `RESERVED`, `PAYMENT_REQUESTED`, `RELEASING` |
+| `REVIEW` | `PAYMENT_REQUESTED`, `EXPIRED`, `PAID`, `RELEASING` |
+
+**Paid after expiry.** `ramp.expire-orders` gives the float back, so a late payment may find it gone. `EXPIRED` → `PAID` re-reserves inside the same transaction when the merchant's free float still covers it; when it doesn't, the order goes to `REVIEW` (the user is owed a refund or a release once the merchant tops up; how is under Open questions, with reversal liability).
+
+**A release that fails.** `RELEASING` → `FAILED` means the user paid KES and got nothing: the order is flagged for `ramp.reconcile`, which retries the send with the same key while the merchant's balance allows, then moves it to `REVIEW` and alerts.
+
+### How an off-ramp runs (designed, waiting on a payout provider)
+
+**Status: not built, and not buildable on PayHero today.** PayHero has no payouts today (Pasaka, 2026-11-22; **unverified until PayHero replies in writing**). Its current docs agree: no payout endpoint, and the old "withdraw to mobile" page is gone. Collections on a merchant's own till settle straight there, so PayHero holds nothing to pay out of either. The automated off-ramp therefore waits on a **payout provider** (Open questions): the merchant's own Daraja B2C, another aggregator, or PayHero if it brings payouts back. `MobileCollections.payout`, `payoutStatus` and `balance` stay in the contract for that provider; nothing implements them yet. The engine checks **no KES float** until then.
+
+The designed flow, for whichever provider pays out:
+
+1. Quote, gates and merchant choice as for an on-ramp. With an automated provider the engine will also need the merchant's free KES float there; that check is added with the provider.
+2. R7 creates the order (`AWAITING_TRANSFER`) and returns the merchant's float address and the `rampOrderId`.
+3. The app calls W4 to that address with `rampOrderId`. **The user signs it with their PIN like any transfer**; ramp never touches the user's wallet. An order whose transfer isn't confirmed in 15 minutes (W4's own expiry) ends `EXPIRED`.
+4. Wallet publishes `wallet.TransferConfirmed` carrying `rampOrderId`. Ramp consumes it, checks the transfer (`Wallets.transfer`: sender, destination, amount, state) **and** that Circle shows the inbound transaction on the merchant's wallet, then moves the order to `FUNDED` and **holds the received USDC** with a reservation on the merchant's wallet, so it can't be withdrawn or traded away before the user is paid.
+5. The payout: `MobileCollections.payout` to the user's verified number (`PAYING_OUT`); the provider's callback is a doorbell and ramp re-verifies with its status query before `COMPLETED`, which closes the hold as `CONSUMED` (the USDC becomes the merchant's float).
+6. A payout that fails is retried by `ramp.reconcile`, **only after the status query says it did not pay**. When it can't be paid, the held USDC goes back to the user automatically from the merchant's wallet (`TreasuryCustody.send` in the ops process, key derived from the order id and `refund`), ending `REFUNDED`.
+
+**Off-ramp states.** `AWAITING_TRANSFER` → `FUNDED` → `PAYING_OUT` → `COMPLETED`; `EXPIRED` (never funded), `REFUNDED`, `REVIEW`.
+
+### Semi-manual payout (Proposed fallback until a payout provider exists)
+
+A way to open selling without an automated payout: the merchant sends the M-Pesa by hand, and the ramp still holds the USDC until the user is paid. It breaks "merchants do nothing per trade" for off-ramps only, so it is a fallback, switched on per merchant (`payout_mode`: `MANUAL`), and it goes away for a merchant once a provider pays out for them.
+
+1. Steps 1–4 above are unchanged: the user's signed transfer lands on the merchant's developer-controlled wallet and is **held** by a reservation. The merchant can't touch it; only the ramp can release or return it.
+2. The order becomes `PAYOUT_DUE` with a deadline (`RAMP_MANUAL_PAYOUT_MINUTES`, 15). The merchant is told on the portal (and by SMS or email) what to send: the amount in shillings and the user's number, shown in full to that merchant for this order only.
+3. The merchant sends M-Pesa from their own line and enters the M-Pesa receipt code on the portal (RM12). The order is `PAYOUT_CLAIMED`; the user gets `order.updated` and a push asking them to confirm.
+4. The user confirms they received it (R8): `COMPLETED`, and the hold closes as `CONSUMED`. If the user says nothing for `RAMP_MANUAL_CONFIRM_HOURS` (24) after a claim, the order completes on its own, unless they disputed.
+5. The user says they were not paid (R9): `REVIEW`. The USDC stays held; ops decides with the receipt code (release to the merchant or refund the user), audited.
+6. The merchant never claims before the deadline, or declines (RM13): the held USDC is refunded to the user automatically, `REFUNDED`, and the miss counts against the merchant's success rate. Repeated misses take the merchant offline for selling.
+
+Only merchants who are online, approved and in `MANUAL` mode are candidates, and one at a time per merchant up to a small cap (`RAMP_MANUAL_OPEN_PER_MERCHANT`), since a person is doing the work. The rule that matters holds: **the user's USDC is never released to the merchant until the user is paid, and comes back by itself if they are not.** What ramp can't do here is verify the M-Pesa itself; that is why the user confirms and ops arbitrates.
+
+**Off-ramp states with a manual payout.** `AWAITING_TRANSFER` → `FUNDED` → `PAYOUT_DUE` → `PAYOUT_CLAIMED` → `COMPLETED`; `REFUNDED`, `REVIEW`.
+
+### The merchant engine (routing)
+
+A merchant is a candidate for an order only if all of these hold:
+
+- state `APPROVED` (KYC verified and partner-approved, not suspended);
+- online: a live `rmp:session:{merchantId}` and `online_until` in the future, with at least the order's lifetime left in the window;
+- a float wallet on the order's chain;
+- **free float** ≥ the order amount, where free float = the float wallet's USDC balance as Circle reports it − the sum of its `OPEN` reservations. (An off-ramp needs no USDC float; it waits on a payout provider, above.)
+
+**Ranking:** recent success rate (completed ÷ finished, over the merchant's last 50 finished orders), then the least recently assigned merchant as the tie-breaker, so equal merchants take turns. Splitting an order across merchants is later, not now.
+
+**Pick and reserve are one transaction; reading Circle is not inside it.** A transaction holds database work only, so the order runs in two steps:
+
+1. Outside any transaction, read each candidate's balance (`MerchantFloat.balance`, through `rmp:float:{merchantId}`, 10 s) and rank them.
+2. `Transactor.attempt("orders.reserve")`: lock the chosen merchant's row (`SELECT … FOR UPDATE`, the parent before its children), re-check its state and `online_until`, sum its `OPEN` reservations, and insert the reservation and the order only if `balance − reserved ≥ amount`. Otherwise roll back and try the next candidate. No candidate left answers `ramp.no_merchant_available`.
+
+The row lock serialises reservations per merchant, so two orders can't both fit into the last of a merchant's float. The balance was read a moment earlier; if it dropped since (a withdrawal can't: withdrawals take the same lock and need the merchant offline), Circle refuses the release with insufficient funds and the order goes to `REVIEW`.
+
+### Merchant credentials and the trading session
+
+**At rest (envelope).** A merchant's PayHero username, password and channel id are sealed with AES-256-GCM under a random data key. The data key is wrapped under a key derived from **two** secrets: the ramp master key (`RAMP_CREDENTIALS_MASTER_KEY`, from `Secrets`) and the merchant's PIN stretched with Argon2id (per-merchant salt). A database copy alone, or the master key alone, opens nothing. A wrong PIN fails the GCM tag; five wrong tries lock PIN entry for 30 minutes (`rmp:pin:{merchantId}`).
+
+**Going online (RM6).** The merchant enters the PIN on the portal and a trading window (minutes). The node that took the request unwraps the keys **into its own memory only** and registers `rmp:session:{merchantId}` = its node id, TTL = the window. Plaintext credentials are never written to the database, to Redis, to a log or to an event; credential classes mask `toString`.
+
+**Routing to the holder.** Only the holding node can call PayHero for that merchant (STK push, status query, payout). Another node that needs a call made pushes the **order id** (nothing else) onto `rmp:work:{nodeId}`; the holder reads it and acts on the order row, which is the state. Every such step is idempotent by the order's transition guards.
+
+**A node that restarts loses its sessions:** its merchants go offline, their `rmp:session` keys are removed at start (and expire on their own), and each merchant is asked to unlock again. Orders of theirs that were waiting on PayHero can't be verified until then: they are **never** expired or released on a guess. They wait as they are, `ramp.reconcile` alerts, and the merchant's next unlock lets the status queries run.
+
+**No development shortcut (Pasaka, 2026-11-22).** The first draft read one merchant's PayHero keys from `Secrets`. That is dropped: the credentials are the merchant's, not Circaso's, so even the first merchant (Crynce) signs up on the portal and enters them there. The envelope, the PIN and the trading session are therefore part of the first slice.
+
+### Withdrawals
+
+A merchant withdraws USDC float to any address valid on that chain, their personal Circaso wallet's address included (RM10): only unreserved funds, and only while offline with no open orders. The check and the `withdrawals` row take the merchant's row lock, the same lock reservations take. The send is `TreasuryCustody.send`, in the ops process, with a key derived from the withdrawal id. There is no shilling withdrawal: collections already sit in the merchant's own till.
+
+### Reversals
+
+A user who reverses an M-Pesa payment after USDC was released is blocked from the ramp, **as a user and as a KYC identity** (`blocks`). PayHero's API reports no reversal (no status, no callback), so a reversal is learned from the merchant (RM11, with the M-Pesa receipt) or from ops (RO3); who carries the loss is an Open question. Blocking is immediate on a report; ops can lift a block.
+
+### Contract (`ramp:api`)
+
+```kotlin
+interface Ramp {                                     // read by the assistant later; nobody depends on it today
+    suspend fun hasOpenOrder(userId: UserId): Boolean
+}
+
+@JvmInline value class RampOrderId(val value: UUID)  // UUIDv7, made on the server
+@JvmInline value class MerchantId(val value: UUID)
+```
+
+- Frames: `order.updated` (`RampFrames.kt`), so the gateway words the pushes typed.
+- Events on `events:ramp` (below).
+
+### Integrations used
+
+Two new contracts in `integrations:api`, and one more webhook vendor. **`StablecoinCustody` is not changed or reused:** it is the user-controlled contract, where nothing moves without the user's PIN, and it stays that way.
+
+**Merchant float: `TreasuryCustody` (existing) and `MerchantFloat` (new, read-only).** See "How this fits main", rule 3. Nothing about Circle is new code beyond an account type on wallet creation and a balance read:
+
+```kotlin
+/** A merchant float wallet's USDC as the vendor holds it now. Needs the account's API key only; bound in both processes. */
+interface MerchantFloat {
+    suspend fun balance(network: Network, walletId: String): Resource<Money>
+}
+```
+
+- **Create** (ops process, RO2 on approval or RM4 through the ops server): `TreasuryCustody.createWallets` in the merchants' wallet set (`ramp.settings.wallet_set_id`, created once per network by `ramp.release`'s start-up run), `refId` = the merchant id, `accountType` `SCA` (**Proposed**).
+- **Send** (ops process only): `TreasuryCustody.send`, the idempotency key derived from the order id and `release` (Circle wants a UUID v4 and ours are v7), `refId` = the order id. An `Unavailable` answer means the outcome is unknown: the job asks again with the same key; any other error sends the order to `REVIEW`.
+- **Follow:** Circle's webhook in the app (by `custodyType: DEVELOPER` and the order `refId`), and the ops job's re-read every 15 seconds.
+
+**`MobileCollections`** — the architecture's planned `MobileMoney` slot, named for what it does. PayHero first (`PayHeroCollections` in `integrations/impl/.../payhero/` over `HttpClients.named("payhero")`, base `https://backend.payhero.co.ke`). **Credentials are passed per call**, because each merchant brings their own account: this is the one contract whose vendor keys don't come from `Secrets` (decision 2026-11-22). Nothing in it is PayHero's shape, so another provider is a new implementation.
+
+```kotlin
+interface MobileCollections {
+    /** Sends the payment prompt (M-Pesa STK push) to [CollectionRequest.payer]. Never retried by the client. */
+    suspend fun requestPayment(credentials: CollectionCredentials, request: CollectionRequest): Resource<CollectionReceipt>
+
+    /** What the provider itself says about a payment: the only thing a release may rest on. */
+    suspend fun paymentStatus(credentials: CollectionCredentials, providerReference: String): Resource<CollectionStatus>
+
+    /** Pays out to a phone (off-ramp). Never retried by the client. No provider implements it yet: PayHero has no payouts. */
+    suspend fun payout(credentials: CollectionCredentials, request: PayoutRequest): Resource<PayoutReceipt>
+
+    suspend fun payoutStatus(credentials: CollectionCredentials, providerReference: String): Resource<PayoutStatus>
+
+    /** The merchant's balances at the provider: what payouts can spend, and what the provider's fees are paid from. */
+    suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances>
+
+    /** Whether the credentials work, for the portal's "connect your account" step. */
+    suspend fun verify(credentials: CollectionCredentials): Resource<Unit>
+}
+
+class CollectionCredentials(
+    val username: String,
+    val password: String,
+    val collectionChannelId: String,                 // the merchant's own till or paybill
+) {
+    override fun toString() = "CollectionCredentials(***)"
+}
+data class CollectionRequest(val payer: PhoneNumber, val amount: FiatAmount, val reference: String, val callbackUrl: String)
+data class CollectionReceipt(val providerReference: String, val checkoutId: String)
+data class CollectionStatus(
+    val state: CollectionState,                      // QUEUED | SUCCESS | FAILED
+    val amount: FiatAmount?,
+    val payer: PhoneNumber?,
+    val reference: String?,                          // ours, as the provider echoes it
+    val receipt: String?,                            // the M-Pesa receipt number
+)
+data class PayoutRequest(val payee: PhoneNumber, val amount: FiatAmount, val reference: String, val callbackUrl: String)
+data class CollectionBalances(val payout: FiatAmount, val fees: FiatAmount)
+
+interface CollectionNotifications {                  // implemented by ramp, wired in app
+    suspend fun onPaymentCallback(reference: String): Resource<Unit>   // the order id only: a doorbell
+    suspend fun onPayoutCallback(reference: String): Resource<Unit>
+}
+```
+
+- **Collect:** STK push `POST /api/v2/payments` (`amount` in whole shillings, `phone_number`, `channel_id`, `provider: "m-pesa"`, `external_reference`, `callback_url`) → `reference`, `CheckoutRequestID`, `status: QUEUED`. Status `GET /api/v2/transaction-status?reference=…` (PayHero's reference or the M-Pesa code) → `status` (`QUEUED`, `SUCCESS`, `FAILED`), amount, phone, references. Authentication is HTTP Basic from the merchant's API username and password. `channel_id` names one registered till, paybill or bank account, registered per PayHero account.
+- **Where collections settle:** on a merchant's own till, paybill or bank channel, straight into it ("receive payments directly into your linked MPESA Paybill, Till, or bank account"). PayHero holds nothing, so there is no shilling balance to withdraw.
+- **Two wallets at PayHero.** The **service wallet** is a prepaid float PayHero's per-transaction fees are taken from (KES 0–20 by amount; `GET /api/v2/wallets?wallet_type=service_wallet`); it can't be cashed out, and what an STK push does when it is empty isn't documented, so RM6 refuses to go online on a service wallet below a floor (`RAMP_PAYHERO_SERVICE_FLOOR_KES`). 
+- **No payouts.** PayHero has none today (Pasaka, 2026-11-22; unverified until PayHero replies in writing). An archived page describes `POST /api/v2/withdraw` from a "payments wallet", but it is gone from the current docs and no payout status query is documented. `PayHeroCollections` answers `payout`, `payoutStatus` and `balance` with `IntegrationError.NotImplemented`.
+- **Each merchant has a callback address of their own (Pasaka, 2026-11-22).** The portal generates it when the merchant connects PayHero (RM5): `<callback_base_url>/v1/hooks/payhero/<name>-<token>`, the merchant's name as a readable slug and 16 random base62 characters (`merchants.callback_key`, unique). The merchant pastes it into PayHero, and the ramp sends the same address with every prompt it makes for them. The token is a shared secret in the address, which is the best guard a vendor that signs nothing allows: a callback on an address that isn't a merchant's is refused, and one that is may only ring for **that merchant's** orders. The merchant can generate a new one (RM14); the old one stops working at once. This needs the gateway's webhook path to take one more segment, `/v1/hooks/{vendor}/{key}` (additive; `WebhookVendor` is handed the key).
+- **The callbacks are unsigned.** PayHero documents no signature, secret, source address list or retry policy. `PayHeroWebhook` therefore takes exactly one thing from the body, `ExternalReference`, and hands it to `CollectionNotifications`; ramp ignores it unless it names an order in a state that is waiting for it, and then runs the status query. A forged callback can at most cause one status query for a real open order. The gateway's duplicate guard uses `CheckoutRequestID`.
+- **No idempotency.** No idempotency header, and `external_reference` isn't documented as unique. A prompt or payout is never retried by the HTTP client; after a timeout the status query decides.
+- **No sandbox** is documented: tests against PayHero are small real amounts; everything else runs on `fake`.
+- **`fiat`:** `FiatAmount(amountMinor: Long, currency: String)` is new in `shared` (`Money` is crypto-only: it carries an `Asset`). PayHero takes whole shillings, so quotes are priced in whole shillings.
+- **PayHero's abuse limits** shape ours: more than 10 failed or cancelled prompts in a row to one number blocks that number for 24 h, and many failed requests restrict the merchant's account for hours. Ramp limits prompts per user (below) so a user can't burn a merchant's account.
+
+| Setting | Example | Purpose |
+| --- | --- | --- |
+| `INTEGRATIONS_COLLECTIONS_PROVIDER` (start-up, as every provider line) | `log` \| `fake` \| `payhero` | `log` locally, `fake` in tests |
+| `ramp.settings.callback_base_url` (database) | `https://api.circaso.com` | The public origin callback addresses are made on; edited in the admin |
+| A merchant's callback address (generated, RM5) | `https://api.circaso.com/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s` | The merchant's own: shown on the portal to paste into PayHero, and sent with every prompt of theirs |
+
+**`KycProvider`** — the other planned slot. Didit first (`DiditKyc` in `integrations/impl/.../didit/` over `HttpClients.named("didit")`, base `https://verification.didit.me`, `x-api-key` from `Secrets`).
+
+```kotlin
+interface KycProvider {
+    /** A hosted check for [subject] (our own reference); the person completes it at [KycSession.url]. */
+    suspend fun startSession(subject: String, workflow: KycWorkflow): Resource<KycSession>
+
+    /** The provider's decision as it stands now: what a status change is checked against. */
+    suspend fun decision(sessionId: String): Resource<KycDecision>
+}
+
+enum class KycWorkflow { USER, MERCHANT }            // mapped to provider workflow ids in settings
+data class KycSession(val sessionId: String, val url: String)
+data class KycDecision(
+    val status: KycStatus,                           // PENDING | APPROVED | DECLINED | IN_REVIEW | EXPIRED
+    val subject: String,
+    val document: KycDocument?,                      // country, type, number: for the identity key only, never stored
+)
+
+interface KycNotifications {                         // implemented by ramp, wired in app
+    suspend fun onStatusChanged(sessionId: String): Resource<Unit>   // the session id only; ramp re-reads the decision
+}
+```
+
+- **Didit calls:** `POST /v3/session/` (`workflow_id`, `vendor_data`, `callback`) → `session_id`, `url`, `status: "Not Started"`; `GET /v3/session/{id}/decision/`.
+- **Webhook** `/v1/hooks/didit`: HMAC-SHA256 with the destination's secret. `DiditWebhook` verifies `X-Signature-V2` (over the canonical JSON; `X-Signature` over the raw bytes as the fallback; never `X-Signature-Simple`, which doesn't cover the decision), refuses an `X-Timestamp` older than 300 s, and uses `event_id` as the duplicate guard. Statuses are exact strings with spaces (`Approved`, `Declined`, `In Review`, `Kyc Expired`, …).
+- **Sandbox and live** are two Didit applications with separate keys: sandbox mocks every check and bills nothing; live bills per finished feature.
+
+| Setting | Example | Purpose |
+| --- | --- | --- |
+| `INTEGRATIONS_KYC_PROVIDER` (start-up) | `log` \| `fake` \| `didit` | `log` locally, `fake` in tests |
+| `DIDIT_API_KEY`, `DIDIT_WEBHOOK_SECRET` (secrets) | — | Per Didit application (sandbox or live) |
+| `ramp.settings.kyc_workflow_user`, `kyc_workflow_merchant` (database) | workflow ids | Which Didit workflow each kind runs; edited in the admin |
+
+The `log` providers print what they were asked and answer with made-up references; `fake` records calls, and lets a test settle a payment or a transaction by hand.
+
+### Depends on
+
+`shared`, `infrastructure:api`, `integrations:api`, `identity:api` (account status, the verified phone check) and `wallet:api` (a user's deposit address on a chain; `TransferConfirmed` and `Wallets.transfer` for the off-ramp). **Wallet never depends on ramp:** `rampOrderId` on W4 and on `TransferConfirmed` is an opaque id to the wallet.
+
+### Changes to other modules (all additive)
+
+| Where | Change | Needed for |
+| --- | --- | --- |
+| `wallet:api` | Nothing: `Wallets.depositAddress(userId, blockchain)` exists on main | On-ramp release |
+| `integrations:api` `TreasuryWalletRequest` | `accountType` (default `EOA`; `SCA` for merchant float) (**Proposed**) | Gas for releases |
+| `integrations` `dev` | A fake and a logging treasury, bound by `treasuryModule` when custody isn't `circle` | Local runs and tests |
+| `ops` | RO1–RO5 on the ops gateway, calling `ramp:api` `RampAdmin`; the `ramp.release` `OpsJob` | Staff routes; signing |
+| gateway | The ramp's app routes inside `walletNetwork { }`; `/v1/hooks/{vendor}/{key}` | The network of a request; a callback address per merchant |
+| `wallet` W4, `TransferConfirmed`, `TransferSummary` | Optional `rampOrderId`; the wallet stores and echoes it, and checks nothing about it | Off-ramp |
+| `integrations:api` | `MerchantFloat`, `MobileCollections`, `CollectionNotifications`, `KycProvider`, `KycNotifications` | — |
+| `shared` | `FiatAmount`; `Scope.MERCHANT` (**Proposed**, with merchant accounts and portal sign-in) | Quotes; the portal |
+| gateway | Webhook vendors `payhero`, `didit`; push wording for `ramp/*`; docs tags "Ramp", "Merchant portal" | — |
+
+## Endpoints
+
+Paths relative to `https://api.circaso.com/v1`. Every POST, PUT and DELETE takes an `Idempotency-Key`. Amounts follow the wallet: strings, `amountMinor` (exact) and `amount` (display). No response ever names a merchant to a user beyond a display name on the order, and none carries a credential.
+
+### Mobile app (`app` scope)
+
+| # | Route | Use case (domain) | Does | First slice |
+| --- | --- | --- | --- | --- |
+| R0 | `POST /ramp/kyc` | `StartUserKyc` | Starts (or returns the open) Didit check for this user: `{ status, url? }`. Already `VERIFIED` answers so with no link | Later (with Didit) |
+| R1 | `GET /ramp` | `GetRampStatus` | Whether this user can trade now: KYC status, blocked or not, the limits, the chains offered, whether any merchant is online. Never a list of merchants | Yes |
+| R2 | `POST /ramp/quotes` | `CreateQuote` | Prices an amount in one direction; a quote lasts 60 s and reserves nothing | Yes (on-ramp) |
+| R3 | `POST /ramp/onramp/orders` | `StartOnRamp` | Picks a merchant, reserves float, sends the M-Pesa prompt | Yes |
+| R4 | `GET /ramp/orders/{orderId}` | `GetOrder` | One order and its state | Yes |
+| R5 | `GET /ramp/orders?cursor=&limit=` | `ListOrders` | The user's orders, newest first, keyset paged | Yes |
+| R6 | `POST /ramp/orders/{orderId}/cancel` | `CancelOrder` | Cancels before payment; refused once PayHero shows a payment | Yes |
+| R7 | `POST /ramp/offramp/orders` | `StartOffRamp` | Picks a merchant and returns the address and `rampOrderId` for the user's W4 | Waiting on a payout provider (or the manual fallback) |
+| R8 | `POST /ramp/orders/{orderId}/received` | `ConfirmPayout` | Manual payout: the user confirms the M-Pesa arrived | With the manual fallback |
+| R9 | `POST /ramp/orders/{orderId}/dispute` | `DisputePayout` | Manual payout: the user says they were not paid; the order goes to `REVIEW` | With the manual fallback |
+
+```json
+// R2 POST /ramp/quotes ← request
+{ "direction": "ON_RAMP", "blockchain": "BASE", "fiat": { "currency": "KES", "amount": "1300" } }   // or "crypto": { "asset": "USDC", "amount": "10" }
+// → data
+{ "quoteId": "0193…", "direction": "ON_RAMP", "blockchain": "BASE",
+  "pay":     { "currency": "KES", "amountMinor": "130000", "amount": "1300" },
+  "receive": { "asset": "USDC", "amountMinor": "9950000", "amount": "9.95" },
+  "rate": "129.25", "fee": { "currency": "KES", "amountMinor": "1400", "amount": "14" },
+  "expiresAt": "2026-11-22T18:01:00Z" }
+
+// R3 POST /ramp/onramp/orders ← request
+{ "quoteId": "0193…", "phone": "+254712345678" }
+// → data
+{ "orderId": "0193…", "direction": "ON_RAMP", "state": "PAYMENT_REQUESTED", "blockchain": "BASE",
+  "pay": { … }, "receive": { … }, "maskedPhone": "+254 7•• ••• 678",
+  "merchantName": "Crynce", "expiresAt": "2026-11-22T18:03:00Z" }
+```
+
+R3's checks, in order: account `ACTIVE`; KYC `VERIFIED` (`ramp.kyc_required`); not blocked, by user or identity key (`ramp.blocked`); within the limits of the user's KYC tier; the quote exists, is this user's and hasn't expired (`ramp.quote_expired`); within the per-order and daily limits (`ramp.limit_exceeded`); no other open order (`ramp.order_in_progress`: one at a time per user); **the phone is the account's own verified number** (`AccountDirectory.resolvePhones`; else `ramp.phone_not_yours`), so the payer PayHero reports can be matched to the user; the user has a wallet that receives on the chain (`ramp.wallet_required`); a merchant with the float (`ramp.no_merchant_available`). The order and reservation are written before PayHero is asked; when the prompt can't be sent the order ends `FAILED` and the float is given back in the same transaction.
+
+Limits are settings until decided (`RAMP_ORDER_MIN_KES`, `RAMP_ORDER_MAX_KES`, `RAMP_DAILY_LIMIT_KES`, `RAMP_PROMPTS_PER_HOUR`; `TODO(decision)`), and the price comes from a `Pricing` port (`ExchangeRates` plus `RAMP_FEE_BPS`) until the fee model is decided.
+
+### Merchant portal (`/v1/ramp/merchant`, a merchant session; first slice: MA1–MA3, RM1, RM2, RM5, RM6, RM7, RM8, RM9, RM14, RM15)
+
+**Sign-in (decided 2026-11-22): email and a one-time code.** A merchant account is the ramp's own, not an identity account, so its session is the ramp's too and never an app token.
+
+- The session travels in **`X-Merchant-Session`**, not `Authorization` (the gateway reads a Bearer token as an app token). It is 32 random bytes, base64url; only its SHA-256 is stored (`merchant_sessions`); it lasts 12 hours and each use within the last hour extends it.
+- Every state change carries `Idempotency-Key`; money routes carry `X-Wallet-Network`. Answers use the usual envelope.
+- The portal reaches the API through its own host (`merchants.circaso.com/api/...`, forwarded by its Cloudflare worker, as the admin portal does), so the app gateway needs no CORS.
+- A code is 6 digits, lasts 10 minutes, allows 5 tries; 3 codes per email per 10 minutes and 10 per address per hour. Asking for a code always answers the same, whether or not the email is known. The first verified sign-in creates the merchant account (`NEW`).
+
+| # | Route | Does |
+| --- | --- | --- |
+| MA1 | `POST /ramp/merchant/auth/code` | `{ email }` → `{ sent: true, retryAfterSeconds }`. Emails the code (`EmailTemplate.MERCHANT_SIGN_IN_CODE`) |
+| MA2 | `POST /ramp/merchant/auth/verify` | `{ email, code }` → `{ sessionToken, expiresAt, merchant }` |
+| MA3 | `POST /ramp/merchant/auth/signout` | Ends the session; takes the merchant offline |
+
+```json
+// RM2 GET /ramp/merchant → data  (also the `merchant` of MA2 and the answer of RM1)
+{
+  "merchantId": "0193…", "email": "pay@crynce.co.ke", "displayName": "Crynce", "contactPhone": "+254712345678",
+  "state": "APPROVED",                                   // NEW | APPLIED | APPROVED | SUSPENDED
+  "network": "TESTNET",
+  "steps": { "profile": true, "approved": true, "wallet": true, "payments": true },
+  "wallet": { "blockchain": "BASE-SEPOLIA", "address": "0x5a3c…" },          // null until the ops server has made it
+  "float": { "balance": { "unit": "USDC", "amountMinor": "100000000", "amount": "100" },
+             "reserved": { … }, "free": { … } },                               // null without a wallet or when Circle is down
+  "payments": { "provider": "payhero", "connected": true, "channelId": "911",
+                "callbackUrl": "https://api.circaso.com/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s" },   // null until RM5
+  "online": { "online": true, "until": "2026-11-22T22:00:00Z" },
+  "canGoOnline": true, "missing": []                     // e.g. ["approval", "wallet", "payments", "float"]
+}
+// RM1 PUT /ramp/merchant/profile ← { "displayName": "Crynce", "contactPhone": "+254712345678" }   (NEW → APPLIED)
+// RM5 PUT /ramp/merchant/payments ← { "username": "…", "password": "…", "channelId": "911", "pin": "482913" }
+//     → { "connected": true, "callbackUrl": "…" }       the PIN is 6 digits; set here the first time, required after
+// RM14 POST /ramp/merchant/payments/callback → { "callbackUrl": "…" }
+// RM6 POST /ramp/merchant/session ← { "pin": "482913", "minutes": 240 } → { "online": true, "until": "…" }
+//     DELETE /ramp/merchant/session → { "online": false, "until": null }
+// RM9 PUT /ramp/merchant/pin ← { "currentPin": "482913", "newPin": "771204" } → {}
+// RM7 GET /ramp/merchant/orders?cursor=&limit= → { "orders": [ { "orderId", "direction", "state", "pay", "receive",
+//       "fee", "maskedPhone", "createdAt", "updatedAt" } ], "next": null }
+```
+
+```json
+// RM8 GET /ramp/merchant/earnings?from=2026-11-01&to=2026-11-30 → data   (dates are UTC days, inclusive; default: this month)
+{ "from": "2026-11-01", "to": "2026-11-30", "network": "TESTNET",
+  "orders": 42,
+  "collected":      { "unit": "KES",  "amountMinor": "5460000", "amount": "54600" },   // shillings paid into your till
+  "sold":           { "unit": "USDC", "amountMinor": "415800000", "amount": "415.8" }, // USDC released to buyers
+  "fees":           { "unit": "KES",  "amountMinor": "109200", "amount": "1092" },      // the fee buyers paid, inside `collected`
+  "yourShare":      { "unit": "KES",  "amountMinor": "76440", "amount": "764.4" },
+  "circasoShare":   { "unit": "KES",  "amountMinor": "32760", "amount": "327.6" },
+  "circasoShareUsdc": { "unit": "USDC", "amountMinor": "2520000", "amount": "2.52" },   // what it is taken as, from your float
+  "swept":          { "unit": "USDC", "amountMinor": "2400000", "amount": "2.4" },
+  "held":           { "unit": "USDC", "amountMinor": "120000", "amount": "0.12" },      // collected at the next daily sweep
+  "feeRatePercent": "2", "yourSharePercent": "70",                                      // the rates in force now
+  "sweeps": [ { "settlementId": "0193…", "day": "2026-11-21", "amount": { "unit": "USDC", … }, "state": "CONFIRMED",
+                "orders": 9, "txHash": "0x…" } ] }
+
+// RM15 GET /ramp/merchant/statement?from=&to=&cursor=&limit= → data   (newest first, keyset paged; totals are for the whole period)
+{ "from": "…", "to": "…", "network": "TESTNET",
+  "lines": [ { "orderId": "0193…", "completedAt": "2026-11-21T18:04:10Z", "maskedPhone": "+254 7•• ••• 678",
+               "paid": { "unit": "KES", … }, "released": { "unit": "USDC", … }, "rate": "129.25",
+               "fee": { "unit": "KES", … }, "yourShare": { "unit": "KES", … }, "circasoShare": { "unit": "KES", … },
+               "circasoShareUsdc": { "unit": "USDC", … }, "settlementId": "0193…", "txHash": "0x…" } ],
+  "totals": { "orders": 42, "collected": { … }, "sold": { … }, "fees": { … }, "yourShare": { … },
+              "circasoShare": { … }, "circasoShareUsdc": { … } },
+  "next": null }
+```
+
+**The float wallet has no route of its own.** Creating it takes the entity secret, which only the ops process holds: `ramp.release` makes an approved merchant's wallet on its next run (seconds), and RM2 then shows the address to fund.
+
+Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.code_locked` (429), and the `ramp.merchant_*`, `ramp.pin_*` and `ramp.credentials_rejected` codes below.
+
+| # | Route | Use case | Does |
+| --- | --- | --- | --- |
+| RM1 | `PUT /ramp/merchant/profile` | `ApplyAsMerchant` | The merchant's name and contact phone; applies as a partner (`NEW` → `APPLIED`) |
+| RM2 | `GET /ramp/merchant` | `GetMerchant` | State and what is still missing, USDC float (balance, reserved, free), and while online the PayHero service wallet balance; online or not and until when |
+| RM3 | `POST /ramp/merchant/kyc` | `StartMerchantKyc` | The Didit session link for the merchant (ID, liveness, face match, AML) |
+| RM5 | `PUT /ramp/merchant/payments` | `StorePaymentAccount` | PayHero username, password, the till or paybill channel id, and the PIN that seals them; answers the merchant's callback address to paste into PayHero; checked with `MobileCollections.verify` first |
+| RM6 | `POST /ramp/merchant/session` / `DELETE` | `GoOnline` / `GoOffline` | PIN and a window in minutes; unlocks the keys on this node. Going offline stops new orders; open ones finish |
+| RM7 | `GET /ramp/merchant/orders?cursor=` | `ListMerchantOrders` | The merchant's orders, payer numbers masked |
+| RM8 | `GET /ramp/merchant/earnings?from=&to=` | `GetEarnings` | The overview for a period: orders, shillings in, USDC sold, fees, the merchant's share, Circaso's share (swept and still held), and the daily sweeps |
+| RM15 | `GET /ramp/merchant/statement?from=&to=&cursor=` | `GetStatement` | Every exchange in the period, line by line, with the sweeps and the totals; the portal shows and exports it |
+| RM9 | `PUT /ramp/merchant/pin` | `ChangePin` | Re-wraps the data key under the new PIN (old PIN required) |
+| RM10 | `POST /ramp/merchant/withdrawals` | `WithdrawFloat` | Unreserved USDC float to an address (their Circaso wallet's or any other); offline and no open orders |
+| RM12 | `POST /ramp/merchant/orders/{orderId}/payout` | `ClaimPayout` | Manual payout: the merchant enters the M-Pesa receipt code after sending | 
+| RM13 | `POST /ramp/merchant/orders/{orderId}/decline` | `DeclinePayout` | Manual payout: the merchant can't pay; the held USDC is refunded |
+| RM14 | `POST /ramp/merchant/payments/callback` | `RotateCallback` | Generates a new callback address; the old one stops working |
+| RM11 | `POST /ramp/merchant/orders/{orderId}/reversal` | `ReportReversal` | Reports an M-Pesa reversal with its receipt; blocks the user and their KYC identity, opens a case for ops |
+
+### Ops (on the ops gateway, `/v1/ops/ramp`, through `ramp:api` `RampAdmin`)
+
+| # | Route | Does |
+| --- | --- | --- |
+| RO1 | `GET /ops/ramp/merchants` | Merchants and their states |
+| RO2 | `POST /ops/ramp/merchants/{id}/approve` · `/suspend` | Partner approval; suspension takes the merchant offline at once |
+| RO3 | `GET` · `POST` · `DELETE /ops/ramp/blocks` | The block list; block or unblock a user (and identity) |
+| RO4 | `GET /ops/ramp/orders?state=REVIEW` · `POST /ops/ramp/orders/{id}/resolve` | Orders waiting for a person, and their resolution (release, refund, close) with a reason, audited |
+| RO5 | `GET` · `PUT /ops/ramp/settings?network=` | One network's ramp settings (state, chains, limits, fee, windows, KYC enforcement, callback origin), with a version check; audited; in force within 10 seconds |
+
+Every money read takes `?network=`, as the other ops routes do.
+
+There are no agent routes in the first slice. When Asha may read the ramp, `GET /v1/agent/ramp/orders` only.
+
+## Data
+
+PostgreSQL tables in schema `ramp` (role `ramp`, Flyway location `db/ramp`), and Redis keys under `rmp:`.
+
+```sql
+-- V1__ramp.sql (first slice: merchants, quotes, orders, reservations, commissions, realtime, outbox);
+-- verifications, merchant_credentials, blocks and withdrawals arrive with Didit, the portal and the off-ramp
+
+CREATE TABLE ramp.settings (                             -- one row per network; edited in the admin (RO5), seeded once
+    network                text        PRIMARY KEY,      -- MAINNET | TESTNET
+    state                  text        NOT NULL,         -- OFF | PREVIEW | ON (built-in seed: OFF)
+    chains                 text[]      NOT NULL,         -- where bought USDC is delivered (BASE-SEPOLIA; BASE)
+    order_min_minor        bigint      NOT NULL,         -- KES minor units. TODO(decision: KYC tiers and limits)
+    order_max_minor        bigint      NOT NULL,
+    daily_limit_minor      bigint      NOT NULL,
+    prompts_per_hour       integer     NOT NULL,
+    fee_bps                integer     NOT NULL CHECK (fee_bps BETWEEN 0 AND 500),          -- what the user pays on an on-ramp
+    merchant_share_bps     integer     NOT NULL CHECK (merchant_share_bps BETWEEN 0 AND 10000),  -- the merchant's part of the fee; the rest is Circaso's
+    fee_settle_hour_utc    integer     NOT NULL CHECK (fee_settle_hour_utc BETWEEN 0 AND 23),    -- the daily sweep of Circaso's share
+    quote_seconds          integer     NOT NULL,         -- 60
+    payment_window_seconds integer     NOT NULL,         -- 120
+    kyc_required           boolean     NOT NULL,         -- false only while Didit isn't built; never false on MAINNET (CHECK)
+    callback_base_url      text        NOT NULL,         -- the public origin merchants' callback addresses are made on
+    wallet_set_id          text,                         -- the merchants' wallet set at Circle; written once by the ops process
+    updated_by             text,
+    updated_at             timestamptz NOT NULL,
+    version                bigint      NOT NULL DEFAULT 0
+);
+
+CREATE TABLE ramp.revenue_wallets (                      -- Circaso's own ramp wallet, one per network; made by the ops process
+    network           text        PRIMARY KEY,
+    blockchain        text        NOT NULL,
+    custody_wallet_id text        NOT NULL UNIQUE,
+    wallet_address    text        NOT NULL,
+    created_at        timestamptz NOT NULL
+);
+
+CREATE TABLE ramp.fee_settlements (                      -- one sweep of what a merchant owes Circaso
+    settlement_id uuid        PRIMARY KEY,               -- the custodian's refId; its idempotency key is derived from it
+    merchant_id   uuid        NOT NULL,
+    network       text        NOT NULL,
+    amount_minor  bigint      NOT NULL CHECK (amount_minor > 0),
+    state         text        NOT NULL,                  -- PENDING | CONFIRMED | FAILED
+    custody_tx_id text,
+    created_at    timestamptz NOT NULL,
+    updated_at    timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX fee_settlements_open_key ON ramp.fee_settlements (merchant_id, network) WHERE state = 'PENDING';
+
+CREATE TABLE ramp.preview_access (user_id uuid, network text, PRIMARY KEY (user_id, network));   -- who may trade while PREVIEW
+
+CREATE TABLE ramp.merchant_wallets (                     -- a merchant's float wallet, one per network
+    merchant_id       uuid        NOT NULL,
+    network           text        NOT NULL,
+    blockchain        text        NOT NULL,
+    custody_wallet_id text        NOT NULL UNIQUE,       -- Circle's wallet id: a custody update finds the merchant by it
+    wallet_address    text        NOT NULL,
+    created_at        timestamptz NOT NULL,
+    PRIMARY KEY (merchant_id, network)
+);
+-- `network` is also a column on quotes, orders, reservations and commissions, set from the order's chain
+-- (Network.ofChain); every index that serves a money read leads with it where staff narrow by network. The
+-- `blockchain`, `custody_wallet_id` and `wallet_address` columns shown on merchants below move to merchant_wallets.
+
+CREATE TABLE ramp.merchants (
+    merchant_id       uuid        PRIMARY KEY,           -- UUIDv7
+    display_name      text        NOT NULL,              -- a merchant account of its own: no user_id (decided 2026-11-22)
+    contact_email     text        NOT NULL UNIQUE,       -- one merchant account per email; sign-in is an Open question
+    contact_phone     text        NOT NULL,
+    state             text        NOT NULL,              -- APPLIED | APPROVED | SUSPENDED (partner approval; KYC is in verifications)
+    blockchain        text,                              -- the float wallet's chain; NULL until RM4
+    custody_wallet_id text        UNIQUE,                -- Circle's wallet id: webhooks find the merchant by it
+    wallet_address    text,
+    online_until      timestamptz,                       -- the end of the trading window; NULL when offline
+    payout_mode       text        NOT NULL DEFAULT 'NONE', -- NONE | MANUAL (the semi-manual fallback) | PROVIDER (later)
+    last_assigned_at  timestamptz,                       -- the fairness tie-breaker
+    approved_by       text,
+    approved_at       timestamptz,
+    created_at        timestamptz NOT NULL,
+    version           bigint      NOT NULL DEFAULT 0
+);
+CREATE INDEX merchants_online_idx ON ramp.merchants (blockchain, online_until)
+    WHERE state = 'APPROVED' AND online_until IS NOT NULL;                    -- the engine's candidates; ramp.end-sessions
+
+CREATE TABLE ramp.verifications (                        -- who passed KYC for the ramp; never a document
+    subject_kind  text        NOT NULL,                  -- USER | MERCHANT
+    subject_id    uuid        NOT NULL,
+    status        text        NOT NULL,                  -- PENDING | VERIFIED | DECLINED | IN_REVIEW
+    tier          text        NOT NULL DEFAULT 'BASIC',  -- for tiered limits (Open question)
+    session_id    text,                                  -- the provider's current session: the webhook finds the row by it
+    identity_key  text,                                  -- HMAC of the approved document; set with VERIFIED
+    verified_at   timestamptz,
+    updated_at    timestamptz NOT NULL,
+    PRIMARY KEY (subject_kind, subject_id)
+);
+CREATE UNIQUE INDEX verifications_session_key ON ramp.verifications (session_id) WHERE session_id IS NOT NULL;
+CREATE UNIQUE INDEX verifications_identity_key ON ramp.verifications (subject_kind, identity_key)
+    WHERE identity_key IS NOT NULL;                      -- one verified ramp user (and one merchant) per real identity
+
+CREATE TABLE ramp.merchant_credentials (                 -- sealed; never plaintext
+    merchant_id  uuid        PRIMARY KEY,
+    provider     text        NOT NULL,                   -- payhero
+    sealed       bytea       NOT NULL,                   -- AES-256-GCM(data key) over the credentials
+    wrapped_key  bytea       NOT NULL,                   -- the data key under KDF(master key, Argon2id(PIN, salt))
+    pin_salt     bytea       NOT NULL,
+    kdf_params   text        NOT NULL,                   -- Argon2id memory, iterations, parallelism; and the master key's version
+    updated_at   timestamptz NOT NULL
+);
+
+CREATE TABLE ramp.quotes (
+    quote_id          uuid        PRIMARY KEY,
+    user_id           uuid        NOT NULL,
+    direction         text        NOT NULL,              -- ON_RAMP | OFF_RAMP
+    blockchain        text        NOT NULL,
+    fiat_currency     text        NOT NULL,              -- KES
+    fiat_amount_minor bigint      NOT NULL CHECK (fiat_amount_minor > 0),
+    asset             text        NOT NULL,              -- USDC
+    asset_amount_minor bigint     NOT NULL CHECK (asset_amount_minor > 0),
+    rate              text        NOT NULL,              -- KES per USDC, a decimal string
+    fee_minor         bigint      NOT NULL,              -- in the fiat currency
+    expires_at        timestamptz NOT NULL               -- 60 s; filtered and purged
+);
+
+CREATE TABLE ramp.orders (
+    order_id           uuid        PRIMARY KEY,          -- UUIDv7; PayHero's external_reference and Circle's refId
+    user_id            uuid        NOT NULL,
+    merchant_id        uuid        NOT NULL,
+    quote_id           uuid        NOT NULL UNIQUE,      -- a quote makes one order: a repeated R3 finds it
+    direction          text        NOT NULL,
+    state              text        NOT NULL,
+    blockchain         text        NOT NULL,
+    fiat_currency      text        NOT NULL,
+    fiat_amount_minor  bigint      NOT NULL,
+    asset              text        NOT NULL,
+    asset_amount_minor bigint      NOT NULL,
+    rate               text        NOT NULL,
+    fee_minor          bigint      NOT NULL,
+    payer_phone        text        NOT NULL,             -- E.164: needed to match the payment; never logged
+    destination_address text       NOT NULL,             -- on-ramp: the user's wallet; off-ramp: the merchant's
+    provider_reference text,                             -- PayHero's reference for the prompt: the status query's key
+    checkout_id        text,
+    mpesa_receipt      text,                             -- set when verified
+    custody_tx_id      text,                             -- Circle's transaction for the release (or the refund)
+    tx_hash            text,
+    wallet_transfer_id uuid,                             -- off-ramp: the user's W4 transfer
+    failure_reason     text,
+    payment_deadline   timestamptz NOT NULL,             -- when ramp.expire-orders gives up on an unpaid prompt (not `expires_at`: the row stays)
+    created_at         timestamptz NOT NULL,
+    updated_at         timestamptz NOT NULL
+);
+CREATE INDEX orders_user_idx ON ramp.orders (user_id, created_at DESC, order_id DESC);          -- R5
+CREATE INDEX orders_merchant_idx ON ramp.orders (merchant_id, created_at DESC, order_id DESC);  -- RM7, success rate
+CREATE UNIQUE INDEX orders_user_open_key ON ramp.orders (user_id)
+    WHERE state IN ('RESERVED', 'PAYMENT_REQUESTED', 'PAID', 'RELEASING',
+                    'AWAITING_TRANSFER', 'FUNDED', 'PAYING_OUT',
+                    'PAYOUT_DUE', 'PAYOUT_CLAIMED');                          -- one open order per user
+CREATE INDEX orders_open_idx ON ramp.orders (state, updated_at)
+    WHERE state NOT IN ('COMPLETED', 'EXPIRED', 'FAILED', 'CANCELLED', 'REFUNDED');  -- expire-orders, reconcile
+CREATE UNIQUE INDEX orders_receipt_key ON ramp.orders (mpesa_receipt) WHERE mpesa_receipt IS NOT NULL;
+                                                         -- one M-Pesa payment releases one order, ever
+
+CREATE TABLE ramp.reservations (
+    order_id     uuid        PRIMARY KEY,                -- one reservation per order
+    merchant_id  uuid        NOT NULL,
+    amount_minor bigint      NOT NULL CHECK (amount_minor > 0),
+    asset        text        NOT NULL,                   -- USDC
+    kind         text        NOT NULL,                   -- FLOAT (promised to an on-ramp) | HOLD (an off-ramp's USDC, held until the user is paid)
+    state        text        NOT NULL,                   -- OPEN | CONSUMED | RELEASED
+    created_at   timestamptz NOT NULL,
+    closed_at    timestamptz
+);
+CREATE INDEX reservations_open_idx ON ramp.reservations (merchant_id) WHERE state = 'OPEN';   -- free float
+
+CREATE TABLE ramp.commissions (
+    order_id     uuid        PRIMARY KEY,                -- written once, with COMPLETED
+    merchant_id  uuid        NOT NULL,
+    merchant_minor bigint    NOT NULL,                   -- the merchant's share of the fee, in the fiat currency
+    platform_minor bigint    NOT NULL,                   -- Circaso's share, in the fiat currency
+    platform_asset_minor bigint NOT NULL,                -- Circaso's share in USDC at the order's rate: what the merchant's float owes
+    settlement_id  uuid,                                 -- the sweep that collected it; NULL while owed
+    currency     text        NOT NULL,
+    earned_at    timestamptz NOT NULL
+);
+CREATE INDEX commissions_merchant_idx ON ramp.commissions (merchant_id, earned_at DESC);       -- RM8
+
+CREATE TABLE ramp.blocks (
+    block_id     uuid        PRIMARY KEY,
+    user_id      uuid,                                   -- one of the two is set
+    identity_key text,                                   -- identity's KYC identity key (an HMAC), never a document number
+    reason       text        NOT NULL,                   -- REVERSAL | OPS
+    order_id     uuid,
+    created_by   text        NOT NULL,
+    created_at   timestamptz NOT NULL
+);
+CREATE UNIQUE INDEX blocks_user_key ON ramp.blocks (user_id) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX blocks_identity_key ON ramp.blocks (identity_key) WHERE identity_key IS NOT NULL;
+
+CREATE TABLE ramp.withdrawals (
+    withdrawal_id uuid       PRIMARY KEY,
+    merchant_id  uuid        NOT NULL,
+    destination_address text NOT NULL,
+    amount_minor bigint      NOT NULL CHECK (amount_minor > 0),
+    asset        text        NOT NULL,
+    state        text        NOT NULL,                   -- SUBMITTED | CONFIRMED | FAILED
+    custody_tx_id text,
+    created_at   timestamptz NOT NULL,
+    updated_at   timestamptz NOT NULL
+);
+CREATE INDEX withdrawals_merchant_idx ON ramp.withdrawals (merchant_id, created_at DESC);
+
+CREATE TABLE ramp.realtime (user_id, seq, frame, sent_at);   -- the shared shape: daily partitions, 7 days
+CREATE TABLE ramp.outbox (…);                                -- the shared DDL: daily partitions, 7 days
+```
+
+| Table | Expiry | How the race is settled |
+| --- | --- | --- |
+| `settings` | — | RO5 writes with `version = version + 1 WHERE version = ?`; 0 rows is a concurrent edit. Read through a 10-second cache per process; on a database error the last read stays in force |
+| `merchants` | — | The row is the lock for everything about a merchant's float: reservations and withdrawals take it `FOR UPDATE` first. Edits use `version` |
+| `verifications` | — | The webhook moves a row by `updateReturning` on `session_id`; `verifications_identity_key` refuses a second account on one identity, inside the transaction that would verify it |
+| `merchant_credentials` | — | One row per merchant, replaced whole by RM5 and RM9 |
+| `quotes` | `expires_at`, purged by `ramp.purge-expired` | — |
+| `orders` | — (kept for the retention period) | R3 inserts with `insertIgnore` on `quote_id`: a repeat finds the same order. `orders_user_open_key` refuses a second open order. States move only by the transition guard, so two callbacks, a callback and the reconcile job, or two nodes can't both release. `orders_receipt_key` stops one M-Pesa payment from settling two orders |
+| `reservations` | — | Inserted in the same transaction as the order, under the merchant's row lock. Closed by `updateReturning … WHERE state = 'OPEN'`: only the caller that closes it writes what follows |
+| `commissions` | — | `insertIgnore` on `order_id`, in the transaction that completes the order |
+| `blocks` | — | `insertIgnore` on each unique key |
+| `withdrawals` | — | Written under the merchant's row lock with the offline and no-open-orders checks |
+| `realtime`, `outbox` | Daily partitions, 7 days | — |
+
+**Redis (`rmp:` prefix)**
+
+| Key | Value | Expiry | Purpose |
+| --- | --- | --- | --- |
+| `rmp:session:{merchantId}` | The node id that holds the merchant's unlocked keys. Never a key or a PIN | The trading window | Says the merchant is online and where their PayHero calls must run |
+| `rmp:work:{nodeId}` | A list of order ids | 1 h, renewed on use | Hands a PayHero step to the node that holds the keys |
+| `rmp:float:{merchantId}` | The wallet's USDC balance in minor units | 10 s, cleared on any webhook for the wallet | Ranking candidates without a Circle call per order |
+| `rmp:pin:{merchantId}` | Wrong PIN tries | 30 min | Locks PIN entry after 5 |
+| `rmp:prompts:{userId}` | Prompts sent this hour | 1 h | Keeps a user from burning a merchant's PayHero account |
+| `rmp:daily:{userId}:{date}` | KES traded today | 2 days | The daily limit, reserved and given back as the wallet's `wal:sent` |
+| `rmp:seq:{userId}` | Counter | 8 days, renewed on use | Next realtime seq for ramp frames |
+
+**Scheduled jobs**
+
+| Job | Every | Does | First slice |
+| --- | --- | --- | --- |
+| `ramp.release` (`OpsJob`, the ops process) | 5 s | For each network: sends `PAID` orders through `TreasuryCustody.send` (key derived from the order) and moves them to `RELEASING`; re-reads `RELEASING` orders older than 15 s. At start-up, makes the merchants' wallet set and any approved merchant's missing wallet | Yes |
+| `ramp.settle-fees` (`OpsJob`) | 10 min | Once a day, at the settings' hour: for each merchant owing Circaso anything, one transfer of the whole total from the merchant's float to Circaso's ramp wallet, then the orders it covers are marked settled. An unsent sweep is tried again each run | With fees |
+| `ramp.expire-orders` | 30 s | An order unpaid 2 minutes after its prompt: **asks PayHero first**. `FAILED` or no payment → `EXPIRED` and the reservation `RELEASED`, in one transaction; `SUCCESS` → the normal verify and release; still `QUEUED` → left for the next run, and to `REVIEW` after 10 minutes. When the merchant's keys aren't available it changes nothing | Yes |
+| `ramp.reconcile` | 2 min | Orders stuck in `PAID`, `RELEASING`, `FUNDED` or `PAYING_OUT`: reads Circle and PayHero and applies what they say (a lost webhook or callback), retries a failed release with the same key, and alerts on anything in `REVIEW` or waiting on a locked merchant | Later (the first slice covers `RELEASING` through Circle's webhook and a manual re-read) |
+| `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed, or whose `rmp:session` is gone: marks them offline. Open orders finish | Later |
+| `ramp.purge-expired` | 5 min | Expired quotes; tomorrow's partitions and old ones for `realtime` and `outbox` | Yes |
+
+## Events
+
+**Consumed**
+
+| Stream (group `ramp`) | Event | What ramp does |
+| --- | --- | --- |
+| `events:wallet` | `wallet.TransferConfirmed` with `rampOrderId` | Off-ramp: verifies the transfer and moves the order to `FUNDED` |
+| `events:wallet` | `wallet.TransferFailed` | Off-ramp: an order waiting on that transfer ends `FAILED` |
+| `events:identity` | `identity.AccountStatusChanged` | A suspended or blocked account: no new orders; a merchant goes offline |
+| `events:identity` | `identity.AccountDeleted` | Closes the user's quotes; keeps order records for the retention period (Open questions) |
+
+**From vendors** (through the integrations' notification interfaces, not a stream): `CollectionNotifications.onPaymentCallback` (and `onPayoutCallback` once a provider pays out: doorbells that start a status query), `KycNotifications.onStatusChanged` (ramp re-reads the decision, writes the verification, and refuses or blocks on a known identity key) and Circle's webhook for a developer-controlled wallet whose `refId` is an order (a release reaching the chain; a deposit into a merchant's wallet clears `rmp:float`).
+
+**Published** (stream `events:ramp`)
+
+| Event | `data` | Consumers |
+| --- | --- | --- |
+| `ramp.OnRampCompleted` v1 | `orderId`, `userId`, `merchantId`, `blockchain`, `asset`, `assetAmountMinor`, `fiatCurrency`, `fiatAmountMinor` | auditor; later assistant |
+| `ramp.OffRampCompleted` v1 | The same (published once the off-ramp exists) | auditor |
+| `ramp.OrderFailed` v1 | `orderId`, `userId`, `direction`, `reason` | auditor |
+| `ramp.UserBlocked` v1 | `userId`, `reason` (never the identity key) | auditor; identity later, if a block should mark the account |
+
+No event carries a phone number, an M-Pesa receipt or a credential.
+
+**Realtime frames** (module `ramp`)
+
+| Type | `data` | Goes to | Push if offline |
+| --- | --- | --- | --- |
+| `order.updated` | `orderId`, `direction`, `state`, `blockchain`, `pay`, `receive`, `failureReason?` | The user, each time their order moves | Yes on `COMPLETED`, `FAILED`, `EXPIRED` and `REFUNDED`: "Your USDC has arrived" / "Your top-up didn't go through"; never an amount on the lock screen |
+
+Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no frames: the portal polls RM2 and RM7.
+
+## Error codes
+
+| Code | Kind → status | When |
+| --- | --- | --- |
+| `ramp.unavailable` | FORBIDDEN → 403 | The ramp is `OFF` on this network, or `PREVIEW` and the user isn't on the list |
+| `ramp.kyc_required` | FORBIDDEN → 403 | The user hasn't passed KYC; `data.verification` says `NONE` or `PENDING` |
+| `ramp.identity_in_use` | CONFLICT → 409 | This identity already verified another ramp account |
+| `ramp.kyc_unavailable` | UPSTREAM → 502 | Didit is down |
+| `ramp.blocked` | FORBIDDEN → 403 | The user or their KYC identity is barred from the ramp |
+| `ramp.account_restricted` | FORBIDDEN → 403 | The account isn't `ACTIVE` |
+| `ramp.wallet_required` | CONFLICT → 409 | No wallet that receives on the order's chain |
+| `ramp.chain_unsupported` | INVALID → 400 | A chain the ramp doesn't offer |
+| `ramp.amount_invalid` | INVALID → 400 | Zero, negative, not whole shillings, or both sides given and disagreeing |
+| `ramp.limit_exceeded` | INVALID → 400 | Under the minimum, over the per-order or daily limit |
+| `ramp.quote_not_found` | NOT_FOUND → 404 | No such quote, or not this user's |
+| `ramp.quote_expired` | CONFLICT → 409 | The quote's 60 s are over: ask again |
+| `ramp.phone_not_yours` | INVALID → 400 | The number isn't the account's verified one |
+| `ramp.order_in_progress` | CONFLICT → 409 | The user already has an open order |
+| `ramp.no_merchant_available` | CONFLICT → 409 | Nobody online has the float for this amount |
+| `ramp.offramp_unavailable` | CONFLICT → 409 | Selling isn't open: no payout provider and no merchant on manual payouts |
+| `ramp.too_many_prompts` | RATE_LIMITED → 429 | Too many M-Pesa prompts this hour |
+| `ramp.order_not_found` | NOT_FOUND → 404 | No such order, or not this user's or merchant's |
+| `ramp.order_not_cancellable` | CONFLICT → 409 | Already paid or finished |
+| `ramp.collections_unavailable` | UPSTREAM → 502 | PayHero is down or the circuit is open |
+| `ramp.pricing_unavailable` | UPSTREAM → 502 | No reference rate is available to price a quote |
+| `ramp.custody_unavailable` | UPSTREAM → 502 | Circle is down |
+| `ramp.merchant_not_found` | NOT_FOUND → 404 | The account is not a merchant |
+| `ramp.merchant_not_approved` | FORBIDDEN → 403 | Not yet KYC-verified and partner-approved, or suspended |
+| `ramp.merchant_setup_incomplete` | CONFLICT → 409 | Going online without a float wallet or a payment account, or with the PayHero service wallet below its floor |
+| `ramp.pin_invalid` | INVALID → 400 | Wrong PIN |
+| `ramp.pin_locked` | RATE_LIMITED → 429 | Five wrong PINs; `retryAfterSeconds` |
+| `ramp.credentials_rejected` | INVALID → 400 | PayHero refused the username, password or channel |
+| `ramp.merchant_online` | CONFLICT → 409 | A withdrawal while online or with open orders |
+| `ramp.insufficient_float` | INVALID → 400 | A withdrawal above the unreserved balance |
+| `ramp.address_invalid` | INVALID → 400 | A withdrawal address not valid on the chain |
+
+Metrics (`circaso_ramp_`): `orders_total` (direction, outcome), `verify_total` (result: matched, mismatch, failed), `release_duration_seconds`, `orders_in_review` (gauge), `merchants_online` (gauge), `no_merchant_total`. No merchant or user id as a label.
+
+## First slice (after approval of "How this fits main")
+
+On-ramp end to end on the testnet (`BASE-SEPOLIA`, state `PREVIEW`), **with the first merchant onboarded through the portal**, not seeded:
+
+- **Merchant accounts and the portal's API:** sign-in by email and a one-time code (decided 2026-11-22; a session of the ramp's own, separate from identity's user sessions), RM1 apply, RM2 status and float, RM4 float wallet, RM5 PayHero credentials sealed under the PIN (checked against PayHero first), RM6 go online and offline, RM7 the merchant's orders.
+- **The portal** (`merchants.circaso.com`): a web app like the admin portal, for those routes.
+- **Partner approval** by staff on the ops gateway (RO1, RO2), and the settings route (RO5).
+- **Credentials and session:** the envelope (`merchant_credentials`), PIN attempts, `rmp:session:{merchantId}` and the in-memory keys; one node for now.
+- `MobileCollections` with PayHero (STK push, status query, `verify`), its `log` and `fake`, and `/v1/hooks/payhero`.
+- `MerchantFloat` (read-only), `accountType` on `TreasuryWalletRequest`, a fake and a logging treasury.
+- `ramp.settings` (seeded, cached 10 s), `preview_access`, `merchants`, `merchant_wallets`, `merchant_credentials`, `quotes`, `orders`, `reservations`, `commissions`, `realtime`, `outbox`, all with `network`.
+- R1–R6 inside `walletNetwork { }`; the simple engine; verify in the app; `ramp.release` in the ops process; Circle's confirmation through the webhook; `ramp.expire-orders`, `ramp.end-sessions`, `ramp.purge-expired`.
+
+**Parked code.** A first slice was built on 2026-11-22 against the old branch and passed its build there: the PayHero integration, `MobileCollections`, the ramp module (orders, reservations, engine, verify, release, sweep) and their tests. It is kept in a git stash, not on this branch. Ported as is: PayHero, `MobileCollections`, the domain flow and its tests. Reworked for main: settings from the database instead of `RAMP_*` variables, `network` throughout, the release moved to the ops process on `TreasuryCustody` (its own `CircleMerchantCustody` and `CircleEntitySecret` dropped), the staff routes in `ops`, and the seeded development merchant and its credentials from `Secrets` replaced by merchant accounts and the envelope.
+
+Where the slice is simpler than the full design: the engine picks the least recently assigned candidate (no success-rate ranking, no `rmp:float` cache); `ramp.expire-orders` also stands in for `ramp.reconcile` (from 30 s it asks PayHero about an unpaid prompt; a prompt still queued after 10 minutes goes to `REVIEW`; when the provider can't be asked, nothing changes); paid-after-expiry and a failed release go straight to `REVIEW`; a prompt that can't be sent ends the order `FAILED` and frees the float.
+
+Skipped for now: off-ramp payouts, routing work to another node, the Didit integration (`settings.kyc_required` is false on the testnet until it exists), blocks, withdrawals, splitting, `ramp.reconcile` and `ramp.end-sessions`.
+
+## As built (first slice, 2026-11-22)
+
+What the code on `feat/ramp` does where it differs from, or settles, what is written above and below. Nothing here changes a decision.
+
+**Where an order completes, and who tells the user.** The ops process's `ramp.release` does all of it: it sends `PAID` orders, then reads each `RELEASING` order's transaction on every run (5 s) and completes it (reservation consumed, commission row, `ramp.OnRampCompleted` in the outbox, one transaction), publishes the event and sends `ramp/order.updated`. The frame goes out from the ops process through the gateway's `Realtime`, which that process already binds so a staff reply reaches a user: the sequence (`rmp:seq`) and the kept frame (`ramp.realtime`) are shared, and delivery crosses to the app's node over Redis. Circle's webhook is not used for the ramp, and the app consumes no `events:ramp` event. The app's processes only verify the payment (`PAID`).
+
+**Settings and the gate.** `ramp.settings.chains` is comma-separated `text`, not `text[]`. The table also checks the state's values, the limits' order and `kyc_required OR network = 'TESTNET'`; code enforces KYC on mainnet whatever the row says. Built-in seed: `OFF`, a 1.5 % fee split 70/30, 10 to 5 000 shillings an order, 20 000 a day, 5 prompts an hour, sweep at 21:00 UTC, callback origin `https://api.circaso.com`. The state gate (`ramp.unavailable`) is on R1, R2 and R3; R4, R5 and R6 stay open so an order made before the ramp was switched off can still be read and cancelled.
+
+**Merchants.** `merchants.state` has `NEW` (signed in, no profile yet) before `APPLIED`; `display_name` and `contact_phone` are empty until RM1, and the API answers them as `null`. The float wallet's columns are in `merchant_wallets` only; `merchants.callback_key` is the end of the callback address. Portal sign-ins are `ramp.merchant_sessions (token_hash bytea PRIMARY KEY, merchant_id, created_at, expires_at)`. `merchant_credentials.channel_id` keeps the till or paybill in plaintext beside the sealed blob, because RM2 shows it while the merchant is offline; it is not a secret. RM2 also answers `pinSet`. RM5 is allowed in `APPLIED` or `APPROVED`. `missing` is `profile`, `approval`, `wallet`, `payments`, `float` (free float below what the smallest order buys; a float the custodian can't report is not counted). RM6 takes 15 to 720 minutes.
+
+**The envelope.** AES-256-GCM under a random 256-bit data key; the data key wrapped with AES-256-GCM under `HMAC-SHA256(master key, "ramp:kek:v1" ‖ Argon2id(PIN, 16-byte salt))`; Argon2id at 19 MiB, 2 passes, 1 lane (Bouncy Castle). Both ciphertexts carry the merchant's id as additional data. `kdf_params` is `argon2id;m=19456;t=2;p=1;mk=1`. Without (a valid) `RAMP_CREDENTIALS_MASTER_KEY` the server still starts; RM5, RM6 and RM9 answer `ramp.vault_unavailable`.
+
+**The trading session.** Keys live in the app process's memory (`NodeTradingSessions`); `rmp:session:{merchantId}` holds the node's id, which is new on every start. One node only: nothing hands work to another node (`rmp:work` is not built), so the engine takes only merchants whose keys this node holds. Going offline (RM6, sign-out, a suspension, the window's end) clears the window and the Redis mark at once, but the keys stay in memory while one of the merchant's orders still waits for its payment, since only the provider's own answer may settle it; `ramp.end-sessions` (every minute, built) drops them once none is left.
+
+**Sign-in codes.** In Redis under `rmp:`, by a SHA-256 of the email, never the address: `code:`, `code-tries:`, `code-wait:` (one request a minute, which is MA1's `retryAfterSeconds`), `code-sent:` (three in ten minutes) and `code-from:{address}` (ten an hour). The address is `CF-Connecting-IP`, else the socket's peer: the source the gateway's own limits trust.
+
+**Fees.** What a merchant owes is not a `FEE` reservation: `commissions.settled_at` is null while the float still holds Circaso's share, and free float is `balance − open reservations − unsettled commissions`. A sweep is opened by naming it on every unswept commission (`settlement_id`) in one transaction; `settled_at` is written when the chain confirms it. `fee_settlements` also has `day`, `orders`, `tx_hash` and `failure_reason`. A sweep the custodian can't take stays `PENDING` and is asked again with the same key; one it refuses, or the chain fails, is `FAILED`, its commissions are freed, and a new one is opened an hour later at the earliest.
+
+**Periods are Nairobi days.** RM8 and RM15 take `from` and `to` as calendar days in East Africa Time (UTC+3), inclusive; the default is the current Nairobi month. A sweep's `day` is the Nairobi day that ended as it fell due (21:00 UTC is midnight there). RM15's `settlementId` is null until the sweep that took the order's share is confirmed.
+
+**The treasury locally.** With custody `log` or `fake` the stand-in `TreasuryCustody` is bound under the Koin name `treasury.dev`, not as the plain binding, so the wallet's fee wallets still find no treasury and report `NOT_CREATED` as before; the ramp asks for the plain one and then for that name. `MerchantFloat` follows the custody provider in both processes (`log`: every wallet always holds 1 000 USDC). Only the USDC contract the wallet's network settings name for the chain is counted or sent.
+
+**Staff routes as built** (ops gateway, `ramp.read` for FINANCE and ADMIN, `ramp.manage` for ADMIN, every write audited with a reason): `GET /ops/ramp/merchants`, `POST /ops/ramp/merchants/{id}/approve` and `/suspend`, `GET` and `PUT /ops/ramp/settings?network=`, `GET /ops/ramp/preview-access?network=` and `POST /ops/ramp/preview-access`, `GET /ops/ramp/orders?state=REVIEW`. Resolving an order in `REVIEW` and the block list (RO3, RO4's resolve) are not built.
+
+**Codes added:** `ramp.email_unavailable` (502, the code couldn't be sent), `ramp.vault_unavailable` (502), `ramp.merchant_not_ready` (409, approving a merchant who hasn't applied), `ramp.settings_invalid` (400, the field named) and `ramp.settings_changed` (409).
+
+**Not built in this slice:** the Didit integration (`KycGate` answers "not verified", so only a network whose settings don't require KYC trades), blocks, withdrawals, the off-ramp, `ramp.reconcile`, the `rmp:float` cache and success-rate ranking, the PayHero service-wallet floor on RM6, metrics, and the agent route.
+
+## To check against the vendor before building on it
+
+- **PayHero, payouts:** PayHero's written answer that it has no payouts today (and whether or when they return). Until then the off-ramp waits on a payout provider.
+- **PayHero, which API:** docs.payhero.africa is branded "FinoQ", names another base (`api.finoq.africa`) and other payout fields (`account_id`, `recipient_type`), and never says it is PayHero's API. This design follows docs.payhero.co.ke and `backend.payhero.co.ke`; PayHero must say which one a new integration should use.
+- **PayHero, the on-ramp:** whether callbacks are retried; whether the status query's amount and phone are always present on `SUCCESS` (the match depends on them); the format `phone_number` wants; what an empty service wallet does to a prompt.
+- **PayHero, the business:** its terms don't name crypto or P2P trading as prohibited, but keep "sole discretion" over restricted categories, and its newer docs sell a crypto on-ramp as a product that must be enabled per account. Merchants should have PayHero's agreement in writing before real volume.
+- **Circle:** settled by main: one account holds both wallet types (the fee wallets), the webhook marks them `custodyType: DEVELOPER`, and `EntitySecret` already encrypts for Circle. Still to check: that Gas Station sponsors a developer-controlled `SCA` wallet's transfers on the testnet policy and what mainnet's policy must allow.
+- **Didit:** which fields of the decision carry the document's country, type and number in the chosen workflows' returned data (the identity key needs them).
+
+## Open questions
+
+These also go into `decisions.md`; each is a `TODO(decision: …)` in code, behind a port or a setting.
+
+- **The exchange rate.** Decided 2026-11-22: the fee is a percentage staff set, split between the merchant and Circaso by a ratio staff set (Fees, above). Still open: where the rate itself comes from (today a daily reference rate from `ExchangeRates`, with no spread), and whether merchants may set their own.
+- **Reversal after release.** Who carries the loss when a user reverses M-Pesa after USDC was released (the merchant, Circaso, a shared reserve), how a reversal is proven (PayHero reports none), and what a user paid-after-expiry is owed when the float is gone.
+- **Key vault or envelope encryption.** The envelope above keeps merchant keys out of the database in plaintext, but the master key and the Circle entity secret are environment secrets. Which key store before real money moves (the open "Signing key storage" question, now sharper: the entity secret can move every merchant's float).
+- **Payout provider for the off-ramp.** PayHero has no payouts today (unverified until it replies in writing). Which provider pays users out: the merchant's own Daraja B2C, another aggregator, or PayHero later; whether merchants hold KES float there; and whether the semi-manual payout (Proposed above) opens selling in the meantime.
+- **Merchant float caps.** The most float a merchant may hold, the largest single order against one merchant, and whether a new merchant starts lower.
+- **VASP licensing.** Whether running the desk, holding the entity secret for merchants' wallets and matching trades needs a licence under Kenya's Virtual Asset Service Providers Act, 2025, and what the merchants themselves need. A legal question to settle before mainnet.
+- **KYC tiers and limits.** Which checks a user needs (the basic check, or AML too), what each tier may trade per order and per day, and whether a merchant that is a company needs KYB as well.
+- **Ramp KYC and identity.** Ramp owns the ramp's KYC (Proposed). Whether an approved ramp KYC should also set `identity.accounts.verification`, which support recovery reads.
+- **Merchant accounts and portal sign-in.** A merchant account is its own, not a user account (decided 2026-11-22). How it signs in is not designed: identity's sessions need a registered phone, and the portal is a browser. Proposed: merchant sign-in by email with a one-time code and a `merchant` scope limited to `/v1/ramp/merchant/`; it needs a short design of its own before the portal is built.
+- **Paying from another number.** The first version takes payment only from the account's own verified number. Whether a user may pay from, or cash out to, someone else's M-Pesa.
+- **Deleting an account** of a user with an open order: identity's `DeletionGuard` has one answerer today (wallet).
+- **Record retention** for orders after an account is deleted (with the wallet's same question).
+
+## Not in v1
+
+Splitting an order across merchants; currencies other than KES and providers other than PayHero (the contract allows both); assets other than USDC; a merchant mobile app; merchant-set prices and an order book; disputes inside the app (support handles them).

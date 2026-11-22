@@ -1,6 +1,7 @@
 package com.circaso.gateway
 
 import com.circaso.infrastructure.api.RedisScope
+import com.circaso.integrations.api.KeyedWebhookVendor
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.DomainError
 import com.circaso.shared.Resource
@@ -28,6 +29,7 @@ import java.time.Instant
 private val log = LoggerFactory.getLogger("com.circaso.gateway.Webhooks")
 private val REPLAY_WINDOW: Duration = Duration.ofMinutes(5)
 private val SEEN_FOR: Duration = Duration.ofDays(7)
+private val HOOK_KEY = Regex("[A-Za-z0-9-]{8,96}")
 
 /**
  * `POST /v1/hooks/{vendor}`: the gateway's guards, then the vendor's own translation. The guards are the vendor's
@@ -60,40 +62,7 @@ fun Route.webhookRoutes(
         )
         post("{vendor}") {
             val name = call.parameters["vendor"].orEmpty()
-            val vendor = byName[name]
-            if (vendor == null) {
-                call.respondDefault(SharedError.NotFound.toResponse())
-                return@post
-            }
-            config.webhookAllowedIps[name]?.let { allowed ->
-                if (call.clientIp() !in allowed) {
-                    call.respondDefault(SharedError.ScopeInsufficient.toResponse())
-                    return@post
-                }
-            }
-
-            val body = call.receive<ByteArray>()
-            val headers =
-                call.request.headers
-                    .entries()
-                    .associate { it.key.lowercase() to it.value.first() }
-
-            if (!vendor.verifySignature(headers, body)) {
-                call.respondDefault(SharedError.TokenInvalid.toResponse())
-                return@post
-            }
-            vendor.sentAt(headers, body)?.let { sentAt ->
-                if (Duration.between(sentAt, Instant.now()).abs() > REPLAY_WINDOW) {
-                    call.respondDefault(SharedError.TokenInvalid.toResponse())
-                    return@post
-                }
-            }
-            val seenKey = vendor.deliveryId(headers, body)?.let { id -> "hook:$name:$id" }
-            if (vendor.answersAfterTranslation) {
-                answerAfterTranslation(vendor, body, seenKey, redis)
-            } else {
-                answerAtOnce(vendor, body, seenKey, redis, scope)
-            }
+            receiveHook(name, byName[name], config, redis, scope)
         }.docs<NoBody, NoBody>(
             "Receive a vendor's callback",
             "Webhooks",
@@ -107,6 +76,65 @@ fun Route.webhookRoutes(
                     "body afterwards, except for `circle`: it waits, and answers the error when the update can't be " +
                     "applied, so Circle delivers it again.",
         )
+        // A callback address with a key in it (a ramp merchant's own; decision 2026-11-22). Same guards, and the
+        // vendor is handed the key: an address that isn't one it gave out is refused by the vendor's listener.
+        post("{vendor}/{key}") {
+            val name = call.parameters["vendor"].orEmpty()
+            val key = call.parameters["key"].orEmpty()
+            val vendor = (byName[name] as? KeyedWebhookVendor)?.takeIf { key.matches(HOOK_KEY) }?.keyed(key)
+            receiveHook(name, vendor, config, redis, scope)
+        }.docs<NoBody, NoBody>(
+            "Receive a vendor's callback on a keyed address",
+            "Webhooks",
+            listOf("auth.token_invalid", "auth.scope_insufficient", "request.not_found"),
+            notes =
+                "For a vendor whose callback addresses carry a key (`payhero`: each ramp merchant has an address of " +
+                    "their own). The same guards as the plain address; a vendor that takes no key, or a key that " +
+                    "isn't well formed, answers `request.not_found`.",
+        )
+    }
+}
+
+/** The guards every callback passes, then the vendor's translation; a null [vendor] is an unknown sender. */
+private suspend fun RoutingContext.receiveHook(
+    name: String,
+    vendor: WebhookVendor?,
+    config: GatewayConfig,
+    redis: RedisScope,
+    scope: CoroutineScope,
+) {
+    if (vendor == null) {
+        call.respondDefault(SharedError.NotFound.toResponse())
+        return
+    }
+    config.webhookAllowedIps[name]?.let { allowed ->
+        if (call.clientIp() !in allowed) {
+            call.respondDefault(SharedError.ScopeInsufficient.toResponse())
+            return
+        }
+    }
+
+    val body = call.receive<ByteArray>()
+    val headers =
+        call.request.headers
+            .entries()
+            .associate { it.key.lowercase() to it.value.first() }
+
+    if (!vendor.verifySignature(headers, body)) {
+        call.respondDefault(SharedError.TokenInvalid.toResponse())
+        return
+    }
+    vendor.sentAt(headers, body)?.let { sentAt ->
+        if (Duration.between(sentAt, Instant.now()).abs() > REPLAY_WINDOW) {
+            call.respondDefault(SharedError.TokenInvalid.toResponse())
+            return
+        }
+    }
+    val seenKey = vendor.deliveryId(headers, body)?.let { id -> "hook:$name:$id" }
+    if (vendor.answersAfterTranslation) {
+        answerAfterTranslation(vendor, body, seenKey, redis)
+    } else {
+        answerAtOnce(vendor, body, seenKey, redis, scope)
     }
 }
 

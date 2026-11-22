@@ -4,19 +4,26 @@ import com.circaso.infrastructure.api.Config
 import com.circaso.infrastructure.api.Environment
 import com.circaso.infrastructure.api.HttpClients
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.integrations.api.DEV_TREASURY
+import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TreasuryAccess
 import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.integrations.api.WebhookVendor
+import com.circaso.integrations.impl.circle.CircleMerchantFloat
+import com.circaso.integrations.impl.dev.LogTreasury
 import com.circaso.shared.Network
 import io.ktor.client.engine.mock.respondOk
+import kotlinx.coroutines.runBlocking
 import org.koin.core.Koin
+import org.koin.core.qualifier.named
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -121,6 +128,28 @@ class TreasuryModuleTest {
 
         assertNull(koin(Asked(emptyMap()), log, ops = true).getOrNull<TreasuryCustody>())
     }
+
+    @Test
+    fun `with log or fake the ops process has a stand-in under its own name, which the fee wallets never see`() =
+        runBlocking<Unit> {
+            val log = koin(Asked(emptyMap()), Settings(emptyMap()), ops = true)
+            val fakeSettings = Settings(mapOf("integrations.custody.provider" to "fake"))
+            val fake = koin(Asked(emptyMap()), fakeSettings, ops = true)
+
+            assertIs<LogTreasury>(log.get<TreasuryCustody>(named(DEV_TREASURY)))
+            assertNull(
+                log.getOrNull<TreasuryCustody>(),
+                "a plain lookup, which is what the fee wallets do, finds nothing",
+            )
+            val standIn = fake.get<TreasuryCustody>(named(DEV_TREASURY))
+            assertTrue(standIn === fake.get<MerchantFloat>(), "one in-memory treasury signs and is read")
+            assertNull(fake.getOrNull<TreasuryCustody>())
+
+            // and with Circle there is the real one and no stand-in
+            val real = koin(Asked(keys + ("circle.entity-secret" to secret)), ops = true)
+            assertNull(real.getOrNull<TreasuryCustody>(named(DEV_TREASURY)))
+            assertIs<CircleMerchantFloat>(real.get<MerchantFloat>())
+        }
 
     @Test
     fun `the secrets are read under their fixed names`() {

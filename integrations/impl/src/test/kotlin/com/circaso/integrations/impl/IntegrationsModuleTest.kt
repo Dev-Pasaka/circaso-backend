@@ -11,7 +11,9 @@ import com.circaso.integrations.api.CallMedia
 import com.circaso.integrations.api.CarrierPhoneVerification
 import com.circaso.integrations.api.CryptoMarkets
 import com.circaso.integrations.api.CryptoPrices
+import com.circaso.integrations.api.DEV_TREASURY
 import com.circaso.integrations.api.EmailGateway
+import com.circaso.integrations.api.EmailTemplate
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
@@ -19,6 +21,7 @@ import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
 import com.circaso.integrations.api.LiveTranscriptionOptions
+import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.ModelMessage
 import com.circaso.integrations.api.ModelPurpose
 import com.circaso.integrations.api.ModelRequest
@@ -36,6 +39,7 @@ import com.circaso.integrations.api.SpeechToText
 import com.circaso.integrations.api.StablecoinCustody
 import com.circaso.integrations.api.TextToSpeech
 import com.circaso.integrations.api.TranscriptionEvent
+import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.integrations.api.VisionModel
 import com.circaso.integrations.api.VoipPushGateway
 import com.circaso.integrations.api.WebSearch
@@ -47,23 +51,28 @@ import com.circaso.integrations.impl.coingecko.CoinGeckoMarkets
 import com.circaso.integrations.impl.coingecko.CoinGeckoPrices
 import com.circaso.integrations.impl.dev.FakeSms
 import com.circaso.integrations.impl.dev.FakeSocialSignIn
+import com.circaso.integrations.impl.dev.FakeTreasury
 import com.circaso.integrations.impl.dev.FakeWebSearch
 import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
 import com.circaso.integrations.impl.dev.LogLanguageModel
+import com.circaso.integrations.impl.dev.LogMerchantFloat
 import com.circaso.integrations.impl.dev.NoAiBilling
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.llm.RetryingLanguageModel
 import com.circaso.integrations.impl.llm.RoutedLanguageModel
 import com.circaso.integrations.impl.llm.UnavailableLanguageModel
+import com.circaso.integrations.impl.resend.ResendEmail
 import com.circaso.integrations.impl.workersai.WorkersAiLanguageModel
 import com.circaso.integrations.impl.workersai.WorkersAiLiveSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiLiveTranscription
 import com.circaso.integrations.impl.workersai.WorkersAiSpeechToText
 import com.circaso.integrations.impl.workersai.WorkersAiTextToSpeech
 import com.circaso.integrations.impl.workersai.WorkersAiVisionModel
+import com.circaso.shared.Asset
+import com.circaso.shared.Money
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
@@ -71,6 +80,7 @@ import io.ktor.client.engine.mock.respondOk
 import kotlinx.coroutines.test.runTest
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import java.math.BigDecimal
 import java.security.KeyPairGenerator
@@ -560,6 +570,37 @@ class IntegrationsModuleTest {
             "resend.api-key" in generateSequence<Throwable>(e) { it.cause }.joinToString { it.message.orEmpty() },
         )
     }
+
+    @Test
+    fun `resend starts without the merchant sign-in code's template, which is optional until it is published`() {
+        val required =
+            EmailTemplate.entries
+                .filter { it != EmailTemplate.PIN_VAULT_OPENED && it != EmailTemplate.MERCHANT_SIGN_IN_CODE }
+                .map { "integrations.email.templates.${it.name.lowercase()}" to "tpl_${it.name.lowercase()}" }
+        val settings =
+            required + ("integrations.email.provider" to "resend") +
+                ("integrations.email.from" to "no-reply@circaso.com")
+
+        val gateway = koin(mapOf("resend.api-key" to "re_key"), *settings.toTypedArray()).get<EmailGateway>()
+
+        assertIs<ResendEmail>(gateway)
+    }
+
+    @Test
+    fun `the float reader follows the custody provider, and the app's wiring has no treasury under either name`() =
+        runTest {
+            val log = koin()
+            val float = log.get<MerchantFloat>()
+            assertIs<LogMerchantFloat>(float)
+            val held = (float.balance(Network.TESTNET, "any-wallet") as Resource.Success).data
+            assertEquals(Money(1_000_000_000, Asset.USDC), held)
+            assertNull(log.getOrNull<TreasuryCustody>())
+            assertNull(log.getOrNull<TreasuryCustody>(named(DEV_TREASURY)), "only the ops process binds one")
+            stopKoin()
+
+            val fake = koin("integrations.custody.provider" to "fake")
+            assertIs<FakeTreasury>(fake.get<MerchantFloat>())
+        }
 
     @Test
     fun `google-apple needs at least one client id, and then verifies for real`() {
