@@ -47,7 +47,21 @@ internal data class TransactionStatusReply(
     @SerialName("external_reference") val externalReference: String? = null,
     val amount: Double? = null,
     @SerialName("phone_number") val phoneNumber: String? = null,
-)
+    val message: String? = null,
+    @SerialName("error_message") val errorMessage: String? = null,
+    @SerialName("ResultDesc") val resultDesc: String? = null,
+    @SerialName("result_desc") val resultDescSnake: String? = null,
+) {
+    /** What the provider said about the outcome, if anything (logged masked, never shown to anyone). */
+    val said: String
+        get() =
+            listOfNotNull(
+                resultDesc,
+                resultDescSnake,
+                errorMessage,
+                message,
+            ).filter { it.isNotBlank() }.joinToString(": ")
+}
 
 /**
  * The callback PayHero posts to `callback_url`, in **both** layouts it documents: the old site's, nested under

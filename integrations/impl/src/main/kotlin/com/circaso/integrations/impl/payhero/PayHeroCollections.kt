@@ -102,6 +102,13 @@ class PayHeroCollections(hosts: PayHeroHosts) : MobileCollections {
             }
         }.flatMapBody("transaction_status") { text ->
             val reply = payHeroJson.decodeFromString(TransactionStatusReply.serializer(), text)
+            if (stateOf(reply.status) == CollectionState.FAILED) {
+                log.info(
+                    "payhero payment failed: status={} reason={}",
+                    PayHeroPayouts.word(reply.status),
+                    PayHeroPayouts.masked(reply.said),
+                )
+            }
             stateOf(reply.status)?.let { state ->
                 CollectionStatus(
                     state = state,
