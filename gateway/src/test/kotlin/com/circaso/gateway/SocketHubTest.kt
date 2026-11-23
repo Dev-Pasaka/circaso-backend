@@ -1403,6 +1403,48 @@ class SocketHubTest {
         }
 
     @Test
+    fun `a sale's frames push the payout, the refund on its way and back, and a timeout, never an amount`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
+            val user = UserId.new()
+            val orderId = RampOrderId.new()
+            val pay = RampAmount("USDC", "7800000", "7.8")
+            val receive = RampAmount("KES", "100000", "1000")
+
+            fun sale(state: String) =
+                RealtimeEnvelope.of(
+                    RampFrames.MODULE,
+                    RampFrames.ORDER_UPDATED,
+                    1,
+                    OrderUpdatedFrame(orderId, "OFF_RAMP", state, "BASE", pay, receive),
+                    OrderUpdatedFrame.serializer(),
+                )
+            listOf(
+                "AWAITING_TRANSFER",
+                "FUNDED",
+                "PAYING_OUT",
+                "COMPLETED",
+                "REVIEW",
+                "REFUNDING",
+                "REFUNDED",
+                "EXPIRED",
+            ).forEach { realtime.deliver(user, sale(it)) }
+
+            assertEquals(
+                listOf(
+                    "Your M-Pesa payment has been sent",
+                    "We couldn't pay you out. Your USDC is on its way back.",
+                    "Your USDC is back in your wallet",
+                    "Your sale timed out before your USDC arrived",
+                ),
+                push.sent.map { it.second.body },
+            )
+            assertTrue(push.sent.none { "1000" in it.second.body || "7.8" in it.second.body })
+            assertTrue(push.sent.all { it.second.data.kind == "ramp.order" && it.second.data.orderId == "$orderId" })
+        }
+
+    @Test
     fun `ramp frames push the end of a purchase and of an identity check, never an amount or a reason`() =
         runBlocking {
             val push = RecordingPush()

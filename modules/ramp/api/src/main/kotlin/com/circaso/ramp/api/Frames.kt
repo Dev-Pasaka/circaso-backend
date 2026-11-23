@@ -20,7 +20,9 @@ data class RampAmount(val unit: String, val amountMinor: String, val amount: Str
 
 /**
  * `ramp/order.updated`, to the user, each time their order moves. Pushed when it ends: `COMPLETED` ("Your USDC has
- * arrived"), `FAILED` or `EXPIRED` ("Your top-up didn't go through").
+ * arrived"), `FAILED` or `EXPIRED` ("Your top-up didn't go through"). A sale (`OFF_RAMP`, 2026-11-23): [pay] is the
+ * USDC sent and [receive] the shillings; pushed when the shillings are paid (`COMPLETED`), when the USDC is on its
+ * way back (`REFUNDING`) and back (`REFUNDED`), and when a sale nothing was sent for ran out of time (`EXPIRED`).
  */
 @Serializable
 data class OrderUpdatedFrame(

@@ -13,6 +13,8 @@ import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.RampOverview
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.ResolveCommand
+import com.circaso.ramp.domain.models.Resolved
 import com.circaso.ramp.domain.models.SettingsChange
 import com.circaso.ramp.domain.models.StaffOrder
 import com.circaso.ramp.domain.models.StaffOrderFilter
@@ -35,6 +37,7 @@ import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ResetMerchantVerification
 import com.circaso.ramp.domain.usecases.ResetVerification
+import com.circaso.ramp.domain.usecases.ResolveOrder
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateSettings
@@ -63,7 +66,10 @@ class RampAdminService(
     private val unblockUser: UnblockUser,
     private val resetVerification: ResetVerification,
     private val resetMerchantVerificationUseCase: ResetMerchantVerification,
+    private val resolveOrder: ResolveOrder,
 ) {
+    suspend fun resolve(command: ResolveCommand): Resource<Resolved> = resolveOrder(command)
+
     suspend fun kycProviders(): Resource<List<String>> = listKycProviders()
 
     suspend fun userVerifications(userId: UserId): Resource<UserVerifications> = getUserVerifications(userId)

@@ -15,12 +15,14 @@ import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
+import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetMerchant
 import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetStatement
+import com.circaso.ramp.domain.usecases.GetTestPayout
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
@@ -28,12 +30,15 @@ import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
+import com.circaso.ramp.domain.usecases.SetPayoutAccount
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
+import com.circaso.ramp.domain.usecases.StartTestPayout
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import java.util.UUID
 
 /** The portal's sign-in (MA1–MA3) and who a request is from. No logic of its own: each method is one use case. */
 class MerchantAuthService(
@@ -71,7 +76,25 @@ class MerchantService(
     private val startMerchantKyc: StartMerchantKyc,
     private val getMerchantPerformance: GetMerchantPerformance,
     private val setMerchantOffers: SetMerchantOffers,
+    private val setPayoutAccount: SetPayoutAccount,
+    private val startTestPayout: StartTestPayout,
+    private val getTestPayout: GetTestPayout,
 ) {
+    suspend fun payoutAccount(
+        merchantId: MerchantId,
+        network: Network,
+        accountId: String,
+    ): Resource<MerchantOverview> = setPayoutAccount(merchantId, network, accountId)
+
+    suspend fun testPayout(
+        merchantId: MerchantId,
+        network: Network,
+        amountMinor: Long,
+    ): Resource<TestPayout> = startTestPayout(merchantId, network, amountMinor)
+
+    suspend fun testPayoutResult(merchantId: MerchantId, testId: UUID?): Resource<TestPayout> =
+        getTestPayout(merchantId, testId)
+
     /** RM16: the merchant's own ranking signals. */
     suspend fun performance(merchantId: MerchantId, network: Network): Resource<MerchantPerformance> =
         getMerchantPerformance(merchantId, network)

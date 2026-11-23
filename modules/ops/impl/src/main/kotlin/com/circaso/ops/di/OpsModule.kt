@@ -89,6 +89,7 @@ import com.circaso.ops.domain.usecases.RemoveFeeDestination
 import com.circaso.ops.domain.usecases.ReplyToTicket
 import com.circaso.ops.domain.usecases.ResetRampMerchantVerification
 import com.circaso.ops.domain.usecases.ResetRampUserVerification
+import com.circaso.ops.domain.usecases.ResolveRampOrder
 import com.circaso.ops.domain.usecases.SearchUsers
 import com.circaso.ops.domain.usecases.SetEmailTemplate
 import com.circaso.ops.domain.usecases.SetRampMerchantTier
@@ -320,6 +321,7 @@ fun opsModule(config: Config): Module =
         single { UnblockRampUser(get(), get()) }
         single { ResetRampUserVerification(get(), get()) }
         single { ResetRampMerchantVerification(get(), get()) }
+        single { ResolveRampOrder(get(), get()) }
         single {
             RampService(
                 getRampMerchants = get(),
@@ -338,6 +340,7 @@ fun opsModule(config: Config): Module =
                 unblockRampUser = get(),
                 resetRampUserVerification = get(),
                 resetRampMerchantVerification = get(),
+                resolveRampOrder = get(),
             )
         }
         // The merchant engine for staff (decision 2026-11-23), through ramp:api's RampEngineAdmin

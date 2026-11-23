@@ -136,7 +136,28 @@ data class RampSettingsDto(
     val kycAttemptsPerDay: Int = 0,
     val kycPendingHours: Int = 0,
     val kycProviders: List<String> = emptyList(),
+    /**
+     * Selling (2026-11-23): `offRampState` (OFF | PREVIEW | ON, its own switch; PREVIEW uses the same list),
+     * `offRampMinMinor`, `offRampMaxMinor`, `offRampDailyLimitMinor` (KES cents the user receives),
+     * `transferWindowSeconds` (how long a sale waits for the user's USDC, 60 to 3600), `payoutWindowSeconds` (how long a
+     * payout nothing went out for is retried with the merchant before the USDC is refunded, 60 to 86400),
+     * `payoutFeeBands` (the fallback payout fee table, used only when the provider's published one can't be read;
+     * empty: none, and a sale whose fee can't be found isn't quoted) and `payoutBalanceLowMinor` (below it a
+     * merchant's portal flags `payout_balance_low`; 0: never).
+     */
+    val offRampState: String = "OFF",
+    val offRampMinMinor: String = "0",
+    val offRampMaxMinor: String = "0",
+    val offRampDailyLimitMinor: String = "0",
+    val transferWindowSeconds: Int = 0,
+    val payoutWindowSeconds: Int = 0,
+    val payoutFeeBands: List<RampPayoutFeeBandDto> = emptyList(),
+    val payoutBalanceLowMinor: String = "0",
 )
+
+/** One band of the fallback payout fee table: a payout up to `upToMinor` KES cents (inclusive) costs `feeMinor`. */
+@Serializable
+data class RampPayoutFeeBandDto(val upToMinor: String, val feeMinor: String)
 
 /**
  * `PUT /ops/ramp/settings?network=`: the settings and why they change. Read-only fields are ignored when sent.
@@ -176,7 +197,27 @@ data class UpdateRampSettingsRequest(
     val kycAttemptsPerDay: Int? = null,
     val kycPendingHours: Int? = null,
     val kycProviders: List<String>? = null,
+    // Selling (2026-11-23): each one left out keeps its current value.
+    val offRampState: String? = null,
+    val offRampMinMinor: String? = null,
+    val offRampMaxMinor: String? = null,
+    val offRampDailyLimitMinor: String? = null,
+    val transferWindowSeconds: Int? = null,
+    val payoutWindowSeconds: Int? = null,
+    val payoutFeeBands: List<RampPayoutFeeBandDto>? = null,
+    val payoutBalanceLowMinor: String? = null,
 )
+
+/**
+ * `POST /ops/ramp/orders/{orderId}/resolve` (RO4). `resolution`: `MARK_PAID` (with `receipt`, the M-Pesa receipt you
+ * saw), `REFUND` or `RECHECK`. `reason` is required and audited.
+ */
+@Serializable
+data class RampResolveRequest(val resolution: String = "", val receipt: String? = null, val reason: String = "")
+
+/** RO4's answer: the order as it stands now, and what the provider said (`queued` for a re-check). */
+@Serializable
+data class RampResolveResponse(val order: RampOrderDto, val providerSaid: String? = null)
 
 @Serializable
 data class RampPreviewAccessDto(
@@ -216,6 +257,15 @@ data class RampOrderDto(
     val custodyTxId: String? = null,
     val createdAt: String,
     val updatedAt: String,
+    /** `ON_RAMP` or `OFF_RAMP` (a sale; 2026-11-23). */
+    val direction: String = "ON_RAMP",
+    /** A sale: the provider's payout fee the user paid, what the merchant's float received, and the payouts. */
+    val providerFeeMinor: String = "0",
+    val fundedMinor: String? = null,
+    val payoutAttempts: Int = 0,
+    /** A sale's latest payout: `SENDING`, `ACCEPTED`, `UNKNOWN`, `NOT_SENT:…`, `FAILED:…` or `PAID`. */
+    val payoutOutcome: String? = null,
+    val hasReceipt: Boolean = false,
 )
 
 @Serializable
@@ -244,6 +294,10 @@ data class RampOverviewTotalsDto(
     val circasoShareUsdc: RampAmountDto,
     val swept: RampAmountDto,
     val held: RampAmountDto,
+    /** Selling (2026-11-23): shillings paid out to sellers, the USDC received for them, and sales refunded. */
+    val paidOut: RampAmountDto? = null,
+    val bought: RampAmountDto? = null,
+    val refunded: Int = 0,
 )
 
 /** One merchant's row. `online` is the trading window; `successRatePercent` is completed out of all orders. */
@@ -264,6 +318,8 @@ data class RampOverviewMerchantDto(
     val circasoShareUsdc: RampAmountDto,
     val held: RampAmountDto,
     val lastOrderAt: String? = null,
+    val paidOut: RampAmountDto? = null,
+    val bought: RampAmountDto? = null,
 )
 
 /** `GET /ops/ramp/overview`. `from` and `to` are Nairobi calendar days, inclusive. */
@@ -297,6 +353,25 @@ data class RampSummaryMerchantDto(
     val paymentsIssue: RampPaymentsIssueDto? = null,
     /** Their identity verification in the environment this network trusts; null when they never started. */
     val kyc: RampVerificationDto? = null,
+    /** Selling: whether they offer it, their FinoQ account id, and a payout refusal they must fix. */
+    val offersOffRamp: Boolean = false,
+    val payoutAccountId: String? = null,
+    val payoutIssue: RampPaymentsIssueDto? = null,
+)
+
+/**
+ * A merchant's KES at the payout provider as last read (the ops server holds nobody's keys, so this is the app's
+ * latest reading, from `readAt`). `payout` is what payouts spend, `fees` what the provider's fees come from: **null
+ * is "couldn't be read", never zero**. `held` is what their open sales hold of `payout`.
+ */
+@Serializable
+data class RampKesBalancesDto(
+    val payout: RampAmountDto? = null,
+    val payoutSource: String? = null,
+    val fees: RampAmountDto? = null,
+    val feesSource: String? = null,
+    val readAt: String? = null,
+    val held: RampAmountDto,
 )
 
 @Serializable
@@ -321,6 +396,8 @@ data class RampOrderCountsDto(
     val cancelled: Int,
     val inReview: Int,
     val open: Int,
+    /** Sales whose USDC went back to the user. */
+    val refunded: Int = 0,
 )
 
 @Serializable
@@ -371,6 +448,10 @@ data class RampMerchantSummaryResponse(
     val held: RampAmountDto,
     val daily: List<RampDayDto>,
     val sweeps: List<RampSweepDto>,
+    /** Selling: the shillings paid out to sellers, and the USDC received for them. */
+    val paidOut: RampAmountDto? = null,
+    val bought: RampAmountDto? = null,
+    val kesBalances: RampKesBalancesDto? = null,
 )
 
 /**

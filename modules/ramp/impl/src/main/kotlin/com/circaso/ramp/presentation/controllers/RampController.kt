@@ -6,6 +6,7 @@ import com.circaso.ramp.presentation.dto.OrdersResponse
 import com.circaso.ramp.presentation.dto.QuoteRequest
 import com.circaso.ramp.presentation.dto.QuoteResponse
 import com.circaso.ramp.presentation.dto.RampStatusResponse
+import com.circaso.ramp.presentation.dto.StartOffRampRequest
 import com.circaso.ramp.presentation.dto.StartOnRampRequest
 import com.circaso.ramp.presentation.dto.VerificationDto
 import com.circaso.ramp.presentation.mappers.cursorOf
@@ -54,7 +55,7 @@ fun Route.rampController(ramp: RampService) {
                 val result = ramp.status(call.principal().userId, call.walletNetwork())
                 call.respondDefault(result.toDefaultResponse { it.toResponse() })
             }.docs<NoBody, RampStatusResponse>(
-                "R1 · Whether you can buy now",
+                "R1 · Whether you can buy or sell now",
                 TAG,
                 listOf(UNAVAILABLE),
                 notes =
@@ -67,7 +68,9 @@ fun Route.rampController(ramp: RampService) {
                         "part and the provider hasn't decided: say \"we're checking\", never \"finish " +
                         "verifying\"; `canStart` is false). `kyc` is the short form older apps read. " +
                         "`blocked` is a bar on the account or its identity: say so and point to support. " +
-                        "`ramp.unavailable` means buying isn't open to you on this network: hide the feature.",
+                        "`offRamp` is selling, on its own switch: `offRamp.canSell` is every gate for a sale, and " +
+                        "`offRamp.limits` selling's own limits. `ramp.unavailable` means neither buying nor selling " +
+                        "is open to you on this network: hide the feature.",
             )
 
             route("/kyc") {
@@ -139,12 +142,19 @@ fun Route.rampController(ramp: RampService) {
                     "ramp.limit_exceeded",
                     "ramp.offramp_unavailable",
                     "ramp.pricing_unavailable",
+                    "ramp.payout_fee_unavailable",
                     MALFORMED,
                 ),
                 notes =
-                    "$SCOPE Give `fiat` (what you pay, whole shillings) or `crypto` (what you want to receive). The " +
-                        "fee is inside what you pay and the quote shows it. The price holds until `expiresAt` and " +
-                        "reserves nothing. Only `ON_RAMP` is offered.",
+                    "$SCOPE Buying (`ON_RAMP`): give `fiat` (what you pay, whole shillings) or `crypto` (what you " +
+                        "want to receive); the fee is inside what you pay. Selling (`OFF_RAMP`): give `crypto` (the " +
+                        "USDC you send) or `fiat` (the shillings you want, whole shillings); `pay` is the USDC, " +
+                        "`receive` the shillings, `worth` what the USDC is worth at `rate`, and `fee` (Circaso's) " +
+                        "and `providerFee` (the payout provider's charge) come off it. The price holds until " +
+                        "`expiresAt` " +
+                        "and reserves nothing. `ramp.offramp_unavailable`: selling isn't open to you on this " +
+                        "network. `ramp.payout_fee_unavailable` (502): the payout provider's charge can't be read " +
+                        "right now, try again later.",
             )
 
             post("onramp/orders") {
@@ -183,6 +193,43 @@ fun Route.rampController(ramp: RampService) {
                         "`ramp.collections_unavailable` (502) is M-Pesa itself out of reach.",
             )
 
+            post("offramp/orders") {
+                val userId = call.principal().userId
+                val request = call.receive<StartOffRampRequest>()
+                val result = request.toCommand(userId, call.walletNetwork()).flatMap { ramp.sell(it) }
+                call.respondDefault(result.toDefaultResponse { it.toResponse() })
+            }.docs<StartOffRampRequest, OrderResponse>(
+                "R7 · Sell USDC for M-Pesa",
+                TAG,
+                listOf(
+                    "ramp.offramp_unavailable",
+                    KYC,
+                    BLOCKED,
+                    RESTRICTED,
+                    "ramp.quote_not_found",
+                    "ramp.quote_expired",
+                    "ramp.order_in_progress",
+                    "ramp.phone_not_yours",
+                    "ramp.wallet_required",
+                    "ramp.limit_exceeded",
+                    "ramp.no_merchant_available",
+                    "ramp.custody_unavailable",
+                    MALFORMED,
+                ),
+                notes =
+                    "$SCOPE A sale (`OFF_RAMP`) priced by R2. A seller is picked for you and holds the shillings; " +
+                        "the answer is `AWAITING_TRANSFER` with `deposit`: send exactly `deposit.amount` USDC on " +
+                        "`deposit.blockchain` to `deposit.address` with W4 (`POST /v1/wallet/transfers`, " +
+                        "`to.address`, and `rampOrderId` = this `orderId`; use the order id as W4's " +
+                        "`Idempotency-Key` so a retry never makes a second transfer), signed with your PIN, " +
+                        "before `deposit.expiresAt`. " +
+                        "Once your USDC is confirmed in the seller's wallet the shillings are sent to `phone`, which " +
+                        "must be your account's own verified number. `ramp/order.updated` frames follow: `FUNDED`, " +
+                        "`PAYING_OUT`, `COMPLETED` (with `receipt`), or `REFUNDING` then `REFUNDED` when the seller " +
+                        "couldn't pay (your USDC comes back to your wallet). Repeating the request with the same " +
+                        "quote returns the same order.",
+            )
+
             route("/orders") {
                 get {
                     val userId = call.principal().userId
@@ -219,7 +266,9 @@ fun Route.rampController(ramp: RampService) {
                         listOf(NOT_FOUND, "ramp.order_not_cancellable", MALFORMED),
                         notes =
                             "$SCOPE While the M-Pesa prompt is still open on your phone the order can't be " +
-                                "cancelled: dismiss the prompt and it ends by itself.",
+                                "cancelled: dismiss the prompt and it ends by itself. A sale can be cancelled while " +
+                                "it is `AWAITING_TRANSFER` and no transfer of yours has been confirmed; USDC that " +
+                                "arrives after a cancel is sent back to you.",
                     )
                 }
             }

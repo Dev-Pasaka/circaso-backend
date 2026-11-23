@@ -22,6 +22,7 @@ import com.circaso.ramp.domain.repositories.InsightRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.support.MerchantInsights
@@ -87,6 +88,7 @@ class GetMerchantSummary(
     private val insights: MerchantInsights,
     private val float: MerchantFloat,
     private val clock: Clock,
+    private val payoutHolds: PayoutHoldRepository,
 ) {
     suspend operator fun invoke(
         merchantId: MerchantId,
@@ -109,6 +111,8 @@ class GetMerchantSummary(
                 figures = insights.figures(merchantId, network, covered),
                 daily = daily(merchantId, network, covered),
                 sweeps = settlements.ofMerchant(merchantId, network, covered, MAX_SWEEPS),
+                kesBalances = merchants.balances(merchantId),
+                kesHeldMinor = payoutHolds.openTotal(merchantId),
             ),
         )
     }

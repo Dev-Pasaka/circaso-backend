@@ -21,8 +21,10 @@ data class UnfinishedOrders(
     val cancelled: Int,
     val inReview: Int,
     val open: Int,
+    /** Sales whose USDC went back to the user (2026-11-23). */
+    val refunded: Int = 0,
 ) {
-    val total: Int get() = failed + expired + cancelled + inReview + open
+    val total: Int get() = failed + expired + cancelled + inReview + open + refunded
 
     operator fun plus(other: UnfinishedOrders) =
         UnfinishedOrders(
@@ -31,6 +33,7 @@ data class UnfinishedOrders(
             cancelled = cancelled + other.cancelled,
             inReview = inReview + other.inReview,
             open = open + other.open,
+            refunded = refunded + other.refunded,
         )
 
     companion object {
@@ -43,6 +46,7 @@ data class UnfinishedOrders(
                 cancelled = byState[OrderState.CANCELLED] ?: 0,
                 inReview = byState[OrderState.REVIEW] ?: 0,
                 open = OrderState.OPEN.sumOf { byState[it] ?: 0 },
+                refunded = byState[OrderState.REFUNDED] ?: 0,
             )
     }
 }
@@ -128,6 +132,9 @@ data class MerchantSummary(
     /** Days with activity, oldest first. */
     val daily: List<DayActivity>,
     val sweeps: List<Settlement>,
+    /** The merchant's balances at the payout provider as last read, and what their open sales hold. */
+    val kesBalances: KesBalances = KesBalances.UNREAD,
+    val kesHeldMinor: Long = 0,
 )
 
 /** What a completed order earned, from its commission row. */

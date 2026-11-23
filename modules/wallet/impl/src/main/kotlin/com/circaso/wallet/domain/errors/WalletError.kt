@@ -44,6 +44,16 @@ sealed class WalletError(
         ErrorKind.CONFLICT,
     )
 
+    /**
+     * W4 naming a ramp order another transfer already funds (one that isn't `FAILED`, added 2026-11-23): a sale is
+     * paid for once.
+     */
+    data object RampOrderFunded : WalletError(
+        "wallet.ramp_order_funded",
+        "This sale is already being paid for.",
+        ErrorKind.CONFLICT,
+    )
+
     data object CustodyUnavailable : WalletError(
         "wallet.custody_unavailable",
         "Wallets are unavailable right now. Try again in a moment.",

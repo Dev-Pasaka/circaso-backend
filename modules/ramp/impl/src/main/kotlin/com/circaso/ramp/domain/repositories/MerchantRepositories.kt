@@ -3,6 +3,7 @@ package com.circaso.ramp.domain.repositories
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.DayTotals
+import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
@@ -11,6 +12,7 @@ import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentsIssue
+import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
@@ -98,6 +100,22 @@ interface MerchantRepository {
 
     /** Clears the trading window of every merchant whose window ended before [now]; how many. */
     suspend fun endPassedWindows(now: Instant): Int
+
+    /** The merchant's account id at the payout provider (FinoQ's, digits), or none. */
+    suspend fun setPayoutAccount(merchantId: MerchantId, accountId: String?)
+
+    /** Marks what the merchant must fix before they are paid out through again ([issue]), or clears it (null). */
+    suspend fun setPayoutIssue(
+        merchantId: MerchantId,
+        issue: PayoutIssue?,
+        at: Instant,
+    )
+
+    /** Keeps the balances just read at the provider, for staff, who can't read them (the ops process holds no keys). */
+    suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances)
+
+    /** The balances last read at the provider. */
+    suspend fun balances(merchantId: MerchantId): KesBalances
 }
 
 interface MerchantWalletRepository {

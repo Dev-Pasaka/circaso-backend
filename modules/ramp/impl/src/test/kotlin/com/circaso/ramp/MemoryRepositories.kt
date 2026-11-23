@@ -13,6 +13,7 @@ import com.circaso.ramp.domain.models.EngineSettings
 import com.circaso.ramp.domain.models.EngineSettingsVersion
 import com.circaso.ramp.domain.models.FeeSplit
 import com.circaso.ramp.domain.models.FinishedOrder
+import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
@@ -24,6 +25,7 @@ import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaidOutcome
 import com.circaso.ramp.domain.models.PaymentsIssue
+import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.Quote
@@ -43,6 +45,8 @@ import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.SubjectKind
+import com.circaso.ramp.domain.models.TestPayout
+import com.circaso.ramp.domain.models.TestPayoutState
 import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.models.VerificationChange
 import com.circaso.ramp.domain.models.VerificationStatus
@@ -57,6 +61,7 @@ import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderEvent
 import com.circaso.ramp.domain.repositories.OrderEventRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.PreviewAccessRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
@@ -66,6 +71,7 @@ import com.circaso.ramp.domain.repositories.SessionRepository
 import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
+import com.circaso.ramp.domain.repositories.TestPayoutRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.domain.support.Stats
@@ -259,6 +265,23 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
         passed.forEach { rows[it.merchantId] = it.copy(onlineUntil = null) }
         return passed.size
     }
+
+    val balances = mutableMapOf<MerchantId, KesBalances>()
+
+    override suspend fun setPayoutAccount(merchantId: MerchantId, accountId: String?) =
+        change(merchantId) { it.copy(payoutAccountId = accountId) }
+
+    override suspend fun setPayoutIssue(
+        merchantId: MerchantId,
+        issue: PayoutIssue?,
+        at: Instant,
+    ) = change(merchantId) { it.copy(payoutIssue = issue, payoutIssueAt = at.takeIf { issue != null }) }
+
+    override suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances) {
+        this.balances[merchantId] = balances
+    }
+
+    override suspend fun balances(merchantId: MerchantId): KesBalances = balances[merchantId] ?: KesBalances.UNREAD
 }
 
 class MemoryRevenueWallets : RevenueWalletRepository {
@@ -434,8 +457,92 @@ class MemoryOrders :
         .after(after, { it.createdAt }, { it.orderId.value })
         .take(limit)
 
-    override suspend fun hasAwaitingPayment(merchantId: MerchantId) =
-        rows.values.any { it.merchantId == merchantId && it.state in OrderState.AWAITING_PAYMENT }
+    override suspend fun needsKeys(merchantId: MerchantId) =
+        rows.values.any { it.merchantId == merchantId && it.state in OrderState.NEEDS_KEYS }
+
+    override suspend fun attachTransfer(
+        orderId: RampOrderId,
+        transferId: UUID,
+        at: Instant,
+    ): Order? {
+        val order = rows[orderId] ?: return null
+        val elsewhere = rows.values.any { it.walletTransferId == transferId && it.orderId != orderId }
+        if (order.walletTransferId != null || elsewhere) return order
+        return order.copy(walletTransferId = transferId, updatedAt = at).also { rows[orderId] = it }
+    }
+
+    override suspend fun awaitingFunding(
+        network: Network,
+        before: Instant,
+        limit: Int,
+    ) = rows.values
+        .filter {
+            it.network == network && it.walletTransferId != null && it.fundedMinor == null &&
+                it.updatedAt.isBefore(before)
+        }.sortedBy { it.updatedAt }
+        .take(limit)
+
+    override suspend fun dueForPayout(
+        network: Network,
+        now: Instant,
+        limit: Int,
+    ) = rows.values
+        .filter { order ->
+            order.network == network && order.state == OrderState.FUNDED &&
+                order.payoutRetryAt.let { it == null || !it.isAfter(now) }
+        }.sortedBy { it.updatedAt }
+        .take(limit)
+
+    override suspend fun receiptTaken(receipt: String, except: RampOrderId) =
+        rows.values.any { it.mpesaReceipt == receipt && it.orderId != except }
+
+    val rechecksAsked = linkedMapOf<RampOrderId, Instant>()
+
+    override suspend fun requestRecheck(orderId: RampOrderId, at: Instant): Boolean {
+        if (rows[orderId]?.state != OrderState.REVIEW) return false
+        rechecksAsked[orderId] = at
+        return true
+    }
+
+    override suspend fun rechecks(limit: Int) = rechecksAsked.keys.mapNotNull { rows[it] }.take(limit)
+
+    override suspend fun clearRecheck(orderId: RampOrderId) {
+        rechecksAsked.remove(orderId)
+    }
+
+    override suspend fun annotate(
+        orderId: RampOrderId,
+        state: OrderState,
+        patch: OrderPatch,
+        at: Instant,
+    ): Order? {
+        val order = rows[orderId]?.takeIf { it.state == state } ?: return null
+        return order.patched(patch).copy(updatedAt = at).also { rows[orderId] = it }
+    }
+
+    /** What a patch writes: each non-null field, the rest left as it is. */
+    private fun Order.patched(patch: OrderPatch) =
+        copy(
+            providerReference = patch.providerReference ?: providerReference,
+            checkoutId = patch.checkoutId ?: checkoutId,
+            custodyTxId = patch.custodyTxId ?: custodyTxId,
+            txHash = patch.txHash ?: txHash,
+            failureReason = patch.failureReason ?: failureReason,
+            providerFeeActualMinor = patch.providerFeeActualMinor ?: providerFeeActualMinor,
+            fundedMinor = patch.fundedMinor ?: fundedMinor,
+            fundingTxHash = patch.fundingTxHash ?: fundingTxHash,
+            fundedAt = patch.fundedAt ?: fundedAt,
+            refundAddress = patch.refundAddress ?: refundAddress,
+            payoutAttempts = patch.payoutAttempts ?: payoutAttempts,
+            payoutFailures = patch.payoutFailures ?: payoutFailures,
+            payoutReference = patch.payoutReference ?: payoutReference,
+            payoutProviderReference = patch.payoutProviderReference ?: payoutProviderReference,
+            payoutSecondaryReference = patch.payoutSecondaryReference ?: payoutSecondaryReference,
+            payoutOutcome = patch.payoutOutcome ?: payoutOutcome,
+            payoutSentAt = patch.payoutSentAt ?: payoutSentAt,
+            payoutRetryAt = patch.payoutRetryAt ?: payoutRetryAt,
+            mpesaReceipt = patch.mpesaReceipt ?: mpesaReceipt,
+        )
 
     override suspend fun move(
         orderId: RampOrderId,
@@ -445,16 +552,9 @@ class MemoryOrders :
         at: Instant,
     ): Order? {
         val order = rows[orderId]?.takeIf { it.state in from } ?: return null
-        val moved =
-            order.copy(
-                state = to,
-                updatedAt = at,
-                providerReference = patch.providerReference ?: order.providerReference,
-                checkoutId = patch.checkoutId ?: order.checkoutId,
-                custodyTxId = patch.custodyTxId ?: order.custodyTxId,
-                txHash = patch.txHash ?: order.txHash,
-                failureReason = patch.failureReason ?: order.failureReason,
-            )
+        val receipt = patch.mpesaReceipt
+        check(receipt == null || !receiptTaken(receipt, orderId)) { "orders_receipt_key" }
+        val moved = order.patched(patch).copy(state = to, updatedAt = at)
         rows[orderId] = moved
         record(moved, at, patch.failureReason)
         return moved
@@ -500,6 +600,7 @@ class MemoryReservations : ReservationRepository {
         val network: Network,
         val amountMinor: Long,
         var state: String,
+        val kind: String = "FLOAT",
     )
 
     val rows = mutableMapOf<RampOrderId, Row>()
@@ -511,6 +612,20 @@ class MemoryReservations : ReservationRepository {
 
     override suspend fun insert(order: Order, at: Instant) {
         rows.putIfAbsent(order.orderId, Row(order.merchantId, order.network, order.assetMinor, "OPEN"))
+    }
+
+    override suspend fun hold(
+        order: Order,
+        amountMinor: Long,
+        at: Instant,
+    ) {
+        rows.putIfAbsent(order.orderId, Row(order.merchantId, order.network, amountMinor, "OPEN", "HOLD"))
+    }
+
+    override suspend fun reopen(orderId: RampOrderId, at: Instant): Boolean {
+        val row = rows[orderId]?.takeIf { it.state == "RELEASED" } ?: return false
+        row.state = "OPEN"
+        return true
     }
 
     override suspend fun release(orderId: RampOrderId, at: Instant) = close(orderId, "RELEASED")
@@ -525,6 +640,52 @@ class MemoryReservations : ReservationRepository {
 }
 
 /** Commissions, their sweeps and the statement over them, in memory: one store, as the tables are one schema. */
+class MemoryPayoutHolds : PayoutHoldRepository {
+    data class Row(val merchantId: MerchantId, val amountMinor: Long, var state: String)
+
+    val rows = mutableMapOf<RampOrderId, Row>()
+
+    override suspend fun insert(order: Order, at: Instant) {
+        rows.putIfAbsent(order.orderId, Row(order.merchantId, order.payoutHoldMinor, "OPEN"))
+    }
+
+    override suspend fun openTotal(merchantId: MerchantId) =
+        rows.values.filter { it.merchantId == merchantId && it.state == "OPEN" }.sumOf { it.amountMinor }
+
+    override suspend fun release(orderId: RampOrderId, at: Instant) = close(orderId, "RELEASED")
+
+    override suspend fun consume(orderId: RampOrderId, at: Instant) = close(orderId, "CONSUMED")
+
+    private fun close(orderId: RampOrderId, to: String): Boolean {
+        val row = rows[orderId]?.takeIf { it.state == "OPEN" } ?: return false
+        row.state = to
+        return true
+    }
+}
+
+class MemoryTestPayouts : TestPayoutRepository {
+    val rows = linkedMapOf<UUID, TestPayout>()
+
+    override suspend fun insert(test: TestPayout): Boolean {
+        if (rows.values.any { it.merchantId == test.merchantId && it.state.isOpen }) return false
+        rows[test.testId] = test
+        return true
+    }
+
+    override suspend fun find(testId: UUID) = rows[testId]
+
+    override suspend fun latest(merchantId: MerchantId) = rows.values.lastOrNull { it.merchantId == merchantId }
+
+    override suspend fun move(test: TestPayout, from: Set<TestPayoutState>): Boolean {
+        val current = rows[test.testId]?.takeIf { it.state in from } ?: return false
+        rows[current.testId] = test
+        return true
+    }
+
+    override suspend fun open(before: Instant, limit: Int) =
+        rows.values.filter { it.state.isOpen && it.updatedAt.isBefore(before) }.take(limit)
+}
+
 class MemoryLedger(private val orders: MemoryOrders) :
     CommissionRepository,
     SettlementRepository,
@@ -678,6 +839,7 @@ class MemoryLedger(private val orders: MemoryOrders) :
                 platformAssetMinor = it.split.platformAssetMinor,
                 settlementId = it.settlementId.takeIf { _ -> it.settledAt != null },
                 txHash = order.txHash,
+                direction = order.direction,
             )
         }
 
@@ -687,10 +849,14 @@ class MemoryLedger(private val orders: MemoryOrders) :
         period: Period,
     ): StatementTotals {
         val rows = inPeriod(merchantId, network, period)
+        val buying = rows.filter { it.order.direction == Direction.ON_RAMP }
+        val selling = rows.filter { it.order.direction == Direction.OFF_RAMP }
         return StatementTotals(
             orders = rows.size,
-            collectedMinor = rows.sumOf { it.order.fiat.amountMinor },
-            soldMinor = rows.sumOf { it.order.assetMinor },
+            collectedMinor = buying.sumOf { it.order.fiat.amountMinor },
+            soldMinor = buying.sumOf { it.order.assetMinor },
+            paidOutMinor = selling.sumOf { it.order.fiat.amountMinor },
+            boughtMinor = selling.sumOf { it.order.assetMinor },
             feesMinor = rows.sumOf { it.order.feeMinor },
             merchantMinor = rows.sumOf { it.split.merchantMinor },
             platformMinor = rows.sumOf { it.split.platformMinor },

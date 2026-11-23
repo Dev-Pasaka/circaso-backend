@@ -131,7 +131,25 @@ data class OpsRampSettings(
     val kycPendingHours: Int? = null,
     /** Read-only: the KYC providers this server offers, to choose [kycProvider] from. */
     val kycProviders: List<String> = emptyList(),
+    // Selling (2026-11-23). Always set on a read; null on an update leaves that one as it is.
+    /** Selling's own switch: `OFF`, `PREVIEW` (the same list as buying's) or `ON`. */
+    val offRampState: String? = null,
+    /** Selling's limits on what the user receives, KES minor units. */
+    val offRampMinMinor: Long? = null,
+    val offRampMaxMinor: Long? = null,
+    val offRampDailyLimitMinor: Long? = null,
+    /** How long a sale waits for the user's USDC (60 to 3600 seconds). */
+    val transferWindowSeconds: Int? = null,
+    /** How long a sale whose payout provably didn't go out is retried with its merchant before a refund (60 to 86400). */
+    val payoutWindowSeconds: Int? = null,
+    /** Staff's payout fee table, used only when the provider's own published table can't be read; empty: none. */
+    val payoutFeeBands: List<OpsPayoutFeeBand>? = null,
+    /** Below this payout balance a merchant's portal flags `payout_balance_low`, KES minor units; 0: never. */
+    val payoutBalanceLowMinor: Long? = null,
 )
+
+/** One band of staff's payout fee table: an amount up to [upToMinor] (inclusive) costs [feeMinor]. KES minor units. */
+data class OpsPayoutFeeBand(val upToMinor: Long, val feeMinor: Long)
 
 data class OpsRampSettingsChange(val before: OpsRampSettings, val after: OpsRampSettings)
 
@@ -160,8 +178,29 @@ data class OpsRampOrder(
     val custodyTxId: String?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /** `ON_RAMP` or `OFF_RAMP` (a sale). */
+    val direction: String = "ON_RAMP",
+    /** A sale: the payout provider's fee the user paid on top; what the merchant's wallet received; the payouts. */
+    val providerFeeMinor: Long = 0,
+    val fundedMinor: Long? = null,
+    val payoutAttempts: Int = 0,
+    /** A sale's latest payout: `SENDING`, `ACCEPTED`, `UNKNOWN`, `NOT_SENT:…`, `FAILED:…` or `PAID`. */
+    val payoutOutcome: String? = null,
+    /** Whether an M-Pesa receipt is on the order (it itself never leaves the ramp here). */
+    val hasReceipt: Boolean = false,
 ) {
     override fun toString(): String = "OpsRampOrder($orderId, $state)"
+}
+
+/** RO4's answer: the order as it stands now, and what the provider said (`queued` for a re-check). */
+data class OpsRampResolved(val order: OpsRampOrder, val providerSaid: String?)
+
+/** RO4's outcomes. */
+object RampResolutions {
+    const val MARK_PAID = "MARK_PAID"
+    const val REFUND = "REFUND"
+    const val RECHECK = "RECHECK"
+    val ALL: List<String> = listOf(MARK_PAID, REFUND, RECHECK)
 }
 
 /**
@@ -273,6 +312,21 @@ interface RampAdmin {
         environment: String,
         by: UUID,
     ): Resource<Boolean>
+
+    /**
+     * RO4 (2026-11-23): resolves an order in `REVIEW`, in either direction. [resolution] is one of
+     * [RampResolutions.ALL]; `MARK_PAID` needs the M-Pesa [receipt] staff saw. A sale marked paid completes; a sale
+     * refunded sends its USDC back to the user (the ops process does it); a purchase marked paid is released; a
+     * purchase refunded closes unreleased. `RECHECK` asks the app's process to ask the provider again (it alone holds
+     * the merchant's keys). Errors: `ramp.order_not_found`, `ramp.resolution_invalid`, `ramp.receipt_required`,
+     * `ramp.payout_may_be_paid`.
+     */
+    suspend fun resolve(
+        orderId: RampOrderId,
+        resolution: String,
+        receipt: String?,
+        by: UUID,
+    ): Resource<OpsRampResolved>
 }
 
 /** The provider environments a verification can be in, as [RampAdmin.resetUserVerification] takes them. */
@@ -293,5 +347,10 @@ object RampOrderStates {
             "CANCELLED",
             "FAILED",
             "REVIEW",
+            "AWAITING_TRANSFER",
+            "FUNDED",
+            "PAYING_OUT",
+            "REFUNDING",
+            "REFUNDED",
         )
 }

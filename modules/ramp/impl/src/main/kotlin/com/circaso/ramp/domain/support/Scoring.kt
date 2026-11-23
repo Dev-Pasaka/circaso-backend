@@ -235,11 +235,16 @@ object Stats {
     val MERCHANT_FAILURES = setOf("prompt_refused", "provider_balance", "merchant_offline", "payout_failed")
     val MERCHANT_EXPIRIES = setOf("payout_missed")
 
-    /** The states an order is finished in. `REVIEW` is not one: a person still decides it. */
-    val FINISHED = setOf(OrderState.COMPLETED, OrderState.FAILED, OrderState.EXPIRED, OrderState.CANCELLED)
+    /**
+     * The states an order is finished in. `REVIEW` is not one: a person still decides it. A sale the merchant couldn't
+     * pay ends `REFUNDED` with the reason that counts (`payout_failed`, `payout_missed`); one that was never funded
+     * ends `EXPIRED` (`never_funded`) or `CANCELLED`, which is the user's doing and never counts.
+     */
+    val FINISHED =
+        setOf(OrderState.COMPLETED, OrderState.FAILED, OrderState.EXPIRED, OrderState.CANCELLED, OrderState.REFUNDED)
 
-    /** `REFUNDED` arrives with the off-ramp; the timeline already indexes it. */
-    val FINISHED_NAMES: List<String> = FINISHED.map { it.name } + "REFUNDED"
+    /** What `order_events_finished_idx` indexes. */
+    val FINISHED_NAMES: List<String> = FINISHED.map { it.name }
 
     /** The step handling time is counted from, by direction: the verified payment, or (selling) the funds arriving. */
     const val HANDLING_FROM_ON_RAMP = "PAID"
@@ -248,8 +253,16 @@ object Stats {
     fun attribution(state: OrderState, reason: String?): Attribution =
         when {
             state == OrderState.COMPLETED -> Attribution.COMPLETED
+
             state == OrderState.FAILED && reason in MERCHANT_FAILURES -> Attribution.MERCHANT_FAILURE
+
             state == OrderState.EXPIRED && reason in MERCHANT_EXPIRIES -> Attribution.MERCHANT_EXPIRY
+
+            // A sale refunded because its merchant couldn't pay it out (2026-11-23).
+            state == OrderState.REFUNDED && reason in MERCHANT_FAILURES -> Attribution.MERCHANT_FAILURE
+
+            state == OrderState.REFUNDED && reason in MERCHANT_EXPIRIES -> Attribution.MERCHANT_EXPIRY
+
             else -> Attribution.NOT_COUNTED
         }
 

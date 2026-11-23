@@ -16,6 +16,10 @@ enum class Direction { ON_RAMP, OFF_RAMP }
 /**
  * Where an order stands. It moves only by a transition guard (`WHERE state IN <allowed predecessors>`), so a repeated
  * callback, the sweep job and the release job can never apply the same step twice.
+ *
+ * Buying: `RESERVED → PAYMENT_REQUESTED → PAID → RELEASING → COMPLETED`. Selling (decision 2026-11-23):
+ * `AWAITING_TRANSFER → FUNDED → PAYING_OUT → COMPLETED`, with `REFUNDING → REFUNDED` when the user can't be paid (see
+ * [SaleStates] for every allowed move). `EXPIRED`, `CANCELLED` and `REVIEW` are shared.
  */
 enum class OrderState {
     /** A merchant is picked and its float reserved; the prompt hasn't been sent yet. */
@@ -40,14 +44,72 @@ enum class OrderState {
 
     /** A person must look: the payment doesn't match, or the release couldn't be made. Nothing more moves. */
     REVIEW,
+
+    /** Selling: a merchant is picked and their shillings held; the user's USDC hasn't arrived yet. */
+    AWAITING_TRANSFER,
+
+    /** Selling: the custodian recorded the user's USDC in the merchant's float, where it is held. No payout is out. */
+    FUNDED,
+
+    /** Selling: a payout attempt is recorded and may have been sent: only the provider's lookup moves it on. */
+    PAYING_OUT,
+
+    /** Selling: the user is owed their USDC back and the ops process is sending it. */
+    REFUNDING,
+
+    /** Selling: the user's USDC is back in their wallet, confirmed on chain. */
+    REFUNDED,
     ;
 
     val isOpen: Boolean get() = this in OPEN
 
     companion object {
-        val OPEN = setOf(RESERVED, PAYMENT_REQUESTED, PAID, RELEASING)
+        val OPEN = setOf(RESERVED, PAYMENT_REQUESTED, PAID, RELEASING, AWAITING_TRANSFER, FUNDED, PAYING_OUT, REFUNDING)
         val AWAITING_PAYMENT = setOf(RESERVED, PAYMENT_REQUESTED)
+
+        /** The states in which a merchant's keys are still needed for an order: a prompt's status, or a payout. */
+        val NEEDS_KEYS = setOf(RESERVED, PAYMENT_REQUESTED, AWAITING_TRANSFER, FUNDED, PAYING_OUT)
     }
+}
+
+/**
+ * Every move a sale may make, and from where (decision 2026-11-23). The rule behind the table: **a refund never
+ * starts while a payout may have gone out** (only `FUNDED`, where no attempt is out, a `PAYING_OUT` the provider said
+ * failed, a sale that was never paid, and staff's decision lead to it), and **a sale completes only on the provider's
+ * word or staff's** (`PAYING_OUT` after a lookup said paid, `REVIEW` when staff saw the M-Pesa receipt).
+ */
+object SaleStates {
+    /** The user's USDC was confirmed in the merchant's float. Or a payout that provably went nowhere: again. */
+    val TO_FUNDED = setOf(OrderState.AWAITING_TRANSFER, OrderState.PAYING_OUT)
+
+    val TO_PAYING_OUT = setOf(OrderState.FUNDED)
+
+    val TO_COMPLETED = setOf(OrderState.PAYING_OUT, OrderState.REVIEW)
+
+    /** Never funded by the deadline, or cancelled by the user before they sent anything. */
+    val TO_CLOSED = setOf(OrderState.AWAITING_TRANSFER)
+
+    val TO_REFUNDING =
+        setOf(
+            OrderState.AWAITING_TRANSFER,
+            OrderState.FUNDED,
+            OrderState.PAYING_OUT,
+            OrderState.EXPIRED,
+            OrderState.CANCELLED,
+            OrderState.REVIEW,
+        )
+
+    val TO_REFUNDED = setOf(OrderState.REFUNDING)
+
+    val TO_REVIEW =
+        setOf(
+            OrderState.AWAITING_TRANSFER,
+            OrderState.FUNDED,
+            OrderState.PAYING_OUT,
+            OrderState.REFUNDING,
+            OrderState.EXPIRED,
+            OrderState.CANCELLED,
+        )
 }
 
 /** A price for one amount, good until [expiresAt]. [rate] is shillings per USDC; [feeMinor] is in the fiat currency. */
@@ -65,6 +127,9 @@ data class Quote(
     val feeBps: Int,
     val merchantShareBps: Int,
     val expiresAt: Instant,
+    /** Selling: the provider's payout fee the user pays on top of [feeMinor] (KES minor units), and its source. */
+    val providerFeeMinor: Long = 0,
+    val providerFeeSource: String? = null,
 )
 
 data class Order(
@@ -100,7 +165,33 @@ data class Order(
      * the next merchant was asked. A quote has one order per attempt.
      */
     val attempt: Int = 1,
+    /** Selling: the provider's payout fee quoted (the user pays it), where it came from, and the tariff when sent. */
+    val providerFeeMinor: Long = 0,
+    val providerFeeSource: String? = null,
+    val providerFeeActualMinor: Long? = null,
+    /** Selling: the user's W4 transfer that funds it, once the wallet confirmed it. */
+    val walletTransferId: UUID? = null,
+    /** Selling: the USDC the merchant's float received, as the custodian recorded it, and that record's hash. */
+    val fundedMinor: Long? = null,
+    val fundingTxHash: String? = null,
+    val fundedAt: Instant? = null,
+    /** Selling: the user's own wallet the USDC came from: where a refund goes. */
+    val refundAddress: String? = null,
+    /** Selling: payout attempts made, and the latest one's references and outcome. */
+    val payoutAttempts: Int = 0,
+    /** Selling: how many attempts the provider itself said failed (a second ends the sale in a refund). */
+    val payoutFailures: Int = 0,
+    val payoutReference: String? = null,
+    val payoutProviderReference: String? = null,
+    val payoutSecondaryReference: String? = null,
+    val payoutOutcome: String? = null,
+    val payoutSentAt: Instant? = null,
+    /** Selling, `FUNDED`: the next payout attempt not before then. */
+    val payoutRetryAt: Instant? = null,
 ) {
+    /** Selling: the shillings held at the merchant's provider for it, the payout and its fee. */
+    val payoutHoldMinor: Long get() = fiat.amountMinor + providerFeeMinor
+
     override fun toString(): String = "Order($orderId, $state)"
 }
 
@@ -111,6 +202,20 @@ data class OrderPatch(
     val custodyTxId: String? = null,
     val txHash: String? = null,
     val failureReason: String? = null,
+    val providerFeeActualMinor: Long? = null,
+    val fundedMinor: Long? = null,
+    val fundingTxHash: String? = null,
+    val fundedAt: Instant? = null,
+    val refundAddress: String? = null,
+    val payoutAttempts: Int? = null,
+    val payoutFailures: Int? = null,
+    val payoutReference: String? = null,
+    val payoutProviderReference: String? = null,
+    val payoutSecondaryReference: String? = null,
+    val payoutOutcome: String? = null,
+    val payoutSentAt: Instant? = null,
+    val payoutRetryAt: Instant? = null,
+    val mpesaReceipt: String? = null,
 )
 
 /** How marking an order paid ended. */
@@ -134,6 +239,14 @@ data class QuoteCommand(
     val assetMinor: Long?,
 )
 
+/** R7's input: the sale's quote and the M-Pesa number to pay, which must be the account's own verified number. */
+data class StartOffRampCommand(
+    val userId: UserId,
+    val network: Network,
+    val quoteId: QuoteId,
+    val phone: PhoneNumber,
+)
+
 data class StartOnRampCommand(
     val userId: UserId,
     val network: Network,
@@ -141,8 +254,13 @@ data class StartOnRampCommand(
     val phone: PhoneNumber,
 )
 
-/** An order as its user sees it. */
-data class OrderView(val order: Order, val merchantName: String)
+/**
+ * An order as its user sees it. [depositAddress] is where a sale's USDC goes (the merchant's float), shown while the
+ * user still has to send it.
+ */
+data class OrderView(val order: Order, val merchantName: String) {
+    val depositAddress: String? get() = order.destinationAddress.takeIf { order.direction == Direction.OFF_RAMP }
+}
 
 /** Where a keyset page continues: the row after ([at], [id]) in the list's order. */
 data class PageCursor(val at: Instant, val id: UUID)
@@ -161,7 +279,14 @@ data class RampStatus(
     val verification: KycView,
     /** Barred from the ramp, as a user or as the identity they verified with. */
     val blocked: Boolean,
+    /** Whether buying is open to the user on this network (selling has its own switch). */
+    val onRampOpen: Boolean = true,
+    /** Selling: whether it is open to the user, whether anyone could take a sale now, and its limits. */
+    val offRamp: OffRampStatus = OffRampStatus(open = false, merchantOnline = false, limits = limits),
 )
+
+/** R1's `offRamp`. */
+data class OffRampStatus(val open: Boolean, val merchantOnline: Boolean, val limits: RampLimits)
 
 /**
  * The gate's short answer, kept for apps built before [RampStatus.verification]: verified, not verified (whatever

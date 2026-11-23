@@ -6,14 +6,28 @@ import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
+import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyNotifications
+import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.SmsGateway
+import com.circaso.integrations.api.StablecoinCustody
+import com.circaso.integrations.impl.NetworkCustody
+import com.circaso.integrations.impl.dev.FakeCustody
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeSms
+import com.circaso.integrations.impl.dev.FakeTreasury
+import com.circaso.ramp.api.OpsPayoutFeeBand
 import com.circaso.ramp.api.OpsRoutingQuery
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampEngineAdmin
+import com.circaso.ramp.domain.ports.UsdcContracts
+import com.circaso.ramp.presentation.services.RampEventsService
+import com.circaso.shared.Asset
+import com.circaso.shared.EventSubscription
+import com.circaso.shared.Money
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -29,12 +43,15 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.delay
 import org.koin.core.Koin
 import org.koin.dsl.koinApplication
 import org.koin.ktor.ext.getKoin
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.utility.DockerImageName
+import java.math.BigInteger
 import java.security.KeyPairGenerator
+import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import kotlin.test.Test
@@ -396,6 +413,195 @@ class RampWiringTest {
             assertTrue("\"orders\":0" in earnings.bodyAsText(), earnings.bodyAsText())
             val statement = client.get("$BASE/statement") { header("X-Merchant-Session", session) }
             assertTrue("\"lines\":[]" in statement.bodyAsText(), statement.bodyAsText())
+        }
+    }
+
+    /**
+     * Selling end to end across both processes (decision 2026-11-23), with the `log` collections provider (a payout is
+     * reported paid after a few seconds and rings its doorbell) and the `fake` custody (so the user's wallet holds USDC
+     * and the test plays Circle): staff open selling with a fallback payout fee (the log provider publishes none), a
+     * merchant connects a payout account and goes online, a user quotes a sale, orders it, pays it with W4 naming the
+     * order, Circle confirms the transfer and records the deposit on the merchant's float, the ramp confirms it itself,
+     * pays out, and the provider's lookup completes the sale.
+     */
+    @Test
+    fun `a user sells USDC from quote to COMPLETED, the ramp confirming the deposit and the payout itself`() {
+        val fake = env(mapOf("INTEGRATIONS_CUSTODY_PROVIDER" to "fake"))
+        var session = ""
+        var merchantId = ""
+
+        // the app's process: staff open selling; the merchant signs in and applies
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(fake), EnvSecrets(fake))
+                koin = getKoin()
+            }
+            client.get("/health/live")
+            val admin = koin!!.get<RampAdmin>()
+            val seeded = admin.settings(Network.TESTNET)
+            val selling =
+                seeded.copy(
+                    state = "OFF",
+                    kycRequired = false,
+                    offRampState = "ON",
+                    payoutFeeBands = listOf(OpsPayoutFeeBand(10_000_000, 500)),
+                )
+            assertIs<Resource.Success<*>>(admin.updateSettings(selling, UUID.randomUUID()))
+
+            val asked = client.post("$BASE/auth/code") { json("""{"email":"$email"}""") }
+            assertEquals(HttpStatusCode.OK, asked.status, asked.bodyAsText())
+            val code = ((koin!!.get<EmailGateway>() as FakeEmail).sent.last().email as Email.MerchantSignInCode).code
+            val verified = client.post("$BASE/auth/verify") { json("""{"email":"$email","code":"$code"}""") }
+            session = field(verified.bodyAsText(), "sessionToken")
+            merchantId = field(verified.bodyAsText(), "merchantId")
+            client.put("$BASE/profile") { json("""{"displayName":"Crynce","contactPhone":"+254712000111"}""", session) }
+        }
+
+        // the ops process: staff approve, and its job makes the float wallet
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoOpsServe(EnvConfig(fake), EnvSecrets(fake))
+                koin = getKoin()
+            }
+            client.get("/health/live")
+            val admin = koin!!.get<RampAdmin>()
+            val listed = admin.merchants(null, 200).first { it.merchantId.toString() == merchantId }
+            assertIs<Resource.Success<*>>(admin.approve(listed.merchantId, UUID.randomUUID()))
+            koin!!.getAll<OpsJob>().first { it.name == "ramp.release" }.job()
+        }
+
+        // the app's process again: the merchant sells; a user sells them USDC
+        testApplication {
+            var koin: Koin? = null
+            application {
+                circasoServe(AppConfig(), EnvConfig(fake), EnvSecrets(fake))
+                koin = getKoin()
+            }
+            client.get("/health/live")
+            val float = "dev-$merchantId-BASE-SEPOLIA"
+            val account =
+                """{"username":"api-user","password":"api-pass","channelId":"911","pin":"482913",""" +
+                    """"accountId":"4242"}"""
+            assertEquals(HttpStatusCode.OK, client.put("$BASE/payments") { json(account, session) }.status)
+            val offers = client.put("$BASE/offers") { json("""{"onRamp":false,"offRamp":true}""", session) }
+            assertEquals(HttpStatusCode.OK, offers.status, offers.bodyAsText())
+            val online = client.post("$BASE/session") { json("""{"pin":"482913","minutes":60}""", session) }
+            assertEquals(HttpStatusCode.OK, online.status, online.bodyAsText())
+            val card = client.get(BASE) { header("X-Merchant-Session", session) }.bodyAsText()
+            assertTrue("\"offRamp\":{\"offered\":true,\"accountId\":\"4242\"" in card, card)
+
+            val custody = (koin!!.get<StablecoinCustody>() as NetworkCustody).on(Network.TESTNET) as FakeCustody
+            val buyer = signUp(koin!!.get<SmsGateway>() as FakeSms)
+            val before = custody.users.toSet()
+            assertEquals(HttpStatusCode.OK, client.post("/v1/wallet") { asBuyer(buyer, "{}") }.status)
+            val userWallet = custody.completeSetup((custody.users - before).single())
+            custody.assetBalances[userWallet.walletId] = mapOf("USDC" to BigInteger.valueOf(50_000_000))
+            assertTrue("\"status\":\"ACTIVE\"" in client.get("/v1/wallet") { asBuyer(buyer) }.bodyAsText())
+
+            val status = client.get("/v1/ramp") { asBuyer(buyer) }.bodyAsText()
+            assertTrue("\"offRamp\":{\"open\":true,\"merchantOnline\":true,\"canSell\":true" in status, status)
+            val quoteBody = """{"direction":"OFF_RAMP","blockchain":"BASE-SEPOLIA","crypto":{"amount":"5"}}"""
+            val quote = client.post("/v1/ramp/quotes") { asBuyer(buyer, quoteBody) }
+            assertEquals(HttpStatusCode.OK, quote.status, quote.bodyAsText())
+            assertTrue("\"providerFee\":{\"unit\":\"KES\",\"amountMinor\":\"500\"" in quote.bodyAsText())
+            val order = """{"quoteId":"${field(quote.bodyAsText(), "quoteId")}","phone":"${buyer.phone}"}"""
+            val sold = client.post("/v1/ramp/offramp/orders") { asBuyer(buyer, order) }
+            assertEquals(HttpStatusCode.OK, sold.status, sold.bodyAsText())
+            assertTrue("\"state\":\"AWAITING_TRANSFER\"" in sold.bodyAsText(), sold.bodyAsText())
+            val orderId = field(sold.bodyAsText(), "orderId")
+            val deposit = field(sold.bodyAsText(), "address")
+            assertEquals(FakeTreasury.addressOf(float), deposit, "the merchant's float on the sale's chain")
+
+            // W4, as the app does it: to the float address, naming the order, the order id as the key
+            val w4 =
+                """{"blockchain":"BASE-SEPOLIA","to":{"address":"$deposit"},""" +
+                    """"amount":{"asset":"USDC","amountMinor":"5000000"},"rampOrderId":"$orderId"}"""
+            val prepared =
+                client.post("/v1/wallet/transfers") {
+                    asBuyer(buyer)
+                    header("Idempotency-Key", orderId)
+                    contentType(ContentType.Application.Json)
+                    setBody(w4)
+                }
+            assertEquals(HttpStatusCode.OK, prepared.status, prepared.bodyAsText())
+            val transferId = field(prepared.bodyAsText(), "transferId")
+            val request = custody.transfers.single { it.second.refId == transferId }.second
+
+            // Circle: the merchant's float recorded the deposit, and the user's transfer is confirmed
+            val usdc = koin!!.get<UsdcContracts>().contractOn(Network.TESTNET, "BASE-SEPOLIA")!!
+            koin!!.get<FakeTreasury>().deposits["0xsale"] =
+                listOf(
+                    CustodyTransaction(
+                        circleTxId = "in-sale",
+                        circleUserId = "",
+                        walletId = float,
+                        blockchain = "BASE-SEPOLIA",
+                        direction = CustodyDirection.IN,
+                        state = CustodyTransactionState.CONFIRMED,
+                        amount = Money(5_000_000, Asset.USDC),
+                        sourceAddress = userWallet.address,
+                        destinationAddress = deposit,
+                        refId = "",
+                        txHash = "0xsale",
+                        failureReason = "",
+                        updatedAt = Instant.now(),
+                        developerWallet = true,
+                        tokenAddress = usdc,
+                    ),
+                )
+            val confirmed =
+                CustodyTransaction(
+                    circleTxId = "out-sale",
+                    circleUserId = "",
+                    walletId = request.walletId,
+                    blockchain = "BASE-SEPOLIA",
+                    direction = CustodyDirection.OUT,
+                    state = CustodyTransactionState.CONFIRMED,
+                    amount = request.amount,
+                    sourceAddress = userWallet.address,
+                    destinationAddress = deposit,
+                    refId = transferId,
+                    txHash = "0xsale",
+                    failureReason = "",
+                    updatedAt = Instant.now(),
+                )
+            assertIs<Resource.Success<*>>(koin!!.get<CustodyNotifications>().onTransaction(confirmed))
+            // The wallet's event reaches the ramp's consumer group; the same step run here is idempotent.
+            assertTrue(koin!!.getAll<EventSubscription>().any { it.group == "ramp" && it.stream == "events:wallet" })
+            koin!!.get<RampEventsService>().saleTransfer(UUID.fromString(orderId), UUID.fromString(transferId))
+
+            // The log provider reports the payout paid after a few seconds and rings the doorbell: only its lookup
+            // completes the sale.
+            var state = ""
+            var body = ""
+            repeat(40) {
+                if (state != "COMPLETED") {
+                    delay(500)
+                    body = client.get("/v1/ramp/orders/$orderId") { asBuyer(buyer) }.bodyAsText()
+                    state = field(body, "state")
+                }
+            }
+            assertEquals("COMPLETED", state, body)
+            assertTrue("\"receipt\":\"QP" in body, body)
+            val routed =
+                (
+                    koin!!.get<RampEngineAdmin>().decisions(
+                        OpsRoutingQuery(Network.TESTNET),
+                        null,
+                        10,
+                    ) as Resource.Success
+                ).data
+                    .first { it.direction == "OFF_RAMP" }
+            assertEquals("ROUTED" to listOf("held"), routed.outcome to routed.steps.map { it.result })
+            val earnings = client.get("$BASE/earnings") { header("X-Merchant-Session", session) }.bodyAsText()
+            assertTrue("\"orders\":1" in earnings, earnings)
+
+            // The database outlives this test: selling goes back off.
+            val admin = koin!!.get<RampAdmin>()
+            val off = admin.settings(Network.TESTNET).copy(offRampState = "OFF")
+            assertIs<Resource.Success<*>>(admin.updateSettings(off, UUID.randomUUID()))
         }
     }
 }

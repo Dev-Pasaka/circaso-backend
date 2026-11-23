@@ -1,5 +1,9 @@
 package com.circaso.integrations.impl.dev
 
+import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.integrations.api.CustodyTransactionState
+import com.circaso.integrations.api.DepositQuery
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.TreasuryAccess
@@ -18,6 +22,7 @@ import com.circaso.shared.Resource
 import org.slf4j.LoggerFactory
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -44,6 +49,9 @@ class FakeTreasury(
     val walletRequests: MutableList<TreasuryWalletRequest> = CopyOnWriteArrayList()
     private val byKey = ConcurrentHashMap<UUID, String>()
     private val accesses = ConcurrentHashMap<Network, TreasuryAccess>()
+
+    /** What the provider recorded arriving in each chain transaction, by its hash; set by a test. */
+    val deposits = ConcurrentHashMap<String, List<CustodyTransaction>>()
 
     @Volatile
     var failure: IntegrationError? = null
@@ -131,6 +139,12 @@ class FakeTreasury(
     override suspend fun balance(network: Network, walletId: String): Resource<Money> {
         failure?.let { return Resource.error(it) }
         return Resource.success(Money(held(walletId), Asset.USDC))
+    }
+
+    override suspend fun deposits(network: Network, query: DepositQuery): Resource<List<CustodyTransaction>> {
+        failure?.let { return Resource.error(it) }
+        if (endless) return Resource.success(listOf(expected(query)))
+        return Resource.success(deposits[query.txHash].orEmpty().filter { it.walletId == query.walletId })
     }
 
     override suspend fun estimateTransfer(network: Network, transfer: TreasuryTransfer): Resource<BigDecimal> =
@@ -253,8 +267,39 @@ class LogTreasury(
         }
 }
 
-/** Local runs (`log`): every merchant float wallet always holds 1 000 USDC. Nothing is read from anywhere. */
+/**
+ * Local runs (`log`): every merchant float wallet always holds 1 000 USDC, and every deposit a caller looks for is
+ * reported as arrived and confirmed, exactly as expected (no coin moves on a developer's machine, so there is no
+ * record to read). Nothing is read from anywhere.
+ */
 class LogMerchantFloat : MerchantFloat {
+    private val log = LoggerFactory.getLogger(LogMerchantFloat::class.java)
+
     override suspend fun balance(network: Network, walletId: String): Resource<Money> =
         Resource.success(Money(FakeTreasury.ENDLESS_FLOAT, Asset.USDC))
+
+    override suspend fun deposits(network: Network, query: DepositQuery): Resource<List<CustodyTransaction>> {
+        log.info("merchant float (log): deposit on {} reported as arrived, as expected", query.blockchain)
+        return Resource.success(listOf(expected(query)))
+    }
 }
+
+/** The deposit [query] looks for, as a confirmed incoming USDC transfer: what the local stand-ins answer. */
+internal fun expected(query: DepositQuery): CustodyTransaction =
+    CustodyTransaction(
+        circleTxId = "dev-deposit-${query.txHash}",
+        circleUserId = "",
+        walletId = query.walletId,
+        blockchain = query.blockchain,
+        direction = CustodyDirection.IN,
+        state = CustodyTransactionState.CONFIRMED,
+        amount = Money(query.expectedAmountMinor, Asset.USDC),
+        sourceAddress = query.expectedFrom,
+        destinationAddress = "",
+        refId = "",
+        txHash = query.txHash,
+        failureReason = "",
+        updatedAt = Instant.EPOCH,
+        developerWallet = true,
+        tokenAddress = query.expectedTokenAddress,
+    )

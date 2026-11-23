@@ -7,7 +7,11 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AmountDto(val amountMinor: String? = null, val amount: String? = null)
 
-/** R2 request. Give `fiat` (what you pay, whole shillings) or `crypto` (what you want to receive), not both. */
+/**
+ * R2 request. Buying (`ON_RAMP`): give `fiat` (what you pay, whole shillings) or `crypto` (the USDC you want).
+ * Selling (`OFF_RAMP`, 2026-11-23): give `crypto` (the USDC you send) or `fiat` (the shillings you want to receive,
+ * whole shillings). Not both.
+ */
 @Serializable
 data class QuoteRequest(
     val direction: String = "ON_RAMP",
@@ -26,8 +30,36 @@ data class QuoteResponse(
     val receive: RampAmount,
     /** Shillings per USDC, a decimal string. */
     val rate: String,
-    /** Inside `pay`: what is paid, less this, is what buys the USDC. */
+    /**
+     * Circaso's fee. Buying: inside `pay` (what is paid, less this, buys the USDC). Selling: taken from what the USDC
+     * is worth at `rate`, before `receive`.
+     */
     val fee: RampAmount,
+    val expiresAt: String,
+    /**
+     * Selling only: the payout provider's charge for sending `receive` to M-Pesa, which you pay on top of `fee` (the
+     * merchant pays the provider). Null when buying.
+     */
+    val providerFee: RampAmount? = null,
+    /** Selling only: `pay` at `rate`, before the two fees: `worth − fee − providerFee` is `receive`, rounded down. */
+    val worth: RampAmount? = null,
+)
+
+/** R7 request: the sale's quote and the M-Pesa number to pay, which must be the account's own verified number. */
+@Serializable
+data class StartOffRampRequest(val quoteId: String, val phone: String)
+
+/**
+ * A sale's transfer (R7, R4 while `AWAITING_TRANSFER`): pay exactly `amount` of `asset` on `blockchain` to `address`
+ * with W4, naming the order as `rampOrderId`, before `expiresAt`.
+ */
+@Serializable
+data class DepositDto(
+    val address: String,
+    val blockchain: String,
+    val asset: String,
+    val amountMinor: String,
+    val amount: String,
     val expiresAt: String,
 )
 
@@ -53,6 +85,12 @@ data class OrderResponse(
     val expiresAt: String,
     val createdAt: String,
     val updatedAt: String,
+    /** Selling: the payout provider's charge you pay on top of `fee`. Null when buying. */
+    val providerFee: RampAmount? = null,
+    /** Selling, while `AWAITING_TRANSFER`: where and what to send. Null otherwise. */
+    val deposit: DepositDto? = null,
+    /** Selling: the M-Pesa receipt of your payout, once `COMPLETED`. */
+    val receipt: String? = null,
 )
 
 @Serializable
@@ -137,4 +175,19 @@ data class RampStatusResponse(
     val feePercent: String,
     val verification: VerificationDto,
     val blocked: Boolean = false,
+    /**
+     * Selling (2026-11-23), on its own switch: `open` (selling is open to you on this network; hide it when false),
+     * `merchantOnline` (someone could take a sale now), `canSell` (every gate at once: open, verified or not required,
+     * not barred, the account active, someone online, no open order of yours) and selling's own `limits` (on what you
+     * receive). `offRampAvailable` above is `canSell`, for apps built before this.
+     */
+    val offRamp: OffRampStatusDto? = null,
+)
+
+@Serializable
+data class OffRampStatusDto(
+    val open: Boolean,
+    val merchantOnline: Boolean,
+    val canSell: Boolean,
+    val limits: LimitsDto,
 )

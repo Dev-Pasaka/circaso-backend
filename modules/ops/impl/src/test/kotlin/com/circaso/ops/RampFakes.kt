@@ -19,6 +19,7 @@ import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPaymentsIssue
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
@@ -164,6 +165,27 @@ class FakeRampAdmin : RampAdmin {
 
     override suspend fun merchants(before: MerchantId?, limit: Int): List<OpsMerchant> =
         merchants.values.sortedByDescending { it.merchantId.value }.take(limit)
+
+    /** What staff asked of each order (RO4): the outcome and the receipt. */
+    val resolutions = CopyOnWriteArrayList<Triple<RampOrderId, String, String?>>()
+
+    /** An order in review that RO4 resolves: it answers [resolvedState] (and `queued` for a re-check). */
+    override suspend fun resolve(
+        orderId: RampOrderId,
+        resolution: String,
+        receipt: String?,
+        by: UUID,
+    ): Resource<OpsRampResolved> {
+        refused()?.let { return it }
+        val order =
+            review.firstOrNull { it.orderId == orderId }
+                ?: return Resource.Error(RampRefusal("ramp.order_not_found", ErrorKind.NOT_FOUND))
+        resolutions += Triple(orderId, resolution, receipt)
+        val state = if (resolution == "RECHECK") order.state else resolvedState
+        return Resource.success(OpsRampResolved(order.copy(state = state), "queued".takeIf { resolution == "RECHECK" }))
+    }
+
+    var resolvedState = "COMPLETED"
 
     private fun decide(
         merchantId: MerchantId,

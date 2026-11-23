@@ -184,4 +184,32 @@ const val DEV_TREASURY = "treasury.dev"
 interface MerchantFloat {
     /** The USDC in [walletId]; zero when it holds none. `Unavailable` when the provider can't say. */
     suspend fun balance(network: Network, walletId: String): Resource<Money>
+
+    /**
+     * What the provider itself recorded arriving in [DepositQuery.walletId] in the one chain transaction
+     * [DepositQuery.txHash] (the off-ramp, decision 2026-11-23): each incoming transfer with its coin, amount, source
+     * and state. This is how the ramp confirms that a user's USDC reached a merchant's float, from the provider's
+     * record of the **receiving** wallet, without the wallet module's webhook handling. Read with the API key alone.
+     * Empty when the provider has no such record yet; `Unavailable` when it can't be asked. A coin the provider can't
+     * describe is left out.
+     */
+    suspend fun deposits(network: Network, query: DepositQuery): Resource<List<CustodyTransaction>> =
+        Resource.error(IntegrationError.NotImplemented("MerchantFloat.deposits", "this provider"))
+}
+
+/**
+ * Which deposits to read ([MerchantFloat.deposits]): the merchant's wallet, the chain and the transaction hash. The
+ * `expected…` fields are what the caller will check the answer against; a real provider ignores them and answers
+ * what it recorded. Only the local stand-in, which keeps no ledger at all (no coin moves on a developer's machine),
+ * answers with them, so an off-ramp completes locally. The string form hides the amount and the addresses.
+ */
+data class DepositQuery(
+    val walletId: String,
+    val blockchain: String,
+    val txHash: String,
+    val expectedFrom: String,
+    val expectedTokenAddress: String,
+    val expectedAmountMinor: BigInteger,
+) {
+    override fun toString(): String = "DepositQuery($blockchain, ***)"
 }

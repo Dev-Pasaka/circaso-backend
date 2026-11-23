@@ -14,6 +14,7 @@ import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.PaymentsIssue
+import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
@@ -119,6 +120,7 @@ class StorePaymentAccount(
             vault.seal(merchantId, current.collectionsProvider, command.credentials, command.pin)
                 ?: return Resource.error(RampError.VaultUnavailable)
         credentials.save(merchantId, sealed, clock.instant())
+        command.payoutAccountId?.let { merchants.setPayoutAccount(merchantId, it) }
         sessions.replace(merchantId, UnlockedKeys(current.collectionsProvider, command.credentials))
         val key = merchant.callbackKey ?: newKey(merchant)
         return Resource.success(CallbackView(Callbacks.url(current.callbackBaseUrl, key)))
@@ -128,6 +130,32 @@ class StorePaymentAccount(
         Callbacks.key(merchant.displayName, tokens.callbackToken()).also {
             merchants.setCallbackKey(merchant.merchantId, it)
         }
+}
+
+/**
+ * The merchant's account id at the payout provider (decision 2026-11-23: FinoQ's withdraw names whose balance pays by
+ * it; not a secret, so a plain column, set on its own without the PIN). Digits only (`ramp.payout_account_invalid`).
+ * Setting it clears a payout refusal they were marked for, so the engine tries them again.
+ */
+class SetPayoutAccount(
+    private val merchants: MerchantRepository,
+    private val views: MerchantViews,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(
+        merchantId: MerchantId,
+        network: Network,
+        accountId: String,
+    ): Resource<MerchantOverview> {
+        val id = accountId.trim()
+        if (!PayoutAccount.PATTERN.matches(id)) return Resource.error(RampError.PayoutAccountInvalid)
+        val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
+        if (merchant.state == MerchantState.NEW) return Resource.error(RampError.MerchantSetupIncomplete)
+        merchants.setPayoutAccount(merchantId, id)
+        if (merchant.payoutIssue != null) merchants.setPayoutIssue(merchantId, null, clock.instant())
+        val saved = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
+        return Resource.success(views.overview(saved, network))
+    }
 }
 
 /** RM14: a new callback address for the merchant. The old one stops working at once. */
@@ -195,6 +223,8 @@ class GoOnline(
         val until = now.plus(Duration.ofMinutes(minutes.toLong()))
         sessions.unlock(merchantId, UnlockedKeys(sealed.provider, keys), until)
         if (merchant.paymentsIssue != null) merchants.setPaymentsIssue(merchantId, null, now)
+        // Going online is how a merchant says they put their provider right: a payout refusal is tried again too.
+        if (merchant.payoutIssue != null) merchants.setPayoutIssue(merchantId, null, now)
         merchants.setOnlineUntil(merchantId, until)
         return Resource.success(OnlineView(online = true, until = until))
     }
@@ -279,7 +309,7 @@ class EndSessions(
         var handled = merchants.endPassedWindows(now)
         sessions.held().forEach { merchantId ->
             val online = merchants.find(merchantId)?.isTradingUntil(now) == true
-            if (!online && !orders.hasAwaitingPayment(merchantId)) {
+            if (!online && !orders.needsKeys(merchantId)) {
                 sessions.end(merchantId)
                 handled++
             }

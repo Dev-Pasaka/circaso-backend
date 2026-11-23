@@ -6,22 +6,28 @@ import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycStanding
 import com.circaso.ramp.domain.models.KycView
+import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampStatus
+import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.support.Amounts
+import com.circaso.ramp.domain.support.SalePricing
+import com.circaso.ramp.presentation.dto.DepositDto
 import com.circaso.ramp.presentation.dto.KycResponse
 import com.circaso.ramp.presentation.dto.KycSessionDto
 import com.circaso.ramp.presentation.dto.LimitsDto
+import com.circaso.ramp.presentation.dto.OffRampStatusDto
 import com.circaso.ramp.presentation.dto.OrderResponse
 import com.circaso.ramp.presentation.dto.OrdersResponse
 import com.circaso.ramp.presentation.dto.QuoteRequest
 import com.circaso.ramp.presentation.dto.QuoteResponse
 import com.circaso.ramp.presentation.dto.RampStatusResponse
+import com.circaso.ramp.presentation.dto.StartOffRampRequest
 import com.circaso.ramp.presentation.dto.StartOnRampRequest
 import com.circaso.ramp.presentation.dto.VerificationDto
 import com.circaso.shared.FiatAmount
@@ -62,35 +68,50 @@ fun QuoteRequest.toCommand(userId: UserId, network: Network): Resource<QuoteComm
     return Resource.success(QuoteCommand(userId, network, side, blockchain.trim().uppercase(), fiatMinor, assetMinor))
 }
 
+fun StartOffRampRequest.toCommand(userId: UserId, network: Network): Resource<StartOffRampCommand> {
+    val quote = QuoteId.parse(quoteId) ?: return malformed("quoteId", "not an id")
+    val number = PhoneNumber.parse(phone) ?: return malformed("phone", "not an E.164 number")
+    return Resource.success(StartOffRampCommand(userId, network, quote, number))
+}
+
 fun StartOnRampRequest.toCommand(userId: UserId, network: Network): Resource<StartOnRampCommand> {
     val quote = QuoteId.parse(quoteId) ?: return malformed("quoteId", "not an id")
     val number = PhoneNumber.parse(phone) ?: return malformed("phone", "not an E.164 number")
     return Resource.success(StartOnRampCommand(userId, network, quote, number))
 }
 
-fun Quote.toResponse() =
-    QuoteResponse(
+fun Quote.toResponse(): QuoteResponse {
+    val selling = direction == Direction.OFF_RAMP
+    return QuoteResponse(
         quoteId = quoteId.toString(),
         direction = direction.name,
         network = network.name,
         blockchain = blockchain,
-        pay = Amounts.fiat(fiat),
-        receive = Amounts.usdc(assetMinor),
+        pay = if (selling) Amounts.usdc(assetMinor) else Amounts.fiat(fiat),
+        receive = if (selling) Amounts.fiat(fiat) else Amounts.usdc(assetMinor),
         rate = rate.stripTrailingZeros().toPlainString(),
         fee = Amounts.fiat(feeMinor),
         expiresAt = expiresAt.toString(),
+        providerFee = if (selling) Amounts.fiat(providerFeeMinor) else null,
+        worth = if (selling) Amounts.fiat(SalePricing.grossOf(assetMinor, rate)) else null,
     )
+}
 
-/** An order for its user: the payer number masked, the merchant by display name only. */
-fun OrderView.toResponse() =
-    OrderResponse(
+/**
+ * An order for its user: the phone masked, the merchant by display name only. A sale is paid in USDC and received in
+ * shillings; while it waits for the user's transfer it says where to send it.
+ */
+fun OrderView.toResponse(): OrderResponse {
+    val selling = order.direction == Direction.OFF_RAMP
+    val awaiting = order.state == OrderState.AWAITING_TRANSFER
+    return OrderResponse(
         orderId = order.orderId.toString(),
         direction = order.direction.name,
         state = order.state.name,
         network = order.network.name,
         blockchain = order.blockchain,
-        pay = Amounts.fiat(order.fiat),
-        receive = Amounts.usdc(order.assetMinor),
+        pay = if (selling) Amounts.usdc(order.assetMinor) else Amounts.fiat(order.fiat),
+        receive = if (selling) Amounts.fiat(order.fiat) else Amounts.usdc(order.assetMinor),
         rate = order.rate.stripTrailingZeros().toPlainString(),
         fee = Amounts.fiat(order.feeMinor),
         maskedPhone = order.payerPhone.masked(),
@@ -100,7 +121,23 @@ fun OrderView.toResponse() =
         expiresAt = order.paymentDeadline.toString(),
         createdAt = order.createdAt.toString(),
         updatedAt = order.updatedAt.toString(),
+        providerFee = if (selling) Amounts.fiat(order.providerFeeMinor) else null,
+        deposit = depositAddress?.takeIf { awaiting }?.let { deposit(it) },
+        receipt = order.mpesaReceipt.takeIf { selling && order.state == OrderState.COMPLETED },
     )
+}
+
+private fun OrderView.deposit(address: String): DepositDto {
+    val amount = Amounts.usdc(order.assetMinor)
+    return DepositDto(
+        address = address,
+        blockchain = order.blockchain,
+        asset = amount.unit,
+        amountMinor = amount.amountMinor,
+        amount = amount.amount,
+        expiresAt = order.paymentDeadline.toString(),
+    )
+}
 
 /** A page of orders; `next` is the cursor for the page after it, null on the last one. */
 fun List<OrderView>.toResponse(limit: Int) =
@@ -140,7 +177,6 @@ fun RampStatus.toResponse() =
         accountActive = accountActive,
         blockchains = blockchains,
         merchantOnline = merchantOnline,
-        offRampAvailable = false,
         openOrderId = openOrderId?.toString(),
         limits =
             LimitsDto(
@@ -152,4 +188,22 @@ fun RampStatus.toResponse() =
         feePercent = Amounts.percent(feeBps),
         verification = verification.toDto(),
         blocked = blocked,
+        offRampAvailable = canSell(),
+        offRamp =
+            OffRampStatusDto(
+                open = offRamp.open,
+                merchantOnline = offRamp.merchantOnline,
+                canSell = canSell(),
+                limits =
+                    LimitsDto(
+                        currency = offRamp.limits.currency,
+                        minOrder = Amounts.fiat(offRamp.limits.minOrderMinor),
+                        maxOrder = Amounts.fiat(offRamp.limits.maxOrderMinor),
+                        daily = Amounts.fiat(offRamp.limits.dailyMinor),
+                    ),
+            ),
     )
+
+private fun RampStatus.canSell(): Boolean =
+    offRamp.open && offRamp.merchantOnline && kyc != KycStanding.NONE && !blocked && accountActive &&
+        openOrderId == null

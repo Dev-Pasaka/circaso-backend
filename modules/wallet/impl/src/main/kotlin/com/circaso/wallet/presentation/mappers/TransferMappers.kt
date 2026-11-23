@@ -76,9 +76,26 @@ fun PrepareTransferRequest.toCommand(userId: UserId, requestKey: String): Resour
         quoteId?.let {
             runCatching { UUID.fromString(it.trim()) }.getOrNull() ?: return malformed("quoteId", "is not an id")
         }
+    val rampOrder =
+        rampOrderId?.let {
+            runCatching { UUID.fromString(it.trim()) }.getOrNull() ?: return malformed("rampOrderId", "is not an id")
+        }
     val key = circleKey(userId, "wallet.transfer", requestKey)
     return Resource.success(
-        TransferCommand(userId, chain, payee, money, chat, proposalId = null, key, wallet, payout, quote, spacePayment),
+        TransferCommand(
+            userId,
+            chain,
+            payee,
+            money,
+            chat,
+            proposalId = null,
+            key,
+            wallet,
+            payout,
+            quote,
+            spacePayment,
+            rampOrder,
+        ),
     )
 }
 

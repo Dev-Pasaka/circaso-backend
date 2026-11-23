@@ -25,6 +25,7 @@ class LookupTransfer(private val transfers: TransferRepository) {
                 txHash = it.txHash,
                 createdAt = it.createdAt,
                 updatedAt = it.updatedAt,
+                rampOrderId = it.rampOrderId,
             )
         }
 }

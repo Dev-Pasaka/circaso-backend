@@ -93,6 +93,73 @@ data class MerchantResponse(
     val merchantType: String = "INDIVIDUAL",
     /** Which directions you take orders in: your own switches (RM17). */
     val offers: MerchantOffersDto = MerchantOffersDto(onRamp = true, offRamp = false),
+    /** Selling (2026-11-23): your payout account and your balances at the provider. */
+    val offRamp: MerchantOffRampDto? = null,
+)
+
+/** One balance at the provider, and the call it was read from (for support: which of the provider's wallets). */
+@Serializable
+data class KesBalanceDto(val amount: RampAmount, val source: String)
+
+/**
+ * RM2's `offRamp` (selling, 2026-11-23). `accountId` is your account's number on the FinoQ dashboard: payouts need it
+ * (set it with `PUT /ramp/merchant/payments/account`). `payoutBalance` is what payouts spend and `feeBalance` what the
+ * provider's fees are taken from; **null means unknown** (we couldn't read it), never zero: show "unknown", not "0".
+ * They are read live while you are online (`balancesLive` true; at most every 30 seconds), otherwise they are the last
+ * reading, from `balancesReadAt`. `held` is what your open sales hold of the payout balance (their payouts and fees).
+ * `flags`: `payout_account_missing`, `payout_balance_low` (below the network's line: top up), `service_balance_low`
+ * (the fee balance is below the floor), `provider_balance` (the provider refused a prompt for your fee balance),
+ * `payout_balance` (the provider refused a payout for your payout balance) and `payout_refused` (it refused a payout
+ * outright: check your account); with either of the last two no sale is routed to you until you go online again.
+ */
+@Serializable
+data class MerchantOffRampDto(
+    val offered: Boolean,
+    val accountId: String?,
+    val payoutBalance: KesBalanceDto?,
+    val feeBalance: KesBalanceDto?,
+    val balancesLive: Boolean,
+    val balancesReadAt: String?,
+    val held: RampAmount,
+    val payoutIssue: MerchantPaymentsIssueDto?,
+    val flags: List<String>,
+)
+
+/** `PUT /ramp/merchant/payments/account` request: the account's number on the FinoQ dashboard, digits only. */
+@Serializable
+data class PayoutAccountRequest(val accountId: String = "")
+
+/** `POST /ramp/merchant/test-payout` request: KES cents as a string, 1000 to 10000 (KES 10 to 100), whole shillings. */
+@Serializable
+data class TestPayoutRequest(val amountMinor: String = "")
+
+/**
+ * A test payout to your own contact phone (2026-11-23). `state`: `SENDING` (being sent: if it never answered, it may
+ * have gone out), `ACCEPTED` (the provider took it; not paid yet), `UNKNOWN` (no clear answer: it may have gone out,
+ * and it is looked up, never sent again), `PAID`, `FAILED`, `NOT_SENT` (refused, or the provider couldn't be reached:
+ * nothing left your account) and `NOT_FOUND` (the provider says it knows no such payout: check your M-Pesa
+ * statement). `outcome` says what the provider answered in our words (`accepted`, `rejected:INVALID_REQUEST`,
+ * `insufficient_balance`, `unavailable`, `unknown`, `failed:<its word>`, `looked_up:PENDING`, `paid`).
+ * `providerFee` is the provider's published charge for the amount; `charged` is what your payout balance actually
+ * fell by beyond the amount (before − after − amount), when both readings exist. Read it again (`GET`) until it
+ * leaves `SENDING`, `ACCEPTED` and `UNKNOWN`.
+ */
+@Serializable
+data class TestPayoutResponse(
+    val testId: String,
+    val state: String,
+    val amount: RampAmount,
+    val maskedPhone: String,
+    val outcome: String?,
+    val providerReference: String?,
+    val receipt: String?,
+    val paid: RampAmount?,
+    val providerFee: KesBalanceDto?,
+    val balanceBefore: KesBalanceDto?,
+    val balanceAfter: KesBalanceDto?,
+    val charged: RampAmount?,
+    val createdAt: String,
+    val updatedAt: String,
 )
 
 /** `onRamp`: people buying USDC from you with M-Pesa. `offRamp`: people selling USDC to you for M-Pesa. */
@@ -165,6 +232,8 @@ data class PaymentsRequest(
     val password: String = "",
     val channelId: String = "",
     val pin: String = "",
+    /** Selling (2026-11-23): your account's number on the FinoQ dashboard, digits only; left out stays as it is. */
+    val accountId: String? = null,
 ) {
     override fun toString(): String = "PaymentsRequest(***)"
 }

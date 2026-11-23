@@ -55,6 +55,7 @@ object TransfersTable : Table("wallet.transfers") {
     val fromSpaceId = javaUUID("from_space_id").nullable()
     val toSpaceId = javaUUID("to_space_id").nullable()
     val spacePaymentId = javaUUID("space_payment_id").nullable()
+    val rampOrderId = javaUUID("ramp_order_id").nullable()
     override val primaryKey = PrimaryKey(transferId)
 
     init {

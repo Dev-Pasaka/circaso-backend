@@ -53,15 +53,27 @@ data class Merchant(
     /** The merchant's own switches on the portal: which directions they take orders in. */
     val offersOnramp: Boolean = true,
     val offersOfframp: Boolean = false,
+    /** The merchant's account at the payout provider (FinoQ's account id, digits): payouts need it. Not a secret. */
+    val payoutAccountId: String? = null,
+    /** Set when the provider refused a payout for something only the merchant can fix; cleared when one goes out. */
+    val payoutIssue: PayoutIssue? = null,
+    val payoutIssueAt: Instant? = null,
 ) {
     /** Approved, and inside a trading window that lasts past [until]. */
     fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && onlineUntil?.isAfter(until) == true
 
-    /** Whether the merchant takes orders in [direction]. */
+    /** Whether the merchant takes orders in [direction]: a sale also needs their payout account. */
     fun offers(direction: Direction): Boolean =
         when (direction) {
             Direction.ON_RAMP -> offersOnramp
-            Direction.OFF_RAMP -> offersOfframp
+            Direction.OFF_RAMP -> offersOfframp && payoutAccountId != null
+        }
+
+    /** Whether something at the provider stands in the way of an order in [direction] until the merchant fixes it. */
+    fun hasIssue(direction: Direction): Boolean =
+        when (direction) {
+            Direction.ON_RAMP -> paymentsIssue != null
+            Direction.OFF_RAMP -> paymentsIssue != null || payoutIssue != null
         }
 
     /** The most one order may be for this merchant: their own limit, else their type's under [settings]. */
@@ -169,6 +181,8 @@ data class MerchantOverview(
     val floatFloorMinor: Long,
     /** The merchant's identity verification as [network]'s settings see it. */
     val kyc: KycView = KycView(KycState.NONE, required = false, canStart = true, reason = null, retryAt = null),
+    /** Selling: the payout account, the balances at the provider and what stands in the way (2026-11-23). */
+    val offRamp: OffRampView = OffRampView.NONE,
 ) {
     /** A PIN exists once a payment account has been sealed under one. */
     val pinSet: Boolean get() = payments != null
@@ -186,7 +200,11 @@ data class MerchantOverview(
                 "approval".takeIf { merchant.state != MerchantState.APPROVED },
                 "wallet".takeIf { wallet == null },
                 "payments".takeIf { payments == null || !paymentsCurrent },
-                "float".takeIf { float != null && (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor) },
+                // USDC float is what buying sells; a merchant who only takes sales needs none (2026-11-23).
+                "float".takeIf {
+                    merchant.offersOnramp && float != null &&
+                        (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor)
+                },
                 PROVIDER_BALANCE.takeIf { merchant.paymentsIssue == PaymentsIssue.SERVICE_BALANCE },
             )
 
@@ -210,8 +228,15 @@ data class CallbackView(val callbackUrl: String)
 /** RM1's input, already shape-checked. */
 data class ProfileCommand(val displayName: String, val contactPhone: PhoneNumber)
 
-/** RM5's input. The string form hides all of it. */
-class PaymentAccountCommand(val credentials: CollectionCredentials, val pin: String) {
+/**
+ * RM5's input. [payoutAccountId] is the account id payouts need (FinoQ's, digits; 2026-11-23), null to leave it as it
+ * is. The string form hides all of it.
+ */
+class PaymentAccountCommand(
+    val credentials: CollectionCredentials,
+    val pin: String,
+    val payoutAccountId: String? = null,
+) {
     override fun toString(): String = "PaymentAccountCommand(***)"
 }
 
@@ -249,6 +274,8 @@ data class StatementLine(
     val platformAssetMinor: Long,
     val settlementId: UUID?,
     val txHash: String?,
+    /** `ON_RAMP`: [paidMinor] shillings in, [releasedMinor] USDC out. `OFF_RAMP`: shillings paid out, USDC received. */
+    val direction: Direction = Direction.ON_RAMP,
 ) {
     override fun toString(): String = "StatementLine($orderId)"
 }
@@ -260,6 +287,7 @@ data class StatementLine(
  */
 data class StatementTotals(
     val orders: Int,
+    /** Buying: the shillings paid into the merchant's till, and the USDC released to buyers. */
     val collectedMinor: Long,
     val soldMinor: Long,
     val feesMinor: Long,
@@ -267,6 +295,9 @@ data class StatementTotals(
     val platformMinor: Long,
     val platformAssetMinor: Long,
     val sweptAssetMinor: Long,
+    /** Selling (2026-11-23): the shillings the merchant paid out to sellers, and the USDC they received for them. */
+    val paidOutMinor: Long = 0,
+    val boughtMinor: Long = 0,
 ) {
     val heldAssetMinor: Long get() = platformAssetMinor - sweptAssetMinor
 
@@ -280,6 +311,8 @@ data class StatementTotals(
             platformMinor = platformMinor + other.platformMinor,
             platformAssetMinor = platformAssetMinor + other.platformAssetMinor,
             sweptAssetMinor = sweptAssetMinor + other.sweptAssetMinor,
+            paidOutMinor = paidOutMinor + other.paidOutMinor,
+            boughtMinor = boughtMinor + other.boughtMinor,
         )
 }
 

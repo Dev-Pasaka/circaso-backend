@@ -122,6 +122,12 @@ data class Transfer(
     val usdPrice: BigDecimal? = null,
     /** The amount and the fee in micro-dollars at [usdPrice]: what it counts against the wallet's limits. */
     val usdTotalMinor: Long = (amount.amountMinor + feeMinor).toLong(),
+    /**
+     * The ramp order it funds (W4 `rampOrderId`, the off-ramp, 2026-11-23). Opaque here: stored, echoed on its events,
+     * and held to one transfer that isn't `FAILED` per order (`transfers_ramp_order_key`), so a sale is never funded
+     * twice.
+     */
+    val rampOrderId: UUID? = null,
 ) {
     /** What leaves the sender's wallet: the amount and the fee. The payee gets exactly [amount]. */
     val totalMinor: BigInteger get() = amount.amountMinor + feeMinor
@@ -205,6 +211,8 @@ data class TransferCommand(
     val quoteId: UUID? = null,
     /** A membership payment (SP13) this pays: the amount and the space must be exactly its own. */
     val spacePaymentId: UUID? = null,
+    /** The ramp order this funds (the off-ramp): opaque, one live transfer per order. */
+    val rampOrderId: UUID? = null,
 ) {
     constructor(
         senderId: UserId,

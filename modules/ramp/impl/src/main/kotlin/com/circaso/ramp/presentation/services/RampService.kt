@@ -7,6 +7,7 @@ import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampStatus
+import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.CreateQuote
@@ -14,6 +15,7 @@ import com.circaso.ramp.domain.usecases.GetOrder
 import com.circaso.ramp.domain.usecases.GetRampStatus
 import com.circaso.ramp.domain.usecases.GetUserKyc
 import com.circaso.ramp.domain.usecases.ListOrders
+import com.circaso.ramp.domain.usecases.StartOffRamp
 import com.circaso.ramp.domain.usecases.StartOnRamp
 import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.shared.Network
@@ -30,7 +32,10 @@ class RampService(
     private val cancelOrder: CancelOrder,
     private val startUserKyc: StartUserKyc,
     private val getUserKyc: GetUserKyc,
+    private val startOffRamp: StartOffRamp,
 ) {
+    suspend fun sell(command: StartOffRampCommand): Resource<OrderView> = startOffRamp(command)
+
     suspend fun startKyc(userId: UserId, network: Network): Resource<KycView> = startUserKyc(userId, network)
 
     suspend fun kyc(userId: UserId, network: Network): Resource<KycView> = getUserKyc(userId, network)

@@ -5,6 +5,7 @@ import com.circaso.ops.presentation.dto.RampBlockDto
 import com.circaso.ops.presentation.dto.RampBlocksResponse
 import com.circaso.ops.presentation.dto.RampDayDto
 import com.circaso.ops.presentation.dto.RampFloatDto
+import com.circaso.ops.presentation.dto.RampKesBalancesDto
 import com.circaso.ops.presentation.dto.RampMerchantDto
 import com.circaso.ops.presentation.dto.RampMerchantOrderDto
 import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
@@ -18,8 +19,10 @@ import com.circaso.ops.presentation.dto.RampOverviewMerchantDto
 import com.circaso.ops.presentation.dto.RampOverviewResponse
 import com.circaso.ops.presentation.dto.RampOverviewTotalsDto
 import com.circaso.ops.presentation.dto.RampPaymentsIssueDto
+import com.circaso.ops.presentation.dto.RampPayoutFeeBandDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
+import com.circaso.ops.presentation.dto.RampResolveResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
 import com.circaso.ops.presentation.dto.RampSummaryMerchantDto
 import com.circaso.ops.presentation.dto.RampSummaryWalletDto
@@ -29,6 +32,7 @@ import com.circaso.ops.presentation.dto.RampVerificationDto
 import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsPayoutFeeBand
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
@@ -41,6 +45,7 @@ import com.circaso.ramp.api.OpsRampOrderCursor
 import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampUserVerification
 import com.circaso.ramp.api.OpsRampVerification
@@ -57,6 +62,9 @@ import java.util.UUID
 
 fun parseMerchantId(raw: String?, field: String = "merchantId"): Resource<MerchantId> =
     raw?.let(MerchantId::parse)?.let { Resource.success(it) } ?: malformed(field, "must be a merchant id")
+
+fun parseRampOrderId(raw: String?): Resource<RampOrderId> =
+    raw?.let(RampOrderId::parse)?.let { Resource.success(it) } ?: malformed("orderId", "must be an order id")
 
 /** An optional id cursor: absent is the first page, anything that isn't an id is refused. */
 fun merchantCursor(raw: String?): Resource<MerchantId?> =
@@ -177,6 +185,15 @@ fun OpsRampSettings.toDto() =
         kycAttemptsPerDay = kycAttemptsPerDay ?: 0,
         kycPendingHours = kycPendingHours ?: 0,
         kycProviders = kycProviders,
+        offRampState = offRampState ?: "OFF",
+        offRampMinMinor = (offRampMinMinor ?: 0).toString(),
+        offRampMaxMinor = (offRampMaxMinor ?: 0).toString(),
+        offRampDailyLimitMinor = (offRampDailyLimitMinor ?: 0).toString(),
+        transferWindowSeconds = transferWindowSeconds ?: 0,
+        payoutWindowSeconds = payoutWindowSeconds ?: 0,
+        payoutFeeBands =
+            payoutFeeBands.orEmpty().map { RampPayoutFeeBandDto(it.upToMinor.toString(), it.feeMinor.toString()) },
+        payoutBalanceLowMinor = (payoutBalanceLowMinor ?: 0).toString(),
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -190,6 +207,20 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
     val parsed = amounts.map { (field, raw) -> raw.trim().toLongOrNull() ?: return malformed(field, NOT_CENTS) }
     val floor =
         providerFeeFloorMinor?.let { it.trim().toLongOrNull() ?: return malformed("providerFeeFloorMinor", NOT_CENTS) }
+    val selling =
+        listOf(
+            "offRampMinMinor" to offRampMinMinor,
+            "offRampMaxMinor" to offRampMaxMinor,
+            "offRampDailyLimitMinor" to offRampDailyLimitMinor,
+            "payoutBalanceLowMinor" to payoutBalanceLowMinor,
+        ).map { (field, raw) -> raw?.let { it.trim().toLongOrNull() ?: return malformed(field, NOT_CENTS) } }
+    val bands =
+        payoutFeeBands?.mapIndexed { index, band ->
+            val upTo = band.upToMinor.trim().toLongOrNull()
+            val fee = band.feeMinor.trim().toLongOrNull()
+            if (upTo == null || fee == null) return malformed("payoutFeeBands[$index]", NOT_CENTS)
+            OpsPayoutFeeBand(upTo, fee)
+        }
     return Resource.success(
         OpsRampSettings(
             network = network,
@@ -216,6 +247,14 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             merchantPortalUrl = merchantPortalUrl?.trim(),
             kycAttemptsPerDay = kycAttemptsPerDay,
             kycPendingHours = kycPendingHours,
+            offRampState = offRampState?.trim()?.uppercase(),
+            offRampMinMinor = selling[0],
+            offRampMaxMinor = selling[1],
+            offRampDailyLimitMinor = selling[2],
+            transferWindowSeconds = transferWindowSeconds,
+            payoutWindowSeconds = payoutWindowSeconds,
+            payoutFeeBands = bands,
+            payoutBalanceLowMinor = selling[3],
         ),
     )
 }
@@ -230,28 +269,36 @@ fun List<OpsRampPreviewAccess>.toResponse(network: Network) =
 
 fun List<OpsRampOrder>.toResponse(limit: Int) =
     RampOrdersResponse(
-        orders =
-            map {
-                RampOrderDto(
-                    orderId = it.orderId.toString(),
-                    network = it.network.name,
-                    userId = it.userId.toString(),
-                    merchantId = it.merchantId.toString(),
-                    merchantName = it.merchantName,
-                    state = it.state,
-                    blockchain = it.blockchain,
-                    fiatCurrency = it.fiatCurrency,
-                    fiatAmountMinor = it.fiatAmountMinor.toString(),
-                    assetAmountMinor = it.assetAmountMinor.toString(),
-                    feeMinor = it.feeMinor.toString(),
-                    failureReason = it.failureReason,
-                    custodyTxId = it.custodyTxId,
-                    createdAt = it.createdAt.toString(),
-                    updatedAt = it.updatedAt.toString(),
-                )
-            },
+        orders = map { it.toDto() },
         nextCursor = lastOrNull()?.takeIf { size >= limit }?.orderId?.toString(),
     )
+
+fun OpsRampOrder.toDto() =
+    RampOrderDto(
+        orderId = orderId.toString(),
+        network = network.name,
+        userId = userId.toString(),
+        merchantId = merchantId.toString(),
+        merchantName = merchantName,
+        state = state,
+        blockchain = blockchain,
+        fiatCurrency = fiatCurrency,
+        fiatAmountMinor = fiatAmountMinor.toString(),
+        assetAmountMinor = assetAmountMinor.toString(),
+        feeMinor = feeMinor.toString(),
+        failureReason = failureReason,
+        custodyTxId = custodyTxId,
+        createdAt = createdAt.toString(),
+        updatedAt = updatedAt.toString(),
+        direction = direction,
+        providerFeeMinor = providerFeeMinor.toString(),
+        fundedMinor = fundedMinor?.toString(),
+        payoutAttempts = payoutAttempts,
+        payoutOutcome = payoutOutcome,
+        hasReceipt = hasReceipt,
+    )
+
+fun OpsRampResolved.toResponse() = RampResolveResponse(order.toDto(), providerSaid)
 
 // ---- each merchant's activity ----------------------------------------------------------------------------
 
@@ -328,6 +375,9 @@ fun OpsRampOverview.toResponse() =
                 circasoShareUsdc = money.circasoShareUsdc.toDto(),
                 swept = money.swept.toDto(),
                 held = money.held.toDto(),
+                paidOut = money.paidOut.toDto(),
+                bought = money.bought.toDto(),
+                refunded = orders.refunded,
             ),
         merchants = merchants.map { it.toDto() },
     )
@@ -349,6 +399,8 @@ private fun OpsRampMerchantActivity.toDto() =
         circasoShareUsdc = money.circasoShareUsdc.toDto(),
         held = money.held.toDto(),
         lastOrderAt = lastOrderAt?.toString(),
+        paidOut = money.paidOut.toDto(),
+        bought = money.bought.toDto(),
     )
 
 private fun OpsRampMerchantProfile.toDto() =
@@ -366,6 +418,9 @@ private fun OpsRampMerchantProfile.toDto() =
         collectionsProvider = collectionsProvider,
         paymentsIssue = paymentsIssue?.let { RampPaymentsIssueDto(it.code, it.since?.toString()) },
         kyc = kyc?.toDto(),
+        offersOffRamp = offersOffRamp,
+        payoutAccountId = payoutAccountId,
+        payoutIssue = payoutIssue?.let { RampPaymentsIssueDto(it.code, it.since?.toString()) },
     )
 
 private fun OpsRampDay.toDto() =
@@ -400,6 +455,7 @@ fun OpsRampMerchantSummary.toResponse() =
                 cancelled = orders.cancelled,
                 inReview = orders.inReview,
                 open = orders.open,
+                refunded = orders.refunded,
             ),
         successRatePercent = successRatePercent,
         collected = money.collected.toDto(),
@@ -420,6 +476,19 @@ fun OpsRampMerchantSummary.toResponse() =
                     state = it.state,
                     orders = it.orders,
                     txHash = it.txHash,
+                )
+            },
+        paidOut = money.paidOut.toDto(),
+        bought = money.bought.toDto(),
+        kesBalances =
+            kesBalances?.let {
+                RampKesBalancesDto(
+                    payout = it.payout?.toDto(),
+                    payoutSource = it.payoutSource,
+                    fees = it.fees?.toDto(),
+                    feesSource = it.feesSource,
+                    readAt = it.readAt?.toString(),
+                    held = it.held.toDto(),
                 )
             },
     )

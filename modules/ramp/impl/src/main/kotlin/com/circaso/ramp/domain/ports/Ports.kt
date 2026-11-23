@@ -12,6 +12,7 @@ import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import java.math.BigDecimal
 import java.time.LocalDate
 
 /**
@@ -93,6 +94,9 @@ interface IdentityKeys {
  * TODO(decision: the exchange rate) the day's reference rate with no spread, until where the rate comes from is decided.
  */
 interface Pricing {
+    /** Shillings per USDC now; `ramp.pricing_unavailable` when no reference rate can be read. */
+    suspend fun rate(): Resource<BigDecimal>
+
     suspend fun price(
         direction: Direction,
         fiatMinor: Long?,
@@ -124,6 +128,22 @@ interface RampCounters {
         day: LocalDate,
         fiatMinor: Long,
     )
+
+    /** Selling's own day (decision 2026-11-23): the shillings a user is paid out, under selling's own limit. */
+    suspend fun reserveDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+        limitMinor: Long,
+    ): Boolean
+
+    suspend fun giveBackDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+    )
 }
 
 /** The USDC contract on a chain, as the network's settings name it: the only token the ramp counts or sends. */
@@ -145,9 +165,24 @@ interface PromptTransport {
 }
 
 /**
- * A merchant's free shillings for payouts, for routing an off-ramp: given by the caller of the engine, because where
- * that float lives is the payout provider's business. Null when it can't be read (the merchant is then left out).
+ * A merchant's payout balance at their provider as it reads **now** (KES minor units), for routing a sale: given by the
+ * caller of the engine, because where that float lives is the payout provider's business. The engine takes off what
+ * the merchant's open sales already hold. Null when it can't be read, which is never zero: the merchant is then left
+ * out (`FLOAT_UNKNOWN`).
  */
 fun interface KesFloat {
     suspend fun of(merchantId: MerchantId): Long?
+}
+
+/**
+ * One line per step of a payout, a deposit check or a balance read (decision 2026-11-23): which sale or test, what was
+ * done and what came back, in our words and with ids only, never an amount, a phone number or a credential. With the
+ * integration's own layout lines, what the first real payouts are read from.
+ */
+interface PayoutJournal {
+    fun step(
+        what: String,
+        id: String,
+        outcome: String,
+    )
 }

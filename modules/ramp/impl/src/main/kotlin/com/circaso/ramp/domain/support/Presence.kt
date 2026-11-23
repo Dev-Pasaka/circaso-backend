@@ -18,6 +18,6 @@ class Presence(
 ) {
     suspend fun goOffline(merchantId: MerchantId) {
         merchants.setOnlineUntil(merchantId, null)
-        sessions.end(merchantId, keepKeys = orders.hasAwaitingPayment(merchantId))
+        sessions.end(merchantId, keepKeys = orders.needsKeys(merchantId))
     }
 }

@@ -2,6 +2,7 @@ package com.circaso.ramp.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.integrations.api.KycEnvironment
+import com.circaso.ramp.data.support.PayoutFeeBands
 import com.circaso.ramp.data.tables.PreviewAccessTable
 import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.domain.models.PreviewAccess
@@ -108,6 +109,14 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.merchantPortalUrl] = settings.merchantPortalUrl
         this[SettingsTable.kycAttemptsPerDay] = settings.kycAttemptsPerDay
         this[SettingsTable.kycPendingHours] = settings.kycPendingHours
+        this[SettingsTable.offrampState] = settings.offRampState.name
+        this[SettingsTable.offrampMinMinor] = settings.offRampMinMinor
+        this[SettingsTable.offrampMaxMinor] = settings.offRampMaxMinor
+        this[SettingsTable.offrampDailyLimitMinor] = settings.offRampDailyLimitMinor
+        this[SettingsTable.transferWindowSeconds] = settings.transferWindowSeconds
+        this[SettingsTable.payoutWindowSeconds] = settings.payoutWindowSeconds
+        this[SettingsTable.payoutFeeBands] = PayoutFeeBands.encode(settings.payoutFeeBands)
+        this[SettingsTable.payoutBalanceLowMinor] = settings.payoutBalanceLowMinor
     }
 
     private fun ResultRow.toSettings(): RampSettings? {
@@ -141,6 +150,14 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             merchantPortalUrl = this[SettingsTable.merchantPortalUrl],
             kycAttemptsPerDay = this[SettingsTable.kycAttemptsPerDay],
             kycPendingHours = this[SettingsTable.kycPendingHours],
+            offRampState = RampState.valueOf(this[SettingsTable.offrampState]),
+            offRampMinMinor = this[SettingsTable.offrampMinMinor],
+            offRampMaxMinor = this[SettingsTable.offrampMaxMinor],
+            offRampDailyLimitMinor = this[SettingsTable.offrampDailyLimitMinor],
+            transferWindowSeconds = this[SettingsTable.transferWindowSeconds],
+            payoutWindowSeconds = this[SettingsTable.payoutWindowSeconds],
+            payoutFeeBands = PayoutFeeBands.decode(this[SettingsTable.payoutFeeBands]),
+            payoutBalanceLowMinor = this[SettingsTable.payoutBalanceLowMinor],
         )
     }
 }

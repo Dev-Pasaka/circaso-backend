@@ -17,6 +17,7 @@ import com.circaso.ramp.api.OpsRampOrder
 import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampUserVerification
@@ -116,6 +117,19 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         changed("merchantPortalUrl", before.merchantPortalUrl, after.merchantPortalUrl)
         changed("kycAttemptsPerDay", before.kycAttemptsPerDay, after.kycAttemptsPerDay)
         changed("kycPendingHours", before.kycPendingHours, after.kycPendingHours)
+        changed("offRampState", before.offRampState, after.offRampState)
+        changed("offRampMin", before.offRampMinMinor, after.offRampMinMinor)
+        changed("offRampMax", before.offRampMaxMinor, after.offRampMaxMinor)
+        changed("offRampDailyLimit", before.offRampDailyLimitMinor, after.offRampDailyLimitMinor)
+        changed("transferWindowSeconds", before.transferWindowSeconds, after.transferWindowSeconds)
+        changed("payoutWindowSeconds", before.payoutWindowSeconds, after.payoutWindowSeconds)
+        changed("payoutFeeBands", before.payoutFeeBands?.size, after.payoutFeeBands?.size)
+        if (before.payoutFeeBands != after.payoutFeeBands &&
+            before.payoutFeeBands?.size == after.payoutFeeBands?.size
+        ) {
+            parts += "payoutFeeBands changed"
+        }
+        changed("payoutBalanceLowMinor", before.payoutBalanceLowMinor, after.payoutBalanceLowMinor)
         return parts.joinToString("; ")
     }
 }
@@ -301,5 +315,30 @@ class ResetRampMerchantVerification(private val ramp: RampAdmin, private val tra
             detail = "reset ${environment.trim().uppercase()}",
             outcome = { "reset ${environment.trim().uppercase()}: ${if (it) "removed" else "nothing to remove"}" },
         ) { ramp.resetMerchantVerification(merchantId, environment, actor.staffId) }
+    }
+}
+
+/**
+ * RO4 (2026-11-23): resolves a ramp order in `REVIEW`, either direction: mark it paid (with the M-Pesa receipt staff
+ * saw), refund it, or have the provider asked again. ADMIN only; a reason is required and audited on the order, the
+ * detail being the outcome asked for, never the receipt.
+ */
+class ResolveRampOrder(private val ramp: RampAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(
+        actor: Actor,
+        orderId: RampOrderId,
+        resolution: String,
+        receipt: String?,
+        reason: String,
+    ): Resource<OpsRampResolved> {
+        val why = Reasons.check(reason) ?: return Resource.error(OpsError.ReasonRequired)
+        return trail.record<OpsRampResolved>(
+            actor,
+            AuditAction.RAMP_ORDER_RESOLVE,
+            orderId.toString(),
+            reason = why,
+            detail = resolution.trim().uppercase(),
+            outcome = { "state ${it.order.state}${it.providerSaid?.let { said -> ", provider $said" }.orEmpty()}" },
+        ) { ramp.resolve(orderId, resolution, receipt, actor.staffId) }
     }
 }

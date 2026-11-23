@@ -18,6 +18,7 @@ import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.RoutingLogRepository
 import com.circaso.shared.Network
@@ -73,16 +74,21 @@ class Engine(
     private val log: RoutingLogRepository,
     private val random: Random,
     private val clock: Clock,
+    private val payoutHolds: PayoutHoldRepository,
 ) {
-    /** Whether anybody could take a purchase on [blockchain] right now (their float and limit aren't looked at). */
+    /**
+     * Whether anybody could take an order in [direction] on [blockchain] right now (their float and limit aren't
+     * looked at).
+     */
     suspend fun anyoneOnline(
         network: Network,
         blockchain: String,
         settings: RampSettings,
+        direction: Direction = Direction.ON_RAMP,
     ): Boolean {
-        val engine = book.of(network, Direction.ON_RAMP).settings
+        val engine = book.of(network, direction).settings
         return facts.pool(network, blockchain).any {
-            Scoring.beforeFloat(facts.cheap(it, Direction.ON_RAMP, settings, engine), EngineFacts.NO_AMOUNT) == null
+            Scoring.beforeFloat(facts.cheap(it, direction, settings, engine), EngineFacts.NO_AMOUNT) == null
         }
     }
 
@@ -112,9 +118,10 @@ class Engine(
     }
 
     /**
-     * Writes the order [draft] makes for [candidate] with its reservation, if under the merchant's row lock they can
-     * still take it; `ramp.no_merchant_available` when they can't any more (the caller tries the next). Buying only:
-     * the off-ramp holds USDC the user sent instead of promising float, and writes its own hold.
+     * Writes the order [draft] makes for [candidate] with what it holds, if under the merchant's row lock they can still
+     * take it; `ramp.no_merchant_available` when they can't any more (the caller tries the next). Buying reserves the
+     * USDC float it will release; selling holds the shillings it will pay out (the payout and its fee) at the
+     * merchant's provider. The USDC a sale brings in is held only once it has arrived (`FUNDED`).
      */
     suspend fun reserve(
         routing: Routing,
@@ -124,15 +131,16 @@ class Engine(
     ): Resource<Order> =
         transactor.attempt("orders.reserve") {
             val now = clock.instant()
+            val direction = routing.order.direction
             val merchantId = candidate.merchant.merchantId
             val merchant = merchants.lock(merchantId)
             val wallet = wallets.find(merchantId, candidate.wallet.network)
             val fits =
                 merchant != null && wallet != null &&
-                    merchant.isTradingUntil(now.plus(settings.paymentWindow)) &&
-                    merchant.paymentsIssue == null &&
+                    merchant.isTradingUntil(now.plus(settings.windowOf(direction))) &&
+                    !merchant.hasIssue(direction) &&
                     wallet.blockchain == candidate.wallet.blockchain &&
-                    merchant.offers(routing.order.direction) &&
+                    merchant.offers(direction) &&
                     routing.order.fiatMinor <= merchant.orderLimit(routing.engine.settings) &&
                     freeFloat(routing, merchantId, wallet.network) >= routing.order.needMinor
             if (fits) write(draft(Candidate(merchant, wallet))) else Resource.error(RampError.NoMerchantAvailable)
@@ -141,7 +149,10 @@ class Engine(
     private suspend fun write(order: Order): Resource<Order> {
         if (!orders.insert(order)) return Resource.error(RampError.OrderInProgress)
         val now = clock.instant()
-        reservations.insert(order, now)
+        when (order.direction) {
+            Direction.ON_RAMP -> reservations.insert(order, now)
+            Direction.OFF_RAMP -> payoutHolds.insert(order, now)
+        }
         merchants.markAssigned(order.merchantId, now)
         return Resource.success(order)
     }
@@ -157,8 +168,9 @@ class Engine(
     }
 
     /**
-     * The balance the routing read from the custodian, less what is spoken for **now**, under the lock: open
-     * reservations and what is held for Circaso. Nothing was read for the merchant: nothing is free.
+     * The balance the routing read, less what is spoken for **now**, under the lock. Buying: the custodian's USDC less
+     * open reservations and what is held for Circaso. Selling: the provider's payout balance less what open sales
+     * hold. Nothing was read for the merchant: nothing is free.
      */
     private suspend fun freeFloat(
         routing: Routing,
@@ -166,6 +178,14 @@ class Engine(
         network: Network,
     ): Long {
         val balance = routing.gathered.balances[merchantId] ?: return Long.MIN_VALUE
-        return balance - reservations.openTotal(merchantId, network) - commissions.owedTotal(merchantId, network)
+        return when (routing.order.direction) {
+            Direction.ON_RAMP -> {
+                balance - reservations.openTotal(merchantId, network) - commissions.owedTotal(merchantId, network)
+            }
+
+            Direction.OFF_RAMP -> {
+                balance - payoutHolds.openTotal(merchantId)
+            }
+        }
     }
 }

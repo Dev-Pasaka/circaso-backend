@@ -3,6 +3,8 @@ package com.circaso.ramp
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.usecases.GetTestPayout
+import com.circaso.ramp.domain.usecases.StartTestPayout
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -62,6 +64,9 @@ class MerchantRoutesTest {
             ramp.startMerchantKyc,
             ramp.performance,
             ramp.setOffers,
+            ramp.setPayoutAccount,
+            StartTestPayout(ramp.testPayouts),
+            GetTestPayout(ramp.testPayouts),
         )
     private val base = "/v1/ramp/merchant"
 
@@ -675,5 +680,110 @@ class MerchantRoutesTest {
             assertEquals("onRamp", nothing.field())
             assertEquals(HttpStatusCode.Unauthorized, client.get("$base/performance").status)
             assertEquals(HttpStatusCode.Unauthorized, client.put("$base/offers") { json("""{"onRamp":true}""") }.status)
+        }
+
+    // ---- selling (2026-11-23) ----
+
+    @Test
+    fun `RM2's off-ramp card reads the balances live while online and flags a low payout balance`() =
+        testApplication {
+            serve()
+            ramp.openSelling(payoutMinor = 50_000)
+            ramp.settingsRows.set(TESTNET) { it.copy(payoutBalanceLowMinor = 100_000) }
+            ramp.book.invalidate()
+            val session = signIn("crynce@example.com")
+
+            val card =
+                client
+                    .get(base) { header("X-Merchant-Session", session) }
+                    .data()
+                    .getValue("offRamp")
+                    .jsonObject
+
+            assertEquals("4242", card.text("accountId"))
+            assertEquals(
+                Triple("KES", "50000", "500"),
+                card
+                    .getValue("payoutBalance")
+                    .jsonObject
+                    .getValue("amount")
+                    .amount(),
+            )
+            assertEquals("payment_wallet", card.getValue("payoutBalance").jsonObject.text("source"))
+            assertEquals("service_wallet", card.getValue("feeBalance").jsonObject.text("source"))
+            assertEquals(true, card.getValue("balancesLive").jsonPrimitive.boolean)
+            assertEquals(
+                listOf("payout_balance_low"),
+                card.getValue("flags").jsonArray.map { it.jsonPrimitive.content },
+            )
+            assertEquals(Triple("KES", "0", "0"), card.getValue("held").amount())
+        }
+
+    @Test
+    fun `a new merchant's balances are unknown, never zero, and the payout account is digits`() =
+        testApplication {
+            serve()
+            val session = signIn()
+
+            val card =
+                client
+                    .get(base) { header("X-Merchant-Session", session) }
+                    .data()
+                    .getValue("offRamp")
+                    .jsonObject
+            assertEquals(JsonNull, card.getValue("payoutBalance"))
+            assertEquals(JsonNull, card.getValue("feeBalance"))
+            assertTrue("payout_account_missing" in card.getValue("flags").jsonArray.map { it.jsonPrimitive.content })
+            client.put("$base/profile") { json("""{"displayName":"Bidii","contactPhone":"+254712000222"}""", session) }
+
+            val wrong = client.put("$base/payments/account") { json("""{"accountId":"12ab"}""", session) }
+            assertEquals(HttpStatusCode.BadRequest, wrong.status)
+            assertEquals("ramp.payout_account_invalid", wrong.envelope().text("code"))
+            val saved = client.put("$base/payments/account") { json("""{"accountId":" 777 "}""", session) }
+            assertEquals(HttpStatusCode.OK, saved.status, saved.bodyAsText())
+            assertEquals(
+                "777",
+                saved
+                    .data()
+                    .getValue("offRamp")
+                    .jsonObject
+                    .text("accountId"),
+            )
+        }
+
+    @Test
+    fun `RM18 sends a test payout to the merchant's own phone and reads its outcome`() =
+        testApplication {
+            serve()
+            ramp.openSelling()
+            val session = signIn("crynce@example.com")
+
+            val malformed = client.post("$base/test-payout") { json("""{"amountMinor":"ten"}""", session) }
+            assertEquals(HttpStatusCode.BadRequest, malformed.status)
+            val tooBig = client.post("$base/test-payout") { json("""{"amountMinor":"20000"}""", session) }
+            assertEquals("ramp.amount_invalid", tooBig.envelope().text("code"))
+
+            val sent = client.post("$base/test-payout") { json("""{"amountMinor":"1000"}""", session) }
+            assertEquals(HttpStatusCode.OK, sent.status, sent.bodyAsText())
+            val test = sent.data()
+            assertEquals("ACCEPTED", test.text("state"))
+            assertEquals("+254 7•• ••• 000", test.text("maskedPhone"))
+            assertEquals(Triple("KES", "1000", "10"), test.getValue("amount").amount())
+            assertEquals(
+                PhoneNumber.parse("+254700000000"),
+                ramp.collections.payouts
+                    .single()
+                    .payee,
+            )
+            val again = client.post("$base/test-payout") { json("""{"amountMinor":"1000"}""", session) }
+            assertEquals(HttpStatusCode.Conflict, again.status)
+            assertEquals("ramp.test_payout_in_progress", again.envelope().text("code"))
+
+            ramp.collections.payoutPaid(test.text("testId"), receipt = "QPROUTE")
+            ramp.clock.advance(4)
+            val read = client.get("$base/test-payout") { header("X-Merchant-Session", session) }.data()
+            assertEquals("PAID" to "QPROUTE", read.text("state") to read.text("receipt"))
+            val unknown = client.get("$base/test-payout?testId=nope") { header("X-Merchant-Session", session) }
+            assertEquals(HttpStatusCode.BadRequest, unknown.status)
         }
 }

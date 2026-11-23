@@ -276,4 +276,64 @@ sealed class RampError(
         "Someone else changed these settings. Read them again.",
         ErrorKind.CONFLICT,
     )
+
+    // ---- selling (2026-11-23) ------------------------------------------------------------------------------
+
+    /** Neither the provider's published payout fee nor staff's table covers the amount: a sale isn't quoted. */
+    data object PayoutFeeUnavailable : RampError(
+        "ramp.payout_fee_unavailable",
+        "We can't price this sale right now. Try a different amount, or try again later.",
+        ErrorKind.UPSTREAM,
+    )
+
+    /** A merchant asked for something that needs their unlocked payment account while they are offline. */
+    data object MerchantOffline : RampError(
+        "ramp.merchant_offline",
+        "Go online with your PIN first: this uses your unlocked payment account.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object TestPayoutInProgress : RampError(
+        "ramp.test_payout_in_progress",
+        "A test payout is still going through. Check its result first.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object TestPayoutNotFound : RampError(
+        "ramp.test_payout_not_found",
+        "We couldn't find that test payout.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** The payout account id isn't one: FinoQ numbers accounts with digits. */
+    data object PayoutAccountInvalid : RampError(
+        "ramp.payout_account_invalid",
+        "That account id isn't right: it is the number of your account on the FinoQ dashboard.",
+        ErrorKind.INVALID,
+        ErrorDetails(fields = listOf(FieldError("accountId", "digits only"))),
+    )
+
+    // ---- resolving an order (RO4) --------------------------------------------------------------------------
+
+    /** The resolution doesn't apply to this order as it stands (not in review, nothing to refund, …). */
+    class ResolutionInvalid(problem: String) :
+        RampError(
+            "ramp.resolution_invalid",
+            "That can't be done to this order: $problem.",
+            ErrorKind.CONFLICT,
+        )
+
+    data object ReceiptRequired : RampError(
+        "ramp.receipt_required",
+        "Marking an order paid needs the M-Pesa receipt you saw.",
+        ErrorKind.INVALID,
+        ErrorDetails(fields = listOf(FieldError("receipt", "required"))),
+    )
+
+    /** A refund staff asked for while the provider says the payout was paid, or may still be. */
+    data object PayoutMayBePaid : RampError(
+        "ramp.payout_may_be_paid",
+        "The provider says this payout was paid or is still going through: it can't be refunded.",
+        ErrorKind.CONFLICT,
+    )
 }

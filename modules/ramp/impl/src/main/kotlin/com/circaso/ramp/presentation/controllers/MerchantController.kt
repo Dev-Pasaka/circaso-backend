@@ -11,6 +11,7 @@ import com.circaso.ramp.presentation.dto.MerchantResponse
 import com.circaso.ramp.presentation.dto.OnlineResponse
 import com.circaso.ramp.presentation.dto.PaymentsRequest
 import com.circaso.ramp.presentation.dto.PaymentsSavedResponse
+import com.circaso.ramp.presentation.dto.PayoutAccountRequest
 import com.circaso.ramp.presentation.dto.PerformanceResponse
 import com.circaso.ramp.presentation.dto.PinChangedResponse
 import com.circaso.ramp.presentation.dto.ProfileRequest
@@ -18,9 +19,12 @@ import com.circaso.ramp.presentation.dto.SignInCodeRequest
 import com.circaso.ramp.presentation.dto.SignInCodeResponse
 import com.circaso.ramp.presentation.dto.SignedInResponse
 import com.circaso.ramp.presentation.dto.StatementResponse
+import com.circaso.ramp.presentation.dto.TestPayoutRequest
+import com.circaso.ramp.presentation.dto.TestPayoutResponse
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
 import com.circaso.ramp.presentation.mappers.cursorOf
 import com.circaso.ramp.presentation.mappers.periodOf
+import com.circaso.ramp.presentation.mappers.toAmount
 import com.circaso.ramp.presentation.mappers.toCommand
 import com.circaso.ramp.presentation.mappers.toEmail
 import com.circaso.ramp.presentation.mappers.toMerchantResponse
@@ -37,6 +41,8 @@ import com.circaso.ramp.presentation.support.clientAddress
 import com.circaso.ramp.presentation.support.merchantId
 import com.circaso.ramp.presentation.support.merchantNetwork
 import com.circaso.ramp.presentation.support.merchantSession
+import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
 import com.circaso.shared.flatMap
 import com.circaso.web.NoBody
 import com.circaso.web.docs
@@ -51,6 +57,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
+import java.util.UUID
 
 private const val TAG = "Merchant portal"
 private const val SESSION = "Needs `X-Merchant-Session`."
@@ -82,6 +89,7 @@ fun Route.merchantController(auth: MerchantAuthService, merchants: MerchantServi
             paymentRoutes(merchants)
             tradingRoutes(merchants)
             moneyRoutes(merchants)
+            testPayoutRoutes(merchants)
         }
     }
 }
@@ -275,6 +283,20 @@ private fun Route.paymentRoutes(merchants: MerchantService) {
                     "your PayHero account.",
         )
 
+        put("account") {
+            val request = call.receive<PayoutAccountRequest>()
+            val result = merchants.payoutAccount(call.merchantId(), call.merchantNetwork(), request.accountId)
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<PayoutAccountRequest, MerchantResponse>(
+            "RM5b · Your payout account (selling)",
+            TAG,
+            listOf(INVALID, NOT_FOUND, SETUP, "ramp.payout_account_invalid"),
+            notes =
+                "$MONEY The number of your account on the FinoQ dashboard (digits only). Payouts to people selling " +
+                    "you USDC are paid from that account's payout balance, so you can't take sales without it. It " +
+                    "isn't a secret and needs no PIN. Answers RM2; its `offRamp` card shows it.",
+        )
+
         post("callback") {
             val result = merchants.rotateCallback(call.merchantId(), call.merchantNetwork())
             call.respondDefault(result.toDefaultResponse { it.toResponse() })
@@ -372,4 +394,64 @@ private fun Route.moneyRoutes(merchants: MerchantService) {
                 "null while Circaso's share of that order is still held in your float; `txHash` is the release " +
                 "of the USDC to the buyer.",
     )
+}
+
+private fun Route.testPayoutRoutes(merchants: MerchantService) {
+    route("/test-payout") {
+        post {
+            val request = call.receive<TestPayoutRequest>()
+            val result =
+                request.toAmount().flatMap {
+                    merchants.testPayout(call.merchantId(), call.merchantNetwork(), it)
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<TestPayoutRequest, TestPayoutResponse>(
+            "RM18 · Send yourself a test payout",
+            TAG,
+            listOf(
+                INVALID,
+                NOT_FOUND,
+                SETUP,
+                "ramp.amount_invalid",
+                "ramp.merchant_offline",
+                "ramp.test_payout_in_progress",
+                "ramp.collections_unavailable",
+                MALFORMED,
+            ),
+            notes =
+                "$MONEY KES 10 to 100 (`amountMinor` 1000 to 10000, whole shillings) from your own account at the " +
+                    "provider to **your own contact phone** (RM1), never any other number: the way to try a real " +
+                    "payout before you take sales. Needs your payout account id (RM5b), your callback address " +
+                    "(RM5) and you online (RM6: it uses your unlocked account). It is sent once and never repeated: " +
+                    "read it with `GET` until it is `PAID`, `FAILED`, `NOT_SENT` or `NOT_FOUND`. One at a time " +
+                    "(`ramp.test_payout_in_progress`). `ramp.merchant_setup_incomplete`: the contact phone, the " +
+                    "account id or the callback address is missing.",
+        )
+
+        get {
+            val testId = call.request.queryParameters["testId"]
+            val result =
+                when {
+                    testId == null -> {
+                        merchants.testPayoutResult(call.merchantId(), null)
+                    }
+
+                    else -> {
+                        runCatching { UUID.fromString(testId) }.getOrNull()?.let {
+                            merchants.testPayoutResult(call.merchantId(), it)
+                        } ?: Resource.error(SharedError.Malformed("testId", "not an id"))
+                    }
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, TestPayoutResponse>(
+            "RM18 · Your test payout",
+            TAG,
+            listOf(INVALID, "ramp.test_payout_not_found", MALFORMED),
+            notes =
+                "$SESSION Your latest test payout, or `?testId=`. While it is `SENDING`, `ACCEPTED` or `UNKNOWN` " +
+                    "this asks the provider what became of it (at most every few seconds): only the provider's " +
+                    "answer moves it. Once `PAID`, `balanceAfter` is read and `charged` is the provider's real " +
+                    "charge.",
+        )
+    }
 }

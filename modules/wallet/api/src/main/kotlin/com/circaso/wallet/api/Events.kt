@@ -66,6 +66,11 @@ data class TransferConfirmed(
     val usdValueMinor: String? = null,
     /** [amount]'s coin's decimals (added 2026-11-07). */
     val assetDecimals: Int? = null,
+    /**
+     * The ramp order this transfer funds (added 2026-11-23, the off-ramp): opaque to the wallet, which only stores and
+     * echoes it. The ramp confirms the money reached its merchant itself.
+     */
+    val rampOrderId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 
@@ -116,6 +121,8 @@ data class TransferFailed(
     val payoutRequestId: String? = null,
     /** The membership payment (SP13) it was to pay (added 2026-11-04). */
     val spacePaymentId: String? = null,
+    /** The ramp order it was to fund (added 2026-11-23); opaque to the wallet. */
+    val rampOrderId: String? = null,
 ) : DomainEvent {
     override val type: String get() = TYPE
 
