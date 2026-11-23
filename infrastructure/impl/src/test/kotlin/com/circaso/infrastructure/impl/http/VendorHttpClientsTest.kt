@@ -150,6 +150,24 @@ class VendorHttpClientsTest {
         }
 
     @Test
+    fun `a client of one attempt sends a POST answered 503 or 429 once, so a payment prompt is never repeated`() =
+        runBlocking<Unit> {
+            val client =
+                clients(
+                    { status(HttpStatusCode.ServiceUnavailable) },
+                    { status(HttpStatusCode.TooManyRequests) },
+                    { ok() },
+                ).named("v") { maxAttempts = 1 }
+
+            val unavailable = client.post("http://vendor/pay") { setBody("{}") }
+            val tooMany = client.post("http://vendor/pay") { setBody("{}") }
+
+            assertEquals(HttpStatusCode.ServiceUnavailable, unavailable.status)
+            assertEquals(HttpStatusCode.TooManyRequests, tooMany.status)
+            assertEquals(2, calls.size)
+        }
+
+    @Test
     fun `other server errors and client errors are not retried`() =
         runBlocking<Unit> {
             for (code in listOf(

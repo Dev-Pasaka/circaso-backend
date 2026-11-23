@@ -349,6 +349,24 @@ class IntegrationsModuleTest {
     }
 
     @Test
+    fun `the payhero client never retries, so a 429 or 503 can't send a buyer a second prompt`() {
+        val clients = FakeHttpClients { _ -> respondOk() }
+        val koin =
+            startKoin {
+                modules(
+                    integrationsModule(MapConfig(emptyMap()), noSecrets),
+                    module { single<HttpClients> { clients } },
+                )
+            }.koin
+
+        koin.get<CollectionProviders>()
+
+        val payHero = clients.configs.getValue("payhero")
+        assertEquals(1, payHero.maxAttempts)
+        assertEquals(PayHeroCollections.BASE_URL, payHero.baseUrl)
+    }
+
+    @Test
     fun `live voice runs on its own workers-ai-live client, with the WebSockets flag`() {
         val clients = FakeHttpClients { _ -> respondOk() }
         val koin =
