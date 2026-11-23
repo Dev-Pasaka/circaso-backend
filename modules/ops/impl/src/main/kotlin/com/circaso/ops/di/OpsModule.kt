@@ -48,12 +48,16 @@ import com.circaso.ops.domain.usecases.GetFeeWallets
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
 import com.circaso.ops.domain.usecases.GetRampBlocks
+import com.circaso.ops.domain.usecases.GetRampEngineSettings
 import com.circaso.ops.domain.usecases.GetRampMerchantOrders
+import com.circaso.ops.domain.usecases.GetRampMerchantSignals
 import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchants
 import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
+import com.circaso.ops.domain.usecases.GetRampRoutingDecision
+import com.circaso.ops.domain.usecases.GetRampRoutingDecisions
 import com.circaso.ops.domain.usecases.GetRampSettings
 import com.circaso.ops.domain.usecases.GetRampUserVerification
 import com.circaso.ops.domain.usecases.GetTicket
@@ -87,13 +91,16 @@ import com.circaso.ops.domain.usecases.ResetRampMerchantVerification
 import com.circaso.ops.domain.usecases.ResetRampUserVerification
 import com.circaso.ops.domain.usecases.SearchUsers
 import com.circaso.ops.domain.usecases.SetEmailTemplate
+import com.circaso.ops.domain.usecases.SetRampMerchantTier
 import com.circaso.ops.domain.usecases.SetRampPreviewAccess
 import com.circaso.ops.domain.usecases.SetUserNetworkAccess
 import com.circaso.ops.domain.usecases.SignInStaff
+import com.circaso.ops.domain.usecases.SimulateRampRouting
 import com.circaso.ops.domain.usecases.SuspendUser
 import com.circaso.ops.domain.usecases.UnblockRampUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
+import com.circaso.ops.domain.usecases.UpdateRampEngineSettings
 import com.circaso.ops.domain.usecases.UpdateRampSettings
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.domain.usecases.UpdateWalletNetwork
@@ -112,6 +119,7 @@ import com.circaso.ops.presentation.controllers.meController
 import com.circaso.ops.presentation.controllers.moneyController
 import com.circaso.ops.presentation.controllers.networkController
 import com.circaso.ops.presentation.controllers.rampController
+import com.circaso.ops.presentation.controllers.rampEngineController
 import com.circaso.ops.presentation.controllers.staffController
 import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
@@ -127,6 +135,7 @@ import com.circaso.ops.presentation.services.GroupService
 import com.circaso.ops.presentation.services.MeService
 import com.circaso.ops.presentation.services.MoneyService
 import com.circaso.ops.presentation.services.NetworkService
+import com.circaso.ops.presentation.services.RampEngineService
 import com.circaso.ops.presentation.services.RampService
 import com.circaso.ops.presentation.services.StaffDirectoryService
 import com.circaso.ops.presentation.services.StaffService
@@ -331,6 +340,15 @@ fun opsModule(config: Config): Module =
                 resetRampMerchantVerification = get(),
             )
         }
+        // The merchant engine for staff (decision 2026-11-23), through ramp:api's RampEngineAdmin
+        single { GetRampEngineSettings(get()) }
+        single { UpdateRampEngineSettings(get(), get()) }
+        single { GetRampRoutingDecisions(get()) }
+        single { GetRampRoutingDecision(get()) }
+        single { SimulateRampRouting(get()) }
+        single { SetRampMerchantTier(get(), get()) }
+        single { GetRampMerchantSignals(get()) }
+        single { RampEngineService(get(), get(), get(), get(), get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -349,6 +367,7 @@ fun opsModule(config: Config): Module =
             val networks = get<NetworkService>()
             val feeWallets = get<FeeWalletService>()
             val ramp = get<RampService>()
+            val rampEngine = get<RampEngineService>()
             val emailTemplates = get<EmailTemplateService>()
             OpsRouteContributor { root ->
                 // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
@@ -368,6 +387,7 @@ fun opsModule(config: Config): Module =
                     route.networkController(networks)
                     route.feeWalletController(feeWallets, settings, clock)
                     route.rampController(ramp, settings, clock)
+                    route.rampEngineController(rampEngine, settings, clock)
                     route.emailTemplateController(emailTemplates)
                 }
             }

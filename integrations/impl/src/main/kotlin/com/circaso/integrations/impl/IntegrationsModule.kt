@@ -354,9 +354,19 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         // is NOT a start-up line: it is a row staff switch in the admin (`ramp.settings.collections_provider`), so
         // every provider is bound at once and the ramp names the one it wants on each call. `log` reports every prompt
         // as paid, so it is offered on a developer's machine only.
+        //
+        // The client never retries (maxAttempts = 1). The shared client repeats any request answered 429 or 503, POSTs
+        // included, and PayHero's STK push has no idempotency key: a repeat could put a second M-Pesa prompt on the
+        // buyer's phone. A 429 or 503 is then `Unavailable` with no cause, which the ramp reads as "may have gone
+        // out" and checks before anyone else is prompted (decision 2026-11-23, as the payout clients on FinoQ).
         single<CollectionProviders> {
             val payHero =
-                PayHeroCollections(get<HttpClients>().named("payhero") { baseUrl = PayHeroCollections.BASE_URL })
+                PayHeroCollections(
+                    get<HttpClients>().named("payhero") {
+                        baseUrl = PayHeroCollections.BASE_URL
+                        maxAttempts = 1
+                    },
+                )
             OfferedCollections(
                 real = mapOf(CollectionProviders.PAYHERO to payHero),
                 local =

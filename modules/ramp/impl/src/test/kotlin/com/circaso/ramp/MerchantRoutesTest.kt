@@ -1,5 +1,6 @@
 package com.circaso.ramp
 
+import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.presentation.controllers.merchantController
@@ -59,6 +60,8 @@ class MerchantRoutesTest {
             ramp.earnings,
             ramp.statement,
             ramp.startMerchantKyc,
+            ramp.performance,
+            ramp.setOffers,
         )
     private val base = "/v1/ramp/merchant"
 
@@ -596,5 +599,81 @@ class MerchantRoutesTest {
             assertEquals(1, more.getValue("lines").jsonArray.size)
             assertEquals(JsonNull, more.getValue("next"))
             assertEquals(totals, more.getValue("totals").jsonObject)
+        }
+
+    @Test
+    fun `how you are doing and which orders you take - your own figures, in the shapes the portal reads`() =
+        testApplication {
+            serve()
+            val session = signIn("crynce@example.com")
+            // two completed (12 and 40 seconds from the confirmed payment to the USDC arriving), one the buyer let
+            // lapse, one the merchant's provider refused
+            listOf("+254700000002" to 12L, "+254700000003" to 40L).forEach { (number, seconds) ->
+                ramp.paid(ramp.user(number), PhoneNumber.parse(number)!!)
+                ramp.release()
+                ramp.treasury.settleAll()
+                ramp.clock.advance(seconds)
+                ramp.release()
+            }
+            val lapsed = ramp.prompted(ramp.user("+254700000004"), PhoneNumber.parse("+254700000004")!!)
+            ramp.collections.fail(lapsed)
+            ramp.callback(lapsed)
+            ramp.collections.refusals["Crynce-user"] = IntegrationError.Rejected("The channel is not active.")
+            ramp.buy(ramp.user("+254700000005"), PhoneNumber.parse("+254700000005")!!)
+            ramp.collections.refusals.clear()
+
+            val performance = client.get("$base/performance") { header("X-Merchant-Session", session) }
+
+            assertEquals(HttpStatusCode.OK, performance.status)
+            val data = performance.data()
+            assertEquals(setOf("network", "merchantType", "directions"), data.keys, "nothing about anybody else")
+            assertEquals("TESTNET" to "INDIVIDUAL", data.text("network") to data.text("merchantType"))
+            val directions = data.getValue("directions").jsonArray
+            assertEquals(
+                """{"direction":"ON_RAMP","offered":true,""" +
+                    """"orderLimit":{"unit":"KES","amountMinor":"3000000","amount":"30000"},""" +
+                    """"window":{"orders":50,"days":30},"finished":4,"counted":3,"completed":2,"failed":1,""" +
+                    """"notCounted":1,"completionRatePercent":"66.7","failureRatePercent":"33.3",""" +
+                    """"medianSeconds":12,"p90Seconds":40,"targetSeconds":300,"slaSeconds":900,""" +
+                    """"speed":"ON_TARGET","trades":2,"newcomer":{"applies":true,"until":20,"tradesLeft":18}}""",
+                directions[0].toString(),
+                "the buyer who let the prompt lapse is in notCounted and moved neither rate",
+            )
+            assertEquals(
+                """{"direction":"OFF_RAMP","offered":false,""" +
+                    """"orderLimit":{"unit":"KES","amountMinor":"3000000","amount":"30000"},""" +
+                    """"window":{"orders":50,"days":30},"finished":0,"counted":0,"completed":0,"failed":0,""" +
+                    """"notCounted":0,"completionRatePercent":null,"failureRatePercent":null,""" +
+                    """"medianSeconds":null,"p90Seconds":null,"targetSeconds":300,"slaSeconds":900,""" +
+                    """"speed":"NO_DATA","trades":2,"newcomer":{"applies":true,"until":20,"tradesLeft":18}}""",
+                directions[1].toString(),
+            )
+
+            // RM2 says what the merchant is and offers; RM17 changes the switches, one at a time or both
+            val account = client.get(base) { header("X-Merchant-Session", session) }.data()
+            assertEquals("INDIVIDUAL", account.text("merchantType"))
+            assertEquals("""{"onRamp":true,"offRamp":false}""", account.getValue("offers").toString())
+
+            val selling = client.put("$base/offers") { json("""{"offRamp":true}""", session) }
+            assertEquals(HttpStatusCode.OK, selling.status, selling.bodyAsText())
+            assertEquals("""{"onRamp":true,"offRamp":true}""", selling.data().getValue("offers").toString())
+            val paused = client.put("$base/offers") { json("""{"onRamp":false,"offRamp":false}""", session) }
+            assertEquals("""{"onRamp":false,"offRamp":false}""", paused.data().getValue("offers").toString())
+            assertFalse(ramp.merchants.find(ramp.crynce.merchantId)!!.offersOnramp)
+            val after = client.get("$base/performance") { header("X-Merchant-Session", session) }.data()
+            assertFalse(
+                after
+                    .getValue("directions")
+                    .jsonArray[0]
+                    .jsonObject
+                    .getValue("offered")
+                    .jsonPrimitive.boolean,
+            )
+
+            val nothing = client.put("$base/offers") { json("{}", session) }
+            assertEquals(HttpStatusCode.BadRequest, nothing.status)
+            assertEquals("onRamp", nothing.field())
+            assertEquals(HttpStatusCode.Unauthorized, client.get("$base/performance").status)
+            assertEquals(HttpStatusCode.Unauthorized, client.put("$base/offers") { json("""{"onRamp":true}""") }.status)
         }
 }

@@ -29,7 +29,8 @@ enum class PaymentsIssue {
  * A partner merchant: an account of its own, signed in to by [email]. [onlineUntil] is the end of the trading window,
  * null when offline. [callbackKey] is the end of the merchant's own callback address, null until they connect a
  * payment account. [paymentsIssue] is set when the provider refused a prompt for a reason the merchant must fix, and
- * cleared when they go online again or a later prompt goes through.
+ * cleared when they go online again or a later prompt goes through. [merchantType] and [orderLimitMinor] are staff's;
+ * [offersOnramp] and [offersOfframp] are the merchant's own (decision 2026-11-23).
  */
 data class Merchant(
     val merchantId: MerchantId,
@@ -45,9 +46,26 @@ data class Merchant(
     val createdAt: Instant,
     val paymentsIssue: PaymentsIssue? = null,
     val paymentsIssueAt: Instant? = null,
+    /** Set by staff: decides the order limit the merchant starts with. */
+    val merchantType: MerchantType = MerchantType.INDIVIDUAL,
+    /** Staff's own limit for this merchant, KES minor units; null: their type's default from the engine settings. */
+    val orderLimitMinor: Long? = null,
+    /** The merchant's own switches on the portal: which directions they take orders in. */
+    val offersOnramp: Boolean = true,
+    val offersOfframp: Boolean = false,
 ) {
     /** Approved, and inside a trading window that lasts past [until]. */
     fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && onlineUntil?.isAfter(until) == true
+
+    /** Whether the merchant takes orders in [direction]. */
+    fun offers(direction: Direction): Boolean =
+        when (direction) {
+            Direction.ON_RAMP -> offersOnramp
+            Direction.OFF_RAMP -> offersOfframp
+        }
+
+    /** The most one order may be for this merchant: their own limit, else their type's under [settings]. */
+    fun orderLimit(settings: EngineSettings): Long = orderLimitMinor ?: settings.tierLimit(merchantType)
 
     override fun toString(): String = "Merchant($merchantId, $state)"
 }

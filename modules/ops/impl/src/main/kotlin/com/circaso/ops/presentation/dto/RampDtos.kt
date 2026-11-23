@@ -78,6 +78,13 @@ data class RampMerchantDto(
     val approvedAt: String? = null,
     val createdAt: String,
     val verifications: List<RampVerificationDto> = emptyList(),
+    /** INDIVIDUAL | BUSINESS, set by staff: it decides the order limit the merchant starts with. */
+    val merchantType: String = "INDIVIDUAL",
+    /** Staff's own limit for this merchant, KES cents; null: their type's default from the engine settings. */
+    val orderLimitMinor: String? = null,
+    /** The merchant's own switches on the portal: which directions they take orders in. */
+    val offersOnRamp: Boolean = true,
+    val offersOffRamp: Boolean = false,
 )
 
 @Serializable

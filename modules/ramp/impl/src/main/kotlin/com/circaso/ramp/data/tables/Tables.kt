@@ -63,6 +63,10 @@ object MerchantsTable : Table("ramp.merchants") {
     val version = long("version").default(0)
     val paymentsIssue = text("payments_issue").nullable()
     val paymentsIssueAt = timestamp("payments_issue_at").nullable()
+    val merchantType = text("merchant_type").default("INDIVIDUAL")
+    val orderLimitMinor = long("order_limit_minor").nullable()
+    val offersOnramp = bool("offers_onramp").default(true)
+    val offersOfframp = bool("offers_offramp").default(false)
     override val primaryKey = PrimaryKey(merchantId)
 }
 
@@ -256,4 +260,61 @@ object BlocksTable : Table("ramp.blocks") {
     val createdBy = text("created_by")
     val createdAt = timestamp("created_at")
     override val primaryKey = PrimaryKey(blockId)
+}
+
+/** Every move an order makes, written in the transaction that makes it: the only record of when each step happened. */
+object OrderEventsTable : Table("ramp.order_events") {
+    val eventId = javaUUID("event_id")
+    val orderId = javaUUID("order_id")
+    val merchantId = javaUUID("merchant_id")
+    val network = text("network")
+    val direction = text("direction")
+    val state = text("state")
+    val detail = text("detail").nullable()
+    val at = timestamp("at")
+    override val primaryKey = PrimaryKey(eventId)
+}
+
+/** The engine's settings in force, one versioned JSON document per network and direction. */
+object EngineSettingsTable : Table("ramp.engine_settings") {
+    val network = text("network")
+    val direction = text("direction")
+    val version = long("version")
+    val document = text("document")
+    val updatedBy = text("updated_by").nullable()
+    val reason = text("reason").nullable()
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(network, direction)
+}
+
+/** Every version of the engine's settings there has been: what a routing decision's version points at. */
+object EngineSettingsHistoryTable : Table("ramp.engine_settings_history") {
+    val network = text("network")
+    val direction = text("direction")
+    val version = long("version")
+    val document = text("document")
+    val updatedBy = text("updated_by").nullable()
+    val reason = text("reason").nullable()
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(network, direction, version)
+}
+
+/** One row per routing: who was looked at, how each scored or why it was left out, the order tried, what happened. */
+object RoutingDecisionsTable : Table("ramp.routing_decisions") {
+    val decisionId = javaUUID("decision_id")
+    val quoteId = javaUUID("quote_id")
+    val orderId = javaUUID("order_id").nullable()
+    val merchantId = javaUUID("merchant_id").nullable()
+    val network = text("network")
+    val direction = text("direction")
+    val fiatAmountMinor = long("fiat_amount_minor")
+    val needMinor = long("need_minor")
+    val settingsVersion = long("settings_version")
+    val mode = text("mode")
+    val outcome = text("outcome")
+    val candidates = text("candidates")
+    val ranked = text("ranked")
+    val steps = text("steps")
+    val createdAt = timestamp("created_at")
+    override val primaryKey = PrimaryKey(decisionId)
 }

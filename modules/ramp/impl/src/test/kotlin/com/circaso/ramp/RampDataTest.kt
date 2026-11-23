@@ -12,15 +12,18 @@ import com.circaso.ramp.data.repositories.BlockRepositoryImpl
 import com.circaso.ramp.data.repositories.CommissionRepositoryImpl
 import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
+import com.circaso.ramp.data.repositories.EngineSettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.InsightRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantWalletRepositoryImpl
+import com.circaso.ramp.data.repositories.OrderEventRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
 import com.circaso.ramp.data.repositories.PreviewAccessRepositoryImpl
 import com.circaso.ramp.data.repositories.QuoteRepositoryImpl
 import com.circaso.ramp.data.repositories.RampOutboxImpl
 import com.circaso.ramp.data.repositories.ReservationRepositoryImpl
 import com.circaso.ramp.data.repositories.RevenueWalletRepositoryImpl
+import com.circaso.ramp.data.repositories.RoutingLogRepositoryImpl
 import com.circaso.ramp.data.repositories.SessionRepositoryImpl
 import com.circaso.ramp.data.repositories.SettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.SettlementRepositoryImpl
@@ -28,10 +31,12 @@ import com.circaso.ramp.data.repositories.StatementRepositoryImpl
 import com.circaso.ramp.data.repositories.VerificationRepositoryImpl
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
+import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.di.rampDatabaseSpec
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.Exclusion
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
@@ -47,16 +52,23 @@ import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
+import com.circaso.ramp.domain.models.RoutingOrder
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
 import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
+import com.circaso.ramp.domain.support.EngineBook
+import com.circaso.ramp.domain.support.EngineFacts
 import com.circaso.ramp.domain.support.FeeSweeps
+import com.circaso.ramp.domain.support.MerchantStatsBook
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.Prompted
 import com.circaso.ramp.domain.support.Releases
+import com.circaso.ramp.domain.support.Routing
+import com.circaso.ramp.domain.support.RoutingCommand
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
@@ -74,6 +86,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -124,18 +137,26 @@ class RampDataTest {
     private val identities = HmacIdentityKeys { EnvelopeVault.masterKey(MASTER_KEY) }
     private val verifications =
         Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
+    private val orderEvents = OrderEventRepositoryImpl(database)
+    private val engineRows = EngineSettingsRepositoryImpl(database)
+    private val routingLog = RoutingLogRepositoryImpl(database)
+    private val engineBook = EngineBook(engineRows, alerts, clock, Duration.ZERO)
+    private val statsBook = MerchantStatsBook(orderEvents, commissions, clock, Duration.ZERO)
+    private val engineFacts =
+        EngineFacts(merchants, reservations, commissions, treasury, sessions, verifications, statsBook, clock)
     private val engine =
         Engine(
-            merchants,
-            merchantWallets,
-            reservations,
-            commissions,
-            orders,
-            transactor,
-            treasury,
-            sessions,
-            verifications,
-            clock,
+            facts = engineFacts,
+            book = engineBook,
+            merchants = merchants,
+            wallets = merchantWallets,
+            reservations = reservations,
+            commissions = commissions,
+            orders = orders,
+            transactor = transactor,
+            log = routingLog,
+            random = Random(Harness.SEED),
+            clock = clock,
         )
     private val flow =
         OrderFlow(
@@ -152,6 +173,7 @@ class RampDataTest {
             sessions,
             book,
             Presence(merchants, orders, sessions),
+            HttpPromptTransport(),
             clock,
         )
     private val releases =
@@ -178,6 +200,7 @@ class RampDataTest {
             TestPostgres.truncate("ramp")
             RampExpiry(database).run()
             book.invalidate()
+            engineBook.invalidate()
             settings = book.of(TESTNET)
         }
 
@@ -256,14 +279,30 @@ class RampDataTest {
         attempt = attempt,
     )
 
-    private suspend fun reserve(userId: UserId = UserId.new()): Resource<Order> =
-        engine.reserve(TESTNET, CHAIN, 9_800_000, settings) { candidate: Candidate ->
-            order(candidate.merchant.merchantId, userId, at = clock.instant())
+    /** A routing of the usual purchase (1 300 shillings for 9.8 USDC), as the engine decides and logs it. */
+    private suspend fun route(quoteId: QuoteId = QuoteId.new()): Routing =
+        engine.route(
+            RoutingCommand(quoteId, TESTNET, CHAIN, RoutingOrder(Direction.ON_RAMP, 130_000, 9_800_000)),
+            settings,
+        )
+
+    /** Routes and reserves with the first merchant, in the engine's order, who can still take it under their lock. */
+    private suspend fun reserve(userId: UserId = UserId.new()): Resource<Order> {
+        val routing = route()
+        routing.ranked.forEach { candidate ->
+            val reserved =
+                engine.reserve(routing, candidate, settings) { picked: Candidate ->
+                    order(picked.merchant.merchantId, userId, at = clock.instant())
+                }
+            val triesNext = reserved is Resource.Error && reserved.error == RampError.NoMerchantAvailable
+            if (!triesNext) return reserved
         }
+        return Resource.error(RampError.NoMerchantAvailable)
+    }
 
     /** A reserved order with its prompt sent, as R3 leaves it. */
     private suspend fun prompted(userId: UserId = UserId.new()): Order =
-        (flow.requestPayment((reserve(userId) as Resource.Success).data) as Resource.Success).data
+        (flow.requestPayment((reserve(userId) as Resource.Success).data) as Prompted.Sent).order
 
     /** An order bought, paid, released and confirmed, at the clock's time. */
     private suspend fun completed(): Order {
@@ -414,7 +453,7 @@ class RampDataTest {
         }
 
     @Test
-    fun `candidates are approved, online past the order, and have a wallet on the network and chain`() =
+    fun `the pool is every merchant with a wallet on the chain, and the engine says why each other one is out`() =
         runBlocking<Unit> {
             val online = merchant("Online")
             val offline = merchant("Offline")
@@ -430,11 +469,24 @@ class RampDataTest {
                 )
             merchants.insert(walletless)
 
-            val found = merchants.candidates(TESTNET, CHAIN, until = now.plusSeconds(120))
-            assertEquals(listOf(online.merchantId), found.map { it.merchant.merchantId })
-            assertEquals("w-${online.merchantId}", found.single().wallet.custodyWalletId)
-            assertTrue(merchants.candidates(Network.MAINNET, "BASE", now).isEmpty())
-            assertTrue(merchants.candidates(TESTNET, "ETH-SEPOLIA", now).isEmpty())
+            val pool = merchants.pool(TESTNET, CHAIN, 100)
+            assertEquals(
+                setOf(online.merchantId, offline.merchantId, ending.merchantId),
+                pool.map { it.merchant.merchantId }.toSet(),
+            )
+            assertEquals(
+                "w-${online.merchantId}",
+                pool.single { it.merchant.merchantId == online.merchantId }.wallet.custodyWalletId,
+            )
+            assertEquals(1, merchants.pool(TESTNET, CHAIN, 1).size, "bounded")
+            assertTrue(merchants.pool(Network.MAINNET, "BASE", 100).isEmpty())
+            assertTrue(merchants.pool(TESTNET, "ETH-SEPOLIA", 100).isEmpty())
+
+            val routing = route()
+            assertEquals(listOf(online.merchantId), routing.plan.ranked)
+            val excluded = routing.plan.candidates.associate { it.facts.merchantId to it.exclusion }
+            assertEquals(Exclusion.OFFLINE, excluded[offline.merchantId])
+            assertEquals(Exclusion.OFFLINE, excluded[ending.merchantId], "a window shorter than the payment's")
 
             assertEquals(listOf(walletless.merchantId), merchantWallets.approvedWithout(TESTNET, 10))
             assertEquals(4, merchantWallets.approvedWithout(Network.MAINNET, 10).size)
@@ -895,7 +947,13 @@ class RampDataTest {
 
             val marked = merchants.find(merchant.merchantId)!!
             assertEquals(PaymentsIssue.SERVICE_BALANCE to at, marked.paymentsIssue to marked.paymentsIssueAt)
-            assertTrue(merchants.candidates(TESTNET, CHAIN, now.plusSeconds(120)).isEmpty())
+            assertEquals(
+                Exclusion.PAYMENTS_ISSUE,
+                route()
+                    .plan.candidates
+                    .single()
+                    .exclusion,
+            )
             assertEquals(RampError.NoMerchantAvailable, (reserve() as Resource.Error).error)
             assertEquals(0, count("SELECT count(*) FROM ramp.orders"))
             assertFailsWith<SQLException>("only an issue the code knows") {
@@ -911,7 +969,7 @@ class RampDataTest {
             val cleared = merchants.find(merchant.merchantId)!!
             assertNull(cleared.paymentsIssue)
             assertNull(cleared.paymentsIssueAt)
-            assertEquals(1, merchants.candidates(TESTNET, CHAIN, now.plusSeconds(120)).size)
+            assertEquals(listOf(merchant.merchantId), route().plan.ranked)
         }
 
     @Test

@@ -11,6 +11,7 @@ import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.RevenueWallet
@@ -82,24 +83,47 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
                 .toList()
         }
 
-    override suspend fun candidates(
+    override suspend fun pool(
         network: Network,
         blockchain: String,
-        until: Instant,
+        limit: Int,
     ): List<Candidate> =
-        database.tx("merchants.candidates") {
+        database.tx("merchants.pool") {
             MerchantsTable
                 .join(MerchantWalletsTable, JoinType.INNER, MerchantsTable.merchantId, MerchantWalletsTable.merchantId)
                 .selectAll()
                 .where {
-                    (MerchantsTable.state eq MerchantState.APPROVED.name) and
-                        (MerchantsTable.onlineUntil greater until) and
-                        MerchantsTable.paymentsIssue.isNull() and
-                        (MerchantWalletsTable.network eq network.name) and
-                        (MerchantWalletsTable.blockchain eq blockchain)
-                }.map { Candidate(it.toMerchant(), it.toWallet()) }
+                    (MerchantWalletsTable.network eq network.name) and (MerchantWalletsTable.blockchain eq blockchain)
+                }.orderBy(MerchantsTable.merchantId to SortOrder.ASC)
+                .limit(limit)
+                .map { Candidate(it.toMerchant(), it.toWallet()) }
                 .toList()
         }
+
+    override suspend fun setTier(
+        merchantId: MerchantId,
+        type: MerchantType,
+        orderLimitMinor: Long?,
+    ): Boolean =
+        database.tx("merchants.set-tier") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[merchantType] = type.name
+                it[MerchantsTable.orderLimitMinor] = orderLimitMinor
+            } > 0
+        }
+
+    override suspend fun setOffers(
+        merchantId: MerchantId,
+        onRamp: Boolean,
+        offRamp: Boolean,
+    ) {
+        database.tx("merchants.set-offers") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[offersOnramp] = onRamp
+                it[offersOfframp] = offRamp
+            }
+        }
+    }
 
     override suspend fun lock(merchantId: MerchantId): Merchant? =
         database.tx("merchants.lock") {
@@ -209,6 +233,10 @@ private fun ResultRow.toMerchant() =
         createdAt = this[MerchantsTable.createdAt],
         paymentsIssue = this[MerchantsTable.paymentsIssue]?.let(PaymentsIssue::valueOf),
         paymentsIssueAt = this[MerchantsTable.paymentsIssueAt],
+        merchantType = MerchantType.valueOf(this[MerchantsTable.merchantType]),
+        orderLimitMinor = this[MerchantsTable.orderLimitMinor],
+        offersOnramp = this[MerchantsTable.offersOnramp],
+        offersOfframp = this[MerchantsTable.offersOfframp],
     )
 
 private fun ResultRow.toWallet() =

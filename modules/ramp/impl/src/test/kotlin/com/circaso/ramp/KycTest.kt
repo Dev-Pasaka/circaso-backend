@@ -1007,22 +1007,60 @@ class KycTest {
         }
 
     @Test
-    fun `the gates come first - the ramp must be open to the user, the account active, and the user not barred`() =
+    fun `verifying is not a trade - it is open with the ramp off, to an active account that isn't barred`() =
         runTest {
             ramp.requireKyc()
             ramp.settingsRows.set(TESTNET) { it.copy(state = RampState.OFF) }
             ramp.book.invalidate()
-            assertEquals(RampError.Unavailable, ramp.startKyc(amina, TESTNET).error())
-            assertEquals(RampError.Unavailable, ramp.getKyc(amina, TESTNET).error())
+            assertEquals(KycState.NONE, (ramp.getKyc(amina, TESTNET) as Resource.Success).data.state)
+            val started = (ramp.startKyc(amina, TESTNET) as Resource.Success).data
+            assertEquals(KycState.PENDING, started.state)
+            assertNotNull(started.link, "a check starts although nobody can trade")
 
-            ramp.settingsRows.set(TESTNET) { it.copy(state = RampState.ON) }
+            val bob = ramp.user("+254700000002")
+            ramp.accounts.statuses[bob] = AccountStatus.SUSPENDED
+            assertEquals(RampError.AccountRestricted, ramp.startKyc(bob, TESTNET).error())
+
+            ramp.accounts.statuses[bob] = AccountStatus.ACTIVE
+            ramp.blockUser(bob, BlockReason.OPS, "why", "staff-1")
+            assertEquals(RampError.Blocked, ramp.startKyc(bob, TESTNET).error())
+            val barred = (ramp.getKyc(bob, TESTNET) as Resource.Success).data
+            assertFalse(barred.canStart, "someone barred reads their state with nothing to start")
+        }
+
+    @Test
+    fun `a person verifies from their profile where kyc isn't required, and off the preview list`() =
+        runTest {
+            // The testnet as it is seeded for staff testing: KYC not required, the ramp in PREVIEW, Amina not on the list.
+            ramp.settingsRows.set(
+                TESTNET,
+            ) { it.copy(state = RampState.PREVIEW, kycRequired = false, kycProvider = DIDIT) }
             ramp.book.invalidate()
-            ramp.accounts.statuses[amina] = AccountStatus.SUSPENDED
-            assertEquals(RampError.AccountRestricted, ramp.startKyc(amina, TESTNET).error())
+            assertEquals(RampError.Unavailable, ramp.status(amina, TESTNET).error(), "trading is still closed to her")
 
-            ramp.accounts.statuses[amina] = AccountStatus.ACTIVE
-            ramp.blockUser(amina, BlockReason.OPS, "why", "staff-1")
-            assertEquals(RampError.Blocked, ramp.startKyc(amina, TESTNET).error())
+            val before = (ramp.getKyc(amina, TESTNET) as Resource.Success).data
+            assertEquals(KycState.NONE to false, before.state to before.required)
+            assertTrue(before.canStart)
+
+            val started = (ramp.startKyc(amina, TESTNET) as Resource.Success).data
+            assertNotNull(started.link)
+            val session = ramp.sessionOf(Subject.user(amina))
+            ramp.didit.approve(session, KycDocument("KEN", "Identity Card", "12345678"))
+            ramp.webhook(session)
+
+            val after = (ramp.getKyc(amina, TESTNET) as Resource.Success).data
+            assertEquals(KycState.VERIFIED, after.state)
+            assertFalse(after.required, "verified although nothing asked for it")
+        }
+
+    @Test
+    fun `where the identity provider isn't set up, verifying answers so - with the ramp off or on`() =
+        runTest {
+            ramp.settingsRows.set(TESTNET) { it.copy(state = RampState.OFF, kycProvider = DIDIT, kycWorkflowUser = "") }
+            ramp.book.invalidate()
+
+            assertEquals(RampError.KycNotConfigured, ramp.startKyc(amina, TESTNET).error())
+            assertEquals(KycState.NONE, (ramp.getKyc(amina, TESTNET) as Resource.Success).data.state)
         }
 
     @Test

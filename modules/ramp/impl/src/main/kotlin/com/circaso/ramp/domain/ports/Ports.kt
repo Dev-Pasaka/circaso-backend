@@ -2,6 +2,7 @@ package com.circaso.ramp.domain.ports
 
 import com.circaso.integrations.api.KycDocument
 import com.circaso.integrations.api.KycEnvironment
+import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
@@ -129,4 +130,24 @@ interface RampCounters {
 interface UsdcContracts {
     /** Null when the chain isn't configured with a USDC contract: then nothing is sent on it. */
     fun contractOn(network: Network, blockchain: String): String?
+}
+
+/**
+ * What is known about a payment prompt whose request failed without an answer (decision 2026-11-23). The engine may
+ * ask another merchant only when no prompt can be on the payer's phone, so the two cases must never be confused.
+ */
+interface PromptTransport {
+    /**
+     * True only when the request **can't have reached** the provider: its circuit was open, or the connection was
+     * never made. A timeout, a dropped answer or a server error is false: a prompt may have gone out.
+     */
+    fun neverSent(failure: Resource.Error): Boolean
+}
+
+/**
+ * A merchant's free shillings for payouts, for routing an off-ramp: given by the caller of the engine, because where
+ * that float lives is the payout provider's business. Null when it can't be read (the merchant is then left out).
+ */
+fun interface KesFloat {
+    suspend fun of(merchantId: MerchantId): Long?
 }

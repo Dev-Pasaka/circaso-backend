@@ -54,7 +54,8 @@ data class OpsRampUserVerification(
 /**
  * A partner merchant as staff see it. [state] is `NEW`, `APPLIED`, `APPROVED` or `SUSPENDED`. [paymentsConnected] says
  * whether the merchant has stored a payment account; what it is stays sealed. [verifications] is their identity
- * verification in each provider environment they have one.
+ * verification in each provider environment they have one. [merchantType], [orderLimitMinor] and the two `offers`
+ * are what the merchant engine reads (decision 2026-11-23).
  */
 data class OpsMerchant(
     val merchantId: MerchantId,
@@ -69,6 +70,13 @@ data class OpsMerchant(
     val approvedAt: Instant?,
     val createdAt: Instant,
     val verifications: List<OpsRampVerification> = emptyList(),
+    /** `INDIVIDUAL` or `BUSINESS`, set by staff: it decides the order limit the merchant starts with. */
+    val merchantType: String = "INDIVIDUAL",
+    /** Staff's own limit for this merchant, KES minor units; null: their type's default from the engine settings. */
+    val orderLimitMinor: Long? = null,
+    /** The merchant's own switches on the portal: which directions they take orders in. */
+    val offersOnRamp: Boolean = true,
+    val offersOffRamp: Boolean = false,
 ) {
     override fun toString(): String = "OpsMerchant($merchantId, $state)"
 }

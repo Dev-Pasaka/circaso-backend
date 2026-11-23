@@ -8,10 +8,15 @@ import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.CommissionFigures
 import com.circaso.ramp.domain.models.DayTotals
+import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.EngineSettings
+import com.circaso.ramp.domain.models.EngineSettingsVersion
 import com.circaso.ramp.domain.models.FeeSplit
+import com.circaso.ramp.domain.models.FinishedOrder
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
@@ -24,6 +29,10 @@ import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RevenueWallet
+import com.circaso.ramp.domain.models.RoutingDecision
+import com.circaso.ramp.domain.models.RoutingFilter
+import com.circaso.ramp.domain.models.RoutingOutcome
+import com.circaso.ramp.domain.models.RoutingStep
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
@@ -41,22 +50,28 @@ import com.circaso.ramp.domain.models.VerifiedOutcome
 import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
+import com.circaso.ramp.domain.repositories.EngineSettingsRepository
 import com.circaso.ramp.domain.repositories.InsightRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
+import com.circaso.ramp.domain.repositories.OrderEvent
+import com.circaso.ramp.domain.repositories.OrderEventRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.PreviewAccessRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.RevenueWalletRepository
+import com.circaso.ramp.domain.repositories.RoutingLogRepository
 import com.circaso.ramp.domain.repositories.SessionRepository
 import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Periods
+import com.circaso.ramp.domain.support.Stats
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -161,15 +176,32 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
             .filter { before == null || it.merchantId.value < before.value }
             .take(limit)
 
-    override suspend fun candidates(
+    override suspend fun pool(
         network: Network,
         blockchain: String,
-        until: Instant,
-    ) = rows.values.mapNotNull { merchant ->
-        val wallet = wallets.rows[merchant.merchantId to network]?.takeIf { it.blockchain == blockchain }
-        val trading = merchant.isTradingUntil(until) && merchant.paymentsIssue == null
-        if (wallet != null && trading) Candidate(merchant, wallet) else null
+        limit: Int,
+    ) = rows.values
+        .mapNotNull { merchant ->
+            wallets.rows[merchant.merchantId to network]
+                ?.takeIf { it.blockchain == blockchain }
+                ?.let { Candidate(merchant, it) }
+        }.take(limit)
+
+    override suspend fun setTier(
+        merchantId: MerchantId,
+        type: MerchantType,
+        orderLimitMinor: Long?,
+    ): Boolean {
+        if (merchantId !in rows) return false
+        change(merchantId) { it.copy(merchantType = type, orderLimitMinor = orderLimitMinor) }
+        return true
     }
+
+    override suspend fun setOffers(
+        merchantId: MerchantId,
+        onRamp: Boolean,
+        offRamp: Boolean,
+    ) = change(merchantId) { it.copy(offersOnramp = onRamp, offersOfframp = offRamp) }
 
     override suspend fun lock(merchantId: MerchantId): Merchant? {
         locked += merchantId
@@ -300,13 +332,78 @@ private fun <T> List<T>.after(
  * Orders in memory, with the same claims the tables make: one order per quote and attempt, one open order per user,
  * one receipt.
  */
-class MemoryOrders : OrderRepository {
+class MemoryOrders :
+    OrderRepository,
+    OrderEventRepository {
     val rows = linkedMapOf<RampOrderId, Order>()
+
+    /** The timeline: one event per insert and per move, as the table gets them in the same transaction. */
+    val events = mutableListOf<OrderEvent>()
+
+    private fun record(
+        order: Order,
+        at: Instant,
+        detail: String?,
+    ) {
+        events += OrderEvent(order.orderId, order.state, detail, at)
+    }
+
+    override suspend fun timeline(orderId: RampOrderId) = events.filter { it.orderId == orderId }
+
+    private fun finishedSince(
+        merchantId: MerchantId,
+        network: Network,
+        direction: Direction,
+        since: Instant,
+    ) = events
+        .filter { it.state in Stats.FINISHED && !it.at.isBefore(since) }
+        .filter { event ->
+            val order = rows.getValue(event.orderId)
+            order.merchantId == merchantId && order.network == network && order.direction == direction
+        }
+
+    override suspend fun counted(
+        merchantId: MerchantId,
+        network: Network,
+        direction: Direction,
+        since: Instant,
+        limit: Int,
+    ): List<FinishedOrder> {
+        val from = if (direction == Direction.ON_RAMP) Stats.HANDLING_FROM_ON_RAMP else Stats.HANDLING_FROM_OFF_RAMP
+        return finishedSince(merchantId, network, direction, since)
+            .filter { Stats.isCounted(it.state, it.detail) }
+            .sortedByDescending { it.at }
+            .take(limit)
+            .distinctBy { it.orderId }
+            .map { end ->
+                val started = events.filter { it.orderId == end.orderId && it.state.name == from }.minOfOrNull { it.at }
+                val handled = started?.takeIf { end.state == OrderState.COMPLETED }
+                val seconds = handled?.let { Duration.between(it, end.at).seconds }
+                FinishedOrder(end.orderId, end.state, end.detail, end.at, seconds)
+            }
+    }
+
+    override suspend fun notCounted(
+        merchantId: MerchantId,
+        network: Network,
+        direction: Direction,
+        since: Instant,
+    ) = finishedSince(merchantId, network, direction, since).count { !Stats.isCounted(it.state, it.detail) }
+
+    override suspend fun recent(
+        network: Network,
+        direction: Direction,
+        limit: Int,
+    ) = rows.values
+        .filter { it.network == network && it.direction == direction && it.attempt == 1 }
+        .sortedByDescending { it.createdAt }
+        .take(limit)
 
     override suspend fun insert(order: Order): Boolean {
         val sameAttempt = rows.values.any { it.quoteId == order.quoteId && it.attempt == order.attempt }
         if (sameAttempt || rows.values.any { it.userId == order.userId && it.state.isOpen }) return false
         rows[order.orderId] = order
+        record(order, order.createdAt, null)
         return true
     }
 
@@ -359,6 +456,7 @@ class MemoryOrders : OrderRepository {
                 failureReason = patch.failureReason ?: order.failureReason,
             )
         rows[orderId] = moved
+        record(moved, at, patch.failureReason)
         return moved
     }
 
@@ -372,6 +470,7 @@ class MemoryOrders : OrderRepository {
         if (receipt != null && rows.values.any { it.mpesaReceipt == receipt }) return PaidOutcome.ReceiptUsed
         val paid = order.copy(state = OrderState.PAID, mpesaReceipt = receipt, updatedAt = at)
         rows[orderId] = paid
+        record(paid, at, null)
         return PaidOutcome.Moved(paid)
     }
 
@@ -456,6 +555,8 @@ class MemoryLedger(private val orders: MemoryOrders) :
 
     override suspend fun owedTotal(merchantId: MerchantId, network: Network) =
         of(merchantId, network).filter { it.settledAt == null }.sumOf { it.split.platformAssetMinor }
+
+    override suspend fun completedCount(merchantId: MerchantId, network: Network) = of(merchantId, network).size
 
     override suspend fun insert(settlement: Settlement) {
         val pending =
@@ -797,4 +898,118 @@ class MemoryBlocks : BlockRepository {
             .sortedWith(compareByDescending<Block> { it.createdAt }.thenByDescending { it.blockId })
             .filter { after == null || it.createdAt < after.at || (it.createdAt == after.at && it.blockId < after.id) }
             .take(limit)
+}
+
+/** The engine's settings in memory: the row in force per network and direction, and every version there has been. */
+class MemoryEngineSettings : EngineSettingsRepository {
+    val rows = linkedMapOf<Pair<Network, Direction>, EngineSettingsVersion>()
+    val history = mutableListOf<EngineSettingsVersion>()
+
+    override suspend fun load() = rows.toMap()
+
+    override suspend fun seed(row: EngineSettingsVersion) {
+        if (rows.putIfAbsent(row.network to row.direction, row) == null) history += row
+    }
+
+    override suspend fun update(
+        network: Network,
+        direction: Direction,
+        settings: EngineSettings,
+        expectedVersion: Long?,
+        by: String,
+        reason: String,
+        at: Instant,
+    ): EngineSettingsVersion? {
+        val current = rows[network to direction] ?: return null
+        if (expectedVersion != null && current.version != expectedVersion) return null
+        val next =
+            current.copy(
+                version = current.version + 1,
+                settings = settings,
+                updatedBy = by,
+                reason = reason,
+                updatedAt = at,
+            )
+        rows[network to direction] = next
+        history += next
+        return next
+    }
+
+    override suspend fun version(
+        network: Network,
+        direction: Direction,
+        version: Long,
+    ) = history.firstOrNull { it.network == network && it.direction == direction && it.version == version }
+
+    /** Changes what is in force without a version, as a test sets the scene. */
+    fun set(
+        network: Network,
+        direction: Direction = Direction.ON_RAMP,
+        change: (EngineSettings) -> EngineSettings,
+    ) {
+        val current =
+            rows[network to direction]
+                ?: EngineSettingsVersion(
+                    network,
+                    direction,
+                    1,
+                    EngineSettings.defaults(network),
+                    null,
+                    null,
+                    Instant.EPOCH,
+                ).also { history += it }
+        rows[network to direction] = current.copy(settings = change(current.settings))
+    }
+}
+
+/** The routing log in memory. */
+class MemoryRoutingLog : RoutingLogRepository {
+    val rows = linkedMapOf<UUID, RoutingDecision>()
+
+    override suspend fun insert(decision: RoutingDecision) {
+        rows[decision.decisionId] = decision
+    }
+
+    override suspend fun finish(
+        decisionId: UUID,
+        orderId: RampOrderId?,
+        merchantId: MerchantId?,
+        outcome: RoutingOutcome,
+        steps: List<RoutingStep>,
+    ) {
+        rows[decisionId]?.let {
+            rows[decisionId] = it.copy(orderId = orderId, merchantId = merchantId, outcome = outcome, steps = steps)
+        }
+    }
+
+    override suspend fun find(decisionId: UUID) = rows[decisionId]
+
+    override suspend fun list(
+        filter: RoutingFilter,
+        after: PageCursor?,
+        limit: Int,
+    ) = rows.values
+        .filter { it.network == filter.network }
+        .filter { filter.merchantId == null || it.merchantId == filter.merchantId }
+        .filter { filter.quoteId == null || it.quoteId == filter.quoteId }
+        .filter { filter.from == null || !it.createdAt.isBefore(filter.from) }
+        .filter { filter.to == null || it.createdAt.isBefore(filter.to) }
+        .after(after, { it.createdAt }, { it.decisionId })
+        .take(limit)
+
+    override suspend fun prune(
+        network: Network,
+        direction: Direction,
+        before: Instant,
+        limit: Int,
+    ): Int {
+        val old =
+            rows.values
+                .filter { it.network == network && it.order.direction == direction && it.createdAt.isBefore(before) }
+                .take(limit)
+        old.forEach { rows.remove(it.decisionId) }
+        return old.size
+    }
+
+    fun last(): RoutingDecision = rows.values.last()
 }

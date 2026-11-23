@@ -2,7 +2,7 @@
 
 Ramp answers "how do I turn shillings into USDC and back": it is an automated P2P merchant desk for USDC ↔ KES over M-Pesa. Vetted partner merchants supply the USDC float and their own M-Pesa collection account and earn commission; Circaso's merchant engine runs every trade, so a merchant does nothing per trade. Schema `ramp`, Redis prefix `rmp:`, stream `events:ramp`.
 
-Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day), then identity verification with Didit on `feat/ramp-kyc` (same day; see "As built: identity verification"); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
+Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day), then identity verification with Didit on `feat/ramp-kyc` (same day; see "As built: identity verification"), then the merchant engine and verifying from the profile on `feat/ramp-engine` (2026-11-23; see "As built: the merchant engine" and "As built: verifying from the profile"); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
 
 **This is the one module that moves money.** Everywhere else the backend prepares and the user signs (principle 7, principle 11). Ramp sends USDC on its own, but only from a partner merchant's developer-controlled wallet, and only against a payment it has verified itself (decision 2026-11-22). It never signs for a user's wallet: an off-ramp is still an ordinary W4 transfer signed with the user's PIN.
 
@@ -156,6 +156,8 @@ Only merchants who are online, approved and in `MANUAL` mode are candidates, and
 **Off-ramp states with a manual payout.** `AWAITING_TRANSFER` → `FUNDED` → `PAYOUT_DUE` → `PAYOUT_CLAIMED` → `COMPLETED`; `REFUNDED`, `REVIEW`.
 
 ### The merchant engine (routing)
+
+**Built on 2026-11-23, and more than this section designed: eligibility, scoring, the weighted draw, failover, the settings and the routing log are in "As built: the merchant engine" below, which replaces the ranking paragraph here.** What still holds from this section: who is a candidate at all, and that pick and reserve are one transaction under the merchant's row lock with the custodian read outside it.
 
 A merchant is a candidate for an order only if all of these hold:
 
@@ -352,7 +354,7 @@ Paths relative to `https://api.circaso.com/v1`. Every POST, PUT and DELETE takes
 
 | # | Route | Use case (domain) | Does | First slice |
 | --- | --- | --- | --- | --- |
-| R0 | `POST /ramp/kyc` · `GET /ramp/kyc` | `StartUserKyc` · `GetUserKyc` | Starts (or returns the open) Didit check for this user: `{ status, required, canStart, reason, retryAt, submitted, session: { sessionToken, url, expiresAt }? }`. Already `VERIFIED` answers so with no session. The `GET` reads the state, asking Didit while a check is unfinished | Built 2026-11-22 |
+| R0 | `POST /ramp/kyc` · `GET /ramp/kyc` | `StartUserKyc` · `GetUserKyc` | Starts (or returns the open) Didit check for this user: `{ status, required, canStart, reason, retryAt, submitted, session: { sessionToken, url, expiresAt }? }`. Already `VERIFIED` answers so with no session. The `GET` reads the state, asking Didit while a check is unfinished. **Not gated by the ramp's state (2026-11-23): see "As built: verifying from the profile"** | Built 2026-11-22 |
 | R1 | `GET /ramp` | `GetRampStatus` | Whether this user can trade now: KYC status, blocked or not, the limits, the chains offered, whether any merchant is online. Never a list of merchants | Yes |
 | R2 | `POST /ramp/quotes` | `CreateQuote` | Prices an amount in one direction; a quote lasts 60 s and reserves nothing | Yes (on-ramp) |
 | R3 | `POST /ramp/onramp/orders` | `StartOnRamp` | Picks a merchant, reserves float, sends the M-Pesa prompt | Yes |
@@ -381,7 +383,7 @@ Paths relative to `https://api.circaso.com/v1`. Every POST, PUT and DELETE takes
   "merchantName": "Crynce", "expiresAt": "2026-11-22T18:03:00Z" }
 ```
 
-**When the provider refuses the prompt (2026-11-22):** the order is closed and its float freed as before, then the next candidate merchant is asked with a new order for the same quote; `ramp.merchant_unavailable` (409) when nobody is left. `ramp.collections_unavailable` (502) is only the provider out of reach. See "As built".
+**When the provider refuses the prompt (2026-11-22):** the order is closed and its float freed as before, then the next candidate merchant is asked with a new order for the same quote; `ramp.merchant_unavailable` (409) when nobody is left. `ramp.collections_unavailable` (502) is only the provider out of reach. See "As built". **Since 2026-11-23** the engine gives the whole failover order at once, the settings' `maxAttempts` bounds it, and a provider that is out of reach is handled by whether a prompt can be on the phone: see "As built: the merchant engine" → Failover.
 
 R3's checks, in order: account `ACTIVE`; KYC `VERIFIED` (`ramp.kyc_required`); not blocked, by user or identity key (`ramp.blocked`); within the limits of the user's KYC tier; the quote exists, is this user's and hasn't expired (`ramp.quote_expired`); within the per-order and daily limits (`ramp.limit_exceeded`); no other open order (`ramp.order_in_progress`: one at a time per user); **the phone is the account's own verified number** (`AccountDirectory.resolvePhones`; else `ramp.phone_not_yours`), so the payer PayHero reports can be matched to the user; the user has a wallet that receives on the chain (`ramp.wallet_required`); a merchant with the float (`ramp.no_merchant_available`). The order and reservation are written before PayHero is asked; when the prompt can't be sent the order ends `FAILED` and the float is given back in the same transaction.
 
@@ -476,6 +478,8 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RM13 | `POST /ramp/merchant/orders/{orderId}/decline` | `DeclinePayout` | Manual payout: the merchant can't pay; the held USDC is refunded |
 | RM14 | `POST /ramp/merchant/payments/callback` | `RotateCallback` | Generates a new callback address; the old one stops working |
 | RM11 | `POST /ramp/merchant/orders/{orderId}/reversal` | `ReportReversal` | Reports an M-Pesa reversal with its receipt; blocks the user and their KYC identity, opens a case for ops |
+| RM16 | `GET /ramp/merchant/performance` | `GetMerchantPerformance` | The merchant's **own** ranking signals per direction, in plain terms: completion and failure rate, median time against the target and the SLA, trades, whether the newcomer boost applies, their order limit. Never another merchant's. Built 2026-11-23 |
+| RM17 | `PUT /ramp/merchant/offers` | `SetMerchantOffers` | The merchant's own switches: `{ onRamp?, offRamp? }` (one left out stays as it is); answers RM2. Built 2026-11-23 |
 
 ### Ops (on the ops gateway, `/v1/ops/ramp`, through `ramp:api` `RampAdmin`)
 
@@ -490,6 +494,12 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RO6 | `GET /ops/ramp/overview?network=&from=&to=` | What each merchant did in a period, and the network's totals (the sum of the rows) |
 | RO7 | `GET /ops/ramp/merchants/{id}/summary?network=&from=&to=` | One merchant: account, float, orders by how they ended, the money, each day, the sweeps |
 | RO8 | `GET /ops/ramp/merchants/{id}/orders?network=&from=&to=&state=&cursor=&limit=` | The merchant's orders, newest first, keyset paged, the payer masked |
+| RO9 | `GET` · `PUT /ops/ramp/engine-settings?network=&direction=` | The merchant engine's settings for one network and direction: a versioned document, version-checked, audited with a reason kept on the version (2026-11-23) |
+| RO10 | `POST /ops/ramp/engine-settings/simulate?network=&direction=` | What a draft of the settings would do to the last real orders (or one amount): each merchant's share, with nothing written |
+| RO11 | `GET /ops/ramp/routing?network=&merchantId=&orderId=&from=&to=&cursor=&limit=` | Routing decisions, newest first |
+| RO12 | `GET /ops/ramp/routing/{decisionId}` | One routing in full: why this merchant |
+| RO13 | `PUT /ops/ramp/merchants/{id}/tier` | A merchant's type (`INDIVIDUAL` \| `BUSINESS`) and own order limit, audited |
+| RO14 | `GET /ops/ramp/merchants/{id}/signals?network=` | What the engine scores a merchant on, per direction |
 
 Every money read takes `?network=`, as the other ops routes do. RO6–RO8 are described under "As built" (staff visibility per merchant).
 
@@ -745,6 +755,8 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | `withdrawals` | — | Written under the merchant's row lock with the offline and no-open-orders checks |
 | `realtime`, `outbox` | Daily partitions, 7 days | — |
 
+**V6 (2026-11-23, the merchant engine):** `ramp.order_events`, four columns on `merchants`, `ramp.engine_settings` with `ramp.engine_settings_history`, and `ramp.routing_decisions`. The DDL and how each race is settled are under "As built: the merchant engine".
+
 **Redis (`rmp:` prefix)**
 
 | Key | Value | Expiry | Purpose |
@@ -768,6 +780,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed, or whose `rmp:session` is gone: marks them offline. Open orders finish | Later |
 | `ramp.sweep-verifications` | 2 min | Re-reads from the provider every `PENDING` verification not asked about in 5 minutes and every `IN_REVIEW` one not asked about in 30 (a lost webhook, an abandoned session). One the provider still calls unfinished after its time (`kyc_pending_hours`) is marked `EXPIRED`, and so is one whose provider can't be asked any more; while the provider is only out of reach nothing changes | Built 2026-11-22 |
 | `ramp.purge-expired` | 5 min | Expired quotes; tomorrow's partitions and old ones for `realtime` and `outbox` | Yes |
+| `ramp.prune-routing` | 1 h | Deletes routing decisions older than each network and direction's `logRetentionDays` (90), 500 at a time | Built 2026-11-23 |
 
 ## Events
 
@@ -806,7 +819,7 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 
 | Code | Kind → status | When |
 | --- | --- | --- |
-| `ramp.unavailable` | FORBIDDEN → 403 | The ramp is `OFF` on this network, or `PREVIEW` and the user isn't on the list |
+| `ramp.unavailable` | FORBIDDEN → 403 | The ramp is `OFF` on this network, or `PREVIEW` and the user isn't on the list (R1, R2, R3; **never R0**: verifying is not a trade) |
 | `ramp.kyc_required` | FORBIDDEN → 403 | The user hasn't passed KYC on this network (R2, R3); R1's `verification` says where it stands |
 | `ramp.kyc_unavailable` | UPSTREAM → 502 | Didit is out of reach, or refused the session (R0, RM3) |
 | `ramp.kyc_not_configured` | UNAVAILABLE → 503 | Checks can't run on this network yet: the environment's key isn't on the server, the workflow id is empty, the provider isn't offered, or (live) the master key is missing |
@@ -828,7 +841,7 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.too_many_prompts` | RATE_LIMITED → 429 | Too many M-Pesa prompts this hour |
 | `ramp.order_not_found` | NOT_FOUND → 404 | No such order, or not this user's or merchant's |
 | `ramp.order_not_cancellable` | CONFLICT → 409 | Already paid or finished |
-| `ramp.collections_unavailable` | UPSTREAM → 502 | PayHero is out of reach (down, timing out, or the circuit is open). A refusal is `ramp.merchant_unavailable`, never this |
+| `ramp.collections_unavailable` | UPSTREAM → 502 | PayHero is out of reach (down, timing out, or the circuit is open) for every merchant tried, or gave no answer and couldn't then say whether a prompt went out (2026-11-23). A refusal is `ramp.merchant_unavailable`, never this |
 | `ramp.pricing_unavailable` | UPSTREAM → 502 | No reference rate is available to price a quote |
 | `ramp.custody_unavailable` | UPSTREAM → 502 | Circle is down |
 | `ramp.merchant_not_found` | NOT_FOUND → 404 | The account is not a merchant |
@@ -840,6 +853,7 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.merchant_online` | CONFLICT → 409 | A withdrawal while online or with open orders |
 | `ramp.insufficient_float` | INVALID → 400 | A withdrawal above the unreserved balance |
 | `ramp.address_invalid` | INVALID → 400 | A withdrawal address not valid on the chain |
+| `ramp.routing_not_found` | NOT_FOUND → 404 | No such routing decision (RO12) |
 
 Metrics (`circaso_ramp_`): `orders_total` (direction, outcome), `verify_total` (result: matched, mismatch, failed), `release_duration_seconds`, `orders_in_review` (gauge), `merchants_online` (gauge), `no_merchant_total`. No merchant or user id as a label.
 
@@ -988,6 +1002,286 @@ What the code does where it differs from, or settles, what is written above. Dec
 **If the signal proves unreliable: the alternative, not built.** A small authenticated route, `POST /v1/ramp/kyc/submitted` (and the same for the merchant), that the app calls when the SDK reports completion. The server would never take the client's word as a decision: it would mark the row `submitted` only if Didit's session is still undecided and the row's session is the one named, keep `canStart` false for a bounded time (minutes), and go on reading the decision as now. That covers the app, not a person who finishes and kills the app before the call, which is why the provider's own signal was preferred.
 
 **Not changed:** the ops gateway's verification lookup (`GET /ops/ramp/users/{userId}/verification`) and the merchant list still show `PENDING` without `submitted`.
+
+## As built: the merchant engine (2026-11-23, `feat/ramp-engine`)
+
+Approved by Pasaka for implementation on 2026-11-23. It replaces the first slice's pick (the least recently assigned merchant) with an engine that is a hard eligibility filter, a score per merchant, a weighted random draw that gives the whole failover order, a log of every routing, and settings staff change without a deploy. Everything the engine computes is a pure function (`domain/support/Scoring.kt`: `Scoring`, `WeightedDraw`, `Router`, `Stats`), tested as tables; what reads the database and the custodian is `EngineFacts`, and `Engine` joins the two.
+
+### Eligibility (a hard filter, the same in every mode)
+
+The pool is every merchant with a float wallet on the order's network and chain (at most 500). Each one is either eligible or **left out with one reason, the first that applies, in this order**:
+
+| Reason | Left out because |
+| --- | --- |
+| `NOT_APPROVED` | Not `APPROVED` (applied only, or suspended) |
+| `KYC_REQUIRED` | Not verified in the environment the order's network trusts, where that network requires KYC |
+| `OFFLINE` | No trading window, or one that ends before the order's payment window does |
+| `NO_KEYS` | This node doesn't hold their payment keys, or holds keys for another provider than the network's |
+| `PAYMENTS_ISSUE` | Their provider refused a prompt for something only they can fix |
+| `DIRECTION_OFF` | They don't offer this direction (`offers_onramp`, `offers_offramp`) |
+| `OVER_LIMIT` | The order (KES) is above their limit: `order_limit_minor`, else their type's tier limit from the engine settings |
+| `FLOAT_UNKNOWN` | Their float couldn't be read |
+| `FLOAT_SHORT` | Their free float doesn't cover the order |
+
+- **Float.** Buying: free USDC = the wallet's balance at the custodian − open reservations − commissions not yet swept, as before. Selling: a `kesFloat` the caller of the engine gives (`RoutingCommand.kesFloat: KesFloat?`, a function from merchant to free shillings); nobody passes one yet, so on an off-ramp everybody is `FLOAT_UNKNOWN`.
+- **Cost.** The checks that need no float come first; floats are read (one custodian call each, made together) only for whoever passed them, and statistics only for whoever's float was read.
+- **Under the row lock, again.** `Engine.reserve` locks the merchant's row and re-checks state, window, payments issue, chain, direction, limit and free float (the balance read at routing, less what is spoken for **now**) before the order and its reservation are written. A merchant who no longer fits is passed over (step `reserve_failed`) without counting as an attempt.
+
+### Merchant attributes (V6 columns on `ramp.merchants`)
+
+| Column | Default | Set by | Meaning |
+| --- | --- | --- | --- |
+| `merchant_type` | `INDIVIDUAL` | Staff (RO13) | `INDIVIDUAL` \| `BUSINESS`: which tier limit applies |
+| `order_limit_minor` | null | Staff (RO13) | Their own limit for one order, KES minor units; null: the tier's default |
+| `offers_onramp` | true | The merchant (RM17) | Takes purchases |
+| `offers_offramp` | false | The merchant (RM17) | Takes sales (the off-ramp isn't open: the switch is kept for it) |
+
+**Completed trades are derived, not stored:** `count(*)` of the merchant's commissions on the network (one commission is one completed trade; `commissions_merchant_idx`), in both directions together. Nothing to keep in step, and it is per network, so testnet trades never make a mainnet merchant look experienced.
+
+### The order timeline (`ramp.order_events`)
+
+`orders.updated_at` is overwritten on every move, so the times of the steps were lost. Now **every insert and every move of an order writes one row** (the state entered, when, and the failure reason when the move carried one) **in the same transaction**: the writes are inside `OrderRepositoryImpl.insert`, `move` and `markPaid` themselves, the only three places `orders.state` is ever written, so the app's processes and the ops process (`Releases`) both leave the timeline without knowing about it, and a move rolled back takes its event with it. Each row carries `merchant_id`, `network` and `direction`, so the statistics need no join. Nothing was backfilled: an order from before V6 has no timeline and the statistics don't see it. Read through `OrderEventRepository` (`timeline`, `counted`, `notCounted`).
+
+### Merchant statistics
+
+Per merchant × network × direction, over **the merchant's last N counted orders (default 50) that finished within D days (default 30)**, computed from the timeline by `Stats`:
+
+| Statistic | Definition |
+| --- | --- |
+| `completed` | Orders that reached `COMPLETED` |
+| `merchantFailures` | `FAILED` with a reason in the merchant's list below |
+| `merchantExpiries` | `EXPIRED` with a reason in the merchant's list (`payout_missed`, the off-ramp's; nothing on the on-ramp expires because of a merchant) |
+| `reversals` | M-Pesa reversals after release: **always 0** until reversal reports (RM11) are built |
+| `counted` | `completed + merchantFailures + merchantExpiries + reversals`: the only orders a rate is taken over |
+| `notCounted` | Every other order of theirs that finished in the D days: shown to the merchant and staff, never scored |
+| `finished` | `counted + notCounted` |
+| `medianHandlingSeconds`, `p90HandlingSeconds` | Of the completed orders in the window, nearest rank. **Handling time is `PAID → COMPLETED` when buying** (from the payment being verified to the release confirmed on chain: release speed) **and `FUNDED → COMPLETED` when selling** |
+
+**Which reasons count against a merchant, and which never do:**
+
+| Order ended | Reason | Counts as |
+| --- | --- | --- |
+| `FAILED` | `prompt_refused` (the provider refused this merchant's prompt) | Merchant failure |
+| `FAILED` | `provider_balance` (their prepaid balance at the provider was empty) | Merchant failure |
+| `FAILED` | `merchant_offline` (their keys were gone when the prompt had to go out) | Merchant failure |
+| `FAILED` | `payout_failed` (selling; not produced yet) | Merchant failure |
+| `EXPIRED` | `payout_missed` (selling; not produced yet) | Merchant expiry |
+| `FAILED` | `payment_failed` (**the buyer ignored, declined or mistyped the M-Pesa prompt**: the provider reports the payment failed) | Not counted |
+| `CANCELLED` | `cancelled` (the buyer cancelled before the prompt) | Not counted |
+| `FAILED` | `provider_unreachable`, `prompt_failed`, `prompt_unconfirmed`, `provider_unavailable` (the provider, or which provider is offered) | Not counted |
+| `EXPIRED` | `never_prompted` (the prompt never went out: Circaso's side) | Not counted |
+| any | A reason nobody has classified | Not counted, until it is added to `Stats` on purpose |
+
+- **`REVIEW` is not a finished state**: a person still decides it, so it is in no statistic.
+- **Why the window is "last N counted" and not "last N finished":** with a window of finished orders, fifty buyers letting a prompt lapse would push a merchant's whole record out of the window and reset them to the priors. Buyers' behaviour must not move a merchant's score in either direction, so uncounted orders take no place in the window.
+- **Cost and the cache.** Three indexed reads per merchant (`order_events_finished_idx` for the counted and the uncounted, `order_events_order_idx` for the `PAID` step of the completed ones) and one count of commissions. `MerchantStatsBook` keeps the result **30 seconds per process**: a finished order moves its merchant's score at most half a minute late.
+
+### Scoring (as built: the formulas)
+
+With `k` = `priorStrength`, `p0` = `completionPrior`, `f0` = `failurePrior`:
+
+```
+C = (completed + k·p0) / (counted + k)                         completion, pulled toward the prior while data is thin
+F = (failed + k·f0) / (counted + k)                            failed = merchantFailures + merchantExpiries + reversals
+S = 1                         when median ≤ target
+    1 − (median − target) / (2·SLA − target)                   between them: a straight line
+    0                         when median ≥ 2·SLA
+    speedPrior                when nothing has been timed
+Q = wc·C + ws·S + wf·(1 − F)
+
+hunger   = hMax × min(1, minutes since last assigned / hWindow)        never assigned: hMax
+newcomer = nMax × max(0, 1 − completed trades / newcomerTrades)
+sizeFit  = 1                                                            when the order ≤ the small-order line (KES)
+           min(1, free float / (order × cover))                         otherwise
+           × sharePenalty                                               when the order > shareThreshold × free float
+
+W = max(Q, floor)^alpha × (1 + hunger) × (1 + newcomer) × sizeFit
+```
+
+`free float` and `order` in `sizeFit` are in the float's own unit (USDC minor units when buying, shillings when selling); the small-order line and the limits are in KES. **No starvation:** the validation keeps `floor` and `sharePenalty` above zero and `cover` at least 1, so every eligible merchant's `W` is above zero. **The draw:** `WeightedDraw.rank` draws without replacement, each place going to one of those left with a chance in proportion to its weight; the first is the pick and the rest are the failover order. The random source is `kotlin.random.Random`, injected (`Random.Default` in the servers, a seeded one in tests).
+
+### Modes
+
+| `mode` | What picks | What is scored and logged |
+| --- | --- | --- |
+| `ROUND_ROBIN` | The least recently assigned eligible merchant (never assigned first) | Nothing: statistics aren't read |
+| `SHADOW` | Round-robin, as above | Everything: the engine's own draw is in the log beside the order that was used (`engineRanked`) |
+| `ACTIVE` | The engine's weighted draw | Everything |
+
+Eligibility, limits and direction switches apply in all three.
+
+### Engine settings (`ramp.engine_settings`: one row per network × direction)
+
+Defaults (the seed, written once when a network and direction have no row):
+
+| Setting | Default | Range |
+| --- | --- | --- |
+| `mode` | `ACTIVE` on TESTNET, `SHADOW` on MAINNET | `ROUND_ROBIN` \| `SHADOW` \| `ACTIVE` |
+| `weightCompletion` (wc), `weightSpeed` (ws), `weightFailure` (wf) | 0.5, 0.3, 0.2 | each 0 to 1, adding up to 1 |
+| `priorStrength` (k) | 10 | 0 to 1000 |
+| `completionPrior` (p0) | 0.9 | 0 to 1 |
+| `failurePrior` | 0.1 | 0 to 1 |
+| `speedPrior` | 0.9 | 0 to 1 |
+| `qualityFloor` | 0.1 | 0.001 to 1 |
+| `alpha` | 1 | 0 to 5 |
+| `hungerMax`, `hungerWindowMinutes` | 1.0, 120 | 0 to 10; 1 to 10080 |
+| `newcomerMax`, `newcomerTrades` | 0.5, 20 | 0 to 10; 1 to 10000 |
+| `smallOrderMinor` | 200000 (KES 2,000) | ≥ 0 |
+| `floatCover` | 3 | 1 to 100 |
+| `shareThreshold`, `sharePenalty` | 0.5, 0.25 | 0.001 to 1 each |
+| `slaSeconds`, `targetSeconds` | 900 (15 min), 300 (5 min) | target 1 to 86400; SLA from the target to 86400 |
+| `statsOrders`, `statsDays` | 50, 30 | 1 to 500; 1 to 365 |
+| `maxAttempts` | 3 | 1 to 10 |
+| `individualLimitMinor`, `businessLimitMinor` | 3000000 (KES 30,000), 15000000 (KES 150,000) | above 0 |
+| `logRetentionDays` | 90 | 1 to 3650 |
+
+- **Why a versioned JSON document and not columns.** The two dozen numbers are read and written whole and mean nothing apart; the routing log names the version that made each decision, so every version must be kept whole (`ramp.engine_settings_history`, written in the transaction of the change); and a setting added later is a field of the typed document with a default, not a migration. The document is typed on both sides: `EngineSettings` in the domain (its `problem()` is the validation), `SettingsDocument` (`@Serializable`) in `data`, decoded with unknown keys ignored and missing ones defaulted, so a row written by an older build still opens.
+- **The house rule holds:** settings live in the database, are validated before they are written (`ramp.settings_invalid`, naming the field), version-checked (`SET version = version + 1 WHERE version = ?`; `ramp.settings_changed`), audited with a reason on the ops gateway (`ramp_engine_settings.update`, the line saying what changed by name) and the reason is kept on the version itself. Read through `EngineBook` at most every 10 seconds per process, like `SettingsBook`; on a database error the last read stays in force.
+- **`failurePrior` and `speedPrior` are the backend session's additions** (the brief named p0 only): the failure rate is "smoothed the same way with its own prior", and a merchant with nothing timed needs a speed score. For Pasaka to confirm.
+
+### Failover
+
+`StartOnRamp` routes once (`Engine.route`: facts, plan, log row) and tries the merchants in the plan's order, **up to `maxAttempts` merchants** (a merchant passed over under the lock isn't one). Each attempt is a new order for the same quote (`orders.attempt`), as since 2026-11-22. What sending a prompt answers decides what happens next (`OrderFlow.requestPayment` → `Prompted`):
+
+| What happened | The order ends | Next |
+| --- | --- | --- |
+| The provider accepted the prompt | `PAYMENT_REQUESTED` | Done (`ROUTED`) |
+| The provider refused this merchant (`Rejected`) | `FAILED` `prompt_refused` | The next merchant |
+| …for their prepaid balance (`ServiceBalanceLow`) | `FAILED` `provider_balance`; the merchant marked and taken offline | The next merchant |
+| This node no longer held the merchant's keys | `FAILED` `merchant_offline` | The next merchant |
+| **The request never left** (the client's circuit was open, or no connection was made) | `FAILED` `provider_unreachable` | The next merchant |
+| **No answer, and it may have left** (a timeout, a dropped answer, a 5xx), **and the provider then says the prompt failed** | `FAILED` `prompt_failed` | The next merchant |
+| …and the provider says the prompt is queued or paid | `PAYMENT_REQUESTED`, with the reference the provider answered to | Done: the prompt went out after all |
+| …and the provider can't say | `FAILED` `prompt_unconfirmed`; the people on call alerted | **Stop**: `ramp.collections_unavailable`, nobody else is asked |
+
+- **A buyer never gets two prompts for one quote without the first being closed.** After a failure with no answer, the provider is asked about the order **before anybody else is prompted**, by our own reference (the order id we sent as the prompt's reference; the provider never gave us one of its own). Only an answer that **names that very reference** counts. No such answer means nobody knows, and then the purchase stops.
+- **What proves the request never left** is read from the failure's cause in `data` (`HttpPromptTransport`): `CircuitOpenException`, `ConnectException`, `UnknownHostException`, `NoRouteToHostException`, `UnresolvedAddressException`. A connect *timeout* is treated as "may have left" (the cautious side).
+- **The `payhero` HTTP client never retries** (`maxAttempts = 1` in `IntegrationsModule`, 2026-11-23). The shared client repeats a request answered 429 or 503, POSTs included, and the STK push has no idempotency key, so the client itself could have sent a buyer a second prompt. A 429 or 503 now comes back once as `Unavailable` with no cause: "may have left", checked as above. (On `feat/finoq-payouts` the `payhero` legacy client is built in `PayHeroHosts`; the same setting must be carried over when the two branches meet.)
+- **PayHero today.** Its status query takes PayHero's own reference or the M-Pesa code (docs.payhero.co.ke), not ours, so after a real timeout the check finds nothing and **the purchase stops rather than fails over**: the safe behaviour, and the same answer the buyer got before. Timeouts fail over only for a provider that can look a prompt up by our reference. **To make PayHero timeouts fail over too**, `MobileCollections` needs a "status by our reference" call that PayHero implements (if its API can) or answers "can't say": an `integrations` change, left to that module's owner.
+- **An order closed as `prompt_unconfirmed` whose prompt did go out:** the float was freed and the order is `FAILED`, so if the provider later rings about it (`/v1/hooks/payhero`), nothing moves (the callback is unsigned) and the people on call are alerted again (`callback_after_unconfirmed_prompt`). A person then looks at the merchant's till.
+- **The answer when nobody takes it** is the last merchant's: every merchant refused → `ramp.merchant_unavailable` (409); the provider unreachable for all → `ramp.collections_unavailable` (502); nobody eligible → `ramp.no_merchant_available` (409). The day's limit is counted once, as before.
+
+### The routing log (`ramp.routing_decisions`)
+
+One row per purchase routed, written **before the first attempt** (`outcome` `PENDING`, or `NO_CANDIDATE`) and finished when the routing ends, so a request that dies halfway still leaves what was decided.
+
+| Field | Holds |
+| --- | --- |
+| `decision_id`, `quote_id`, `network`, `direction`, `created_at` | Which purchase |
+| `fiat_amount_minor`, `need_minor` | The order in KES, and what the float had to cover |
+| `settings_version`, `mode` | The engine settings that made it (readable in the history) |
+| `candidates` (JSON) | Every merchant in the pool: its inputs (approved, kycCleared, online, hasKeys, paymentsIssue, offersDirection, limitMinor, floatMinor, lastAssignedAt, completedTrades, stats), `excluded` with the reason, or its `score` (completion, speed, failure, quality, hunger, newcomer, sizeFit, weight) |
+| `ranked` (JSON) | `used`: the failover order that was used; `engine`: the engine's own draw (null in `ROUND_ROBIN`) |
+| `steps` (JSON) | Each attempt: merchant, order, `prompted` or why it moved on or stopped, when |
+| `outcome`, `merchant_id`, `order_id` | `ROUTED` \| `NO_CANDIDATE` \| `EXHAUSTED` \| `STOPPED` \| `PENDING`; who ended up with the order |
+
+The three JSON columns are `text` holding typed documents (`data/support/EngineDocuments.kt`). Pruned by `ramp.prune-routing` (hourly) after the settings' `logRetentionDays`. The simulation and R1's "is anybody online" never write a row.
+
+### Contracts
+
+**Ops gateway** (`/v1/ops/ramp`, through `ramp:api` `RampEngineAdmin`; reads `ramp.read`: FINANCE, ADMIN; writes `ramp.manage`: ADMIN, with a reason and an `Idempotency-Key`):
+
+```json
+// RO9 GET /ops/ramp/engine-settings?network=TESTNET&direction=ON_RAMP → data
+{ "network": "TESTNET", "direction": "ON_RAMP", "version": 1,
+  "settings": { "mode": "ACTIVE", "weightCompletion": 0.5, "weightSpeed": 0.3, "weightFailure": 0.2,
+    "priorStrength": 10.0, "completionPrior": 0.9, "failurePrior": 0.1, "speedPrior": 0.9, "qualityFloor": 0.1,
+    "alpha": 1.0, "hungerMax": 1.0, "hungerWindowMinutes": 120, "newcomerMax": 0.5, "newcomerTrades": 20,
+    "smallOrderMinor": "200000", "floatCover": 3.0, "shareThreshold": 0.5, "sharePenalty": 0.25,
+    "slaSeconds": 900, "targetSeconds": 300, "statsOrders": 50, "statsDays": 30, "maxAttempts": 3,
+    "individualLimitMinor": "3000000", "businessLimitMinor": "15000000", "logRetentionDays": 90 },
+  "updatedBy": null, "reason": null, "updatedAt": "2026-11-23T09:00:00Z" }
+
+// RO9 PUT /ops/ramp/engine-settings?network=&direction= ← the whole document; → the new version (the GET's shape)
+{ "settings": { …as above… }, "version": 1, "reason": "Watching the engine before it picks" }
+//   ops.reason_required · ramp.settings_invalid (details.fields names it) · ramp.settings_changed (409)
+
+// RO10 POST /ops/ramp/engine-settings/simulate?network=&direction= ← { "settings": {…}?, "lastOrders": 50 } or { "amountMinor": "150000" }
+{ "network": "TESTNET", "direction": "ON_RAMP", "mode": "ACTIVE", "currentMode": "ROUND_ROBIN",
+  "orders": 20, "unroutable": 0,
+  "shares": [ { "merchantId": "0193…", "displayName": "Crynce", "sharePercent": "62.5", "currentSharePercent": "50",
+                "eligibleOrders": 20, "exclusions": {}, "quality": 0.91 },
+              { "merchantId": "0193…", "displayName": "Bidii", "sharePercent": "37.5", "currentSharePercent": "50",
+                "eligibleOrders": 19, "exclusions": { "FLOAT_SHORT": 1 }, "quality": 0.6 } ] }
+
+// RO11 GET /ops/ramp/routing?network=TESTNET&merchantId=&orderId=&from=&to=&cursor=&limit= → data
+{ "decisions": [ { "decisionId": "0193…", "createdAt": "2026-11-23T09:00:00Z", "quoteId": "0193…", "orderId": "0193…",
+                   "merchantId": "0193…", "direction": "ON_RAMP", "fiatAmountMinor": "130000", "mode": "ACTIVE",
+                   "outcome": "ROUTED", "settingsVersion": 3, "candidates": 3, "eligible": 2, "attempts": 2 } ],
+  "nextCursor": "2026-11-23T09:00:00Z~0193…" }
+
+// RO12 GET /ops/ramp/routing/{decisionId} → data
+{ "decisionId": "0193…", "createdAt": "…", "network": "TESTNET", "direction": "ON_RAMP", "quoteId": "0193…",
+  "orderId": "0193…", "merchantId": "0193…", "fiatAmountMinor": "130000", "needMinor": "9800000",
+  "mode": "ACTIVE", "outcome": "ROUTED", "settingsVersion": 3,
+  "candidates": [
+    { "merchantId": "0193…a", "excluded": null, "approved": true, "kycCleared": true, "online": true, "hasKeys": true,
+      "paymentsIssue": false, "offersDirection": true, "limitMinor": "3000000", "floatMinor": "100000000",
+      "lastAssignedAt": null, "completedTrades": 4,
+      "stats": { "finished": 6, "completed": 4, "merchantFailures": 1, "merchantExpiries": 0, "reversals": 0,
+                 "counted": 5, "notCounted": 1, "medianHandlingSeconds": 12, "p90HandlingSeconds": 40 },
+      "score": { "completion": 0.9, "speed": 1.0, "failure": 0.1, "quality": 0.93, "hunger": 1.0, "newcomer": 0.4,
+                 "sizeFit": 1.0, "weight": 2.604 } },
+    { "merchantId": "0193…c", "excluded": "FLOAT_SHORT", …, "floatMinor": "1000000", "stats": null, "score": null } ],
+  "ranked": ["0193…a", "0193…b"], "engineRanked": ["0193…a", "0193…b"],
+  "steps": [ { "merchantId": "0193…a", "orderId": "0193…", "result": "prompt_refused", "at": "…" },
+             { "merchantId": "0193…b", "orderId": "0193…", "result": "prompted", "at": "…" } ] }
+
+// RO13 PUT /ops/ramp/merchants/{id}/tier ← { "merchantType": "BUSINESS", "orderLimitMinor": "5000000" | null, "reason": "…" }
+//   → the merchant as RO1 lists it, which now carries "merchantType", "orderLimitMinor", "offersOnRamp", "offersOffRamp"
+
+// RO14 GET /ops/ramp/merchants/{id}/signals?network=TESTNET → data
+{ "merchantId": "0193…", "network": "TESTNET", "merchantType": "INDIVIDUAL",
+  "directions": [ { "direction": "ON_RAMP", "offered": true, "orderLimitMinor": "3000000",
+                    "stats": { …as above… }, "trades": 4, "newcomerTrades": 20, "newcomerTradesLeft": 16,
+                    "targetSeconds": 300, "slaSeconds": 900, "statsOrders": 50, "statsDays": 30 },
+                  { "direction": "OFF_RAMP", "offered": false, … } ] }
+```
+
+- **RO10, the simulation.** The last real orders' amounts (each quote's first order; default 50, at most 500), or one amount, are routed again among **the merchants as they are now** (who is online, their float, their record), once under the draft and once under what is in force. The share is exact, not sampled: under `ACTIVE` a merchant's chance of the first pick is their weight over the eligible weights; under `ROUND_ROBIN` and `SHADOW` round-robin picks, an equal turn each. It reads floats from the custodian and nothing else leaves; no order, reservation, assignment or log row is written, and nothing is audited. It can't know who was online when the orders were really made.
+- **RO11 by merchant** is the decisions that ended with that merchant; **by order** finds the purchase the order belongs to (through its quote), so a refused first attempt finds the routing too. `from` inclusive, `to` exclusive, both instants.
+
+**Merchant portal** (`X-Merchant-Session`, `X-Wallet-Network`):
+
+```json
+// RM16 GET /ramp/merchant/performance → data   (your own figures only)
+{ "network": "TESTNET", "merchantType": "INDIVIDUAL",
+  "directions": [
+    { "direction": "ON_RAMP", "offered": true,
+      "orderLimit": { "unit": "KES", "amountMinor": "3000000", "amount": "30000" },
+      "window": { "orders": 50, "days": 30 },
+      "finished": 4, "counted": 3, "completed": 2, "failed": 1, "notCounted": 1,
+      "completionRatePercent": "66.7", "failureRatePercent": "33.3",          // of `counted`; null with nothing counted
+      "medianSeconds": 12, "p90Seconds": 40, "targetSeconds": 300, "slaSeconds": 900,
+      "speed": "ON_TARGET",                                                   // NO_DATA | ON_TARGET | WITHIN_SLA | SLOW
+      "trades": 2,                                                            // completed on this network, ever
+      "newcomer": { "applies": true, "until": 20, "tradesLeft": 18 } },
+    { "direction": "OFF_RAMP", "offered": false, …, "speed": "NO_DATA" } ] }
+
+// RM17 PUT /ramp/merchant/offers ← { "onRamp": true, "offRamp": false }   (either may be left out) → RM2's body
+// RM2 GET /ramp/merchant gains: "merchantType": "INDIVIDUAL", "offers": { "onRamp": true, "offRamp": false }
+```
+
+RM16 shows plain rates (completed and failed out of counted), not the smoothed ones the engine draws with, and never a weight, a rank or anything about another merchant. `failed` is `merchantFailures + merchantExpiries + reversals`.
+
+### What is left for the off-ramp to wire
+
+The engine already takes `Direction.OFF_RAMP` end to end: its own settings row per network (seeded), `offers_offramp`, statistics from `FUNDED → COMPLETED`, the reasons `payout_failed` and `payout_missed`, and the routing log. When the off-ramp is built it has to:
+
+1. **Pass `kesFloat`** on `RoutingCommand` (a merchant's free shillings at the payout provider, or null when it can't be read) and `RoutingOrder(OFF_RAMP, fiatMinor, needMinor = fiatMinor)`.
+2. **Write its own reserve under the lock**: `Engine.reserve` writes an on-ramp float reservation; an off-ramp holds the USDC the user sent (`HOLD`) instead, after re-checking the same things.
+3. **Add its states** to `OrderState` (`AWAITING_TRANSFER`, `FUNDED`, `PAYING_OUT`, `REFUNDED`, …): the timeline stores state names, `order_events_finished_idx` already covers `REFUNDED`, and `Stats.FINISHED` and `Stats.attribution` are where a new state or reason is classified.
+4. **Close orders with the reasons the statistics know** (`payout_failed`, `payout_missed`) or classify new ones in `Stats`.
+
+**Not built:** reversals in the statistics (they wait on RM11); a history route for past versions of the engine settings (the table has them, and each routing names its version); handing work to another node (a merchant unlocked on another node is `NO_KEYS` here, as before); the `rmp:float` cache (floats are read from the custodian for each routing).
+
+## As built: verifying from the profile (2026-11-23, `feat/ramp-engine`)
+
+Pasaka wants a person to see their identity verification in their profile and verify there, without starting a purchase.
+
+- **R0 was refusing.** `POST /v1/ramp/kyc` and `GET /v1/ramp/kyc` both opened with the ramp's state gate, so they answered `ramp.unavailable` with the ramp `OFF`, and in `PREVIEW` for anyone not on the list. (`kyc_required: false` alone was never the problem: R0 already started a check where KYC wasn't required.)
+- **Now verifying is not a trade.** Both routes take the network's settings whatever the ramp's state (`Gates.settingsOf`). `POST` needs an active account (`ramp.account_restricted`) and no block, on the user or the identity they verified with (`ramp.blocked`), then starts or resumes the check as before; where the network's identity provider isn't set up it answers `ramp.kyc_not_configured` (503). `GET` answers the state to anyone signed in, with `canStart: false` for someone barred. Neither ever answers `ramp.unavailable`.
+- **Unchanged:** the daily cap, `submitted`, the frames and pushes, and every trading gate (R1, R2, R3 still need the ramp open to the person). The routes still sit in the wallet-network group, so the check runs for the network the request is for, in the provider environment that network trusts (the testnet: Didit's sandbox).
 
 ## To check against the vendor before building on it
 

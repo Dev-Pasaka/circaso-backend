@@ -132,6 +132,10 @@ private fun OpsMerchant.toDto(now: Instant) =
         approvedAt = approvedAt?.toString(),
         createdAt = createdAt.toString(),
         verifications = verifications.map { it.toDto() },
+        merchantType = merchantType,
+        orderLimitMinor = orderLimitMinor?.toString(),
+        offersOnRamp = offersOnRamp,
+        offersOffRamp = offersOffRamp,
     )
 
 fun OpsMerchant.toResponse(now: Instant) = toDto(now)

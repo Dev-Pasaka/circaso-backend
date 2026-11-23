@@ -6,6 +6,7 @@ import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Earnings
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.MerchantOverview
+import com.circaso.ramp.domain.models.MerchantPerformance
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
@@ -18,6 +19,7 @@ import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetMerchant
+import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetStatement
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
@@ -25,6 +27,7 @@ import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
+import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
@@ -53,7 +56,7 @@ class MerchantAuthService(
     suspend fun signOut(token: String?): Resource<Unit> = signOutUseCase(token)
 }
 
-/** What a signed-in merchant asks the ramp (RM1–RM15). No logic of its own: each method is one use case. */
+/** What a signed-in merchant asks the ramp (RM1–RM17). No logic of its own: each method is one use case. */
 class MerchantService(
     private val getMerchant: GetMerchant,
     private val applyAsMerchant: ApplyAsMerchant,
@@ -66,7 +69,21 @@ class MerchantService(
     private val getEarnings: GetEarnings,
     private val getStatement: GetStatement,
     private val startMerchantKyc: StartMerchantKyc,
+    private val getMerchantPerformance: GetMerchantPerformance,
+    private val setMerchantOffers: SetMerchantOffers,
 ) {
+    /** RM16: the merchant's own ranking signals. */
+    suspend fun performance(merchantId: MerchantId, network: Network): Resource<MerchantPerformance> =
+        getMerchantPerformance(merchantId, network)
+
+    /** RM17: which directions the merchant takes orders in. */
+    suspend fun setOffers(
+        merchantId: MerchantId,
+        network: Network,
+        onRamp: Boolean?,
+        offRamp: Boolean?,
+    ): Resource<MerchantOverview> = setMerchantOffers(merchantId, network, onRamp, offRamp)
+
     suspend fun startKyc(merchantId: MerchantId, network: Network): Resource<KycView> =
         startMerchantKyc(merchantId, network)
 

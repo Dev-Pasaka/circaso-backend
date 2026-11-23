@@ -34,6 +34,12 @@ class Gates(
         return if (allowed) Resource.success(current) else Resource.error(RampError.Unavailable)
     }
 
+    /**
+     * [network]'s settings whatever the ramp's state: for what isn't a trade. Verifying one's identity is open to any
+     * signed-in person, with the ramp `OFF` or in `PREVIEW` without them (decision 2026-11-23).
+     */
+    suspend fun settingsOf(network: Network): RampSettings = settings.of(network)
+
     suspend fun kyc(userId: UserId, settings: RampSettings): KycStanding =
         when {
             !settings.enforcesKyc -> KycStanding.NOT_REQUIRED

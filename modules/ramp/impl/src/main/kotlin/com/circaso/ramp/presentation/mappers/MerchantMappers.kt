@@ -5,10 +5,12 @@ import com.circaso.ramp.domain.models.CallbackView
 import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Earnings
 import com.circaso.ramp.domain.models.MerchantOverview
+import com.circaso.ramp.domain.models.MerchantPerformance
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PaymentAccountCommand
+import com.circaso.ramp.domain.models.Performance
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.Settlement
@@ -23,6 +25,8 @@ import com.circaso.ramp.presentation.dto.ChangePinRequest
 import com.circaso.ramp.presentation.dto.EarningsResponse
 import com.circaso.ramp.presentation.dto.GoOnlineRequest
 import com.circaso.ramp.presentation.dto.MerchantFloatDto
+import com.circaso.ramp.presentation.dto.MerchantOffersDto
+import com.circaso.ramp.presentation.dto.MerchantOffersRequest
 import com.circaso.ramp.presentation.dto.MerchantOrderDto
 import com.circaso.ramp.presentation.dto.MerchantOrdersResponse
 import com.circaso.ramp.presentation.dto.MerchantPaymentsDto
@@ -30,9 +34,13 @@ import com.circaso.ramp.presentation.dto.MerchantPaymentsIssueDto
 import com.circaso.ramp.presentation.dto.MerchantResponse
 import com.circaso.ramp.presentation.dto.MerchantStepsDto
 import com.circaso.ramp.presentation.dto.MerchantWalletDto
+import com.circaso.ramp.presentation.dto.NewcomerDto
 import com.circaso.ramp.presentation.dto.OnlineResponse
 import com.circaso.ramp.presentation.dto.PaymentsRequest
 import com.circaso.ramp.presentation.dto.PaymentsSavedResponse
+import com.circaso.ramp.presentation.dto.PerformanceDto
+import com.circaso.ramp.presentation.dto.PerformanceResponse
+import com.circaso.ramp.presentation.dto.PerformanceWindowDto
 import com.circaso.ramp.presentation.dto.ProfileRequest
 import com.circaso.ramp.presentation.dto.SignInCodeRequest
 import com.circaso.ramp.presentation.dto.SignInCodeResponse
@@ -44,6 +52,9 @@ import com.circaso.ramp.presentation.dto.SweepDto
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
+import com.circaso.shared.SharedError
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
@@ -168,7 +179,76 @@ fun MerchantOverview.toResponse() =
         paymentsIssue =
             merchant.paymentsIssue?.let { MerchantPaymentsIssueDto(it.name, merchant.paymentsIssueAt?.toString()) },
         kyc = kyc.toDto(),
+        merchantType = merchant.merchantType.name,
+        offers = MerchantOffersDto(onRamp = merchant.offersOnramp, offRamp = merchant.offersOfframp),
     )
+
+/** RM17: at least one of the two switches must be named. */
+fun MerchantOffersRequest.toSwitches(): Resource<Pair<Boolean?, Boolean?>> =
+    if (onRamp == null && offRamp == null) {
+        Resource.error(SharedError.Malformed("onRamp", "send onRamp, offRamp or both"))
+    } else {
+        Resource.success(onRamp to offRamp)
+    }
+
+fun MerchantPerformance.toResponse() =
+    PerformanceResponse(
+        network = network.name,
+        merchantType = merchantType.name,
+        directions = directions.map { it.toDto() },
+    )
+
+private fun Performance.toDto() =
+    PerformanceDto(
+        direction = direction.name,
+        offered = offered,
+        orderLimit = Amounts.fiat(orderLimitMinor),
+        window = PerformanceWindowDto(settings.statsOrders, settings.statsDays),
+        finished = stats.finished,
+        counted = stats.counted,
+        completed = stats.completed,
+        failed = stats.failed,
+        notCounted = stats.notCounted,
+        completionRatePercent = ratePercent(stats.completed, stats.counted),
+        failureRatePercent = ratePercent(stats.failed, stats.counted),
+        medianSeconds = stats.medianHandlingSeconds,
+        p90Seconds = stats.p90HandlingSeconds,
+        targetSeconds = settings.targetSeconds,
+        slaSeconds = settings.slaSeconds,
+        speed = speedOf(stats.medianHandlingSeconds, settings.targetSeconds, settings.slaSeconds),
+        trades = trades,
+        newcomer =
+            NewcomerDto(
+                applies = newcomerTradesLeft > 0,
+                until = settings.newcomerTrades,
+                tradesLeft = newcomerTradesLeft,
+            ),
+    )
+
+/** [part] out of [whole] as a percentage with at most one decimal; null when there is nothing to take it of. */
+private fun ratePercent(part: Int, whole: Int): String? =
+    if (whole <= 0) {
+        null
+    } else {
+        BigDecimal(part * PERCENT)
+            .divide(BigDecimal(whole), 1, RoundingMode.HALF_UP)
+            .stripTrailingZeros()
+            .toPlainString()
+    }
+
+private fun speedOf(
+    medianSeconds: Long?,
+    targetSeconds: Int,
+    slaSeconds: Int,
+): String =
+    when {
+        medianSeconds == null -> "NO_DATA"
+        medianSeconds <= targetSeconds -> "ON_TARGET"
+        medianSeconds <= slaSeconds -> "WITHIN_SLA"
+        else -> "SLOW"
+    }
+
+private const val PERCENT = 100
 
 fun OnlineView.toResponse() = OnlineResponse(online, until?.toString())
 

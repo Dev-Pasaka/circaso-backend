@@ -9,8 +9,11 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
+import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.EngineMode
+import com.circaso.ramp.domain.models.EngineSettings
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
@@ -21,20 +24,26 @@ import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
+import com.circaso.ramp.domain.models.RoutingDecision
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
+import com.circaso.ramp.domain.support.EngineBook
+import com.circaso.ramp.domain.support.EngineFacts
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantInsights
+import com.circaso.ramp.domain.support.MerchantStatsBook
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.PurchaseRouting
 import com.circaso.ramp.domain.support.Releases
+import com.circaso.ramp.domain.support.RoutingSimulator
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
@@ -45,11 +54,14 @@ import com.circaso.ramp.domain.usecases.CreateQuote
 import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.GetEarnings
+import com.circaso.ramp.domain.usecases.GetEngineSettings
 import com.circaso.ramp.domain.usecases.GetMerchant
+import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetMerchantSummary
 import com.circaso.ramp.domain.usecases.GetOrder
 import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
+import com.circaso.ramp.domain.usecases.GetRoutingDecision
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
 import com.circaso.ramp.domain.usecases.GetUserKyc
@@ -63,15 +75,20 @@ import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
 import com.circaso.ramp.domain.usecases.ListReviewOrders
+import com.circaso.ramp.domain.usecases.ListRoutingDecisions
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
+import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
+import com.circaso.ramp.domain.usecases.SetMerchantOffers
+import com.circaso.ramp.domain.usecases.SetMerchantTier
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
+import com.circaso.ramp.domain.usecases.SimulateRouting
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartOnRamp
 import com.circaso.ramp.domain.usecases.StartUserKyc
@@ -79,6 +96,7 @@ import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
 import com.circaso.ramp.domain.usecases.SweepVerifications
 import com.circaso.ramp.domain.usecases.UnblockUser
+import com.circaso.ramp.domain.usecases.UpdateEngineSettings
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.shared.Network
@@ -86,6 +104,7 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import java.time.Duration
+import kotlin.random.Random
 
 const val CHAIN = "BASE-SEPOLIA"
 val TESTNET = Network.TESTNET
@@ -98,6 +117,7 @@ const val MASTER_KEY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b
 /**
  * The whole ramp over in-memory fakes, both processes' sides in one: the testnet's ramp open to everyone at a 2 % fee
  * split 70/30, one approved merchant online with 100 USDC of float and his keys unlocked, and one user with a wallet.
+ * The merchant engine takes turns (`ROUND_ROBIN`) until a test switches it on with [engineSettings].
  * [release] and [settle] are what the ops process's jobs do.
  */
 class Harness {
@@ -148,6 +168,7 @@ class Harness {
     val identities = HmacIdentityKeys { EnvelopeVault.masterKey(masterKey) }
 
     private val transactor = DirectTransactor()
+    val transport = HttpPromptTransport()
     val presence = Presence(merchants, orders, sessions)
     val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
     val verifications =
@@ -171,10 +192,35 @@ class Harness {
             sessions,
             book,
             presence,
+            transport,
             clock,
         )
+
+    /** The engine's settings; the harness puts the testnet on `ROUND_ROBIN` (its seed is `ACTIVE`). */
+    val engineRows = MemoryEngineSettings()
+    val engineBook = EngineBook(engineRows, alerts, clock, Duration.ZERO)
+
+    /** Statistics are never kept between reads here, so a test sees an order the moment it finishes. */
+    val statsBook = MerchantStatsBook(orders, ledger, clock, Duration.ZERO)
+    val routingLog = MemoryRoutingLog()
+
+    /** The engine's dice: seeded, so a draw is the same on every run. */
+    var random: Random = Random(SEED)
+    val engineFacts = EngineFacts(merchants, reservations, ledger, treasury, sessions, kyc, statsBook, clock)
     val engine =
-        Engine(merchants, merchantWallets, reservations, ledger, orders, transactor, treasury, sessions, kyc, clock)
+        Engine(
+            facts = engineFacts,
+            book = engineBook,
+            merchants = merchants,
+            wallets = merchantWallets,
+            reservations = reservations,
+            commissions = ledger,
+            orders = orders,
+            transactor = transactor,
+            log = routingLog,
+            random = SwitchableRandom { random },
+            clock = clock,
+        )
     val releases =
         Releases(orders, merchantWallets, reservations, ledger, transactor, outbox, bus, frames, alerts, usdc, clock)
     val floatWallets = FloatWallets(book, settingsRows, merchantWallets, revenue, alerts, clock)
@@ -206,11 +252,12 @@ class Harness {
     val unblockUser = UnblockUser(blocks)
     val resetVerification = ResetVerification(verificationRows)
     val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock)
-    val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, flow, clock)
+    val purchases = PurchaseRouting(engine, flow, counters, clock)
+    val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, purchases, clock)
     val getOrder = GetOrder(orders, merchants)
     val listOrders = ListOrders(orders, merchants)
     val cancelOrder = CancelOrder(orders, merchants, flow)
-    val paymentCallback = HandlePaymentCallback(merchants, orders, flow)
+    val paymentCallback = HandlePaymentCallback(merchants, orders, flow, alerts)
     val sweep = SweepOrders(orders, flow, clock)
     val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock)
     val settleFees = SettleFees(treasury, sweeps)
@@ -257,6 +304,16 @@ class Harness {
         )
     val staffOrders = ListStaffMerchantOrders(merchants, ledger)
 
+    val getEngineSettings = GetEngineSettings(engineRows, engineBook)
+    val updateEngineSettings = UpdateEngineSettings(engineRows, engineBook, clock)
+    val routingDecisions = ListRoutingDecisions(routingLog, orders)
+    val routingDecision = GetRoutingDecision(routingLog)
+    val simulate = SimulateRouting(RoutingSimulator(engineFacts, engineBook, book, orders, pricing, clock))
+    val setTier = SetMerchantTier(merchants, merchantWallets, credentials, verificationRows)
+    val performance = GetMerchantPerformance(merchants, engineBook, statsBook)
+    val setOffers = SetMerchantOffers(merchants, views)
+    val pruneRouting = PruneRoutingLog(routingLog, engineBook, clock)
+
     val phone = PhoneNumber.parse("+254712345678")!!
     val amina: UserId
     val crynce: Merchant
@@ -265,6 +322,8 @@ class Harness {
         settingsRows.set(TESTNET) {
             it.copy(state = RampState.ON, feeBps = 200, merchantShareBps = 7_000, callbackBaseUrl = "https://api.test")
         }
+        // Merchants take turns here unless a test switches the engine on: who gets an order is then never a draw.
+        engineRows.set(TESTNET) { it.copy(mode = EngineMode.ROUND_ROBIN) }
         revenue.rows[TESTNET] = RevenueWallet(TESTNET, CHAIN, "w-revenue", "0xrevenue")
         treasury.addresses["w-revenue"] = "0xrevenue"
         amina = user("+254712345678")
@@ -393,6 +452,19 @@ class Harness {
     }
 
     fun now(order: Order): Order = orders.reload(order)
+
+    /** Changes the testnet's engine settings for buying, as staff would, and makes them the ones in force. */
+    fun engineSettings(change: (EngineSettings) -> EngineSettings) {
+        engineRows.set(TESTNET, Direction.ON_RAMP, change)
+        engineBook.invalidate()
+    }
+
+    /** The routing the engine logged last. */
+    fun lastRouting(): RoutingDecision = routingLog.last()
+
+    companion object {
+        const val SEED = 20_261_123
+    }
 
     /** Signs [address] in to the portal the way a merchant does: ask for the code, read the email, send it back. */
     suspend fun verifyCodeFor(address: String, network: Network = TESTNET): SignedIn {
