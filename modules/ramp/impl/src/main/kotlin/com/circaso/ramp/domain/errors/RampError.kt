@@ -329,7 +329,7 @@ sealed class RampError(
         "ramp.merchant_setup_incomplete",
         "Add your FinoQ account id first (Settings, Payments).",
         ErrorKind.CONFLICT,
-        ErrorDetails(fields = listOf(FieldError("accountId", "required to top up the payment wallet"))),
+        ErrorDetails(fields = listOf(FieldError("accountId", "required to top up a FinoQ wallet"))),
     )
 
     data object TopUpInProgress : RampError(

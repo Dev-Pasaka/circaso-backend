@@ -166,7 +166,10 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "`openEnded`, online until you go offline), `keysHeld`, `since`, and while offline " +
                 "`offlineReason` (`STOPPED`, `SIGNED_OUT`, `SUSPENDED`, `PROVIDER_BALANCE`, `WINDOW_ENDED`, " +
                 "`RESTART`: the server restarted and your unlocked account went with it, so go online again) " +
-                "with `offlineAt`.",
+                "with `offlineAt`. `providerWallets` lists your three wallets at the provider, each with its " +
+                "balance (null: unknown, never zero), source, read time, whether it is `low` and whether you can " +
+                "top it up (RM19): `PAYHERO_SERVICE` (buying's M-Pesa prompt fees), `FINOQ_SERVICE` (selling's " +
+                "payout fees) and `FINOQ_PAYMENT` (what payouts spend).",
     )
 
     put("profile") {
@@ -521,7 +524,7 @@ private fun Route.topUpRoutes(merchants: MerchantService) {
                 }
             call.respondDefault(result.toDefaultResponse { it.toResponse() })
         }.docs<TopUpRequest, TopUpResponse>(
-            "RM19 · Top up your FinoQ wallet with M-Pesa",
+            "RM19 · Top up a PayHero or FinoQ wallet with M-Pesa",
             TAG,
             listOf(
                 INVALID,
@@ -539,8 +542,11 @@ private fun Route.topUpRoutes(merchants: MerchantService) {
             ),
             notes =
                 "$MONEY Sends an M-Pesa prompt for `amountMinor` (KES 10 to 150,000, whole shillings) to **your own " +
-                    "contact phone** (RM1), never any other number, to fill your `SERVICE` wallet (FinoQ's fees) or " +
-                    "your `PAYMENT` wallet (what payouts spend; needs your FinoQ account id, RM5b). Online, it uses " +
+                    "contact phone** (RM1), never any other number, to fill one of your three wallets: " +
+                    "`PAYHERO_SERVICE` (PayHero's service wallet: buying's M-Pesa prompt fees), `FINOQ_SERVICE` " +
+                    "(FinoQ's service wallet: selling's payout fees) or `FINOQ_PAYMENT` (FinoQ's payment wallet: " +
+                    "what payouts spend). Both FinoQ wallets need your FinoQ account id (RM5b). The old names are " +
+                    "still taken: `SERVICE` is `PAYHERO_SERVICE`, `PAYMENT` is `FINOQ_PAYMENT`. Online, it uses " +
                     "your unlocked account; offline, send your `pin` with it (`ramp.merchant_offline` with field " +
                     "`pin` when you didn't): it unlocks the account for this top-up only and doesn't put you online. " +
                     "One open top-up per wallet (`ramp.topup_in_progress`). The prompt is sent once and never " +

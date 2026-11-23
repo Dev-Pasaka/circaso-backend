@@ -5,13 +5,57 @@ import com.circaso.shared.PhoneNumber
 import java.time.Instant
 import java.util.UUID
 
-/** Which of the merchant's two wallets at their provider a top-up fills (FinoQ's names). */
-enum class TopUpTarget {
-    /** The service wallet: the provider's fees for every prompt and payout are taken from it. */
-    SERVICE,
+/**
+ * Which of the merchant's three wallets at their provider a top-up fills (2026-11-24; RM19's `wallet`). Each is its
+ * own wallet with its own balance and its own top-up.
+ */
+enum class TopUpTarget(
+    /** What the portal and the admin call it. */
+    val label: String,
+    /** `PAYHERO` or `FINOQ`: whose wallet it is. */
+    val provider: String,
+    /** The side of the desk it serves. */
+    val direction: Direction,
+    /** What it is for, in one line. */
+    val purpose: String,
+) {
+    /** PayHero's service wallet: the fee for every M-Pesa prompt (buying, the on-ramp) is taken from it. */
+    PAYHERO_SERVICE(
+        "PayHero service wallet",
+        "PAYHERO",
+        Direction.ON_RAMP,
+        "PayHero's fee for each M-Pesa prompt when people buy comes from here",
+    ),
 
-    /** The payment wallet: what payouts to sellers spend. */
-    PAYMENT,
+    /** FinoQ's service wallet: the fee for every payout (selling, the off-ramp) is taken from it. */
+    FINOQ_SERVICE(
+        "FinoQ service wallet",
+        "FINOQ",
+        Direction.OFF_RAMP,
+        "FinoQ's fee for each M-Pesa payout when people sell comes from here",
+    ),
+
+    /** FinoQ's payment wallet: what payouts to sellers spend. */
+    FINOQ_PAYMENT(
+        "FinoQ payment wallet",
+        "FINOQ",
+        Direction.OFF_RAMP,
+        "Sellers' M-Pesa payouts are paid from here",
+    ),
+    ;
+
+    /** FinoQ's wallets belong to the account the merchant names by its id; PayHero's needs none. */
+    val needsAccountId: Boolean get() = this != PAYHERO_SERVICE
+
+    companion object {
+        /** RM19's names, and the two from before 2026-11-24: `SERVICE` (PayHero's) and `PAYMENT` (FinoQ's payment). */
+        fun parse(text: String): TopUpTarget? =
+            when (val name = text.trim().uppercase()) {
+                "SERVICE" -> PAYHERO_SERVICE
+                "PAYMENT" -> FINOQ_PAYMENT
+                else -> entries.firstOrNull { it.name == name }
+            }
+    }
 }
 
 /**

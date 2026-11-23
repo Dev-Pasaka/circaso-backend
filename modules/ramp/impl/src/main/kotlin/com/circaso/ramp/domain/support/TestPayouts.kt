@@ -86,7 +86,7 @@ class TestPayouts(
                 receipt = null,
                 paidAmountMinor = null,
                 providerFee = fees.of(current.copy(collectionsProvider = keys.provider), amountMinor),
-                balanceBefore = before?.payoutMinor?.let { BalanceRead(it, before.payoutSource.orEmpty()) },
+                balanceBefore = before?.finoqPayment?.let { BalanceRead(it.minor, it.source) },
                 balanceAfter = null,
                 createdAt = now,
                 updatedAt = now,
@@ -185,7 +185,7 @@ class TestPayouts(
             outcome = "paid",
             receipt = status.providerReceipt,
             paidAmountMinor = status.amount?.amountMinor,
-            balanceAfter = after?.payoutMinor?.let { BalanceRead(it, after.payoutSource.orEmpty()) },
+            balanceAfter = after?.finoqPayment?.let { BalanceRead(it.minor, it.source) },
         )
     }
 

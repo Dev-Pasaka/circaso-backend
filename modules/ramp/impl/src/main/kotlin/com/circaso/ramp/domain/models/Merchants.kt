@@ -251,6 +251,8 @@ data class MerchantOverview(
     val kyc: KycView = KycView(KycState.NONE, required = false, canStart = true, reason = null, retryAt = null),
     /** Selling: the payout account, the balances at the provider and what stands in the way (2026-11-23). */
     val offRamp: OffRampView = OffRampView.NONE,
+    /** The three wallets at the provider, buying's first (2026-11-24). */
+    val providerWallets: List<ProviderWalletView> = emptyList(),
 ) {
     /** A PIN exists once a payment account has been sealed under one. */
     val pinSet: Boolean get() = payments != null

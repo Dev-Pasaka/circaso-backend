@@ -141,7 +141,10 @@ interface MerchantRepository {
         at: Instant,
     )
 
-    /** Keeps the balances just read at the provider, for staff, who can't read them (the ops process holds no keys). */
+    /**
+     * Keeps the balances just read at the provider, for staff, who can't read them (the ops process holds no keys).
+     * A wallet [balances] has no reading for keeps the one it had, with its own time.
+     */
     suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances)
 
     /** The balances last read at the provider. */

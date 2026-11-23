@@ -126,7 +126,7 @@ class TopUpRepositoryImpl(private val database: Database) : TopUpRepository {
         TopUp(
             topUpId = this[TopUpsTable.topUpId],
             merchantId = MerchantId(this[TopUpsTable.merchantId]),
-            target = TopUpTarget.valueOf(this[TopUpsTable.wallet]),
+            target = TopUpTarget.parse(this[TopUpsTable.wallet]) ?: error("unknown top-up wallet"),
             provider = this[TopUpsTable.provider],
             amountMinor = this[TopUpsTable.amountMinor],
             payer = payer(this[TopUpsTable.payerPhone]),

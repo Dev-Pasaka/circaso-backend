@@ -17,6 +17,18 @@ internal data class ServiceTopUpBody(
 )
 
 /**
+ * `POST /api/v2/topup` on FinoQ's host for its **service wallet** (2026-11-24): FinoQ documents no such top-up, so
+ * this is the legacy body plus the Team it is for (`account_id`, as FinoQ's other account calls name it). Unconfirmed
+ * until the first real attempt's layout line.
+ */
+@Serializable
+internal data class FinoqServiceTopUpBody(
+    val amount: Long,
+    @SerialName("phone_number") val phoneNumber: String,
+    @SerialName("account_id") val accountId: Long,
+)
+
+/**
  * `POST /api/v2/payments` as a **wallet-based** collection (docs.payhero.africa, Kenya collections): `network_code`
  * instead of `channel_id` settles the money into the account's own FinoQ wallet, the one payouts spend.
  */

@@ -13,18 +13,21 @@ import io.ktor.client.statement.HttpResponse
 import org.slf4j.LoggerFactory
 
 /**
- * A merchant's two balances at PayHero/FinoQ, each from the first call that gives it, with the call's name beside the
- * number so staff can see which one answered:
+ * A merchant's three balances at PayHero/FinoQ (2026-11-24, the owner's "the PayHero service wallet is for on-ramp,
+ * the FinoQ service wallet is for off-ramp"), each from its own wallet and **never filled in from another's**, with
+ * the call's name beside the number so staff can see which one answered:
  *
- * - **Fees** (the service wallet PayHero takes its charges from): the legacy wallet query
- *   ([SERVICE_WALLET]), then the account on the auth host ([ACCOUNT_SERVICE_WALLET]).
- * - **Payout** (what a withdraw can spend): the legacy wallet query asked for a `payment_wallet`
- *   ([PAYMENT_WALLET]: the wallet the owner and the old dashboard name; the query is a guess, undocumented, and is
- *   believed only when the answer says it is that wallet), then the new account balance ([ACCOUNT_BALANCE]:
- *   documented, its answer isn't).
+ * - **Collection fees** (PayHero's service wallet, what an M-Pesa prompt's fee is taken from): the legacy wallet
+ *   query ([SERVICE_WALLET]) on the host the prompts go to. Nothing else.
+ * - **Payout fees** (FinoQ's service wallet): the account balance's `service_wallet_balance` ([ACCOUNT_SERVICE]),
+ *   then the Team on the auth host ([ACCOUNT_SERVICE_WALLET]), both FinoQ's own account.
+ * - **Payout** (FinoQ's payment wallet, what a withdraw spends): the account balance's `wallet_balance`
+ *   ([ACCOUNT_WALLET]), or a balance in a layout this client knows from an older answer ([ACCOUNT_BALANCE]).
  *
- * Which of them a payout really spends is unconfirmed, which is why the source travels with the amount. A call that
- * fails, or answers without a number this class can read, leaves that balance **null**; it is never zero by default.
+ * Until 2026-11-24 the fee balance came from the legacy wallet first and fell back to FinoQ's service wallet, which
+ * mixed two wallets under one name; and a guessed legacy `payment_wallet` query (never documented, always `404` on the
+ * dev server) is no longer asked. A call that fails, or answers without a number this class can read, leaves its
+ * balance **null**; it is never zero by default, and the FinoQ wallets need the account id.
  */
 class PayHeroBalances(hosts: PayHeroHosts) {
     private val log = LoggerFactory.getLogger(PayHeroBalances::class.java)
@@ -37,37 +40,37 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         val account = accountId?.trim()?.toLongOrNull()
         val answers = mutableListOf<Answer>()
         val calls = Calls(credentials)
-        var fees = serviceWallet(calls, answers)
-        var payout = paymentWallet(calls, answers)
+        val collectionFees = serviceWallet(calls, answers)
+        var payoutFees: BalanceReading? = null
+        var payout: BalanceReading? = null
 
-        if (account != null && payout == null) {
+        if (account != null) {
             val body =
                 askBody(ACCOUNT_BALANCE, answers) { calls.account(api, "$ACCOUNT_BALANCE_PATH/$account/balance", it) }
             val split = body?.let(::accountBalances)
             if (split != null) {
                 payout = split.wallet?.let { reading(it.heldOrZero, it.currency, ACCOUNT_WALLET) }
-                fees =
-                    fees
-                        ?: split.serviceWallet?.balance?.let {
-                            reading(
-                                it,
-                                split.serviceWallet.currency,
-                                ACCOUNT_BALANCE,
-                            )
-                        }
+                payoutFees =
+                    split.serviceWallet?.balance?.let { reading(it, split.serviceWallet.currency, ACCOUNT_SERVICE) }
             } else {
                 val reply = body?.let { decode(ACCOUNT_BALANCE, it) }
                 payout = reply?.candidates?.firstNotNullOfOrNull { reading(it.held, it.currency, ACCOUNT_BALANCE) }
-                fees = fees ?: reply?.let { serviceWalletIn(it, ACCOUNT_BALANCE) }
+                payoutFees = reply?.let { serviceWalletIn(it, ACCOUNT_SERVICE) }
             }
         }
-        if (account != null && fees == null) {
+        if (account != null && payoutFees == null) {
             val reply = ask(ACCOUNT_SERVICE_WALLET, answers) { calls.account(auth, "$ACCOUNT_PATH/$account", it) }
-            fees = reply?.let { serviceWalletIn(it, ACCOUNT_SERVICE_WALLET) }
+            payoutFees = reply?.let { serviceWalletIn(it, ACCOUNT_SERVICE_WALLET) }
         }
 
-        log.info("payhero balances: payout={} fees={}", payout?.source ?: "unread", fees?.source ?: "unread")
-        if (payout != null || fees != null) return Resource.success(ProviderBalances(payout, fees))
+        val balances = ProviderBalances(collectionFees, payoutFees, payout)
+        log.info(
+            "payhero balances: payhero_service={} finoq_service={} finoq_payment={}",
+            collectionFees?.source ?: "unread",
+            payoutFees?.source ?: "unread",
+            payout?.source ?: "unread",
+        )
+        if (!balances.isEmpty) return Resource.success(balances)
         return nothingRead(answers)
     }
 
@@ -75,12 +78,6 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         ask(SERVICE_WALLET, answers) { calls.wallet(SERVICE_WALLET_TYPE, it) }
             ?.takeIf { it.walletType == null || it.walletType.equals(SERVICE_WALLET_TYPE, ignoreCase = true) }
             ?.let { reading(it.held, it.currency, SERVICE_WALLET) }
-
-    /** Believed only when the answer names itself the payment wallet: a query that ignores the type isn't one. */
-    private suspend fun paymentWallet(calls: Calls, answers: MutableList<Answer>): BalanceReading? =
-        ask(PAYMENT_WALLET, answers) { calls.wallet(PAYMENT_WALLET_TYPE, it) }
-            ?.takeIf { it.walletType.equals(PAYMENT_WALLET_TYPE, ignoreCase = true) }
-            ?.let { reading(it.held, it.currency, PAYMENT_WALLET) }
 
     /** No balance at all: an error when no call could even be made, otherwise two honest nulls. */
     private fun nothingRead(answers: List<Answer>): Resource<ProviderBalances> {
@@ -95,7 +92,7 @@ class PayHeroBalances(hosts: PayHeroHosts) {
             }
 
             else -> {
-                Resource.success(ProviderBalances(null, null))
+                Resource.success(ProviderBalances())
             }
         }
     }
@@ -169,11 +166,15 @@ class PayHeroBalances(hosts: PayHeroHosts) {
     companion object {
         /** The names a reading carries ([BalanceReading.source]). */
         const val SERVICE_WALLET = "payhero.wallets.service_wallet"
-        const val PAYMENT_WALLET = "payhero.wallets.payment_wallet"
         const val ACCOUNT_BALANCE = "finoq.account.balance"
+
+        /** FinoQ's service wallet in the new balance answer: what a payout's fee is taken from. */
+        const val ACCOUNT_SERVICE = "finoq.balance.service_wallet"
 
         /** The account's own wallet in the new balance answer: what a withdraw spends (confirmed 2026-11-23). */
         const val ACCOUNT_WALLET = "finoq.account.wallet_balance"
+
+        /** FinoQ's service wallet as the Team on the auth host reports it (`account.service_wallet_balance`). */
         const val ACCOUNT_SERVICE_WALLET = "finoq.account.service_wallet_balance"
 
         const val WALLETS_PATH = "/api/v2/wallets"
@@ -181,7 +182,6 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         const val ACCOUNT_PATH = "/api/v2/account"
 
         private const val SERVICE_WALLET_TYPE = "service_wallet"
-        private const val PAYMENT_WALLET_TYPE = "payment_wallet"
         private val SUCCESS = 200..299
         private const val UNAUTHORIZED = 401
         private const val FORBIDDEN = 403

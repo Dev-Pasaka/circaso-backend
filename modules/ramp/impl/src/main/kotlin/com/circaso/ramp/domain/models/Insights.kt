@@ -86,6 +86,8 @@ data class MerchantActivity(
     val figures: MerchantFigures,
     /** When the merchant's latest order on the network was made, whatever the period. */
     val lastOrderAt: Instant?,
+    /** The three wallets at the provider as last read. */
+    val providerWallets: List<ProviderWalletView> = emptyList(),
 )
 
 /** Every merchant's activity on a network in a period. The totals are the sum of the rows, and nothing else. */
@@ -135,6 +137,8 @@ data class MerchantSummary(
     /** The merchant's balances at the payout provider as last read, and what their open sales hold. */
     val kesBalances: KesBalances = KesBalances.UNREAD,
     val kesHeldMinor: Long = 0,
+    /** The three wallets at the provider as last read, buying's first. */
+    val providerWallets: List<ProviderWalletView> = emptyList(),
 )
 
 /** What a completed order earned, from its commission row. */

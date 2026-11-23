@@ -23,7 +23,6 @@ class PayHeroBalancesTest {
     private val merchant = CollectionCredentials("merchant-user", "merchant-pass", "911")
 
     private val serviceWallet = "$LEGACY$WALLETS?wallet_type=service_wallet"
-    private val paymentWallet = "$LEGACY$WALLETS?wallet_type=payment_wallet"
     private val accountBalance = "$API/api/global/accounts/63/balance"
     private val account = "$AUTH/api/v2/account/63"
 
@@ -34,35 +33,50 @@ class PayHeroBalancesTest {
 
     private fun kes(minor: Long, source: String) = BalanceReading(FiatAmount(minor, "KES"), source)
 
+    private val finoqBoth =
+        """{"service_wallet_balance":{"account_id":63,"balance":68,"currency":"KES"},""" +
+            """"wallet_balance":{"account_id":63,"balance":250,"currency":"KES"}}"""
+
     @Test
-    fun `both wallets are read from the legacy host first, each with the call that gave it`() {
+    fun `the three wallets are each read from their own call, with the call that gave it`() {
         vendor.answer(
             serviceWallet,
             """{"id":7,"wallet_type":"service_wallet","currency":"KES","available_balance":49.5}""",
         )
-        vendor.answer(
-            paymentWallet,
-            """{"wallet_type":"payment_wallet","currency":"KES","available_balance":"15101.36"}""",
-        )
+        vendor.answer(accountBalance, finoqBoth)
 
         val read = read()
 
-        assertEquals(kes(4_950, PayHeroBalances.SERVICE_WALLET), read.fees)
-        assertEquals(kes(1_510_136, PayHeroBalances.PAYMENT_WALLET), read.payout)
-        assertEquals(listOf(serviceWallet, paymentWallet), vendor.asked, "nothing else is asked once both are read")
+        assertEquals(kes(4_950, PayHeroBalances.SERVICE_WALLET), read.collectionFees, "PayHero's: buying's fees")
+        assertEquals(kes(6_800, PayHeroBalances.ACCOUNT_SERVICE), read.payoutFees, "FinoQ's: selling's fees")
+        assertEquals(kes(25_000, PayHeroBalances.ACCOUNT_WALLET), read.payout)
+        assertEquals(listOf(serviceWallet, accountBalance), vendor.asked, "the guessed payment_wallet query is gone")
     }
 
     @Test
-    fun `a wallet query that ignores the type is not believed to be the payment wallet`() {
-        val service = """{"wallet_type":"service_wallet","currency":"KES","available_balance":49.5}"""
-        vendor.answer(serviceWallet, service)
-        vendor.answer(paymentWallet, service)
+    fun `one service wallet is never reported as the other`() {
+        vendor.answer(serviceWallet, "", 404)
+        vendor.answer(accountBalance, finoqBoth)
+        val noPayHero = read()
+        assertNull(noPayHero.collectionFees, "PayHero's wallet unread stays unknown, never FinoQ's number")
+        assertEquals(kes(6_800, PayHeroBalances.ACCOUNT_SERVICE), noPayHero.payoutFees)
+
+        vendor.answer(serviceWallet, """{"wallet_type":"service_wallet","available_balance":49.5}""")
+        vendor.answer(accountBalance, """{"wallet_balance":{"account_id":63,"balance":250,"currency":"KES"}}""")
+        vendor.answer(account, "", 404)
+        val noFinoq = read()
+        assertEquals(kes(4_950, PayHeroBalances.SERVICE_WALLET), noFinoq.collectionFees)
+        assertNull(noFinoq.payoutFees, "FinoQ's wallet unread stays unknown, never PayHero's number")
+    }
+
+    @Test
+    fun `without an account id only PayHero's service wallet is asked`() {
+        vendor.answer(serviceWallet, """{"wallet_type":"service_wallet","available_balance":49.5}""")
 
         val read = read(accountId = null)
 
-        assertEquals(kes(4_950, PayHeroBalances.SERVICE_WALLET), read.fees)
-        assertNull(read.payout, "unknown, never the service wallet's number and never zero")
-        assertEquals(listOf(serviceWallet, paymentWallet), vendor.asked, "no account id: the account calls are skipped")
+        assertEquals(ProviderBalances(collectionFees = kes(4_950, PayHeroBalances.SERVICE_WALLET)), read)
+        assertEquals(listOf(serviceWallet), vendor.asked)
     }
 
     @Test
@@ -81,32 +95,24 @@ class PayHeroBalancesTest {
             vendor.answer(accountBalance, body)
             assertEquals(kes(minor, PayHeroBalances.ACCOUNT_BALANCE), read().payout, body)
         }
-        assertEquals(kes(2_000, PayHeroBalances.SERVICE_WALLET), read().fees)
+        assertEquals(kes(2_000, PayHeroBalances.SERVICE_WALLET), read().collectionFees)
     }
 
     @Test
-    fun `FinoQ's real two-wallet answer gives both balances, an empty wallet reading as zero`() {
+    fun `FinoQ's real two-wallet answer gives both its wallets, an empty payment wallet reading as zero`() {
         vendor.answer(serviceWallet, "", 404)
-        vendor.answer(paymentWallet, "", 404)
         vendor.answer(
             accountBalance,
             """{"service_wallet_balance":{"account_id":63,"balance":68,"currency":"KES"},""" +
                 """"wallet_balance":{"account_id":63,"currency":"KES"}}""",
         )
         assertEquals(
-            ProviderBalances(kes(0, PayHeroBalances.ACCOUNT_WALLET), kes(6_800, PayHeroBalances.ACCOUNT_BALANCE)),
+            ProviderBalances(
+                payoutFees = kes(6_800, PayHeroBalances.ACCOUNT_SERVICE),
+                payout = kes(0, PayHeroBalances.ACCOUNT_WALLET),
+            ),
             read(),
             "the wallet FinoQ sends without a balance is empty, as its withdraw said",
-        )
-
-        vendor.answer(
-            accountBalance,
-            """{"service_wallet_balance":{"account_id":63,"balance":"68.5","currency":"KES"},""" +
-                """"wallet_balance":{"account_id":63,"balance":250,"currency":"KES"}}""",
-        )
-        assertEquals(
-            ProviderBalances(kes(25_000, PayHeroBalances.ACCOUNT_WALLET), kes(6_850, PayHeroBalances.ACCOUNT_BALANCE)),
-            read(),
         )
 
         vendor.answer(accountBalance, """{"service_wallet_balance":{"account_id":63,"balance":68,"currency":"KES"}}""")
@@ -114,40 +120,42 @@ class PayHeroBalancesTest {
     }
 
     @Test
-    fun `the fee balance falls back to the account's service wallet`() {
+    fun `FinoQ's service wallet falls back to the Team on the auth host`() {
         vendor.answer(accountBalance, """{"balance":300,"service_wallet_balance":12}""")
         assertEquals(
-            ProviderBalances(kes(30_000, PayHeroBalances.ACCOUNT_BALANCE), kes(1_200, PayHeroBalances.ACCOUNT_BALANCE)),
+            ProviderBalances(
+                payoutFees = kes(1_200, PayHeroBalances.ACCOUNT_SERVICE),
+                payout = kes(30_000, PayHeroBalances.ACCOUNT_BALANCE),
+            ),
             read(),
             "the new balance answer carried both",
         )
 
         vendor.answer(accountBalance, """{"balance":300}""")
         vendor.answer(account, """{"account":{"id":63,"currency":"KES","service_wallet_balance":7.25}}""")
-        assertEquals(kes(725, PayHeroBalances.ACCOUNT_SERVICE_WALLET), read().fees)
+        assertEquals(kes(725, PayHeroBalances.ACCOUNT_SERVICE_WALLET), read().payoutFees)
         assertEquals(account, vendor.asked.last())
     }
 
     @Test
     fun `a balance that can't be read is null, never zero`() {
         vendor.answer(serviceWallet, """{"wallet_type":"service_wallet"}""")
-        vendor.answer(paymentWallet, """{"error_message":"unknown wallet type"}""", 400)
         vendor.answer(accountBalance, """{"balance":{"available":10}}""")
         vendor.answer(account, "<html>nope</html>")
 
-        assertEquals(ProviderBalances(null, null), read(), "answered, but nothing this client can read")
+        assertEquals(ProviderBalances(), read(), "answered, but nothing this client can read")
 
         vendor.answer(accountBalance, """{"balance":"12"}""")
         vendor.fail(serviceWallet) { ConnectException("refused") }
-        assertEquals(ProviderBalances(kes(1_200, PayHeroBalances.ACCOUNT_BALANCE), null), read())
+        assertEquals(ProviderBalances(payout = kes(1_200, PayHeroBalances.ACCOUNT_BALANCE)), read())
     }
 
     @Test
     fun `with nothing read, refused credentials and an unreachable provider are errors`() {
-        listOf(serviceWallet, paymentWallet, accountBalance, account).forEach { vendor.answer(it, "", 401) }
+        listOf(serviceWallet, accountBalance, account).forEach { vendor.answer(it, "", 401) }
         assertIs<IntegrationError.Rejected>((balances() as Resource.Error).error)
 
-        listOf(serviceWallet, paymentWallet, accountBalance, account).forEach { where ->
+        listOf(serviceWallet, accountBalance, account).forEach { where ->
             vendor.fail(where) { ConnectException("refused") }
         }
         assertIs<IntegrationError.Unavailable>((balances() as Resource.Error).error)

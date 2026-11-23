@@ -119,10 +119,35 @@ data class MerchantResponse(
     val offers: MerchantOffersDto = MerchantOffersDto(onRamp = true, offRamp = false),
     /** Selling (2026-11-23): your payout account and your balances at the provider. */
     val offRamp: MerchantOffRampDto? = null,
+    /** Your three wallets at the provider (2026-11-24), each with its balance and read time. */
+    val providerWallets: List<ProviderWalletDto> = emptyList(),
     /** Whether your FinoQ webhook signing secret is set (RM5c). The secret itself is never sent back. */
     val webhookSecretSet: Boolean = false,
     /** When it was last set (ISO-8601 UTC); null when it isn't set. */
     val webhookSecretUpdatedAt: String? = null,
+)
+
+/**
+ * RM2 `providerWallets[]` (2026-11-24): one of your three wallets at the provider, buying's first. `wallet` is RM19's
+ * name for it (`PAYHERO_SERVICE`, `FINOQ_SERVICE`, `FINOQ_PAYMENT`), `name` and `purpose` what to call it and what it
+ * is for, `provider` `PAYHERO` | `FINOQ`, `direction` `ON_RAMP` | `OFF_RAMP`. `balance` is the last reading, from
+ * `source` at `readAt`: **null means unknown** (never read, or not readable), never zero. `low` is true when it is
+ * under `lowBelow` (the network's line; null when none is set), or when the provider refused a prompt or a payout
+ * for it. `canTopUp` is false only while a FinoQ wallet waits for your FinoQ account id (RM5b).
+ */
+@Serializable
+data class ProviderWalletDto(
+    val wallet: String,
+    val name: String,
+    val provider: String,
+    val direction: String,
+    val purpose: String,
+    val balance: RampAmount?,
+    val source: String?,
+    val readAt: String?,
+    val low: Boolean,
+    val lowBelow: RampAmount?,
+    val canTopUp: Boolean,
 )
 
 /** One balance at the provider, and the call it was read from (for support: which of the provider's wallets). */
@@ -131,14 +156,15 @@ data class KesBalanceDto(val amount: RampAmount, val source: String)
 
 /**
  * RM2's `offRamp` (selling, 2026-11-23). `accountId` is your account's number on the FinoQ dashboard: payouts need it
- * (set it with `PUT /ramp/merchant/payments/account`). `payoutBalance` is what payouts spend and `feeBalance` what the
- * provider's fees are taken from; **null means unknown** (we couldn't read it), never zero: show "unknown", not "0".
+ * (set it with `PUT /ramp/merchant/payments/account`). `payoutBalance` is FinoQ's payment wallet (what payouts spend)
+ * and `feeBalance` FinoQ's service wallet (what a payout's fee is taken from; PayHero's service wallet, buying's, is in
+ * RM2's `providerWallets` only); **null means unknown** (we couldn't read it), never zero: show "unknown", not "0".
  * They are read live while you are online (`balancesLive` true; at most every 30 seconds), otherwise they are the last
  * reading, from `balancesReadAt`. `held` is what your open sales hold of the payout balance (their payouts and fees).
  * `flags`: `payout_account_missing`, `payout_balance_low` (below the network's line: top up), `service_balance_low`
- * (the fee balance is below the floor), `provider_balance` (the provider refused a prompt for your fee balance),
- * `payout_balance` (the provider refused a payout for your payout balance) and `payout_refused` (it refused a payout
- * outright: check your account); with either of the last two no sale is routed to you until you go online again.
+ * (FinoQ's service wallet is below the provider-fee floor), `payout_balance` (the provider refused a payout for your
+ * payout balance) and `payout_refused` (it refused a payout outright: check your account); with either of the last two
+ * no sale is routed to you until you go online again.
  */
 @Serializable
 data class MerchantOffRampDto(

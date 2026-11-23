@@ -48,7 +48,8 @@ interface MobileCollections {
 
     /**
      * Sends an M-Pesa prompt to [TopUpRequest.payer] to put money into one of the merchant's **own** wallets at the
-     * provider ([TopUpWallet]): the one its fees are taken from, or the one payouts spend (2026-11-23). **Sent once**:
+     * provider ([TopUpWallet]): the one collections' fees are taken from, the one payouts' fees are taken from, or the
+     * one payouts spend (2026-11-23; three wallets 2026-11-24). **Sent once**:
      * the client never repeats it, so a payer never gets two prompts for one top-up.
      *
      * Not a `Resource`: as with [sendPayout], each answer asks something different of the caller. `Accepted` is
@@ -61,17 +62,22 @@ interface MobileCollections {
     suspend fun lookUpTopUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus = TopUpStatus.Unknown
 
     /**
-     * The merchant's balances at the provider, each with where it was read: what payouts can spend
-     * ([ProviderBalances.payout]) and what the provider's fees are taken from ([ProviderBalances.fees]). **A balance
-     * that could not be read is null, never zero.** [accountId] is the merchant's account at the provider
+     * The merchant's balances at the provider, each with where it was read ([ProviderBalances]: the collections' fee
+     * wallet, the payouts' fee wallet and what payouts spend). **A balance that could not be read is null, never
+     * zero, and one wallet is never reported as another.** [accountId] is the merchant's account at the provider
      * ([PayoutRequest.accountId]); without it only the calls that need no account are made.
      *
      * An error only when nothing could be asked at all (credentials refused, provider out of reach).
      */
     suspend fun balances(credentials: CollectionCredentials, accountId: String? = null): Resource<ProviderBalances> =
         when (val read = balance(credentials)) {
-            is Resource.Error -> read
-            is Resource.Success -> Resource.success(ProviderBalances(null, BalanceReading(read.data.fees, "balance")))
+            is Resource.Error -> {
+                read
+            }
+
+            is Resource.Success -> {
+                Resource.success(ProviderBalances(collectionFees = BalanceReading(read.data.fees, "balance")))
+            }
         }
 
     /**
@@ -89,9 +95,9 @@ interface MobileCollections {
         Resource.error(IntegrationError.NotImplemented("MobileCollections.payoutStatus", "use lookUpPayout"))
 
     /**
-     * The fee balance alone ([CollectionBalances.fees]: PayHero's service wallet), as the on-ramp's "go online" check
-     * reads it. [CollectionBalances.payout] is **not** a reading here (it is zero whatever the merchant holds): the
-     * off-ramp reads [balances].
+     * The collections' fee balance alone ([CollectionBalances.fees]: PayHero's service wallet, the one an M-Pesa
+     * prompt's fee is taken from), as the on-ramp's "go online" check reads it. [CollectionBalances.payout] is
+     * **not** a reading here (it is zero whatever the merchant holds): the off-ramp reads [balances].
      */
     suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances>
 
@@ -263,13 +269,20 @@ sealed interface PayoutStatus {
 
 enum class PayoutReference { PROVIDER, OURS }
 
-/** Which of the merchant's own wallets at the provider a top-up fills. */
+/**
+ * Which of the merchant's own wallets at the provider a top-up fills (2026-11-24: three, the owner's "the PayHero
+ * service wallet is for on-ramp, the FinoQ service wallet is for off-ramp"). Each is its own wallet with its own
+ * balance: a top-up of one never fills another.
+ */
 enum class TopUpWallet {
-    /** What the provider's fees are taken from ([ProviderBalances.fees]; FinoQ's service wallet). */
-    SERVICE,
+    /** What an M-Pesa prompt's fee is taken from ([ProviderBalances.collectionFees]; PayHero's service wallet). */
+    COLLECTION_FEES,
+
+    /** What a payout's fee is taken from ([ProviderBalances.payoutFees]; FinoQ's service wallet). */
+    PAYOUT_FEES,
 
     /** What payouts spend ([ProviderBalances.payout]; FinoQ's payment wallet). */
-    PAYMENT,
+    PAYOUT,
 }
 
 data class TopUpRequest(
@@ -352,8 +365,28 @@ sealed interface TopUpStatus {
 /** The on-ramp's reading ([MobileCollections.balance]): only [fees] is real. */
 data class CollectionBalances(val payout: FiatAmount, val fees: FiatAmount)
 
-/** The merchant's balances at the provider. Null is "could not be read", which is never the same as zero. */
-data class ProviderBalances(val payout: BalanceReading?, val fees: BalanceReading?)
+/**
+ * The merchant's three balances at the provider (2026-11-24), each read from its own wallet and **never substituted
+ * for another**. Null is "could not be read", which is never the same as zero.
+ */
+data class ProviderBalances(
+    /** What a collection's (M-Pesa prompt's) fee is taken from: PayHero's service wallet, the on-ramp's. */
+    val collectionFees: BalanceReading? = null,
+    /** What a payout's fee is taken from: FinoQ's service wallet, the off-ramp's. */
+    val payoutFees: BalanceReading? = null,
+    /** What payouts spend: FinoQ's payment wallet. */
+    val payout: BalanceReading? = null,
+) {
+    /** The reading of [wallet]: a top-up is confirmed by its own wallet rising, never another's. */
+    fun of(wallet: TopUpWallet): BalanceReading? =
+        when (wallet) {
+            TopUpWallet.COLLECTION_FEES -> collectionFees
+            TopUpWallet.PAYOUT_FEES -> payoutFees
+            TopUpWallet.PAYOUT -> payout
+        }
+
+    val isEmpty: Boolean get() = collectionFees == null && payoutFees == null && payout == null
+}
 
 /** One balance and the call that gave it ([source]: a short name for logs and for staff, never a URL). */
 data class BalanceReading(val amount: FiatAmount, val source: String)

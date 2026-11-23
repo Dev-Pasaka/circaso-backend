@@ -533,8 +533,10 @@ fun rampModule(config: Config): Module =
         single { SetPreviewAccess(get(), clock) }
         single { ListReviewOrders(get(), get()) }
         single { MerchantInsights(get(), get()) }
-        single { GetRampOverview(get(), get(), get(), clock) }
-        single { GetMerchantSummary(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
+        single { GetRampOverview(get(), get(), get(), clock, get()) }
+        single {
+            GetMerchantSummary(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock, get(), get())
+        }
         single { ListStaffMerchantOrders(get(), get()) }
         single { GetEngineSettings(get(), get()) }
         single { UpdateEngineSettings(get(), get(), clock) }

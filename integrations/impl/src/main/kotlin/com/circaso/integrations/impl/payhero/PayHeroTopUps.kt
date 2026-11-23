@@ -19,11 +19,17 @@ import io.ktor.http.contentType
 import org.slf4j.LoggerFactory
 
 /**
- * A merchant topping up their own two wallets at PayHero/FinoQ with an M-Pesa prompt to their own phone (2026-11-23):
+ * A merchant topping up their own three wallets at PayHero/FinoQ with an M-Pesa prompt to their own phone (2026-11-23;
+ * three wallets 2026-11-24). Each top-up goes only to its own wallet's host: a top-up never lands in another wallet.
  *
- * - **Service wallet** (the fees): `POST /api/v2/topup` `{amount, phone_number}` on [PayHeroHosts.LEGACY_URL], the
- *   only host that documents it (docs.payhero.co.ke, "Service Wallet Top Up"). It takes no reference of ours and no
- *   callback address.
+ * - **PayHero service wallet** (collections' fees, the on-ramp): `POST /api/v2/topup` `{amount, phone_number}` on
+ *   [PayHeroHosts.LEGACY_URL], the only host that documents it (docs.payhero.co.ke, "Service Wallet Top Up"). It takes
+ *   no reference of ours and no callback address. Confirmed on the dev server 2026-11-23 (`201`, then "paid").
+ * - **FinoQ service wallet** (payouts' fees, the off-ramp): FinoQ documents **no** top-up for it (docs.payhero.africa,
+ *   every page, read 2026-11-24). Tried: the legacy call's twin, `POST /api/v2/topup` `{amount, phone_number,
+ *   account_id}` on [PayHeroHosts.API_URL] **only** (never the legacy host, which would fill PayHero's wallet
+ *   instead). A bare `404`/`405` is "no such route": nothing was sent, and the merchant is told it isn't supported.
+ *   The answer's layout is logged once (`what=topup_finoq_service`), so the first real attempt confirms it.
  * - **Payment wallet** (what payouts spend): a wallet-based collection, `POST /api/v2/payments` with
  *   `provider: "sasapay"`, `network_code: "63902"` and the `account_id` (docs.payhero.africa, Kenya collections), on
  *   [PayHeroHosts.API_URL] and then [PayHeroHosts.LEGACY_URL] **only when the first provably took nothing** (it
@@ -37,6 +43,7 @@ class PayHeroTopUps(hosts: PayHeroHosts, private val payouts: PayHeroPayouts) {
     private val log = LoggerFactory.getLogger(PayHeroTopUps::class.java)
     private val shapes = ShapeLog(log)
     private val serviceHosts = listOf(Host("payhero", hosts.legacy))
+    private val finoqServiceHosts = listOf(Host("finoq", hosts.api))
     private val paymentHosts = listOf(Host("finoq", hosts.api), Host("payhero", hosts.legacy))
 
     suspend fun send(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult {
@@ -70,7 +77,7 @@ class PayHeroTopUps(hosts: PayHeroHosts, private val payouts: PayHeroPayouts) {
      */
     suspend fun lookUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus {
         val asked = PayoutLookup(lookup.reference, lookup.providerReference)
-        val checkEcho = lookup.wallet == TopUpWallet.PAYMENT
+        val checkEcho = lookup.wallet == TopUpWallet.PAYOUT
         return when (val status = payouts.lookUp(credentials, asked, TOPUP, checkEcho)) {
             is PayoutStatus.Paid -> TopUpStatus.Paid(status.providerReceipt, status.amount)
             is PayoutStatus.Failed -> TopUpStatus.Failed(status.reason)
@@ -85,7 +92,7 @@ class PayHeroTopUps(hosts: PayHeroHosts, private val payouts: PayHeroPayouts) {
         if (amount.currency != KES || !amount.isWholeUnits || amount.amountMinor <= 0) return null
         val phone = PayHeroCollections.localNumber(request.payer)
         return when (request.wallet) {
-            TopUpWallet.SERVICE -> {
+            TopUpWallet.COLLECTION_FEES -> {
                 val body = ServiceTopUpBody(amount.wholeUnits, phone)
                 Call(
                     wallet = request.wallet,
@@ -96,7 +103,19 @@ class PayHeroTopUps(hosts: PayHeroHosts, private val payouts: PayHeroPayouts) {
                 )
             }
 
-            TopUpWallet.PAYMENT -> {
+            TopUpWallet.PAYOUT_FEES -> {
+                val accountId = request.accountId?.trim()?.toLongOrNull() ?: return null
+                val body = FinoqServiceTopUpBody(amount.wholeUnits, phone, accountId)
+                Call(
+                    wallet = request.wallet,
+                    hosts = finoqServiceHosts,
+                    path = SERVICE_PATH,
+                    operation = "topup_finoq_service",
+                    json = payHeroJson.encodeToString(FinoqServiceTopUpBody.serializer(), body),
+                )
+            }
+
+            TopUpWallet.PAYOUT -> {
                 val accountId = request.accountId?.trim()?.toLongOrNull() ?: return null
                 val body =
                     WalletTopUpBody(

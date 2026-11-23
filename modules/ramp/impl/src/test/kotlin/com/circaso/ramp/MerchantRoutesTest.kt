@@ -757,16 +757,13 @@ class MerchantRoutesTest {
         testApplication {
             serve()
             ramp.openSelling(payoutMinor = 50_000)
-            ramp.settingsRows.set(TESTNET) { it.copy(payoutBalanceLowMinor = 100_000) }
+            ramp.collections.payoutFeeBalances["Crynce-user"] = 3_000
+            ramp.settingsRows.set(TESTNET) { it.copy(payoutBalanceLowMinor = 100_000, providerFeeFloorMinor = 5_000) }
             ramp.book.invalidate()
             val session = signIn("crynce@example.com")
 
-            val card =
-                client
-                    .get(base) { header("X-Merchant-Session", session) }
-                    .data()
-                    .getValue("offRamp")
-                    .jsonObject
+            val merchant = client.get(base) { header("X-Merchant-Session", session) }.data()
+            val card = merchant.getValue("offRamp").jsonObject
 
             assertEquals("4242", card.text("accountId"))
             assertEquals(
@@ -778,13 +775,33 @@ class MerchantRoutesTest {
                     .amount(),
             )
             assertEquals("payment_wallet", card.getValue("payoutBalance").jsonObject.text("source"))
-            assertEquals("service_wallet", card.getValue("feeBalance").jsonObject.text("source"))
+            assertEquals("finoq_service_wallet", card.getValue("feeBalance").jsonObject.text("source"), "FinoQ's")
             assertEquals(true, card.getValue("balancesLive").jsonPrimitive.boolean)
             assertEquals(
-                listOf("payout_balance_low"),
+                listOf("payout_balance_low", "service_balance_low"),
                 card.getValue("flags").jsonArray.map { it.jsonPrimitive.content },
+                "selling's flags read FinoQ's two wallets: PayHero's KES 1,000 doesn't hide FinoQ's KES 30",
             )
             assertEquals(Triple("KES", "0", "0"), card.getValue("held").amount())
+
+            val wallets = merchant.getValue("providerWallets").jsonArray.map { it.jsonObject }
+            assertEquals(
+                listOf(
+                    listOf("PAYHERO_SERVICE", "PayHero service wallet", "ON_RAMP", "100000", "false"),
+                    listOf("FINOQ_SERVICE", "FinoQ service wallet", "OFF_RAMP", "3000", "true"),
+                    listOf("FINOQ_PAYMENT", "FinoQ payment wallet", "OFF_RAMP", "50000", "true"),
+                ),
+                wallets.map {
+                    listOf(
+                        it.text("wallet"),
+                        it.text("name"),
+                        it.text("direction"),
+                        it.getValue("balance").amount().second,
+                        it.getValue("low").jsonPrimitive.content,
+                    )
+                },
+            )
+            assertTrue(wallets.all { it.text("readAt") != null && it.getValue("canTopUp").jsonPrimitive.boolean })
         }
 
     @Test
@@ -801,6 +818,20 @@ class MerchantRoutesTest {
                     .jsonObject
             assertEquals(JsonNull, card.getValue("payoutBalance"))
             assertEquals(JsonNull, card.getValue("feeBalance"))
+            val wallets =
+                client
+                    .get(base) { header("X-Merchant-Session", session) }
+                    .data()
+                    .getValue("providerWallets")
+                    .jsonArray
+                    .map { it.jsonObject }
+            assertEquals(3, wallets.size)
+            assertTrue(wallets.all { it.getValue("balance") == JsonNull && it.getValue("readAt") == JsonNull })
+            assertEquals(
+                listOf(true, false, false),
+                wallets.map { it.getValue("canTopUp").jsonPrimitive.boolean },
+                "FinoQ's wallets wait for the account id",
+            )
             assertTrue("payout_account_missing" in card.getValue("flags").jsonArray.map { it.jsonPrimitive.content })
             client.put("$base/profile") { json("""{"displayName":"Bidii","contactPhone":"+254712000222"}""", session) }
 
@@ -876,24 +907,32 @@ class MerchantRoutesTest {
             assertEquals("pin", shortPin.field())
             val tooSmall = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"500"}""", session) }
             assertEquals("ramp.amount_invalid" to "amountMinor", tooSmall.envelope().text("code") to tooSmall.field())
-            val noAccount =
-                client.post(
-                    "$base/topups",
-                ) { json("""{"wallet":"PAYMENT","amountMinor":"50000"}""", session) }
-            assertEquals(
-                "ramp.merchant_setup_incomplete" to "accountId",
-                noAccount.envelope().text("code") to noAccount.field(),
-            )
+            for (wallet in listOf("PAYMENT", "FINOQ_PAYMENT", "FINOQ_SERVICE")) {
+                val noAccount =
+                    client.post(
+                        "$base/topups",
+                    ) { json("""{"wallet":"$wallet","amountMinor":"50000"}""", session) }
+                assertEquals(
+                    "ramp.merchant_setup_incomplete" to "accountId",
+                    noAccount.envelope().text("code") to noAccount.field(),
+                    wallet,
+                )
+            }
 
             val sent = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"50000"}""", session) }
             assertEquals(HttpStatusCode.OK, sent.status, sent.bodyAsText())
             val topUp = sent.data()
-            assertEquals("REQUESTED" to "SERVICE", topUp.text("state") to topUp.text("wallet"))
+            assertEquals(
+                "REQUESTED" to "PAYHERO_SERVICE",
+                topUp.text("state") to topUp.text("wallet"),
+                "the old name is PayHero's service wallet",
+            )
             assertEquals("+254 7•• ••• 000", topUp.text("maskedPhone"))
             assertEquals(Triple("KES", "50000", "500"), topUp.getValue("amount").amount())
             assertEquals(Triple("KES", "5000", "50"), topUp.getValue("balanceBefore").amount())
             assertEquals(JsonNull, topUp["failure"])
-            val again = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"50000"}""", session) }
+            val again =
+                client.post("$base/topups") { json("""{"wallet":"PAYHERO_SERVICE","amountMinor":"50000"}""", session) }
             assertEquals(
                 HttpStatusCode.Conflict to "ramp.topup_in_progress",
                 again.status to again.envelope().text("code"),

@@ -16,8 +16,8 @@ private const val TOPUP_PIN_LENGTH = 6
 /** RM19's shape: a wallet we know, KES cents as digits, a 6-digit PIN when one is given. The range is the use case's. */
 fun TopUpRequest.toCommand(): Resource<TopUpCommand> {
     val target =
-        TopUpTarget.entries.firstOrNull { it.name == wallet.trim().uppercase() }
-            ?: return malformed("wallet", "SERVICE or PAYMENT")
+        TopUpTarget.parse(wallet)
+            ?: return malformed("wallet", "PAYHERO_SERVICE, FINOQ_SERVICE or FINOQ_PAYMENT")
     val amount = amountMinor.trim().toLongOrNull() ?: return malformed("amountMinor", "KES cents as digits")
     val code = pin?.trim()?.takeIf { it.isNotEmpty() }
     if (code != null && (code.length != TOPUP_PIN_LENGTH || !code.all { it in '0'..'9' })) {

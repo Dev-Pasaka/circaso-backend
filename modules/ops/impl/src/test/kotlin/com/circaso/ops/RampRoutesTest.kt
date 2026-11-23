@@ -446,6 +446,20 @@ class RampRoutesTest {
                 body,
             )
             assertTrue("\"lastOrderAt\":\"2026-11-22T12:00:00Z\"" in body)
+            assertTrue(
+                "\"providerWallets\":[{\"wallet\":\"PAYHERO_SERVICE\",\"name\":\"PayHero service wallet\"," +
+                    "\"provider\":\"PAYHERO\",\"direction\":\"ON_RAMP\"," +
+                    "\"balance\":{\"unit\":\"KES\",\"amountMinor\":\"31240\",\"amount\":\"312.4\"}," +
+                    "\"source\":\"payhero.wallets.service_wallet\",\"readAt\":\"2026-11-22T12:00:00Z\"," +
+                    "\"low\":false}" in body,
+                body,
+            )
+            assertTrue(
+                "{\"wallet\":\"FINOQ_PAYMENT\",\"name\":\"FinoQ payment wallet\",\"provider\":\"FINOQ\"," +
+                    "\"direction\":\"OFF_RAMP\",\"balance\":null,\"source\":null,\"readAt\":null," +
+                    "\"low\":false}" in body,
+                "a wallet never read is null, never zero: $body",
+            )
             assertEquals(FakeRampAdmin.Asked(null, Network.TESTNET, null), ramp.asked.single())
 
             read("/overview?network=MAINNET&from=2026-10-01&to=2026-10-31")
@@ -511,6 +525,13 @@ class RampRoutesTest {
                 body,
             )
             assertFalse("password" in body || "username" in body || "channel" in body.lowercase())
+            assertTrue(
+                "\"fees\":{\"unit\":\"KES\",\"amountMinor\":\"700\",\"amount\":\"7\"}," +
+                    "\"feesSource\":\"finoq.balance.service_wallet\"" in body &&
+                    "\"wallets\":[{\"wallet\":\"PAYHERO_SERVICE\"" in body &&
+                    "{\"wallet\":\"FINOQ_SERVICE\",\"name\":\"FinoQ service wallet\"" in body,
+                body,
+            )
             assertEquals(FakeRampAdmin.Asked(merchant, Network.TESTNET, FakeRampAdmin.MONTH), ramp.asked.single())
 
             // a custodian that can't be read is a null float, never a zero; no wallet on the network is a null wallet
