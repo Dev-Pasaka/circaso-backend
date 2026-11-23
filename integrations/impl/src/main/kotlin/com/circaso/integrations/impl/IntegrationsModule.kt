@@ -348,7 +348,7 @@ fun integrationsModule(config: Config, secrets: Secrets) =
                     mapOf(
                         "log" to { LogMerchantFloat() },
                         "fake" to { get<FakeTreasury>() },
-                        "circle" to { CircleMerchantFloat(get<CircleAccounts>().accounts) },
+                        "circle" to { CircleMerchantFloat(get<CircleAccounts>()) },
                     ),
             )
         }

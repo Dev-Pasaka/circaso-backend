@@ -3,12 +3,14 @@ package com.circaso.integrations.impl.circle
 import com.circaso.integrations.api.CustodyDirection
 import com.circaso.integrations.api.CustodyOperation
 import com.circaso.integrations.api.CustodyTransactionState
+import com.circaso.integrations.api.DepositQuery
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.PaymentLeg
 import com.circaso.integrations.api.SplitTransferRequest
 import com.circaso.integrations.impl.text
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
+import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import io.ktor.client.request.HttpRequestData
 import kotlinx.coroutines.runBlocking
@@ -198,5 +200,40 @@ class CircleSplitTest {
             assertEquals(CircleRecords.TX_HASH, execution.txHash)
             assertEquals("0.0000018510681", execution.networkFee)
             assertEquals("", execution.refId)
+        }
+
+    @Test
+    fun `a merchant float's deposits are the incoming records of that wallet in the chain transaction, nothing else`() =
+        runBlocking<Unit> {
+            circle.reply("GET /v1/w3s/tokens/${FakeCircle.USDC_TOKEN_ID}", FakeCircle.USDC_TOKEN_REPLY)
+            circle.reply(
+                "GET /v1/w3s/transactions",
+                """{"data":{"transactions":[${CircleRecords.PAYEE_INBOUND},${CircleRecords.FEE_INBOUND},""" +
+                    "${CircleRecords.SENDER_EXECUTION}]}}",
+            )
+            val float = CircleMerchantFloat(emptyMap(), mapOf(Network.TESTNET to custody))
+            val query =
+                DepositQuery(
+                    walletId = "d4eac6e0-25e4-5fb7-8dc6-deb56bcf9864",
+                    blockchain = "BASE-SEPOLIA",
+                    txHash = CircleRecords.TX_HASH,
+                    expectedFrom = "ignored by a real provider",
+                    expectedTokenAddress = "ignored",
+                    expectedAmountMinor = 1.toBigInteger(),
+                )
+
+            val deposits = float.deposits(Network.TESTNET, query).data()
+
+            val deposit = deposits.single()
+            assertEquals(CustodyDirection.IN, deposit.direction)
+            assertEquals(
+                100_000.toBigInteger(),
+                deposit.amount.amountMinor,
+                "what Circle recorded, not what was expected",
+            )
+            assertEquals(CustodyTransactionState.CONFIRMED, deposit.state)
+            assertTrue(deposit.tokenAddress!!.isNotEmpty())
+            assertIs<Resource.Error>(float.deposits(Network.MAINNET, query), "no account: can't be asked")
+            assertTrue(float.deposits(Network.TESTNET, query.copy(txHash = "")).data().isEmpty())
         }
 }

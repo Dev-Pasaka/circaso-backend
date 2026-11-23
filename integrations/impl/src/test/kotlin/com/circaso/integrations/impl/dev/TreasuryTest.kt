@@ -1,5 +1,7 @@
 package com.circaso.integrations.impl.dev
 
+import com.circaso.integrations.api.CustodyTransactionState
+import com.circaso.integrations.api.DepositQuery
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.TreasuryAccess
@@ -149,5 +151,24 @@ class TreasuryTest {
             val receipt = LogEmail().send("pay@crynce.co.ke", Email.MerchantSignInCode("482913", 10)).data()
 
             assertEquals("log", receipt.provider)
+        }
+
+    @Test
+    fun `the log float reports the deposit asked for as arrived, and the fake only what a test recorded`() =
+        runBlocking<Unit> {
+            val query = DepositQuery("w-1", "BASE-SEPOLIA", "0xhash", "0xuser", "0xusdc", BigInteger.valueOf(9_800_000))
+
+            val logged = LogMerchantFloat().deposits(network, query).data().single()
+            assertEquals(
+                Triple("w-1", "0xuser", "0xusdc"),
+                Triple(logged.walletId, logged.sourceAddress, logged.tokenAddress),
+            )
+            assertEquals(BigInteger.valueOf(9_800_000), logged.amount.amountMinor)
+            assertEquals(CustodyTransactionState.CONFIRMED, logged.state)
+
+            val fake = FakeTreasury()
+            assertTrue(fake.deposits(network, query).data().isEmpty(), "nothing recorded: nothing arrived")
+            fake.deposits["0xhash"] = listOf(logged.copy(walletId = "w-2"), logged)
+            assertEquals(listOf("w-1"), fake.deposits(network, query).data().map { it.walletId })
         }
 }
