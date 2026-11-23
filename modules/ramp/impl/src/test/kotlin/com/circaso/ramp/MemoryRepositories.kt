@@ -329,7 +329,7 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
     ) = change(merchantId) { it.copy(payoutIssue = issue, payoutIssueAt = at.takeIf { issue != null }) }
 
     override suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances) {
-        this.balances[merchantId] = balances
+        this.balances[merchantId] = balances.over(this.balances[merchantId] ?: KesBalances.UNREAD)
     }
 
     override suspend fun balances(merchantId: MerchantId): KesBalances = balances[merchantId] ?: KesBalances.UNREAD

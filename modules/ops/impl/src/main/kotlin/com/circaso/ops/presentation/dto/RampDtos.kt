@@ -324,6 +324,28 @@ data class RampOverviewMerchantDto(
     val lastOrderAt: String? = null,
     val paidOut: RampAmountDto? = null,
     val bought: RampAmountDto? = null,
+    /** The merchant's three wallets at their provider as last read (2026-11-24), buying's first. */
+    val providerWallets: List<RampProviderWalletDto> = emptyList(),
+)
+
+/**
+ * One of a merchant's three wallets at their provider as last read (2026-11-24; the ops server holds nobody's keys, so
+ * this is the app's latest reading of it). `wallet`: `PAYHERO_SERVICE` (PayHero's service wallet: buying's M-Pesa
+ * prompt fees), `FINOQ_SERVICE` (FinoQ's service wallet: selling's payout fees), `FINOQ_PAYMENT` (FinoQ's payment
+ * wallet: what payouts spend); `name` is what to call it, `provider` `PAYHERO` | `FINOQ`, `direction` `ON_RAMP` |
+ * `OFF_RAMP`. **`balance` null is "never read", never zero**; `readAt` is when this wallet was read. `low`: under the
+ * network's line, or the provider refused a prompt or payout for it.
+ */
+@Serializable
+data class RampProviderWalletDto(
+    val wallet: String,
+    val name: String,
+    val provider: String,
+    val direction: String,
+    val balance: RampAmountDto? = null,
+    val source: String? = null,
+    val readAt: String? = null,
+    val low: Boolean = false,
 )
 
 /** `GET /ops/ramp/overview`. `from` and `to` are Nairobi calendar days, inclusive. */
@@ -369,8 +391,10 @@ data class RampSummaryMerchantDto(
 
 /**
  * A merchant's KES at the payout provider as last read (the ops server holds nobody's keys, so this is the app's
- * latest reading, from `readAt`). `payout` is what payouts spend, `fees` what the provider's fees come from: **null
- * is "couldn't be read", never zero**. `held` is what their open sales hold of `payout`.
+ * latest reading, from `readAt`). `payout` is FinoQ's payment wallet (what payouts spend), `fees` FinoQ's service
+ * wallet (a payout's fee): **null is "couldn't be read", never zero**. `held` is what their open sales hold of
+ * `payout`. `wallets` has all three wallets with their names and read times, PayHero's service wallet (buying's
+ * prompt fees) too (2026-11-24).
  */
 @Serializable
 data class RampKesBalancesDto(
@@ -380,6 +404,7 @@ data class RampKesBalancesDto(
     val feesSource: String? = null,
     val readAt: String? = null,
     val held: RampAmountDto,
+    val wallets: List<RampProviderWalletDto> = emptyList(),
 )
 
 @Serializable

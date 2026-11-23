@@ -127,7 +127,8 @@ class CollectionsTest {
         runBlocking<Unit> {
             val read = (fake.balances(merchant, "63") as Resource.Success).data
             assertEquals(FiatAmount(10_000_000, "KES"), read.payout?.amount)
-            assertEquals(FiatAmount(100_000, "KES"), read.fees?.amount)
+            assertEquals(FiatAmount(100_000, "KES"), read.collectionFees?.amount)
+            assertEquals(FiatAmount(100_000, "KES"), read.payoutFees?.amount)
             assertEquals("fake", read.payout?.source)
 
             fake.payoutBalanceMinor = null

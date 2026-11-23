@@ -1388,8 +1388,7 @@ The old `payout` and `payoutStatus` (which returned a `Resource` and could not t
   - Collect, its status, `verify`, the on-ramp's `balance`: `https://backend.payhero.co.ke` only. Unchanged.
   - Payout: `POST /api/v2/withdraw` on `https://api.finoq.africa`, then on `https://backend.payhero.co.ke`. It moves to the second host **only when the first provably took nothing**: it could not be reached, it refused the credentials (`401`/`403`), or it has no such route (a bare `404`/`405`). After a timeout, a 5xx or any answer it can't read, no other host is asked.
   - Payout status: `POST /api/global/transaction-status` `{ "request_id": … }` on the new host, then `GET /api/v2/transaction-status?reference=…` on the old one; by the provider's reference first, then by ours.
-  - Fee balance: `GET /api/v2/wallets?wallet_type=service_wallet` (old host), then `GET https://auth.payhero.africa/api/v2/account/{id}` (`account.service_wallet_balance`).
-  - Payout balance: `GET /api/v2/wallets?wallet_type=payment_wallet` (old host; a guess, believed only when the answer says it is that wallet), then `GET /api/global/accounts/{id}/balance` (new host).
+  - Balances: superseded 2026-11-24 by three wallets read apart, never one for another (see "As built: three provider wallets").
 - **Never retried.** The two payout clients (`finoq-payout`, `payhero-payout`) have `maxAttempts = 1`: the shared client would otherwise repeat a POST on `429` or `503`. Since the merge into `feat/offramp` the three read clients do too, so no PayHero/FinoQ POST (the STK push, the payout, FinoQ's POST status read) is ever repeated by the client.
 - **The request:** `external_reference` (the order id), `account_id`, `amount` (whole shillings), `phone_number` and `account_number` (the local form, `0712345678`), `network_code: "63902"`, `channel: "phone"`, `recipient_type: "MSISDN"`, `callback_url`. An amount with cents, another currency or an account id that isn't a number is `Rejected(INVALID_REQUEST)` without a call.
 - **Reading the answer:** a 2xx with a reference is `Accepted`; a 2xx without one, a 5xx, a `408` and a timeout are `Unknown`; a `429` is `Unavailable`; any other 4xx is a rejection, told apart by the provider's words: "wont cater for cost" → `AMOUNT_BELOW_COST` (the cost in brackets is handed on, not logged), "insufficient balance/funds/float" → `InsufficientBalance`, `invalid_argument`/`invalid_arguments` → `INVALID_REQUEST`, anything else → `REFUSED`.
@@ -1571,7 +1570,7 @@ Statements and the staff figures tell the directions apart: `collected`/`sold` a
 
 ### Logs
 
-Every payout step is one INFO line under `com.circaso.ramp` (`LOG_LEVEL_RAMP`) through the `PayoutJournal` port: `ramp payout sent: id=<orderId>#<n> outcome=<Accepted|Unknown|…>`, `ramp payout looked up: id=… outcome=<PAID|PENDING|FAILED|NOT_FOUND_BY_OURS|…>`, `ramp sale funded`, `ramp balances read: id=<merchant> outcome=payout=<source|unread> fees=<…>`, `ramp test payout sent|looked up`. Ids and outcomes only, never an amount, a number or a credential. The integration's own lines (layouts, hosts, outcomes) are unchanged.
+Every payout step is one INFO line under `com.circaso.ramp` (`LOG_LEVEL_RAMP`) through the `PayoutJournal` port: `ramp payout sent: id=<orderId>#<n> outcome=<Accepted|Unknown|…>`, `ramp payout looked up: id=… outcome=<PAID|PENDING|FAILED|NOT_FOUND_BY_OURS|…>`, `ramp sale funded`, `ramp balances read: id=<merchant> outcome=payhero_service=<source|unread> finoq_service=<…> finoq_payment=<…>` (2026-11-24), `ramp test payout sent|looked up`. Ids and outcomes only, never an amount, a number or a credential. The integration's own lines (layouts, hosts, outcomes) are unchanged.
 
 ### The first real test payout (KES 10)
 
@@ -1652,6 +1651,58 @@ The owner's request: "On the merchant side, add an option to top up their servic
 **`log` and `fake`.** `LogCollections` accepts a top-up, reports it paid after 3 s, credits the fake wallet and rings the payment doorbell; `FakeCollections` takes `nextTopUp`, `completeTopUp`, `failTopUp`.
 
 **Unconfirmed (each is what the code assumes).** That `/api/v2/topup` still works for FinoQ accounts and with the same API keys; that the wallet collection is allowed for the merchant's own number at their KYC tier and that `sasapay`/`63902` is right for M-Pesa; that either status lookup finds a service top-up (it sends no reference of ours) and with which words; whether a callback comes for either (and with which `transaction_type`); whether FinoQ takes a fee from the collected amount (hence the 90 % rule); FinoQ's wording for a non-owner number (`PAYER_NOT_ALLOWED` is matched widely, else `REFUSED`).
+
+## As built: three provider wallets (2026-11-24, `feat/three-wallets`)
+
+The owner: "There's the FinoQ service wallet and there's the PayHero service wallet: the PayHero service wallet is for on-ramp, the FinoQ service wallet is for off-ramp. You should be able to top up any of them." Until now one "fee balance" held whichever service wallet answered first (PayHero's, else FinoQ's), so two wallets shared a name and a column, and RM19's `SERVICE` topped up only PayHero's.
+
+**The three wallets.**
+
+| RM19 `wallet` | Contract (`TopUpWallet`, `ProviderBalances`) | What it is for | Read from | Topped up with |
+| --- | --- | --- | --- | --- |
+| `PAYHERO_SERVICE` | `COLLECTION_FEES`, `collectionFees` | PayHero's fee for each M-Pesa prompt (buying) | `GET backend.payhero.co.ke/api/v2/wallets?wallet_type=service_wallet` → `available_balance` (source `payhero.wallets.service_wallet`) | `POST backend.payhero.co.ke/api/v2/topup` `{amount, phone_number}` (documented; worked on dev 2026-11-23) |
+| `FINOQ_SERVICE` | `PAYOUT_FEES`, `payoutFees` | FinoQ's fee for each payout (selling) | `GET api.finoq.africa/api/global/accounts/{id}/balance` → `service_wallet_balance.balance` (`finoq.balance.service_wallet`), else the Team on `auth.payhero.africa/api/v2/account/{id}` → `account.service_wallet_balance` (`finoq.account.service_wallet_balance`) | `POST api.finoq.africa/api/v2/topup` `{amount, phone_number, account_id}`: **undocumented, a try** (below) |
+| `FINOQ_PAYMENT` | `PAYOUT`, `payout` | What payouts spend | the same balance call → `wallet_balance.balance` (`finoq.account.wallet_balance`; present without `balance` = 0) | wallet collection `POST /api/v2/payments` with `network_code` on `api.finoq.africa` (unchanged) |
+
+Each wallet is read only from its own calls: a PayHero reading never fills FinoQ's service wallet or the other way round, and one not read is null ("unknown"), never zero. The guessed legacy `wallet_type=payment_wallet` query is no longer asked (it was never documented and answered `404` on every dev-server call). FinoQ's two wallets need the account id; PayHero's doesn't. Log line: `payhero balances: payhero_service=<source|unread> finoq_service=<…> finoq_payment=<…>`.
+
+**Which check reads which.** RM6's provider-balance floor (`provider_fee_floor_minor`) reads PayHero's service wallet (`MobileCollections.balance`, unchanged), and its reading is now kept for RM2 and staff; a prompt refused for the balance still marks `paymentsIssue: SERVICE_BALANCE` (PayHero's). The off-ramp's flags read FinoQ's wallets only: `payout_balance_low` the payment wallet against `payout_balance_low_minor`, `service_balance_low` FinoQ's service wallet against `provider_fee_floor_minor` (one floor for both service wallets: `TODO(decision: a floor of its own for FinoQ's service wallet)` in `ProviderWallets`). `provider_balance` left the `offRamp` flags (it is buying's; still in `missing` and `paymentsIssue`). The engine's KES float for a sale and the test payout read the payment wallet, as before.
+
+**Kept per wallet (V11).** `ramp.merchants` gains `payhero_service_balance_minor|_source`, `payhero_service_read_at`, `finoq_service_balance_minor|_source`, `finoq_service_read_at`, `payout_balance_read_at`; the old `fee_balance_*` was copied to the wallet its source names and is no longer read or written (a later script drops it). A reading that couldn't read one wallet keeps that wallet's last reading with its own time; `balances_read_at` is the last reading of any. `ramp.topups.wallet` is now `PAYHERO_SERVICE | FINOQ_SERVICE | FINOQ_PAYMENT` (rows moved: `SERVICE` → `PAYHERO_SERVICE`, `PAYMENT` → `FINOQ_PAYMENT`).
+
+**RM2.** `providerWallets[]`, buying's first:
+
+```json
+"providerWallets": [
+  { "wallet": "PAYHERO_SERVICE", "name": "PayHero service wallet", "provider": "PAYHERO", "direction": "ON_RAMP",
+    "purpose": "PayHero's fee for each M-Pesa prompt when people buy comes from here",
+    "balance": { "unit": "KES", "amountMinor": "31240", "amount": "312.4" }, "source": "payhero.wallets.service_wallet",
+    "readAt": "2026-11-24T09:00:00Z", "low": false, "lowBelow": { "unit": "KES", "amountMinor": "5000", "amount": "50" },
+    "canTopUp": true },
+  { "wallet": "FINOQ_SERVICE", "name": "FinoQ service wallet", "provider": "FINOQ", "direction": "OFF_RAMP",
+    "purpose": "FinoQ's fee for each M-Pesa payout when people sell comes from here",
+    "balance": null, "source": null, "readAt": null, "low": false, "lowBelow": { … }, "canTopUp": true },
+  { "wallet": "FINOQ_PAYMENT", "name": "FinoQ payment wallet", "provider": "FINOQ", "direction": "OFF_RAMP",
+    "purpose": "Sellers' M-Pesa payouts are paid from here", "balance": { … }, "source": "finoq.account.wallet_balance",
+    "readAt": "…", "low": true, "lowBelow": { "unit": "KES", "amountMinor": "100000", "amount": "1000" }, "canTopUp": true }
+]
+```
+
+`low`: under `lowBelow` (null when the line is 0), or PayHero's after a prompt refused for it, or the payment wallet after a payout refused for it. `canTopUp` is false only for a FinoQ wallet without the account id. `offRamp.payoutBalance` stays the payment wallet; `offRamp.feeBalance` is now **FinoQ's** service wallet.
+
+**RM19.** `wallet`: `PAYHERO_SERVICE | FINOQ_SERVICE | FINOQ_PAYMENT`; the old `SERVICE` is taken as `PAYHERO_SERVICE` and `PAYMENT` as `FINOQ_PAYMENT`, and answers carry the new names. Both FinoQ wallets need the account id (`ramp.merchant_setup_incomplete`, field `accountId`). One open top-up per wallet. Confirmation is unchanged (the provider's "paid", or **that** wallet's balance rising by 90 % of the amount).
+
+```json
+// POST /v1/ramp/merchant/topups
+{ "wallet": "FINOQ_SERVICE", "amountMinor": "20000" }
+// → { "topupId": "…", "wallet": "FINOQ_SERVICE", "state": "REQUESTED", "balanceBefore": { KES 7 }, … }
+```
+
+**FinoQ's service-wallet top-up: not documented.** docs.payhero.africa (all 69 pages of its sitemap, read 2026-11-24) has no top-up for a service wallet or an account: its only "top-ups" are wallet collections and PesaLink deposits into the wallet collections settle into. So the client tries the legacy call's twin on FinoQ's host, `POST api.finoq.africa/api/v2/topup` `{ "amount": 200, "phone_number": "0712345678", "account_id": 63 }`, **on that host only** (PayHero's host would fill PayHero's wallet), once, on the no-retry client. A bare `404`/`405` is "no such route" → `FAILED`/`REFUSED` with outcome `rejected:NOT_SUPPORTED` and nothing sent; `401`/`403` → `CREDENTIALS_REFUSED`; a timeout, 5xx or 2xx without a reference → `Unknown` (looked up, never resent). The first real attempt logs `payhero layout first seen: what=topup_finoq_service status=<http> shape={…}` and `payhero topup: wallet=PAYOUT_FEES host=finoq status=… outcome=…`: a `404` means FinoQ has no such route (ask FinoQ how its service wallet is funded); a `2xx` with `reference` confirms it; then watch `finoq_service` rise in `ramp balances read`.
+
+**Ops.** RO7's `kesBalances` gains `wallets[]` (`wallet`, `name`, `provider`, `direction`, `balance`, `source`, `readAt`, `low`), and its `fees`/`feesSource` are FinoQ's service wallet; RO6's overview rows gain `providerWallets[]` in the same shape.
+
+**Confirmed and not.** *Confirmed:* on the dev server (logs, 2026-11-23/24) PayHero's legacy wallet answer is its own object (`{account_id, wallet_type, available_balance, …}`) and FinoQ's account balance is `{service_wallet_balance:{account_id,balance,currency}, wallet_balance:{…}}`; a `SERVICE` top-up on the legacy host was accepted (`201`) and reported paid by the legacy status lookup, while FinoQ's status lookup didn't know it (`404`); PayHero's STK callbacks carry `ServiceWalletBalance` and `PaymentWalletBalance` of their own. FinoQ's docs say each Team "gets its own service wallet (created automatically)" and that balances "never mix across Teams". *Not confirmed (trusted from the owner):* that PayHero's legacy service wallet and FinoQ's `service_wallet_balance` are different wallets with different balances (no doc says either way; the logs carry no values), that the prompt fee comes from PayHero's and the payout fee from FinoQ's (no doc names which wallet pays which fee), and FinoQ's service-wallet top-up itself. Check: after a real payout, `finoq_service` should fall by the fee and `payhero_service` stay put.
 
 ## To check against the vendor before building on it
 

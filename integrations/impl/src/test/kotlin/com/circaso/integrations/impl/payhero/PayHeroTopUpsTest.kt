@@ -23,21 +23,22 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/** A merchant's top-ups of their own two FinoQ wallets: the documented requests, sent once, every answer told apart. */
+/** A merchant's top-ups of their own three wallets: each to its own host, sent once, every answer told apart. */
 class PayHeroTopUpsTest {
     private val vendor = FakePayHero()
     private val payHero = PayHeroCollections(vendor.hosts)
     private val merchant = CollectionCredentials("merchant-user", "merchant-pass", "911")
     private val service =
         TopUpRequest(
-            wallet = TopUpWallet.SERVICE,
+            wallet = TopUpWallet.COLLECTION_FEES,
             payer = PhoneNumber.parse("+254787677676")!!,
             amount = FiatAmount.ofWholeUnits(100, "KES"),
             reference = "topup-1",
             callbackUrl = "https://api.test/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s",
             accountId = "63",
         )
-    private val payment = service.copy(wallet = TopUpWallet.PAYMENT, reference = "topup-2")
+    private val payment = service.copy(wallet = TopUpWallet.PAYOUT, reference = "topup-2")
+    private val finoqService = service.copy(wallet = TopUpWallet.PAYOUT_FEES, reference = "topup-3")
     private val queued =
         """{"success":true,"status":"QUEUED","reference":"09b8794f-4da0","CheckoutRequestID":"ws_CO_15012024161614"}"""
 
@@ -72,6 +73,31 @@ class PayHeroTopUpsTest {
                 """"callback_url":"https://api.test/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s"}""",
             vendor.clients.last.text(),
         )
+    }
+
+    @Test
+    fun `FinoQ's service wallet is topped up on FinoQ's host only, naming the account`() {
+        vendor.answer("$API$SERVICE_PATH", queued, 201)
+
+        assertEquals(TopUpResult.Accepted(TopUpReceipt("09b8794f-4da0", "ws_CO_15012024161614")), send(finoqService))
+
+        assertEquals(listOf("$API$SERVICE_PATH"), vendor.asked)
+        assertEquals("""{"amount":100,"phone_number":"0787677676","account_id":63}""", vendor.clients.last.text())
+    }
+
+    @Test
+    fun `a FinoQ service top-up FinoQ has no route for is not supported, and never goes to PayHero's wallet`() {
+        vendor.answer("$API$SERVICE_PATH", "", 404)
+        vendor.answer("$LEGACY$SERVICE_PATH", queued)
+
+        assertEquals(TopUpResult.Rejected(TopUpRejection.NOT_SUPPORTED), send(finoqService))
+        assertEquals(listOf("$API$SERVICE_PATH"), vendor.asked, "PayHero's top-up would fill the other wallet")
+
+        vendor.answer("$API$SERVICE_PATH", "", 403)
+        assertEquals(TopUpResult.Rejected(TopUpRejection.CREDENTIALS_REFUSED), send(finoqService))
+        vendor.fail("$API$SERVICE_PATH") { SocketTimeoutException("read timed out") }
+        assertEquals(TopUpResult.Unknown, send(finoqService), "it may have prompted")
+        assertEquals(TopUpResult.Rejected(TopUpRejection.INVALID_REQUEST), send(finoqService.copy(accountId = null)))
     }
 
     @Test
@@ -139,14 +165,14 @@ class PayHeroTopUpsTest {
             """{"status":"SUCCESS","provider_reference":"QK12345","amount":100,"external_reference":"other"}""",
         )
 
-        val serviceStatus = lookUp(TopUpLookup(TopUpWallet.SERVICE, "topup-1", "09b8794f-4da0"))
+        val serviceStatus = lookUp(TopUpLookup(TopUpWallet.COLLECTION_FEES, "topup-1", "09b8794f-4da0"))
         assertEquals(TopUpStatus.Paid("QK12345", FiatAmount.ofWholeUnits(100, "KES")), serviceStatus)
-        assertEquals(TopUpStatus.Unknown, lookUp(TopUpLookup(TopUpWallet.PAYMENT, "topup-2", "09b8794f-4da0")))
+        assertEquals(TopUpStatus.Unknown, lookUp(TopUpLookup(TopUpWallet.PAYOUT, "topup-2", "09b8794f-4da0")))
 
         vendor.answer("$LEGACY$LEGACY_STATUS", """{"status":"FAILED","external_reference":"topup-2"}""")
-        assertEquals(TopUpStatus.Failed("FAILED"), lookUp(TopUpLookup(TopUpWallet.PAYMENT, "topup-2", "ref")))
+        assertEquals(TopUpStatus.Failed("FAILED"), lookUp(TopUpLookup(TopUpWallet.PAYOUT, "topup-2", "ref")))
         vendor.answer("$LEGACY$LEGACY_STATUS", """{"status":"QUEUED"}""")
-        assertEquals(TopUpStatus.Pending, lookUp(TopUpLookup(TopUpWallet.SERVICE, "topup-1", "ref")))
+        assertEquals(TopUpStatus.Pending, lookUp(TopUpLookup(TopUpWallet.COLLECTION_FEES, "topup-1", "ref")))
     }
 
     private companion object {

@@ -522,6 +522,9 @@ class FakeCollections : MobileCollections {
     /** The payout balance by API username, and the fee balance read with it; unnamed: unreadable. */
     val payoutBalances = mutableMapOf<String, Long>()
 
+    /** FinoQ's service wallet (a payout's fee) by API username; unnamed: unreadable. */
+    val payoutFeeBalances = mutableMapOf<String, Long>()
+
     /** The next send reaches the provider and then the call dies (a caller's timeout): the payout went out. */
     var timeOutAfterSend = false
 
@@ -592,8 +595,9 @@ class FakeCollections : MobileCollections {
         val topUp = topUps.last { it.reference == reference }
         val amount = topUp.amount.amountMinor
         when (topUp.wallet) {
-            TopUpWallet.SERVICE -> serviceBalances[username] = (serviceBalances[username] ?: 0) + amount
-            TopUpWallet.PAYMENT -> payoutBalances[username] = (payoutBalances[username] ?: 0) + amount
+            TopUpWallet.COLLECTION_FEES -> serviceBalances[username] = (serviceBalances[username] ?: 0) + amount
+            TopUpWallet.PAYOUT_FEES -> payoutFeeBalances[username] = (payoutFeeBalances[username] ?: 0) + amount
+            TopUpWallet.PAYOUT -> payoutBalances[username] = (payoutBalances[username] ?: 0) + amount
         }
         if (reported) {
             topUpStatuses[reference] =
@@ -603,11 +607,13 @@ class FakeCollections : MobileCollections {
 
     override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> {
         val payout = payoutBalances[credentials.username] ?: return Resource.error(IntegrationError.Unavailable("x"))
-        val fees = serviceBalances[credentials.username]
+
+        fun reading(minor: Long?, source: String) = minor?.let { BalanceReading(FiatAmount(it, "KES"), source) }
         return Resource.success(
             ProviderBalances(
-                BalanceReading(FiatAmount(payout, "KES"), "payment_wallet"),
-                fees?.let { BalanceReading(FiatAmount(it, "KES"), "service_wallet") },
+                collectionFees = reading(serviceBalances[credentials.username], "service_wallet"),
+                payoutFees = reading(payoutFeeBalances[credentials.username], "finoq_service_wallet"),
+                payout = reading(payout, "payment_wallet"),
             ),
         )
     }

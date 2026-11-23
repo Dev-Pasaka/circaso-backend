@@ -59,6 +59,25 @@ data class OpsRampMerchantActivity(
     val successRatePercent: String,
     val money: OpsRampMoney,
     val lastOrderAt: Instant?,
+    /** The three wallets at the provider as last read (2026-11-24), buying's first. */
+    val providerWallets: List<OpsRampProviderWallet> = emptyList(),
+)
+
+/**
+ * One of a merchant's three wallets at their provider as last read (2026-11-24): [wallet] `PAYHERO_SERVICE` (buying's
+ * prompt fees), `FINOQ_SERVICE` (selling's payout fees) or `FINOQ_PAYMENT` (what payouts spend), [name] what to call
+ * it, [direction] `ON_RAMP` | `OFF_RAMP`. A null [balance] is one never read, never zero. [low]: under the network's
+ * line, or the provider refused a prompt or a payout for it.
+ */
+data class OpsRampProviderWallet(
+    val wallet: String,
+    val name: String,
+    val provider: String,
+    val direction: String,
+    val balance: RampAmount?,
+    val source: String?,
+    val readAt: Instant?,
+    val low: Boolean,
 )
 
 /** Every merchant's activity on [network] in [period]; [orders] and [money] are the sums of the rows. */
@@ -151,7 +170,10 @@ data class OpsRampMerchantSummary(
     val kesBalances: OpsRampKesBalances? = null,
 )
 
-/** A merchant's balances at the payout provider as last read: what payouts spend, and what its fees are taken from. */
+/**
+ * A merchant's balances at the payout provider as last read: [payout] is FinoQ's payment wallet (what payouts spend),
+ * [fees] FinoQ's service wallet (a payout's fee). [wallets] has all three, PayHero's service wallet (buying's) too.
+ */
 data class OpsRampKesBalances(
     val payout: RampAmount?,
     val payoutSource: String?,
@@ -160,6 +182,7 @@ data class OpsRampKesBalances(
     val readAt: Instant?,
     /** What their open sales hold of [payout]. */
     val held: RampAmount,
+    val wallets: List<OpsRampProviderWallet> = emptyList(),
 )
 
 /**

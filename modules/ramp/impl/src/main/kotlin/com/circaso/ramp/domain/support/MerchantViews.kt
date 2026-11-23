@@ -56,6 +56,7 @@ class MerchantViews(
                 val callbackUrl = merchant.callbackKey?.let { key -> Callbacks.url(current.callbackBaseUrl, key) }
                 PaymentsView(it.provider, it.channelId, callbackUrl)
             }
+        val offRamp = offRamp(merchant, current)
         return MerchantOverview(
             merchant = merchant,
             network = network,
@@ -66,7 +67,8 @@ class MerchantViews(
             presence = presenceOf(merchant),
             floatFloorMinor = floatFloor(current),
             kyc = verifications.view(Subject.merchant(merchant.merchantId), current),
-            offRamp = offRamp(merchant, current),
+            offRamp = offRamp,
+            providerWallets = ProviderWallets.of(merchant, offRamp.balances, current),
         )
     }
 
@@ -79,20 +81,18 @@ class MerchantViews(
         val kept = merchants.balances(merchant.merchantId)
         val stale = kept.readAt?.plus(FRESH_FOR)?.isBefore(clock.instant()) ?: true
         val fresh = if (stale && sessions.of(merchant.merchantId) != null) balances.read(merchant) else null
-        val shown = fresh ?: kept
+        val shown = fresh?.over(kept) ?: kept
         val live = fresh != null || (!stale && sessions.of(merchant.merchantId) != null)
+        // Selling's wallets are FinoQ's: its payment wallet and its service wallet (PayHero's is buying's).
         val flags =
             listOfNotNull(
                 OffRampView.PAYOUT_ACCOUNT_MISSING.takeIf { merchant.payoutAccountId == null },
                 OffRampView.PAYOUT_BALANCE_LOW.takeIf {
-                    val payout = shown.payoutMinor
-                    payout != null && current.payoutBalanceLowMinor > 0 && payout < current.payoutBalanceLowMinor
+                    ProviderWallets.below(shown.finoqPayment, current.payoutBalanceLowMinor)
                 },
                 OffRampView.SERVICE_BALANCE_LOW.takeIf {
-                    val fees = shown.feeMinor
-                    fees != null && current.providerFeeFloorMinor > 0 && fees < current.providerFeeFloorMinor
+                    ProviderWallets.below(shown.finoqService, current.providerFeeFloorMinor)
                 },
-                MerchantOverview.PROVIDER_BALANCE.takeIf { merchant.paymentsIssue == PaymentsIssue.SERVICE_BALANCE },
                 merchant.payoutIssue?.name?.lowercase(),
             )
         return OffRampView(

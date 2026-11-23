@@ -78,10 +78,19 @@ object MerchantsTable : Table("ramp.merchants") {
     val payoutAccountId = text("payout_account_id").nullable()
     val payoutIssue = text("payout_issue").nullable()
     val payoutIssueAt = timestamp("payout_issue_at").nullable()
+
+    // FinoQ's payment wallet (what payouts spend).
     val payoutBalanceMinor = long("payout_balance_minor").nullable()
     val payoutBalanceSource = text("payout_balance_source").nullable()
-    val feeBalanceMinor = long("fee_balance_minor").nullable()
-    val feeBalanceSource = text("fee_balance_source").nullable()
+    val payoutBalanceReadAt = timestamp("payout_balance_read_at").nullable()
+
+    // PayHero's service wallet (buying's prompt fees) and FinoQ's (selling's payout fees), V11.
+    val payheroServiceMinor = long("payhero_service_balance_minor").nullable()
+    val payheroServiceSource = text("payhero_service_balance_source").nullable()
+    val payheroServiceReadAt = timestamp("payhero_service_read_at").nullable()
+    val finoqServiceMinor = long("finoq_service_balance_minor").nullable()
+    val finoqServiceSource = text("finoq_service_balance_source").nullable()
+    val finoqServiceReadAt = timestamp("finoq_service_read_at").nullable()
     val balancesReadAt = timestamp("balances_read_at").nullable()
     val webhookSecretSealed = binary("webhook_secret_sealed").nullable()
     val webhookSecretUpdatedAt = timestamp("webhook_secret_updated_at").nullable()

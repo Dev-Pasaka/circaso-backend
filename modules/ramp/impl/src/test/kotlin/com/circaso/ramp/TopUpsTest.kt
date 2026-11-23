@@ -46,7 +46,7 @@ class TopUpsTest {
     }
 
     private suspend fun start(
-        target: TopUpTarget = TopUpTarget.SERVICE,
+        target: TopUpTarget = TopUpTarget.PAYHERO_SERVICE,
         amountMinor: Long = 50_000,
         merchantId: MerchantId = crynce,
         pin: String? = null,
@@ -66,13 +66,13 @@ class TopUpsTest {
             ramp.seller(ramp.crynce)
             balances()
 
-            val service = start(TopUpTarget.SERVICE, 50_000).data()
-            val payment = start(TopUpTarget.PAYMENT, 100_000).data()
+            val service = start(TopUpTarget.PAYHERO_SERVICE, 50_000).data()
+            val payment = start(TopUpTarget.FINOQ_PAYMENT, 100_000).data()
 
             val (first, second) = ramp.collections.topUpCalls
             assertEquals(PhoneNumber.parse("+254700000000"), first.payer, "the merchant's own contact phone")
-            assertEquals(TopUpWallet.SERVICE to FiatAmount(50_000, "KES"), first.wallet to first.amount)
-            assertEquals(TopUpWallet.PAYMENT to "4242", second.wallet to second.accountId)
+            assertEquals(TopUpWallet.COLLECTION_FEES to FiatAmount(50_000, "KES"), first.wallet to first.amount)
+            assertEquals(TopUpWallet.PAYOUT to "4242", second.wallet to second.accountId)
             assertEquals(service.topUpId.toString(), first.reference)
             assertEquals("https://api.test/v1/hooks/payhero/crynce-0123456789abcdef", second.callbackUrl)
             assertEquals(TopUpState.REQUESTED to "TU-1", service.state to service.providerReference)
@@ -81,19 +81,60 @@ class TopUpsTest {
         }
 
     @Test
+    fun `FinoQ's service wallet is its own wallet, topped up and confirmed by its own balance`() =
+        runTest {
+            ramp.seller(ramp.crynce)
+            balances(service = 5_000)
+            ramp.collections.payoutFeeBalances[user] = 700
+
+            val topUp = start(TopUpTarget.FINOQ_SERVICE, 20_000).data()
+
+            val sent = ramp.collections.topUpCalls.single()
+            assertEquals(TopUpWallet.PAYOUT_FEES to "4242", sent.wallet to sent.accountId)
+            assertEquals(700L, topUp.balanceBeforeMinor, "FinoQ's service wallet, not PayHero's KES 50")
+            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.PAYHERO_SERVICE).data().state, "each wallet its own")
+
+            ramp.collections.topUpStatuses.remove(topUp.topUpId.toString())
+            ramp.collections.serviceBalances[user] = 5_000 + 20_000
+            assertEquals(TopUpState.REQUESTED, read(topUp).state, "PayHero's wallet rising says nothing of FinoQ's")
+            ramp.collections.payoutFeeBalances[user] = 700 + 19_000
+            val done = read(topUp)
+            assertEquals(TopUpState.CONFIRMED to TopUpConfirmation.BALANCE, done.state to done.confirmedBy)
+            assertEquals(
+                19_700L,
+                ramp.merchants
+                    .balances(crynce)
+                    .finoqService
+                    ?.minor,
+            )
+        }
+
+    @Test
+    fun `a FinoQ service top-up needs the FinoQ account id`() =
+        runTest {
+            balances()
+            assertEquals(RampError.TopUpAccountMissing, start(TopUpTarget.FINOQ_SERVICE).error())
+            assertTrue(ramp.collections.topUpCalls.isEmpty())
+        }
+
+    @Test
     fun `one open top-up per wallet, the other wallet still free`() =
         runTest {
             ramp.seller(ramp.crynce)
             balances()
-            val first = start(TopUpTarget.SERVICE).data()
+            val first = start(TopUpTarget.PAYHERO_SERVICE).data()
 
-            assertEquals(RampError.TopUpInProgress, start(TopUpTarget.SERVICE).error())
-            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.PAYMENT).data().state)
+            assertEquals(RampError.TopUpInProgress, start(TopUpTarget.PAYHERO_SERVICE).error())
+            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.FINOQ_PAYMENT).data().state)
             assertEquals(2, ramp.collections.topUpCalls.size, "the refused one asked the provider nothing")
 
             ramp.collections.topUpPaid(first.topUpId.toString(), user)
             assertEquals(TopUpState.CONFIRMED, read(first).state)
-            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.SERVICE).data().state, "free again once it closed")
+            assertEquals(
+                TopUpState.REQUESTED,
+                start(TopUpTarget.PAYHERO_SERVICE).data().state,
+                "free again once it closed",
+            )
         }
 
     @Test
@@ -113,16 +154,16 @@ class TopUpsTest {
             }
             assertEquals(TopUpState.REQUESTED, start(amountMinor = 1_000).data().state, "KES 10")
 
-            val payment = start(TopUpTarget.PAYMENT).error()
+            val payment = start(TopUpTarget.FINOQ_PAYMENT).error()
             assertEquals(RampError.TopUpAccountMissing, payment, "the payment wallet needs the FinoQ account id")
             ramp.seller(ramp.crynce)
-            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.PAYMENT, 15_000_000).data().state, "KES 150,000")
+            assertEquals(TopUpState.REQUESTED, start(TopUpTarget.FINOQ_PAYMENT, 15_000_000).data().state, "KES 150,000")
 
             ramp.merchants.rows[crynce] =
                 ramp.merchants.rows
                     .getValue(crynce)
                     .copy(state = MerchantState.SUSPENDED)
-            assertEquals(RampError.MerchantNotApproved, start(TopUpTarget.SERVICE, 2_000).error())
+            assertEquals(RampError.MerchantNotApproved, start(TopUpTarget.PAYHERO_SERVICE, 2_000).error())
             assertEquals(2, ramp.collections.topUpCalls.size)
         }
 
@@ -137,9 +178,9 @@ class TopUpsTest {
             ramp.collections.nextTopUps += TopUpResult.Unavailable
             ramp.collections.nextTopUps += TopUpResult.Rejected(TopUpRejection.PAYER_NOT_ALLOWED)
 
-            val low = start(TopUpTarget.PAYMENT).data()
-            val unreachable = start(TopUpTarget.PAYMENT).data()
-            val notOwn = start(TopUpTarget.PAYMENT).data()
+            val low = start(TopUpTarget.FINOQ_PAYMENT).data()
+            val unreachable = start(TopUpTarget.FINOQ_PAYMENT).data()
+            val notOwn = start(TopUpTarget.FINOQ_PAYMENT).data()
 
             assertEquals(TopUpState.FAILED to TopUpFailure.SERVICE_BALANCE_LOW, low.state to low.failure)
             assertEquals(TopUpFailure.PROVIDER_UNAVAILABLE, unreachable.failure)
@@ -168,7 +209,14 @@ class TopUpsTest {
                         .uppercase(),
                 done.receipt,
             )
-            assertEquals(55_000L, ramp.merchants.balances(crynce).feeMinor, "RM2's reading is refreshed")
+            assertEquals(
+                55_000L,
+                ramp.merchants
+                    .balances(crynce)
+                    .payheroService
+                    ?.minor,
+                "RM2's reading is refreshed",
+            )
         }
 
     @Test
@@ -192,8 +240,8 @@ class TopUpsTest {
         runTest {
             ramp.seller(ramp.crynce)
             balances()
-            val cancelled = start(TopUpTarget.SERVICE).data()
-            val failed = start(TopUpTarget.PAYMENT).data()
+            val cancelled = start(TopUpTarget.PAYHERO_SERVICE).data()
+            val failed = start(TopUpTarget.FINOQ_PAYMENT).data()
 
             ramp.collections.topUpStatuses[cancelled.topUpId.toString()] = TopUpStatus.Failed("CANCELLED")
             ramp.collections.topUpStatuses[failed.topUpId.toString()] = TopUpStatus.Failed("FAILED")

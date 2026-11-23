@@ -363,7 +363,7 @@ class Harness {
     val setPreview = SetPreviewAccess(preview, clock)
     val reviewOrders = ListReviewOrders(orders, merchants)
     val insights = MerchantInsights(ledger, ledger)
-    val overview = GetRampOverview(merchants, orders, insights, clock)
+    val overview = GetRampOverview(merchants, orders, insights, clock, book)
     val merchantSummary =
         GetMerchantSummary(
             merchants,
@@ -377,6 +377,7 @@ class Harness {
             treasury,
             clock,
             payoutHolds,
+            book,
         )
     val staffOrders = ListStaffMerchantOrders(merchants, ledger)
 

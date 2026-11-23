@@ -40,6 +40,7 @@ import com.circaso.ramp.domain.models.TopUpConfirmation
 import com.circaso.ramp.domain.models.TopUpFailure
 import com.circaso.ramp.domain.models.TopUpState
 import com.circaso.ramp.domain.models.TopUpTarget
+import com.circaso.ramp.domain.models.WalletBalance
 import com.circaso.ramp.domain.support.Fees
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.shared.FiatAmount
@@ -304,12 +305,26 @@ class OffRampDataTest {
             val merchant = merchant()
             merchants.setPayoutAccount(merchant.merchantId, "4242")
             merchants.setPayoutIssue(merchant.merchantId, PayoutIssue.PAYOUT_BALANCE, now)
-            val balances = KesBalances(50_000, "payment_wallet", null, null, now)
+            val balances =
+                KesBalances(
+                    payheroService = WalletBalance(4_000, "payhero.wallets.service_wallet", now),
+                    finoqPayment = WalletBalance(50_000, "payment_wallet", now),
+                    readAt = now,
+                )
             merchants.recordBalances(merchant.merchantId, balances)
 
             val read = merchants.find(merchant.merchantId)!!
             assertEquals("4242" to PayoutIssue.PAYOUT_BALANCE, read.payoutAccountId to read.payoutIssue)
             assertEquals(balances, merchants.balances(merchant.merchantId))
+            val later = now.plusSeconds(60)
+            val finoqOnly =
+                KesBalances(finoqService = WalletBalance(700, "finoq.balance.service_wallet", later), readAt = later)
+            merchants.recordBalances(merchant.merchantId, finoqOnly)
+            assertEquals(
+                balances.copy(finoqService = finoqOnly.finoqService, readAt = later),
+                merchants.balances(merchant.merchantId),
+                "a wallet this reading didn't read keeps its last reading and time",
+            )
             merchants.setPayoutIssue(merchant.merchantId, null, now)
             assertNull(merchants.find(merchant.merchantId)!!.payoutIssue)
             val refused = runCatching { merchants.setPayoutAccount(merchant.merchantId, "12ab") }
@@ -367,7 +382,7 @@ class OffRampDataTest {
                 TopUp(
                     topUpId = Uuid7.generate(now),
                     merchantId = merchant.merchantId,
-                    target = TopUpTarget.SERVICE,
+                    target = TopUpTarget.PAYHERO_SERVICE,
                     provider = PAYHERO,
                     amountMinor = 50_000,
                     payer = PhoneNumber.parse("+254700000000")!!,
@@ -386,9 +401,9 @@ class OffRampDataTest {
                 )
             assertTrue(topUps.insert(topUp))
             assertFalse(topUps.insert(topUp.copy(topUpId = Uuid7.generate(now))), "topups_open_key")
-            val payment = topUp.copy(topUpId = Uuid7.generate(now.plusMillis(1)), target = TopUpTarget.PAYMENT)
+            val payment = topUp.copy(topUpId = Uuid7.generate(now.plusMillis(1)), target = TopUpTarget.FINOQ_PAYMENT)
             assertTrue(topUps.insert(payment), "the other wallet is free")
-            assertEquals(topUp, topUps.open(merchant.merchantId, TopUpTarget.SERVICE))
+            assertEquals(topUp, topUps.open(merchant.merchantId, TopUpTarget.PAYHERO_SERVICE))
             assertTrue(topUps.hasOpen(merchant.merchantId))
             assertEquals(
                 setOf(topUp.topUpId, payment.topUpId),
@@ -420,7 +435,7 @@ class OffRampDataTest {
                 topUps.recent(merchant.merchantId, 10).map { it.topUpId },
             )
             assertFalse(topUps.hasOpen(merchant.merchantId))
-            assertNull(topUps.open(merchant.merchantId, TopUpTarget.SERVICE))
+            assertNull(topUps.open(merchant.merchantId, TopUpTarget.PAYHERO_SERVICE))
             assertTrue(
                 topUps.insert(topUp.copy(topUpId = Uuid7.generate(now.plusSeconds(3)))),
                 "a new one once it closed",

@@ -4,7 +4,6 @@ import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.ramp.domain.models.CallbackView
 import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Earnings
-import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantPerformance
 import com.circaso.ramp.domain.models.MerchantState
@@ -16,6 +15,7 @@ import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.Performance
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProfileCommand
+import com.circaso.ramp.domain.models.ProviderWalletView
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
@@ -24,6 +24,7 @@ import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
 import com.circaso.ramp.domain.models.TradingWindow
+import com.circaso.ramp.domain.models.WalletBalance
 import com.circaso.ramp.domain.models.WebhookSecret
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.domain.support.Periods
@@ -51,6 +52,7 @@ import com.circaso.ramp.presentation.dto.PerformanceDto
 import com.circaso.ramp.presentation.dto.PerformanceResponse
 import com.circaso.ramp.presentation.dto.PerformanceWindowDto
 import com.circaso.ramp.presentation.dto.ProfileRequest
+import com.circaso.ramp.presentation.dto.ProviderWalletDto
 import com.circaso.ramp.presentation.dto.SignInCodeRequest
 import com.circaso.ramp.presentation.dto.SignInCodeResponse
 import com.circaso.ramp.presentation.dto.SignedInResponse
@@ -137,17 +139,30 @@ fun WebhookSecretRequest.toSecret(): Resource<String> {
 fun TestPayoutRequest.toAmount(): Resource<Long> =
     amountMinor.trim().toLongOrNull()?.let { Resource.success(it) } ?: malformed("amountMinor", "KES cents as digits")
 
-fun KesBalances.toPayoutDto(): KesBalanceDto? =
-    payoutMinor?.let { KesBalanceDto(Amounts.fiat(it), payoutSource.orEmpty()) }
+fun WalletBalance.toDto(): KesBalanceDto = KesBalanceDto(Amounts.fiat(minor), source)
 
-fun KesBalances.toFeeDto(): KesBalanceDto? = feeMinor?.let { KesBalanceDto(Amounts.fiat(it), feeSource.orEmpty()) }
+/** RM2's `providerWallets[]`; [accountId] is what FinoQ's two need before they can be topped up. */
+fun ProviderWalletView.toDto(accountId: String?) =
+    ProviderWalletDto(
+        wallet = target.name,
+        name = target.label,
+        provider = target.provider,
+        direction = target.direction.name,
+        purpose = target.purpose,
+        balance = balance?.let { Amounts.fiat(it.minor) },
+        source = balance?.source,
+        readAt = balance?.readAt?.toString(),
+        low = low,
+        lowBelow = lowBelowMinor?.let { Amounts.fiat(it) },
+        canTopUp = !target.needsAccountId || accountId != null,
+    )
 
 fun OffRampView.toDto() =
     MerchantOffRampDto(
         offered = offered,
         accountId = accountId,
-        payoutBalance = balances.toPayoutDto(),
-        feeBalance = balances.toFeeDto(),
+        payoutBalance = balances.finoqPayment?.toDto(),
+        feeBalance = balances.finoqService?.toDto(),
         balancesLive = live,
         balancesReadAt = balances.readAt?.toString(),
         held = Amounts.fiat(heldMinor),
@@ -261,6 +276,7 @@ fun MerchantOverview.toResponse() =
         merchantType = merchant.merchantType.name,
         offers = MerchantOffersDto(onRamp = merchant.offersOnramp, offRamp = merchant.offersOfframp),
         offRamp = offRamp.toDto(),
+        providerWallets = providerWallets.map { it.toDto(merchant.payoutAccountId) },
         webhookSecretSet = merchant.webhookSecretUpdatedAt != null,
         webhookSecretUpdatedAt = merchant.webhookSecretUpdatedAt?.toString(),
     )

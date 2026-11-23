@@ -22,6 +22,7 @@ import com.circaso.ops.presentation.dto.RampPaymentsIssueDto
 import com.circaso.ops.presentation.dto.RampPayoutFeeBandDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
+import com.circaso.ops.presentation.dto.RampProviderWalletDto
 import com.circaso.ops.presentation.dto.RampResolveResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
 import com.circaso.ops.presentation.dto.RampSummaryMerchantDto
@@ -45,6 +46,7 @@ import com.circaso.ramp.api.OpsRampOrderCursor
 import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampProviderWallet
 import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampUserVerification
@@ -403,6 +405,19 @@ private fun OpsRampMerchantActivity.toDto() =
         lastOrderAt = lastOrderAt?.toString(),
         paidOut = money.paidOut.toDto(),
         bought = money.bought.toDto(),
+        providerWallets = providerWallets.map { it.toDto() },
+    )
+
+private fun OpsRampProviderWallet.toDto() =
+    RampProviderWalletDto(
+        wallet = wallet,
+        name = name,
+        provider = provider,
+        direction = direction,
+        balance = balance?.toDto(),
+        source = source,
+        readAt = readAt?.toString(),
+        low = low,
     )
 
 private fun OpsRampMerchantProfile.toDto() =
@@ -493,6 +508,7 @@ fun OpsRampMerchantSummary.toResponse() =
                     feesSource = it.feesSource,
                     readAt = it.readAt?.toString(),
                     held = it.held.toDto(),
+                    wallets = it.wallets.map { wallet -> wallet.toDto() },
                 )
             },
     )

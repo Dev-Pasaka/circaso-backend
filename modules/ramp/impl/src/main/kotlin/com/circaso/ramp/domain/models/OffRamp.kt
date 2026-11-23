@@ -34,21 +34,59 @@ data class PayoutFee(val feeMinor: Long, val source: String) {
     }
 }
 
+/** One wallet's balance as read, in KES minor units, with the call that gave it and when. */
+data class WalletBalance(val minor: Long, val source: String, val readAt: Instant)
+
 /**
- * A merchant's balances at the provider as last read: what payouts spend, and what its fees are taken from. A null
- * amount is one that couldn't be read, which is never the same as zero. [readAt] null: never read.
+ * A merchant's three wallets at the provider (2026-11-24, the owner's "the PayHero service wallet is for on-ramp,
+ * the FinoQ service wallet is for off-ramp"), each read from itself and never filled in from another. A null wallet
+ * is one that couldn't be read, which is never the same as zero. A reading that couldn't read a wallet keeps the
+ * last one that did, with its own time; [readAt] is the last reading of any of them (null: never read).
  */
 data class KesBalances(
-    val payoutMinor: Long?,
-    val payoutSource: String?,
-    val feeMinor: Long?,
-    val feeSource: String?,
-    val readAt: Instant?,
+    /** PayHero's service wallet: an M-Pesa prompt's fee (buying) is taken from it. */
+    val payheroService: WalletBalance? = null,
+    /** FinoQ's service wallet: a payout's fee (selling) is taken from it. */
+    val finoqService: WalletBalance? = null,
+    /** FinoQ's payment wallet: what payouts to sellers spend. */
+    val finoqPayment: WalletBalance? = null,
+    val readAt: Instant? = null,
 ) {
+    val payoutMinor: Long? get() = finoqPayment?.minor
+
+    /** The wallet [target] fills. */
+    fun of(target: TopUpTarget): WalletBalance? =
+        when (target) {
+            TopUpTarget.PAYHERO_SERVICE -> payheroService
+            TopUpTarget.FINOQ_SERVICE -> finoqService
+            TopUpTarget.FINOQ_PAYMENT -> finoqPayment
+        }
+
+    /** This reading over [older]: each wallet this one couldn't read keeps the older reading. */
+    fun over(older: KesBalances): KesBalances =
+        KesBalances(
+            payheroService = payheroService ?: older.payheroService,
+            finoqService = finoqService ?: older.finoqService,
+            finoqPayment = finoqPayment ?: older.finoqPayment,
+            readAt = readAt ?: older.readAt,
+        )
+
     companion object {
-        val UNREAD = KesBalances(null, null, null, null, null)
+        val UNREAD = KesBalances()
     }
 }
+
+/**
+ * One of the merchant's three wallets at the provider as RM2 and staff show it: its last reading ([balance] null:
+ * never read, unknown, never zero), whether it is [low], and the line it is held against ([lowBelowMinor], KES minor
+ * units; null when the network sets none).
+ */
+data class ProviderWalletView(
+    val target: TopUpTarget,
+    val balance: WalletBalance?,
+    val low: Boolean,
+    val lowBelowMinor: Long?,
+)
 
 /** Where a merchant's test payout stands. */
 enum class TestPayoutState {
@@ -150,7 +188,7 @@ data class OffRampView(
         /** The payout balance is below the network's line (`payout_balance_low_minor`). */
         const val PAYOUT_BALANCE_LOW = "payout_balance_low"
 
-        /** The provider's fee balance (its service wallet) is below the network's floor. */
+        /** FinoQ's service wallet (a payout's fee) is below the network's provider-fee floor. */
         const val SERVICE_BALANCE_LOW = "service_balance_low"
 
         /** No payout account id: payouts can't be sent. */

@@ -24,6 +24,7 @@ import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPaymentsIssue
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampProviderWallet
 import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
@@ -47,6 +48,7 @@ import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PayoutFeeBand
 import com.circaso.ramp.domain.models.Period
+import com.circaso.ramp.domain.models.ProviderWalletView
 import com.circaso.ramp.domain.models.RampOverview
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
@@ -497,6 +499,7 @@ private fun RampOverview.toOps() =
                     successRatePercent = it.figures.successRatePercent,
                     money = it.figures.totals.toMoney(),
                     lastOrderAt = it.lastOrderAt,
+                    providerWallets = it.providerWallets.map { wallet -> wallet.toOps() },
                 )
             },
     )
@@ -557,13 +560,26 @@ private fun MerchantSummary.toOps() =
             },
         kesBalances =
             OpsRampKesBalances(
-                payout = kesBalances.payoutMinor?.let { Amounts.fiat(it) },
-                payoutSource = kesBalances.payoutSource,
-                fees = kesBalances.feeMinor?.let { Amounts.fiat(it) },
-                feesSource = kesBalances.feeSource,
+                payout = kesBalances.finoqPayment?.let { Amounts.fiat(it.minor) },
+                payoutSource = kesBalances.finoqPayment?.source,
+                fees = kesBalances.finoqService?.let { Amounts.fiat(it.minor) },
+                feesSource = kesBalances.finoqService?.source,
                 readAt = kesBalances.readAt,
                 held = Amounts.fiat(kesHeldMinor),
+                wallets = providerWallets.map { it.toOps() },
             ),
+    )
+
+private fun ProviderWalletView.toOps() =
+    OpsRampProviderWallet(
+        wallet = target.name,
+        name = target.label,
+        provider = target.provider,
+        direction = target.direction.name,
+        balance = balance?.let { Amounts.fiat(it.minor) },
+        source = balance?.source,
+        readAt = balance?.readAt,
+        low = low,
     )
 
 /** The payer's number leaves the ramp masked, for staff as for the merchant. */

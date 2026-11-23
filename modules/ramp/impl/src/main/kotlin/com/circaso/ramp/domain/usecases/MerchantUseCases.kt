@@ -8,6 +8,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.CallbackView
+import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantState
@@ -19,9 +20,11 @@ import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.ProfileCommand
+import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
+import com.circaso.ramp.domain.models.WalletBalance
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.TradingSessions
@@ -37,6 +40,7 @@ import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Clock
@@ -259,9 +263,28 @@ class GoOnline(
         if (floor <= 0) return false
         val collections = providers.named(provider) ?: return false
         return when (val read = collections.balance(keys)) {
-            is Resource.Success -> read.data.fees.amountMinor < floor
-            is Resource.Error -> false
+            is Resource.Success -> {
+                recordPayheroService(merchant, read.data.fees)
+                read.data.fees.amountMinor < floor
+            }
+
+            is Resource.Error -> {
+                false
+            }
         }
+    }
+
+    /** What the check read is PayHero's service wallet: kept for RM2 and staff like any other reading of it. */
+    private suspend fun recordPayheroService(merchant: Merchant, fees: FiatAmount) {
+        if (fees.currency != RampSettings.FIAT) return
+        val now = clock.instant()
+        val reading = WalletBalance(fees.amountMinor, CHECK_SOURCE, now)
+        merchants.recordBalances(merchant.merchantId, KesBalances(payheroService = reading, readAt = now))
+    }
+
+    private companion object {
+        /** The reading's source: the provider's own fee-balance call, as the on-ramp has always made it. */
+        const val CHECK_SOURCE = "balance"
     }
 }
 

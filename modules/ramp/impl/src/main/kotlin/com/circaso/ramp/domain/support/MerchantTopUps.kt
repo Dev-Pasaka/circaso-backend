@@ -11,7 +11,6 @@ import com.circaso.integrations.api.TopUpStatus
 import com.circaso.integrations.api.TopUpWallet
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
-import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.RampSettings
@@ -39,15 +38,17 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * A merchant tops up one of their own two wallets at their provider (2026-11-23): the owner's "they just enter an
- * amount, get an STK push, and top up immediately". The prompt goes **only to the merchant's own contact phone**, never
- * a number from the request, so nobody can use the portal to push prompts at other people.
+ * A merchant tops up one of their own three wallets at their provider (2026-11-23; three since 2026-11-24: PayHero's
+ * service wallet for buying's fees, FinoQ's service wallet for selling's fees, FinoQ's payment wallet for payouts): the
+ * owner's "they just enter an amount, get an STK push, and top up immediately". The prompt goes **only to the
+ * merchant's own contact phone**, never a number from the request, so nobody can use the portal to push prompts at
+ * other people.
  *
  * **The keys.** The prompt is asked for with the merchant's own provider account, so it needs their unlocked keys. A
- * merchant online on this node has them; an offline one gives their PIN with the request, which unlocks the account
- * on this node **without** putting them online ([TradingSessions.hold]): an empty service wallet is exactly what keeps
- * a merchant from going online, so asking them to go online first would lock them out. The held keys go when nothing
- * open needs them (`ramp.end-sessions`).
+ * merchant online on this node has them; an offline one gives their PIN with the request, which unlocks the account on
+ * this node **without** putting them online ([TradingSessions.hold]): an empty service wallet is exactly what keeps a
+ * merchant from going online, so asking them to go online first would lock them out. The held keys go when nothing open
+ * needs them (`ramp.end-sessions`).
  *
  * **Sent once.** The row is written `REQUESTED` before the prompt is asked for, one open per wallet; the client never
  * retries, and nothing here sends a second prompt for the same top-up.
@@ -82,7 +83,7 @@ class MerchantTopUps(
         val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
         if (merchant.state != MerchantState.APPROVED) return Resource.error(RampError.MerchantNotApproved)
         val phone = PhoneNumber.parse(merchant.contactPhone) ?: return Resource.error(RampError.MerchantSetupIncomplete)
-        if (command.target == TopUpTarget.PAYMENT && merchant.payoutAccountId == null) {
+        if (command.target.needsAccountId && merchant.payoutAccountId == null) {
             return Resource.error(RampError.TopUpAccountMissing)
         }
         if (topUps.open(merchantId, command.target) != null) return Resource.error(RampError.TopUpInProgress)
@@ -110,7 +111,7 @@ class MerchantTopUps(
                 checkoutId = null,
                 receipt = null,
                 confirmedBy = null,
-                balanceBeforeMinor = before?.of(command.target),
+                balanceBeforeMinor = before?.of(command.target)?.minor,
                 balanceAfterMinor = null,
                 createdAt = now,
                 updatedAt = now,
@@ -221,7 +222,7 @@ class MerchantTopUps(
     ): TopUpRequest {
         val callbackBase = settings.of(network).callbackBaseUrl
         return TopUpRequest(
-            wallet = if (topUp.target == TopUpTarget.SERVICE) TopUpWallet.SERVICE else TopUpWallet.PAYMENT,
+            wallet = walletOf(topUp.target),
             payer = topUp.payer,
             amount = FiatAmount(topUp.amountMinor, RampSettings.FIAT),
             reference = topUp.topUpId.toString(),
@@ -264,7 +265,12 @@ class MerchantTopUps(
         balanceAfter: Long?,
     ): TopUp {
         // Read again after a confirmation by status: it also refreshes what RM2 shows.
-        val after = balanceAfter ?: merchants.find(topUp.merchantId)?.let { balances.read(it) }?.of(topUp.target)
+        val after =
+            balanceAfter ?: merchants
+                .find(topUp.merchantId)
+                ?.let { balances.read(it) }
+                ?.of(topUp.target)
+                ?.minor
         val now = clock.instant()
         val confirmed =
             topUp.copy(
@@ -305,7 +311,7 @@ class MerchantTopUps(
     private suspend fun risenBalance(topUp: TopUp): Long? {
         val before = topUp.balanceBeforeMinor ?: return null
         val merchant = merchants.find(topUp.merchantId) ?: return null
-        val now = balances.read(merchant)?.of(topUp.target) ?: return null
+        val now = balances.read(merchant)?.of(topUp.target)?.minor ?: return null
         val needed = topUp.amountMinor * BALANCE_SHARE_PERCENT / PERCENT
         return now.takeIf { it - before >= needed }
     }
@@ -319,7 +325,7 @@ class MerchantTopUps(
         keys: CollectionCredentials,
         topUp: TopUp,
     ): TopUpStatus {
-        val wallet = if (topUp.target == TopUpTarget.SERVICE) TopUpWallet.SERVICE else TopUpWallet.PAYMENT
+        val wallet = walletOf(topUp.target)
         return try {
             collections.lookUpTopUp(keys, TopUpLookup(wallet, topUp.topUpId.toString(), topUp.providerReference))
         } catch (e: CancellationException) {
@@ -344,10 +350,12 @@ class MerchantTopUps(
             TopUpResult.Unknown
         }
 
-    private fun KesBalances.of(target: TopUpTarget): Long? =
+    /** The provider's name for the wallet: never another wallet's, so a top-up can't land elsewhere. */
+    private fun walletOf(target: TopUpTarget): TopUpWallet =
         when (target) {
-            TopUpTarget.SERVICE -> feeMinor
-            TopUpTarget.PAYMENT -> payoutMinor
+            TopUpTarget.PAYHERO_SERVICE -> TopUpWallet.COLLECTION_FEES
+            TopUpTarget.FINOQ_SERVICE -> TopUpWallet.PAYOUT_FEES
+            TopUpTarget.FINOQ_PAYMENT -> TopUpWallet.PAYOUT
         }
 
     private fun failureOf(reason: TopUpRejection): TopUpFailure =

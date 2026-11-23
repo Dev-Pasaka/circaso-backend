@@ -7,6 +7,7 @@ import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
 import com.circaso.ramp.api.OpsRampFloat
+import com.circaso.ramp.api.OpsRampKesBalances
 import com.circaso.ramp.api.OpsRampMerchantActivity
 import com.circaso.ramp.api.OpsRampMerchantOrder
 import com.circaso.ramp.api.OpsRampMerchantProfile
@@ -19,6 +20,7 @@ import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPaymentsIssue
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampProviderWallet
 import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
@@ -274,6 +276,7 @@ class FakeRampAdmin : RampAdmin {
                     successRatePercent = "95.2",
                     money = MONEY,
                     lastOrderAt = AT,
+                    providerWallets = WALLETS,
                 )
             }
         return OpsRampOverview(network, period ?: MONTH, COUNTS, MONEY, rows)
@@ -328,6 +331,16 @@ class FakeRampAdmin : RampAdmin {
                         ),
                     ),
                 sweeps = listOf(OpsRampSweep(SWEEP, MONTH.from.plusDays(20), usdc(540_000), "CONFIRMED", 9, "0xsweep")),
+                kesBalances =
+                    OpsRampKesBalances(
+                        payout = null,
+                        payoutSource = null,
+                        fees = kes(700),
+                        feesSource = "finoq.balance.service_wallet",
+                        readAt = AT,
+                        held = kes(0),
+                        wallets = WALLETS,
+                    ),
             ),
         )
     }
@@ -386,6 +399,42 @@ class FakeRampAdmin : RampAdmin {
     )
 
     companion object {
+        /** PayHero's read, FinoQ's service wallet low, FinoQ's payment wallet never read. */
+        val WALLETS: List<OpsRampProviderWallet>
+            get() =
+                listOf(
+                    OpsRampProviderWallet(
+                        "PAYHERO_SERVICE",
+                        "PayHero service wallet",
+                        "PAYHERO",
+                        "ON_RAMP",
+                        RampAmount("KES", "31240", "312.4"),
+                        "payhero.wallets.service_wallet",
+                        AT,
+                        false,
+                    ),
+                    OpsRampProviderWallet(
+                        "FINOQ_SERVICE",
+                        "FinoQ service wallet",
+                        "FINOQ",
+                        "OFF_RAMP",
+                        RampAmount("KES", "700", "7"),
+                        "finoq.balance.service_wallet",
+                        AT,
+                        true,
+                    ),
+                    OpsRampProviderWallet(
+                        "FINOQ_PAYMENT",
+                        "FinoQ payment wallet",
+                        "FINOQ",
+                        "OFF_RAMP",
+                        null,
+                        null,
+                        null,
+                        false,
+                    ),
+                )
+
         val AT: Instant = Instant.parse("2026-11-22T12:00:00Z")
         val MONTH = OpsRampPeriod(LocalDate.parse("2026-11-01"), LocalDate.parse("2026-11-30"))
         val SWEEP: UUID = UUID.fromString("0193a000-0000-7000-8000-000000000001")

@@ -27,6 +27,8 @@ import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.Periods
+import com.circaso.ramp.domain.support.ProviderWallets
+import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Clock
@@ -45,10 +47,12 @@ class GetRampOverview(
     private val orders: OrderRepository,
     private val insights: MerchantInsights,
     private val clock: Clock,
+    private val settings: SettingsBook,
 ) {
     suspend operator fun invoke(network: Network, period: Period?): Resource<RampOverview> {
         val now = clock.instant()
         val covered = period ?: Periods.thisMonth(now)
+        val current = settings.of(network)
         val rows =
             merchants
                 .page(before = null, limit = MAX_MERCHANTS)
@@ -58,6 +62,8 @@ class GetRampOverview(
                         online = merchant.isOnlineAt(now),
                         figures = insights.figures(merchant.merchantId, network, covered),
                         lastOrderAt = lastOrderAt(merchant, network),
+                        providerWallets =
+                            ProviderWallets.of(merchant, merchants.balances(merchant.merchantId), current),
                     )
                 }.filter { it.merchant.state == MerchantState.APPROVED || it.figures.orders > 0 }
         return Resource.success(RampOverview(covered, network, rows))
@@ -89,6 +95,7 @@ class GetMerchantSummary(
     private val float: MerchantFloat,
     private val clock: Clock,
     private val payoutHolds: PayoutHoldRepository,
+    private val settings: SettingsBook,
 ) {
     suspend operator fun invoke(
         merchantId: MerchantId,
@@ -99,6 +106,7 @@ class GetMerchantSummary(
         val now = clock.instant()
         val covered = period ?: Periods.thisMonth(now)
         val wallet = wallets.find(merchantId, network)
+        val balances = merchants.balances(merchantId)
         return Resource.success(
             MerchantSummary(
                 merchant = merchant,
@@ -111,8 +119,9 @@ class GetMerchantSummary(
                 figures = insights.figures(merchantId, network, covered),
                 daily = daily(merchantId, network, covered),
                 sweeps = settlements.ofMerchant(merchantId, network, covered, MAX_SWEEPS),
-                kesBalances = merchants.balances(merchantId),
+                kesBalances = balances,
                 kesHeldMinor = payoutHolds.openTotal(merchantId),
+                providerWallets = ProviderWallets.of(merchant, balances, settings.of(network)),
             ),
         )
     }

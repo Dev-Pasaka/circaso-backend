@@ -20,6 +20,7 @@ import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.models.StoredWebhookSecret
+import com.circaso.ramp.domain.models.WalletBalance
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
@@ -29,6 +30,7 @@ import com.circaso.shared.Network
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
+import org.jetbrains.exposed.v1.core.Column
 import org.jetbrains.exposed.v1.core.JoinType
 import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -286,10 +288,21 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
     override suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances) {
         database.tx("merchants.record-balances") {
             MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
-                it[payoutBalanceMinor] = balances.payoutMinor
-                it[payoutBalanceSource] = balances.payoutSource
-                it[feeBalanceMinor] = balances.feeMinor
-                it[feeBalanceSource] = balances.feeSource
+                balances.payheroService?.let { read ->
+                    it[payheroServiceMinor] = read.minor
+                    it[payheroServiceSource] = read.source
+                    it[payheroServiceReadAt] = read.readAt
+                }
+                balances.finoqService?.let { read ->
+                    it[finoqServiceMinor] = read.minor
+                    it[finoqServiceSource] = read.source
+                    it[finoqServiceReadAt] = read.readAt
+                }
+                balances.finoqPayment?.let { read ->
+                    it[payoutBalanceMinor] = read.minor
+                    it[payoutBalanceSource] = read.source
+                    it[payoutBalanceReadAt] = read.readAt
+                }
                 it[balancesReadAt] = balances.readAt
             }
         }
@@ -298,22 +311,10 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
     override suspend fun balances(merchantId: MerchantId): KesBalances =
         database.tx("merchants.balances") {
             MerchantsTable
-                .select(
-                    MerchantsTable.payoutBalanceMinor,
-                    MerchantsTable.payoutBalanceSource,
-                    MerchantsTable.feeBalanceMinor,
-                    MerchantsTable.feeBalanceSource,
-                    MerchantsTable.balancesReadAt,
-                ).where { MerchantsTable.merchantId eq merchantId.value }
-                .map {
-                    KesBalances(
-                        payoutMinor = it[MerchantsTable.payoutBalanceMinor],
-                        payoutSource = it[MerchantsTable.payoutBalanceSource],
-                        feeMinor = it[MerchantsTable.feeBalanceMinor],
-                        feeSource = it[MerchantsTable.feeBalanceSource],
-                        readAt = it[MerchantsTable.balancesReadAt],
-                    )
-                }.singleOrNull() ?: KesBalances.UNREAD
+                .select(BALANCE_COLUMNS)
+                .where { MerchantsTable.merchantId eq merchantId.value }
+                .map { it.toBalances() }
+                .singleOrNull() ?: KesBalances.UNREAD
         }
 
     override suspend fun setWebhookSecret(
@@ -566,4 +567,39 @@ class SessionRepositoryImpl(private val database: Database) : SessionRepository 
         database.tx("sessions.delete") {
             MerchantSessionsTable.deleteWhere { MerchantSessionsTable.tokenHash eq tokenHash } > 0
         }
+}
+
+private val BALANCE_COLUMNS =
+    listOf(
+        MerchantsTable.payheroServiceMinor,
+        MerchantsTable.payheroServiceSource,
+        MerchantsTable.payheroServiceReadAt,
+        MerchantsTable.finoqServiceMinor,
+        MerchantsTable.finoqServiceSource,
+        MerchantsTable.finoqServiceReadAt,
+        MerchantsTable.payoutBalanceMinor,
+        MerchantsTable.payoutBalanceSource,
+        MerchantsTable.payoutBalanceReadAt,
+        MerchantsTable.balancesReadAt,
+    )
+
+private fun ResultRow.toBalances(): KesBalances =
+    with(MerchantsTable) {
+        KesBalances(
+            payheroService = wallet(payheroServiceMinor, payheroServiceSource, payheroServiceReadAt),
+            finoqService = wallet(finoqServiceMinor, finoqServiceSource, finoqServiceReadAt),
+            finoqPayment = wallet(payoutBalanceMinor, payoutBalanceSource, payoutBalanceReadAt),
+            readAt = this@toBalances[balancesReadAt],
+        )
+    }
+
+/** One wallet's kept reading; a balance from before V11 without its own time takes the last reading's. */
+private fun ResultRow.wallet(
+    minor: Column<Long?>,
+    source: Column<String?>,
+    readAt: Column<Instant?>,
+): WalletBalance? {
+    val amount = this[minor] ?: return null
+    val at = this[readAt] ?: this[MerchantsTable.balancesReadAt] ?: return null
+    return WalletBalance(amount, this[source].orEmpty(), at)
 }

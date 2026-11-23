@@ -40,8 +40,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 /**
  * Tests: an in-memory collections provider that records every prompt. A prompt is `QUEUED` until the test says what
  * the payer did ([pay], [fail]); [statuses] may be set directly to answer anything at all (a wrong amount, another
- * payer). While [failure] is set, every call fails with it. [feeBalanceMinor] is the service balance [balance]
- * reports.
+ * payer). While [failure] is set, every call fails with it. [feeBalanceMinor] is the collections' fee balance
+ * (PayHero's service wallet) [balance] reports; [payoutFeeBalanceMinor] is the payouts' (FinoQ's service wallet).
  *
  * **Payouts** are scripted the same way. [nextPayout] says what the next [sendPayout] does (see [FakePayout]); a
  * payout the provider took is `Pending` until the test says what became of it ([completePayout], [failPayout]);
@@ -69,6 +69,10 @@ class FakeCollections : MobileCollections {
     @Volatile
     var feeBalanceMinor: Long = DEFAULT_FEE_BALANCE_MINOR
 
+    /** What a payout's fee is taken from (FinoQ's service wallet); null is one that can't be read. */
+    @Volatile
+    var payoutFeeBalanceMinor: Long? = DEFAULT_FEE_BALANCE_MINOR
+
     /** What payouts can spend; null is a provider whose payout balance can't be read. */
     @Volatile
     var payoutBalanceMinor: Long? = DEFAULT_PAYOUT_BALANCE_MINOR
@@ -89,8 +93,9 @@ class FakeCollections : MobileCollections {
         val topUp = topUps.first { it.reference == reference }
         topUpStatuses[reference] = TopUpStatus.Paid(receipt, topUp.amount)
         when (topUp.wallet) {
-            TopUpWallet.SERVICE -> feeBalanceMinor += topUp.amount.amountMinor
-            TopUpWallet.PAYMENT -> payoutBalanceMinor = payoutBalanceMinor?.plus(topUp.amount.amountMinor)
+            TopUpWallet.COLLECTION_FEES -> feeBalanceMinor += topUp.amount.amountMinor
+            TopUpWallet.PAYOUT_FEES -> payoutFeeBalanceMinor = payoutFeeBalanceMinor?.plus(topUp.amount.amountMinor)
+            TopUpWallet.PAYOUT -> payoutBalanceMinor = payoutBalanceMinor?.plus(topUp.amount.amountMinor)
         }
     }
 
@@ -209,8 +214,9 @@ class FakeCollections : MobileCollections {
         failure?.let { return Resource.error(it) }
         return Resource.success(
             ProviderBalances(
+                collectionFees = BalanceReading(FiatAmount(feeBalanceMinor, KES), SOURCE),
+                payoutFees = payoutFeeBalanceMinor?.let { BalanceReading(FiatAmount(it, KES), SOURCE) },
                 payout = payoutBalanceMinor?.let { BalanceReading(FiatAmount(it, KES), SOURCE) },
-                fees = BalanceReading(FiatAmount(feeBalanceMinor, KES), SOURCE),
             ),
         )
     }

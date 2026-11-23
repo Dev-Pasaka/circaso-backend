@@ -4,10 +4,11 @@ import com.circaso.ramp.api.RampAmount
 import kotlinx.serialization.Serializable
 
 /**
- * RM19 request: `wallet` is `SERVICE` (FinoQ's service wallet, which pays its fees) or `PAYMENT` (the wallet payouts
- * spend); `amountMinor` is KES cents as digits, whole shillings. `pin` (6 digits) only while you are offline: it
- * unlocks your account for this top-up without putting you online. There is no phone field: the prompt always goes to
- * your own contact phone.
+ * RM19 request: `wallet` is `PAYHERO_SERVICE` (PayHero's service wallet: buying's prompt fees), `FINOQ_SERVICE`
+ * (FinoQ's service wallet: selling's payout fees) or `FINOQ_PAYMENT` (FinoQ's payment wallet: what payouts spend); the
+ * old `SERVICE` and `PAYMENT` still mean `PAYHERO_SERVICE` and `FINOQ_PAYMENT`. `amountMinor` is KES cents as digits,
+ * whole shillings. `pin` (6 digits) only while you are offline: it unlocks your account for this top-up without putting
+ * you online. There is no phone field: the prompt always goes to your own contact phone.
  */
 @Serializable
 data class TopUpRequest(val wallet: String = "", val amountMinor: String = "", val pin: String? = null) {
