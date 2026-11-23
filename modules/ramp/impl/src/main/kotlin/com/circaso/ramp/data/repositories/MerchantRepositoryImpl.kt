@@ -18,6 +18,7 @@ import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
+import com.circaso.ramp.domain.models.StoredWebhookSecret
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
@@ -264,6 +265,31 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
                 }.singleOrNull() ?: KesBalances.UNREAD
         }
 
+    override suspend fun setWebhookSecret(
+        merchantId: MerchantId,
+        sealed: ByteArray?,
+        at: Instant,
+    ) {
+        database.tx("merchants.set-webhook-secret") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[webhookSecretSealed] = sealed
+                it[webhookSecretUpdatedAt] = at.takeIf { sealed != null }
+            }
+        }
+    }
+
+    override suspend fun webhookSecret(callbackKey: String): StoredWebhookSecret? =
+        database.tx("merchants.webhook-secret") {
+            MerchantsTable
+                .select(MerchantsTable.merchantId, MerchantsTable.webhookSecretSealed)
+                .where { MerchantsTable.callbackKey eq callbackKey }
+                .map { row ->
+                    row[MerchantsTable.webhookSecretSealed]?.let {
+                        StoredWebhookSecret(MerchantId(row[MerchantsTable.merchantId]), it)
+                    }
+                }.singleOrNull()
+        }
+
     private suspend fun one(where: () -> Op<Boolean>): Merchant? =
         MerchantsTable
             .selectAll()
@@ -294,6 +320,7 @@ private fun ResultRow.toMerchant() =
         payoutAccountId = this[MerchantsTable.payoutAccountId],
         payoutIssue = this[MerchantsTable.payoutIssue]?.let(PayoutIssue::valueOf),
         payoutIssueAt = this[MerchantsTable.payoutIssueAt],
+        webhookSecretUpdatedAt = this[MerchantsTable.webhookSecretUpdatedAt],
     )
 
 private fun ResultRow.toWallet() =

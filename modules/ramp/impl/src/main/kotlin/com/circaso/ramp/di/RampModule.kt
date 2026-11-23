@@ -50,6 +50,7 @@ import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.data.support.LoggedAlerts
 import com.circaso.ramp.data.support.LoggedPayoutJournal
+import com.circaso.ramp.data.support.MasterKeyWebhookSecrets
 import com.circaso.ramp.data.support.ReferenceRatePricing
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.data.support.SettingsUsdcContracts
@@ -92,6 +93,7 @@ import com.circaso.ramp.domain.ports.SignInCodes
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.ports.UsdcContracts
+import com.circaso.ramp.domain.ports.WebhookSecretVault
 import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
@@ -139,6 +141,7 @@ import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
+import com.circaso.ramp.domain.usecases.CallbackSigningSecret
 import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
@@ -190,6 +193,7 @@ import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SetMerchantTier
 import com.circaso.ramp.domain.usecases.SetPayoutAccount
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
+import com.circaso.ramp.domain.usecases.SetWebhookSecret
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.SimulateRouting
@@ -352,6 +356,12 @@ fun rampModule(config: Config): Module =
             val secrets = get<Secrets>()
             EnvelopeVault(masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) })
         }
+        single<WebhookSecretVault> {
+            val secrets = get<Secrets>()
+            MasterKeyWebhookSecrets(
+                masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) },
+            )
+        }
         single<RampTokens> { SecureTokens() }
         single<IdentityKeys> {
             val secrets = get<Secrets>()
@@ -492,6 +502,8 @@ fun rampModule(config: Config): Module =
         single { ApplyAsMerchant(get(), get()) }
         single { StorePaymentAccount(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { RotateCallback(get(), get(), get(), get()) }
+        single { SetWebhookSecret(get(), get(), get(), clock) }
+        single { CallbackSigningSecret(get(), get()) }
         single { GoOnline(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GoOffline(get()) }
         single { ChangePin(get(), get(), clock) }
@@ -546,10 +558,27 @@ fun rampModule(config: Config): Module =
                 setPayoutAccount = get(),
                 startTestPayout = get(),
                 getTestPayout = get(),
+                setWebhookSecret = get(),
             )
         }
         single { RampEngineService(get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { RampEventsService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single {
+            RampEventsService(
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+                get(),
+            )
+        }
         single { RampOpsJobsService(get(), get()) }
         single {
             RampAdminService(

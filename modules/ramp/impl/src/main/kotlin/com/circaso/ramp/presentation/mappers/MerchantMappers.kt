@@ -23,6 +23,7 @@ import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.models.WebhookSecret
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.presentation.dto.CallbackResponse
@@ -59,6 +60,7 @@ import com.circaso.ramp.presentation.dto.SweepDto
 import com.circaso.ramp.presentation.dto.TestPayoutRequest
 import com.circaso.ramp.presentation.dto.TestPayoutResponse
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
+import com.circaso.ramp.presentation.dto.WebhookSecretRequest
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
@@ -118,6 +120,16 @@ fun PaymentsRequest.toCommand(): Resource<PaymentAccountCommand> {
     if (account != null && !PayoutAccount.PATTERN.matches(account)) return malformed("accountId", "digits only")
     val credentials = CollectionCredentials(username.trim(), password, channelId.trim())
     return Resource.success(PaymentAccountCommand(credentials, pin, account))
+}
+
+/** RM5c: the secret as FinoQ shows it, trimmed; 8 to 512 visible characters, no spaces. */
+fun WebhookSecretRequest.toSecret(): Resource<String> {
+    val secret = secret.trim()
+    return when {
+        secret.isEmpty() -> malformed("secret", "required")
+        !WebhookSecret.isValid(secret) -> malformed("secret", "8 to 512 characters, no spaces")
+        else -> Resource.success(secret)
+    }
 }
 
 /** The test payout's amount: KES cents as digits. The use case checks the range. */
@@ -242,6 +254,8 @@ fun MerchantOverview.toResponse() =
         merchantType = merchant.merchantType.name,
         offers = MerchantOffersDto(onRamp = merchant.offersOnramp, offRamp = merchant.offersOfframp),
         offRamp = offRamp.toDto(),
+        webhookSecretSet = merchant.webhookSecretUpdatedAt != null,
+        webhookSecretUpdatedAt = merchant.webhookSecretUpdatedAt?.toString(),
     )
 
 /** RM17: at least one of the two switches must be named. */

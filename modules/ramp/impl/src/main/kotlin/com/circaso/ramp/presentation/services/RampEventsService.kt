@@ -3,6 +3,7 @@ package com.circaso.ramp.presentation.services
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.support.TestPayouts
+import com.circaso.ramp.domain.usecases.CallbackSigningSecret
 import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.HandleKycNotification
 import com.circaso.ramp.domain.usecases.HandlePaymentCallback
@@ -38,7 +39,11 @@ class RampEventsService(
     private val sweepSales: SweepSales,
     private val runRechecks: RunRechecks,
     private val testPayouts: TestPayouts,
+    private val callbackSigningSecret: CallbackSigningSecret,
 ) {
+    /** The webhook signing secret for a callback on the address ending in [callbackKey], or null. */
+    suspend fun callbackSecret(callbackKey: String): String? = callbackSigningSecret(callbackKey)
+
     suspend fun payoutCallback(callbackKey: String, reference: String): Resource<Unit> =
         handlePayoutCallback(callbackKey, reference)
 

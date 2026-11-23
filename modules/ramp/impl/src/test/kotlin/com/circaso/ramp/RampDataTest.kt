@@ -326,6 +326,32 @@ class RampDataTest {
         return releases.follow(treasury, orders.find(order.orderId)!!)
     }
 
+    // The webhook signing secret
+
+    @Test
+    fun `a webhook secret is kept sealed, found by the callback address, and removed with its date`() =
+        runBlocking<Unit> {
+            val crynce = merchant()
+            val other = merchant("Bidii")
+            assertNull(merchants.webhookSecret(crynce.callbackKey!!), "none set")
+
+            merchants.setWebhookSecret(crynce.merchantId, byteArrayOf(1, 2, 3), now)
+            val stored = merchants.webhookSecret(crynce.callbackKey!!)
+            assertEquals(crynce.merchantId, stored?.merchantId)
+            assertTrue(byteArrayOf(1, 2, 3).contentEquals(stored?.sealed))
+            assertEquals(now, merchants.find(crynce.merchantId)?.webhookSecretUpdatedAt)
+            assertNull(merchants.webhookSecret(other.callbackKey!!), "only the merchant's own address")
+            assertNull(merchants.webhookSecret("nobody-0123456789abcdef"))
+
+            merchants.setWebhookSecret(crynce.merchantId, null, now)
+            assertNull(merchants.webhookSecret(crynce.callbackKey!!))
+            assertNull(merchants.find(crynce.merchantId)?.webhookSecretUpdatedAt)
+            assertEquals(
+                0,
+                rows("merchants", "webhook_secret_sealed IS NOT NULL OR webhook_secret_updated_at IS NOT NULL"),
+            )
+        }
+
     // Settings
 
     @Test

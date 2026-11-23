@@ -31,6 +31,7 @@ import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SetPayoutAccount
+import com.circaso.ramp.domain.usecases.SetWebhookSecret
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartTestPayout
@@ -79,7 +80,15 @@ class MerchantService(
     private val setPayoutAccount: SetPayoutAccount,
     private val startTestPayout: StartTestPayout,
     private val getTestPayout: GetTestPayout,
+    private val setWebhookSecret: SetWebhookSecret,
 ) {
+    /** RM5c: sets or replaces ([secret]) or removes (null) the FinoQ webhook signing secret. */
+    suspend fun webhookSecret(
+        merchantId: MerchantId,
+        network: Network,
+        secret: String?,
+    ): Resource<MerchantOverview> = setWebhookSecret(merchantId, network, secret)
+
     suspend fun payoutAccount(
         merchantId: MerchantId,
         network: Network,

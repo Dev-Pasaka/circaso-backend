@@ -43,6 +43,7 @@ import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.Stamped
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
+import com.circaso.ramp.domain.models.StoredWebhookSecret
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.SubjectKind
 import com.circaso.ramp.domain.models.TestPayout
@@ -282,6 +283,22 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
     }
 
     override suspend fun balances(merchantId: MerchantId): KesBalances = balances[merchantId] ?: KesBalances.UNREAD
+
+    val webhookSecrets = mutableMapOf<MerchantId, ByteArray>()
+
+    override suspend fun setWebhookSecret(
+        merchantId: MerchantId,
+        sealed: ByteArray?,
+        at: Instant,
+    ) {
+        if (sealed == null) webhookSecrets.remove(merchantId) else webhookSecrets[merchantId] = sealed
+        change(merchantId) { it.copy(webhookSecretUpdatedAt = at.takeIf { sealed != null }) }
+    }
+
+    override suspend fun webhookSecret(callbackKey: String): StoredWebhookSecret? {
+        val merchant = rows.values.firstOrNull { it.callbackKey == callbackKey } ?: return null
+        return webhookSecrets[merchant.merchantId]?.let { StoredWebhookSecret(merchant.merchantId, it) }
+    }
 }
 
 class MemoryRevenueWallets : RevenueWalletRepository {

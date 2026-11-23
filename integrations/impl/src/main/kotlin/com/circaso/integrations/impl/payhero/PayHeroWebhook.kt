@@ -5,6 +5,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.KeyedWebhookVendor
 import com.circaso.integrations.api.WebhookVendor
 import com.circaso.shared.Resource
+import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
 import java.time.Instant
 
@@ -28,17 +29,28 @@ import java.time.Instant
  *
  * A callback on the plain `/v1/hooks/payhero` (no key) is refused. [notifications] is looked up on each delivery:
  * the ramp module binds it and integrations never depend on it.
+ *
+ * **The merchant's webhook signing secret** (2026-11-23): FinoQ's dashboard shows one, but its scheme is not documented
+ * ([CallbackSignatures]). When the merchant has entered theirs on the portal, a callback that carries a recognised
+ * signature header must match it, or it is refused (`401`) and logged as a security event, without values; one with
+ * no such header is accepted and logged, until the first real callback confirms the scheme. With no secret it is as
+ * before. Either way the refusal only silences the doorbell: the ramp's own sweep still asks FinoQ about every open
+ * payment and payout. Reading the secret never fails a callback: a lookup that fails is "no secret".
  */
 class PayHeroWebhook(private val notifications: () -> CollectionNotifications?) : KeyedWebhookVendor {
     private val log = LoggerFactory.getLogger(PayHeroWebhook::class.java)
     private val shapes = ShapeLog(log)
+    private val signatures = CallbackSignatures(log)
 
     override val name: String = NAME
 
     override fun keyed(key: String): WebhookVendor = Keyed(key)
 
-    /** There is nothing to verify: see the class comment. What the body says is never trusted. */
-    override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean = true
+    /** Without a key there is no merchant and so no secret: see the class comment. The body is never trusted. */
+    override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean {
+        signatures.noteHeaders(headers)
+        return true
+    }
 
     override fun sentAt(headers: Map<String, String>, body: ByteArray): Instant? = null
 
@@ -46,6 +58,45 @@ class PayHeroWebhook(private val notifications: () -> CollectionNotifications?) 
 
     override suspend fun translate(body: ByteArray): Resource<Unit> =
         Resource.error(IntegrationError.Rejected("The payment callback came on an address without a key."))
+
+    /** The keyed address's check: the merchant's secret, if they set one, against the recognised headers. */
+    private suspend fun verifyKeyed(
+        key: String,
+        headers: Map<String, String>,
+        body: ByteArray,
+    ): Boolean {
+        signatures.noteHeaders(headers)
+        val secret = secretOf(key) ?: return true
+        return when (val check = signatures.check(secret, headers, body)) {
+            CallbackSignatures.Check.Unsigned -> {
+                log.info("payhero callback signature: outcome=missing (a signing secret is set; accepted)")
+                true
+            }
+
+            is CallbackSignatures.Check.Verified -> {
+                log.info("payhero callback signature: outcome=verified header={} form={}", check.header, check.form)
+                true
+            }
+
+            is CallbackSignatures.Check.Mismatch -> {
+                log.warn("security: payhero callback refused: outcome=bad_signature header={}", check.header)
+                false
+            }
+        }
+    }
+
+    private suspend fun secretOf(key: String): String? =
+        try {
+            notifications()?.callbackSigningSecret(key)?.takeIf { it.isNotEmpty() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(
+                "payhero callback signature not checked: the signing secret could not be read ({})",
+                e.javaClass.simpleName,
+            )
+            null
+        }
 
     private suspend fun ring(key: String, body: ByteArray): Resource<Unit> {
         shapes.note("callback", null, body.decodeToString())
@@ -125,7 +176,8 @@ class PayHeroWebhook(private val notifications: () -> CollectionNotifications?) 
     private inner class Keyed(private val key: String) : WebhookVendor {
         override val name: String = NAME
 
-        override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean = true
+        override suspend fun verifySignature(headers: Map<String, String>, body: ByteArray): Boolean =
+            verifyKeyed(key, headers, body)
 
         override fun sentAt(headers: Map<String, String>, body: ByteArray): Instant? = null
 

@@ -275,4 +275,13 @@ interface CollectionNotifications {
      */
     suspend fun onPayoutCallback(callbackKey: String, reference: String): Resource<Unit> =
         Resource.error(IntegrationError.NotImplemented("Payout callbacks", "this listener"))
+
+    /**
+     * The webhook signing secret the merchant whose callback address ends in [callbackKey] copied from their
+     * provider's dashboard, so the provider's webhook can check a callback's signature before it rings; null when
+     * they set none, the key isn't one the listener gave out, or it can't be read now. A callback is only a doorbell
+     * either way: the signature is defence in depth, and a callback refused for it never stops the listener's own
+     * sweep from learning the outcome. The caller never logs or keeps it.
+     */
+    suspend fun callbackSigningSecret(callbackKey: String): String? = null
 }

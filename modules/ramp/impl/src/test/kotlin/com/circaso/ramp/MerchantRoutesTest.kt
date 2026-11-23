@@ -67,6 +67,7 @@ class MerchantRoutesTest {
             ramp.setPayoutAccount,
             StartTestPayout(ramp.testPayouts),
             GetTestPayout(ramp.testPayouts),
+            ramp.setWebhookSecret,
         )
     private val base = "/v1/ramp/merchant"
 
@@ -785,5 +786,62 @@ class MerchantRoutesTest {
             assertEquals("PAID" to "QPROUTE", read.text("state") to read.text("receipt"))
             val unknown = client.get("$base/test-payout?testId=nope") { header("X-Merchant-Session", session) }
             assertEquals(HttpStatusCode.BadRequest, unknown.status)
+        }
+
+    @Test
+    fun `RM5c sets, replaces and removes the webhook signing secret and never sends it back`() =
+        testApplication {
+            serve()
+            val secret = "whsec_Zr8Lq2Vx7Tn4Kp9W"
+            val session = signIn("crynce@example.com")
+            val path = "$base/payments/webhook-secret"
+
+            listOf("" to "required", "short" to "8 to 512", "has a space" to "8 to 512").forEach { (value, _) ->
+                val refused = client.put(path) { json("""{"secret":"$value"}""", session) }
+                assertEquals(HttpStatusCode.BadRequest, refused.status, value)
+                assertEquals("secret", refused.field())
+            }
+            assertEquals(
+                HttpStatusCode.Unauthorized,
+                client.put(path) { json("""{"secret":"$secret"}""") }.status,
+            )
+
+            val saved = client.put(path) { json("""{"secret":" $secret "}""", session) }
+            assertEquals(HttpStatusCode.OK, saved.status, saved.bodyAsText())
+            val text = saved.bodyAsText()
+            assertFalse(secret in text, "the secret is never returned")
+            assertTrue(
+                saved
+                    .data()
+                    .getValue("webhookSecretSet")
+                    .jsonPrimitive.boolean,
+            )
+            assertEquals(secret, ramp.callbackSigningSecret(ramp.crynce.callbackKey!!))
+
+            val read = client.get(base) { header("X-Merchant-Session", session) }
+            assertFalse(secret in read.bodyAsText())
+            assertEquals(ramp.clock.instant().toString(), read.data().text("webhookSecretUpdatedAt"))
+
+            val removed = client.delete(path) { header("X-Merchant-Session", session) }
+            assertEquals(HttpStatusCode.OK, removed.status)
+            assertFalse(
+                removed
+                    .data()
+                    .getValue("webhookSecretSet")
+                    .jsonPrimitive.boolean,
+            )
+            assertEquals(JsonNull, removed.data().getValue("webhookSecretUpdatedAt"))
+        }
+
+    @Test
+    fun `RM5c needs the callback address first`() =
+        testApplication {
+            serve()
+            val session = signIn()
+            client.put("$base/profile") { json("""{"displayName":"Bidii","contactPhone":"+254712000222"}""", session) }
+
+            val refused =
+                client.put("$base/payments/webhook-secret") { json("""{"secret":"whsec_Zr8Lq2Vx7Tn4Kp9W"}""", session) }
+            assertEquals("ramp.merchant_setup_incomplete", refused.envelope().text("code"))
         }
 }
