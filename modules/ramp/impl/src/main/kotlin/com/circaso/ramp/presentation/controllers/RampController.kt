@@ -62,8 +62,10 @@ fun Route.rampController(ramp: RampService) {
                         "account active, a merchant online and no order of yours still open. No merchant is ever " +
                         "listed. `verification` is the identity check in full: `status` (`NONE`, `PENDING`, " +
                         "`IN_REVIEW`, `VERIFIED`, `DECLINED`, `EXPIRED`), `required` (whether this network asks " +
-                        "for it), `canStart` (whether R0 will hand out a check now), `reason` (a code to word) " +
-                        "and `retryAt` (when today's tries come back). `kyc` is the short form older apps read. " +
+                        "for it), `canStart` (whether R0 will hand out a check now), `reason` (a code to word), " +
+                        "`retryAt` (when today's tries come back) and `submitted` (the person finished their " +
+                        "part and the provider hasn't decided: say \"we're checking\", never \"finish " +
+                        "verifying\"; `canStart` is false). `kyc` is the short form older apps read. " +
                         "`blocked` is a bar on the account or its identity: say so and point to support. " +
                         "`ramp.unavailable` means buying isn't open to you on this network: hide the feature.",
             )
@@ -89,11 +91,12 @@ fun Route.rampController(ramp: RampService) {
                             "its hosted page, as the fallback); both work until `session.expiresAt`. Calling again " +
                             "returns the same open check, never a second one. A declined or expired check may be " +
                             "started again, a few times a day (`ramp.kyc_attempts_exceeded`, 429, with " +
-                            "`details.retryAfterSeconds`). With no `session` there is nothing to do now: `status` " +
-                            "and `reason` say why (already `VERIFIED`, `IN_REVIEW`, or declined for a reason trying " +
-                            "again can't fix). The outcome arrives as a `ramp/kyc.updated` frame, and a push when it " +
-                            "is final. `ramp.kyc_unavailable` (502): the provider is out of reach, try again in a " +
-                            "moment. `ramp.kyc_not_configured` (503): checks aren't set up on this network yet.",
+                            "`details.retryAfterSeconds`). With no `session` there is nothing to do now: `status`, " +
+                            "`submitted` and `reason` say why (already `VERIFIED`, `IN_REVIEW`, `PENDING` with " +
+                            "`submitted` true: finished and waiting for the provider's answer, or declined for " +
+                            "a reason trying again can't fix). The outcome arrives as a `ramp/kyc.updated` " +
+                            "frame, and a push when it is final. `ramp.kyc_unavailable` (502): the provider is " +
+                            "out of reach, try again in a moment. `ramp.kyc_not_configured` (503): checks aren't set up on this network yet.",
                 )
 
                 get {
@@ -106,7 +109,9 @@ fun Route.rampController(ramp: RampService) {
                     notes =
                         "$SCOPE The same fields as R1's `verification`. Call it when the provider's SDK closes: " +
                             "while a check is unfinished this asks the provider itself (at most every few seconds), " +
-                            "so the outcome shows at once even before the frame arrives. It never returns a link.",
+                            "so the outcome shows at once even before the frame arrives. `PENDING` with `submitted` " +
+                            "true means the check was finished and the provider hasn't decided yet: keep reading " +
+                            "(or wait for the frame) and never reopen the SDK. It never returns a link.",
                 )
             }
 

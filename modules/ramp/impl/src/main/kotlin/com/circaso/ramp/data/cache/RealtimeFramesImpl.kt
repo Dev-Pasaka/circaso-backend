@@ -89,6 +89,7 @@ class RealtimeFramesImpl(
                     canStart = view.canStart,
                     reason = view.reason?.code,
                     retryAt = view.retryAt?.toString(),
+                    submitted = view.submitted,
                 )
             val envelope =
                 RealtimeEnvelope.of(

@@ -92,7 +92,7 @@ class KycSession(
 
 /** Where a session stands, in our words. */
 enum class KycStatus {
-    /** Not started, or the person is still going through it. */
+    /** Not started, the person is still going through it, or they finished and the provider hasn't decided yet. */
     PENDING,
 
     /** A reviewer asked the person to redo some steps in the same session. */
@@ -133,12 +133,18 @@ class KycDocument(val issuingCountry: String, val type: String, val number: Stri
 /**
  * A session as the provider reports it. [subject] is the reference the session was started with; [document] is set
  * for an approved session whose document could be read; [declineReason] for a declined one.
+ *
+ * [isSubmitted] tells an unfinished session ([KycStatus.PENDING], [KycStatus.RESUBMIT]) that still waits on the
+ * person from one whose person has done everything asked and now waits on the provider: true when the provider says
+ * they finished, false when it says they haven't, and null when it didn't say (it couldn't be asked, or the status
+ * isn't an unfinished one), which never changes what was known before.
  */
 class KycDecision(
     val status: KycStatus,
     val subject: String?,
     val document: KycDocument? = null,
     val declineReason: KycDeclineReason? = null,
+    val isSubmitted: Boolean? = null,
 ) {
     override fun toString(): String = "KycDecision($status, ***)"
 }

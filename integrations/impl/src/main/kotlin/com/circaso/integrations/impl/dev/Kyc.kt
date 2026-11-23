@@ -19,7 +19,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Tests: an in-memory KYC provider that records every session it was asked to start. A session is `PENDING` until
- * the test says what the provider decided ([approve], [decline], [set]). Like Didit, it keeps one unfinished session
+ * the test says what the provider decided ([approve], [decline], [set]) or that the person finished and the provider
+ * is still deciding ([submit]). Like Didit, it keeps one unfinished session
  * per environment, workflow and subject: asking again returns it. While [failure] is set every call fails with it;
  * [available] are the environments that have keys.
  */
@@ -52,16 +53,25 @@ class FakeKyc(private val clock: Clock = Clock.systemUTC()) : KycProvider {
         set(sessionId, KycStatus.DECLINED, declineReason = reason)
     }
 
-    /** What the provider reports for [sessionId] from now on. [subject] defaults to the one it was started with. */
+    /** The person finished everything [sessionId] asked of them; the provider hasn't decided yet. */
+    fun submit(sessionId: String, status: KycStatus = KycStatus.PENDING) {
+        set(sessionId, status, isSubmitted = true)
+    }
+
+    /**
+     * What the provider reports for [sessionId] from now on. [subject] defaults to the one it was started with;
+     * [isSubmitted] to "not yet" for an unfinished session, and null leaves it unsaid.
+     */
     fun set(
         sessionId: String,
         status: KycStatus,
         document: KycDocument? = null,
         declineReason: KycDeclineReason? = null,
         subject: String? = kept(sessionId)?.request?.subject,
+        isSubmitted: Boolean? = if (status in UNFINISHED) false else null,
     ) {
         checkNotNull(kept(sessionId)) { "no such session" }.decision =
-            KycDecision(status, subject, document, declineReason)
+            KycDecision(status, subject, document, declineReason, isSubmitted)
     }
 
     override fun isAvailable(environment: KycEnvironment): Boolean = environment in available
@@ -75,7 +85,7 @@ class FakeKyc(private val clock: Clock = Clock.systemUTC()) : KycProvider {
         val id = UUID.randomUUID().toString()
         val token = "token-${sessions.size + 1}"
         val session = KycSession(id, token, "https://verify.test/session/$token", expiryOf(request))
-        sessions += Kept(request, session, KycDecision(KycStatus.PENDING, request.subject))
+        sessions += Kept(request, session, KycDecision(KycStatus.PENDING, request.subject, isSubmitted = false))
         return Resource.success(session)
     }
 

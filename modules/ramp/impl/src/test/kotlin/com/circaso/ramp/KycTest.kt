@@ -292,6 +292,189 @@ class KycTest {
             assertEquals(1, ramp.didit.started.size)
         }
 
+    // Submitted: finished by the person, not yet decided by the provider
+
+    @Test
+    fun `a check the person finished is still PENDING but submitted - nothing to continue, no link, one frame`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            assertFalse(status().verification.submitted, "started, not finished")
+
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+
+            val waiting = status().verification
+            assertEquals(KycState.PENDING, waiting.state)
+            assertTrue(waiting.submitted, "finished: the provider is deciding")
+            assertFalse(waiting.canStart, "nothing to continue")
+            assertNull(waiting.reason)
+            assertNull(waiting.retryAt)
+            val told =
+                ramp.frames.kyc
+                    .single()
+                    .third
+            assertTrue(told.submitted && !told.canStart, "the frame says so when it flips")
+            assertNull(told.link)
+
+            val tapped = start()
+            assertTrue(tapped.submitted)
+            assertNull(tapped.link, "R0 never reopens a capture that is done")
+            assertEquals(1, ramp.didit.started.size, "and never makes another session")
+            assertEquals(1, row()!!.attempts)
+
+            ramp.webhook(session())
+            assertEquals(1, ramp.frames.kyc.size, "the same news twice is told once")
+        }
+
+    @Test
+    fun `a submitted check follows the provider's decision, by the status read alone`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            ramp.didit.submit(session())
+            ramp.clock.advance(6)
+
+            val waiting = ramp.getKyc(amina, TESTNET).value()
+            assertTrue(waiting.submitted, "the SDK closed: the read learns it without a webhook")
+            assertFalse(waiting.canStart)
+
+            ramp.clock.advance(6)
+            assertTrue(ramp.getKyc(amina, TESTNET).value().submitted, "still deciding: asked again, nothing moves")
+            assertEquals(2, ramp.didit.decisionQueries.size, "a submitted check keeps being read")
+
+            ramp.didit.approve(session(), id)
+            ramp.clock.advance(6)
+            val verified = ramp.getKyc(amina, TESTNET).value()
+            assertEquals(KycState.VERIFIED, verified.state)
+            assertFalse(verified.submitted, "decided: nothing is awaited any more")
+            assertFalse(row()!!.isSubmitted)
+            assertEquals(
+                listOf(KycState.PENDING to true, KycState.VERIFIED to false),
+                ramp.frames.kyc.map { it.third.state to it.third.submitted },
+            )
+        }
+
+    @Test
+    fun `a submitted check that is declined may be started again, with a new session`() =
+        runTest {
+            ramp.requireKyc()
+            val first = start()
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+
+            ramp.didit.decline(session(), KycDeclineReason.LIVENESS)
+            ramp.webhook(session())
+
+            val declined = status().verification
+            assertEquals(KycState.DECLINED to false, declined.state to declined.submitted)
+            assertTrue(declined.canStart)
+            assertNotEquals(first.link!!.token, start().link!!.token)
+        }
+
+    @Test
+    fun `in review counts as submitted too - the person has nothing left to do`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+
+            ramp.didit.set(session(), KycStatus.IN_REVIEW)
+            ramp.webhook(session())
+
+            val review = status().verification
+            assertEquals(KycState.IN_REVIEW, review.state)
+            assertTrue(review.submitted && !review.canStart)
+            assertFalse(row()!!.isSubmitted, "the row keeps it for PENDING only: the status says the rest")
+        }
+
+    @Test
+    fun `a step asked for again is not submitted until the person has redone it`() =
+        runTest {
+            ramp.requireKyc()
+            val first = start()
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+
+            ramp.didit.set(session(), KycStatus.RESUBMIT)
+            ramp.webhook(session())
+            val asked = status().verification
+            assertEquals(VerificationReason.RESUBMISSION_REQUESTED, asked.reason)
+            assertFalse(asked.submitted, "something is asked of the person again")
+            assertTrue(asked.canStart)
+            assertEquals(first.link!!.token, start().link!!.token, "the same session reopens")
+
+            ramp.didit.submit(session(), KycStatus.RESUBMIT)
+            ramp.webhook(session())
+            val redone = status().verification
+            assertEquals(KycState.PENDING, redone.state)
+            assertTrue(redone.submitted && !redone.canStart)
+            assertNull(redone.reason, "nothing is asked any more")
+            assertNull(start().link)
+        }
+
+    @Test
+    fun `when the provider doesn't say whether the person finished, what was known stays`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            ramp.didit.set(session(), KycStatus.PENDING, isSubmitted = null)
+            ramp.webhook(session())
+            assertFalse(status().verification.submitted, "never assumed")
+            assertTrue(status().verification.canStart)
+
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+            ramp.didit.set(session(), KycStatus.PENDING, isSubmitted = null)
+            ramp.webhook(session())
+            assertTrue(status().verification.submitted, "one missed answer sends nobody back to the capture")
+            assertEquals(1, ramp.frames.kyc.size)
+
+            ramp.didit.set(session(), KycStatus.PENDING, isSubmitted = false)
+            ramp.webhook(session())
+            val back = status().verification
+            assertFalse(back.submitted, "the provider's own word that they are back in the check")
+            assertTrue(back.canStart)
+            assertNotNull(start().link)
+        }
+
+    @Test
+    fun `a tap on a submitted check asks the provider first, so a decision made since is not missed`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+            ramp.didit.set(session(), KycStatus.RESUBMIT)
+            ramp.clock.advance(6)
+
+            val tapped = start()
+
+            assertFalse(tapped.submitted)
+            assertEquals(VerificationReason.RESUBMISSION_REQUESTED, tapped.reason)
+            assertNotNull(tapped.link, "the lost webhook didn't strand them on \"we're checking\"")
+        }
+
+    @Test
+    fun `a submitted check the provider never decides still ends in time, so nobody is locked out`() =
+        runTest {
+            ramp.requireKyc()
+            start()
+            ramp.didit.submit(session())
+            ramp.clock.advance(5 * 60 + 1)
+            ramp.sweepVerifications()
+            assertTrue(row()!!.isSubmitted, "the sweep keeps it fresh")
+            assertEquals(VerificationStatus.PENDING, row()!!.status)
+
+            ramp.clock.advance(24 * 3_600)
+            ramp.sweepVerifications()
+
+            val expired = status().verification
+            assertEquals(KycState.EXPIRED to false, expired.state to expired.submitted)
+            assertTrue(expired.canStart)
+        }
+
     @Test
     fun `a session the provider ends unfinished is EXPIRED, and may be started again`() =
         runTest {

@@ -2,6 +2,7 @@ package com.circaso.ramp
 
 import com.circaso.integrations.api.KycDeclineReason
 import com.circaso.integrations.api.KycEnvironment
+import com.circaso.integrations.api.KycStatus
 import com.circaso.ramp.domain.models.BlockReason
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.Subject
@@ -54,12 +55,14 @@ class KycShapesTest {
 
             assertEquals(
                 """{"status":"PENDING","required":true,"canStart":true,"reason":null,"retryAt":null,""" +
-                    """"session":{"sessionToken":"token-1","url":"https://verify.test/session/token-1",""" +
+                    """"submitted":false,"session":{"sessionToken":"token-1",""" +
+                    """"url":"https://verify.test/session/token-1",""" +
                     """"expiresAt":"2026-11-23T12:00:00Z"}}""",
                 r0(),
             )
             assertEquals(
-                """{"status":"PENDING","required":true,"canStart":true,"reason":null,"retryAt":null}""",
+                """{"status":"PENDING","required":true,"canStart":true,"reason":null,""" +
+                    """"retryAt":null,"submitted":false}""",
                 read(),
                 "the status read never carries the link",
             )
@@ -67,7 +70,8 @@ class KycShapesTest {
             ramp.didit.approve(session())
             ramp.webhook(session())
             assertEquals(
-                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,"retryAt":null,"session":null}""",
+                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,""" +
+                    """"retryAt":null,"submitted":false,"session":null}""",
                 r0(),
             )
         }
@@ -80,7 +84,7 @@ class KycShapesTest {
 
             val none = r1()
             assertEquals(
-                """{"status":"NONE","required":true,"canStart":true,"reason":null,"retryAt":null}""",
+                """{"status":"NONE","required":true,"canStart":true,"reason":null,"retryAt":null,"submitted":false}""",
                 none.getValue("verification").toString(),
             )
             assertEquals("\"NONE\"", none.getValue("kyc").toString())
@@ -92,7 +96,8 @@ class KycShapesTest {
             ramp.webhook(session())
             val declined = r1()
             assertEquals(
-                """{"status":"DECLINED","required":true,"canStart":true,"reason":"document_expired","retryAt":null}""",
+                """{"status":"DECLINED","required":true,"canStart":true,"reason":"document_expired",""" +
+                    """"retryAt":null,"submitted":false}""",
                 declined.getValue("verification").toString(),
             )
             assertEquals("\"NONE\"", declined.getValue("kyc").toString(), "anything but verified reads as NONE there")
@@ -102,7 +107,8 @@ class KycShapesTest {
             ramp.webhook(session())
             val verified = r1()
             assertEquals(
-                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,"retryAt":null}""",
+                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,""" +
+                    """"retryAt":null,"submitted":false}""",
                 verified.getValue("verification").toString(),
             )
             assertEquals("\"VERIFIED\"", verified.getValue("kyc").toString())
@@ -115,6 +121,30 @@ class KycShapesTest {
         }
 
     @Test
+    fun `a finished check awaiting its decision is PENDING, submitted, canStart false and no session`() =
+        runTest {
+            ramp.requireKyc()
+            ramp.startKyc(amina, TESTNET)
+            ramp.didit.submit(session())
+            ramp.webhook(session())
+
+            val waiting =
+                """{"status":"PENDING","required":true,"canStart":false,"reason":null,"retryAt":null,""" +
+                    """"submitted":true"""
+            assertEquals("$waiting}", read())
+            assertEquals("$waiting,\"session\":null}", r0())
+            assertEquals("$waiting}", r1().getValue("verification").toString())
+
+            ramp.didit.set(session(), KycStatus.IN_REVIEW)
+            ramp.webhook(session())
+            assertEquals(
+                """{"status":"IN_REVIEW","required":true,"canStart":false,"reason":null,"retryAt":null,""" +
+                    """"submitted":true}""",
+                read(),
+            )
+        }
+
+    @Test
     fun `the day's cap shows as canStart false with the time it lifts`() =
         runTest {
             ramp.requireKyc { it.copy(kycAttemptsPerDay = 1) }
@@ -124,7 +154,7 @@ class KycShapesTest {
 
             assertEquals(
                 """{"status":"DECLINED","required":true,"canStart":false,"reason":"liveness",""" +
-                    """"retryAt":"2026-11-22T21:00:00Z"}""",
+                    """"retryAt":"2026-11-22T21:00:00Z","submitted":false}""",
                 read(),
             )
         }
@@ -134,7 +164,7 @@ class KycShapesTest {
         runTest {
             val open = r1()
             assertEquals(
-                """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null}""",
+                """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null,"submitted":false}""",
                 open.getValue("verification").toString(),
             )
             assertEquals("\"NOT_REQUIRED\"", open.getValue("kyc").toString())

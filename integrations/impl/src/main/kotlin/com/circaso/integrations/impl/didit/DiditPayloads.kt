@@ -74,6 +74,18 @@ internal data class IdVerification(
 @Serializable
 internal data class FeatureResult(val status: String = "")
 
+/**
+ * `GET /v3/session/{id}/features/overrides/`, of which only where the person is in the flow is read (docs.didit.me →
+ * List Feature Overrides, read 2026-11-23): `person_in_flow` is true while the session is `Not Started`,
+ * `In Progress` or `Resubmitted` and the person has not finished; `flow_finished_at` is when they last finished, null
+ * while they are still in it (a resubmission included). The overrides themselves are never decoded.
+ */
+@Serializable
+internal data class FlowReply(
+    @SerialName("person_in_flow") val personInFlow: Boolean? = null,
+    @SerialName("flow_finished_at") val flowFinishedAt: String? = null,
+)
+
 /** A risk signal on a feature: `risk` is Didit's stable code (`DOCUMENT_EXPIRED`). */
 @Serializable
 internal data class Warning(val risk: String = "")

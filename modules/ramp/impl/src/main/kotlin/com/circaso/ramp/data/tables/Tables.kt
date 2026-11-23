@@ -227,6 +227,7 @@ object VerificationsTable : Table("ramp.verifications") {
     val environment = text("environment")
     val status = text("status")
     val reason = text("reason").nullable()
+    val submitted = bool("submitted").default(false)
     val provider = text("provider")
     val sessionId = text("session_id").nullable()
     val sessionToken = text("session_token").nullable()

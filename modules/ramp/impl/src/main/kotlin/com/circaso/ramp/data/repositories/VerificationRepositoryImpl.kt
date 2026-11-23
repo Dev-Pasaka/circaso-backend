@@ -83,6 +83,7 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
                 it[environment] = verification.environment.name
                 it[status] = verification.status.name
                 it[reason] = verification.reason?.code
+                it[submitted] = verification.isSubmitted
                 it[provider] = verification.provider
                 it[sessionId] = verification.sessionId
                 it[sessionToken] = verification.sessionToken
@@ -113,6 +114,7 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
                 .updateReturning(where = { onSession(subject, environment, sessionId) and isNot(change) }) {
                     it[status] = change.status.name
                     it[reason] = change.reason?.code
+                    it[submitted] = change.isSubmitted
                     it[checkedAt] = at
                     it[updatedAt] = at
                 }.map { it.toVerification() }
@@ -133,6 +135,7 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
                     .updateReturning(where = { onSession(subject, environment, sessionId) and isNot(verified) }) {
                         it[status] = VerificationStatus.VERIFIED.name
                         it[reason] = null
+                        it[submitted] = false
                         if (identityKey != null) it[VerificationsTable.identityKey] = identityKey
                         it[sessionToken] = null
                         it[sessionUrl] = null
@@ -203,9 +206,14 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
         sessionId: String,
     ): Op<Boolean> = row(subject, environment) and (VerificationsTable.sessionId eq sessionId)
 
-    /** The row isn't already exactly at [change]: another status, or the same status for another reason. */
+    /**
+     * The row isn't already exactly at [change]: another status, the same status for another reason, or the same of
+     * both with the person's part newly finished (or no longer).
+     */
     private fun isNot(change: VerificationChange): Op<Boolean> {
-        val otherStatus = VerificationsTable.status neq change.status.name
+        val otherStatus =
+            (VerificationsTable.status neq change.status.name) or
+                (VerificationsTable.submitted neq change.isSubmitted)
         val reason = change.reason?.code
         return if (reason == null) {
             otherStatus or VerificationsTable.reason.isNotNull()
@@ -224,6 +232,7 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
             environment = KycEnvironment.valueOf(this[VerificationsTable.environment]),
             status = VerificationStatus.valueOf(this[VerificationsTable.status]),
             reason = VerificationReason.of(this[VerificationsTable.reason]),
+            isSubmitted = this[VerificationsTable.submitted],
             provider = this[VerificationsTable.provider],
             sessionId = this[VerificationsTable.sessionId],
             sessionToken = this[VerificationsTable.sessionToken],

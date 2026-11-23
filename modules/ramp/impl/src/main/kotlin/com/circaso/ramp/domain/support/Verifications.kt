@@ -49,6 +49,10 @@ import java.time.Instant
  * [refresh], which asks the provider for the session's decision and applies it through the repository's guards, so
  * the same outcome is never applied twice and an old session's late news never touches a newer one.
  *
+ * **Submitted is the provider's word too.** A check the person finished and the provider hasn't decided is still
+ * `PENDING`, with [Verification.isSubmitted]: no link is handed out and none is started, so nobody is sent back into
+ * a capture they completed. It is learnt, and unlearnt, only in [refresh].
+ *
  * **Identity.** On a live approval the document's country, type and number are turned into the identity key and
  * dropped. A key that is barred refuses the account and bars it too; a key that already verified another account of
  * the same kind refuses this one (`identity_in_use`). In the sandbox no key is kept at all: its checks read the same
@@ -103,8 +107,12 @@ class Verifications(
         val needsNewSession =
             when (row?.status) {
                 null -> true
-                VerificationStatus.PENDING -> !row.hasLiveLink(now)
+
+                // Finished and waiting for the provider: nothing to continue and nothing new to start.
+                VerificationStatus.PENDING -> !row.isSubmitted && !row.hasLiveLink(now)
+
                 VerificationStatus.DECLINED, VerificationStatus.EXPIRED -> row.reason?.canRetry != false
+
                 VerificationStatus.IN_REVIEW, VerificationStatus.VERIFIED -> false
             }
         val canContinue = row?.hasLiveLink(now) == true
@@ -118,14 +126,17 @@ class Verifications(
                 row
                     ?.takeIf { withLink && canContinue }
                     ?.let { KycLink(it.sessionToken, it.sessionUrl, it.sessionExpiresAt) },
+            submitted = row?.awaitsDecision == true,
         )
     }
 
     /**
      * Starts a check for [subject], or hands back the one still open: a tap never makes a second session while the
      * first one's link works. A declined or expired check may be started again, up to the settings' cap a day; one
-     * that can't be retried (an identity in use, a barred identity) answers its state with no link. [callbackUrl] is
-     * where the provider's hosted page returns to (the merchant portal); the app passes none.
+     * that can't be retried (an identity in use, a barred identity) answers its state with no link, and so does one
+     * the person has finished that the provider hasn't decided: the capture is never reopened under a check that is
+     * only waiting for its answer. [callbackUrl] is where the provider's hosted page returns to (the merchant portal);
+     * the app passes none.
      */
     suspend fun start(
         subject: Subject,
@@ -134,9 +145,9 @@ class Verifications(
     ): Resource<KycView> {
         val now = clock.instant()
         val environment = current.kycEnvironment
-        val row = rows.find(subject, environment)
+        val row = freshIfSubmitted(rows.find(subject, environment))
         val before = view(row, current, withLink = true)
-        if (before.link != null) return Resource.success(before)
+        if (before.link != null || before.submitted) return Resource.success(before)
         val startsAgain = row == null || row.status == VerificationStatus.PENDING || row.status.isRetryable
         if (!startsAgain || row?.reason?.canRetry == false) return Resource.success(before)
         if (!before.canStart) return Resource.error(RampError.KycAttemptsExceeded(secondsUntil(before.retryAt, now)))
@@ -186,6 +197,13 @@ class Verifications(
         if (row.checkedAt.plus(notWithin).isAfter(clock.instant())) return row
         return refresh(row).verification
     }
+
+    /**
+     * Before a tap is answered "wait": a submitted check is read again (as the status read does), since the provider
+     * may have decided, or asked for a step again, since the row was written.
+     */
+    private suspend fun freshIfSubmitted(row: Verification?): Verification? =
+        if (row?.status == VerificationStatus.PENDING && row.isSubmitted) refreshIfDue(row) else row
 
     /** Ends a check nobody finished in time, so its subject can start another. Tells the user when it moved. */
     suspend fun expire(row: Verification): Verification {
@@ -285,11 +303,13 @@ class Verifications(
                 }
 
                 KycStatus.PENDING -> {
-                    pendingAgain(row)
+                    pendingAgain(row, isSubmitted(row, decision))
                 }
 
                 KycStatus.RESUBMIT -> {
-                    pending(VerificationReason.RESUBMISSION_REQUESTED)
+                    // Once the steps asked for again are done, nothing is asked of the person any more.
+                    val isSubmitted = isSubmitted(row, decision)
+                    pending(VerificationReason.RESUBMISSION_REQUESTED.takeUnless { isSubmitted }, isSubmitted)
                 }
 
                 KycStatus.IN_REVIEW -> {
@@ -316,13 +336,22 @@ class Verifications(
     }
 
     /**
-     * The provider says the person is (still, or again) going through the check. A check already pending stays as it
-     * is, and so does one we ended for running out of time: the provider ends it too a moment later.
+     * Whether the person has finished an unfinished session's steps, as the provider says now; when it didn't say
+     * (it couldn't be asked), what the row already knew, so one missed answer never sends anyone back to the capture.
      */
-    private fun pendingAgain(row: Verification): VerificationChange? {
+    private fun isSubmitted(row: Verification, decision: KycDecision): Boolean =
+        decision.isSubmitted ?: (row.status == VerificationStatus.PENDING && row.isSubmitted)
+
+    /**
+     * The provider hasn't decided: the person is (still, or again) going through the check, or ([isSubmitted]) has
+     * finished it and waits for the answer. A pending check stays as it is until that flips, and one we ended for
+     * running out of time stays ended: the provider ends it too a moment later.
+     */
+    private fun pendingAgain(row: Verification, isSubmitted: Boolean): VerificationChange? {
         val endedForTime =
             row.status == VerificationStatus.EXPIRED && row.reason == VerificationReason.SESSION_EXPIRED
-        return if (row.status == VerificationStatus.PENDING || endedForTime) null else pending(null)
+        val isThere = row.status == VerificationStatus.PENDING && row.isSubmitted == isSubmitted
+        return if (isThere || endedForTime) null else pending(null, isSubmitted)
     }
 
     private suspend fun approve(
@@ -403,7 +432,8 @@ class Verifications(
         }
     }
 
-    private fun pending(reason: VerificationReason?) = VerificationChange(VerificationStatus.PENDING, reason)
+    private fun pending(reason: VerificationReason?, isSubmitted: Boolean = false) =
+        VerificationChange(VerificationStatus.PENDING, reason, isSubmitted)
 
     private fun declined(reason: VerificationReason) = VerificationChange(VerificationStatus.DECLINED, reason)
 

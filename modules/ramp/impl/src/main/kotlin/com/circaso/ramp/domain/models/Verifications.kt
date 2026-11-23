@@ -29,7 +29,8 @@ data class Subject(val kind: SubjectKind, val id: UUID) {
 
 /**
  * Where a verification stands. There is no `NONE` here: a subject who never started has no row. `PENDING` is a check
- * the person still has to finish (or redo), `IN_REVIEW` one the provider's reviewers must decide.
+ * the provider hasn't decided: one the person still has to finish (or redo), or, once [Verification.isSubmitted], one
+ * they finished that the provider is still working on. `IN_REVIEW` is one the provider's reviewers must decide.
  */
 enum class VerificationStatus {
     PENDING,
@@ -93,14 +94,16 @@ enum class VerificationReason(val code: String, val canRetry: Boolean = true) {
 /**
  * One subject's verification in one provider environment. [sessionToken] and [sessionUrl] are the open check's link,
  * kept only until it is verified; [identityKey] is the HMAC of the approved document, set with `VERIFIED` in the
- * live environment only (the sandbox reads the same sample document for everyone). The string form hides the link
- * and the key.
+ * live environment only (the sandbox reads the same sample document for everyone). [isSubmitted] is the provider
+ * saying the person finished everything a `PENDING` check asked of them; it is false in every other status. The
+ * string form hides the link and the key.
  */
 data class Verification(
     val subject: Subject,
     val environment: KycEnvironment,
     val status: VerificationStatus,
     val reason: VerificationReason?,
+    val isSubmitted: Boolean = false,
     /** The KYC provider that holds [sessionId]: its decision is asked there, whatever the settings say later. */
     val provider: String,
     val sessionId: String?,
@@ -123,9 +126,20 @@ data class Verification(
     /** How many sessions were started on [day]. */
     fun attemptsOn(day: LocalDate): Int = if (attemptDay == day) attemptsOnDay else 0
 
-    /** Whether the open check's link still works at [now]: there is one, and it hasn't run out. */
+    /**
+     * The person has done their part and the provider hasn't decided (it is still working, or its reviewers are
+     * looking): there is nothing for them to do but wait, so no check is started, continued or handed out.
+     */
+    val awaitsDecision: Boolean
+        get() = status == VerificationStatus.IN_REVIEW || (status == VerificationStatus.PENDING && isSubmitted)
+
+    /**
+     * Whether the open check's link is for the person to use at [now]: there is one, it hasn't run out, and they
+     * haven't already finished what it asks.
+     */
     fun hasLiveLink(now: Instant): Boolean =
         status == VerificationStatus.PENDING &&
+            !isSubmitted &&
             sessionId != null &&
             (sessionToken != null || sessionUrl != null) &&
             sessionExpiresAt?.isAfter(now) != false
@@ -133,8 +147,15 @@ data class Verification(
     override fun toString(): String = "Verification($subject, $environment, $status)"
 }
 
-/** Where a move takes a verification: its new status and the reason behind it. */
-data class VerificationChange(val status: VerificationStatus, val reason: VerificationReason? = null)
+/**
+ * Where a move takes a verification: its new status, the reason behind it, and for a `PENDING` one whether the person
+ * has finished their part ([isSubmitted]).
+ */
+data class VerificationChange(
+    val status: VerificationStatus,
+    val reason: VerificationReason? = null,
+    val isSubmitted: Boolean = false,
+)
 
 /** How marking a verification `VERIFIED` ended. */
 sealed interface VerifiedOutcome {
@@ -159,6 +180,10 @@ class KycLink(val token: String?, val url: String?, val expiresAt: Instant?) {
  * A subject's verification as the app and the portal are told it, so neither ever guesses: the [state], whether the
  * network [required] it, whether a check may be started or continued now ([canStart]), the [reason] behind a decline
  * or an expiry, and when the daily cap lifts ([retryAt]). [link] is set only by the calls that hand one out.
+ *
+ * [submitted] is what tells "finished, waiting for the answer" from "started, not finished", which are both
+ * `PENDING`: the person has done their part and the provider hasn't decided. It is true for a submitted `PENDING` and
+ * for `IN_REVIEW`, and then [canStart] is false and there is no [link].
  */
 data class KycView(
     val state: KycState,
@@ -167,6 +192,7 @@ data class KycView(
     val reason: VerificationReason?,
     val retryAt: Instant?,
     val link: KycLink? = null,
+    val submitted: Boolean = false,
 ) {
     val isVerified: Boolean get() = state == KycState.VERIFIED
 

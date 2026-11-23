@@ -31,7 +31,7 @@ interface VerificationRepository {
 
     /**
      * The guard every outcome but an approval goes through: moves the row to [change] only while its current session
-     * is still [sessionId] and it isn't already exactly there (the same status and reason). The moved row, or null
+     * is still [sessionId] and it isn't already exactly there (the same status, reason and submitted). The moved row, or null
      * when it was already there or names another session now: only the caller that moved it tells anyone.
      */
     suspend fun move(
