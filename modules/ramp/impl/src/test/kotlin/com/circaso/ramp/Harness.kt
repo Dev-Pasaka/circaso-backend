@@ -39,12 +39,19 @@ import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantStatsBook
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
+import com.circaso.ramp.domain.support.PayoutFees
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.ProviderBalancesReader
 import com.circaso.ramp.domain.support.PurchaseRouting
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.RoutingSimulator
+import com.circaso.ramp.domain.support.SaleFlow
+import com.circaso.ramp.domain.support.SaleFunding
+import com.circaso.ramp.domain.support.SalePayouts
+import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
@@ -70,6 +77,8 @@ import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
 import com.circaso.ramp.domain.usecases.HandleKycNotification
 import com.circaso.ramp.domain.usecases.HandlePaymentCallback
+import com.circaso.ramp.domain.usecases.HandlePayoutCallback
+import com.circaso.ramp.domain.usecases.HandleSaleTransfer
 import com.circaso.ramp.domain.usecases.ListBlocks
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
@@ -81,19 +90,24 @@ import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResetVerification
+import com.circaso.ramp.domain.usecases.ResolveOrder
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
+import com.circaso.ramp.domain.usecases.RunRechecks
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SetMerchantTier
+import com.circaso.ramp.domain.usecases.SetPayoutAccount
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.SimulateRouting
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
+import com.circaso.ramp.domain.usecases.StartOffRamp
 import com.circaso.ramp.domain.usecases.StartOnRamp
 import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
+import com.circaso.ramp.domain.usecases.SweepSales
 import com.circaso.ramp.domain.usecases.SweepVerifications
 import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateEngineSettings
@@ -206,7 +220,13 @@ class Harness {
 
     /** The engine's dice: seeded, so a draw is the same on every run. */
     var random: Random = Random(SEED)
-    val engineFacts = EngineFacts(merchants, reservations, ledger, treasury, sessions, kyc, statsBook, clock)
+    val payoutHolds = MemoryPayoutHolds()
+    val testPayoutRows = MemoryTestPayouts()
+    val providerFees = FakeProviderFees()
+    val payoutFees = PayoutFees(providerFees)
+    val balancesReader = ProviderBalancesReader(sessions, providers, merchants, clock)
+    val engineFacts =
+        EngineFacts(merchants, reservations, ledger, treasury, sessions, kyc, statsBook, clock, payoutHolds)
     val engine =
         Engine(
             facts = engineFacts,
@@ -220,6 +240,7 @@ class Harness {
             log = routingLog,
             random = SwitchableRandom { random },
             clock = clock,
+            payoutHolds = payoutHolds,
         )
     val releases =
         Releases(orders, merchantWallets, reservations, ledger, transactor, outbox, bus, frames, alerts, usdc, clock)
@@ -237,8 +258,29 @@ class Harness {
             pricing,
             verifications,
             clock,
+            merchants,
+            payoutHolds,
+            balancesReader,
         )
     val pins = PinGuard(vault, pinAttempts)
+
+    // Selling (2026-11-23).
+    val saleFlow =
+        SaleFlow(orders, reservations, payoutHolds, ledger, transactor, outbox, bus, frames, counters, alerts, clock)
+    val salePayouts =
+        SalePayouts(orders, merchants, saleFlow, providers, sessions, book, payoutFees, frames, alerts, clock)
+    val saleFunding = SaleFunding(orders, wallets, merchantWallets, treasury, usdc, saleFlow, alerts, clock)
+    val saleRefunds = SaleRefunds(orders, merchantWallets, releases, saleFlow, clock)
+    val testPayouts =
+        TestPayouts(testPayoutRows, merchants, sessions, providers, balancesReader, payoutFees, book, clock)
+    val startOffRamp =
+        StartOffRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, balancesReader, clock)
+    val saleTransfer = HandleSaleTransfer(orders, saleFunding, salePayouts)
+    val payoutCallback = HandlePayoutCallback(merchants, orders, salePayouts, testPayouts)
+    val sweepSales = SweepSales(orders, saleFunding, salePayouts, saleFlow, clock)
+    val resolveOrder = ResolveOrder(orders, merchants, flow, saleFlow, clock)
+    val runRechecks = RunRechecks(orders, flow, salePayouts, saleFunding)
+    val setPayoutAccount = SetPayoutAccount(merchants, views, clock)
 
     val status = GetRampStatus(gates, accounts, orders, engine, verifications)
     val startKyc = StartUserKyc(gates, accounts, verifications)
@@ -251,15 +293,15 @@ class Harness {
     val blockUser = BlockUser(verificationRows, blocks, transactor, clock)
     val unblockUser = UnblockUser(blocks)
     val resetVerification = ResetVerification(verificationRows)
-    val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock)
+    val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock, payoutFees)
     val purchases = PurchaseRouting(engine, flow, counters, clock)
     val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, purchases, clock)
     val getOrder = GetOrder(orders, merchants)
     val listOrders = ListOrders(orders, merchants)
-    val cancelOrder = CancelOrder(orders, merchants, flow)
+    val cancelOrder = CancelOrder(orders, merchants, flow, saleFlow)
     val paymentCallback = HandlePaymentCallback(merchants, orders, flow, alerts)
     val sweep = SweepOrders(orders, flow, clock)
-    val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock)
+    val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock, saleRefunds)
     val settleFees = SettleFees(treasury, sweeps)
 
     val requestCode = RequestSignInCode(codes, tokens, email)
@@ -301,6 +343,7 @@ class Harness {
             insights,
             treasury,
             clock,
+            payoutHolds,
         )
     val staffOrders = ListStaffMerchantOrders(merchants, ledger)
 

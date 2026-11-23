@@ -65,6 +65,7 @@ class InsightsTest {
                 unblockUser = ramp.unblockUser,
                 resetVerification = ramp.resetVerification,
                 resetMerchantVerificationUseCase = ResetMerchantVerification(ramp.merchants, ramp.verificationRows),
+                resolveOrder = ramp.resolveOrder,
             ),
         )
     private var buyers = 1

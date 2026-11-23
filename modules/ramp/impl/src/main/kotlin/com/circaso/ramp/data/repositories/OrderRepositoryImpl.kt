@@ -35,8 +35,13 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.r2dbc.insert
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.select
@@ -64,6 +69,8 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
                 it[feeBps] = quote.feeBps
                 it[merchantShareBps] = quote.merchantShareBps
                 it[expiresAt] = quote.expiresAt
+                it[providerFeeMinor] = quote.providerFeeMinor
+                it[providerFeeSource] = quote.providerFeeSource
             }
         }
     }
@@ -91,6 +98,8 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
             feeBps = this[QuotesTable.feeBps],
             merchantShareBps = this[QuotesTable.merchantShareBps],
             expiresAt = this[QuotesTable.expiresAt],
+            providerFeeMinor = this[QuotesTable.providerFeeMinor],
+            providerFeeSource = this[QuotesTable.providerFeeSource],
         )
 }
 
@@ -137,6 +146,9 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                         it[createdAt] = order.createdAt
                         it[updatedAt] = order.updatedAt
                         it[attempt] = order.attempt
+                        it[providerFeeMinor] = order.providerFeeMinor
+                        it[providerFeeSource] = order.providerFeeSource
+                        it[refundAddress] = order.refundAddress
                     }.insertedCount > 0
             if (inserted) record(order, order.createdAt, detail = null)
             inserted
@@ -195,13 +207,120 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
             .map { it.toOrder() }
             .toList()
 
-    override suspend fun hasAwaitingPayment(merchantId: MerchantId): Boolean =
-        database.tx("orders.has-awaiting-payment") {
+    override suspend fun needsKeys(merchantId: MerchantId): Boolean =
+        database.tx("orders.needs-keys") {
             OrdersTable
                 .select(OrdersTable.orderId)
-                .where { (OrdersTable.merchantId eq merchantId.value) and (OrdersTable.state inList AWAITING) }
+                .where { (OrdersTable.merchantId eq merchantId.value) and (OrdersTable.state inList NEEDS_KEYS) }
                 .limit(1)
                 .firstOrNull() != null
+        }
+
+    override suspend fun attachTransfer(
+        orderId: RampOrderId,
+        transferId: UUID,
+        at: Instant,
+    ): Order? =
+        try {
+            database.tx("orders.attach-transfer") {
+                OrdersTable.update({
+                    (OrdersTable.orderId eq orderId.value) and OrdersTable.walletTransferId.isNull()
+                }) {
+                    it[walletTransferId] = transferId
+                    it[updatedAt] = at
+                }
+                read(orderId)
+            }
+        } catch (e: DatabaseException) {
+            // orders_wallet_transfer_key: the transfer already funds another order; this one keeps what it had.
+            if (e.isUniqueViolation) find(orderId) else throw e
+        }
+
+    override suspend fun awaitingFunding(
+        network: Network,
+        before: Instant,
+        limit: Int,
+    ): List<Order> =
+        database.tx("orders.awaiting-funding") {
+            OrdersTable
+                .selectAll()
+                .where {
+                    (OrdersTable.network eq network.name) and
+                        OrdersTable.walletTransferId.isNotNull() and
+                        OrdersTable.fundedMinor.isNull() and
+                        (OrdersTable.updatedAt less before)
+                }.orderBy(OrdersTable.updatedAt to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toOrder() }
+                .toList()
+        }
+
+    override suspend fun dueForPayout(
+        network: Network,
+        now: Instant,
+        limit: Int,
+    ): List<Order> =
+        database.tx("orders.due-for-payout") {
+            OrdersTable
+                .selectAll()
+                .where {
+                    (OrdersTable.network eq network.name) and
+                        (OrdersTable.state eq OrderState.FUNDED.name) and
+                        (OrdersTable.payoutRetryAt.isNull() or (OrdersTable.payoutRetryAt lessEq now))
+                }.orderBy(OrdersTable.updatedAt to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toOrder() }
+                .toList()
+        }
+
+    override suspend fun requestRecheck(orderId: RampOrderId, at: Instant): Boolean =
+        database.tx("orders.request-recheck") {
+            OrdersTable.update({
+                (OrdersTable.orderId eq orderId.value) and (OrdersTable.state eq OrderState.REVIEW.name)
+            }) { it[recheckRequestedAt] = at } > 0
+        }
+
+    override suspend fun rechecks(limit: Int): List<Order> =
+        database.tx("orders.rechecks") {
+            OrdersTable
+                .selectAll()
+                .where { OrdersTable.recheckRequestedAt.isNotNull() }
+                .orderBy(OrdersTable.recheckRequestedAt to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toOrder() }
+                .toList()
+        }
+
+    override suspend fun clearRecheck(orderId: RampOrderId) {
+        database.tx("orders.clear-recheck") {
+            OrdersTable.update({ OrdersTable.orderId eq orderId.value }) { it[recheckRequestedAt] = null }
+        }
+    }
+
+    override suspend fun receiptTaken(receipt: String, except: RampOrderId): Boolean =
+        database.tx("orders.receipt-taken") {
+            OrdersTable
+                .select(OrdersTable.orderId)
+                .where { (OrdersTable.mpesaReceipt eq receipt) and (OrdersTable.orderId neq except.value) }
+                .limit(1)
+                .firstOrNull() != null
+        }
+
+    override suspend fun annotate(
+        orderId: RampOrderId,
+        state: OrderState,
+        patch: OrderPatch,
+        at: Instant,
+    ): Order? =
+        database.tx("orders.annotate") {
+            val changed =
+                OrdersTable.update({
+                    (OrdersTable.orderId eq orderId.value) and (OrdersTable.state eq state.name)
+                }) {
+                    it[updatedAt] = at
+                    it.write(patch)
+                }
+            if (changed == 0) null else read(orderId)
         }
 
     override suspend fun move(
@@ -218,14 +337,33 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                 }) {
                     it[state] = to.name
                     it[updatedAt] = at
-                    patch.providerReference?.let { value -> it[providerReference] = value }
-                    patch.checkoutId?.let { value -> it[checkoutId] = value }
-                    patch.custodyTxId?.let { value -> it[custodyTxId] = value }
-                    patch.txHash?.let { value -> it[txHash] = value }
-                    patch.failureReason?.let { value -> it[failureReason] = value }
+                    it.write(patch)
                 }
             if (moved == 0) null else read(orderId)?.also { record(it, at, patch.failureReason) }
         }
+
+    /** The columns a patch sets; null leaves a column as it is. */
+    private fun UpdateBuilder<*>.write(patch: OrderPatch) {
+        patch.providerReference?.let { this[OrdersTable.providerReference] = it }
+        patch.checkoutId?.let { this[OrdersTable.checkoutId] = it }
+        patch.custodyTxId?.let { this[OrdersTable.custodyTxId] = it }
+        patch.txHash?.let { this[OrdersTable.txHash] = it }
+        patch.failureReason?.let { this[OrdersTable.failureReason] = it }
+        patch.providerFeeActualMinor?.let { this[OrdersTable.providerFeeActualMinor] = it }
+        patch.fundedMinor?.let { this[OrdersTable.fundedMinor] = it }
+        patch.fundingTxHash?.let { this[OrdersTable.fundingTxHash] = it }
+        patch.fundedAt?.let { this[OrdersTable.fundedAt] = it }
+        patch.refundAddress?.let { this[OrdersTable.refundAddress] = it }
+        patch.payoutAttempts?.let { this[OrdersTable.payoutAttempts] = it }
+        patch.payoutFailures?.let { this[OrdersTable.payoutFailures] = it }
+        patch.payoutReference?.let { this[OrdersTable.payoutReference] = it }
+        patch.payoutProviderReference?.let { this[OrdersTable.payoutProviderReference] = it }
+        patch.payoutSecondaryReference?.let { this[OrdersTable.payoutSecondaryReference] = it }
+        patch.payoutOutcome?.let { this[OrdersTable.payoutOutcome] = it }
+        patch.payoutSentAt?.let { this[OrdersTable.payoutSentAt] = it }
+        patch.payoutRetryAt?.let { this[OrdersTable.payoutRetryAt] = it }
+        patch.mpesaReceipt?.let { this[OrdersTable.mpesaReceipt] = it }
+    }
 
     override suspend fun markPaid(
         orderId: RampOrderId,
@@ -337,7 +475,7 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
 
     private companion object {
         val OPEN = OrderState.OPEN.map { it.name }
-        val AWAITING = OrderState.AWAITING_PAYMENT.map { it.name }
+        val NEEDS_KEYS = OrderState.NEEDS_KEYS.map { it.name }
     }
 }
 
@@ -370,6 +508,22 @@ internal fun ResultRow.toOrder() =
         createdAt = this[OrdersTable.createdAt],
         updatedAt = this[OrdersTable.updatedAt],
         attempt = this[OrdersTable.attempt],
+        providerFeeMinor = this[OrdersTable.providerFeeMinor],
+        providerFeeSource = this[OrdersTable.providerFeeSource],
+        providerFeeActualMinor = this[OrdersTable.providerFeeActualMinor],
+        walletTransferId = this[OrdersTable.walletTransferId],
+        fundedMinor = this[OrdersTable.fundedMinor],
+        fundingTxHash = this[OrdersTable.fundingTxHash],
+        fundedAt = this[OrdersTable.fundedAt],
+        refundAddress = this[OrdersTable.refundAddress],
+        payoutAttempts = this[OrdersTable.payoutAttempts],
+        payoutFailures = this[OrdersTable.payoutFailures],
+        payoutReference = this[OrdersTable.payoutReference],
+        payoutProviderReference = this[OrdersTable.payoutProviderReference],
+        payoutSecondaryReference = this[OrdersTable.payoutSecondaryReference],
+        payoutOutcome = this[OrdersTable.payoutOutcome],
+        payoutSentAt = this[OrdersTable.payoutSentAt],
+        payoutRetryAt = this[OrdersTable.payoutRetryAt],
     )
 
 internal fun payer(stored: String): PhoneNumber =

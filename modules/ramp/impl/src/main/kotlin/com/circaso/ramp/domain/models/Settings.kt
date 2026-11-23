@@ -61,6 +61,23 @@ data class RampSettings(
     val kycAttemptsPerDay: Int = DEFAULT_KYC_ATTEMPTS_PER_DAY,
     /** How long a started check may stay unfinished before it is marked expired; also how long its link lasts. */
     val kycPendingHours: Int = DEFAULT_KYC_PENDING_HOURS,
+    /** Selling's own switch (decision 2026-11-23): buying's [state] doesn't open it. */
+    val offRampState: RampState = RampState.OFF,
+    /** Selling's limits, in what the user receives (KES minor units). */
+    val offRampMinMinor: Long = DEFAULT_OFFRAMP_MIN_MINOR,
+    val offRampMaxMinor: Long = DEFAULT_OFFRAMP_MAX_MINOR,
+    val offRampDailyLimitMinor: Long = DEFAULT_OFFRAMP_DAILY_MINOR,
+    /** How long a sale waits for the user's USDC before it expires and the merchant's shillings are freed. */
+    val transferWindowSeconds: Int = DEFAULT_TRANSFER_WINDOW_SECONDS,
+    /**
+     * How long a funded sale whose payout provably didn't go out (refused, no balance, provider out of reach, the
+     * merchant offline) keeps being retried with its merchant before the USDC is refunded.
+     */
+    val payoutWindowSeconds: Int = DEFAULT_PAYOUT_WINDOW_SECONDS,
+    /** Staff's payout fee table: used only when the provider's own published table can't be read. Empty: none. */
+    val payoutFeeBands: List<PayoutFeeBand> = emptyList(),
+    /** Below this payout balance a merchant's portal says `payout_balance_low` (KES minor units; 0: never). */
+    val payoutBalanceLowMinor: Long = DEFAULT_PAYOUT_BALANCE_LOW_MINOR,
 ) {
     val quoteLifetime: Duration get() = Duration.ofSeconds(quoteSeconds.toLong())
 
@@ -68,6 +85,19 @@ data class RampSettings(
     val paymentWindow: Duration get() = Duration.ofSeconds(paymentWindowSeconds.toLong())
 
     val limits: RampLimits get() = RampLimits(FIAT, orderMinMinor, orderMaxMinor, dailyLimitMinor)
+
+    /** Selling's limits, in what the user receives. */
+    val offRampLimits: RampLimits get() = RampLimits(FIAT, offRampMinMinor, offRampMaxMinor, offRampDailyLimitMinor)
+
+    val transferWindow: Duration get() = Duration.ofSeconds(transferWindowSeconds.toLong())
+
+    val payoutWindow: Duration get() = Duration.ofSeconds(payoutWindowSeconds.toLong())
+
+    /** The state that opens [direction] on this network. */
+    fun stateOf(direction: Direction): RampState = if (direction == Direction.ON_RAMP) state else offRampState
+
+    /** How long an order in [direction] needs its merchant online for: the payment window, or the transfer's. */
+    fun windowOf(direction: Direction): Duration = if (direction == Direction.ON_RAMP) paymentWindow else transferWindow
 
     /** KYC is enforced on mainnet whatever the row says; the testnet may run without it while staff are testing. */
     val enforcesKyc: Boolean get() = kycRequired || network == Network.MAINNET
@@ -91,6 +121,16 @@ data class RampSettings(
         const val DEFAULT_MERCHANT_PORTAL_URL = "https://merchants.circaso.com"
         const val DEFAULT_KYC_ATTEMPTS_PER_DAY = 3
         const val DEFAULT_KYC_PENDING_HOURS = 24
+
+        /** Selling's defaults: KES 10 to 5 000 a sale, 20 000 a day, 15 minutes to send, 30 to retry a payout. */
+        const val DEFAULT_OFFRAMP_MIN_MINOR = 1_000L
+        const val DEFAULT_OFFRAMP_MAX_MINOR = 500_000L
+        const val DEFAULT_OFFRAMP_DAILY_MINOR = 2_000_000L
+        const val DEFAULT_TRANSFER_WINDOW_SECONDS = 900
+        const val DEFAULT_PAYOUT_WINDOW_SECONDS = 1_800
+
+        /** KES 1 000: a few sales' worth. */
+        const val DEFAULT_PAYOUT_BALANCE_LOW_MINOR = 100_000L
 
         /** The portal page a merchant lands on after the provider's hosted check; it reads RM2 for the outcome. */
         const val MERCHANT_KYC_CALLBACK_PATH = "/kyc/done"

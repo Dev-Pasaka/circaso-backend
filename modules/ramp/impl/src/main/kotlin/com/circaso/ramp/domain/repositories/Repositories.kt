@@ -13,9 +13,12 @@ import com.circaso.ramp.domain.models.PaidOutcome
 import com.circaso.ramp.domain.models.PreviewAccess
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.TestPayout
+import com.circaso.ramp.domain.models.TestPayoutState
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import java.time.Instant
+import java.util.UUID
 
 interface SettingsRepository {
     /** Every network's row there is. */
@@ -93,14 +96,66 @@ interface OrderRepository {
         after: PageCursor?,
     ): List<Order>
 
-    /** Whether the merchant has an order still waiting for its payment (their keys are still needed). */
-    suspend fun hasAwaitingPayment(merchantId: MerchantId): Boolean
+    /**
+     * Whether the merchant has an order their keys are still needed for: a purchase waiting for its payment, or a sale
+     * that may still have to be paid out ([OrderState.NEEDS_KEYS]).
+     */
+    suspend fun needsKeys(merchantId: MerchantId): Boolean
+
+    /**
+     * Records the W4 transfer [transferId] funding a sale, once: an order that already has one keeps it (the caller
+     * compares), and a transfer that funds another order is not taken. The order as it stands afterwards.
+     */
+    suspend fun attachTransfer(
+        orderId: RampOrderId,
+        transferId: UUID,
+        at: Instant,
+    ): Order?
+
+    /** Sales on [network] whose transfer is known but not yet confirmed with the custodian, untouched since [before]. */
+    suspend fun awaitingFunding(
+        network: Network,
+        before: Instant,
+        limit: Int,
+    ): List<Order>
+
+    /** `FUNDED` sales on [network] whose next payout attempt is due at [now], oldest first. */
+    suspend fun dueForPayout(
+        network: Network,
+        now: Instant,
+        limit: Int,
+    ): List<Order>
+
+    /**
+     * Staff asked for an order in `REVIEW` to be checked with its provider again (RO4): the app's process, which holds
+     * the merchant's keys, does it on its next sweep. False when the order isn't in review.
+     */
+    suspend fun requestRecheck(orderId: RampOrderId, at: Instant): Boolean
+
+    /** Orders staff asked to be checked again, oldest request first; and the request done. */
+    suspend fun rechecks(limit: Int): List<Order>
+
+    suspend fun clearRecheck(orderId: RampOrderId)
+
+    /** Whether another order than [except] already carries the M-Pesa [receipt] (`orders_receipt_key`). */
+    suspend fun receiptTaken(receipt: String, except: RampOrderId): Boolean
 
     /** The transition guard: moves the order to [to] only from one of [from], and answers the moved row or null. */
     suspend fun move(
         orderId: RampOrderId,
         to: OrderState,
         from: Set<OrderState>,
+        patch: OrderPatch,
+        at: Instant,
+    ): Order?
+
+    /**
+     * Writes [patch] on an order that is still in [state], without moving it (no timeline row): what a step learned
+     * while the order stays where it is (a payout's references, a refund's transaction). Null when it has moved on.
+     */
+    suspend fun annotate(
+        orderId: RampOrderId,
+        state: OrderState,
         patch: OrderPatch,
         at: Instant,
     ): Order?
@@ -141,11 +196,60 @@ interface ReservationRepository {
 
     suspend fun insert(order: Order, at: Instant)
 
+    /**
+     * Holds a sale's USDC in the merchant's float (`HOLD`, decision 2026-11-23): [amountMinor] the merchant's wallet
+     * received for it, counted as reserved so it can be neither sold nor swept until the user is paid or refunded.
+     */
+    suspend fun hold(
+        order: Order,
+        amountMinor: Long,
+        at: Instant,
+    )
+
+    /**
+     * Holds the float again for an order staff resolved as paid after it was given back (a purchase paid after its
+     * expiry); true when it was given back and is held again now.
+     */
+    suspend fun reopen(orderId: RampOrderId, at: Instant): Boolean
+
     /** Gives the float back; true for the caller that closed it. */
     suspend fun release(orderId: RampOrderId, at: Instant): Boolean
 
     /** The float was spent on the order; true for the caller that closed it. */
     suspend fun consume(orderId: RampOrderId, at: Instant): Boolean
+}
+
+/**
+ * `ramp.payout_holds`: the shillings at a merchant's payout provider promised to their open sales, one per order (the
+ * payout and its fee). Free shillings are the provider's payout balance less [openTotal]. Each closes once.
+ */
+interface PayoutHoldRepository {
+    suspend fun insert(order: Order, at: Instant)
+
+    /** What the merchant's open sales hold, across networks (one provider account pays for both). */
+    suspend fun openTotal(merchantId: MerchantId): Long
+
+    /** The sale ended without a payout: the shillings are free again. True for the caller that closed it. */
+    suspend fun release(orderId: RampOrderId, at: Instant): Boolean
+
+    /** The payout was made. True for the caller that closed it. */
+    suspend fun consume(orderId: RampOrderId, at: Instant): Boolean
+}
+
+/** `ramp.test_payouts`. One test in flight per merchant (`test_payouts_open_key`). */
+interface TestPayoutRepository {
+    /** False when the merchant already has a test in flight. */
+    suspend fun insert(test: TestPayout): Boolean
+
+    suspend fun find(testId: UUID): TestPayout?
+
+    suspend fun latest(merchantId: MerchantId): TestPayout?
+
+    /** Replaces the test's row with [test] only while it is in one of [from]; true when it moved. */
+    suspend fun move(test: TestPayout, from: Set<TestPayoutState>): Boolean
+
+    /** Tests in flight untouched since [before], oldest first. */
+    suspend fun open(before: Instant, limit: Int): List<TestPayout>
 }
 
 interface CommissionRepository {

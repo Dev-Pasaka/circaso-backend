@@ -8,12 +8,14 @@ import com.circaso.ramp.data.tables.MerchantWalletsTable
 import com.circaso.ramp.data.tables.MerchantsTable
 import com.circaso.ramp.data.tables.RevenueWalletsTable
 import com.circaso.ramp.domain.models.Candidate
+import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.PaymentsIssue
+import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.SealedCredentials
 import com.circaso.ramp.domain.repositories.CredentialRepository
@@ -210,6 +212,58 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
             MerchantsTable.update({ MerchantsTable.onlineUntil less now }) { it[onlineUntil] = null }
         }
 
+    override suspend fun setPayoutAccount(merchantId: MerchantId, accountId: String?) {
+        database.tx("merchants.set-payout-account") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) { it[payoutAccountId] = accountId }
+        }
+    }
+
+    override suspend fun setPayoutIssue(
+        merchantId: MerchantId,
+        issue: PayoutIssue?,
+        at: Instant,
+    ) {
+        database.tx("merchants.set-payout-issue") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[payoutIssue] = issue?.name
+                it[payoutIssueAt] = at.takeIf { issue != null }
+            }
+        }
+    }
+
+    override suspend fun recordBalances(merchantId: MerchantId, balances: KesBalances) {
+        database.tx("merchants.record-balances") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[payoutBalanceMinor] = balances.payoutMinor
+                it[payoutBalanceSource] = balances.payoutSource
+                it[feeBalanceMinor] = balances.feeMinor
+                it[feeBalanceSource] = balances.feeSource
+                it[balancesReadAt] = balances.readAt
+            }
+        }
+    }
+
+    override suspend fun balances(merchantId: MerchantId): KesBalances =
+        database.tx("merchants.balances") {
+            MerchantsTable
+                .select(
+                    MerchantsTable.payoutBalanceMinor,
+                    MerchantsTable.payoutBalanceSource,
+                    MerchantsTable.feeBalanceMinor,
+                    MerchantsTable.feeBalanceSource,
+                    MerchantsTable.balancesReadAt,
+                ).where { MerchantsTable.merchantId eq merchantId.value }
+                .map {
+                    KesBalances(
+                        payoutMinor = it[MerchantsTable.payoutBalanceMinor],
+                        payoutSource = it[MerchantsTable.payoutBalanceSource],
+                        feeMinor = it[MerchantsTable.feeBalanceMinor],
+                        feeSource = it[MerchantsTable.feeBalanceSource],
+                        readAt = it[MerchantsTable.balancesReadAt],
+                    )
+                }.singleOrNull() ?: KesBalances.UNREAD
+        }
+
     private suspend fun one(where: () -> Op<Boolean>): Merchant? =
         MerchantsTable
             .selectAll()
@@ -237,6 +291,9 @@ private fun ResultRow.toMerchant() =
         orderLimitMinor = this[MerchantsTable.orderLimitMinor],
         offersOnramp = this[MerchantsTable.offersOnramp],
         offersOfframp = this[MerchantsTable.offersOfframp],
+        payoutAccountId = this[MerchantsTable.payoutAccountId],
+        payoutIssue = this[MerchantsTable.payoutIssue]?.let(PayoutIssue::valueOf),
+        payoutIssueAt = this[MerchantsTable.payoutIssueAt],
     )
 
 private fun ResultRow.toWallet() =

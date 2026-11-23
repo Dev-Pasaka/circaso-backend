@@ -14,6 +14,8 @@ import com.circaso.ops.presentation.dto.RampOrdersResponse
 import com.circaso.ops.presentation.dto.RampOverviewResponse
 import com.circaso.ops.presentation.dto.RampPreviewAccessRequest
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
+import com.circaso.ops.presentation.dto.RampResolveRequest
+import com.circaso.ops.presentation.dto.RampResolveResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
 import com.circaso.ops.presentation.dto.RampUserVerificationResponse
 import com.circaso.ops.presentation.dto.RampVerificationResetRequest
@@ -33,6 +35,7 @@ import com.circaso.ops.presentation.mappers.orderCursor
 import com.circaso.ops.presentation.mappers.pageLimit
 import com.circaso.ops.presentation.mappers.parseEnum
 import com.circaso.ops.presentation.mappers.parseMerchantId
+import com.circaso.ops.presentation.mappers.parseRampOrderId
 import com.circaso.ops.presentation.mappers.parseUserId
 import com.circaso.ops.presentation.mappers.query
 import com.circaso.ops.presentation.mappers.rampOrderState
@@ -160,7 +163,11 @@ private fun Route.rampReads(
         notes =
             "${roles("FINANCE", "ADMIN")} `?state=REVIEW` (the only state listed), oldest first, both networks " +
                 "unless `?network=` names one. $PAGED `failureReason` says why it stopped (`payment_mismatch`, " +
-                "`paid_after_expiry`, `release_refused`, `release_failed`, …). Its float stays reserved.",
+                "`paid_after_expiry`, `release_refused`, `release_failed`; a sale: `payout_mismatch`, " +
+                "`payout_not_found`, `payout_unconfirmed`, `payout_unresolved`, `receipt_reused`, " +
+                "`transfer_mismatch`, `wrong_token`, `funding_unconfirmed`, `refund_refused`, `refund_failed`, …). " +
+                "What it holds stays held. `direction` says which; a sale carries `fundedMinor`, " +
+                "`payoutAttempts` and `payoutOutcome`. Resolve it with `POST orders/{orderId}/resolve`.",
     )
 }
 
@@ -375,6 +382,37 @@ private fun Route.rampIdentityWrites(ramp: RampService) {
 
 private fun Route.rampWrites(ramp: RampService, clock: Clock) {
     rampIdentityWrites(ramp)
+    post("orders/{orderId}/resolve") {
+        val request = call.receive<RampResolveRequest>()
+        val result =
+            parseRampOrderId(call.parameters["orderId"]).flatMap {
+                ramp.resolve(call.actor(), it, request.resolution, request.receipt, request.reason)
+            }
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<RampResolveRequest, RampResolveResponse>(
+        "OPS · Resolve a ramp order waiting for a person (RO4)",
+        TAG_RAMP,
+        listOf(
+            REASON,
+            "ramp.order_not_found",
+            "ramp.resolution_invalid",
+            "ramp.receipt_required",
+            "ramp.payout_may_be_paid",
+            MALFORMED,
+            FORBIDDEN,
+        ),
+        notes =
+            "${roles("ADMIN")} Audited with the reason, on the order. Only an order in REVIEW. `resolution`: " +
+                "`MARK_PAID` (with `receipt`, the M-Pesa receipt you saw: a sale completes and its USDC becomes the " +
+                "merchant's; a purchase is released by the ops server), `REFUND` (a sale's USDC goes back to the " +
+                "user from the merchant's float, sent by the ops server within seconds; refused when it never " +
+                "arrived, when a refund already went, and `ramp.payout_may_be_paid` when the provider last said " +
+                "the payout was paid; a purchase is closed unreleased and its shillings are returned by hand) or " +
+                "`RECHECK` (the provider is asked again by the app server, which holds the merchant's keys, within " +
+                "about ten seconds; `providerSaid` is `queued`: read the order again). Check the merchant's M-Pesa " +
+                "statement before a refund: a payout that went out and is refunded pays the user twice.",
+    )
+
     route("/merchants/{merchantId}") {
         post("approve") {
             val request = call.receive<ReasonRequest>()

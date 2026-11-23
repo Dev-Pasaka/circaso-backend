@@ -18,6 +18,7 @@ import com.circaso.ramp.data.repositories.MerchantRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantWalletRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderEventRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
+import com.circaso.ramp.data.repositories.PayoutHoldRepositoryImpl
 import com.circaso.ramp.data.repositories.PreviewAccessRepositoryImpl
 import com.circaso.ramp.data.repositories.QuoteRepositoryImpl
 import com.circaso.ramp.data.repositories.RampOutboxImpl
@@ -143,7 +144,17 @@ class RampDataTest {
     private val engineBook = EngineBook(engineRows, alerts, clock, Duration.ZERO)
     private val statsBook = MerchantStatsBook(orderEvents, commissions, clock, Duration.ZERO)
     private val engineFacts =
-        EngineFacts(merchants, reservations, commissions, treasury, sessions, verifications, statsBook, clock)
+        EngineFacts(
+            merchants,
+            reservations,
+            commissions,
+            treasury,
+            sessions,
+            verifications,
+            statsBook,
+            clock,
+            PayoutHoldRepositoryImpl(database),
+        )
     private val engine =
         Engine(
             facts = engineFacts,
@@ -157,6 +168,7 @@ class RampDataTest {
             log = routingLog,
             random = Random(Harness.SEED),
             clock = clock,
+            payoutHolds = PayoutHoldRepositoryImpl(database),
         )
     private val flow =
         OrderFlow(
@@ -561,7 +573,7 @@ class RampDataTest {
             assertEquals(order, orders.find(order.orderId))
             assertEquals(order, orders.byQuote(quote.quoteId))
             assertEquals(order, orders.openOf(quote.userId))
-            assertTrue(orders.hasAwaitingPayment(merchant.merchantId))
+            assertTrue(orders.needsKeys(merchant.merchantId))
         }
 
     @Test
@@ -610,7 +622,7 @@ class RampDataTest {
             assertEquals(listOf(order.orderId), orders.inReview(null, null, 10).map { it.orderId })
             assertTrue(orders.inReview(Network.MAINNET, null, 10).isEmpty())
             assertTrue(orders.inReview(TESTNET, order.orderId, 10).isEmpty())
-            assertFalse(orders.hasAwaitingPayment(order.merchantId))
+            assertFalse(orders.needsKeys(order.merchantId))
         }
 
     @Test

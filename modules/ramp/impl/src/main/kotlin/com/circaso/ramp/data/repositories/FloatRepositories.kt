@@ -7,6 +7,7 @@ import com.circaso.ramp.data.tables.CommissionsTable
 import com.circaso.ramp.data.tables.FeeSettlementsTable
 import com.circaso.ramp.data.tables.OrdersTable
 import com.circaso.ramp.data.tables.ReservationsTable
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.FeeSplit
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
@@ -56,6 +57,7 @@ private const val OPEN = "OPEN"
 private const val CONSUMED = "CONSUMED"
 private const val RELEASED = "RELEASED"
 private const val FLOAT = "FLOAT"
+private const val HOLD = "HOLD"
 
 class ReservationRepositoryImpl(private val database: Database) : ReservationRepository {
     override suspend fun openTotal(merchantId: MerchantId, network: Network): Long =
@@ -85,7 +87,36 @@ class ReservationRepositoryImpl(private val database: Database) : ReservationRep
         }
     }
 
+    override suspend fun hold(
+        order: Order,
+        amountMinor: Long,
+        at: Instant,
+    ) {
+        database.tx("reservations.hold") {
+            ReservationsTable.insertIgnore {
+                it[orderId] = order.orderId.value
+                it[merchantId] = order.merchantId.value
+                it[network] = order.network.name
+                it[ReservationsTable.amountMinor] = amountMinor
+                it[asset] = RampSettings.ASSET
+                it[kind] = HOLD
+                it[state] = OPEN
+                it[createdAt] = at
+            }
+        }
+    }
+
     override suspend fun release(orderId: RampOrderId, at: Instant): Boolean = close(orderId, RELEASED, at)
+
+    override suspend fun reopen(orderId: RampOrderId, at: Instant): Boolean =
+        database.tx("reservations.reopen") {
+            ReservationsTable.update({
+                (ReservationsTable.orderId eq orderId.value) and (ReservationsTable.state eq RELEASED)
+            }) {
+                it[state] = OPEN
+                it[closedAt] = null
+            } > 0
+        }
 
     override suspend fun consume(orderId: RampOrderId, at: Instant): Boolean = close(orderId, CONSUMED, at)
 
@@ -377,31 +408,37 @@ class StatementRepositoryImpl(private val database: Database) : StatementReposit
     ): StatementTotals =
         database.tx("statement.totals") {
             val orders = CommissionsTable.orderId.count()
-            val collected = OrdersTable.fiatAmountMinor.sum()
-            val sold = OrdersTable.assetAmountMinor.sum()
+            val fiat = OrdersTable.fiatAmountMinor.sum()
+            val asset = OrdersTable.assetAmountMinor.sum()
             val fees = OrdersTable.feeMinor.sum()
             val merchant = CommissionsTable.merchantMinor.sum()
             val platform = CommissionsTable.platformMinor.sum()
             val platformAsset = CommissionsTable.platformAssetMinor.sum()
-            val all =
+            // One row per direction: buying's shillings came in and its USDC went out; selling's the other way.
+            val byDirection =
                 rows
-                    .select(orders, collected, sold, fees, merchant, platform, platformAsset)
+                    .select(OrdersTable.direction, orders, fiat, asset, fees, merchant, platform, platformAsset)
                     .where { inPeriod(merchantId, network, period) }
-                    .single()
+                    .groupBy(OrdersTable.direction)
+                    .toList()
+            val buying = byDirection.firstOrNull { it[OrdersTable.direction] == Direction.ON_RAMP.name }
+            val selling = byDirection.firstOrNull { it[OrdersTable.direction] == Direction.OFF_RAMP.name }
             val swept =
                 rows
                     .select(platformAsset)
                     .where { inPeriod(merchantId, network, period) and CommissionsTable.settledAt.isNotNull() }
                     .single()[platformAsset] ?: 0
             StatementTotals(
-                orders = all[orders].toInt(),
-                collectedMinor = all[collected] ?: 0,
-                soldMinor = all[sold] ?: 0,
-                feesMinor = all[fees] ?: 0,
-                merchantMinor = all[merchant] ?: 0,
-                platformMinor = all[platform] ?: 0,
-                platformAssetMinor = all[platformAsset] ?: 0,
+                orders = byDirection.sumOf { it[orders].toInt() },
+                collectedMinor = buying?.get(fiat) ?: 0,
+                soldMinor = buying?.get(asset) ?: 0,
+                feesMinor = byDirection.sumOf { it[fees] ?: 0 },
+                merchantMinor = byDirection.sumOf { it[merchant] ?: 0 },
+                platformMinor = byDirection.sumOf { it[platform] ?: 0 },
+                platformAssetMinor = byDirection.sumOf { it[platformAsset] ?: 0 },
                 sweptAssetMinor = swept,
+                paidOutMinor = selling?.get(fiat) ?: 0,
+                boughtMinor = selling?.get(asset) ?: 0,
             )
         }
 
@@ -430,5 +467,6 @@ class StatementRepositoryImpl(private val database: Database) : StatementReposit
             // A sweep that has only been opened hasn't collected anything yet: the share is still held.
             settlementId = this[CommissionsTable.settlementId].takeIf { this[CommissionsTable.settledAt] != null },
             txHash = this[OrdersTable.txHash],
+            direction = Direction.valueOf(this[OrdersTable.direction]),
         )
 }

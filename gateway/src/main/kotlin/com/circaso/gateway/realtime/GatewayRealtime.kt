@@ -772,12 +772,26 @@ class GatewayRealtime(
 
     private fun rampOrderPush(frame: OrderUpdatedFrame): PushMessage? {
         val ids = PushPayload(kind = RAMP_ORDER_KIND, orderId = frame.orderId.toString())
+        if (frame.direction == "OFF_RAMP") return rampSalePush(frame, ids)
         return when (frame.state) {
             "COMPLETED" -> PushMessage("Circaso", "Your USDC has arrived", ids)
             "FAILED", "EXPIRED" -> PushMessage("Circaso", "Your top-up didn't go through", ids)
             else -> null
         }
     }
+
+    /**
+     * A sale (2026-11-23): the shillings were paid, the USDC is on its way back or back, and a sale the user never sent
+     * the USDC for ran out of time. Never an amount or a number on the lock screen.
+     */
+    private fun rampSalePush(frame: OrderUpdatedFrame, ids: PushPayload): PushMessage? =
+        when (frame.state) {
+            "COMPLETED" -> PushMessage("Circaso", "Your M-Pesa payment has been sent", ids)
+            "REFUNDING" -> PushMessage("Circaso", "We couldn't pay you out. Your USDC is on its way back.", ids)
+            "REFUNDED" -> PushMessage("Circaso", "Your USDC is back in your wallet", ids)
+            "EXPIRED" -> PushMessage("Circaso", "Your sale timed out before your USDC arrived", ids)
+            else -> null
+        }
 
     /**
      * Identity verification's final outcomes, and the two that need the person back: approved, declined, asked to

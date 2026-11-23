@@ -20,6 +20,11 @@ import java.math.RoundingMode
  * quoted rate.
  */
 class ReferenceRatePricing(private val rates: ExchangeRates) : Pricing {
+    override suspend fun rate(): Resource<BigDecimal> {
+        val rate = rates.usdRate(RampSettings.FIAT)?.rate ?: return Resource.error(RampError.PricingUnavailable)
+        return if (rate.signum() > 0) Resource.success(rate) else Resource.error(RampError.PricingUnavailable)
+    }
+
     override suspend fun price(
         direction: Direction,
         fiatMinor: Long?,

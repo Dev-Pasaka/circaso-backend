@@ -6,6 +6,7 @@ import com.circaso.ramp.api.KycUpdatedFrame
 import com.circaso.ramp.api.OrderUpdatedFrame
 import com.circaso.ramp.api.RampFrames
 import com.circaso.ramp.data.tables.RealtimeTable
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.ports.FrameSender
@@ -149,8 +150,9 @@ internal fun Order.toEnvelope(seq: Long, ts: Instant): RealtimeEnvelope =
             direction = direction.name,
             state = state.name,
             blockchain = blockchain,
-            pay = Amounts.fiat(fiat),
-            receive = Amounts.usdc(assetMinor),
+            // A sale is paid in USDC and received in shillings; a purchase the other way round.
+            pay = if (direction == Direction.OFF_RAMP) Amounts.usdc(assetMinor) else Amounts.fiat(fiat),
+            receive = if (direction == Direction.OFF_RAMP) Amounts.fiat(fiat) else Amounts.usdc(assetMinor),
             failureReason = failureReason,
         ),
         OrderUpdatedFrame.serializer(),

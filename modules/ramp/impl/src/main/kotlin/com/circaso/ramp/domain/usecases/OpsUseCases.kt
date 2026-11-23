@@ -28,6 +28,7 @@ import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
+import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
@@ -37,7 +38,8 @@ import java.time.Clock
 /**
  * `ramp.release` on one network, in the ops process: makes the wallets that are missing (the ramp's wallet set,
  * Circaso's ramp wallet, an approved merchant's float wallet), sends the USDC of every `PAID` order, and follows every
- * `RELEASING` one until the chain confirms it. Does nothing where this server has no treasury or can't sign.
+ * `RELEASING` one until the chain confirms it; sends back the USDC of every `REFUNDING` sale and follows it the same
+ * way (2026-11-23). Does nothing where this server has no treasury or can't sign.
  */
 class ReleaseOrders(
     private val treasury: TreasuryCustody?,
@@ -45,6 +47,7 @@ class ReleaseOrders(
     private val releases: Releases,
     private val orders: OrderRepository,
     private val clock: Clock,
+    private val refunds: SaleRefunds,
 ) {
     suspend operator fun invoke(network: Network): Int {
         val custody = treasury?.takeIf { it.canSign(network) } ?: return 0
@@ -57,6 +60,11 @@ class ReleaseOrders(
         }
         orders.stale(network, setOf(OrderState.RELEASING), all, LIMIT).forEach { order ->
             releases.follow(custody, order)
+            handled++
+        }
+        // A sale's USDC going back to its user (2026-11-23): sent once with a key from the order, then followed.
+        orders.stale(network, setOf(OrderState.REFUNDING), all, LIMIT).forEach { order ->
+            refunds.advance(custody, order)
             handled++
         }
         return handled

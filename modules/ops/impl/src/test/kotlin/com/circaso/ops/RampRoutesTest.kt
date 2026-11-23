@@ -337,6 +337,61 @@ class RampRoutesTest {
             assertEquals(HttpStatusCode.BadRequest, read("/orders?cursor=nope").status)
         }
 
+    @Test
+    fun `an admin resolves an order in review with a reason, audited on the order, and nobody else can`() =
+        testApplication {
+            application { harness.install(this) }
+            val order =
+                OpsRampOrder(
+                    orderId = RampOrderId.new(),
+                    network = Network.TESTNET,
+                    userId = UserId.new(),
+                    merchantId = MerchantId.new(),
+                    merchantName = "Crynce",
+                    state = "REVIEW",
+                    blockchain = "BASE-SEPOLIA",
+                    fiatCurrency = "KES",
+                    fiatAmountMinor = 100_000,
+                    assetAmountMinor = 7_800_000,
+                    feeMinor = 1_520,
+                    failureReason = "payout_unconfirmed",
+                    custodyTxId = null,
+                    createdAt = FakeRampAdmin.AT,
+                    updatedAt = FakeRampAdmin.AT,
+                    direction = "OFF_RAMP",
+                    providerFeeMinor = 500,
+                    fundedMinor = 7_800_000,
+                    payoutAttempts = 1,
+                    payoutOutcome = "UNKNOWN",
+                )
+            ramp.review += order
+            val path = "/orders/${order.orderId}/resolve"
+
+            val listed = read("/orders?state=REVIEW").bodyAsText()
+            assertTrue("\"direction\":\"OFF_RAMP\"" in listed && "\"payoutOutcome\":\"UNKNOWN\"" in listed, listed)
+            assertTrue("\"fundedMinor\":\"7800000\"" in listed && "\"providerFeeMinor\":\"500\"" in listed)
+
+            val finance =
+                post(path, """{"resolution":"REFUND","reason":"Statement shows nothing"}""", StaffRole.FINANCE)
+            assertEquals(HttpStatusCode.Forbidden, finance.status)
+            val noReason = post(path, """{"resolution":"REFUND","reason":" "}""")
+            assertTrue("ops.reason_required" in noReason.bodyAsText(), noReason.bodyAsText())
+            assertTrue(ramp.resolutions.isEmpty() && harness.audit.entries.isEmpty())
+
+            val paid = post(path, """{"resolution":"MARK_PAID","receipt":"QP12AB","reason":"Seen on the statement"}""")
+            assertEquals(HttpStatusCode.OK, paid.status, paid.bodyAsText())
+            assertTrue("\"state\":\"COMPLETED\"" in paid.bodyAsText(), paid.bodyAsText())
+            assertEquals(Triple(order.orderId, "MARK_PAID", "QP12AB"), ramp.resolutions.single())
+            val line = lines("ramp_order.resolve").single()
+            assertEquals(order.orderId.toString() to "ramp_order", line.targetId to line.targetType)
+            assertEquals("Seen on the statement", line.reason)
+            assertFalse("QP12AB" in line.detail.orEmpty(), "the receipt never reaches the audit line")
+
+            val recheck = post(path, """{"resolution":"RECHECK","reason":"Ask again"}""")
+            assertTrue("\"providerSaid\":\"queued\"" in recheck.bodyAsText(), recheck.bodyAsText())
+            assertEquals(HttpStatusCode.BadRequest, post("/orders/nope/resolve", """{"reason":"x y z"}""").status)
+        }
+
     // What each merchant did (2026-11-22)
 
     @Test
@@ -427,7 +482,7 @@ class RampRoutesTest {
                     "\"createdAt\":\"2026-11-22T12:00:00Z\",\"approvedAt\":\"2026-11-22T12:00:00Z\"," +
                     "\"online\":true,\"onlineUntil\":\"2026-11-22T13:00:00Z\"," +
                     "\"paymentsConnected\":true,\"collectionsProvider\":\"payhero\",\"paymentsIssue\":null," +
-                    "\"kyc\":null}" in body,
+                    "\"kyc\":null,\"offersOffRamp\":false,\"payoutAccountId\":null,\"payoutIssue\":null}" in body,
                 body,
             )
             assertTrue("\"wallet\":{\"blockchain\":\"BASE-SEPOLIA\",\"address\":\"0xfloat\"}" in body, body)
@@ -440,7 +495,7 @@ class RampRoutesTest {
             )
             assertTrue(
                 "\"orders\":{\"total\":42,\"completed\":40,\"failed\":1,\"expired\":0,\"cancelled\":0," +
-                    "\"inReview\":1,\"open\":0},\"successRatePercent\":\"95.2\",\"collected\":{" in body,
+                    "\"inReview\":1,\"open\":0,\"refunded\":0},\"successRatePercent\":\"95.2\",\"collected\":{" in body,
                 body,
             )
             val money = listOf("sold", "fees", "merchantShare", "circasoShare", "circasoShareUsdc", "swept", "held")

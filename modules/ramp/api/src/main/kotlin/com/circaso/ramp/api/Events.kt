@@ -27,7 +27,35 @@ data class OnRampCompleted(
     }
 }
 
-/** An order ended without a trade (`FAILED`, `EXPIRED` or `CANCELLED`). Once per order. */
+/**
+ * A sale completed (decision 2026-11-23): the provider itself said the user's shillings were paid, and the USDC the
+ * user sent became the merchant's. Once per order.
+ */
+@Serializable
+data class OffRampCompleted(
+    val orderId: RampOrderId,
+    val userId: UserId,
+    val merchantId: MerchantId,
+    /** `MAINNET` or `TESTNET`. */
+    val network: String,
+    val blockchain: String,
+    val asset: String,
+    val assetAmountMinor: String,
+    val fiatCurrency: String,
+    /** What the user was paid. */
+    val fiatAmountMinor: String,
+) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "ramp.OffRampCompleted"
+    }
+}
+
+/**
+ * An order ended without a trade (`FAILED`, `EXPIRED` or `CANCELLED`; a sale also `REFUNDED`, its USDC back with the
+ * user). Once per order.
+ */
 @Serializable
 data class OrderFailed(
     val orderId: RampOrderId,

@@ -3,6 +3,7 @@ package com.circaso.ramp
 import com.circaso.identity.api.AccountDirectory
 import com.circaso.identity.api.AccountKind
 import com.circaso.identity.api.AccountStatus
+import com.circaso.integrations.api.BalanceReading
 import com.circaso.integrations.api.CollectionBalances
 import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.integrations.api.CollectionProviders
@@ -10,9 +11,12 @@ import com.circaso.integrations.api.CollectionReceipt
 import com.circaso.integrations.api.CollectionRequest
 import com.circaso.integrations.api.CollectionState
 import com.circaso.integrations.api.CollectionStatus
+import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.integrations.api.DepositQuery
 import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailReceipt
+import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.KycDecision
 import com.circaso.integrations.api.KycDeclineReason
@@ -25,8 +29,15 @@ import com.circaso.integrations.api.KycSessionRequest
 import com.circaso.integrations.api.KycStatus
 import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.MobileCollections
+import com.circaso.integrations.api.PayoutLookup
 import com.circaso.integrations.api.PayoutReceipt
+import com.circaso.integrations.api.PayoutReference
 import com.circaso.integrations.api.PayoutRequest
+import com.circaso.integrations.api.PayoutResult
+import com.circaso.integrations.api.PayoutStatus
+import com.circaso.integrations.api.ProviderBalances
+import com.circaso.integrations.api.ProviderFee
+import com.circaso.integrations.api.ProviderFees
 import com.circaso.integrations.api.TreasuryAccess
 import com.circaso.integrations.api.TreasuryBalance
 import com.circaso.integrations.api.TreasuryCustody
@@ -202,6 +213,30 @@ class MemoryCounters : RampCounters {
     ) {
         daily[userId to network] = (daily[userId to network] ?: 0) - fiatMinor
     }
+
+    val sold = mutableMapOf<Pair<UserId, Network>, Long>()
+
+    override suspend fun reserveDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+        limitMinor: Long,
+    ): Boolean {
+        val total = (sold[userId to network] ?: 0) + fiatMinor
+        if (total > limitMinor) return false
+        sold[userId to network] = total
+        return true
+    }
+
+    override suspend fun giveBackDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+    ) {
+        sold[userId to network] = (sold[userId to network] ?: 0) - fiatMinor
+    }
 }
 
 class FakeAccounts : AccountDirectory {
@@ -219,9 +254,12 @@ class FakeAccounts : AccountDirectory {
 class FakeWallets : Wallets {
     val addresses = mutableMapOf<Pair<UserId, String>, String>()
 
+    /** The wallet's own record of each transfer, as `Wallets.transfer` answers it; set by a test. */
+    val transfers = mutableMapOf<TransferId, TransferSummary>()
+
     override suspend fun hasWallet(userId: UserId) = addresses.keys.any { it.first == userId }
 
-    override suspend fun transfer(transferId: TransferId): TransferSummary? = null
+    override suspend fun transfer(transferId: TransferId): TransferSummary? = transfers[transferId]
 
     override suspend fun groupWallet(chatId: ChatId): GroupWalletSummary? = null
 
@@ -347,6 +385,9 @@ class FakeKycProviders(private val offered: Map<String, KycProvider>) : KycProvi
 class FixedPricing : Pricing {
     var failure: Resource.Error? = null
 
+    /** 130 shillings a dollar, as [price] uses. */
+    override suspend fun rate(): Resource<BigDecimal> = failure ?: Resource.success(BigDecimal("130"))
+
     override suspend fun price(
         direction: Direction,
         fiatMinor: Long?,
@@ -452,13 +493,61 @@ class FakeCollections : MobileCollections {
         return Resource.success(known)
     }
 
-    override suspend fun payout(credentials: CollectionCredentials, request: PayoutRequest): Resource<PayoutReceipt> =
-        Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+    // ---- payouts (2026-11-23) ----
 
-    override suspend fun payoutStatus(
-        credentials: CollectionCredentials,
-        providerReference: String,
-    ): Resource<CollectionStatus> = Resource.error(IntegrationError.NotImplemented("payouts", "fake"))
+    /** Every payout that reached the provider (including one whose answer was lost), so a test can count sends. */
+    val payouts = mutableListOf<PayoutRequest>()
+
+    /** Every payout asked for, whatever came of it: a send the provider never took is in here and not in [payouts]. */
+    val payoutCalls = mutableListOf<PayoutRequest>()
+    val payoutLookups = mutableListOf<PayoutLookup>()
+
+    /** What the provider says of each payout, by our reference; set to answer anything at all. */
+    val payoutStatuses = mutableMapOf<String, PayoutStatus>()
+
+    /** What the next sends answer, in order; [PayoutResult.Accepted] once they run out. */
+    val nextPayouts = ArrayDeque<PayoutResult>()
+
+    /** Whether a send that answered `Unknown` actually reached the provider. */
+    var unknownReached = true
+
+    /** The payout balance by API username, and the fee balance read with it; unnamed: unreadable. */
+    val payoutBalances = mutableMapOf<String, Long>()
+
+    override suspend fun sendPayout(credentials: CollectionCredentials, request: PayoutRequest): PayoutResult {
+        payoutCalls += request
+        val result = nextPayouts.removeFirstOrNull() ?: PayoutResult.Accepted(PayoutReceipt("PO-${payouts.size + 1}"))
+        val reached = result is PayoutResult.Accepted || (result == PayoutResult.Unknown && unknownReached)
+        if (reached) {
+            payouts += request
+            payoutStatuses.putIfAbsent(request.reference, PayoutStatus.Pending)
+        }
+        return result
+    }
+
+    /** By our reference, which the fake can always search: a payout it never took is not found. */
+    override suspend fun lookUpPayout(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus {
+        payoutLookups += lookup
+        val by = if (lookup.providerReference != null) PayoutReference.PROVIDER else PayoutReference.OURS
+        return payoutStatuses[lookup.reference] ?: PayoutStatus.NotFound(by)
+    }
+
+    /** The provider paid [reference] as it was asked. */
+    fun payoutPaid(reference: String, receipt: String = "QP${reference.takeLast(6).uppercase()}") {
+        val payout = payouts.last { it.reference == reference }
+        payoutStatuses[reference] = PayoutStatus.Paid(receipt, payout.amount, reference)
+    }
+
+    override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> {
+        val payout = payoutBalances[credentials.username] ?: return Resource.error(IntegrationError.Unavailable("x"))
+        val fees = serviceBalances[credentials.username]
+        return Resource.success(
+            ProviderBalances(
+                BalanceReading(FiatAmount(payout, "KES"), "payment_wallet"),
+                fees?.let { BalanceReading(FiatAmount(it, "KES"), "service_wallet") },
+            ),
+        )
+    }
 
     override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> {
         balanceQueries += credentials
@@ -489,6 +578,9 @@ class FakeTreasury :
     val walletSets = mutableListOf<String>()
     val transactions = mutableMapOf<String, TreasuryTransaction>()
     val addresses = mutableMapOf<String, String>()
+
+    /** What the custodian recorded arriving in each chain transaction, by its hash; set by a test. */
+    val deposits = mutableMapOf<String, List<CustodyTransaction>>()
     var failure: IntegrationError? = null
     var access = TreasuryAccess.FULL
     private val byKey = mutableMapOf<UUID, String>()
@@ -567,6 +659,11 @@ class FakeTreasury :
     override suspend fun balance(network: Network, walletId: String): Resource<Money> {
         failure?.let { return Resource.error(it) }
         return Resource.success(Money(balances[walletId] ?: 0, Asset.USDC))
+    }
+
+    override suspend fun deposits(network: Network, query: DepositQuery): Resource<List<CustodyTransaction>> {
+        failure?.let { return Resource.error(it) }
+        return Resource.success(deposits[query.txHash].orEmpty().filter { it.walletId == query.walletId })
     }
 
     override suspend fun estimateTransfer(network: Network, transfer: TreasuryTransfer): Resource<BigDecimal> =
@@ -720,4 +817,17 @@ class SwitchableRandom(private val current: () -> Random) : Random() {
     override fun nextBits(bitCount: Int): Int = current().nextBits(bitCount)
 
     override fun nextDouble(): Double = current().nextDouble()
+}
+
+/** The provider's published fees, as a test sets them: every payout costs [payoutFeeMinor]; null is "can't say". */
+class FakeProviderFees(var payoutFeeMinor: Long? = 500) : ProviderFees {
+    val asked = mutableListOf<Long>()
+
+    override suspend fun collectionFee(provider: String, amount: FiatAmount): ProviderFee = ProviderFee.UNKNOWN
+
+    override suspend fun payoutFee(provider: String, amount: FiatAmount): ProviderFee {
+        asked += amount.amountMinor
+        val fee = payoutFeeMinor ?: return ProviderFee.UNKNOWN
+        return ProviderFee(FiatAmount(fee, amount.currency), FeeSource.LIVE_TABLE)
+    }
 }

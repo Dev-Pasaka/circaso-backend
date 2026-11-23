@@ -7,6 +7,7 @@ import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycStanding
+import com.circaso.ramp.domain.models.OffRampStatus
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
@@ -25,6 +26,9 @@ import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.OrderFlow
+import com.circaso.ramp.domain.support.PayoutFees
+import com.circaso.ramp.domain.support.SaleFlow
+import com.circaso.ramp.domain.support.SalePricing
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
@@ -44,12 +48,15 @@ class GetRampStatus(
     private val engine: Engine,
     private val verifications: Verifications,
 ) {
+    /**
+     * Answers when either direction is open to the user (selling has its own switch, 2026-11-23); `ramp.unavailable`
+     * only when neither is.
+     */
     suspend operator fun invoke(userId: UserId, network: Network): Resource<RampStatus> {
-        val settings =
-            when (val open = gates.open(userId, network)) {
-                is Resource.Error -> return open
-                is Resource.Success -> open.data
-            }
+        val settings = gates.settingsOf(network)
+        val buying = gates.isOpen(userId, settings, Direction.ON_RAMP)
+        val selling = gates.isOpen(userId, settings, Direction.OFF_RAMP)
+        if (!buying && !selling) return Resource.error(RampError.Unavailable)
         val blocked = gates.isBlocked(userId, settings)
         val verification = verifications.view(Subject.user(userId), settings)
         return Resource.success(
@@ -58,13 +65,24 @@ class GetRampStatus(
                 kyc = gates.kyc(userId, settings),
                 accountActive = accounts.status(userId) == AccountStatus.ACTIVE,
                 blockchains = settings.chains,
-                merchantOnline = settings.chains.any { engine.anyoneOnline(network, it, settings) },
+                merchantOnline = buying && settings.chains.any { engine.anyoneOnline(network, it, settings) },
                 openOrderId = orders.openOf(userId)?.orderId,
                 limits = settings.limits,
                 feeBps = settings.feeBps,
                 // Someone barred has nothing to start: a check wouldn't let them trade.
                 verification = if (blocked) verification.copy(canStart = false) else verification,
                 blocked = blocked,
+                onRampOpen = buying,
+                offRamp =
+                    OffRampStatus(
+                        open = selling,
+                        merchantOnline =
+                            selling &&
+                                settings.chains.any {
+                                    engine.anyoneOnline(network, it, settings, Direction.OFF_RAMP)
+                                },
+                        limits = settings.offRampLimits,
+                    ),
             ),
         )
     }
@@ -80,19 +98,20 @@ class CreateQuote(
     private val pricing: Pricing,
     private val quotes: QuoteRepository,
     private val clock: Clock,
+    private val payoutFees: PayoutFees,
 ) {
     suspend operator fun invoke(command: QuoteCommand): Resource<Quote> {
         val settings =
-            when (val open = gates.open(command.userId, command.network)) {
+            when (val open = gates.open(command.userId, command.network, command.direction)) {
                 is Resource.Error -> return open
                 is Resource.Success -> open.data
             }
-        if (command.direction != Direction.ON_RAMP) return Resource.error(RampError.OffRampUnavailable)
         val offered = command.blockchain in settings.chains && Network.ofChain(command.blockchain) == command.network
         if (!offered) return Resource.error(RampError.ChainUnsupported)
         if ((command.fiatMinor == null) == (command.assetMinor == null)) return Resource.error(RampError.AmountInvalid)
         if (accounts.status(command.userId) != AccountStatus.ACTIVE) return Resource.error(RampError.AccountRestricted)
         gates.refusal(command.userId, settings)?.let { return Resource.error(it) }
+        if (command.direction == Direction.OFF_RAMP) return sale(command, settings)
 
         val asked = pricing.price(command.direction, command.fiatMinor, command.assetMinor, settings.feeBps)
         val priced =
@@ -118,6 +137,60 @@ class CreateQuote(
                 feeBps = settings.feeBps,
                 merchantShareBps = settings.merchantShareBps,
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
+            )
+        quotes.insert(quote)
+        return Resource.success(quote)
+    }
+
+    /**
+     * A sale (decision 2026-11-23): the user names the USDC to send or the shillings to receive (whole shillings).
+     * Circaso's fee is the settings' rate, as on a purchase; the provider's payout fee is added to the user's cost and
+     * comes from its published table, else staff's table, and is **never invented**: no fee, no quote
+     * (`ramp.payout_fee_unavailable`). The limits are selling's own, on what the user receives.
+     */
+    private suspend fun sale(command: QuoteCommand, settings: RampSettings): Resource<Quote> {
+        val rate =
+            when (val read = pricing.rate()) {
+                is Resource.Error -> return read
+                is Resource.Success -> read.data
+            }
+        var feeMissing = false
+        var feeSource: String? = null
+        val feeOf: suspend (Long) -> Long? = { amount ->
+            val fee = payoutFees.of(settings, amount)
+            if (fee == null) feeMissing = true else feeSource = fee.source
+            fee?.feeMinor
+        }
+        val asset = command.assetMinor
+        val fiat = command.fiatMinor
+        val priced =
+            when {
+                asset != null -> SalePricing.ofAsset(asset, rate, settings.feeBps, feeOf)
+                fiat != null -> SalePricing.ofPayout(fiat, rate, settings.feeBps, feeOf)
+                else -> null
+            }
+        if (priced == null) {
+            return Resource.error(if (feeMissing) RampError.PayoutFeeUnavailable else RampError.AmountInvalid)
+        }
+        if (priced.payoutMinor !in settings.offRampMinMinor..settings.offRampMaxMinor) {
+            return Resource.error(RampError.LimitExceeded)
+        }
+        val quote =
+            Quote(
+                quoteId = QuoteId.new(),
+                userId = command.userId,
+                network = command.network,
+                direction = Direction.OFF_RAMP,
+                blockchain = command.blockchain,
+                fiat = FiatAmount(priced.payoutMinor, RampSettings.FIAT),
+                assetMinor = priced.assetMinor,
+                rate = rate,
+                feeMinor = priced.feeMinor,
+                feeBps = settings.feeBps,
+                merchantShareBps = settings.merchantShareBps,
+                expiresAt = clock.instant().plus(settings.quoteLifetime),
+                providerFeeMinor = priced.providerFeeMinor,
+                providerFeeSource = feeSource,
             )
         quotes.insert(quote)
         return Resource.success(quote)
@@ -160,15 +233,36 @@ class CancelOrder(
     private val orders: OrderRepository,
     private val merchants: MerchantRepository,
     private val flow: OrderFlow,
+    private val sales: SaleFlow,
 ) {
     suspend operator fun invoke(userId: UserId, orderId: RampOrderId): Resource<OrderView> {
         val order =
             orders.find(orderId)?.takeIf { it.userId == userId } ?: return Resource.error(RampError.OrderNotFound)
         val after =
             when (order.state) {
-                OrderState.RESERVED -> flow.close(order, OrderState.CANCELLED, "cancelled")
-                OrderState.PAYMENT_REQUESTED -> flow.verify(order).order.takeIf { it.state == OrderState.FAILED }
-                else -> null
+                OrderState.RESERVED -> {
+                    flow.close(order, OrderState.CANCELLED, "cancelled")
+                }
+
+                OrderState.PAYMENT_REQUESTED -> {
+                    flow.verify(order).order.takeIf { it.state == OrderState.FAILED }
+                }
+
+                // A sale before its USDC is known to be on its way: a transfer the wallet already confirmed can't be
+                // taken back, so that sale carries on (and one that lands after a cancel is refunded).
+                OrderState.AWAITING_TRANSFER -> {
+                    order.takeIf { it.walletTransferId == null }?.let {
+                        sales.close(
+                            it,
+                            OrderState.CANCELLED,
+                            "cancelled",
+                        )
+                    }
+                }
+
+                else -> {
+                    null
+                }
             } ?: return Resource.error(RampError.OrderNotCancellable)
         return Resource.success(OrderView(after, merchants.find(after.merchantId)?.displayName.orEmpty()))
     }

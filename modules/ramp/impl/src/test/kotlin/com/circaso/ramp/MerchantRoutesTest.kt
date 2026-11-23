@@ -3,6 +3,8 @@ package com.circaso.ramp
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.usecases.GetTestPayout
+import com.circaso.ramp.domain.usecases.StartTestPayout
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -62,6 +64,9 @@ class MerchantRoutesTest {
             ramp.startMerchantKyc,
             ramp.performance,
             ramp.setOffers,
+            ramp.setPayoutAccount,
+            StartTestPayout(ramp.testPayouts),
+            GetTestPayout(ramp.testPayouts),
         )
     private val base = "/v1/ramp/merchant"
 

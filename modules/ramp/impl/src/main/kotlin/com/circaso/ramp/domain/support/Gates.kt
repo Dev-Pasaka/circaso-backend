@@ -1,6 +1,7 @@
 package com.circaso.ramp.domain.support
 
 import com.circaso.ramp.domain.errors.RampError
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycStanding
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
@@ -22,17 +23,33 @@ class Gates(
     private val preview: PreviewAccessRepository,
     private val kyc: KycGate,
 ) {
-    /** [network]'s settings when the ramp is open to [userId] there. */
-    suspend fun open(userId: UserId, network: Network): Resource<RampSettings> {
+    /**
+     * [network]'s settings when the ramp is open to [userId] there in [direction]. Buying answers `ramp.unavailable`
+     * when it isn't; selling, which has its own switch (decision 2026-11-23), `ramp.offramp_unavailable`. Both use the
+     * same preview list.
+     */
+    suspend fun open(
+        userId: UserId,
+        network: Network,
+        direction: Direction = Direction.ON_RAMP,
+    ): Resource<RampSettings> {
         val current = settings.of(network)
-        val allowed =
-            when (current.state) {
-                RampState.OFF -> false
-                RampState.PREVIEW -> preview.has(userId, network)
-                RampState.ON -> true
-            }
-        return if (allowed) Resource.success(current) else Resource.error(RampError.Unavailable)
+        if (isOpen(userId, current, direction)) return Resource.success(current)
+        val closed = if (direction == Direction.ON_RAMP) RampError.Unavailable else RampError.OffRampUnavailable
+        return Resource.error(closed)
     }
+
+    /** Whether [direction] is open to [userId] under [current]. */
+    suspend fun isOpen(
+        userId: UserId,
+        current: RampSettings,
+        direction: Direction,
+    ): Boolean =
+        when (current.stateOf(direction)) {
+            RampState.OFF -> false
+            RampState.PREVIEW -> preview.has(userId, current.network)
+            RampState.ON -> true
+        }
 
     /**
      * [network]'s settings whatever the ramp's state: for what isn't a trade. Verifying one's identity is open to any

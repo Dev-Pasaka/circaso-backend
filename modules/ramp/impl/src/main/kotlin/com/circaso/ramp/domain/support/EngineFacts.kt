@@ -17,6 +17,7 @@ import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
+import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
@@ -48,7 +49,10 @@ data class RoutingCommand(
 data class Gathered(
     val facts: List<CandidateFacts>,
     val candidates: Map<MerchantId, Candidate>,
-    /** Buying: each wallet's USDC as the custodian reported it, before anything spoken for is taken off. */
+    /**
+     * Buying: each wallet's USDC as the custodian reported it; selling: each merchant's payout balance as the provider
+     * reported it. Before anything spoken for is taken off.
+     */
     val balances: Map<MerchantId, Long>,
     /** Whether a float couldn't be read because the custodian was out of reach (not because it refused). */
     val custodyDown: Boolean,
@@ -68,6 +72,7 @@ class EngineFacts(
     private val kyc: KycGate,
     private val statsBook: MerchantStatsBook,
     private val clock: Clock,
+    private val payoutHolds: PayoutHoldRepository,
 ) {
     private class Read(val facts: CandidateFacts, val balance: Long?, val custodyDown: Boolean)
 
@@ -111,9 +116,9 @@ class EngineFacts(
             merchantId = merchantId,
             approved = merchant.state == MerchantState.APPROVED,
             kycCleared = !settings.enforcesKyc || kyc.isVerified(Subject.merchant(merchantId), settings.kycEnvironment),
-            online = merchant.onlineUntil?.isAfter(clock.instant().plus(settings.paymentWindow)) == true,
+            online = merchant.onlineUntil?.isAfter(clock.instant().plus(settings.windowOf(direction))) == true,
             hasKeys = sessions.of(merchantId)?.provider == settings.collectionsProvider,
-            paymentsIssue = merchant.paymentsIssue != null,
+            paymentsIssue = merchant.hasIssue(direction),
             offersDirection = merchant.offers(direction),
             limitMinor = merchant.orderLimit(engine),
             floatMinor = null,
@@ -137,7 +142,7 @@ class EngineFacts(
         val free =
             when (direction) {
                 Direction.ON_RAMP -> freeUsdc(candidate)
-                Direction.OFF_RAMP -> Free(request.kesFloat?.of(merchantId), null, custodyDown = false)
+                Direction.OFF_RAMP -> freeKes(merchantId, request.kesFloat)
             }
         val trades = statsBook.trades(merchantId, request.network)
         val stats = if (scores) statsBook.stats(merchantId, request.network, direction, engine) else null
@@ -164,6 +169,15 @@ class EngineFacts(
                 Free(balance - spoken, balance, custodyDown = false)
             }
         }
+    }
+
+    /**
+     * Selling: the merchant's payout balance as the provider reads it now, less what their open sales hold (both
+     * networks: one provider account pays for both); null when it can't be read.
+     */
+    private suspend fun freeKes(merchantId: MerchantId, kesFloat: KesFloat?): Free {
+        val balance = kesFloat?.of(merchantId) ?: return Free(null, null, custodyDown = false)
+        return Free(balance - payoutHolds.openTotal(merchantId), balance, custodyDown = false)
     }
 
     companion object {

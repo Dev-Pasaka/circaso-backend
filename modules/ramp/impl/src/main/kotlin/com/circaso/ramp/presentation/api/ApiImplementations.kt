@@ -6,10 +6,12 @@ import com.circaso.integrations.api.KycNotifications
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsMerchantWallet
+import com.circaso.ramp.api.OpsPayoutFeeBand
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
 import com.circaso.ramp.api.OpsRampFloat
+import com.circaso.ramp.api.OpsRampKesBalances
 import com.circaso.ramp.api.OpsRampMerchantActivity
 import com.circaso.ramp.api.OpsRampMerchantOrder
 import com.circaso.ramp.api.OpsRampMerchantProfile
@@ -22,6 +24,7 @@ import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPaymentsIssue
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
@@ -33,6 +36,7 @@ import com.circaso.ramp.api.RampFrames
 import com.circaso.ramp.api.RampKycEnvironments
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.api.RampOrderStates
+import com.circaso.ramp.api.RampResolutions
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.MerchantFigures
@@ -41,10 +45,13 @@ import com.circaso.ramp.domain.models.MerchantSummary
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.PayoutFeeBand
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.RampOverview
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
+import com.circaso.ramp.domain.models.Resolution
+import com.circaso.ramp.domain.models.ResolveCommand
 import com.circaso.ramp.domain.models.StaffOrder
 import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.StatementTotals
@@ -78,6 +85,10 @@ class RampImpl(private val events: RampEventsService) : Ramp {
 class RampCollectionNotifications(private val events: RampEventsService) : CollectionNotifications {
     override suspend fun onPaymentCallback(callbackKey: String, reference: String): Resource<Unit> =
         events.paymentCallback(callbackKey, reference)
+
+    /** A payout's doorbell (2026-11-23): the ramp asks the provider itself; a payment's reference is ignored here. */
+    override suspend fun onPayoutCallback(callbackKey: String, reference: String): Resource<Unit> =
+        events.payoutCallback(callbackKey, reference)
 }
 
 /**
@@ -246,6 +257,22 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
         by: UUID,
     ): Resource<Boolean> = environmentOf(environment).flatMap { admin.resetMerchantVerification(merchantId, it) }
 
+    override suspend fun resolve(
+        orderId: RampOrderId,
+        resolution: String,
+        receipt: String?,
+        by: UUID,
+    ): Resource<OpsRampResolved> {
+        val outcome =
+            Resolution.entries.firstOrNull { it.name == resolution.trim().uppercase() }
+                ?: return Resource.error(
+                    SharedError.Malformed("resolution", "must be one of ${RampResolutions.ALL.joinToString()}"),
+                )
+        return admin.resolve(ResolveCommand(orderId, outcome, receipt, by.toString())).map {
+            OpsRampResolved(it.view.toOps(), it.providerSaid)
+        }
+    }
+
     private fun environmentOf(name: String): Resource<KycEnvironment> =
         KycEnvironment.parse(name)?.let { Resource.success(it) }
             ?: Resource.error(SharedError.Malformed("environment", "must be one of ${RampKycEnvironments.ALL}"))
@@ -306,6 +333,12 @@ private fun OrderView.toOps() =
         custodyTxId = order.custodyTxId,
         createdAt = order.createdAt,
         updatedAt = order.updatedAt,
+        direction = order.direction.name,
+        providerFeeMinor = order.providerFeeMinor,
+        fundedMinor = order.fundedMinor,
+        payoutAttempts = order.payoutAttempts,
+        payoutOutcome = order.payoutOutcome,
+        hasReceipt = order.mpesaReceipt != null,
     )
 
 private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) =
@@ -339,6 +372,14 @@ private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) 
         kycAttemptsPerDay = kycAttemptsPerDay,
         kycPendingHours = kycPendingHours,
         kycProviders = offeredKyc,
+        offRampState = offRampState.name,
+        offRampMinMinor = offRampMinMinor,
+        offRampMaxMinor = offRampMaxMinor,
+        offRampDailyLimitMinor = offRampDailyLimitMinor,
+        transferWindowSeconds = transferWindowSeconds,
+        payoutWindowSeconds = payoutWindowSeconds,
+        payoutFeeBands = payoutFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
+        payoutBalanceLowMinor = payoutBalanceLowMinor,
     )
 
 /**
@@ -353,6 +394,11 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
         kycEnvironment?.let {
             KycEnvironment.parse(it)
                 ?: return Resource.error(RampError.SettingsInvalid("kycEnvironment", "must be SANDBOX or LIVE"))
+        }
+    val selling =
+        offRampState?.let { name ->
+            RampState.entries.firstOrNull { it.name == name.trim().uppercase() }
+                ?: return Resource.error(RampError.SettingsInvalid("offRampState", "must be OFF, PREVIEW or ON"))
         }
     return Resource.success(
         RampSettings(
@@ -383,6 +429,15 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             merchantPortalUrl = merchantPortalUrl?.trim() ?: current.merchantPortalUrl,
             kycAttemptsPerDay = kycAttemptsPerDay ?: current.kycAttemptsPerDay,
             kycPendingHours = kycPendingHours ?: current.kycPendingHours,
+            offRampState = selling ?: current.offRampState,
+            offRampMinMinor = offRampMinMinor ?: current.offRampMinMinor,
+            offRampMaxMinor = offRampMaxMinor ?: current.offRampMaxMinor,
+            offRampDailyLimitMinor = offRampDailyLimitMinor ?: current.offRampDailyLimitMinor,
+            transferWindowSeconds = transferWindowSeconds ?: current.transferWindowSeconds,
+            payoutWindowSeconds = payoutWindowSeconds ?: current.payoutWindowSeconds,
+            payoutFeeBands =
+                payoutFeeBands?.map { PayoutFeeBand(it.upToMinor, it.feeMinor) } ?: current.payoutFeeBands,
+            payoutBalanceLowMinor = payoutBalanceLowMinor ?: current.payoutBalanceLowMinor,
         ),
     )
 }
@@ -404,6 +459,8 @@ private fun StatementTotals.toMoney() =
         circasoShareUsdc = Amounts.usdc(platformAssetMinor),
         swept = Amounts.usdc(sweptAssetMinor),
         held = Amounts.usdc(heldAssetMinor),
+        paidOut = Amounts.fiat(paidOutMinor),
+        bought = Amounts.usdc(boughtMinor),
     )
 
 private fun MerchantFigures.toCounts() =
@@ -415,6 +472,7 @@ private fun MerchantFigures.toCounts() =
         cancelled = unfinished.cancelled,
         inReview = unfinished.inReview,
         open = unfinished.open,
+        refunded = unfinished.refunded,
     )
 
 private fun RampOverview.toOps() =
@@ -454,6 +512,9 @@ private fun MerchantSummary.toOps() =
                 paymentsConnected = paymentsProvider != null,
                 collectionsProvider = paymentsProvider,
                 paymentsIssue = merchant.paymentsIssue?.let { OpsRampPaymentsIssue(it.name, merchant.paymentsIssueAt) },
+                offersOffRamp = merchant.offersOfframp,
+                payoutAccountId = merchant.payoutAccountId,
+                payoutIssue = merchant.payoutIssue?.let { OpsRampPaymentsIssue(it.name, merchant.payoutIssueAt) },
             ),
         network = network,
         period = period.toOps(),
@@ -487,6 +548,15 @@ private fun MerchantSummary.toOps() =
             sweeps.map {
                 OpsRampSweep(it.settlementId, it.day, Amounts.usdc(it.amountMinor), it.state.name, it.orders, it.txHash)
             },
+        kesBalances =
+            OpsRampKesBalances(
+                payout = kesBalances.payoutMinor?.let { Amounts.fiat(it) },
+                payoutSource = kesBalances.payoutSource,
+                fees = kesBalances.feeMinor?.let { Amounts.fiat(it) },
+                feesSource = kesBalances.feeSource,
+                readAt = kesBalances.readAt,
+                held = Amounts.fiat(kesHeldMinor),
+            ),
     )
 
 /** The payer's number leaves the ramp masked, for staff as for the merchant. */

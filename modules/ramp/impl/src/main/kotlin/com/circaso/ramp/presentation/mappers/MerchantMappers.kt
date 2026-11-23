@@ -4,12 +4,15 @@ import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.ramp.domain.models.CallbackView
 import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Earnings
+import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantPerformance
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.OffRampView
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PaymentAccountCommand
+import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.Performance
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProfileCommand
@@ -18,13 +21,17 @@ import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
+import com.circaso.ramp.domain.models.TestPayout
+import com.circaso.ramp.domain.models.TestPayoutState
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.presentation.dto.CallbackResponse
 import com.circaso.ramp.presentation.dto.ChangePinRequest
 import com.circaso.ramp.presentation.dto.EarningsResponse
 import com.circaso.ramp.presentation.dto.GoOnlineRequest
+import com.circaso.ramp.presentation.dto.KesBalanceDto
 import com.circaso.ramp.presentation.dto.MerchantFloatDto
+import com.circaso.ramp.presentation.dto.MerchantOffRampDto
 import com.circaso.ramp.presentation.dto.MerchantOffersDto
 import com.circaso.ramp.presentation.dto.MerchantOffersRequest
 import com.circaso.ramp.presentation.dto.MerchantOrderDto
@@ -49,6 +56,8 @@ import com.circaso.ramp.presentation.dto.StatementLineDto
 import com.circaso.ramp.presentation.dto.StatementResponse
 import com.circaso.ramp.presentation.dto.StatementTotalsDto
 import com.circaso.ramp.presentation.dto.SweepDto
+import com.circaso.ramp.presentation.dto.TestPayoutRequest
+import com.circaso.ramp.presentation.dto.TestPayoutResponse
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
@@ -105,8 +114,59 @@ fun PaymentsRequest.toCommand(): Resource<PaymentAccountCommand> {
             value.length > FIELD_MAX
         }?.let { (field, _) -> return malformed(field, "too long") }
     if (!pin.isDigits(PIN_LENGTH)) return malformed("pin", "must be 6 digits")
+    val account = accountId?.trim()?.takeIf { it.isNotEmpty() }
+    if (account != null && !PayoutAccount.PATTERN.matches(account)) return malformed("accountId", "digits only")
     val credentials = CollectionCredentials(username.trim(), password, channelId.trim())
-    return Resource.success(PaymentAccountCommand(credentials, pin))
+    return Resource.success(PaymentAccountCommand(credentials, pin, account))
+}
+
+/** The test payout's amount: KES cents as digits. The use case checks the range. */
+fun TestPayoutRequest.toAmount(): Resource<Long> =
+    amountMinor.trim().toLongOrNull()?.let { Resource.success(it) } ?: malformed("amountMinor", "KES cents as digits")
+
+fun KesBalances.toPayoutDto(): KesBalanceDto? =
+    payoutMinor?.let { KesBalanceDto(Amounts.fiat(it), payoutSource.orEmpty()) }
+
+fun KesBalances.toFeeDto(): KesBalanceDto? = feeMinor?.let { KesBalanceDto(Amounts.fiat(it), feeSource.orEmpty()) }
+
+fun OffRampView.toDto() =
+    MerchantOffRampDto(
+        offered = offered,
+        accountId = accountId,
+        payoutBalance = balances.toPayoutDto(),
+        feeBalance = balances.toFeeDto(),
+        balancesLive = live,
+        balancesReadAt = balances.readAt?.toString(),
+        held = Amounts.fiat(heldMinor),
+        payoutIssue = payoutIssue?.let { MerchantPaymentsIssueDto(it.name, payoutIssueAt?.toString()) },
+        flags = flags,
+    )
+
+fun TestPayout.toResponse(): TestPayoutResponse {
+    val before = balanceBefore
+    val after = balanceAfter
+    val charged =
+        if (state == TestPayoutState.PAID && before != null && after != null) {
+            Amounts.fiat(before.amountMinor - after.amountMinor - amountMinor)
+        } else {
+            null
+        }
+    return TestPayoutResponse(
+        testId = testId.toString(),
+        state = state.name,
+        amount = Amounts.fiat(amountMinor),
+        maskedPhone = payee.masked(),
+        outcome = outcome,
+        providerReference = providerReference,
+        receipt = receipt,
+        paid = paidAmountMinor?.let { Amounts.fiat(it) },
+        providerFee = providerFee?.let { KesBalanceDto(Amounts.fiat(it.feeMinor), it.source) },
+        balanceBefore = before?.let { KesBalanceDto(Amounts.fiat(it.amountMinor), it.source) },
+        balanceAfter = after?.let { KesBalanceDto(Amounts.fiat(it.amountMinor), it.source) },
+        charged = charged,
+        createdAt = createdAt.toString(),
+        updatedAt = updatedAt.toString(),
+    )
 }
 
 /** RM6's PIN and window. */
@@ -181,6 +241,7 @@ fun MerchantOverview.toResponse() =
         kyc = kyc.toDto(),
         merchantType = merchant.merchantType.name,
         offers = MerchantOffersDto(onRamp = merchant.offersOnramp, offRamp = merchant.offersOfframp),
+        offRamp = offRamp.toDto(),
     )
 
 /** RM17: at least one of the two switches must be named. */

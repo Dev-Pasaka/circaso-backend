@@ -15,6 +15,7 @@ import com.circaso.ops.domain.usecases.GetRampSettings
 import com.circaso.ops.domain.usecases.GetRampUserVerification
 import com.circaso.ops.domain.usecases.ResetRampMerchantVerification
 import com.circaso.ops.domain.usecases.ResetRampUserVerification
+import com.circaso.ops.domain.usecases.ResolveRampOrder
 import com.circaso.ops.domain.usecases.SetRampPreviewAccess
 import com.circaso.ops.domain.usecases.UnblockRampUser
 import com.circaso.ops.domain.usecases.UpdateRampSettings
@@ -28,6 +29,7 @@ import com.circaso.ramp.api.OpsRampOrder
 import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
+import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampUserVerification
@@ -54,7 +56,16 @@ class RampService(
     private val unblockRampUser: UnblockRampUser,
     private val resetRampUserVerification: ResetRampUserVerification,
     private val resetRampMerchantVerification: ResetRampMerchantVerification,
+    private val resolveRampOrder: ResolveRampOrder,
 ) {
+    suspend fun resolve(
+        actor: Actor,
+        orderId: RampOrderId,
+        resolution: String,
+        receipt: String?,
+        reason: String,
+    ): Resource<OpsRampResolved> = resolveRampOrder(actor, orderId, resolution, receipt, reason)
+
     suspend fun userVerification(userId: UserId): Resource<OpsRampUserVerification> = getRampUserVerification(userId)
 
     suspend fun blocks(after: OpsRampBlockCursor?, limit: Int): Resource<List<OpsRampBlock>> =

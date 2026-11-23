@@ -46,11 +46,40 @@ class RedisCounters(private val redis: RedisScope) : RampCounters {
         redis.incrementBy(daily(userId, network, day), -fiatMinor, DAY_TTL)
     }
 
+    override suspend fun reserveDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+        limitMinor: Long,
+    ): Boolean {
+        val total = redis.incrementBy(sold(userId, network, day), fiatMinor, DAY_TTL)
+        if (total <= limitMinor) return true
+        redis.incrementBy(sold(userId, network, day), -fiatMinor, DAY_TTL)
+        return false
+    }
+
+    override suspend fun giveBackDailySale(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+        fiatMinor: Long,
+    ) {
+        redis.incrementBy(sold(userId, network, day), -fiatMinor, DAY_TTL)
+    }
+
     private fun daily(
         userId: UserId,
         network: Network,
         day: LocalDate,
     ) = "daily:${network.name.lowercase()}:$userId:$day"
+
+    /** Selling's day: the shillings paid out to the user, apart from what they bought. */
+    private fun sold(
+        userId: UserId,
+        network: Network,
+        day: LocalDate,
+    ) = "sold:${network.name.lowercase()}:$userId:$day"
 
     private companion object {
         val PROMPT_WINDOW: Duration = Duration.ofHours(1)

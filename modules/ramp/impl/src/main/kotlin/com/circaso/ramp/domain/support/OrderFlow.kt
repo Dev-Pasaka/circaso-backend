@@ -9,6 +9,7 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.errors.RampError
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
@@ -309,6 +310,82 @@ class OrderFlow(
         alerts.needsReview(moved, reason)
         frames.orderUpdated(moved)
         return moved
+    }
+
+    /**
+     * Staff asked (RO4) for a purchase in `REVIEW` to be checked with its provider again. Only a clean answer moves it,
+     * and only while nothing was released: paid and matching → `PAID` (its float held again, the release follows);
+     * failed → `FAILED` (its float freed). Anything else leaves it with staff. Without the merchant's keys on this node
+     * nothing changes.
+     */
+    suspend fun recheck(order: Order): Order {
+        if (order.state != OrderState.REVIEW || order.direction != Direction.ON_RAMP || order.custodyTxId != null) {
+            return order
+        }
+        val reference = order.providerReference ?: return order
+        val keys = keysFor(order) ?: return order
+        val collections = providers.named(order.collectionsProvider) ?: return order
+        val status = (collections.paymentStatus(keys, reference) as? Resource.Success)?.data ?: return order
+        return when (status.state) {
+            CollectionState.QUEUED -> {
+                order
+            }
+
+            CollectionState.FAILED -> {
+                closeFromReview(order, "payment_failed") ?: current(order)
+            }
+
+            CollectionState.SUCCESS -> {
+                if (matches(
+                        order,
+                        status,
+                    )
+                ) {
+                    paidFromReview(order, status.receipt) ?: order
+                } else {
+                    order
+                }
+            }
+        }
+    }
+
+    /**
+     * Staff (or a re-check) found the purchase paid: `REVIEW → PAID`, with the receipt, its float held again where it
+     * had been given back (paid after its expiry); the ops process then releases it. Null when the receipt already
+     * settled another order or the purchase isn't in review.
+     */
+    suspend fun paidFromReview(order: Order, receipt: String?): Order? {
+        if (receipt != null && orders.receiptTaken(receipt, order.orderId)) return null
+        val now = clock.instant()
+        val paid =
+            transactor.run("orders.paid-from-review") {
+                val patch = OrderPatch(mpesaReceipt = receipt)
+                orders.move(order.orderId, OrderState.PAID, setOf(OrderState.REVIEW), patch, now)?.also {
+                    reservations.reopen(order.orderId, now)
+                }
+            } ?: return null
+        frames.orderUpdated(paid)
+        return paid
+    }
+
+    /** A purchase in `REVIEW` ends unreleased ([reason]): its float is freed. Null when it isn't in review. */
+    suspend fun closeFromReview(order: Order, reason: String): Order? {
+        val now = clock.instant()
+        val failed = OrderFailed(order.orderId, order.userId, order.direction.name, reason, order.network.name)
+        val event = bus.envelope(failed)
+        val closed =
+            transactor.run("orders.close-from-review") {
+                val patch = OrderPatch(failureReason = reason)
+                val moved = orders.move(order.orderId, OrderState.FAILED, setOf(OrderState.REVIEW), patch, now)
+                if (moved != null) {
+                    reservations.release(order.orderId, now)
+                    outbox.write(event)
+                }
+                moved
+            } ?: return null
+        bus.publish(event)
+        frames.orderUpdated(closed)
+        return closed
     }
 
     private suspend fun current(order: Order): Order = orders.find(order.orderId) ?: order

@@ -28,6 +28,9 @@ data class OpsRampMoney(
     val circasoShareUsdc: RampAmount,
     val swept: RampAmount,
     val held: RampAmount,
+    /** Selling (2026-11-23): the shillings paid out to sellers, and the USDC received for them. */
+    val paidOut: RampAmount = RampAmount("KES", "0", "0"),
+    val bought: RampAmount = RampAmount("USDC", "0", "0"),
 )
 
 /**
@@ -42,6 +45,8 @@ data class OpsRampOrderCounts(
     val cancelled: Int,
     val inReview: Int,
     val open: Int,
+    /** Sales whose USDC went back to the user (2026-11-23). */
+    val refunded: Int = 0,
 )
 
 /** One merchant's row of the overview. [online] is the trading window: staff can't see whose keys are unlocked. */
@@ -84,6 +89,10 @@ data class OpsRampMerchantProfile(
     val paymentsIssue: OpsRampPaymentsIssue?,
     /** Their identity verification in the environment the summary's network trusts; null when they never started. */
     val kyc: OpsRampVerification? = null,
+    /** Selling (2026-11-23): whether they offer it, their payout account id, and a payout refusal they must fix. */
+    val offersOffRamp: Boolean = false,
+    val payoutAccountId: String? = null,
+    val payoutIssue: OpsRampPaymentsIssue? = null,
 ) {
     override fun toString(): String = "OpsRampMerchantProfile($merchantId, $state)"
 }
@@ -131,6 +140,22 @@ data class OpsRampMerchantSummary(
     /** Oldest day first. */
     val daily: List<OpsRampDay>,
     val sweeps: List<OpsRampSweep>,
+    /**
+     * The merchant's KES at the payout provider as last read (2026-11-23): the ops process holds nobody's keys, so this
+     * is the app's latest reading, with its time. A null amount is one that couldn't be read.
+     */
+    val kesBalances: OpsRampKesBalances? = null,
+)
+
+/** A merchant's balances at the payout provider as last read: what payouts spend, and what its fees are taken from. */
+data class OpsRampKesBalances(
+    val payout: RampAmount?,
+    val payoutSource: String?,
+    val fees: RampAmount?,
+    val feesSource: String?,
+    val readAt: Instant?,
+    /** What their open sales hold of [payout]. */
+    val held: RampAmount,
 )
 
 /**
