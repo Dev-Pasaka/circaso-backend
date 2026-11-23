@@ -104,6 +104,29 @@ internal data class PayoutLookupReply(
 }
 
 /**
+ * The new account balance as FinoQ really answers it (first seen 2026-11-23, on a real account):
+ * `{"service_wallet_balance":{"account_id":…,"balance":68,"currency":"KES"},"wallet_balance":{"account_id":…,"currency":"KES"}}`.
+ * `wallet_balance` is the wallet a withdraw spends; FinoQ leaves `balance` out of it when it is empty (the same
+ * account's withdraw was refused for "insufficient balance" in the same minute), so a present wallet with no
+ * `balance` reads as zero. A missing `wallet_balance` object stays unknown.
+ */
+@Serializable
+internal data class AccountBalancesReply(
+    @SerialName("service_wallet_balance") val serviceWallet: WalletPart? = null,
+    @SerialName("wallet_balance") val wallet: WalletPart? = null,
+) {
+    @Serializable
+    internal data class WalletPart(
+        @SerialName("account_id") val accountId: Long? = null,
+        val balance: String? = null,
+        val currency: String? = null,
+    ) {
+        /** What it holds; an object FinoQ sent without `balance` is an empty wallet. */
+        val heldOrZero: String get() = balance?.takeIf { it.isNotBlank() } ?: "0"
+    }
+}
+
+/**
  * A balance answer: the legacy wallet (`available_balance`), the account on the auth host
  * (`account.service_wallet_balance`), and the new account balance, whose schema is undocumented.
  */

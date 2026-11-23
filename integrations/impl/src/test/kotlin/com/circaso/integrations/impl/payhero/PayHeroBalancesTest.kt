@@ -85,6 +85,35 @@ class PayHeroBalancesTest {
     }
 
     @Test
+    fun `FinoQ's real two-wallet answer gives both balances, an empty wallet reading as zero`() {
+        vendor.answer(serviceWallet, "", 404)
+        vendor.answer(paymentWallet, "", 404)
+        vendor.answer(
+            accountBalance,
+            """{"service_wallet_balance":{"account_id":63,"balance":68,"currency":"KES"},""" +
+                """"wallet_balance":{"account_id":63,"currency":"KES"}}""",
+        )
+        assertEquals(
+            ProviderBalances(kes(0, PayHeroBalances.ACCOUNT_WALLET), kes(6_800, PayHeroBalances.ACCOUNT_BALANCE)),
+            read(),
+            "the wallet FinoQ sends without a balance is empty, as its withdraw said",
+        )
+
+        vendor.answer(
+            accountBalance,
+            """{"service_wallet_balance":{"account_id":63,"balance":"68.5","currency":"KES"},""" +
+                """"wallet_balance":{"account_id":63,"balance":250,"currency":"KES"}}""",
+        )
+        assertEquals(
+            ProviderBalances(kes(25_000, PayHeroBalances.ACCOUNT_WALLET), kes(6_850, PayHeroBalances.ACCOUNT_BALANCE)),
+            read(),
+        )
+
+        vendor.answer(accountBalance, """{"service_wallet_balance":{"account_id":63,"balance":68,"currency":"KES"}}""")
+        assertNull(read().payout, "no wallet object at all stays unknown, never zero")
+    }
+
+    @Test
     fun `the fee balance falls back to the account's service wallet`() {
         vendor.answer(accountBalance, """{"balance":300,"service_wallet_balance":12}""")
         assertEquals(
