@@ -367,6 +367,24 @@ class IntegrationsModuleTest {
     }
 
     @Test
+    fun `no PayHero or FinoQ client ever retries, so neither a prompt nor a payout is ever sent twice`() {
+        val clients = FakeHttpClients { _ -> respondOk() }
+        val koin =
+            startKoin {
+                modules(
+                    integrationsModule(MapConfig(emptyMap()), noSecrets),
+                    module { single<HttpClients> { clients } },
+                )
+            }.koin
+
+        koin.get<CollectionProviders>()
+
+        for (name in listOf("payhero", "finoq", "finoq-auth", "finoq-payout", "payhero-payout")) {
+            assertEquals(1, clients.configs.getValue(name).maxAttempts, "$name must never retry")
+        }
+    }
+
+    @Test
     fun `live voice runs on its own workers-ai-live client, with the WebSockets flag`() {
         val clients = FakeHttpClients { _ -> respondOk() }
         val koin =

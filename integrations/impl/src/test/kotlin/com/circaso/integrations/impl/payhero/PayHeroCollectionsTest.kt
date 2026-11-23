@@ -26,7 +26,7 @@ class PayHeroCollectionsTest {
     private var down = false
 
     private val clients = FakeHttpClients { _ -> if (down) throw IOException("down") else json(reply, status) }
-    private val payHero = PayHeroCollections(clients.named("payhero") { baseUrl = PayHeroCollections.BASE_URL })
+    private val payHero = PayHeroCollections(PayHeroHosts.of(clients))
     private val merchant = CollectionCredentials("merchant-user", "merchant-pass", "911")
     private val payer = PhoneNumber.parse("+254712345678")!!
     private val prompt =
@@ -126,13 +126,15 @@ class PayHeroCollectionsTest {
         }
 
     @Test
-    fun `payouts are not implemented, because PayHero has none today`() =
+    fun `the superseded payout calls send nothing - payouts go through sendPayout and lookUpPayout`() =
         runBlocking<Unit> {
-            val payout = PayoutRequest(payer, FiatAmount.ofWholeUnits(500, "KES"), "order-2", "https://api.test/hook")
+            val payout =
+                PayoutRequest(payer, FiatAmount.ofWholeUnits(500, "KES"), "order-2", "https://api.test/hook", "63")
 
             assertIs<IntegrationError.NotImplemented>((payHero.payout(merchant, payout) as Resource.Error).error)
             assertIs<IntegrationError.NotImplemented>((payHero.payoutStatus(merchant, "x") as Resource.Error).error)
             assertTrue(clients.requests.isEmpty())
+            assertEquals("PayoutRequest(order-2, ***)", payout.toString())
         }
 
     @Test

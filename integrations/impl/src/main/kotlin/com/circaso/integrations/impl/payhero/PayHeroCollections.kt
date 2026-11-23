@@ -10,8 +10,11 @@ import com.circaso.integrations.api.CollectionState
 import com.circaso.integrations.api.CollectionStatus
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.integrations.api.MobileCollections
-import com.circaso.integrations.api.PayoutReceipt
+import com.circaso.integrations.api.PayoutLookup
 import com.circaso.integrations.api.PayoutRequest
+import com.circaso.integrations.api.PayoutResult
+import com.circaso.integrations.api.PayoutStatus
+import com.circaso.integrations.api.ProviderBalances
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
@@ -34,21 +37,27 @@ import java.util.Base64
 import kotlin.math.roundToLong
 
 /**
- * PayHero (docs.payhero.co.ke) over the shared `HttpClients.named("payhero")` client, base
- * `https://backend.payhero.co.ke`. Every call is authenticated with the **merchant's own** API username and password
- * (HTTP Basic), passed in per call. Collections on a merchant's own till settle straight there; PayHero holds nothing.
+ * PayHero, now FinoQ. The **on-ramp half** lives here and is unchanged: docs.payhero.co.ke over the shared
+ * `HttpClients.named("payhero")` client, base `https://backend.payhero.co.ke`. Every call is authenticated with the
+ * **merchant's own** API username and password (HTTP Basic), passed in per call. Collections on a merchant's own till
+ * settle straight there; PayHero holds nothing of them.
  *
  * PayHero documents no idempotency key, so the prompt goes out without an `Idempotency-Key` header and the shared
  * client never repeats it; after a timeout the caller asks [paymentStatus]. Bodies are never logged: they carry phone
  * numbers and amounts.
  *
- * Payouts: PayHero has none today (decision 2026-11-22), so [payout] and [payoutStatus] answer `NotImplemented`.
+ * The **payout half** (2026-11-23) is [PayHeroPayouts] ([sendPayout], [lookUpPayout]) and [PayHeroBalances]
+ * ([balances]), over the hosts and the fallback order in [PayHeroHosts].
+ *
  * [balance] reads the **service wallet**, the prepaid float PayHero's per-transaction fees are taken from: when it is
  * empty PayHero refuses the prompt (`400 … merchant has insufficient balance …`, seen in the first real test), which
  * [requestPayment] answers as `ServiceBalanceLow`.
  */
-class PayHeroCollections(private val http: HttpClient) : MobileCollections {
+class PayHeroCollections(hosts: PayHeroHosts) : MobileCollections {
     private val log = LoggerFactory.getLogger(PayHeroCollections::class.java)
+    private val http: HttpClient = hosts.legacy
+    private val payouts = PayHeroPayouts(hosts)
+    private val providerBalances = PayHeroBalances(hosts)
 
     override suspend fun requestPayment(
         credentials: CollectionCredentials,
@@ -104,15 +113,16 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
             }
         }
 
-    override suspend fun payout(credentials: CollectionCredentials, request: PayoutRequest): Resource<PayoutReceipt> =
-        noPayouts()
+    override suspend fun sendPayout(credentials: CollectionCredentials, request: PayoutRequest): PayoutResult =
+        payouts.send(credentials, request)
 
-    override suspend fun payoutStatus(
-        credentials: CollectionCredentials,
-        providerReference: String,
-    ): Resource<CollectionStatus> = noPayouts()
+    override suspend fun lookUpPayout(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus =
+        payouts.lookUp(credentials, lookup)
 
-    /** The service wallet's available balance as `fees`; `payout` is zero, since PayHero pays nothing out. */
+    override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> =
+        providerBalances.read(credentials, accountId)
+
+    /** The service wallet's available balance as `fees`. `payout` is not a reading here: see [balances]. */
     override suspend fun balance(credentials: CollectionCredentials): Resource<CollectionBalances> =
         serviceWallet("service_wallet_balance", credentials).flatMapBody("service_wallet_balance") { text ->
             payHeroJson.decodeFromString(WalletReply.serializer(), text).availableBalance?.let { shillings ->
@@ -200,9 +210,6 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
 
     private fun <T> rejected(message: String): Resource<T> = Resource.error(IntegrationError.Rejected(message))
 
-    private fun <T> noPayouts(): Resource<T> =
-        Resource.error(IntegrationError.NotImplemented("MobileCollections payouts", "payhero"))
-
     private fun stateOf(status: String): CollectionState? =
         when (status.uppercase()) {
             "SUCCESS" -> CollectionState.SUCCESS
@@ -212,7 +219,7 @@ class PayHeroCollections(private val http: HttpClient) : MobileCollections {
         }
 
     companion object {
-        const val BASE_URL = "https://backend.payhero.co.ke"
+        const val BASE_URL = PayHeroHosts.LEGACY_URL
         const val VENDOR = "PayHero"
         private const val KES = "KES"
         private const val MPESA = "m-pesa"
