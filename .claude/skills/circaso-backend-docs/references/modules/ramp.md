@@ -2,7 +2,7 @@
 
 Ramp answers "how do I turn shillings into USDC and back": it is an automated P2P merchant desk for USDC ↔ KES over M-Pesa. Vetted partner merchants supply the USDC float and their own M-Pesa collection account and earn commission; Circaso's merchant engine runs every trade, so a merchant does nothing per trade. Schema `ramp`, Redis prefix `rmp:`, stream `events:ramp`.
 
-Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day), then identity verification with Didit on `feat/ramp-kyc` (same day; see "As built: identity verification"), then the merchant engine and verifying from the profile on `feat/ramp-engine` (2026-11-23; see "As built: the merchant engine" and "As built: verifying from the profile"); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
+Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day), then identity verification with Didit on `feat/ramp-kyc` (same day; see "As built: identity verification"), then the merchant engine and verifying from the profile on `feat/ramp-engine` (2026-11-23; see "As built: the merchant engine" and "As built: verifying from the profile"), then the off-ramp on `feat/offramp` (2026-11-23, with FinoQ payouts; see "As built: the off-ramp"); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
 
 **This is the one module that moves money.** Everywhere else the backend prepares and the user signs (principle 7, principle 11). Ramp sends USDC on its own, but only from a partner merchant's developer-controlled wallet, and only against a payment it has verified itself (decision 2026-11-22). It never signs for a user's wallet: an off-ramp is still an ordinary W4 transfer signed with the user's PIN.
 
@@ -127,7 +127,7 @@ Circaso earns on every trade, and staff set the numbers in the admin.
 
 ### How an off-ramp runs (designed, waiting on a payout provider)
 
-**Status: the ramp side is not built. Superseded in part on 2026-11-23:** PayHero, now FinoQ, documents a payout (`POST /api/v2/withdraw`), and the integrations half (contract, client, callback, fees) is built and waiting on a first real payout: see "As built: payouts through FinoQ". What follows in this paragraph is the earlier reading. PayHero has no payouts today (Pasaka, 2026-11-22; **unverified until PayHero replies in writing**). Its current docs agree: no payout endpoint, and the old "withdraw to mobile" page is gone. Collections on a merchant's own till settle straight there, so PayHero holds nothing to pay out of either. The automated off-ramp therefore waits on a **payout provider** (Open questions): the merchant's own Daraja B2C, another aggregator, or PayHero if it brings payouts back. `MobileCollections.payout`, `payoutStatus` and `balance` stay in the contract for that provider; nothing implements them yet. The engine checks **no KES float** until then.
+**Built on 2026-11-23: see "As built: the off-ramp", which replaces this section and the semi-manual fallback below (dropped for now).** Earlier: **Status: the ramp side is not built. Superseded in part on 2026-11-23:** PayHero, now FinoQ, documents a payout (`POST /api/v2/withdraw`), and the integrations half (contract, client, callback, fees) is built and waiting on a first real payout: see "As built: payouts through FinoQ". What follows in this paragraph is the earlier reading. PayHero has no payouts today (Pasaka, 2026-11-22; **unverified until PayHero replies in writing**). Its current docs agree: no payout endpoint, and the old "withdraw to mobile" page is gone. Collections on a merchant's own till settle straight there, so PayHero holds nothing to pay out of either. The automated off-ramp therefore waits on a **payout provider** (Open questions): the merchant's own Daraja B2C, another aggregator, or PayHero if it brings payouts back. `MobileCollections.payout`, `payoutStatus` and `balance` stay in the contract for that provider; nothing implements them yet. The engine checks **no KES float** until then.
 
 The designed flow, for whichever provider pays out:
 
@@ -361,7 +361,7 @@ Paths relative to `https://api.circaso.com/v1`. Every POST, PUT and DELETE takes
 | R4 | `GET /ramp/orders/{orderId}` | `GetOrder` | One order and its state | Yes |
 | R5 | `GET /ramp/orders?cursor=&limit=` | `ListOrders` | The user's orders, newest first, keyset paged | Yes |
 | R6 | `POST /ramp/orders/{orderId}/cancel` | `CancelOrder` | Cancels before payment; refused once PayHero shows a payment | Yes |
-| R7 | `POST /ramp/offramp/orders` | `StartOffRamp` | Picks a merchant and returns the address and `rampOrderId` for the user's W4 | Waiting on a payout provider (or the manual fallback) |
+| R7 | `POST /ramp/offramp/orders` | `StartOffRamp` | Picks a merchant and returns the address and `rampOrderId` for the user's W4 | Built 2026-11-23 |
 | R8 | `POST /ramp/orders/{orderId}/received` | `ConfirmPayout` | Manual payout: the user confirms the M-Pesa arrived | With the manual fallback |
 | R9 | `POST /ramp/orders/{orderId}/dispute` | `DisputePayout` | Manual payout: the user says they were not paid; the order goes to `REVIEW` | With the manual fallback |
 
@@ -488,7 +488,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RO1 | `GET /ops/ramp/merchants` | Merchants and their states |
 | RO2 | `POST /ops/ramp/merchants/{id}/approve` · `/suspend` | Partner approval; suspension takes the merchant offline at once |
 | RO3 | `GET` · `POST /ops/ramp/blocks` · `DELETE /ops/ramp/blocks/{userId}` | The block list; block or unblock a user (and identity). Built 2026-11-22, with `GET /ops/ramp/users/{userId}/verification` and the two verification resets (see "As built: identity verification") |
-| RO4 | `GET /ops/ramp/orders?state=REVIEW` · `POST /ops/ramp/orders/{id}/resolve` | Orders waiting for a person, and their resolution (release, refund, close) with a reason, audited |
+| RO4 | `GET /ops/ramp/orders?state=REVIEW` · `POST /ops/ramp/orders/{id}/resolve` | Orders waiting for a person, and their resolution (mark paid, refund, re-check) with a reason, audited. Resolve built 2026-11-23, both directions |
 | RO5 | `GET` · `PUT /ops/ramp/settings?network=` | One network's ramp settings (state, chains, limits, fee, windows, KYC enforcement, callback origin), with a version check; audited; in force within 10 seconds |
 
 | RO6 | `GET /ops/ramp/overview?network=&from=&to=` | What each merchant did in a period, and the network's totals (the sum of the rows) |
@@ -775,6 +775,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | --- | --- | --- | --- |
 | `ramp.release` (`OpsJob`, the ops process) | 5 s | For each network: sends `PAID` orders through `TreasuryCustody.send` (key derived from the order) and moves them to `RELEASING`; re-reads `RELEASING` orders older than 15 s. At start-up, makes the merchants' wallet set and any approved merchant's missing wallet | Yes |
 | `ramp.settle-fees` (`OpsJob`) | 10 min | Once a day, at the settings' hour: for each merchant owing Circaso anything, one transfer of the whole total from the merchant's float to Circaso's ramp wallet, then the orders it covers are marked settled. An unsent sweep is tried again each run | With fees |
+| `ramp.payouts` | 10 s | Selling (2026-11-23): unconfirmed fundings, due payouts, `PAYING_OUT` lookups, unfunded sales past their deadline, staff's re-checks, test payouts in flight. See "As built: the off-ramp" | Built 2026-11-23 |
 | `ramp.expire-orders` | 30 s | An order unpaid 2 minutes after its prompt: **asks PayHero first**. `FAILED` or no payment → `EXPIRED` and the reservation `RELEASED`, in one transaction; `SUCCESS` → the normal verify and release; still `QUEUED` → left for the next run, and to `REVIEW` after 10 minutes. When the merchant's keys aren't available it changes nothing | Yes |
 | `ramp.reconcile` | 2 min | Orders stuck in `PAID`, `RELEASING`, `FUNDED` or `PAYING_OUT`: reads Circle and PayHero and applies what they say (a lost webhook or callback), retries a failed release with the same key, and alerts on anything in `REVIEW` or waiting on a locked merchant | Later (the first slice covers `RELEASING` through Circle's webhook and a manual re-read) |
 | `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed, or whose `rmp:session` is gone: marks them offline. Open orders finish | Later |
@@ -800,7 +801,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | Event | `data` | Consumers |
 | --- | --- | --- |
 | `ramp.OnRampCompleted` v1 | `orderId`, `userId`, `merchantId`, `blockchain`, `asset`, `assetAmountMinor`, `fiatCurrency`, `fiatAmountMinor` | auditor; later assistant |
-| `ramp.OffRampCompleted` v1 | The same (published once the off-ramp exists) | auditor |
+| `ramp.OffRampCompleted` v1 | The same; `fiatAmountMinor` is what the user was paid (published since 2026-11-23) | auditor |
 | `ramp.OrderFailed` v1 | `orderId`, `userId`, `direction`, `reason` | auditor |
 | `ramp.UserBlocked` v1 | `userId`, `reason` (never the identity key) | auditor; identity later, if a block should mark the account |
 
@@ -837,7 +838,15 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.order_in_progress` | CONFLICT → 409 | The user already has an open order |
 | `ramp.no_merchant_available` | CONFLICT → 409 | Nobody online has the float for this amount |
 | `ramp.merchant_unavailable` | CONFLICT → 409 | The provider refused the prompt for every merchant who could take the order (2026-11-22): "We couldn't start this payment right now. Nothing was taken. Please try again in a moment." Nothing was sent or reserved |
-| `ramp.offramp_unavailable` | CONFLICT → 409 | Selling isn't open: no payout provider and no merchant on manual payouts |
+| `ramp.offramp_unavailable` | CONFLICT → 409 | Selling isn't open to the user on this network (`offramp_state`, 2026-11-23) |
+| `ramp.payout_fee_unavailable` | UPSTREAM → 502 | Neither the provider's published payout fee nor staff's table covers the amount: a sale isn't quoted |
+| `ramp.merchant_offline` | CONFLICT → 409 | A test payout while the merchant's keys aren't unlocked on this node |
+| `ramp.test_payout_in_progress` | CONFLICT → 409 | A test payout while one is still in flight |
+| `ramp.test_payout_not_found` | NOT_FOUND → 404 | No such test payout of this merchant |
+| `ramp.payout_account_invalid` | INVALID → 400 | A payout account id that isn't digits |
+| `ramp.resolution_invalid` | CONFLICT → 409 | RO4 on an order not in review, or a resolution that doesn't apply as it stands |
+| `ramp.receipt_required` | INVALID → 400 | RO4 `MARK_PAID` without the M-Pesa receipt |
+| `ramp.payout_may_be_paid` | CONFLICT → 409 | RO4 `REFUND` of a sale whose last payout the provider said was paid |
 | `ramp.too_many_prompts` | RATE_LIMITED → 429 | Too many M-Pesa prompts this hour |
 | `ramp.order_not_found` | NOT_FOUND → 404 | No such order, or not this user's or merchant's |
 | `ramp.order_not_cancellable` | CONFLICT → 409 | Already paid or finished |
@@ -1264,7 +1273,7 @@ The three JSON columns are `text` holding typed documents (`data/support/EngineD
 
 RM16 shows plain rates (completed and failed out of counted), not the smoothed ones the engine draws with, and never a weight, a rank or anything about another merchant. `failed` is `merchantFailures + merchantExpiries + reversals`.
 
-### What is left for the off-ramp to wire
+### What is left for the off-ramp to wire (wired 2026-11-23: see "As built: the off-ramp")
 
 The engine already takes `Direction.OFF_RAMP` end to end: its own settings row per network (seeded), `offers_offramp`, statistics from `FUNDED → COMPLETED`, the reasons `payout_failed` and `payout_missed`, and the routing log. When the off-ramp is built it has to:
 
@@ -1342,7 +1351,7 @@ enum class FeeSource { LIVE_TABLE, CACHED, UNKNOWN }
 
 The old `payout` and `payoutStatus` (which returned a `Resource` and could not tell "may have been sent" from "nothing was sent") stay in the interface with default bodies that answer `NotImplemented`, only because the ramp's test fake still overrides them; they go when the ramp moves over. `balance` stays as the on-ramp's fee-floor check; its `payout` field is not a reading.
 
-### What the ramp must do to use it (not built)
+### What the ramp must do to use it (built 2026-11-23: see "As built: the off-ramp")
 
 - **Collect one more thing from the merchant: the account id.** FinoQ's withdraw needs `account_id`, the integer id of the merchant's account ("team") on its dashboard. RM5 and the portal collect username, password and channel id today. The id is not a secret; it can be a plain column on the merchant or a fourth field in the envelope. It is passed as `PayoutRequest.accountId` and to `balances`.
 - **Send once.** Persist the order as `PAYING_OUT` **before** calling `sendPayout`, with the order id as `reference`. Never call it twice for one order unless a lookup has shown the first did not go out: nothing in FinoQ's docs says a repeated `external_reference` is paid once.
@@ -1413,6 +1422,136 @@ The off-ramp isn't wired, so the first payout is made by whatever calls `sendPay
 5. **After it is paid.** `balances` again: the difference in the payout balance, less KES 10, is the real fee; the service wallet's difference shows whether the fee came from there instead. Compare with `ProviderFees.payoutFee`. Check the M-Pesa message for the receipt and compare it with `Paid.providerReceipt`.
 6. **Write down** in "Confirmed and unconfirmed": the host, the callback layout and whether it repeated, each status layout and word, whether our reference is searchable, the balance source that moved, the fee, and what a second send of the same reference does (only if FinoQ says in writing that it is safe to try).
 
+## As built: the off-ramp (2026-11-23, `feat/offramp`)
+
+Approved by Pasaka for implementation on 2026-11-23, on `feat/ramp-engine` merged with `feat/finoq-payouts` (the merge keeps every PayHero/FinoQ client at `maxAttempts = 1`, so no POST to them is ever repeated by the client; `IntegrationsModuleTest` proves it for all five). A user sells USDC and is paid shillings to their own verified M-Pesa number from a merchant's FinoQ account. This replaces "How an off-ramp runs (designed, waiting on a payout provider)" and "What the ramp must do to use it (not built)" above; the semi-manual payout (RM12, RM13, R8, R9) is **dropped for now** and not built.
+
+**Decided by Pasaka (2026-11-23):** users never pick a merchant (the engine routes the sale); merchants hold their own KES in their own FinoQ account and top it up themselves (collections are unchanged); the provider's payout fee is added to the user's cost, shown in the quote beside Circaso's percentage, and the merchant receives their full amount; selling uses the same `fee_bps` and merchant/Circaso split as buying, Circaso's share swept daily as today; the order stores the provider fee quoted and actual; only the order's amount plus its payout fee is held at the merchant's provider; merchant credentials stay in the PIN envelope and the trading session; FinoQ's account id is a plain column.
+
+### The state machine
+
+Every move is a transition guard (`SaleStates`), with what it holds or frees in the same transaction and a timeline row (`ramp.order_events`):
+
+| Next state | From | When | Holds |
+| --- | --- | --- | --- |
+| `AWAITING_TRANSFER` | (R7) | The engine routed the sale; the deadline is `transfer_window_seconds` (900) | KES hold `OPEN` (payout + payout fee) |
+| `FUNDED` | `AWAITING_TRANSFER` | The custodian recorded exactly the order's USDC from the user's wallet in the merchant's float | USDC `HOLD` reservation `OPEN` |
+| `FUNDED` | `PAYING_OUT` | Provably nothing was paid (refused, no balance, provider unreachable, or the lookup said `Failed` once): sent again later | unchanged |
+| `PAYING_OUT` | `FUNDED` | The attempt is written (number, our reference, `SENDING`) **before** `sendPayout` | unchanged |
+| `COMPLETED` | `PAYING_OUT`, `REVIEW` | The provider's lookup says `Paid` (amount and our reference checked where given), or staff mark it paid with the M-Pesa receipt | USDC hold `CONSUMED` (the USDC is the merchant's), KES hold `CONSUMED`, commission, `ramp.OffRampCompleted` |
+| `EXPIRED` | `AWAITING_TRANSFER` | No transfer known by the deadline (`never_funded`; never counted) | KES hold `RELEASED`, the day given back |
+| `CANCELLED` | `AWAITING_TRANSFER` | R6 before any transfer is known | KES hold `RELEASED` |
+| `REFUNDING` | `AWAITING_TRANSFER` (wrong amount), `FUNDED` (nothing sent, window over), `PAYING_OUT` (only after provably nothing was paid), `EXPIRED`/`CANCELLED` (late transfer), `REVIEW` (staff) | The user is owed their USDC | KES hold `RELEASED`; USDC held until it leaves |
+| `REFUNDED` | `REFUNDING` | The ops process's refund confirmed on chain | USDC hold `RELEASED`, `ramp.OrderFailed` with the reason |
+| `REVIEW` | `AWAITING_TRANSFER`, `FUNDED`, `PAYING_OUT`, `REFUNDING`, `EXPIRED`, `CANCELLED` | A person must decide | Everything stays held |
+
+`OrderState.OPEN` now includes `AWAITING_TRANSFER`, `FUNDED`, `PAYING_OUT` and `REFUNDING` (`orders_user_open_key` too: one open order per user, either direction). `OrderState.NEEDS_KEYS` (the purchase's two waiting states and the sale's three) is what keeps a merchant's keys on the node after they go offline.
+
+### Pricing (R2, `direction: OFF_RAMP`)
+
+`SalePricing`, pure. The rate is the reference rate (`Pricing.rate()`, new). From USDC `X`: `gross = floor_cent(X × rate)`, `fee = ceil_cent(gross × fee_bps)`, the provider's payout fee asked **of `gross − fee`** (never less than the fee of what is finally paid), `receive = floor_shilling(gross − fee − providerFee)`. From shillings `Y` (whole): `providerFee = fee(Y)`, `X = ceil_6dp((Y + providerFee) / (1 − fee_bps) / rate)`, `fee = floor_cent(X × rate) − Y − providerFee` (never below the rate: the rounding goes to the fee). The payout fee is `ProviderFees.payoutFee(network's provider, amount)` when it is `LIVE_TABLE` or `CACHED`, else the first band of `settings.payout_fee_bands` that covers the amount (`ADMIN_TABLE`), else **no quote** (`ramp.payout_fee_unavailable`, 502). The quote keeps `provider_fee_minor` and its source; the order copies them. Limits are selling's own (`offramp_min/max/daily_limit_minor`, on what the user receives); the day is counted on its own Redis key (`rmp:sold:…`).
+
+### The order (R7) and the engine
+
+`StartOffRamp`: selling's gate (`offramp_state`; `PREVIEW` uses buying's list), the account, the block and KYC gates, the quote (the user's, a sale's, alive), one open order, **the phone is the account's own verified number**, the user's own wallet address on the chain (kept as `refund_address`: where the USDC must come from and where a refund goes), the day. Then the engine, as "What is left for the off-ramp to wire" asked:
+
+1. `kesFloat` is `ProviderBalancesReader`: the merchant's payout balance read **live** with their unlocked keys (`MobileCollections.balances(keys, accountId).payout`), null when it can't be read; `EngineFacts` subtracts what their open sales hold (`payout_holds`, both networks: one account pays for both). `RoutingOrder(OFF_RAMP, fiatMinor = receive, needMinor = receive + providerFee)`.
+2. `Engine.reserve` re-checks under the row lock (window = the transfer window, `hasIssue(OFF_RAMP)`, `offers(OFF_RAMP)` which also needs a payout account id, the limit, and the **live balance less the holds now**) and writes the order with a `payout_holds` row instead of a float reservation. The USDC `HOLD` is written only when the USDC has arrived.
+3. The states are in `OrderState`; `Stats.FINISHED` includes `REFUNDED`; a `REFUNDED` sale counts against the merchant when its reason is `payout_failed` (failure) or `payout_missed` (expiry). `never_funded`, `late_transfer`, `amount_mismatch`, `payout_unavailable`, `payout_rejected` and `resolved_refund` are never counted. Handling time is `FUNDED → COMPLETED`.
+4. Every merchant tried is a routing step (`held` or `reserve_failed`); nothing is sent at routing, so every eligible merchant may be tried (no failover by attempts).
+
+A merchant who only sells needs no USDC float to go online (`missing` asks for `float` only from one who buys).
+
+### How inbound USDC is confirmed (the safest of the two options)
+
+**The ramp confirms it itself, from the custodian's own record of the receiving wallet; the wallet module's handling of Circle's webhook is untouched** (it still drops every developer-wallet update, as its invariants require: a fee wallet's or a merchant's transactions are nobody's payment there).
+
+1. W4 takes `rampOrderId` (wallet.md). The wallet keeps one live transfer per order (`transfers_ramp_order_key`), so a sale can't be funded twice from the app.
+2. The wallet's `wallet.TransferConfirmed` carries `rampOrderId`; the ramp's consumer group `ramp` on `events:wallet` (`WalletEventHandler`) records the transfer on the sale once (`orders.wallet_transfer_id`, `orders_wallet_transfer_key`) and checks it (`SaleFunding`).
+3. The wallet's own record (`Wallets.transfer`): the user's (not a group's), `CONFIRMED`, to this merchant's float address, on the sale's chain, with a hash.
+4. The custodian's record of that very chain transaction on the merchant's wallet (`MerchantFloat.deposits`, new in `integrations:api`: Circle's `GET /v1/w3s/transactions?txHash=&blockchain=` with the developer's key, narrowed to that wallet's incoming transfers): `CONFIRMED`, **from the user's own address**, **of the USDC contract the network's settings name** (`UsdcContracts`). Its amount is what the sale is funded with.
+5. Exactly the order's amount: `FUNDED`, the USDC held, and the payout is sent at once when this node holds the merchant's keys. Another amount: `REFUNDING` (`amount_mismatch`), all of it goes back. Another coin: `REVIEW` (`wrong_token`). Another sender, address or chain: `REVIEW` (`transfer_mismatch`). Arrived after the sale expired or was cancelled: `REFUNDING` (`late_transfer`). Not recorded yet, or the custodian out of reach: nothing changes; `ramp.payouts` checks every 10 s and, after 30 minutes without a record, sends it to `REVIEW` (`funding_unconfirmed`, still checked: a record that turns up is held for staff). A sale whose transfer is known is never expired.
+
+Why not have the wallet pass developer-wallet updates on: it would have to tell a merchant float from Circaso's fee wallets inside the wallet, which knows nothing of merchants, and the ramp would still have to re-read Circle to trust it. Reading the receiving wallet's record directly is one call, with the API key the app already has, and doesn't depend on a webhook arriving.
+
+**Locally** (`log` custody) `LogMerchantFloat.deposits` reports the deposit asked for as arrived (no coin moves); the `fake` reports what a test recorded.
+
+### The payout (`SalePayouts`, the app's process)
+
+The table "On each result" of "As built: payouts through FinoQ" is applied exactly, with these choices:
+
+- **Our reference** is the order id for the first attempt and `<orderId>-<n>` after; the callback and the lookup find the sale by its first 36 characters.
+- `Accepted`: stays `PAYING_OUT` (`ACCEPTED`, the provider's references kept); a merchant payout issue is cleared.
+- `Unknown` (and a call that throws or is cancelled): `UNKNOWN`, looked up at once by our reference; **never sent again, never refunded on this**.
+- `Rejected(AMOUNT_BELOW_COST | NOT_SUPPORTED)`: refunded at once (`payout_rejected`): asking again can't change it.
+- `Rejected(CREDENTIALS_REFUSED | INVALID_REQUEST | REFUSED)`: the merchant is marked `PAYOUT_REFUSED` (no sale is routed to them; cleared when a payout goes out, they go online again, or they set a new account id), alerted, and the **same merchant** is tried again in 2 minutes. `InsufficientBalance`: marked `PAYOUT_BALANCE`, the same. `Unavailable`: tried again in 30 s. Each `FUNDED` again with `payout_retry_at`. Once the **payout window** (`payout_window_seconds`, 1800, from funding) is over: refunded, `payout_failed` (counted) or `payout_unavailable` (the provider: not counted). The user's USDC can't go to another merchant: it is in this one's float.
+- A merchant whose keys aren't on the node (offline, a restart) or who has no account id: the sale waits in `FUNDED`; after the window it is refunded (`payout_missed`, counted).
+- **Only the lookup decides.** `Paid` with the amount and our reference matching where given → `COMPLETED`; otherwise `REVIEW` (`payout_mismatch`). `Failed` → one more attempt within the window (`payout_failures`), a second → refunded (`payout_failed`). `NotFound(PROVIDER)` → `REVIEW` (`payout_not_found`); `NotFound(OURS)` → `REVIEW` (`payout_unconfirmed`): **never a resend or a refund**. `Pending`/`Unknown` wait; still so when the payout window is over → `REVIEW` (`payout_unresolved`), never a refund. A sale in `REVIEW` whose payout the provider later confirms (its callback, or staff's re-check) still completes.
+- **The callback** (`onPayoutCallback`, now implemented) checks the key is the merchant's and the reference is their sale's current attempt (or their test payout), then only looks up. A second ring looks up again and changes nothing.
+- **The provider fee actual** is the provider's published tariff when the payout is sent (`provider_fee_actual_minor`), since FinoQ returns no fee; the test payout's balance difference is what measures the real charge.
+
+### The refund (`SaleRefunds`, the ops process)
+
+`ramp.release` now also advances `REFUNDING` sales: `TreasuryCustody.send` from the merchant's float of **`funded_minor`** (what the custodian recorded arriving) to **`refund_address`**, key `nameUUID("ramp:refund:<orderId>")`, `refId` the order; the transaction kept on the order (`custody_tx_id`), followed every run; `CONFIRMED` → `REFUNDED`; `FAILED` → `REVIEW` (`refund_failed`); refused → `REVIEW` (`refund_refused`); unreachable → asked again with the same key. **A refund never starts while a payout may have gone out**: `REFUNDING` is entered only from where none can be out (see the table).
+
+### Staff (RO4, both directions)
+
+`POST /ops/ramp/orders/{orderId}/resolve` `{ resolution, receipt?, reason }`, ADMIN, audited (`ramp_order.resolve` on the new target `ramp_order`; the receipt never reaches the audit line). Only an order in `REVIEW`.
+
+| Resolution | A sale | A purchase |
+| --- | --- | --- |
+| `MARK_PAID` (receipt required) | `COMPLETED`, as a confirmed payout (commission, holds consumed); refused when the USDC never arrived or a refund was sent, and when the receipt settled another order | `PAID` (its float held again if it was given back: paid after expiry), and the ops process releases; refused once a release was sent |
+| `REFUND` | `REFUNDING`; refused when the USDC never arrived, when a refund was already sent (one that failed on chain must be sent by hand), and `ramp.payout_may_be_paid` when the last payout outcome was `PAID`. **Staff decide a payout didn't go out** (the merchant's M-Pesa statement, FinoQ's dashboard) | `FAILED` (`resolved_refund`), its float freed; the shillings are returned by hand |
+| `RECHECK` | Queued (`recheck_requested_at`): the app's process (which alone holds the merchant's keys) looks the payout up on its next sweep, or checks a pending funding; a confirmed payout completes it | Queued the same way: the payment is asked about; paid and matching with nothing released → `PAID`; failed → `FAILED` |
+
+A re-check while the merchant is offline asks nobody; ask again once they are online.
+
+### The merchant
+
+- **The payout account id** (FinoQ's, digits, not a secret): `merchants.payout_account_id`, set with RM5 (`accountId`, optional) or `PUT /ramp/merchant/payments/account` `{ accountId }` (RM5b, no PIN; answers RM2; clears a payout refusal).
+- **RM2's `offRamp` card**: `{ offered, accountId, payoutBalance: { amount, source } | null, feeBalance | null, balancesLive, balancesReadAt, held, payoutIssue: { code, since } | null, flags }`. Balances are read live while the merchant is online on this node (at most every 30 s) and kept on the merchant row for staff (`payout_balance_minor`, `fee_balance_minor`, their sources, `balances_read_at`); null is **unknown**, never zero. `flags`: `payout_account_missing`, `payout_balance_low` (below `payout_balance_low_minor`), `service_balance_low` (below `provider_fee_floor_minor`), `provider_balance` (the existing service-balance issue), `payout_balance`, `payout_refused`.
+- **The test payout (RM18)**: `POST /ramp/merchant/test-payout` `{ amountMinor }` (1000 to 10000, whole shillings) and `GET /ramp/merchant/test-payout[?testId=]`. From the merchant's own account to **their own contact phone, never any other number**; needs the account id, a callback address and the merchant online (`ramp.merchant_offline`); one in flight (`ramp.test_payout_in_progress`); written `SENDING` before it is sent; the same result rules (`Unknown` looked up at once, never resent); `GET` looks it up while it is open (at most every 3 s), and the `ramp.payouts` job and the callback do too. It records the payout balance before and after (`charged` = before − after − amount: the provider's real fee) and the provider's published fee. Table `ramp.test_payouts`.
+
+### Settings (V7, RO5, all audited by name)
+
+| Setting | Default | Range |
+| --- | --- | --- |
+| `offRampState` | `OFF` | `OFF` \| `PREVIEW` \| `ON`: selling's own switch |
+| `offRampMinMinor`, `offRampMaxMinor`, `offRampDailyLimitMinor` | 1 000, 500 000, 2 000 000 (KES 10, 5 000, 20 000) | on what the user receives |
+| `transferWindowSeconds` | 900 | 60 to 3600 |
+| `payoutWindowSeconds` | 1800 | 60 to 86400 |
+| `payoutFeeBands` | `[]` | `[{ upToMinor, feeMinor }]`, the fallback table |
+| `payoutBalanceLowMinor` | 100 000 (KES 1 000) | ≥ 0; 0: never |
+
+Engine settings for `OFF_RAMP` were already seeded (V6).
+
+### Data (V7)
+
+`ramp.settings` (the six settings), `ramp.quotes` (`provider_fee_minor`, `provider_fee_source`), `ramp.orders` (`provider_fee_minor`, `provider_fee_source`, `provider_fee_actual_minor`, `wallet_transfer_id` unique, `funded_minor`, `funding_tx_hash`, `funded_at`, `refund_address`, `payout_attempts`, `payout_failures`, `payout_reference`, `payout_provider_reference`, `payout_secondary_reference`, `payout_outcome`, `payout_sent_at`, `payout_retry_at`, `recheck_requested_at`; `orders_funding_idx`, `orders_recheck_idx`; `orders_user_open_key` with `REFUNDING`), `ramp.merchants` (`payout_account_id` digits, `payout_issue`, `payout_issue_at`, the last balances), `ramp.payout_holds` (one per sale, closed once), `ramp.test_payouts` (one in flight per merchant). `payer_phone` is a sale's payee; `destination_address` the merchant's float; `mpesa_receipt` the payout's receipt; `custody_tx_id`/`tx_hash` the refund's.
+
+### Jobs
+
+`ramp.payouts` (app, every 10 s): per network, unconfirmed fundings, due payouts, `PAYING_OUT` lookups (one still `SENDING` only after 2 minutes), unfunded sales past their deadline; then staff's re-checks and the test payouts in flight. `ramp.release` (ops) also advances refunds. `ramp.expire-orders` is unchanged (it never touches a sale).
+
+### Insights and frames
+
+Statements and the staff figures tell the directions apart: `collected`/`sold` are buying's, `paidOut` (KES) and `bought` (USDC) selling's; `fees`, the shares and the sweeps cover both. Order counts gain `refunded`. RO7 shows the merchant's last KES balances (`kesBalances`) and their payout account and issue. `ramp/order.updated` for a sale has `pay` in USDC and `receive` in KES; pushes: `COMPLETED` "Your M-Pesa payment has been sent", `REFUNDING` "We couldn't pay you out. Your USDC is on its way back.", `REFUNDED` "Your USDC is back in your wallet", `EXPIRED` "Your sale timed out before your USDC arrived".
+
+### Logs
+
+Every payout step is one INFO line under `com.circaso.ramp` (`LOG_LEVEL_RAMP`) through the `PayoutJournal` port: `ramp payout sent: id=<orderId>#<n> outcome=<Accepted|Unknown|…>`, `ramp payout looked up: id=… outcome=<PAID|PENDING|FAILED|NOT_FOUND_BY_OURS|…>`, `ramp sale funded`, `ramp balances read: id=<merchant> outcome=payout=<source|unread> fees=<…>`, `ramp test payout sent|looked up`. Ids and outcomes only, never an amount, a number or a credential. The integration's own lines (layouts, hosts, outcomes) are unchanged.
+
+### The first real test payout (KES 10)
+
+1. On the portal (or with curl against the API), the merchant: RM5b `{ "accountId": "<FinoQ account id>" }`, RM6 online with the PIN, then `POST /v1/ramp/merchant/test-payout` `{ "amountMinor": "1000" }` with `X-Merchant-Session` and an `Idempotency-Key`. The KES 10 goes to the merchant's own contact phone (RM1).
+2. It exercises, for real: `balances` (both hosts, which source answered), the withdraw on `api.finoq.africa` then `backend.payhero.co.ke` only if the first provably took nothing, the answer read as one `PayoutResult`, the callback on the merchant's own address (its layout, whether it is flat with `transaction_type`), and `lookUpPayout` by the provider's reference (and, after an `Unknown`, by ours).
+3. `GET /v1/ramp/merchant/test-payout` until `PAID`, `FAILED`, `NOT_SENT` or `NOT_FOUND`; once `PAID`, `charged` is the real fee (compare with `providerFee`).
+4. Read the runbook of "As built: payouts through FinoQ" for the log lines, and write down what it confirmed in "Confirmed and unconfirmed".
+
+### Not built
+
+The semi-manual payout (RM12, RM13, R8, R9); a second transfer for a sale that the wallet's key can't stop (one sent outside W4 to the float address is left in the float, alerted as `second_transfer` only when it names an order); a refund that failed on chain sent again by the system (staff send it by hand); handing a payout to another node (a merchant unlocked on another node is `NO_KEYS`, as before); reading a payout's actual fee from the provider (none returns it).
+
 ## To check against the vendor before building on it
 
 - **PayHero, payouts:** superseded 2026-11-23: FinoQ's docs describe `POST /api/v2/withdraw`, and the integrations half is built on them (see "As built: payouts through FinoQ"). Still to get in writing: that withdraws are enabled for a merchant's account, and every "Not confirmed" item there.
@@ -1429,7 +1568,7 @@ These also go into `decisions.md`; each is a `TODO(decision: …)` in code, behi
 - **The exchange rate.** Decided 2026-11-22: the fee is a percentage staff set, split between the merchant and Circaso by a ratio staff set (Fees, above). Still open: where the rate itself comes from (today a daily reference rate from `ExchangeRates`, with no spread), and whether merchants may set their own.
 - **Reversal after release.** Who carries the loss when a user reverses M-Pesa after USDC was released (the merchant, Circaso, a shared reserve), how a reversal is proven (PayHero reports none), and what a user paid-after-expiry is owed when the float is gone.
 - **Key vault or envelope encryption.** The envelope above keeps merchant keys out of the database in plaintext, but the master key and the Circle entity secret are environment secrets. Which key store before real money moves (the open "Signing key storage" question, now sharper: the entity secret can move every merchant's float).
-- **Payout provider for the off-ramp.** PayHero has no payouts today (unverified until it replies in writing). Which provider pays users out: the merchant's own Daraja B2C, another aggregator, or PayHero later; whether merchants hold KES float there; and whether the semi-manual payout (Proposed above) opens selling in the meantime.
+- **Payout provider for the off-ramp.** Settled 2026-11-23: FinoQ (PayHero) payouts from each merchant's own account (see "As built: the off-ramp"). Earlier: PayHero has no payouts today (unverified until it replies in writing). Which provider pays users out: the merchant's own Daraja B2C, another aggregator, or PayHero later; whether merchants hold KES float there; and whether the semi-manual payout (Proposed above) opens selling in the meantime.
 - **Merchant float caps.** The most float a merchant may hold, the largest single order against one merchant, and whether a new merchant starts lower.
 - **VASP licensing.** Whether running the desk, holding the entity secret for merchants' wallets and matching trades needs a licence under Kenya's Virtual Asset Service Providers Act, 2025, and what the merchants themselves need. A legal question to settle before mainnet.
 - **KYC tiers and limits.** Which checks a user needs (the basic check, or AML too), what each tier may trade per order and per day, and whether a merchant that is a company needs KYB as well.
