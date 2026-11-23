@@ -41,10 +41,25 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         var payout = paymentWallet(calls, answers)
 
         if (account != null && payout == null) {
-            val reply =
-                ask(ACCOUNT_BALANCE, answers) { calls.account(api, "$ACCOUNT_BALANCE_PATH/$account/balance", it) }
-            payout = reply?.candidates?.firstNotNullOfOrNull { reading(it.held, it.currency, ACCOUNT_BALANCE) }
-            fees = fees ?: reply?.let { serviceWalletIn(it, ACCOUNT_BALANCE) }
+            val body =
+                askBody(ACCOUNT_BALANCE, answers) { calls.account(api, "$ACCOUNT_BALANCE_PATH/$account/balance", it) }
+            val split = body?.let(::accountBalances)
+            if (split != null) {
+                payout = split.wallet?.let { reading(it.heldOrZero, it.currency, ACCOUNT_WALLET) }
+                fees =
+                    fees
+                        ?: split.serviceWallet?.balance?.let {
+                            reading(
+                                it,
+                                split.serviceWallet.currency,
+                                ACCOUNT_BALANCE,
+                            )
+                        }
+            } else {
+                val reply = body?.let { decode(ACCOUNT_BALANCE, it) }
+                payout = reply?.candidates?.firstNotNullOfOrNull { reading(it.held, it.currency, ACCOUNT_BALANCE) }
+                fees = fees ?: reply?.let { serviceWalletIn(it, ACCOUNT_BALANCE) }
+            }
         }
         if (account != null && fees == null) {
             val reply = ask(ACCOUNT_SERVICE_WALLET, answers) { calls.account(auth, "$ACCOUNT_PATH/$account", it) }
@@ -90,7 +105,14 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         name: String,
         answers: MutableList<Answer>,
         send: suspend (String) -> HttpResponse,
-    ): BalanceReply? {
+    ): BalanceReply? = askBody(name, answers, send)?.let { decode(name, it) }
+
+    /** One balance call's body when it is a 2xx, its answer recorded in [answers]. */
+    private suspend fun askBody(
+        name: String,
+        answers: MutableList<Answer>,
+        send: suspend (String) -> HttpResponse,
+    ): String? {
         val answer = log.ask(name) { send(name) }
         answers += answer
         if (answer !is Answer.Replied) return null
@@ -99,10 +121,20 @@ class PayHeroBalances(hosts: PayHeroHosts) {
             log.warn("payhero balance not given: source={} status={}", name, answer.status)
             return null
         }
-        val reply = runCatching { payHeroJson.decodeFromString(BalanceReply.serializer(), answer.body) }.getOrNull()
+        return answer.body
+    }
+
+    private fun decode(name: String, body: String): BalanceReply? {
+        val reply = runCatching { payHeroJson.decodeFromString(BalanceReply.serializer(), body) }.getOrNull()
         if (reply == null) log.warn("payhero balance not read: source={} (a layout this client doesn't know)", name)
         return reply
     }
+
+    /** The account balance in FinoQ's real two-wallet layout, or null when the answer isn't that layout. */
+    private fun accountBalances(body: String): AccountBalancesReply? =
+        runCatching { payHeroJson.decodeFromString(AccountBalancesReply.serializer(), body) }
+            .getOrNull()
+            ?.takeIf { it.wallet != null || it.serviceWallet != null }
 
     private fun serviceWalletIn(reply: BalanceReply, source: String): BalanceReading? =
         reply.candidates.firstNotNullOfOrNull { reading(it.serviceWalletBalance, it.currency, source) }
@@ -139,6 +171,9 @@ class PayHeroBalances(hosts: PayHeroHosts) {
         const val SERVICE_WALLET = "payhero.wallets.service_wallet"
         const val PAYMENT_WALLET = "payhero.wallets.payment_wallet"
         const val ACCOUNT_BALANCE = "finoq.account.balance"
+
+        /** The account's own wallet in the new balance answer: what a withdraw spends (confirmed 2026-11-23). */
+        const val ACCOUNT_WALLET = "finoq.account.wallet_balance"
         const val ACCOUNT_SERVICE_WALLET = "finoq.account.service_wallet_balance"
 
         const val WALLETS_PATH = "/api/v2/wallets"
