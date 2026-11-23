@@ -2,6 +2,7 @@ package com.circaso.ramp.presentation.services
 
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.domain.ports.LoggedFrame
+import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.usecases.CallbackSigningSecret
 import com.circaso.ramp.domain.usecases.EndSessions
@@ -40,6 +41,7 @@ class RampEventsService(
     private val runRechecks: RunRechecks,
     private val testPayouts: TestPayouts,
     private val callbackSigningSecret: CallbackSigningSecret,
+    private val topUps: MerchantTopUps,
 ) {
     /** The webhook signing secret for a callback on the address ending in [callbackKey], or null. */
     suspend fun callbackSecret(callbackKey: String): String? = callbackSigningSecret(callbackKey)
@@ -54,8 +56,8 @@ class RampEventsService(
     /** `ramp.payouts` on one network: funding, payouts, lookups, expiry of unfunded sales. */
     suspend fun sweepSales(network: Network): Int = sweepSales.invoke(network)
 
-    /** `ramp.payouts`, once per run: staff's re-checks and the merchants' test payouts in flight. */
-    suspend fun rechecksAndTests(): Int = runRechecks() + testPayouts.sweep()
+    /** `ramp.payouts`, once per run: staff's re-checks, the merchants' test payouts and top-ups in flight. */
+    suspend fun rechecksAndTests(): Int = runRechecks() + testPayouts.sweep() + topUps.sweep()
 
     suspend fun kycNotification(environment: KycEnvironment, sessionId: String): Resource<Unit> =
         handleKycNotification(environment, sessionId)

@@ -35,6 +35,10 @@ class NodeTradingSessions(private val redis: RedisScope, private val nodeId: Str
         redis.set(mark(merchantId), nodeId, window)
     }
 
+    override fun hold(merchantId: MerchantId, keys: UnlockedKeys) {
+        this.keys.putIfAbsent(merchantId, keys)
+    }
+
     override suspend fun renew(merchantId: MerchantId) {
         if (keys.containsKey(merchantId)) redis.set(mark(merchantId), nodeId, OPEN_ENDED_MARK)
     }

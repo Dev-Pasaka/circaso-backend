@@ -305,6 +305,45 @@ sealed class RampError(
         ErrorKind.NOT_FOUND,
     )
 
+    // ---- top-ups (2026-11-23) ------------------------------------------------------------------------------
+
+    /** A top-up's amount outside the limits, or with cents. */
+    class TopUpAmountInvalid(minShillings: Long, maxShillings: Long) :
+        RampError(
+            "ramp.amount_invalid",
+            "Top up between KES $minShillings and KES $maxShillings, in whole shillings.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError("amountMinor", "KES $minShillings to $maxShillings, whole"))),
+        )
+
+    /** A top-up while offline, without the PIN that unlocks the account for it: the same code as going offline. */
+    data object TopUpPinRequired : RampError(
+        "ramp.merchant_offline",
+        "Enter your PIN to top up while you're offline, or go online first.",
+        ErrorKind.CONFLICT,
+        ErrorDetails(fields = listOf(FieldError("pin", "required while you are offline"))),
+    )
+
+    /** A payment-wallet top-up before the FinoQ account id is saved (it names the wallet). */
+    data object TopUpAccountMissing : RampError(
+        "ramp.merchant_setup_incomplete",
+        "Add your FinoQ account id first (Settings, Payments).",
+        ErrorKind.CONFLICT,
+        ErrorDetails(fields = listOf(FieldError("accountId", "required to top up the payment wallet"))),
+    )
+
+    data object TopUpInProgress : RampError(
+        "ramp.topup_in_progress",
+        "A top-up of this wallet is still waiting for M-Pesa. Finish it on your phone, or wait a moment.",
+        ErrorKind.CONFLICT,
+    )
+
+    data object TopUpNotFound : RampError(
+        "ramp.topup_not_found",
+        "We couldn't find that top-up.",
+        ErrorKind.NOT_FOUND,
+    )
+
     /** The payout account id isn't one: FinoQ numbers accounts with digits. */
     data object PayoutAccountInvalid : RampError(
         "ramp.payout_account_invalid",

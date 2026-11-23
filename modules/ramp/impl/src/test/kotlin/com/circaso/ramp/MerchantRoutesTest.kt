@@ -4,7 +4,10 @@ import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.usecases.GetTestPayout
+import com.circaso.ramp.domain.usecases.GetTopUp
+import com.circaso.ramp.domain.usecases.ListTopUps
 import com.circaso.ramp.domain.usecases.StartTestPayout
+import com.circaso.ramp.domain.usecases.StartTopUp
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -69,6 +72,9 @@ class MerchantRoutesTest {
             StartTestPayout(ramp.testPayouts),
             GetTestPayout(ramp.testPayouts),
             ramp.setWebhookSecret,
+            StartTopUp(ramp.topUps),
+            GetTopUp(ramp.topUps),
+            ListTopUps(ramp.topUps),
         )
     private val base = "/v1/ramp/merchant"
 
@@ -847,6 +853,112 @@ class MerchantRoutesTest {
             assertEquals("PAID" to "QPROUTE", read.text("state") to read.text("receipt"))
             val unknown = client.get("$base/test-payout?testId=nope") { header("X-Merchant-Session", session) }
             assertEquals(HttpStatusCode.BadRequest, unknown.status)
+        }
+
+    @Test
+    fun `RM19 tops up a wallet with a prompt to the merchant's own phone and reads it until it is confirmed`() =
+        testApplication {
+            serve()
+            ramp.collections.serviceBalances["Crynce-user"] = 5_000
+            ramp.collections.payoutBalances["Crynce-user"] = 0
+            val session = signIn("crynce@example.com")
+
+            val wrongWallet =
+                client.post(
+                    "$base/topups",
+                ) { json("""{"wallet":"FLOAT","amountMinor":"50000"}""", session) }
+            assertEquals(HttpStatusCode.BadRequest, wrongWallet.status)
+            assertEquals("wallet", wrongWallet.field())
+            val shortPin =
+                client.post(
+                    "$base/topups",
+                ) { json("""{"wallet":"SERVICE","amountMinor":"50000","pin":"12"}""", session) }
+            assertEquals("pin", shortPin.field())
+            val tooSmall = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"500"}""", session) }
+            assertEquals("ramp.amount_invalid" to "amountMinor", tooSmall.envelope().text("code") to tooSmall.field())
+            val noAccount =
+                client.post(
+                    "$base/topups",
+                ) { json("""{"wallet":"PAYMENT","amountMinor":"50000"}""", session) }
+            assertEquals(
+                "ramp.merchant_setup_incomplete" to "accountId",
+                noAccount.envelope().text("code") to noAccount.field(),
+            )
+
+            val sent = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"50000"}""", session) }
+            assertEquals(HttpStatusCode.OK, sent.status, sent.bodyAsText())
+            val topUp = sent.data()
+            assertEquals("REQUESTED" to "SERVICE", topUp.text("state") to topUp.text("wallet"))
+            assertEquals("+254 7•• ••• 000", topUp.text("maskedPhone"))
+            assertEquals(Triple("KES", "50000", "500"), topUp.getValue("amount").amount())
+            assertEquals(Triple("KES", "5000", "50"), topUp.getValue("balanceBefore").amount())
+            assertEquals(JsonNull, topUp["failure"])
+            val again = client.post("$base/topups") { json("""{"wallet":"SERVICE","amountMinor":"50000"}""", session) }
+            assertEquals(
+                HttpStatusCode.Conflict to "ramp.topup_in_progress",
+                again.status to again.envelope().text("code"),
+            )
+
+            val id = topUp.text("topupId")
+            ramp.collections.topUpPaid(id, "Crynce-user")
+            ramp.clock.advance(4)
+            val read = client.get("$base/topups/$id") { header("X-Merchant-Session", session) }.data()
+            assertEquals("CONFIRMED" to "STATUS", read.text("state") to read.text("confirmedBy"))
+            assertEquals(Triple("KES", "55000", "550"), read.getValue("balanceAfter").amount())
+            assertEquals(Triple("KES", "50000", "500"), read.getValue("added").amount())
+
+            val list = client.get("$base/topups") { header("X-Merchant-Session", session) }.data()
+            assertEquals(
+                id,
+                list
+                    .getValue("topups")
+                    .jsonArray
+                    .single()
+                    .jsonObject
+                    .text("topupId"),
+            )
+            assertEquals(
+                Triple("KES", "1000", "10"),
+                list
+                    .getValue("limits")
+                    .jsonObject
+                    .getValue("min")
+                    .amount(),
+            )
+            assertEquals(
+                Triple("KES", "15000000", "150000"),
+                list
+                    .getValue("limits")
+                    .jsonObject
+                    .getValue("max")
+                    .amount(),
+            )
+            val bad = client.get("$base/topups/nope") { header("X-Merchant-Session", session) }
+            assertEquals(HttpStatusCode.BadRequest, bad.status)
+            val missing =
+                client.get(
+                    "$base/topups/${java.util.UUID.randomUUID()}",
+                ) { header("X-Merchant-Session", session) }
+            assertEquals(
+                HttpStatusCode.NotFound to "ramp.topup_not_found",
+                missing.status to missing.envelope().text("code"),
+            )
+        }
+
+    @Test
+    fun `RM19 offline asks for the PIN on field pin`() =
+        testApplication {
+            serve()
+            ramp.sessions.restart()
+            val session = signIn("crynce@example.com")
+
+            val offline =
+                client.post(
+                    "$base/topups",
+                ) { json("""{"wallet":"SERVICE","amountMinor":"50000"}""", session) }
+
+            assertEquals(HttpStatusCode.Conflict, offline.status)
+            assertEquals("ramp.merchant_offline" to "pin", offline.envelope().text("code") to offline.field())
         }
 
     @Test

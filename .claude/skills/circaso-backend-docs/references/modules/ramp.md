@@ -488,6 +488,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RM11 | `POST /ramp/merchant/orders/{orderId}/reversal` | `ReportReversal` | Reports an M-Pesa reversal with its receipt; blocks the user and their KYC identity, opens a case for ops |
 | RM16 | `GET /ramp/merchant/performance` | `GetMerchantPerformance` | The merchant's **own** ranking signals per direction, in plain terms: completion and failure rate, median time against the target and the SLA, trades, whether the newcomer boost applies, their order limit. Never another merchant's. Built 2026-11-23 |
 | RM17 | `PUT /ramp/merchant/offers` | `SetMerchantOffers` | The merchant's own switches: `{ onRamp?, offRamp? }` (one left out stays as it is); answers RM2. Built 2026-11-23 |
+| RM19 | `POST /ramp/merchant/topups` · `GET /ramp/merchant/topups` · `GET /ramp/merchant/topups/{topupId}` | `StartTopUp` / `ListTopUps` / `GetTopUp` | An M-Pesa prompt to the merchant's own contact phone to top up their FinoQ service or payment wallet; offline with the PIN. Built 2026-11-23: see "As built: merchant top-ups" |
 
 ### Ops (on the ops gateway, `/v1/ops/ramp`, through `ramp:api` `RampAdmin`)
 
@@ -852,6 +853,8 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.test_payout_in_progress` | CONFLICT → 409 | A test payout while one is still in flight |
 | `ramp.test_payout_not_found` | NOT_FOUND → 404 | No such test payout of this merchant |
 | `ramp.payout_account_invalid` | INVALID → 400 | A payout account id that isn't digits |
+| `ramp.topup_in_progress` | CONFLICT → 409 | RM19 while a top-up of the same wallet is still `REQUESTED` |
+| `ramp.topup_not_found` | NOT_FOUND → 404 | No such top-up of this merchant |
 | `ramp.resolution_invalid` | CONFLICT → 409 | RO4 on an order not in review, or a resolution that doesn't apply as it stands |
 | `ramp.receipt_required` | INVALID → 400 | RO4 `MARK_PAID` without the M-Pesa receipt |
 | `ramp.payout_may_be_paid` | CONFLICT → 409 | RO4 `REFUND` of a sale whose last payout the provider said was paid |
@@ -1609,6 +1612,46 @@ The owner's request: "Include one with no duration, so you don't have to set a d
 **One node, still.** "Keys not on this node" counts as lost because the trading session is single-node (`rmp:work` is not built). With a second app node this sweep would need the holder's mark instead: `TODO(decision: more than one app node)` in `EndSessions`.
 
 **The email.** `EmailTemplate.MERCHANT_TAKEN_OFFLINE` (`Email.MerchantTakenOffline`, no variables), `email-templates/merchant-taken-offline.html`. Until staff set its template id in the admin, nothing is sent and the session still ends.
+
+## As built: merchant top-ups (2026-11-23, `feat/merchant-topups`)
+
+The owner's request: "On the merchant side, add an option to top up their service account, and on the balance also an option to top up their FinoQ payment wallet, so they just enter an amount, get an STK push, and top up immediately." RM19.
+
+**FinoQ calls (`MobileCollections.requestTopUp` / `lookUpTopUp`, `PayHeroTopUps`).**
+
+- Service wallet: `POST https://backend.payhero.co.ke/api/v2/topup` `{ "amount": 100, "phone_number": "0712345678" }` (docs.payhero.co.ke, "Service Wallet Top Up": "The phone number you provide will get an MPESA prompt"). 200: `{ success, status: "QUEUED", reference, CheckoutRequestID }`. No reference of ours, no callback address. Legacy host only.
+- Payment wallet: a wallet-based collection, `POST /api/v2/payments` `{ amount, phone_number, provider: "sasapay", network_code: "63902", account_id, external_reference: <topupId>, callback_url }` (docs.payhero.africa, Kenya collections, "Wallet-based collections"; `account_id` is required there), on `api.finoq.africa`, then `backend.payhero.co.ke` only when the first provably took nothing (as the payout). No dedicated wallet top-up endpoint is documented on the new host.
+- Status: the payout's two lookups (`POST /api/global/transaction-status`, then `GET /api/v2/transaction-status?reference=`), by the provider's reference then ours; an answer echoing another `external_reference` is not used for the payment wallet (the service top-up sends none, so it isn't checked).
+- Typed results: `TopUpResult` `Accepted(receipt)` / `Rejected(reason)` / `Unknown` / `Unavailable`; `TopUpRejection` `INVALID_REQUEST`, `CREDENTIALS_REFUSED`, `NOT_SUPPORTED`, `SERVICE_BALANCE_LOW` ("insufficient … balance"), `PAYER_NOT_ALLOWED` (words about the own/first-party number or KYC level: FinoQ's KYC 1–2 accounts collect only from the number the account was opened with), `REFUSED`. Sent once on the no-retry clients; a timeout, a 5xx, a 408 and a 2xx without a reference (or `success: false`) are `Unknown`; a 429 is `Unavailable`. Layouts logged once (`what=topup_service|topup_payment|topup_status…`), never bodies or numbers.
+
+**The contract.**
+
+```json
+// POST /v1/ramp/merchant/topups   (Idempotency-Key; X-Merchant-Session)
+{ "wallet": "SERVICE", "amountMinor": "50000" }                    // online
+{ "wallet": "PAYMENT", "amountMinor": "100000", "pin": "482913" }  // offline: the PIN unlocks the account for this top-up only
+// → data (also GET /topups/{topupId})
+{ "topupId": "0193…", "wallet": "SERVICE", "state": "REQUESTED", "failure": null,
+  "amount": { "unit": "KES", "amountMinor": "50000", "amount": "500" }, "maskedPhone": "+254 7•• ••• 678",
+  "confirmedBy": null, "receipt": null,
+  "balanceBefore": { "unit": "KES", "amountMinor": "5000", "amount": "50" }, "balanceAfter": null, "added": null,
+  "outcome": "accepted", "createdAt": "…", "updatedAt": "…", "closedAt": null }
+// GET /v1/ramp/merchant/topups?limit=20 → { "topups": [ … ], "limits": { "min": { KES 10 }, "max": { KES 150000 } } }
+```
+
+`state`: `REQUESTED` (open) → `CONFIRMED` (`confirmedBy` `STATUS` | `BALANCE`, `balanceAfter`, `added`) | `FAILED` (`failure`: `CANCELLED`, `FAILED` after the prompt; `SERVICE_BALANCE_LOW`, `PAYER_NOT_ALLOWED`, `CREDENTIALS_REFUSED`, `PROVIDER_UNAVAILABLE`, `REFUSED` when nothing was sent) | `UNKNOWN` (nothing settled it within 5 minutes; a late provider "paid" still confirms it). Errors: `ramp.amount_invalid` (field `amountMinor`), `ramp.merchant_not_approved`, `ramp.merchant_setup_incomplete` (field `accountId` for a payment top-up without the FinoQ account id; or no contact phone/payment account), `ramp.merchant_offline` (field `pin`: offline without a PIN), `ramp.pin_invalid`, `ramp.pin_locked`, `ramp.vault_unavailable`, `ramp.topup_in_progress`, `ramp.collections_unavailable`, `ramp.topup_not_found`, `request.malformed` (`wallet`, `amountMinor`, `pin`, `topupId`).
+
+**Rules (`MerchantTopUps`).** Approved merchant; KES 10–150,000 in whole shillings (constants `MIN_SHILLINGS`/`MAX_SHILLINGS`); the prompt goes **only** to the merchant's own contact phone (the request has no phone field); one `REQUESTED` per merchant and wallet (`topups_open_key`); the row is written before the call, the call is made once.
+
+**Online or PIN (the choice).** Online on this node, the held keys are used. Offline, the request carries the PIN: `PinGuard` opens the envelope (wrong tries counted as everywhere) and `TradingSessions.hold` keeps the keys in this node's memory **without** a session mark, so the merchant takes no orders. Requiring "go online first" would lock out exactly the merchant who needs it: RM6 refuses to go online while the service wallet is under the floor. `ramp.end-sessions` keeps held keys while a top-up is open (`TopUpRepository.hasOpen`) and drops them after.
+
+**Confirmation.** A callback (`/v1/hooks/payhero/{key}`) is a doorbell: `HandlePaymentCallback` treats a reference that is no order as a possible top-up of the key's merchant (`MerchantTopUps.rung`). `lookUp` asks the provider's status: `Paid` → `CONFIRMED` (`STATUS`). Otherwise that wallet's balance is read (`ProviderBalancesReader`, which also records it for RM2): a rise of at least 90 % of the amount since `balanceBefore` → `CONFIRMED` (`BALANCE`; FinoQ may take a fee from a wallet collection). Else a provider `Failed` → `FAILED` (`CANCELLED` for the word CANCELLED). Else it waits; past 5 minutes → `UNKNOWN`. The portal's `GET /topups/{id}` asks at most every 3 s; `ramp.payouts` (every 10 s) sweeps open ones untouched for 10 s. Balances are refreshed on confirmation.
+
+**Data (V10).** `ramp.topups` (`topup_id`, `merchant_id`, `wallet`, `provider`, `amount_minor` whole KES, `payer_phone`, `state`, `failure`, `outcome`, `provider_reference`, `checkout_id`, `receipt`, `confirmed_by`, `balance_before_minor`, `balance_after_minor`, `created_at`, `updated_at`, `closed_at`), `topups_open_key` (unique `merchant_id, wallet` where `REQUESTED`), `topups_merchant_idx`, `topups_open_idx`.
+
+**`log` and `fake`.** `LogCollections` accepts a top-up, reports it paid after 3 s, credits the fake wallet and rings the payment doorbell; `FakeCollections` takes `nextTopUp`, `completeTopUp`, `failTopUp`.
+
+**Unconfirmed (each is what the code assumes).** That `/api/v2/topup` still works for FinoQ accounts and with the same API keys; that the wallet collection is allowed for the merchant's own number at their KYC tier and that `sasapay`/`63902` is right for M-Pesa; that either status lookup finds a service top-up (it sends no reference of ours) and with which words; whether a callback comes for either (and with which `transaction_type`); whether FinoQ takes a fee from the collected amount (hence the 90 % rule); FinoQ's wording for a non-owner number (`PAYER_NOT_ALLOWED` is matched widely, else `REFUSED`).
 
 ## To check against the vendor before building on it
 

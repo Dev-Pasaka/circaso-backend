@@ -21,6 +21,9 @@ import com.circaso.ramp.presentation.dto.SignedInResponse
 import com.circaso.ramp.presentation.dto.StatementResponse
 import com.circaso.ramp.presentation.dto.TestPayoutRequest
 import com.circaso.ramp.presentation.dto.TestPayoutResponse
+import com.circaso.ramp.presentation.dto.TopUpRequest
+import com.circaso.ramp.presentation.dto.TopUpResponse
+import com.circaso.ramp.presentation.dto.TopUpsResponse
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
 import com.circaso.ramp.presentation.dto.WebhookSecretRequest
 import com.circaso.ramp.presentation.mappers.cursorOf
@@ -35,6 +38,7 @@ import com.circaso.ramp.presentation.mappers.toSavedResponse
 import com.circaso.ramp.presentation.mappers.toSecret
 import com.circaso.ramp.presentation.mappers.toSignIn
 import com.circaso.ramp.presentation.mappers.toSwitches
+import com.circaso.ramp.presentation.mappers.toTopUpsResponse
 import com.circaso.ramp.presentation.mappers.toWindow
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -92,6 +96,7 @@ fun Route.merchantController(auth: MerchantAuthService, merchants: MerchantServi
             tradingRoutes(merchants)
             moneyRoutes(merchants)
             testPayoutRoutes(merchants)
+            topUpRoutes(merchants)
         }
     }
 }
@@ -502,6 +507,73 @@ private fun Route.testPayoutRoutes(merchants: MerchantService) {
                     "this asks the provider what became of it (at most every few seconds): only the provider's " +
                     "answer moves it. Once `PAID`, `balanceAfter` is read and `charged` is the provider's real " +
                     "charge.",
+        )
+    }
+}
+
+private fun Route.topUpRoutes(merchants: MerchantService) {
+    route("/topups") {
+        post {
+            val request = call.receive<TopUpRequest>()
+            val result =
+                request.toCommand().flatMap {
+                    merchants.topUp(call.merchantId(), call.merchantNetwork(), it)
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<TopUpRequest, TopUpResponse>(
+            "RM19 · Top up your FinoQ wallet with M-Pesa",
+            TAG,
+            listOf(
+                INVALID,
+                NOT_FOUND,
+                SETUP,
+                "ramp.merchant_not_approved",
+                "ramp.amount_invalid",
+                "ramp.merchant_offline",
+                PIN_INVALID,
+                PIN_LOCKED,
+                VAULT,
+                "ramp.topup_in_progress",
+                "ramp.collections_unavailable",
+                MALFORMED,
+            ),
+            notes =
+                "$MONEY Sends an M-Pesa prompt for `amountMinor` (KES 10 to 150,000, whole shillings) to **your own " +
+                    "contact phone** (RM1), never any other number, to fill your `SERVICE` wallet (FinoQ's fees) or " +
+                    "your `PAYMENT` wallet (what payouts spend; needs your FinoQ account id, RM5b). Online, it uses " +
+                    "your unlocked account; offline, send your `pin` with it (`ramp.merchant_offline` with field " +
+                    "`pin` when you didn't): it unlocks the account for this top-up only and doesn't put you online. " +
+                    "One open top-up per wallet (`ramp.topup_in_progress`). The prompt is sent once and never " +
+                    "repeated: read the top-up with `GET /topups/{topupId}` until it leaves `REQUESTED`. A `FAILED` " +
+                    "answer straight away means no prompt was sent (`failure` says why).",
+        )
+
+        get {
+            val limit = call.pageLimit()
+            val result = merchants.topUps(call.merchantId(), limit)
+            call.respondDefault(result.toDefaultResponse { it.toTopUpsResponse() })
+        }.docs<NoBody, TopUpsResponse>(
+            "RM19 · Your top-ups",
+            TAG,
+            listOf(INVALID, MALFORMED),
+            notes = "$SESSION Your latest top-ups, newest first (`?limit=`, default 20), and the amount limits.",
+        )
+
+        get("{topupId}") {
+            val topUpId = runCatching { UUID.fromString(call.parameters["topupId"]) }.getOrNull()
+            val result =
+                topUpId?.let { merchants.topUpResult(call.merchantId(), it) }
+                    ?: Resource.error(SharedError.Malformed("topupId", "not an id"))
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, TopUpResponse>(
+            "RM19 · One top-up",
+            TAG,
+            listOf(INVALID, "ramp.topup_not_found", MALFORMED),
+            notes =
+                "$SESSION While it is `REQUESTED` this asks the provider what became of the prompt (at most every " +
+                    "few seconds), then that wallet's balance: it is `CONFIRMED` when the provider says it was paid " +
+                    "or the balance rose by the amount, `FAILED` when the provider says it failed, and `UNKNOWN` " +
+                    "when nothing could tell within 5 minutes. A callback only makes it ask sooner.",
         )
     }
 }

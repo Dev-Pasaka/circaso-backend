@@ -44,6 +44,7 @@ import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantStatsBook
+import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PayoutFees
@@ -288,6 +289,20 @@ class Harness {
     val saleRefunds = SaleRefunds(orders, merchantWallets, releases, saleFlow, clock)
     val testPayouts =
         TestPayouts(testPayoutRows, merchants, sessions, providers, balancesReader, payoutFees, book, clock, journal)
+    val topUpRows = MemoryTopUps()
+    val topUps =
+        MerchantTopUps(
+            topUpRows,
+            merchants,
+            credentials,
+            pins,
+            sessions,
+            providers,
+            balancesReader,
+            book,
+            clock,
+            journal,
+        )
     val startOffRamp =
         StartOffRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, balancesReader, clock)
     val saleTransfer = HandleSaleTransfer(orders, saleFunding, salePayouts, alerts)
@@ -317,7 +332,7 @@ class Harness {
     val getOrder = GetOrder(orders, merchants)
     val listOrders = ListOrders(orders, merchants)
     val cancelOrder = CancelOrder(orders, merchants, flow, saleFlow)
-    val paymentCallback = HandlePaymentCallback(merchants, orders, flow, alerts)
+    val paymentCallback = HandlePaymentCallback(merchants, orders, flow, alerts, topUps)
     val sweep = SweepOrders(orders, flow, clock)
     val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock, saleRefunds)
     val settleFees = SettleFees(treasury, sweeps)
@@ -336,7 +351,7 @@ class Harness {
     val goOffline = GoOffline(presence, clock)
     val changePin = ChangePin(credentials, pins, clock)
     val merchantOrders = ListMerchantOrders(orders)
-    val endSessions = EndSessions(merchants, orders, sessions, email, clock)
+    val endSessions = EndSessions(merchants, orders, sessions, email, clock, topUpRows)
     val earnings = GetEarnings(ledger, ledger, book, clock)
     val statement = GetStatement(ledger, clock)
 

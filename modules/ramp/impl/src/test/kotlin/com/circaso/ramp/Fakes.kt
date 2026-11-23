@@ -38,6 +38,12 @@ import com.circaso.integrations.api.PayoutStatus
 import com.circaso.integrations.api.ProviderBalances
 import com.circaso.integrations.api.ProviderFee
 import com.circaso.integrations.api.ProviderFees
+import com.circaso.integrations.api.TopUpLookup
+import com.circaso.integrations.api.TopUpReceipt
+import com.circaso.integrations.api.TopUpRequest
+import com.circaso.integrations.api.TopUpResult
+import com.circaso.integrations.api.TopUpStatus
+import com.circaso.integrations.api.TopUpWallet
 import com.circaso.integrations.api.TreasuryAccess
 import com.circaso.integrations.api.TreasuryBalance
 import com.circaso.integrations.api.TreasuryCustody
@@ -549,6 +555,52 @@ class FakeCollections : MobileCollections {
         payoutStatuses[reference] = PayoutStatus.Paid(receipt, payout.amount, reference)
     }
 
+    // ---- top-ups (2026-11-23) ----
+
+    /** Every top-up prompt asked for, and the ones that reached the provider (a send it never took is not here). */
+    val topUpCalls = mutableListOf<TopUpRequest>()
+    val topUps = mutableListOf<TopUpRequest>()
+    val topUpLookups = mutableListOf<TopUpLookup>()
+
+    /** What the next top-ups answer, in order; accepted once they run out. `Unknown` reaches the provider. */
+    val nextTopUps = ArrayDeque<TopUpResult>()
+
+    /** What the provider says of each top-up, by our reference; a prompt that went out is `Pending`. */
+    val topUpStatuses = mutableMapOf<String, TopUpStatus>()
+
+    override suspend fun requestTopUp(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult {
+        topUpCalls += request
+        val result = nextTopUps.removeFirstOrNull() ?: TopUpResult.Accepted(TopUpReceipt("TU-${topUps.size + 1}"))
+        if (result is TopUpResult.Accepted || result == TopUpResult.Unknown) {
+            topUps += request
+            topUpStatuses[request.reference] = TopUpStatus.Pending
+        }
+        return result
+    }
+
+    override suspend fun lookUpTopUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus {
+        topUpLookups += lookup
+        return topUpStatuses[lookup.reference] ?: TopUpStatus.NotFound
+    }
+
+    /** The merchant approved the prompt: the money lands in [username]'s wallet, and the status says so if [reported]. */
+    fun topUpPaid(
+        reference: String,
+        username: String,
+        reported: Boolean = true,
+    ) {
+        val topUp = topUps.last { it.reference == reference }
+        val amount = topUp.amount.amountMinor
+        when (topUp.wallet) {
+            TopUpWallet.SERVICE -> serviceBalances[username] = (serviceBalances[username] ?: 0) + amount
+            TopUpWallet.PAYMENT -> payoutBalances[username] = (payoutBalances[username] ?: 0) + amount
+        }
+        if (reported) {
+            topUpStatuses[reference] =
+                TopUpStatus.Paid("QT${reference.takeLast(6).uppercase()}", topUp.amount)
+        }
+    }
+
     override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> {
         val payout = payoutBalances[credentials.username] ?: return Resource.error(IntegrationError.Unavailable("x"))
         val fees = serviceBalances[credentials.username]
@@ -733,6 +785,10 @@ class MemorySessions : TradingSessions {
     ) {
         this.keys[merchantId] = keys
         marks[merchantId] = until ?: Instant.MAX
+    }
+
+    override fun hold(merchantId: MerchantId, keys: UnlockedKeys) {
+        this.keys.putIfAbsent(merchantId, keys)
     }
 
     /** Open-ended sessions this node renewed the mark of. */

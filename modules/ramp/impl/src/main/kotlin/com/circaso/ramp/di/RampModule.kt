@@ -44,6 +44,7 @@ import com.circaso.ramp.data.repositories.SettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.SettlementRepositoryImpl
 import com.circaso.ramp.data.repositories.StatementRepositoryImpl
 import com.circaso.ramp.data.repositories.TestPayoutRepositoryImpl
+import com.circaso.ramp.data.repositories.TopUpRepositoryImpl
 import com.circaso.ramp.data.repositories.VerificationRepositoryImpl
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
@@ -74,6 +75,7 @@ import com.circaso.ramp.data.tables.RevenueWalletsTable
 import com.circaso.ramp.data.tables.RoutingDecisionsTable
 import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.data.tables.TestPayoutsTable
+import com.circaso.ramp.data.tables.TopUpsTable
 import com.circaso.ramp.data.tables.VerificationsTable
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.FrameSender
@@ -114,6 +116,7 @@ import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
 import com.circaso.ramp.domain.repositories.TestPayoutRepository
+import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
@@ -123,6 +126,7 @@ import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantStatsBook
+import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PayoutFees
@@ -160,6 +164,7 @@ import com.circaso.ramp.domain.usecases.GetRoutingDecision
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
 import com.circaso.ramp.domain.usecases.GetTestPayout
+import com.circaso.ramp.domain.usecases.GetTopUp
 import com.circaso.ramp.domain.usecases.GetUserKyc
 import com.circaso.ramp.domain.usecases.GetUserVerifications
 import com.circaso.ramp.domain.usecases.GoOffline
@@ -179,6 +184,7 @@ import com.circaso.ramp.domain.usecases.ListPreviewAccess
 import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListRoutingDecisions
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
+import com.circaso.ramp.domain.usecases.ListTopUps
 import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.ReplayFrames
@@ -201,6 +207,7 @@ import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartOffRamp
 import com.circaso.ramp.domain.usecases.StartOnRamp
 import com.circaso.ramp.domain.usecases.StartTestPayout
+import com.circaso.ramp.domain.usecases.StartTopUp
 import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
@@ -268,6 +275,7 @@ internal val rampDatabaseSpec =
                 RoutingDecisionsTable,
                 PayoutHoldsTable,
                 TestPayoutsTable,
+                TopUpsTable,
             ),
         migrationsLocation = "classpath:db/ramp",
         outbox = true,
@@ -327,6 +335,7 @@ fun rampModule(config: Config): Module =
         single<OrderRepository> { OrderRepositoryImpl(get(named("ramp.database"))) }
         single<PayoutHoldRepository> { PayoutHoldRepositoryImpl(get(named("ramp.database"))) }
         single<TestPayoutRepository> { TestPayoutRepositoryImpl(get(named("ramp.database"))) }
+        single<TopUpRepository> { TopUpRepositoryImpl(get(named("ramp.database"))) }
         single<ReservationRepository> { ReservationRepositoryImpl(get(named("ramp.database"))) }
         single<CommissionRepository> { CommissionRepositoryImpl(get(named("ramp.database"))) }
         single<SettlementRepository> { SettlementRepositoryImpl(get(named("ramp.database"))) }
@@ -440,6 +449,7 @@ fun rampModule(config: Config): Module =
         single { SaleFunding(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { SaleRefunds(get(), get(), get(), get(), clock) }
         single { TestPayouts(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
+        single { MerchantTopUps(get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { FloatWallets(get(), get(), get(), get(), get(), clock) }
         single { FeeSweeps(get(), get(), get(), get(), get(), get(), get(), clock) }
         single {
@@ -490,7 +500,10 @@ fun rampModule(config: Config): Module =
         single { SetPayoutAccount(get(), get(), clock) }
         single { StartTestPayout(get()) }
         single { GetTestPayout(get()) }
-        single { HandlePaymentCallback(get(), get(), get(), get()) }
+        single { StartTopUp(get()) }
+        single { GetTopUp(get()) }
+        single { ListTopUps(get()) }
+        single { HandlePaymentCallback(get(), get(), get(), get(), get()) }
         single { SweepOrders(get(), get(), clock) }
         single { ReplayFrames(get()) }
         single { HasOpenOrder(get()) }
@@ -508,7 +521,7 @@ fun rampModule(config: Config): Module =
         single { GoOffline(get(), clock) }
         single { ChangePin(get(), get(), clock) }
         single { ListMerchantOrders(get()) }
-        single { EndSessions(get(), get(), get(), get(), clock) }
+        single { EndSessions(get(), get(), get(), get(), clock, get()) }
         single { GetEarnings(get(), get(), get(), clock) }
         single { GetStatement(get(), clock) }
         single { ListMerchants(get(), get(), get(), get()) }
@@ -559,11 +572,15 @@ fun rampModule(config: Config): Module =
                 startTestPayout = get(),
                 getTestPayout = get(),
                 setWebhookSecret = get(),
+                startTopUp = get(),
+                getTopUp = get(),
+                listTopUps = get(),
             )
         }
         single { RampEngineService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single {
             RampEventsService(
+                get(),
                 get(),
                 get(),
                 get(),

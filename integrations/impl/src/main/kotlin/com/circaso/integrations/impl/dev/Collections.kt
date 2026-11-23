@@ -18,6 +18,12 @@ import com.circaso.integrations.api.PayoutRequest
 import com.circaso.integrations.api.PayoutResult
 import com.circaso.integrations.api.PayoutStatus
 import com.circaso.integrations.api.ProviderBalances
+import com.circaso.integrations.api.TopUpLookup
+import com.circaso.integrations.api.TopUpReceipt
+import com.circaso.integrations.api.TopUpRequest
+import com.circaso.integrations.api.TopUpResult
+import com.circaso.integrations.api.TopUpStatus
+import com.circaso.integrations.api.TopUpWallet
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Resource
 import kotlinx.coroutines.CancellationException
@@ -41,6 +47,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * payout the provider took is `Pending` until the test says what became of it ([completePayout], [failPayout]);
  * [ringPayout] rings a listener's doorbell as the provider's callback would, as often as asked (a duplicate callback
  * is `times = 2`). Every payout that reached the provider is in [payouts], so a test can prove one was sent once.
+ *
+ * **Top-ups** (2026-11-23): [nextTopUp] scripts the next [requestTopUp] (accepted when unset); a prompt that went out is
+ * `Pending` until [completeTopUp] (which credits the wallet it was for) or [failTopUp].
  */
 class FakeCollections : MobileCollections {
     val prompts: MutableList<CollectionRequest> = CopyOnWriteArrayList()
@@ -66,6 +75,29 @@ class FakeCollections : MobileCollections {
 
     @Volatile
     var nextPayout: FakePayout = FakePayout.ACCEPT
+
+    /** The top-up prompts that reached the provider, and what it says of each, by our reference. */
+    val topUps: MutableList<TopUpRequest> = CopyOnWriteArrayList()
+    val topUpStatuses = ConcurrentHashMap<String, TopUpStatus>()
+
+    /** What the next [requestTopUp] answers; unset, the prompt goes out. */
+    @Volatile
+    var nextTopUp: TopUpResult? = null
+
+    /** The payer approved the top-up [reference]: reported paid, and the wallet it was for credited. */
+    fun completeTopUp(reference: String, receipt: String = "QT${reference.takeLast(8).uppercase()}") {
+        val topUp = topUps.first { it.reference == reference }
+        topUpStatuses[reference] = TopUpStatus.Paid(receipt, topUp.amount)
+        when (topUp.wallet) {
+            TopUpWallet.SERVICE -> feeBalanceMinor += topUp.amount.amountMinor
+            TopUpWallet.PAYMENT -> payoutBalanceMinor = payoutBalanceMinor?.plus(topUp.amount.amountMinor)
+        }
+    }
+
+    /** The payer cancelled the top-up [reference], or its prompt timed out. */
+    fun failTopUp(reference: String, reason: String = "CANCELLED") {
+        topUpStatuses[reference] = TopUpStatus.Failed(reason)
+    }
 
     /** The provider's reference for the prompt we named [reference]. */
     fun referenceOf(reference: String): String = "PH-${prompts.indexOfFirst { it.reference == reference } + 1}"
@@ -159,6 +191,20 @@ class FakeCollections : MobileCollections {
         return providerReference?.let { payoutStatuses[it] } ?: PayoutStatus.NotFound(by)
     }
 
+    override suspend fun requestTopUp(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult {
+        if (failure != null) return TopUpResult.Unavailable
+        val scripted = nextTopUp.also { nextTopUp = null }
+        if (scripted != null && scripted !is TopUpResult.Accepted && scripted != TopUpResult.Unknown) return scripted
+        topUps += request
+        topUpStatuses[request.reference] = TopUpStatus.Pending
+        return scripted ?: TopUpResult.Accepted(TopUpReceipt("TU-${topUps.size}", "ws_CO_TU_${topUps.size}"))
+    }
+
+    override suspend fun lookUpTopUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus {
+        if (failure != null) return TopUpStatus.Unknown
+        return topUpStatuses[lookup.reference] ?: TopUpStatus.NotFound
+    }
+
     override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> {
         failure?.let { return Resource.error(it) }
         return Resource.success(
@@ -240,17 +286,39 @@ class LogCollections(
             if (result is PayoutResult.Accepted) background.launch { settle(request) }
         }
 
+    override suspend fun requestTopUp(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult =
+        delegate.requestTopUp(credentials, request).also { result ->
+            log.info("collections (log): top-up for reference={}: {}", request.reference, result::class.simpleName)
+            if (result is TopUpResult.Accepted) background.launch { settleTopUp(request) }
+        }
+
+    /** The pretend payer approves the prompt after [payoutDelay]; the payment doorbell rings when there is an address. */
+    private suspend fun settleTopUp(request: TopUpRequest) {
+        delay(payoutDelay.toMillis())
+        delegate.completeTopUp(request.reference)
+        log.info("collections (log): top-up for reference={} reported as paid", request.reference)
+        val callbackUrl = request.callbackUrl ?: return
+        try {
+            notifications()?.onPaymentCallback(keyOf(callbackUrl), request.reference)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("collections (log): the top-up doorbell failed: error={}", e::class.simpleName)
+        }
+    }
+
+    private fun keyOf(callbackUrl: String): String =
+        callbackUrl
+            .substringBefore('?')
+            .trimEnd('/')
+            .substringAfterLast('/')
+
     private suspend fun settle(request: PayoutRequest) {
         delay(payoutDelay.toMillis())
         delegate.completePayout(request.reference)
         log.info("collections (log): payout for reference={} reported as paid", request.reference)
-        val callbackKey =
-            request.callbackUrl
-                .substringBefore('?')
-                .trimEnd('/')
-                .substringAfterLast('/')
         try {
-            notifications()?.onPayoutCallback(callbackKey, request.reference)
+            notifications()?.onPayoutCallback(keyOf(request.callbackUrl), request.reference)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

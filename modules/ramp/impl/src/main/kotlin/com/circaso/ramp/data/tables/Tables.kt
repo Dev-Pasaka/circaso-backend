@@ -241,6 +241,29 @@ object TestPayoutsTable : Table("ramp.test_payouts") {
     override val primaryKey = PrimaryKey(testId)
 }
 
+/** A merchant's top-ups of their own wallets at the provider (2026-11-23). */
+object TopUpsTable : Table("ramp.topups") {
+    val topUpId = javaUUID("topup_id")
+    val merchantId = javaUUID("merchant_id")
+    val wallet = text("wallet")
+    val provider = text("provider")
+    val amountMinor = long("amount_minor")
+    val payerPhone = text("payer_phone")
+    val state = text("state")
+    val failure = text("failure").nullable()
+    val outcome = text("outcome").nullable()
+    val providerReference = text("provider_reference").nullable()
+    val checkoutId = text("checkout_id").nullable()
+    val receipt = text("receipt").nullable()
+    val confirmedBy = text("confirmed_by").nullable()
+    val balanceBeforeMinor = long("balance_before_minor").nullable()
+    val balanceAfterMinor = long("balance_after_minor").nullable()
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
+    val closedAt = timestamp("closed_at").nullable()
+    override val primaryKey = PrimaryKey(topUpId)
+}
+
 /** The part of a merchant's float promised to an open order. */
 object ReservationsTable : Table("ramp.reservations") {
     val orderId = javaUUID("order_id")

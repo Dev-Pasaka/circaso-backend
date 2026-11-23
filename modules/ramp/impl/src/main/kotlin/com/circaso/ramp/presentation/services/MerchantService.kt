@@ -16,6 +16,8 @@ import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
 import com.circaso.ramp.domain.models.TestPayout
+import com.circaso.ramp.domain.models.TopUp
+import com.circaso.ramp.domain.models.TopUpCommand
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.ChangePin
@@ -24,9 +26,11 @@ import com.circaso.ramp.domain.usecases.GetMerchant
 import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetStatement
 import com.circaso.ramp.domain.usecases.GetTestPayout
+import com.circaso.ramp.domain.usecases.GetTopUp
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
+import com.circaso.ramp.domain.usecases.ListTopUps
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
@@ -36,6 +40,7 @@ import com.circaso.ramp.domain.usecases.SetWebhookSecret
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartTestPayout
+import com.circaso.ramp.domain.usecases.StartTopUp
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.shared.Network
@@ -63,7 +68,7 @@ class MerchantAuthService(
     suspend fun signOut(token: String?): Resource<Unit> = signOutUseCase(token)
 }
 
-/** What a signed-in merchant asks the ramp (RM1–RM17). No logic of its own: each method is one use case. */
+/** What a signed-in merchant asks the ramp (RM1–RM19). No logic of its own: each method is one use case. */
 class MerchantService(
     private val getMerchant: GetMerchant,
     private val applyAsMerchant: ApplyAsMerchant,
@@ -82,7 +87,21 @@ class MerchantService(
     private val startTestPayout: StartTestPayout,
     private val getTestPayout: GetTestPayout,
     private val setWebhookSecret: SetWebhookSecret,
+    private val startTopUp: StartTopUp,
+    private val getTopUp: GetTopUp,
+    private val listTopUps: ListTopUps,
 ) {
+    /** RM19: an M-Pesa prompt to the merchant's own phone to fill one of their wallets at the provider. */
+    suspend fun topUp(
+        merchantId: MerchantId,
+        network: Network,
+        command: TopUpCommand,
+    ): Resource<TopUp> = startTopUp(merchantId, network, command)
+
+    suspend fun topUpResult(merchantId: MerchantId, topUpId: UUID): Resource<TopUp> = getTopUp(merchantId, topUpId)
+
+    suspend fun topUps(merchantId: MerchantId, limit: Int): Resource<List<TopUp>> = listTopUps(merchantId, limit)
+
     /** RM5c: sets or replaces ([secret]) or removes (null) the FinoQ webhook signing secret. */
     suspend fun webhookSecret(
         merchantId: MerchantId,

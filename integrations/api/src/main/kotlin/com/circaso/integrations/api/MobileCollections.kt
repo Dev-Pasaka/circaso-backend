@@ -47,6 +47,20 @@ interface MobileCollections {
         PayoutStatus.Unknown
 
     /**
+     * Sends an M-Pesa prompt to [TopUpRequest.payer] to put money into one of the merchant's **own** wallets at the
+     * provider ([TopUpWallet]): the one its fees are taken from, or the one payouts spend (2026-11-23). **Sent once**:
+     * the client never repeats it, so a payer never gets two prompts for one top-up.
+     *
+     * Not a `Resource`: as with [sendPayout], each answer asks something different of the caller. `Accepted` is
+     * only "the prompt went out"; whether it was paid is [lookUpTopUp]'s (or the wallet's balance rising).
+     */
+    suspend fun requestTopUp(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult =
+        TopUpResult.Rejected(TopUpRejection.NOT_SUPPORTED)
+
+    /** What the provider says became of a top-up's prompt. A callback about it is only a doorbell that leads here. */
+    suspend fun lookUpTopUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus = TopUpStatus.Unknown
+
+    /**
      * The merchant's balances at the provider, each with where it was read: what payouts can spend
      * ([ProviderBalances.payout]) and what the provider's fees are taken from ([ProviderBalances.fees]). **A balance
      * that could not be read is null, never zero.** [accountId] is the merchant's account at the provider
@@ -248,6 +262,92 @@ sealed interface PayoutStatus {
 }
 
 enum class PayoutReference { PROVIDER, OURS }
+
+/** Which of the merchant's own wallets at the provider a top-up fills. */
+enum class TopUpWallet {
+    /** What the provider's fees are taken from ([ProviderBalances.fees]; FinoQ's service wallet). */
+    SERVICE,
+
+    /** What payouts spend ([ProviderBalances.payout]; FinoQ's payment wallet). */
+    PAYMENT,
+}
+
+data class TopUpRequest(
+    val wallet: TopUpWallet,
+    /** Who gets the prompt: the merchant's own phone, never a number a request named. */
+    val payer: PhoneNumber,
+    val amount: FiatAmount,
+    /** Ours (the top-up's id), echoed back in the callback and the status where the provider takes it. */
+    val reference: String,
+    /** Where the provider calls back, when it takes one for this wallet. */
+    val callbackUrl: String?,
+    /** The merchant's account at the provider ([PayoutRequest.accountId]); the payment wallet's top-up needs it. */
+    val accountId: String?,
+) {
+    override fun toString(): String = "TopUpRequest($wallet, $reference, ***)"
+}
+
+/** What the provider handed back for a prompt it sent: [MobileCollections.lookUpTopUp] asks with [providerReference]. */
+data class TopUpReceipt(val providerReference: String, val checkoutId: String? = null)
+
+/** What became of asking for a top-up's prompt. Exactly one of these. */
+sealed interface TopUpResult {
+    /** The provider took it and is prompting the phone. Not paid yet. */
+    data class Accepted(val receipt: TopUpReceipt) : TopUpResult
+
+    /** Refused for good: **no prompt was sent**. */
+    data class Rejected(val reason: TopUpRejection) : TopUpResult
+
+    /** The request left and no usable answer came back: a prompt **may** be on the phone. Look it up; never resend. */
+    data object Unknown : TopUpResult
+
+    /** The provider could not be reached, or turned the call away unread: no prompt was sent. */
+    data object Unavailable : TopUpResult
+}
+
+/** Why a top-up was refused, in our words. */
+enum class TopUpRejection {
+    /** Something in the request the provider (or this client) won't take: cents, no account id, a field it refused. */
+    INVALID_REQUEST,
+
+    /** The provider doesn't accept the merchant's username and password. */
+    CREDENTIALS_REFUSED,
+
+    /** This provider has no such top-up. */
+    NOT_SUPPORTED,
+
+    /** The provider can't take its own fee for the prompt: the service wallet must be topped up first. */
+    SERVICE_BALANCE_LOW,
+
+    /** The provider won't prompt this phone for this account (FinoQ's lower KYC tiers: only the owner's own number). */
+    PAYER_NOT_ALLOWED,
+
+    /** Refused for a reason this client doesn't tell apart. */
+    REFUSED,
+}
+
+/** Which top-up to ask about: by the provider's reference when we have one, else by ours. */
+data class TopUpLookup(val wallet: TopUpWallet, val reference: String, val providerReference: String? = null)
+
+/** What the provider says became of a top-up's prompt. */
+sealed interface TopUpStatus {
+    /** Still waiting for the payer (or for M-Pesa). */
+    data object Pending : TopUpStatus
+
+    /** Paid: the money is on its way into the wallet. [receipt] is M-Pesa's code when the provider gives it. */
+    data class Paid(val receipt: String?, val amount: FiatAmount?) : TopUpStatus {
+        override fun toString(): String = "Paid(***)"
+    }
+
+    /** The payer cancelled, the prompt timed out, or M-Pesa refused it. [reason] is the provider's status word. */
+    data class Failed(val reason: String) : TopUpStatus
+
+    /** The provider knows no such top-up (it may not search by our reference). */
+    data object NotFound : TopUpStatus
+
+    /** No usable answer. Nothing may rest on it. */
+    data object Unknown : TopUpStatus
+}
 
 /** The on-ramp's reading ([MobileCollections.balance]): only [fees] is real. */
 data class CollectionBalances(val payout: FiatAmount, val fees: FiatAmount)

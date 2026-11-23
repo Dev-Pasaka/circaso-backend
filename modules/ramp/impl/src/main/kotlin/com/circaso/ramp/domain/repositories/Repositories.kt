@@ -15,6 +15,9 @@ import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.models.TopUp
+import com.circaso.ramp.domain.models.TopUpState
+import com.circaso.ramp.domain.models.TopUpTarget
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import java.time.Instant
@@ -250,6 +253,29 @@ interface TestPayoutRepository {
 
     /** Tests in flight untouched since [before], oldest first. */
     suspend fun open(before: Instant, limit: Int): List<TestPayout>
+}
+
+/** `ramp.topups`. One open top-up per merchant and wallet (`topups_open_key`). */
+interface TopUpRepository {
+    /** False when the merchant already has an open top-up of that wallet. */
+    suspend fun insert(topUp: TopUp): Boolean
+
+    suspend fun find(topUpId: UUID): TopUp?
+
+    /** The merchant's open top-up of [target], if any. */
+    suspend fun open(merchantId: MerchantId, target: TopUpTarget): TopUp?
+
+    /** The merchant's latest top-ups, newest first. */
+    suspend fun recent(merchantId: MerchantId, limit: Int): List<TopUp>
+
+    /** Replaces the row with [topUp] only while it is in one of [from]; true when it moved. */
+    suspend fun move(topUp: TopUp, from: Set<TopUpState>): Boolean
+
+    /** Open top-ups untouched since [before], oldest first. */
+    suspend fun stale(before: Instant, limit: Int): List<TopUp>
+
+    /** Whether the merchant has an open top-up: its lookups need their unlocked keys. */
+    suspend fun hasOpen(merchantId: MerchantId): Boolean
 }
 
 interface CommissionRepository {
