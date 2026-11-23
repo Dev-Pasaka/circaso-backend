@@ -10,6 +10,7 @@ import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
@@ -139,7 +140,7 @@ class OrderFlow(
             is IntegrationError.ServiceBalanceLow -> {
                 close(order, OrderState.FAILED, PROVIDER_BALANCE, tellUser = false)
                 merchants.setPaymentsIssue(order.merchantId, PaymentsIssue.SERVICE_BALANCE, clock.instant())
-                presence.goOffline(order.merchantId)
+                presence.goOffline(order.merchantId, OfflineReason.PROVIDER_BALANCE)
                 alerts.stuck("merchant ${order.merchantId} prompts", PROVIDER_BALANCE)
                 Prompted.NotSent(PROVIDER_BALANCE, RampError.MerchantUnavailable)
             }

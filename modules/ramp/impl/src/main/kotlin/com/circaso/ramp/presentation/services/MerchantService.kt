@@ -16,6 +16,7 @@ import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
 import com.circaso.ramp.domain.models.TestPayout
+import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.GetEarnings
@@ -141,8 +142,8 @@ class MerchantService(
         merchantId: MerchantId,
         network: Network,
         pin: String,
-        minutes: Int,
-    ): Resource<OnlineView> = goOnlineUseCase(merchantId, network, pin, minutes)
+        window: TradingWindow,
+    ): Resource<OnlineView> = goOnlineUseCase(merchantId, network, pin, window)
 
     suspend fun goOffline(merchantId: MerchantId): Resource<OnlineView> = goOfflineUseCase(merchantId)
 

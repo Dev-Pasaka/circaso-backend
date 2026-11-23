@@ -8,6 +8,7 @@ import com.circaso.ramp.domain.models.CodeCheck
 import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.SignInCodes
@@ -133,7 +134,7 @@ class SignOut(
         val hash = tokens.digest(token.trim())
         val session = sessions.find(hash, clock.instant()) ?: return Resource.success(Unit)
         sessions.delete(hash)
-        presence.goOffline(session.merchantId)
+        presence.goOffline(session.merchantId, OfflineReason.SIGNED_OUT)
         return Resource.success(Unit)
     }
 }

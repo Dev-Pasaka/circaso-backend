@@ -156,7 +156,12 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "(\"Top up your PayHero service wallet\"). It takes you offline and puts `provider_balance` in " +
                 "`missing`; `canGoOnline` stays true, because going online again (RM6) checks the balance and " +
                 "clears it. `merchantType` (`INDIVIDUAL` or `BUSINESS`) is set by Circaso; `offers` are your own " +
-                "switches for which orders you take (RM17); RM16 shows how you are doing.",
+                "switches for which orders you take (RM17); RM16 shows how you are doing. `online` is your " +
+                "trading session: `state` (`ONLINE` or `OFFLINE`), `until` (a timed window's end; null when " +
+                "`openEnded`, online until you go offline), `keysHeld`, `since`, and while offline " +
+                "`offlineReason` (`STOPPED`, `SIGNED_OUT`, `SUSPENDED`, `PROVIDER_BALANCE`, `WINDOW_ENDED`, " +
+                "`RESTART`: the server restarted and your unlocked account went with it, so go online again) " +
+                "with `offlineAt`.",
     )
 
     put("profile") {
@@ -353,8 +358,8 @@ private fun Route.tradingRoutes(merchants: MerchantService) {
         post {
             val request = call.receive<GoOnlineRequest>()
             val result =
-                request.toWindow().flatMap { (pin, minutes) ->
-                    merchants.goOnline(call.merchantId(), call.merchantNetwork(), pin, minutes)
+                request.toWindow().flatMap { (pin, window) ->
+                    merchants.goOnline(call.merchantId(), call.merchantNetwork(), pin, window)
                 }
             call.respondDefault(result.toDefaultResponse { it.toResponse() })
         }.docs<GoOnlineRequest, OnlineResponse>(
@@ -362,7 +367,11 @@ private fun Route.tradingRoutes(merchants: MerchantService) {
             TAG,
             listOf(INVALID, "ramp.merchant_not_approved", SETUP, PIN_INVALID, PIN_LOCKED, VAULT, MALFORMED),
             notes =
-                "$MONEY Your PIN and a trading window in `minutes` (15 to 720). Needs your identity verified where " +
+                "$MONEY Your PIN and a trading window in `minutes` (15 to 720), or `untilStopped: true` to stay " +
+                    "online until you go offline yourself (no end time: the answer has `openEnded` true and `until` " +
+                    "null). Your unlocked account lives only in the server's memory, so a restart still takes you " +
+                    "offline: RM2 then shows `keysHeld` false and `offlineReason` `RESTART`, and you are emailed. " +
+                    "Needs your identity verified where " +
                     "the network requires it (`$SETUP` with the field `kyc` otherwise), approval, a float wallet " +
                     "with enough USDC for the smallest order, and a connected payment account. Your provider's " +
                     "prepaid " +
@@ -378,7 +387,9 @@ private fun Route.tradingRoutes(merchants: MerchantService) {
             "RM6 · Go offline",
             TAG,
             listOf(INVALID),
-            notes = "$SESSION New orders stop; open ones finish.",
+            notes =
+                "$SESSION Ends the session, timed or until stopped (`offlineReason` `STOPPED`). New orders stop; " +
+                    "open ones finish.",
         )
     }
 

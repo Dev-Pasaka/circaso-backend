@@ -202,6 +202,27 @@ const mails: Mail[] = [
     },
     variables: ['CODE', 'MINUTES'],
   },
+  {
+    // A ramp merchant's unlocked payment keys live only in the server's memory, so a restart (a deploy) ends their
+    // session, even one they set to last until they stop it (decision 2026-11-23). This tells them to unlock again.
+    file: 'merchant-taken-offline.html',
+    subject: 'You were taken offline on Circaso Merchants',
+    preheader: 'Circaso restarted, so you are offline. Enter your PIN on the merchant portal to go online again.',
+    eyebrow: 'Merchant portal',
+    title: 'You are offline',
+    intro: [
+      'Circaso restarted, and you were taken offline. Your unlocked payment account is kept only while our ' +
+        'server runs, never stored, so a restart ends every session, including one set to last until you stop it.',
+      'Orders already under way finish as usual. No new orders come to you until you go online again.',
+    ],
+    outro: ['To take orders again, open the Circaso merchant portal and go online with your PIN.'],
+    notYou: {
+      heading: 'Need help?',
+      text: 'If you keep being taken offline, or something looks wrong with your orders, contact us.',
+      button: 'Contact support',
+    },
+    variables: [],
+  },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------

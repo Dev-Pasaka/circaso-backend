@@ -85,6 +85,10 @@ object MerchantsTable : Table("ramp.merchants") {
     val balancesReadAt = timestamp("balances_read_at").nullable()
     val webhookSecretSealed = binary("webhook_secret_sealed").nullable()
     val webhookSecretUpdatedAt = timestamp("webhook_secret_updated_at").nullable()
+    val onlineOpenEnded = bool("online_open_ended").default(false)
+    val onlineSince = timestamp("online_since").nullable()
+    val offlineReason = text("offline_reason").nullable()
+    val offlineAt = timestamp("offline_at").nullable()
     override val primaryKey = PrimaryKey(merchantId)
 }
 

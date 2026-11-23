@@ -37,6 +37,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.Duration
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -177,7 +178,11 @@ class MerchantRoutesTest {
                 """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null,"submitted":false}""",
                 merchant.getValue("kyc").toString(),
             )
-            assertEquals("""{"online":false,"until":null}""", merchant.getValue("online").toString())
+            assertEquals(
+                """{"online":false,"until":null,"state":"OFFLINE","openEnded":false,"keysHeld":false,""" +
+                    """"since":null,"offlineReason":null,"offlineAt":null}""",
+                merchant.getValue("online").toString(),
+            )
             assertFalse(merchant.getValue("pinSet").jsonPrimitive.boolean)
             assertFalse(merchant.getValue("canGoOnline").jsonPrimitive.boolean)
             assertEquals("""["profile","approval","wallet","payments"]""", merchant.getValue("missing").toString())
@@ -309,7 +314,11 @@ class MerchantRoutesTest {
             assertEquals("{}", changed.data().toString())
 
             val offline = client.delete("$base/session") { header("X-Merchant-Session", session) }
-            assertEquals("""{"online":false,"until":null}""", offline.data().toString())
+            assertEquals(
+                """{"online":false,"until":null,"state":"OFFLINE","openEnded":false,"keysHeld":false,""" +
+                    """"since":null,"offlineReason":"STOPPED","offlineAt":"${ramp.clock.instant()}"}""",
+                offline.data().toString(),
+            )
 
             // on mainnet the same account has no wallet: the header picks the network
             val mainnet =
@@ -320,6 +329,53 @@ class MerchantRoutesTest {
                     }.data()
             assertEquals("MAINNET", mainnet.text("network"))
             assertEquals(JsonNull, mainnet.getValue("wallet"))
+        }
+
+    @Test
+    fun `going online until stopped answers no end time, and RM2 says why a restart took the merchant offline`() =
+        testApplication {
+            serve()
+            val session = signIn()
+            ramp.merchants.rows.remove(ramp.crynce.merchantId)
+            client.put("$base/profile") { json("""{"displayName":"Crynce","contactPhone":"+254712000111"}""", session) }
+            val id = ramp.merchants.byEmail("pay@crynce.co.ke")!!.merchantId
+            ramp.decideMerchant(id, approve = true, by = "staff")
+            ramp.release()
+            ramp.treasury.balances[ramp.merchantWallets.find(id, TESTNET)!!.custodyWalletId] = 100_000_000
+            client.put("$base/payments") {
+                json("""{"username":"api-user","password":"api-pass","channelId":"911","pin":"482913"}""", session)
+            }
+            val now = ramp.clock.instant()
+
+            val online = client.post("$base/session") { json("""{"pin":"482913","untilStopped":true}""", session) }
+
+            assertEquals(HttpStatusCode.OK, online.status)
+            val expected =
+                """{"online":true,"until":null,"state":"ONLINE","openEnded":true,"keysHeld":true,""" +
+                    """"since":"$now","offlineReason":null,"offlineAt":null}"""
+            assertEquals(expected, online.data().toString())
+            ramp.clock.advance(Duration.ofDays(3).seconds)
+            ramp.endSessions()
+            val portal = signIn() // the portal's own sign-in lasts 12 hours; the trading session doesn't end with it
+            val later = client.get(base) { header("X-Merchant-Session", portal) }.data()
+            assertEquals(expected, later.getValue("online").toString(), "no end time: days later it is still on")
+
+            ramp.sessions.restart()
+
+            val restarted = client.get(base) { header("X-Merchant-Session", portal) }.data().getValue("online")
+            assertEquals(
+                """{"online":false,"until":null,"state":"OFFLINE","openEnded":false,"keysHeld":false,""" +
+                    """"since":null,"offlineReason":"RESTART","offlineAt":null}""",
+                restarted.toString(),
+                "at once, before the sweep",
+            )
+            ramp.endSessions()
+            val swept = client.get(base) { header("X-Merchant-Session", portal) }.data().getValue("online")
+            assertEquals(
+                """{"online":false,"until":null,"state":"OFFLINE","openEnded":false,"keysHeld":false,""" +
+                    """"since":null,"offlineReason":"RESTART","offlineAt":"${ramp.clock.instant()}"}""",
+                swept.toString(),
+            )
         }
 
     @Test
@@ -473,6 +529,11 @@ class MerchantRoutesTest {
             refused(client.post("$base/session") { json("""{"pin":"48291x","minutes":60}""", session) }, "pin")
             refused(client.post("$base/session") { json("""{"pin":"482913","minutes":14}""", session) }, "minutes")
             refused(client.post("$base/session") { json("""{"pin":"482913","minutes":721}""", session) }, "minutes")
+            refused(client.post("$base/session") { json("""{"pin":"482913"}""", session) }, "minutes")
+            refused(
+                client.post("$base/session") { json("""{"pin":"482913","minutes":60,"untilStopped":true}""", session) },
+                "minutes",
+            )
             refused(client.put("$base/pin") { json("""{"currentPin":"1","newPin":"771204"}""", session) }, "currentPin")
             refused(client.put("$base/pin") { json("""{"currentPin":"482913","newPin":"7712"}""", session) }, "newPin")
             refused(client.get("$base/earnings?from=2026-11-01") { header("X-Merchant-Session", session) }, "to")

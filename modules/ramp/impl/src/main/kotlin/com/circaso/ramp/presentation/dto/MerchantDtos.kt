@@ -47,8 +47,32 @@ data class MerchantPaymentsDto(
     val callbackUrl: String?,
 )
 
+/**
+ * The merchant's trading session (RM2's `online`, and RM6's answer). `online` and `until` are as they always were;
+ * the rest came with sessions that last until the merchant stops them (2026-11-23).
+ *
+ * - `state`: `ONLINE` or `OFFLINE`, the same fact as `online`.
+ * - `until`: a timed window's end; null while offline **and** while online until stopped (`openEnded` true): show
+ *   "Online until you go offline".
+ * - `keysHeld`: whether the server holds the unlocked payment account. The keys live only in its memory, so a restart
+ *   (a deploy) ends every session, open-ended ones too: then `keysHeld` is false and `offlineReason` is `RESTART`
+ *   ("You were taken offline when Circaso restarted: go online again").
+ * - `since`: when the current session began (null while offline).
+ * - `offlineReason`: while offline, why the last session ended: `STOPPED` (you went offline), `SIGNED_OUT`,
+ *   `SUSPENDED`, `PROVIDER_BALANCE` (your provider refused a prompt for its service balance), `WINDOW_ENDED`, or
+ *   `RESTART`; null when none is known. `offlineAt` is when.
+ */
 @Serializable
-data class OnlineResponse(val online: Boolean, val until: String?)
+data class OnlineResponse(
+    val online: Boolean,
+    val until: String?,
+    val state: String,
+    val openEnded: Boolean,
+    val keysHeld: Boolean,
+    val since: String?,
+    val offlineReason: String?,
+    val offlineAt: String?,
+)
 
 /**
  * Something at the merchant's payment provider only they can put right. `code`: `SERVICE_BALANCE` (the provider
@@ -259,9 +283,12 @@ data class PaymentsSavedResponse(val connected: Boolean, val callbackUrl: String
 @Serializable
 data class CallbackResponse(val callbackUrl: String)
 
-/** RM6 request. */
+/**
+ * RM6 request: the PIN, and either `minutes` (a window of 15 to 720) or `untilStopped: true` (online until you go
+ * offline yourself, with no end time; a server restart still ends it). Not both.
+ */
 @Serializable
-data class GoOnlineRequest(val pin: String = "", val minutes: Int = 0) {
+data class GoOnlineRequest(val pin: String = "", val minutes: Int? = null, val untilStopped: Boolean = false) {
     override fun toString(): String = "GoOnlineRequest(***)"
 }
 

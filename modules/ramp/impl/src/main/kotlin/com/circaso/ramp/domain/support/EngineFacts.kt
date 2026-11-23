@@ -116,7 +116,8 @@ class EngineFacts(
             merchantId = merchantId,
             approved = merchant.state == MerchantState.APPROVED,
             kycCleared = !settings.enforcesKyc || kyc.isVerified(Subject.merchant(merchantId), settings.kycEnvironment),
-            online = merchant.onlineUntil?.isAfter(clock.instant().plus(settings.windowOf(direction))) == true,
+            // An open-ended session covers any payment window; a timed one must outlast this order's.
+            online = merchant.isOnlineAt(clock.instant().plus(settings.windowOf(direction))),
             hasKeys = sessions.of(merchantId)?.provider == settings.collectionsProvider,
             paymentsIssue = merchant.hasIssue(direction),
             offersDirection = merchant.offers(direction),

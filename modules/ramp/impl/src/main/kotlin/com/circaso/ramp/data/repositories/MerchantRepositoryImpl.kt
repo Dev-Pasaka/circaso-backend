@@ -14,6 +14,7 @@ import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.RevenueWallet
@@ -36,8 +37,11 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.deleteWhere
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
@@ -189,11 +193,56 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
         }
     }
 
-    override suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?) {
-        database.tx("merchants.set-online") {
-            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) { it[onlineUntil] = until }
+    override suspend fun goOnline(
+        merchantId: MerchantId,
+        until: Instant?,
+        since: Instant,
+    ) {
+        database.tx("merchants.go-online") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) {
+                it[onlineUntil] = until
+                it[onlineOpenEnded] = until == null
+                it[onlineSince] = since
+                it[offlineReason] = null
+                it[offlineAt] = null
+            }
         }
     }
+
+    override suspend fun goOffline(
+        merchantId: MerchantId,
+        reason: OfflineReason,
+        at: Instant,
+    ) {
+        database.tx("merchants.go-offline") {
+            MerchantsTable.update({ MerchantsTable.merchantId eq merchantId.value }) { it.endSession(reason, at) }
+        }
+    }
+
+    override suspend fun endLostSession(
+        merchantId: MerchantId,
+        since: Instant?,
+        at: Instant,
+    ): Boolean =
+        database.tx("merchants.end-lost-session") {
+            val sameSession = since?.let { MerchantsTable.onlineSince eq it } ?: MerchantsTable.onlineSince.isNull()
+            MerchantsTable.update(
+                { (MerchantsTable.merchantId eq merchantId.value) and hasSession() and sameSession },
+            ) {
+                it.endSession(OfflineReason.RESTART, at)
+            } > 0
+        }
+
+    override suspend fun withSessions(limit: Int): List<Merchant> =
+        database.tx("merchants.with-sessions") {
+            MerchantsTable
+                .selectAll()
+                .where { hasSession() }
+                .orderBy(MerchantsTable.merchantId to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toMerchant() }
+                .toList()
+        }
 
     override suspend fun setPaymentsIssue(
         merchantId: MerchantId,
@@ -210,7 +259,9 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
 
     override suspend fun endPassedWindows(now: Instant): Int =
         database.tx("merchants.end-passed-windows") {
-            MerchantsTable.update({ MerchantsTable.onlineUntil less now }) { it[onlineUntil] = null }
+            MerchantsTable.update({ MerchantsTable.onlineUntil less now }) {
+                it.endSession(OfflineReason.WINDOW_ENDED, now)
+            }
         }
 
     override suspend fun setPayoutAccount(merchantId: MerchantId, accountId: String?) {
@@ -298,6 +349,19 @@ class MerchantRepositoryImpl(private val database: Database) : MerchantRepositor
             .singleOrNull()
 }
 
+/** Matches the partial index `merchants_sessions_idx`: a session is open, timed or not. */
+private fun hasSession(): Op<Boolean> =
+    (MerchantsTable.onlineOpenEnded eq true) or MerchantsTable.onlineUntil.isNotNull()
+
+/** Ends whatever session is open, keeping why and when for the portal. */
+private fun UpdateStatement.endSession(reason: OfflineReason, at: Instant) {
+    this[MerchantsTable.onlineUntil] = null
+    this[MerchantsTable.onlineOpenEnded] = false
+    this[MerchantsTable.onlineSince] = null
+    this[MerchantsTable.offlineReason] = reason.name
+    this[MerchantsTable.offlineAt] = at
+}
+
 private fun ResultRow.toMerchant() =
     Merchant(
         merchantId = MerchantId(this[MerchantsTable.merchantId]),
@@ -321,6 +385,10 @@ private fun ResultRow.toMerchant() =
         payoutIssue = this[MerchantsTable.payoutIssue]?.let(PayoutIssue::valueOf),
         payoutIssueAt = this[MerchantsTable.payoutIssueAt],
         webhookSecretUpdatedAt = this[MerchantsTable.webhookSecretUpdatedAt],
+        onlineOpenEnded = this[MerchantsTable.onlineOpenEnded],
+        onlineSince = this[MerchantsTable.onlineSince],
+        offlineReason = this[MerchantsTable.offlineReason]?.let(OfflineReason::valueOf),
+        offlineAt = this[MerchantsTable.offlineAt],
     )
 
 private fun ResultRow.toWallet() =

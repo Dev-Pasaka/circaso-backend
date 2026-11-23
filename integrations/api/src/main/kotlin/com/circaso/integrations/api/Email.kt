@@ -30,6 +30,9 @@ enum class EmailTemplate {
 
     /** The ramp's merchant portal sign-in code (decision 2026-11-22). */
     MERCHANT_SIGN_IN_CODE,
+
+    /** A ramp merchant's trading session ended because the server restarted (decision 2026-11-23). */
+    MERCHANT_TAKEN_OFFLINE,
 }
 
 /**
@@ -72,6 +75,14 @@ sealed interface Email {
         override val template = EmailTemplate.MERCHANT_SIGN_IN_CODE
 
         override fun toString(): String = "MerchantSignInCode(***)"
+    }
+
+    /**
+     * A ramp merchant was online (until they stopped, or in a window) when the server restarted: their unlocked keys
+     * lived only in its memory, so they are offline and must enter their PIN again to go back online (2026-11-23).
+     */
+    data object MerchantTakenOffline : Email {
+        override val template = EmailTemplate.MERCHANT_TAKEN_OFFLINE
     }
 }
 

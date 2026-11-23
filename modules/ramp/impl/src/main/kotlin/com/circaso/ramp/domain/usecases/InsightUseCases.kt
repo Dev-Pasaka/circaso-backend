@@ -55,7 +55,7 @@ class GetRampOverview(
                 .map { merchant ->
                     MerchantActivity(
                         merchant = merchant,
-                        online = merchant.onlineUntil?.isAfter(now) == true,
+                        online = merchant.isOnlineAt(now),
                         figures = insights.figures(merchant.merchantId, network, covered),
                         lastOrderAt = lastOrderAt(merchant, network),
                     )
@@ -102,7 +102,7 @@ class GetMerchantSummary(
         return Resource.success(
             MerchantSummary(
                 merchant = merchant,
-                online = merchant.onlineUntil?.isAfter(now) == true,
+                online = merchant.isOnlineAt(now),
                 paymentsProvider = credentials.find(merchantId)?.provider,
                 period = covered,
                 network = network,

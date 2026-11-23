@@ -19,6 +19,7 @@ import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
@@ -252,8 +253,53 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
     override suspend fun setCallbackKey(merchantId: MerchantId, callbackKey: String) =
         change(merchantId) { it.copy(callbackKey = callbackKey) }
 
-    override suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?) =
-        change(merchantId) { it.copy(onlineUntil = until) }
+    override suspend fun goOnline(
+        merchantId: MerchantId,
+        until: Instant?,
+        since: Instant,
+    ) = change(merchantId) {
+        it.copy(
+            onlineUntil = until,
+            onlineOpenEnded = until == null,
+            onlineSince = since,
+            offlineReason = null,
+            offlineAt = null,
+        )
+    }
+
+    override suspend fun goOffline(
+        merchantId: MerchantId,
+        reason: OfflineReason,
+        at: Instant,
+    ) = change(merchantId) { it.ended(reason, at) }
+
+    override suspend fun endLostSession(
+        merchantId: MerchantId,
+        since: Instant?,
+        at: Instant,
+    ): Boolean {
+        val merchant = rows[merchantId] ?: return false
+        if (!merchant.inSession() || merchant.onlineSince != since) return false
+        rows[merchantId] = merchant.ended(OfflineReason.RESTART, at)
+        return true
+    }
+
+    override suspend fun withSessions(limit: Int): List<Merchant> =
+        rows.values
+            .filter { it.inSession() }
+            .sortedBy { it.merchantId.value }
+            .take(limit)
+
+    private fun Merchant.inSession() = onlineOpenEnded || onlineUntil != null
+
+    private fun Merchant.ended(reason: OfflineReason, at: Instant) =
+        copy(
+            onlineUntil = null,
+            onlineOpenEnded = false,
+            onlineSince = null,
+            offlineReason = reason,
+            offlineAt = at,
+        )
 
     override suspend fun setPaymentsIssue(
         merchantId: MerchantId,
@@ -263,7 +309,7 @@ class MemoryMerchants(private val wallets: MemoryMerchantWallets) : MerchantRepo
 
     override suspend fun endPassedWindows(now: Instant): Int {
         val passed = rows.values.filter { it.onlineUntil?.isBefore(now) == true }
-        passed.forEach { rows[it.merchantId] = it.copy(onlineUntil = null) }
+        passed.forEach { rows[it.merchantId] = it.ended(OfflineReason.WINDOW_ENDED, now) }
         return passed.size
     }
 
@@ -1195,4 +1241,16 @@ class MemoryRoutingLog : RoutingLogRepository {
     }
 
     fun last(): RoutingDecision = rows.values.last()
+}
+
+/**
+ * Tests set a merchant's session directly: a timed window to [until], or offline (null) as the merchant going offline
+ * themselves would. The repository's own calls are `goOnline` and `goOffline`.
+ */
+suspend fun MerchantRepository.setOnlineUntil(merchantId: MerchantId, until: Instant?) {
+    if (until == null) {
+        goOffline(merchantId, OfflineReason.STOPPED, Instant.now())
+    } else {
+        goOnline(merchantId, until, since = Instant.now())
+    }
 }

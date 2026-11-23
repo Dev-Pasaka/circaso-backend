@@ -8,6 +8,7 @@ import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.MerchantRecord
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
@@ -142,7 +143,7 @@ class DecideMerchant(
         } else {
             val from = MerchantState.entries.toSet() - MerchantState.SUSPENDED
             merchants.setState(merchantId, MerchantState.SUSPENDED, from, by, clock.instant())
-            presence.goOffline(merchantId)
+            presence.goOffline(merchantId, OfflineReason.SUSPENDED)
         }
         val after = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
         return Resource.success(

@@ -460,7 +460,7 @@ fun rampModule(config: Config): Module =
             )
         }
         single { PinGuard(get(), get()) }
-        single { Presence(get(), get(), get()) }
+        single { Presence(get(), get(), get(), clock) }
         single { GetRampStatus(get(), get(), get(), get(), get()) }
         single { StartUserKyc(get(), get(), get()) }
         single { GetUserKyc(get(), get(), get()) }
@@ -505,10 +505,10 @@ fun rampModule(config: Config): Module =
         single { SetWebhookSecret(get(), get(), get(), clock) }
         single { CallbackSigningSecret(get(), get()) }
         single { GoOnline(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { GoOffline(get()) }
+        single { GoOffline(get(), clock) }
         single { ChangePin(get(), get(), clock) }
         single { ListMerchantOrders(get()) }
-        single { EndSessions(get(), get(), get(), clock) }
+        single { EndSessions(get(), get(), get(), get(), clock) }
         single { GetEarnings(get(), get(), get(), clock) }
         single { GetStatement(get(), clock) }
         single { ListMerchants(get(), get(), get(), get()) }

@@ -21,6 +21,7 @@ import com.circaso.ramp.domain.models.EngineSettings
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.Quote
@@ -33,6 +34,7 @@ import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
@@ -195,7 +197,7 @@ class Harness {
 
     private val transactor = DirectTransactor()
     val transport = HttpPromptTransport()
-    val presence = Presence(merchants, orders, sessions)
+    val presence = Presence(merchants, orders, sessions, clock)
     val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
     val verifications =
         Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
@@ -331,10 +333,10 @@ class Harness {
     val rotateCallback = RotateCallback(merchants, credentials, tokens, book)
     val goOnline =
         GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, providers, book, clock)
-    val goOffline = GoOffline(presence)
+    val goOffline = GoOffline(presence, clock)
     val changePin = ChangePin(credentials, pins, clock)
     val merchantOrders = ListMerchantOrders(orders)
-    val endSessions = EndSessions(merchants, orders, sessions, clock)
+    val endSessions = EndSessions(merchants, orders, sessions, email, clock)
     val earnings = GetEarnings(ledger, ledger, book, clock)
     val statement = GetStatement(ledger, clock)
 
@@ -660,3 +662,11 @@ class Harness {
         return (verifyCode(address, email.lastCode(), network) as Resource.Success).data
     }
 }
+
+/** RM6 for a timed window of [minutes], as most tests go online. */
+suspend operator fun GoOnline.invoke(
+    merchantId: MerchantId,
+    network: Network,
+    pin: String,
+    minutes: Int,
+): Resource<OnlineView> = invoke(merchantId, network, pin, TradingWindow.Minutes(minutes))
