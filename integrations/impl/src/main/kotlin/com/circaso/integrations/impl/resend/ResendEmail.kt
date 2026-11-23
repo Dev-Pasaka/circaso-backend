@@ -89,7 +89,7 @@ private fun sendBody(
             )
         }
 
-        Email.RecoveryStarted, Email.RecoveryCompleted, Email.Welcome -> {
+        Email.RecoveryStarted, Email.RecoveryCompleted, Email.Welcome, Email.MerchantTakenOffline -> {
             encode(from, to, templateId, NoVariables, NoVariables.serializer())
         }
     }

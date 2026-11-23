@@ -729,10 +729,17 @@ class MemorySessions : TradingSessions {
     override suspend fun unlock(
         merchantId: MerchantId,
         keys: UnlockedKeys,
-        until: Instant,
+        until: Instant?,
     ) {
         this.keys[merchantId] = keys
-        marks[merchantId] = until
+        marks[merchantId] = until ?: Instant.MAX
+    }
+
+    /** Open-ended sessions this node renewed the mark of. */
+    val renewed = mutableListOf<MerchantId>()
+
+    override suspend fun renew(merchantId: MerchantId) {
+        if (merchantId in keys) renewed += merchantId
     }
 
     override fun of(merchantId: MerchantId): UnlockedKeys? = keys[merchantId]

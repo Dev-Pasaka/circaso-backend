@@ -482,7 +482,8 @@ class RampRoutesTest {
                     "\"createdAt\":\"2026-11-22T12:00:00Z\",\"approvedAt\":\"2026-11-22T12:00:00Z\"," +
                     "\"online\":true,\"onlineUntil\":\"2026-11-22T13:00:00Z\"," +
                     "\"paymentsConnected\":true,\"collectionsProvider\":\"payhero\",\"paymentsIssue\":null," +
-                    "\"kyc\":null,\"offersOffRamp\":false,\"payoutAccountId\":null,\"payoutIssue\":null}" in body,
+                    "\"kyc\":null,\"offersOffRamp\":false,\"payoutAccountId\":null,\"payoutIssue\":null," +
+                    "\"onlineOpenEnded\":false,\"offlineReason\":null}" in body,
                 body,
             )
             assertTrue("\"wallet\":{\"blockchain\":\"BASE-SEPOLIA\",\"address\":\"0xfloat\"}" in body, body)

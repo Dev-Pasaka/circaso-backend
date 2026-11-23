@@ -41,6 +41,7 @@ import com.circaso.ramp.domain.models.Exclusion
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
@@ -82,6 +83,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import java.math.BigDecimal
 import java.sql.SQLException
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -184,7 +186,7 @@ class RampDataTest {
             providers,
             sessions,
             book,
-            Presence(merchants, orders, sessions),
+            Presence(merchants, orders, sessions, Clock.systemUTC()),
             HttpPromptTransport(),
             clock,
         )
@@ -534,6 +536,54 @@ class RampDataTest {
 
             assertEquals(1, merchants.endPassedWindows(now.plusSeconds(60)))
             assertNull(merchants.find(ending.merchantId)?.onlineUntil)
+        }
+
+    @Test
+    fun `an open-ended session is stored as one, never ends by time, and a lost one ends only if it is the same`() =
+        runBlocking<Unit> {
+            val open = merchant("Open").merchantId
+            merchants.goOnline(open, until = null, since = now)
+            val timed = merchant("Timed").merchantId
+
+            val stored = merchants.find(open)!!
+            assertEquals(
+                Triple(true, null, now),
+                Triple(stored.onlineOpenEnded, stored.onlineUntil, stored.onlineSince),
+            )
+            assertTrue(stored.isTradingUntil(now.plus(Duration.ofDays(365))))
+            assertEquals(setOf(open, timed), merchants.withSessions(10).map { it.merchantId }.toSet())
+            assertNull(
+                route()
+                    .plan.candidates
+                    .single { it.facts.merchantId == open }
+                    .exclusion,
+                "eligible",
+            )
+
+            assertEquals(1, merchants.endPassedWindows(now.plus(Duration.ofDays(2))), "only the timed window")
+            assertEquals(OfflineReason.WINDOW_ENDED, merchants.find(timed)!!.offlineReason)
+            assertTrue(merchants.find(open)!!.onlineOpenEnded)
+
+            assertFalse(merchants.endLostSession(open, now.minusSeconds(1), now), "another session than the one read")
+            assertTrue(merchants.endLostSession(open, now, now.plusSeconds(60)))
+            val ended = merchants.find(open)!!
+            assertEquals(
+                listOf(false, null, null, OfflineReason.RESTART, now.plusSeconds(60)),
+                listOf(
+                    ended.onlineOpenEnded,
+                    ended.onlineUntil,
+                    ended.onlineSince,
+                    ended.offlineReason,
+                    ended.offlineAt,
+                ),
+            )
+            assertFalse(merchants.endLostSession(open, null, now), "no session left to end")
+            assertTrue(merchants.withSessions(10).isEmpty())
+
+            merchants.goOnline(open, until = now.plusSeconds(600), since = now)
+            val timedAgain = merchants.find(open)!!
+            assertFalse(timedAgain.onlineOpenEnded)
+            assertNull(timedAgain.offlineReason, "going online clears why the last one ended")
         }
 
     @Test

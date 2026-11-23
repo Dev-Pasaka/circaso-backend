@@ -7,6 +7,8 @@ import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.OffRampView
+import com.circaso.ramp.domain.models.OfflineReason
+import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PaymentsView
 import com.circaso.ramp.domain.models.RampSettings
@@ -26,8 +28,9 @@ import java.time.Duration
 
 /**
  * The merchant as the portal shows them (RM2): what is set up, the float wallet to fund and what it holds, and what
- * still stands between them and going online. Online means inside a trading window **and** unlocked on this node: a
- * node that restarted holds no keys, so its merchants read as offline until they unlock again.
+ * still stands between them and going online. Online means inside a session (a timed window, or open-ended until they
+ * stop it) **and** unlocked on this node: a node that restarted holds no keys, so its merchants read as offline, with
+ * the reason `RESTART`, until they unlock again.
  */
 class MerchantViews(
     private val wallets: MerchantWalletRepository,
@@ -60,7 +63,7 @@ class MerchantViews(
             float = wallet?.let { floatOf(it) },
             payments = payments,
             paymentsCurrent = sealed?.provider == current.collectionsProvider,
-            online = isOnline(merchant),
+            presence = presenceOf(merchant),
             floatFloorMinor = floatFloor(current),
             kyc = verifications.view(Subject.merchant(merchant.merchantId), current),
             offRamp = offRamp(merchant, current),
@@ -104,8 +107,32 @@ class MerchantViews(
         )
     }
 
-    fun isOnline(merchant: Merchant): Boolean =
-        merchant.onlineUntil?.isAfter(clock.instant()) == true && sessions.of(merchant.merchantId) != null
+    /**
+     * The session as the portal shows it. A session the database still holds but whose keys this node lost reads as
+     * offline for `RESTART` at once, before `ramp.end-sessions` ends it in the database within the minute.
+     */
+    fun presenceOf(merchant: Merchant): OnlineView {
+        val now = clock.instant()
+        val keysHeld = sessions.of(merchant.merchantId) != null
+        val inSession = merchant.isOnlineAt(now)
+        if (inSession && keysHeld) {
+            return OnlineView(
+                online = true,
+                until = merchant.onlineUntil,
+                openEnded = merchant.onlineOpenEnded,
+                keysHeld = true,
+                since = merchant.onlineSince,
+            )
+        }
+        val lost = inSession && !keysHeld
+        return OnlineView(
+            online = false,
+            until = null,
+            keysHeld = keysHeld,
+            offlineReason = if (lost) OfflineReason.RESTART else merchant.offlineReason,
+            offlineAt = if (lost) null else merchant.offlineAt,
+        )
+    }
 
     /** The wallet's USDC and what is spoken for; null when the custodian can't be asked. */
     suspend fun floatOf(wallet: MerchantWallet): FloatView? {

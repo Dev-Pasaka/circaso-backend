@@ -85,6 +85,10 @@ data class RampMerchantDto(
     /** The merchant's own switches on the portal: which directions they take orders in. */
     val offersOnRamp: Boolean = true,
     val offersOffRamp: Boolean = false,
+    /** Online until the merchant stops it (no `onlineUntil`); a server restart still ends it. */
+    val onlineOpenEnded: Boolean = false,
+    /** Why the last session ended: STOPPED | SIGNED_OUT | SUSPENDED | PROVIDER_BALANCE | WINDOW_ENDED | RESTART. */
+    val offlineReason: String? = null,
 )
 
 @Serializable
@@ -357,6 +361,10 @@ data class RampSummaryMerchantDto(
     val offersOffRamp: Boolean = false,
     val payoutAccountId: String? = null,
     val payoutIssue: RampPaymentsIssueDto? = null,
+    /** Online until the merchant stops it (no `onlineUntil`); a server restart still ends it. */
+    val onlineOpenEnded: Boolean = false,
+    /** Why the last session ended: STOPPED | SIGNED_OUT | SUSPENDED | PROVIDER_BALANCE | WINDOW_ENDED | RESTART. */
+    val offlineReason: String? = null,
 )
 
 /**

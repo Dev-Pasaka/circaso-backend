@@ -23,6 +23,7 @@ import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.WebhookSecret
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.domain.support.Periods
@@ -181,11 +182,17 @@ fun TestPayout.toResponse(): TestPayoutResponse {
     )
 }
 
-/** RM6's PIN and window. */
-fun GoOnlineRequest.toWindow(): Resource<Pair<String, Int>> {
+/** RM6's PIN and window: `minutes`, or `untilStopped` for a session with no end time. */
+fun GoOnlineRequest.toWindow(): Resource<Pair<String, TradingWindow>> {
     if (!pin.isDigits(PIN_LENGTH)) return malformed("pin", "must be 6 digits")
-    if (minutes !in MIN_MINUTES..MAX_MINUTES) return malformed("minutes", "must be $MIN_MINUTES to $MAX_MINUTES")
-    return Resource.success(pin to minutes)
+    if (untilStopped) {
+        if (minutes != null) return malformed("minutes", "leave it out when untilStopped is true")
+        return Resource.success(pin to TradingWindow.UntilStopped)
+    }
+    if (minutes == null || minutes !in MIN_MINUTES..MAX_MINUTES) {
+        return malformed("minutes", "must be $MIN_MINUTES to $MAX_MINUTES, or set untilStopped")
+    }
+    return Resource.success(pin to TradingWindow.Minutes(minutes))
 }
 
 /** RM9's current and new PIN. */
@@ -245,7 +252,7 @@ fun MerchantOverview.toResponse() =
                 MerchantPaymentsDto(it.provider, connected = paymentsCurrent, it.channelId, it.callbackUrl)
             },
         pinSet = pinSet,
-        online = OnlineResponse(online, merchant.onlineUntil?.takeIf { online }?.toString()),
+        online = presence.toResponse(),
         canGoOnline = canGoOnline,
         missing = missing,
         paymentsIssue =
@@ -325,7 +332,17 @@ private fun speedOf(
 
 private const val PERCENT = 100
 
-fun OnlineView.toResponse() = OnlineResponse(online, until?.toString())
+fun OnlineView.toResponse() =
+    OnlineResponse(
+        online = online,
+        until = until?.toString(),
+        state = if (online) "ONLINE" else "OFFLINE",
+        openEnded = openEnded,
+        keysHeld = keysHeld,
+        since = since?.toString(),
+        offlineReason = offlineReason?.name,
+        offlineAt = offlineAt?.toString(),
+    )
 
 fun CallbackView.toSavedResponse() = PaymentsSavedResponse(connected = true, callbackUrl = callbackUrl)
 

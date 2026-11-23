@@ -9,6 +9,7 @@ Three security emails, designed with circaso.com's look (ink on white, grey pane
 | `recovery-started.html` | `RECOVERY_STARTED` | A request was made to recover your Circaso account | none |
 | `recovery-completed.html` | `RECOVERY_COMPLETED` | Your Circaso account recovery is complete | none |
 | `merchant-sign-in-code.html` | `MERCHANT_SIGN_IN_CODE` | Your Circaso Merchants sign-in code | `CODE` (string, no fallback), `MINUTES` (number, fallback `10`) |
+| `merchant-taken-offline.html` | `MERCHANT_TAKEN_OFFLINE` | You were taken offline on Circaso Merchants | none |
 
 ## Create each one in Resend
 

@@ -77,6 +77,10 @@ data class OpsMerchant(
     /** The merchant's own switches on the portal: which directions they take orders in. */
     val offersOnRamp: Boolean = true,
     val offersOffRamp: Boolean = false,
+    /** Online until the merchant stops it: [onlineUntil] is then null (decision 2026-11-23). */
+    val onlineOpenEnded: Boolean = false,
+    /** Why the merchant's last session ended (`STOPPED`, `RESTART`, ...); null while online or when not known. */
+    val offlineReason: String? = null,
 ) {
     override fun toString(): String = "OpsMerchant($merchantId, $state)"
 }

@@ -62,12 +62,18 @@ interface WebhookSecretVault {
  * routes work to another node yet.
  */
 interface TradingSessions {
-    /** Keeps [keys] in this node's memory and marks the merchant online on it until [until]. */
+    /**
+     * Keeps [keys] in this node's memory and marks the merchant online on it until [until], or, when [until] is null
+     * (online until they stop it), for a short time that [renew] extends while the node runs.
+     */
     suspend fun unlock(
         merchantId: MerchantId,
         keys: UnlockedKeys,
-        until: Instant,
+        until: Instant?,
     )
+
+    /** Extends an open-ended session's mark, if this node holds the merchant's keys. */
+    suspend fun renew(merchantId: MerchantId)
 
     /** The merchant's keys when this node holds them; null otherwise: then nothing is asked of the provider. */
     fun of(merchantId: MerchantId): UnlockedKeys?

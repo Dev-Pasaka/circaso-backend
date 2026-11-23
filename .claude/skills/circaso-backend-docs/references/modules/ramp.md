@@ -416,7 +416,9 @@ Limits are settings until decided (`RAMP_ORDER_MIN_KES`, `RAMP_ORDER_MAX_KES`, `
              "reserved": { … }, "free": { … } },                               // null without a wallet or when Circle is down
   "payments": { "provider": "payhero", "connected": true, "channelId": "911",
                 "callbackUrl": "https://api.circaso.com/v1/hooks/payhero/crynce-9fQ2xLr7Tk3mVb8s" },   // null until RM5
-  "online": { "online": true, "until": "2026-11-22T22:00:00Z" },
+  "online": { "online": true, "until": "2026-11-22T22:00:00Z",     // the first two fields as before; the rest 2026-11-23
+              "state": "ONLINE", "openEnded": false, "keysHeld": true, "since": "2026-11-22T18:00:00Z",
+              "offlineReason": null, "offlineAt": null },          // see "As built: online until stopped"
   "canGoOnline": true, "missing": [],                    // e.g. ["approval", "wallet", "payments", "float", "provider_balance"]
   "paymentsIssue": null,                                 // { "code": "SERVICE_BALANCE", "since": "2026-11-22T18:04:10Z" }: "Top up your PayHero service wallet"
   "webhookSecretSet": true,                              // RM5c; the secret itself is never sent back
@@ -428,8 +430,9 @@ Limits are settings until decided (`RAMP_ORDER_MIN_KES`, `RAMP_ORDER_MAX_KES`, `
 // RM14 POST /ramp/merchant/payments/callback → { "callbackUrl": "…" }
 // RM5c PUT /ramp/merchant/payments/webhook-secret ← { "secret": "…" } → RM2      (8–512 visible characters, no spaces)
 //      DELETE /ramp/merchant/payments/webhook-secret → RM2
-// RM6 POST /ramp/merchant/session ← { "pin": "482913", "minutes": 240 } → { "online": true, "until": "…" }
-//     DELETE /ramp/merchant/session → { "online": false, "until": null }
+// RM6 POST /ramp/merchant/session ← { "pin": "482913", "minutes": 240 }       → RM2's `online` (until "…")
+//                                  ← { "pin": "482913", "untilStopped": true } → RM2's `online` (openEnded, until null)
+//     DELETE /ramp/merchant/session → { "online": false, "until": null, "state": "OFFLINE", …, "offlineReason": "STOPPED" }
 // RM9 PUT /ramp/merchant/pin ← { "currentPin": "482913", "newPin": "771204" } → {}
 // RM7 GET /ramp/merchant/orders?cursor=&limit= → { "orders": [ { "orderId", "direction", "state", "pay", "receive",
 //       "fee", "maskedPhone", "createdAt", "updatedAt" } ], "next": null }
@@ -472,7 +475,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RM2 | `GET /ramp/merchant` | `GetMerchant` | State and what is still missing, USDC float (balance, reserved, free), and while online the PayHero service wallet balance; online or not and until when |
 | RM3 | `POST /ramp/merchant/kyc` | `StartMerchantKyc` | The Didit session link for the merchant (ID, liveness, face match, AML): the hosted `url`, which returns to `<merchant_portal_url>/kyc/done`. Built 2026-11-22 |
 | RM5 | `PUT /ramp/merchant/payments` | `StorePaymentAccount` | PayHero username, password, the till or paybill channel id, and the PIN that seals them; answers the merchant's callback address to paste into PayHero; checked with `MobileCollections.verify` first |
-| RM6 | `POST /ramp/merchant/session` / `DELETE` | `GoOnline` / `GoOffline` | PIN and a window in minutes; unlocks the keys on this node. Going offline stops new orders; open ones finish |
+| RM6 | `POST /ramp/merchant/session` / `DELETE` | `GoOnline` / `GoOffline` | PIN and a window in minutes, or online until stopped (2026-11-23); unlocks the keys on this node. Going offline stops new orders; open ones finish |
 | RM7 | `GET /ramp/merchant/orders?cursor=` | `ListMerchantOrders` | The merchant's orders, payer numbers masked |
 | RM8 | `GET /ramp/merchant/earnings?from=&to=` | `GetEarnings` | The overview for a period: orders, shillings in, USDC sold, fees, the merchant's share, Circaso's share (swept and still held), and the daily sweeps |
 | RM15 | `GET /ramp/merchant/statement?from=&to=&cursor=` | `GetStatement` | Every exchange in the period, line by line, with the sweeps and the totals; the portal shows and exports it |
@@ -783,7 +786,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | `ramp.payouts` | 10 s | Selling (2026-11-23): unconfirmed fundings, due payouts, `PAYING_OUT` lookups, unfunded sales past their deadline, staff's re-checks, test payouts in flight. See "As built: the off-ramp" | Built 2026-11-23 |
 | `ramp.expire-orders` | 30 s | An order unpaid 2 minutes after its prompt: **asks PayHero first**. `FAILED` or no payment → `EXPIRED` and the reservation `RELEASED`, in one transaction; `SUCCESS` → the normal verify and release; still `QUEUED` → left for the next run, and to `REVIEW` after 10 minutes. When the merchant's keys aren't available it changes nothing | Yes |
 | `ramp.reconcile` | 2 min | Orders stuck in `PAID`, `RELEASING`, `FUNDED` or `PAYING_OUT`: reads Circle and PayHero and applies what they say (a lost webhook or callback), retries a failed release with the same key, and alerts on anything in `REVIEW` or waiting on a locked merchant | Later (the first slice covers `RELEASING` through Circle's webhook and a manual re-read) |
-| `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed, or whose `rmp:session` is gone: marks them offline. Open orders finish | Later |
+| `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed (`WINDOW_ENDED`), or whose keys this node doesn't hold (`RESTART`, timed or open-ended, with an email): marks them offline. Renews open-ended sessions' marks; drops keys no open order needs. Open orders finish | Built (`RESTART` 2026-11-23) |
 | `ramp.sweep-verifications` | 2 min | Re-reads from the provider every `PENDING` verification not asked about in 5 minutes and every `IN_REVIEW` one not asked about in 30 (a lost webhook, an abandoned session). One the provider still calls unfinished after its time (`kyc_pending_hours`) is marked `EXPIRED`, and so is one whose provider can't be asked any more; while the provider is only out of reach nothing changes | Built 2026-11-22 |
 | `ramp.purge-expired` | 5 min | Expired quotes; tomorrow's partitions and old ones for `realtime` and `outbox` | Yes |
 | `ramp.prune-routing` | 1 h | Deletes routing decisions older than each network and direction's `logRetentionDays` (90), 500 at a time | Built 2026-11-23 |
@@ -900,11 +903,11 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 
 **The collections provider.** `integrations:api` has `CollectionProviders`; `OfferedCollections` (integrations) offers `payhero` everywhere and `log` only when `config.environment.isLocal`; it never offers `fake`. PayHero's webhook vendor is always bound, since the provider can be switched on at any time. The built-in seed of `collections_provider` is `payhero`, or `log` where the server offers it (a developer's machine), so a local order still completes end to end. `OrderFlow` asks `named(order.collectionsProvider)` for the prompt and for every status query; when that provider isn't offered any more the order waits untouched. The engine takes only merchants whose unlocked keys are for the network's current provider (the node keeps the provider beside the keys). RM5 checks the account with the network's current provider and seals it as that provider's, under the PIN already set; RM6 refuses (`ramp.merchant_setup_incomplete`) while the stored account is at another provider. RO5 refuses a provider this server doesn't offer (`ramp.settings_invalid`, field `collectionsProvider`), which is what keeps `log` off every server, and answers the offered names as `collectionsProviders` (read-only).
 
-**Merchants.** `merchants.state` has `NEW` (signed in, no profile yet) before `APPLIED`; `display_name` and `contact_phone` are empty until RM1, and the API answers them as `null`. The float wallet's columns are in `merchant_wallets` only; `merchants.callback_key` is the end of the callback address. Portal sign-ins are `ramp.merchant_sessions (token_hash bytea PRIMARY KEY, merchant_id, created_at, expires_at)`. `merchant_credentials.channel_id` keeps the till or paybill in plaintext beside the sealed blob, because RM2 shows it while the merchant is offline; it is not a secret. RM2 also answers `pinSet`. RM5 is allowed in `APPLIED` or `APPROVED`. `missing` is `profile`, `approval`, `wallet`, `payments`, `float` (free float below what the smallest order buys; a float the custodian can't report is not counted). RM6 takes 15 to 720 minutes.
+**Merchants.** `merchants.state` has `NEW` (signed in, no profile yet) before `APPLIED`; `display_name` and `contact_phone` are empty until RM1, and the API answers them as `null`. The float wallet's columns are in `merchant_wallets` only; `merchants.callback_key` is the end of the callback address. Portal sign-ins are `ramp.merchant_sessions (token_hash bytea PRIMARY KEY, merchant_id, created_at, expires_at)`. `merchant_credentials.channel_id` keeps the till or paybill in plaintext beside the sealed blob, because RM2 shows it while the merchant is offline; it is not a secret. RM2 also answers `pinSet`. RM5 is allowed in `APPLIED` or `APPROVED`. `missing` is `profile`, `approval`, `wallet`, `payments`, `float` (free float below what the smallest order buys; a float the custodian can't report is not counted). RM6 takes 15 to 720 minutes, or (2026-11-23) `untilStopped` for a session with no end time: see "As built: online until stopped".
 
 **The envelope.** AES-256-GCM under a random 256-bit data key; the data key wrapped with AES-256-GCM under `HMAC-SHA256(master key, "ramp:kek:v1" ‖ Argon2id(PIN, 16-byte salt))`; Argon2id at 19 MiB, 2 passes, 1 lane (Bouncy Castle). Both ciphertexts carry the merchant's id as additional data. `kdf_params` is `argon2id;m=19456;t=2;p=1;mk=1`. Without (a valid) `RAMP_CREDENTIALS_MASTER_KEY` the server still starts; RM5, RM6 and RM9 answer `ramp.vault_unavailable`.
 
-**The trading session.** Keys live in the app process's memory (`NodeTradingSessions`); `rmp:session:{merchantId}` holds the node's id, which is new on every start. One node only: nothing hands work to another node (`rmp:work` is not built), so the engine takes only merchants whose keys this node holds. Going offline (RM6, sign-out, a suspension, the window's end) clears the window and the Redis mark at once, but the keys stay in memory while one of the merchant's orders still waits for its payment, since only the provider's own answer may settle it; `ramp.end-sessions` (every minute, built) drops them once none is left.
+**The trading session.** Keys live in the app process's memory (`NodeTradingSessions`); `rmp:session:{merchantId}` holds the node's id, which is new on every start. One node only: nothing hands work to another node (`rmp:work` is not built), so the engine takes only merchants whose keys this node holds. Going offline (RM6, sign-out, a suspension, the window's end) clears the window and the Redis mark at once, but the keys stay in memory while one of the merchant's orders still waits for its payment, since only the provider's own answer may settle it; `ramp.end-sessions` (every minute, built) drops them once none is left. (2026-11-23: a session may also be open-ended, and a session whose keys a restart took is ended with `RESTART`: see "As built: online until stopped".)
 
 **Sign-in codes.** In Redis under `rmp:`, by a SHA-256 of the email, never the address: `code:`, `code-tries:`, `code-wait:` (one request a minute, which is MA1's `retryAfterSeconds`), `code-sent:` (three in ten minutes) and `code-from:{address}` (ten an hour). The address is `CF-Connecting-IP`, else the socket's peer: the source the gateway's own limits trust.
 
@@ -1577,6 +1580,35 @@ Every payout step is one INFO line under `com.circaso.ramp` (`LOG_LEVEL_RAMP`) t
 ### Not built
 
 The semi-manual payout (RM12, RM13, R8, R9); a second transfer for a sale that the wallet's key can't stop (one sent outside W4 to the float address is left in the float, alerted as `second_transfer` only when it names an order); a refund that failed on chain sent again by the system (staff send it by hand); handing a payout to another node (a merchant unlocked on another node is `NO_KEYS`, as before); reading a payout's actual fee from the provider (none returns it).
+
+## As built: online until stopped (2026-11-23, `feat/online-until-stopped`)
+
+The owner's request: "Include one with no duration, so you don't have to set a duration manually: you can go live and only turn it off yourself." RM6 now opens either a timed window (unchanged) or a session that lasts until the merchant ends it. **What still ends an open-ended session:** the merchant (RM6 `DELETE`), signing out (MA3), a suspension, the provider refusing a prompt for the service balance, and **a restart of the app server**: the unlocked keys live only in its memory (unchanged, and never stored), so a deploy ends every session, open-ended ones included. The portal is told plainly (RM2 below) and the merchant is emailed.
+
+**RM6.**
+
+```json
+// POST /v1/ramp/merchant/session
+{ "pin": "482913", "minutes": 240 }          // timed, as before: 15 to 720
+{ "pin": "482913", "untilStopped": true }     // open-ended: no `minutes`
+// → data (the same object as RM2's `online`)
+{ "online": true, "until": null, "state": "ONLINE", "openEnded": true, "keysHeld": true,
+  "since": "2026-11-23T09:00:00Z", "offlineReason": null, "offlineAt": null }
+// DELETE → { "online": false, "until": null, "state": "OFFLINE", "openEnded": false, "keysHeld": false,
+//            "since": null, "offlineReason": "STOPPED", "offlineAt": "2026-11-23T17:30:00Z" }
+```
+
+`ramp.malformed` on field `minutes` when neither is given, when `minutes` is outside 15–720, or when both are. Every other check is as before, in the same order: approval, KYC where the network requires it (`kyc`), the float wallet, `float`, a payment account at the network's current provider, the PIN, and the provider's service-balance floor (`provider_balance`).
+
+**RM2 `online`.** `online` and `until` keep their meaning for older portals (`until` is null for an open-ended session). Added: `state` (`ONLINE` | `OFFLINE`, the same fact), `openEnded`, `keysHeld` (this server holds the unlocked account), `since` (when the session began), and while offline `offlineReason` with `offlineAt`: `STOPPED`, `SIGNED_OUT`, `SUSPENDED`, `PROVIDER_BALANCE`, `WINDOW_ENDED`, `RESTART` (null when unknown, e.g. a session that ended before 2026-11-23). A session the database still holds but whose keys the server lost reads at once as `OFFLINE`, `keysHeld: false`, `offlineReason: "RESTART"` (`offlineAt` null until the sweep below records it). The portal says "Online until you go offline" for `openEnded`, and "You were taken offline when Circaso restarted: go online again" for `RESTART`.
+
+**Data (V9).** `merchants.online_open_ended` (boolean, with `CHECK (NOT (online_open_ended AND online_until IS NOT NULL))`), `online_since`, `offline_reason`, `offline_at`; partial index `merchants_sessions_idx` on `merchant_id WHERE online_open_ended OR online_until IS NOT NULL`. An open-ended session is `online_until` NULL with the flag set, never a far-future date. Every check that read `online_until` reads both through `Merchant.isOnlineAt` / `isTradingUntil`: the engine's eligibility (`online`: the session must outlast the order's payment or transfer window, which an open-ended one always does), the re-check under the reservation's row lock, RM2, the staff overview and summary (RO6, RO7: `online` is the flag or a window in the future). Staff reads also carry `onlineOpenEnded` and `offlineReason` (`OpsMerchant`, `OpsRampMerchantProfile`, and the ops DTOs).
+
+**`ramp.end-sessions`, every minute (the app process).** (1) Ends timed windows that ran out (`WINDOW_ENDED`). (2) For every merchant with a session in the database whose keys this node doesn't hold, ends it with `RESTART`, guarded by `online_since` so a session opened again since the row was read is never ended; the merchant is emailed `MERCHANT_TAKEN_OFFLINE` once (idempotency key `merchant-offline-<merchantId>-<since>`; best effort, nothing sent while the template has no id). This applies to timed sessions too: after a restart they could take no order either, and staff's `online` no longer shows them as online. (3) Renews `rmp:session:{merchantId}` for open-ended sessions it holds (the mark lasts 10 minutes, so a dead node's marks lapse). (4) Drops keys no open order needs, as before. Orders that were waiting on the provider when the keys went still wait, never settled on a guess (unchanged).
+
+**One node, still.** "Keys not on this node" counts as lost because the trading session is single-node (`rmp:work` is not built). With a second app node this sweep would need the holder's mark instead: `TODO(decision: more than one app node)` in `EndSessions`.
+
+**The email.** `EmailTemplate.MERCHANT_TAKEN_OFFLINE` (`Email.MerchantTakenOffline`, no variables), `email-templates/merchant-taken-offline.html`. Until staff set its template id in the admin, nothing is sent and the session still ends.
 
 ## To check against the vendor before building on it
 

@@ -17,6 +17,41 @@ import java.util.UUID
 enum class MerchantState { NEW, APPLIED, APPROVED, SUSPENDED }
 
 /**
+ * Why a merchant's trading session ended, kept until they go online again so the portal can say it. `RESTART`: the
+ * server that held their unlocked keys restarted (a deploy), and the keys, which live only in its memory, went with
+ * it. Recorded from 2026-11-23; older sessions ended with none.
+ */
+enum class OfflineReason {
+    /** The merchant went offline themselves (RM6 `DELETE`). */
+    STOPPED,
+
+    /** The merchant signed out of the portal (MA3). */
+    SIGNED_OUT,
+
+    /** Staff suspended the merchant. */
+    SUSPENDED,
+
+    /** The provider refused a prompt for the merchant's service balance. */
+    PROVIDER_BALANCE,
+
+    /** The timed window they chose ran out. */
+    WINDOW_ENDED,
+
+    /** The server holding their keys restarted: they must unlock again. */
+    RESTART,
+}
+
+/**
+ * How long RM6 opens a session for: a window of [Minutes], or until the merchant stops it themselves (decision
+ * 2026-11-23). Neither outlives the server's memory: a restart ends both.
+ */
+sealed interface TradingWindow {
+    data class Minutes(val minutes: Int) : TradingWindow
+
+    data object UntilStopped : TradingWindow
+}
+
+/**
  * Something at the merchant's payment provider that only the merchant can put right. While one is set the engine gives
  * them no order.
  */
@@ -26,9 +61,10 @@ enum class PaymentsIssue {
 }
 
 /**
- * A partner merchant: an account of its own, signed in to by [email]. [onlineUntil] is the end of the trading window,
- * null when offline. [callbackKey] is the end of the merchant's own callback address, null until they connect a
- * payment account. [paymentsIssue] is set when the provider refused a prompt for a reason the merchant must fix, and
+ * A partner merchant: an account of its own, signed in to by [email]. [onlineUntil] is the end of a timed trading
+ * window; [onlineOpenEnded] is a session with no end but the merchant's own (or the server's restart), and then
+ * [onlineUntil] is null. Neither: offline, and [offlineReason] says why when it is known. [callbackKey] is the end of
+ * the merchant's own callback address, null until they connect a payment account. [paymentsIssue] is set when the provider refused a prompt for a reason the merchant must fix, and
  * cleared when they go online again or a later prompt goes through. [merchantType] and [orderLimitMinor] are staff's;
  * [offersOnramp] and [offersOfframp] are the merchant's own (decision 2026-11-23).
  */
@@ -63,9 +99,18 @@ data class Merchant(
      * never part of the merchant: it is read sealed, only by the callback check ([StoredWebhookSecret]).
      */
     val webhookSecretUpdatedAt: Instant? = null,
+    /** Online until the merchant stops it: no end time, so every payment window fits (decision 2026-11-23). */
+    val onlineOpenEnded: Boolean = false,
+    /** When the current session began; null when offline (and for sessions opened before 2026-11-23). */
+    val onlineSince: Instant? = null,
+    val offlineReason: OfflineReason? = null,
+    val offlineAt: Instant? = null,
 ) {
-    /** Approved, and inside a trading window that lasts past [until]. */
-    fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && onlineUntil?.isAfter(until) == true
+    /** Inside a session at [at]: open-ended, or a window that ends after it. Says nothing about the keys. */
+    fun isOnlineAt(at: Instant): Boolean = onlineOpenEnded || onlineUntil?.isAfter(at) == true
+
+    /** Approved, and inside a session that lasts past [until]; an open-ended one lasts past any time. */
+    fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && isOnlineAt(until)
 
     /** Whether the merchant takes orders in [direction]: a sale also needs their payout account. */
     fun offers(direction: Direction): Boolean =
@@ -198,7 +243,8 @@ data class MerchantOverview(
     val payments: PaymentsView?,
     /** Whether the stored payment account is at the provider the network uses now; false means reconnect. */
     val paymentsCurrent: Boolean,
-    val online: Boolean,
+    /** Online or not as the portal shows it: a session in the database **and** the keys unlocked on this node. */
+    val presence: OnlineView,
     /** The least free float worth going online with: what the smallest order buys. Zero when it can't be priced. */
     val floatFloorMinor: Long,
     /** The merchant's identity verification as [network]'s settings see it. */
@@ -236,13 +282,29 @@ data class MerchantOverview(
      */
     val canGoOnline: Boolean get() = missing.all { it == PROVIDER_BALANCE }
 
+    val online: Boolean get() = presence.online
+
     companion object {
         const val PROVIDER_BALANCE = "provider_balance"
         const val KYC = "kyc"
     }
 }
 
-data class OnlineView(val online: Boolean, val until: Instant?)
+/**
+ * A merchant's trading session as RM2 and RM6 answer it. [online] is a session that is open **and** whose keys this
+ * node holds; [until] is a timed window's end (null when [openEnded] or offline). [keysHeld] is false after the server
+ * restarted, even while the database still shows the session (until `ramp.end-sessions` ends it with `RESTART`).
+ * [offlineReason] and [offlineAt] say why and when the last session ended, while offline.
+ */
+data class OnlineView(
+    val online: Boolean,
+    val until: Instant?,
+    val openEnded: Boolean = false,
+    val keysHeld: Boolean = online,
+    val since: Instant? = null,
+    val offlineReason: OfflineReason? = null,
+    val offlineAt: Instant? = null,
+)
 
 /** RM5's and RM14's answer. */
 data class CallbackView(val callbackUrl: String)

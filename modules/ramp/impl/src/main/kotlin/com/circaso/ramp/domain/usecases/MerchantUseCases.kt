@@ -2,6 +2,8 @@ package com.circaso.ramp.domain.usecases
 
 import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.integrations.api.CollectionProviders
+import com.circaso.integrations.api.Email
+import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
@@ -9,6 +11,7 @@ import com.circaso.ramp.domain.models.CallbackView
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
@@ -17,6 +20,7 @@ import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.RampTokens
@@ -36,6 +40,8 @@ import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /** RM2: the merchant, what is set up, the float, and what is still missing before they can go online. */
 class GetMerchant(
@@ -175,7 +181,9 @@ class RotateCallback(
 }
 
 /**
- * RM6: goes online for a trading window. The PIN unwraps the payment keys **into this node's memory only**; the
+ * RM6: goes online for a trading window, or until the merchant stops it ([TradingWindow.UntilStopped], decision
+ * 2026-11-23: no end time; RM6 `DELETE`, sign-out, a suspension or a provider's refusal end it, and so does a restart
+ * of this server, which takes the keys with it). The PIN unwraps the payment keys **into this node's memory only**; the
  * merchant must be approved, verified where the network requires KYC (`kyc`), with a float wallet on the network and
  * a payment account. A float the custodian reports as too small for the smallest order refuses too; one it can't
  * report doesn't.
@@ -200,7 +208,7 @@ class GoOnline(
         merchantId: MerchantId,
         network: Network,
         pin: String,
-        minutes: Int,
+        window: TradingWindow,
     ): Resource<OnlineView> {
         val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
         if (merchant.state != MerchantState.APPROVED) return Resource.error(RampError.MerchantNotApproved)
@@ -219,14 +227,20 @@ class GoOnline(
         if (serviceBalanceLow(merchant, sealed.provider, keys, network)) {
             return Resource.error(RampError.ProviderBalanceLow)
         }
-        val now = clock.instant()
-        val until = now.plus(Duration.ofMinutes(minutes.toLong()))
+        // Microseconds, as the database keeps it: RM6's `since` reads the same as RM2's afterwards.
+        val now = clock.instant().truncatedTo(ChronoUnit.MICROS)
+        val until =
+            when (window) {
+                is TradingWindow.Minutes -> now.plus(Duration.ofMinutes(window.minutes.toLong()))
+                TradingWindow.UntilStopped -> null
+            }
+        // The keys first, then the session: whoever sees the session open finds the keys already here.
         sessions.unlock(merchantId, UnlockedKeys(sealed.provider, keys), until)
         if (merchant.paymentsIssue != null) merchants.setPaymentsIssue(merchantId, null, now)
         // Going online is how a merchant says they put their provider right: a payout refusal is tried again too.
         if (merchant.payoutIssue != null) merchants.setPayoutIssue(merchantId, null, now)
-        merchants.setOnlineUntil(merchantId, until)
-        return Resource.success(OnlineView(online = true, until = until))
+        merchants.goOnline(merchantId, until, since = now)
+        return Resource.success(OnlineView(online = true, until = until, openEnded = until == null, since = now))
     }
 
     /**
@@ -250,11 +264,18 @@ class GoOnline(
     }
 }
 
-/** RM6: goes offline. New orders stop; open ones finish. */
-class GoOffline(private val presence: Presence) {
+/** RM6: goes offline, from a timed window or an open-ended session alike. New orders stop; open ones finish. */
+class GoOffline(private val presence: Presence, private val clock: Clock) {
     suspend operator fun invoke(merchantId: MerchantId): Resource<OnlineView> {
-        presence.goOffline(merchantId)
-        return Resource.success(OnlineView(online = false, until = null))
+        presence.goOffline(merchantId, OfflineReason.STOPPED)
+        return Resource.success(
+            OnlineView(
+                online = false,
+                until = null,
+                offlineReason = OfflineReason.STOPPED,
+                offlineAt = clock.instant(),
+            ),
+        )
     }
 }
 
@@ -295,18 +316,27 @@ class ListMerchantOrders(private val orders: OrderRepository) {
 }
 
 /**
- * `ramp.end-sessions`: clears the trading window of every merchant whose window has ended, and drops from this node's
- * memory the keys of merchants who are no longer online once none of their orders still waits for its payment.
+ * `ramp.end-sessions`, every minute on this node:
+ *
+ * - ends every timed window that has run out (`WINDOW_ENDED`);
+ * - ends every session whose keys this node doesn't hold (`RESTART`): the keys live only in memory, so after a restart
+ *   (a deploy) the database may still show a merchant online, open-ended or inside their window, whom no order could
+ *   reach. Each such merchant is emailed once, best effort, to go online again. One node only, as the rest of the
+ *   trading session: a second node would hold keys this one can't see;
+ * - renews the Redis mark of every open-ended session this node holds;
+ * - drops from memory the keys of merchants who are no longer online once none of their orders waits for its payment.
  */
 class EndSessions(
     private val merchants: MerchantRepository,
     private val orders: OrderRepository,
     private val sessions: TradingSessions,
+    private val email: EmailGateway,
     private val clock: Clock,
 ) {
     suspend operator fun invoke(): Int {
         val now = clock.instant()
         var handled = merchants.endPassedWindows(now)
+        handled += endLostSessions(now)
         sessions.held().forEach { merchantId ->
             val online = merchants.find(merchantId)?.isTradingUntil(now) == true
             if (!online && !orders.needsKeys(merchantId)) {
@@ -315,5 +345,37 @@ class EndSessions(
             }
         }
         return handled
+    }
+
+    // TODO(decision: more than one app node; `rmp:work` would route to the holder, and this check would read the mark)
+    private suspend fun endLostSessions(now: Instant): Int {
+        var ended = 0
+        merchants.withSessions(MAX_SESSIONS).forEach { merchant ->
+            val merchantId = merchant.merchantId
+            if (sessions.of(merchantId) != null) {
+                if (merchant.onlineOpenEnded) sessions.renew(merchantId)
+                return@forEach
+            }
+            // Guarded by when the session began: one opened since this run read the row is left alone. Its stale mark
+            // in Redis isn't touched either (it may already be the new session's) and expires on its own.
+            if (!merchants.endLostSession(merchantId, merchant.onlineSince, now)) return@forEach
+            ended++
+            tellTakenOffline(merchant, now)
+        }
+        return ended
+    }
+
+    /** Best effort: an email that can't be sent (no template id yet, the provider down) changes nothing. */
+    private suspend fun tellTakenOffline(merchant: Merchant, now: Instant) {
+        val session = (merchant.onlineSince ?: now).toEpochMilli()
+        email.send(
+            merchant.email,
+            Email.MerchantTakenOffline,
+            idempotencyKey = "merchant-offline-${merchant.merchantId}-$session",
+        )
+    }
+
+    private companion object {
+        const val MAX_SESSIONS = 500
     }
 }

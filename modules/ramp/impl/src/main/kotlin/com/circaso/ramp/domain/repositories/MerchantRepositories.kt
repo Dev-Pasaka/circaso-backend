@@ -9,6 +9,7 @@ import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.OfflineReason
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentsIssue
@@ -90,7 +91,35 @@ interface MerchantRepository {
 
     suspend fun setCallbackKey(merchantId: MerchantId, callbackKey: String)
 
-    suspend fun setOnlineUntil(merchantId: MerchantId, until: Instant?)
+    /**
+     * Opens a session that began at [since]: a window to [until], or open-ended when [until] is null. Clears the
+     * reason the last one ended.
+     */
+    suspend fun goOnline(
+        merchantId: MerchantId,
+        until: Instant?,
+        since: Instant,
+    )
+
+    /** Ends the merchant's session, whatever kind, and records [reason] at [at]. */
+    suspend fun goOffline(
+        merchantId: MerchantId,
+        reason: OfflineReason,
+        at: Instant,
+    )
+
+    /**
+     * Ends the session that began at [since] (null: one opened before that was recorded) with `RESTART`, only if it is
+     * still that session: a merchant who went online again in the meantime keeps the new one. True when it ended.
+     */
+    suspend fun endLostSession(
+        merchantId: MerchantId,
+        since: Instant?,
+        at: Instant,
+    ): Boolean
+
+    /** Merchants with a session open in the database, timed or open-ended, at most [limit]. */
+    suspend fun withSessions(limit: Int): List<Merchant>
 
     /** Marks what the merchant must fix at their provider ([issue]), or clears it (null). */
     suspend fun setPaymentsIssue(
@@ -99,7 +128,7 @@ interface MerchantRepository {
         at: Instant,
     )
 
-    /** Clears the trading window of every merchant whose window ended before [now]; how many. */
+    /** Ends the timed window of every merchant whose window ended before [now] (`WINDOW_ENDED`); how many. */
     suspend fun endPassedWindows(now: Instant): Int
 
     /** The merchant's account id at the payout provider (FinoQ's, digits), or none. */
