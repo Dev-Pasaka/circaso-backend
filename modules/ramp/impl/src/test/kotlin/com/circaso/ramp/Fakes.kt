@@ -90,6 +90,7 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.net.SocketTimeoutException
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -514,8 +515,17 @@ class FakeCollections : MobileCollections {
     /** The payout balance by API username, and the fee balance read with it; unnamed: unreadable. */
     val payoutBalances = mutableMapOf<String, Long>()
 
+    /** The next send reaches the provider and then the call dies (a caller's timeout): the payout went out. */
+    var timeOutAfterSend = false
+
     override suspend fun sendPayout(credentials: CollectionCredentials, request: PayoutRequest): PayoutResult {
         payoutCalls += request
+        if (timeOutAfterSend) {
+            timeOutAfterSend = false
+            payouts += request
+            payoutStatuses.putIfAbsent(request.reference, PayoutStatus.Pending)
+            throw SocketTimeoutException("read timed out")
+        }
         val result = nextPayouts.removeFirstOrNull() ?: PayoutResult.Accepted(PayoutReceipt("PO-${payouts.size + 1}"))
         val reached = result is PayoutResult.Accepted || (result == PayoutResult.Unknown && unknownReached)
         if (reached) {

@@ -2,6 +2,9 @@ package com.circaso.ramp
 
 import com.circaso.identity.api.AccountStatus
 import com.circaso.integrations.api.CollectionCredentials
+import com.circaso.integrations.api.CustodyDirection
+import com.circaso.integrations.api.CustodyTransaction
+import com.circaso.integrations.api.CustodyTransactionState
 import com.circaso.integrations.api.KycDocument
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.MobileCollections
@@ -26,6 +29,7 @@ import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.RoutingDecision
 import com.circaso.ramp.domain.models.SignedIn
+import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
@@ -113,10 +117,15 @@ import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateEngineSettings
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
+import com.circaso.shared.Asset
+import com.circaso.shared.Money
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.TransferId
+import com.circaso.wallet.api.TransferSummary
+import com.circaso.wallet.api.WalletAmount
 import java.time.Duration
 import kotlin.random.Random
 
@@ -508,6 +517,135 @@ class Harness {
     companion object {
         const val SEED = 20_261_123
     }
+
+    // ---- selling (2026-11-23) ----
+
+    private var transfers = 0
+
+    /**
+     * Opens selling on the testnet (round-robin, as buying) with staff's fallback fee table empty, and makes [merchant]
+     * a seller: they offer it, have a FinoQ account id, and KES [payoutMinor] in their payout balance there.
+     */
+    fun openSelling(merchant: Merchant = crynce, payoutMinor: Long = 10_000_000) {
+        settingsRows.set(TESTNET) { it.copy(offRampState = RampState.ON) }
+        book.invalidate()
+        engineRows.set(TESTNET, Direction.OFF_RAMP) { it.copy(mode = EngineMode.ROUND_ROBIN) }
+        engineBook.invalidate()
+        seller(merchant, payoutMinor)
+    }
+
+    fun seller(merchant: Merchant, payoutMinor: Long = 10_000_000) {
+        val id = merchant.merchantId
+        merchants.rows[id] = merchants.rows.getValue(id).copy(offersOfframp = true, payoutAccountId = "4242")
+        collections.payoutBalances["${merchant.displayName}-user"] = payoutMinor
+        collections.serviceBalances["${merchant.displayName}-user"] = 100_000
+    }
+
+    /** A quote to sell [usdcMinor] (130 a dollar, 2 % fee, KES 5 payout fee: 10 USDC pays out KES 1 269). */
+    suspend fun saleQuote(userId: UserId = amina, usdcMinor: Long = 10_000_000): Resource<Quote> =
+        createQuote(QuoteCommand(userId, TESTNET, Direction.OFF_RAMP, CHAIN, null, usdcMinor))
+
+    suspend fun sell(
+        userId: UserId = amina,
+        number: PhoneNumber = phone,
+        usdcMinor: Long = 10_000_000,
+    ): Resource<OrderView> {
+        val quote = (saleQuote(userId, usdcMinor) as Resource.Success).data
+        return startOffRamp(StartOffRampCommand(userId, TESTNET, quote.quoteId, number))
+    }
+
+    /** A sale waiting for its USDC. */
+    suspend fun sale(
+        userId: UserId = amina,
+        number: PhoneNumber = phone,
+        usdcMinor: Long = 10_000_000,
+    ): Order = (sell(userId, number, usdcMinor) as Resource.Success).data.order
+
+    /**
+     * The user's W4 for [order] lands: the wallet's record of it (confirmed, to the merchant's float), the custodian's
+     * record of the deposit on the merchant's wallet ([amountMinor] of [token] from [from]), the float's balance up,
+     * and the wallet's `TransferConfirmed` handled. [recorded] false: the custodian has no record of it yet.
+     */
+    suspend fun transfer(
+        order: Order,
+        amountMinor: Long = order.assetMinor,
+        token: String = USDC_CONTRACT,
+        from: String = order.refundAddress!!,
+        recorded: Boolean = true,
+    ): TransferId {
+        val transferId = TransferId.new()
+        val hash = "0xsale-${++transfers}"
+        val wallet = merchantWallets.rows.getValue(order.merchantId to order.network)
+        wallets.transfers[transferId] =
+            TransferSummary(
+                transferId = transferId,
+                senderId = order.userId,
+                recipientId = null,
+                destinationAddress = order.destinationAddress,
+                amount = WalletAmount("USDC", amountMinor.toString(), amountMinor.toString()),
+                state = "CONFIRMED",
+                chatId = null,
+                blockchain = order.blockchain,
+                txHash = hash,
+                rampOrderId = order.orderId.value,
+            )
+        if (recorded) deposit(wallet, hash, amountMinor, token, from)
+        saleTransfer(order.orderId.value, transferId.value)
+        return transferId
+    }
+
+    /** The custodian's record of [amountMinor] arriving in [wallet] in the chain transaction [hash]. */
+    fun deposit(
+        wallet: MerchantWallet,
+        hash: String,
+        amountMinor: Long,
+        token: String = USDC_CONTRACT,
+        from: String,
+    ) {
+        treasury.deposits[hash] =
+            listOf(
+                CustodyTransaction(
+                    circleTxId = "dep-$hash",
+                    circleUserId = "",
+                    walletId = wallet.custodyWalletId,
+                    blockchain = wallet.blockchain,
+                    direction = CustodyDirection.IN,
+                    state = CustodyTransactionState.CONFIRMED,
+                    amount = Money(amountMinor, Asset.USDC),
+                    sourceAddress = from,
+                    destinationAddress = wallet.address,
+                    refId = "",
+                    txHash = hash,
+                    failureReason = "",
+                    updatedAt = clock.instant(),
+                    developerWallet = true,
+                    tokenAddress = token,
+                ),
+            )
+        if (token == USDC_CONTRACT) {
+            treasury.balances[wallet.custodyWalletId] = (treasury.balances[wallet.custodyWalletId] ?: 0) + amountMinor
+        }
+    }
+
+    /** A sale whose USDC arrived: funded and its payout sent (and accepted) at once. */
+    suspend fun paying(
+        userId: UserId = amina,
+        number: PhoneNumber = phone,
+        usdcMinor: Long = 10_000_000,
+    ): Order {
+        val order = sale(userId, number, usdcMinor)
+        transfer(order)
+        return now(order)
+    }
+
+    /** The provider's payout callback on the address of the sale's own merchant, [times] over. */
+    suspend fun payoutCallback(order: Order, times: Int = 1) {
+        val key = merchants.rows.getValue(order.merchantId).callbackKey!!
+        repeat(times) { payoutCallback(key, now(order).payoutReference ?: order.orderId.toString()) }
+    }
+
+    /** One run of the app's `ramp.payouts` on the testnet (and staff's re-checks and the test payouts). */
+    suspend fun payoutSweep(): Int = sweepSales(TESTNET) + runRechecks() + testPayouts.sweep()
 
     /** Signs [address] in to the portal the way a merchant does: ask for the code, read the email, send it back. */
     suspend fun verifyCodeFor(address: String, network: Network = TESTNET): SignedIn {

@@ -200,7 +200,11 @@ data class MerchantOverview(
                 "approval".takeIf { merchant.state != MerchantState.APPROVED },
                 "wallet".takeIf { wallet == null },
                 "payments".takeIf { payments == null || !paymentsCurrent },
-                "float".takeIf { float != null && (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor) },
+                // USDC float is what buying sells; a merchant who only takes sales needs none (2026-11-23).
+                "float".takeIf {
+                    merchant.offersOnramp && float != null &&
+                        (float.freeMinor <= 0 || float.freeMinor < floatFloorMinor)
+                },
                 PROVIDER_BALANCE.takeIf { merchant.paymentsIssue == PaymentsIssue.SERVICE_BALANCE },
             )
 
