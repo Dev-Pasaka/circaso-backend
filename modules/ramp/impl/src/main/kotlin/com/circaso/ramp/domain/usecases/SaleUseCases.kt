@@ -16,6 +16,7 @@ import com.circaso.ramp.domain.models.RoutingOutcome
 import com.circaso.ramp.domain.models.RoutingStep
 import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.ports.KesFloat
+import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RampCounters
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
@@ -203,15 +204,21 @@ class StartOffRamp(
 /**
  * The wallet's `wallet.TransferConfirmed` for a transfer that names a ramp order (W4 `rampOrderId`): the sale's
  * funding is recorded and checked with the custodian ([SaleFunding]), then paid out at once when this node can. A
- * repeated event changes nothing: the transfer is recorded once and the guards hold.
+ * repeated event changes nothing: the transfer is recorded once and the guards hold. A transfer that names an order
+ * the ramp doesn't have moved real USDC somewhere: the people on call are told.
  */
 class HandleSaleTransfer(
     private val orders: OrderRepository,
     private val funding: SaleFunding,
     private val payouts: SalePayouts,
+    private val alerts: RampAlerts,
 ) {
     suspend operator fun invoke(rampOrderId: UUID, transferId: UUID): Resource<Unit> {
-        val order = orders.find(RampOrderId(rampOrderId)) ?: return Resource.success(Unit)
+        val order = orders.find(RampOrderId(rampOrderId))
+        if (order == null) {
+            alerts.stuck("transfer $transferId for order $rampOrderId", "unknown_ramp_order")
+            return Resource.success(Unit)
+        }
         val funded = funding.transferConfirmed(order, transferId)
         if (funded.state == OrderState.FUNDED) payouts.pay(funded)
         return Resource.success(Unit)

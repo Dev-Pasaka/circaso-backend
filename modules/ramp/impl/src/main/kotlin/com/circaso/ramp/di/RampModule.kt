@@ -472,7 +472,7 @@ fun rampModule(config: Config): Module =
         single { ListOrders(get(), get()) }
         single { CancelOrder(get(), get(), get(), get()) }
         single { StartOffRamp(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { HandleSaleTransfer(get(), get(), get()) }
+        single { HandleSaleTransfer(get(), get(), get(), get()) }
         single { HandlePayoutCallback(get(), get(), get(), get()) }
         single { SweepSales(get(), get(), get(), get(), clock) }
         single { ResolveOrder(get(), get(), get(), get(), clock) }

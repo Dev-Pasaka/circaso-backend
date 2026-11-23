@@ -285,7 +285,7 @@ class Harness {
         TestPayouts(testPayoutRows, merchants, sessions, providers, balancesReader, payoutFees, book, clock, journal)
     val startOffRamp =
         StartOffRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, balancesReader, clock)
-    val saleTransfer = HandleSaleTransfer(orders, saleFunding, salePayouts)
+    val saleTransfer = HandleSaleTransfer(orders, saleFunding, salePayouts, alerts)
     val payoutCallback = HandlePayoutCallback(merchants, orders, salePayouts, testPayouts)
     val sweepSales = SweepSales(orders, saleFunding, salePayouts, saleFlow, clock)
     val resolveOrder = ResolveOrder(orders, merchants, flow, saleFlow, clock)

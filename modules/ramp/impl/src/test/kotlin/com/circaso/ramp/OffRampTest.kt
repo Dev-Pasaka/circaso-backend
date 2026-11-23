@@ -25,6 +25,7 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import kotlinx.coroutines.test.runTest
 import java.math.BigInteger
+import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -903,5 +904,24 @@ class OffRampTest {
             assertIs<PayoutStatus.Pending>(ramp.collections.payoutStatuses[order.orderId.toString()])
             assertEquals(OrderState.PAYING_OUT, ramp.now(order).state)
             assertTrue(ramp.ledger.commissions.isEmpty() && ramp.treasury.sends.isEmpty())
+        }
+
+    @Test
+    fun `a confirmed transfer naming an unknown order is told to the people on call and moves nothing`() =
+        runTest {
+            ramp.saleTransfer(UUID.randomUUID(), UUID.randomUUID())
+
+            assertEquals(listOf("unknown_ramp_order"), ramp.alerts.stuck)
+            assertTrue(ramp.collections.payoutCalls.isEmpty())
+        }
+
+    @Test
+    fun `each payout step is written down with ids and outcomes only`() =
+        runTest {
+            ramp.openSelling()
+            val order = ramp.paying()
+
+            assertTrue("payout sent ${order.orderId}#1 Accepted" in ramp.journal.steps, ramp.journal.steps.toString())
+            assertTrue(ramp.journal.steps.none { "126900" in it || "+254" in it })
         }
 }
