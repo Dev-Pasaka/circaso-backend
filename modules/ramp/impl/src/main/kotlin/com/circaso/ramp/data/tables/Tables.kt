@@ -83,6 +83,8 @@ object MerchantsTable : Table("ramp.merchants") {
     val feeBalanceMinor = long("fee_balance_minor").nullable()
     val feeBalanceSource = text("fee_balance_source").nullable()
     val balancesReadAt = timestamp("balances_read_at").nullable()
+    val webhookSecretSealed = binary("webhook_secret_sealed").nullable()
+    val webhookSecretUpdatedAt = timestamp("webhook_secret_updated_at").nullable()
     override val primaryKey = PrimaryKey(merchantId)
 }
 

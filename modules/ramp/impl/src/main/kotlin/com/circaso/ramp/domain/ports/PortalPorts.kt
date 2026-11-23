@@ -40,6 +40,20 @@ interface CredentialVault {
 }
 
 /**
+ * The merchant's webhook signing secret, sealed under a key derived from the ramp's master key **alone** (2026-11-23).
+ * Unlike the payment credentials it needs no PIN: callbacks arrive while the merchant is offline, and the secret only
+ * tells FinoQ's callbacks from forgeries (a callback is a doorbell that moves nothing). Bound to the merchant, so a row
+ * copied onto another merchant doesn't open.
+ */
+interface WebhookSecretVault {
+    /** The sealed form of [secret]; null when the server has no master key. */
+    fun seal(merchantId: MerchantId, secret: String): ByteArray?
+
+    /** The secret, or null when the server has no master key or [sealed] doesn't open (another key, a changed row). */
+    fun open(merchantId: MerchantId, sealed: ByteArray): String?
+}
+
+/**
  * The merchants whose payment keys this node holds unlocked, in its own memory only (never the database, Redis, a log
  * or an event). Redis holds just the fact that a merchant is online and on which node (`rmp:session:{merchantId}`).
  * A node that restarts holds nothing: its merchants are offline until they unlock again.

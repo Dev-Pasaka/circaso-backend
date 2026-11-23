@@ -58,6 +58,11 @@ data class Merchant(
     /** Set when the provider refused a payout for something only the merchant can fix; cleared when one goes out. */
     val payoutIssue: PayoutIssue? = null,
     val payoutIssueAt: Instant? = null,
+    /**
+     * When the merchant last set their provider's webhook signing secret; null when none is set. The secret itself is
+     * never part of the merchant: it is read sealed, only by the callback check ([StoredWebhookSecret]).
+     */
+    val webhookSecretUpdatedAt: Instant? = null,
 ) {
     /** Approved, and inside a trading window that lasts past [until]. */
     fun isTradingUntil(until: Instant): Boolean = state == MerchantState.APPROVED && onlineUntil?.isAfter(until) == true
@@ -80,6 +85,23 @@ data class Merchant(
     fun orderLimit(settings: EngineSettings): Long = orderLimitMinor ?: settings.tierLimit(merchantType)
 
     override fun toString(): String = "Merchant($merchantId, $state)"
+}
+
+/**
+ * A merchant's webhook signing secret as kept: sealed under a key derived from the ramp's master key, bound to
+ * [merchantId]. Found by the callback address it guards. Its string form shows nothing.
+ */
+class StoredWebhookSecret(val merchantId: MerchantId, val sealed: ByteArray) {
+    override fun toString(): String = "StoredWebhookSecret($merchantId, ***)"
+}
+
+/** The webhook signing secret's rules (2026-11-23): what FinoQ shows is pasted as it is, one line, no spaces. */
+object WebhookSecret {
+    const val MIN_LENGTH = 8
+    const val MAX_LENGTH = 512
+    private val PRINTABLE = Regex("[\\x21-\\x7E]+")
+
+    fun isValid(secret: String): Boolean = secret.length in MIN_LENGTH..MAX_LENGTH && PRINTABLE.matches(secret)
 }
 
 /** A merchant's float wallet on one network: a developer-controlled wallet the ops process signs for. */

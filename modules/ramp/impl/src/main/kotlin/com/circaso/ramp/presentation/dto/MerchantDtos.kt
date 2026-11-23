@@ -95,6 +95,10 @@ data class MerchantResponse(
     val offers: MerchantOffersDto = MerchantOffersDto(onRamp = true, offRamp = false),
     /** Selling (2026-11-23): your payout account and your balances at the provider. */
     val offRamp: MerchantOffRampDto? = null,
+    /** Whether your FinoQ webhook signing secret is set (RM5c). The secret itself is never sent back. */
+    val webhookSecretSet: Boolean = false,
+    /** When it was last set (ISO-8601 UTC); null when it isn't set. */
+    val webhookSecretUpdatedAt: String? = null,
 )
 
 /** One balance at the provider, and the call it was read from (for support: which of the provider's wallets). */
@@ -124,6 +128,15 @@ data class MerchantOffRampDto(
     val payoutIssue: MerchantPaymentsIssueDto?,
     val flags: List<String>,
 )
+
+/**
+ * `PUT /ramp/merchant/payments/webhook-secret` request: the webhook signing secret from your FinoQ dashboard, as shown
+ * there. The string form hides it.
+ */
+@Serializable
+data class WebhookSecretRequest(val secret: String = "") {
+    override fun toString(): String = "WebhookSecretRequest(***)"
+}
 
 /** `PUT /ramp/merchant/payments/account` request: the account's number on the FinoQ dashboard, digits only. */
 @Serializable

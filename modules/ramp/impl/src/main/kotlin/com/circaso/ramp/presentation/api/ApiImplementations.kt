@@ -89,6 +89,9 @@ class RampCollectionNotifications(private val events: RampEventsService) : Colle
     /** A payout's doorbell (2026-11-23): the ramp asks the provider itself; a payment's reference is ignored here. */
     override suspend fun onPayoutCallback(callbackKey: String, reference: String): Resource<Unit> =
         events.payoutCallback(callbackKey, reference)
+
+    /** The merchant's FinoQ webhook signing secret (2026-11-23), for integrations to check a callback with. */
+    override suspend fun callbackSigningSecret(callbackKey: String): String? = events.callbackSecret(callbackKey)
 }
 
 /**

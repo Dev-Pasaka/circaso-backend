@@ -13,6 +13,7 @@ import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.HttpPromptTransport
+import com.circaso.ramp.data.support.MasterKeyWebhookSecrets
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.EngineMode
@@ -59,6 +60,7 @@ import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
+import com.circaso.ramp.domain.usecases.CallbackSigningSecret
 import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
@@ -102,6 +104,7 @@ import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SetMerchantTier
 import com.circaso.ramp.domain.usecases.SetPayoutAccount
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
+import com.circaso.ramp.domain.usecases.SetWebhookSecret
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
 import com.circaso.ramp.domain.usecases.SimulateRouting
@@ -291,6 +294,9 @@ class Harness {
     val resolveOrder = ResolveOrder(orders, merchants, flow, saleFlow, clock)
     val runRechecks = RunRechecks(orders, flow, salePayouts, saleFunding)
     val setPayoutAccount = SetPayoutAccount(merchants, views, clock)
+    val webhookSecrets = MasterKeyWebhookSecrets({ EnvelopeVault.masterKey(masterKey) })
+    val setWebhookSecret = SetWebhookSecret(merchants, webhookSecrets, views, clock)
+    val callbackSigningSecret = CallbackSigningSecret(merchants, webhookSecrets)
 
     val status = GetRampStatus(gates, accounts, orders, engine, verifications)
     val startKyc = StartUserKyc(gates, accounts, verifications)

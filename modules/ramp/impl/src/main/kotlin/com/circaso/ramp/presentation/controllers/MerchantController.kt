@@ -22,6 +22,7 @@ import com.circaso.ramp.presentation.dto.StatementResponse
 import com.circaso.ramp.presentation.dto.TestPayoutRequest
 import com.circaso.ramp.presentation.dto.TestPayoutResponse
 import com.circaso.ramp.presentation.dto.VerifyCodeRequest
+import com.circaso.ramp.presentation.dto.WebhookSecretRequest
 import com.circaso.ramp.presentation.mappers.cursorOf
 import com.circaso.ramp.presentation.mappers.periodOf
 import com.circaso.ramp.presentation.mappers.toAmount
@@ -31,6 +32,7 @@ import com.circaso.ramp.presentation.mappers.toMerchantResponse
 import com.circaso.ramp.presentation.mappers.toPins
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.ramp.presentation.mappers.toSavedResponse
+import com.circaso.ramp.presentation.mappers.toSecret
 import com.circaso.ramp.presentation.mappers.toSignIn
 import com.circaso.ramp.presentation.mappers.toSwitches
 import com.circaso.ramp.presentation.mappers.toWindow
@@ -297,6 +299,8 @@ private fun Route.paymentRoutes(merchants: MerchantService) {
                     "isn't a secret and needs no PIN. Answers RM2; its `offRamp` card shows it.",
         )
 
+        webhookSecretRoutes(merchants)
+
         post("callback") {
             val result = merchants.rotateCallback(call.merchantId(), call.merchantNetwork())
             call.respondDefault(result.toDefaultResponse { it.toResponse() })
@@ -305,6 +309,41 @@ private fun Route.paymentRoutes(merchants: MerchantService) {
             TAG,
             listOf(INVALID, SETUP),
             notes = "$MONEY The old address stops working at once: paste the new one into PayHero.",
+        )
+    }
+}
+
+private fun Route.webhookSecretRoutes(merchants: MerchantService) {
+    route("/webhook-secret") {
+        put {
+            val request = call.receive<WebhookSecretRequest>()
+            val result =
+                request.toSecret().flatMap {
+                    merchants.webhookSecret(call.merchantId(), call.merchantNetwork(), it)
+                }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<WebhookSecretRequest, MerchantResponse>(
+            "RM5c · Your FinoQ webhook signing secret",
+            TAG,
+            listOf(INVALID, NOT_FOUND, SETUP, VAULT, MALFORMED),
+            notes =
+                "$MONEY `secret` is the webhook signing secret your FinoQ dashboard shows, pasted as it is (8 to 512 " +
+                    "characters, no spaces). Sets it, or replaces the one set before. Needs your callback address " +
+                    "first (RM5; `$SETUP` otherwise): it is the address to register in FinoQ, and the one FinoQ " +
+                    "signs its callbacks to. It is kept encrypted and never shown again: RM2's `webhookSecretSet` " +
+                    "and `webhookSecretUpdatedAt` say whether and when it was set. Answers RM2. A callback whose " +
+                    "signature doesn't match it is refused; your orders are still confirmed, because Circaso asks " +
+                    "FinoQ itself about every payment and payout.",
+        )
+
+        delete {
+            val result = merchants.webhookSecret(call.merchantId(), call.merchantNetwork(), null)
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, MerchantResponse>(
+            "RM5c · Remove your FinoQ webhook signing secret",
+            TAG,
+            listOf(INVALID, NOT_FOUND),
+            notes = "$MONEY Callbacks are then taken without a signature check, as before. Answers RM2.",
         )
     }
 }

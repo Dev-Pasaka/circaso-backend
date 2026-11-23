@@ -22,6 +22,7 @@ import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.Stamped
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
+import com.circaso.ramp.domain.models.StoredWebhookSecret
 import com.circaso.shared.Network
 import java.time.Instant
 import java.time.LocalDate
@@ -116,6 +117,16 @@ interface MerchantRepository {
 
     /** The balances last read at the provider. */
     suspend fun balances(merchantId: MerchantId): KesBalances
+
+    /** Keeps the merchant's sealed webhook signing secret, set at [at]; null [sealed] removes it. */
+    suspend fun setWebhookSecret(
+        merchantId: MerchantId,
+        sealed: ByteArray?,
+        at: Instant,
+    )
+
+    /** The sealed webhook signing secret of the merchant whose callback address ends in [callbackKey], if they set one. */
+    suspend fun webhookSecret(callbackKey: String): StoredWebhookSecret?
 }
 
 interface MerchantWalletRepository {
