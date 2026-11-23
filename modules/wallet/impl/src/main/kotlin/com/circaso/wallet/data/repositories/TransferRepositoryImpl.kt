@@ -26,6 +26,7 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.select
@@ -71,6 +72,7 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                     it[fromSpaceId] = transfer.fromSpaceId
                     it[toSpaceId] = transfer.toSpaceId
                     it[spacePaymentId] = transfer.spacePaymentId
+                    it[rampOrderId] = transfer.rampOrderId
                     it[feeMinor] = transfer.feeMinor.toBigDecimal()
                     it[feeAddress] = transfer.feeAddress
                     it[tokenAddress] = transfer.tokenAddress
@@ -87,6 +89,18 @@ class TransferRepositoryImpl(private val database: Database) : TransferRepositor
                 .where {
                     (TransfersTable.senderId eq senderId.value) and (TransfersTable.idempotencyKey eq idempotencyKey)
                 }.map { it.toTransfer() }
+                .singleOrNull()
+        }
+
+    override suspend fun liveForRampOrder(rampOrderId: UUID): Transfer? =
+        database.tx("transfers.live-for-ramp-order") {
+            TransfersTable
+                .selectAll()
+                .where {
+                    (TransfersTable.rampOrderId eq rampOrderId) and
+                        (TransfersTable.state neq TransferState.FAILED.name)
+                }.limit(1)
+                .map { it.toTransfer() }
                 .singleOrNull()
         }
 
@@ -301,6 +315,7 @@ internal fun ResultRow.toTransfer() =
         fromSpaceId = this[TransfersTable.fromSpaceId],
         toSpaceId = this[TransfersTable.toSpaceId],
         spacePaymentId = this[TransfersTable.spacePaymentId],
+        rampOrderId = this[TransfersTable.rampOrderId],
         feeMinor = this[TransfersTable.feeMinor].toBigIntegerExact(),
         feeAddress = this[TransfersTable.feeAddress],
         tokenAddress = this[TransfersTable.tokenAddress],

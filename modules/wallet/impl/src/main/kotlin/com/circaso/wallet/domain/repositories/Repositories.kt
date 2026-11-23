@@ -88,6 +88,9 @@ interface TransferRepository {
 
     suspend fun byKey(senderId: UserId, idempotencyKey: UUID): Transfer?
 
+    /** The transfer funding the ramp order [rampOrderId] that isn't `FAILED`, if any (`transfers_ramp_order_key`). */
+    suspend fun liveForRampOrder(rampOrderId: UUID): Transfer?
+
     suspend fun find(transferId: TransferId): Transfer?
 
     /** Every transfer prepared for the approved payout [payoutRequestId] (`transfers_payout_idx`), in any state. */

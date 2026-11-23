@@ -36,6 +36,7 @@ class TransferEvents(private val bus: EventBus) {
                 spacePaymentId = transfer.spacePaymentId?.toString(),
                 usdValueMinor = usdValueMinor(transfer),
                 assetDecimals = transfer.amount.asset.decimals,
+                rampOrderId = transfer.rampOrderId?.toString(),
             ),
         )
 
@@ -77,6 +78,7 @@ class TransferEvents(private val bus: EventBus) {
                 fromGroupId = transfer.fromGroupId,
                 payoutRequestId = transfer.payoutRequestId?.toString(),
                 spacePaymentId = transfer.spacePaymentId?.toString(),
+                rampOrderId = transfer.rampOrderId?.toString(),
             ),
         )
 

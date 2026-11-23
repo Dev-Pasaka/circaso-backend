@@ -97,6 +97,10 @@ class PrepareTransfer(
             }
         val holder = owner.holder
         transfers.byKey(holder, command.idempotencyKey)?.let { return resume(it) }
+        // A ramp order is funded by one transfer: another that is still live (or may yet land) refuses a second one.
+        command.rampOrderId?.let { order ->
+            if (transfers.liveForRampOrder(order) != null) return Resource.error(WalletError.RampOrderFunded)
+        }
 
         payout(owner, command).let { if (it is Resource.Error) return it }
         val planned =
@@ -124,7 +128,11 @@ class PrepareTransfer(
                 is Resource.Success -> written.data
                 is Resource.Error -> return written
             }
-        if (!recorded) return resume(checkNotNull(transfers.byKey(holder, command.idempotencyKey)))
+        // Not written: this key's transfer exists, or (the off-ramp) another live transfer already funds the order.
+        if (!recorded) {
+            return transfers.byKey(holder, command.idempotencyKey)?.let { resume(it) }
+                ?: Resource.error(WalletError.RampOrderFunded)
+        }
         return challenge(plan.sender, transfer).let {
             if (it is Resource.Success) Resource.success(it.data.copy(fee = fee)) else it
         }
@@ -362,6 +370,7 @@ class PrepareTransfer(
             fromSpaceId = (owner as? WalletOwner.Space)?.spaceId,
             toSpaceId = destination.toSpaceId,
             spacePaymentId = command.spacePaymentId,
+            rampOrderId = command.rampOrderId,
         )
     }
 

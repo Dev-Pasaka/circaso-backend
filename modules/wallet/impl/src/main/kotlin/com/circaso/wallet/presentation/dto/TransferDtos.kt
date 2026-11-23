@@ -62,6 +62,12 @@ data class PrepareTransferRequest(
      * one, or once it has run out, a fee above zero answers `wallet.fee_changed` with a new quote to show first.
      */
     val quoteId: String? = null,
+    /**
+     * The ramp order this transfer funds (added 2026-11-23, the off-ramp: R7 gives it with the merchant's address and
+     * the amount). The wallet stores and echoes it and checks nothing about it, except that one order is funded by one
+     * transfer at a time (`wallet.ramp_order_funded`).
+     */
+    val rampOrderId: String? = null,
 )
 
 /**

@@ -110,6 +110,8 @@ data class TransferSummary(
     val createdAt: Instant? = null,
     /** When its state last changed: for a `CONFIRMED` or `FAILED` transfer, when it settled. */
     val updatedAt: Instant? = null,
+    /** The ramp order it funds (W4 `rampOrderId`, added 2026-11-23); opaque to the wallet. */
+    val rampOrderId: UUID? = null,
 )
 
 /**

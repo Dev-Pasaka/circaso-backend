@@ -83,7 +83,12 @@ class MemoryTransferRepository : TransferRepository {
             val taken =
                 rows.values.any {
                     it.transferId == transfer.transferId ||
-                        (it.senderId == transfer.senderId && it.idempotencyKey == transfer.idempotencyKey)
+                        (it.senderId == transfer.senderId && it.idempotencyKey == transfer.idempotencyKey) ||
+                        (
+                            transfer.rampOrderId != null &&
+                                it.rampOrderId == transfer.rampOrderId &&
+                                it.state != TransferState.FAILED
+                        )
                 }
             if (!taken) rows[transfer.transferId] = transfer
             !taken
@@ -93,6 +98,9 @@ class MemoryTransferRepository : TransferRepository {
         rows.values.firstOrNull { it.senderId == senderId && it.idempotencyKey == idempotencyKey }
 
     override suspend fun find(transferId: TransferId): Transfer? = rows[transferId]
+
+    override suspend fun liveForRampOrder(rampOrderId: UUID): Transfer? =
+        rows.values.firstOrNull { it.rampOrderId == rampOrderId && it.state != TransferState.FAILED }
 
     override suspend fun forPayout(payoutRequestId: UUID): List<Transfer> =
         rows.values.filter { it.payoutRequestId == payoutRequestId }

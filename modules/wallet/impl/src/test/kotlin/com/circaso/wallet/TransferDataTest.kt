@@ -46,6 +46,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -201,6 +202,22 @@ class TransferDataTest {
             assertEquals(later, confirmed?.updatedAt)
             assertNull(transfers.move(first.transferId, TransferState.SUBMITTED, TransferChange(at = later)))
             assertNull(transfers.move(first.transferId, TransferState.FAILED, TransferChange(at = later)))
+        }
+
+    @Test
+    fun `one ramp order is funded by one transfer that isn't FAILED, and the id is read back`() =
+        runBlocking<Unit> {
+            val order = UUID.randomUUID()
+            val first = transfer().copy(rampOrderId = order)
+
+            assertTrue(transfers.insert(first))
+            assertEquals(order, transfers.find(first.transferId)!!.rampOrderId)
+            assertEquals(first.transferId, transfers.liveForRampOrder(order)!!.transferId)
+            assertFalse(transfers.insert(transfer().copy(rampOrderId = order)), "transfers_ramp_order_key")
+
+            transfers.move(first.transferId, TransferState.FAILED, TransferChange(at = now))
+            assertEquals(null, transfers.liveForRampOrder(order))
+            assertTrue(transfers.insert(transfer().copy(rampOrderId = order)), "a failed transfer moved nothing")
         }
 
     @Test
