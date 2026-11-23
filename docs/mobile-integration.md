@@ -9,6 +9,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-23, the ramp: `submitted` on the identity verification (one new field everywhere the verification is returned; additive, old apps keep working):**
+> 1. **The problem it fixes.** After a person finishes the capture in Didit's SDK, Didit takes a moment (sometimes longer) to decide. Until it does the verification is still `PENDING`, exactly like a check the person left halfway, so the app showed "Finish verifying your identity" to someone who had finished.
+> 2. **New field `submitted: boolean`** on R0's answer (`POST /v1/ramp/kyc`), `GET /v1/ramp/kyc`, R1's `verification` and the `ramp` / `kyc.updated` frame (and the merchant portal's RM2 `kyc` and RM3). **True when the person has done their part and the decision is awaited**: a `PENDING` check they completed (Didit is still working on it) and `IN_REVIEW`. False everywhere else. It is Didit's own word (the session's flow has finished), read by the backend; the app never has to tell the backend that the SDK finished.
+> 3. **While `submitted` is true, `canStart` is false and R0's `session` is null**: there is nothing to continue and the capture must not be reopened. Show "We're checking your details", never "Finish verifying". Keep reading `GET /v1/ramp/kyc` while that screen is open (it asks Didit at most every 5 s) and listen for the frame, which is also sent when `submitted` flips (no push for that).
+> 4. **Read `submitted` before `canStart`.** An app that doesn't know the field sees `PENDING` with `canStart: false` and no `retryAt`; treat that combination as "we're checking" too if you can't read the field yet. See "Identity verification (KYC)" in section 7: the flow, the table of states and the examples are updated.
+>
 > **Changed on 2026-11-22, the ramp: identity verification (KYC) before a first purchase (new routes R0, new fields on R1, one new frame and push, new error codes; additive, old apps keep working):**
 > 1. **A person verifies their identity once**, only before their first purchase on a network that asks for it; the rest of the app stays KYC-free. The checks (an ID document, a liveness selfie, a face match) run in **Didit's native SDK**, started with the `sessionToken` the backend returns. See "Identity verification (KYC)" under "Ramp" in section 7 for the whole contract.
 > 2. **R0 `POST /v1/ramp/kyc`** starts the check or returns the one still open: `{ status, required, canStart, reason, retryAt, session: { sessionToken, url, expiresAt } | null }`. **`GET /v1/ramp/kyc`** reads the state (call it when the SDK closes).
@@ -677,9 +683,9 @@ A partner merchant sells the USDC; Circaso's engine picks one who is online with
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `POST /v1/ramp/kyc`<br>**R0** Verify identity (start or continue) | `app` | — → KycResponse | **READY** | Send an `Idempotency-Key`. `{ status, required, canStart, reason, retryAt, session }`. While `session` is not null a check is open: start Didit's SDK with `session.sessionToken` (`session.url` is the hosted page, the fallback); both work until `session.expiresAt`. Calling again returns the **same** open check. With `session: null` there is nothing to do now (`VERIFIED`, `IN_REVIEW`, or a decline trying again can't fix). Errors: `ramp.unavailable`, `ramp.account_restricted`, `ramp.blocked`, `ramp.kyc_attempts_exceeded` (429), `ramp.kyc_unavailable` (502), `ramp.kyc_not_configured` (503). See "Identity verification (KYC)" below. |
-| `GET /v1/ramp/kyc`<br>**R0** My identity verification | `app` | — → VerificationDto | **READY** | `{ status, required, canStart, reason, retryAt }`, the same as R1's `verification`. **Call it when the SDK closes**: while a check is unfinished it asks Didit itself (at most every 5 s), so the outcome shows at once, before the frame. Never returns a link. Errors: `ramp.unavailable`. |
-| `GET /v1/ramp`<br>**R1** Can I buy now | `app` | — → RampStatusResponse | **READY** | `canTrade` is every gate at once (verified or not required, not blocked, account active, a merchant online, no open order). **`verification`** `{ status, required, canStart, reason, retryAt }` is the identity check in full; **`blocked`** is a bar on the account or its identity. `kyc` (`VERIFIED` \| `NONE` \| `NOT_REQUIRED`) is the short form older apps read. Also `accountActive`, `merchantOnline`, `openOrderId`, `limits`, `feePercent`, `blockchains`. `403 ramp.unavailable`: hide the feature. |
+| `POST /v1/ramp/kyc`<br>**R0** Verify identity (start or continue) | `app` | — → KycResponse | **READY** | Send an `Idempotency-Key`. `{ status, required, canStart, reason, retryAt, submitted, session }`. While `session` is not null a check is open: start Didit's SDK with `session.sessionToken` (`session.url` is the hosted page, the fallback); both work until `session.expiresAt`. Calling again returns the **same** open check. With `session: null` there is nothing to do now (`VERIFIED`, `IN_REVIEW`, `PENDING` with `submitted: true`: finished and waiting for the decision, or a decline trying again can't fix). Errors: `ramp.unavailable`, `ramp.account_restricted`, `ramp.blocked`, `ramp.kyc_attempts_exceeded` (429), `ramp.kyc_unavailable` (502), `ramp.kyc_not_configured` (503). See "Identity verification (KYC)" below. |
+| `GET /v1/ramp/kyc`<br>**R0** My identity verification | `app` | — → VerificationDto | **READY** | `{ status, required, canStart, reason, retryAt, submitted }`, the same as R1's `verification`. **Call it when the SDK closes**, and keep calling it while the "we're checking" screen is open: while a check is undecided it asks Didit itself (at most every 5 s), so `submitted` and then the outcome show at once, before the frame. Never returns a link. Errors: `ramp.unavailable`. |
+| `GET /v1/ramp`<br>**R1** Can I buy now | `app` | — → RampStatusResponse | **READY** | `canTrade` is every gate at once (verified or not required, not blocked, account active, a merchant online, no open order). **`verification`** `{ status, required, canStart, reason, retryAt, submitted }` is the identity check in full (`submitted`: finished by the person, waiting for the decision); **`blocked`** is a bar on the account or its identity. `kyc` (`VERIFIED` \| `NONE` \| `NOT_REQUIRED`) is the short form older apps read. Also `accountActive`, `merchantOnline`, `openOrderId`, `limits`, `feePercent`, `blockchains`. `403 ramp.unavailable`: hide the feature. |
 | `POST /v1/ramp/quotes`<br>**R2** Price an amount | `app` | QuoteRequest → QuoteResponse | **READY** | `{ direction: "ON_RAMP", blockchain, fiat: { amount } }` (whole shillings) or `crypto: { amount }`. The `fee` is inside `pay`. Reserves nothing. Errors: `ramp.unavailable`, `ramp.blocked`, `ramp.kyc_required`, `ramp.account_restricted`, `ramp.chain_unsupported`, `ramp.amount_invalid`, `ramp.limit_exceeded`, `ramp.offramp_unavailable`, `ramp.pricing_unavailable`. |
 | `POST /v1/ramp/onramp/orders`<br>**R3** Buy | `app` | StartOnRampRequest → OrderResponse | **READY** | `{ quoteId, phone }`; `phone` must be the account's own verified number. Sends the M-Pesa prompt. The same quote again returns the same order and no second prompt. Errors: the R2 gates, `ramp.quote_not_found`, `ramp.quote_expired` (ask R2 again), `ramp.order_in_progress`, `ramp.phone_not_yours`, `ramp.wallet_required`, `ramp.too_many_prompts`, `ramp.limit_exceeded`, `ramp.no_merchant_available`, `ramp.merchant_unavailable` (409: the payment couldn't be started with any seller; nothing was taken, no prompt was sent; offer "Try again" with a new quote), `ramp.collections_unavailable` (502: M-Pesa is out of reach), `ramp.custody_unavailable`. |
 | `GET /v1/ramp/orders/{orderId}`<br>**R4** One order | `app` | — → OrderResponse | **READY** | `state`: `RESERVED`, `PAYMENT_REQUESTED`, `PAID`, `RELEASING`, `COMPLETED`, `EXPIRED`, `CANCELLED`, `FAILED`, `REVIEW` (a person at Circaso is looking; point to Support). `txHash` once completed. |
@@ -695,36 +701,46 @@ A partner merchant sells the USDC; Circaso's engine picks one who is online with
 1. R1 (`GET /v1/ramp`). If `verification.required` is false, or `verification.status` is `VERIFIED`, go on to buying. Otherwise show the state from the table below.
 2. When the person taps the button and `verification.canStart` is true: **R0 `POST /v1/ramp/kyc`** (with an `Idempotency-Key`).
 3. If the answer has a `session`: start Didit's SDK with **`session.sessionToken`** (Android, `me.didit:didit-sdk`: `DiditSdk.initialize(context)` once, then `DiditSdk.startVerification(token = sessionToken) { result -> … }`; iOS: `DiditSdk.shared.startVerification(token: sessionToken)`; see docs.didit.me → Native SDKs, "Backend Session"). If the SDK can't run, open `session.url` (Didit's hosted page) in an in-app browser instead. Never ship a Didit API key in the app: the token is all it needs.
-4. When the SDK closes (whatever it reports): **`GET /v1/ramp/kyc`** and show `status`. The SDK's own result is a hint, never the truth: the backend reads the decision from Didit.
+4. When the SDK closes (whatever it reports): **`GET /v1/ramp/kyc`** and show the state. The SDK's own result is a hint, never the truth: the backend reads the session from Didit.
+   - `submitted: true` (with `PENDING` or `IN_REVIEW`): the person finished and Didit hasn't decided. Show "We're checking your details" and **do not call R0 or reopen the SDK**. While that screen is open, read `GET /v1/ramp/kyc` again every 5 seconds or so (the backend asks Didit at most that often) until `status` changes; the frame may get there first.
+   - `PENDING` with `submitted: false`: the person closed the SDK before finishing (or Didit hasn't registered the last step yet: read once more after a few seconds before saying so). "Finish verifying your identity", "Continue" → R0.
+   - Anything else: the outcome, from the table below.
 5. The outcome also arrives as a `ramp` / `kyc.updated` frame, and as a push when the app is closed. On either, replace what is shown; on `VERIFIED` carry on to the purchase the person came for.
 
 ```json
 // R0 POST /v1/ramp/kyc → data   (a check is open: run the SDK)
-{ "status": "PENDING", "required": true, "canStart": true, "reason": null, "retryAt": null,
+{ "status": "PENDING", "required": true, "canStart": true, "reason": null, "retryAt": null, "submitted": false,
   "session": { "sessionToken": "abc123…", "url": "https://verify.didit.me/session/abc123…",
                "expiresAt": "2026-11-23T12:00:00Z" } }
+// R0 → data   (finished by the person, Didit is deciding: nothing to do, never reopen the SDK)
+{ "status": "PENDING", "required": true, "canStart": false, "reason": null, "retryAt": null, "submitted": true,
+  "session": null }
 // R0 → data   (nothing to do now)
-{ "status": "VERIFIED", "required": true, "canStart": false, "reason": null, "retryAt": null, "session": null }
+{ "status": "VERIFIED", "required": true, "canStart": false, "reason": null, "retryAt": null, "submitted": false,
+  "session": null }
 
 // GET /v1/ramp/kyc → data, and `verification` on R1 (GET /v1/ramp), and the `data` of the frame (plus `network`)
-{ "status": "DECLINED", "required": true, "canStart": true, "reason": "face_match", "retryAt": null }
+{ "status": "PENDING", "required": true, "canStart": false, "reason": null, "retryAt": null, "submitted": true }
+{ "status": "DECLINED", "required": true, "canStart": true, "reason": "face_match", "retryAt": null, "submitted": false }
 
 // R1 GET /v1/ramp → data (the new fields beside the old ones)
 { "canTrade": false, "network": "TESTNET", "kyc": "NONE", "blocked": false,
-  "verification": { "status": "NONE", "required": true, "canStart": true, "reason": null, "retryAt": null },
+  "verification": { "status": "NONE", "required": true, "canStart": true, "reason": null, "retryAt": null,
+                    "submitted": false },
   "accountActive": true, "blockchains": ["BASE-SEPOLIA"], "merchantOnline": true, "offRampAvailable": false,
   "openOrderId": null, "limits": { … }, "feePercent": "1.5" }
 ```
 
-**What to show for each state** (`verification.status`, with `canStart`, `reason` and `retryAt`):
+**What to show for each state** (`verification.status`, with `submitted`, `canStart`, `reason` and `retryAt`; **check `submitted` first**):
 
 | `status` | Means | Show | Button |
 | --- | --- | --- | --- |
 | `NONE` | Never started | "Verify your identity to add money. It takes about two minutes: your ID and a selfie." | "Verify" → R0 |
+| `PENDING`, `submitted` true | The person finished the check; Didit is still deciding (usually seconds, sometimes minutes) | "We're checking your details. This usually takes a moment; we'll tell you as soon as it's done." | none: never R0, never the SDK. Keep reading `GET /v1/ramp/kyc` while the screen is open; wait for the frame or the push otherwise |
 | `PENDING`, `canStart` true, no `reason` | A check is open and unfinished | "Finish verifying your identity." | "Continue" → R0 (returns the same session) |
-| `PENDING`, `reason` `resubmission_requested` | A reviewer asked for a step again | "We need one more thing to finish verifying you." | "Continue" → R0 |
-| `PENDING`, `canStart` false | The open check's link ran out and today's tries are used up | "You can try again" + the time of `retryAt` | none until `retryAt` |
-| `IN_REVIEW` | Didit's reviewers are looking | "We're reviewing your details. This usually takes a few minutes; we'll tell you as soon as it's done." | none (wait for the frame or the push) |
+| `PENDING`, `reason` `resubmission_requested` | A reviewer asked for a step again (`submitted` is false until it is redone) | "We need one more thing to finish verifying you." | "Continue" → R0 |
+| `PENDING`, `submitted` false, `canStart` false | The open check's link ran out and today's tries are used up | "You can try again" + the time of `retryAt` | none until `retryAt` |
+| `IN_REVIEW` (`submitted` is true here too) | Didit's reviewers are looking | "We're reviewing your details. This usually takes a few minutes; we'll tell you as soon as it's done." | none (wait for the frame or the push) |
 | `VERIFIED` | Done | Nothing: go on to buying. Once, right after: "You're verified." | — |
 | `DECLINED`, `canStart` true | Declined for something another try can fix | The line for `reason` below | "Try again" → R0 |
 | `DECLINED`, `canStart` false, `retryAt` set | Declined, and today's tries are used up | The line for `reason`, then "You can try again" + the time of `retryAt` | none until `retryAt` |
@@ -768,10 +784,10 @@ An unknown `reason` (a newer backend): use the line for `declined` when `canStar
 ```json
 { "module": "ramp", "type": "kyc.updated", "seq": 12, "ts": "2026-11-22T12:03:10Z",
   "data": { "network": "TESTNET", "status": "VERIFIED", "required": true, "canStart": false,
-            "reason": null, "retryAt": null } }
+            "reason": null, "retryAt": null, "submitted": false } }
 ```
 
-It is sent each time the verification moves after a check was started (`IN_REVIEW`, `VERIFIED`, `DECLINED`, `EXPIRED`, `PENDING` again), never for the start itself (R0's answer has that). Use the frame whose `network` is the one the app is on. Push (`kind: "ramp.kyc"`, `network`; a tap opens Add money, which reads R1):
+It is sent each time the verification moves after a check was started (`IN_REVIEW`, `VERIFIED`, `DECLINED`, `EXPIRED`, `PENDING` again, and `PENDING` when `submitted` flips), never for the start itself (R0's answer has that). The backend learns that a check was submitted when it next reads Didit: on the app's `GET /v1/ramp/kyc`, on Didit's webhook, or at the latest on its own sweep a few minutes later; so right after the SDK closes the read in step 4 is what shows it, not the frame. Use the frame whose `network` is the one the app is on. Push (`kind: "ramp.kyc"`, `network`; a tap opens Add money, which reads R1):
 
 | When | Push body |
 | --- | --- |
@@ -779,10 +795,11 @@ It is sent each time the verification moves after a check was started (`IN_REVIE
 | `DECLINED` (any reason) | "We couldn't verify your identity yet. Open Circaso to see what to do next." |
 | `PENDING` with `resubmission_requested` | "We need one more thing to finish verifying you. Open Circaso to continue." |
 | `EXPIRED` with `document_expired` | "Your ID has expired. Open Circaso to verify again." |
-| Anything else (`IN_REVIEW`, a check left unfinished) | No push |
+| Anything else (`IN_REVIEW`, a check left unfinished, a check just submitted) | No push |
 
 **Good to know.**
 
+- **Submitted is the backend's word, from Didit.** The app doesn't report that the SDK finished and the backend doesn't take the SDK's result: it asks Didit whether the person has finished the session's flow. If Didit takes back "finished" (a reviewer asks for a step again), `submitted` goes back to false with `reason` `resubmission_requested` and `canStart` true. A submitted check Didit never decides is ended like any other when its session runs out (`EXPIRED`, `session_expired`), so nobody is left waiting for ever.
 - **Sessions.** A session lasts 24 hours by default (`session.expiresAt`; staff set it). R0 never makes a second session while one is open, so calling it on every tap is right. A person may start a few checks a day (3 by default).
 - **The testnet** verifies in Didit's sandbox: the SDK shows sample documents and a scenario picker, every check is simulated, and nothing is real. A sandbox verification never counts on mainnet: each network has its own `verification`.
 - **Consent.** Before starting the SDK, show Circaso's own notice that Didit runs the check and link the privacy notice; the SDK asks for the camera itself.
