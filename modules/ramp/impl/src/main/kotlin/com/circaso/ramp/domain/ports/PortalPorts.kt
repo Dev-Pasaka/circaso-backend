@@ -72,6 +72,13 @@ interface TradingSessions {
         until: Instant?,
     )
 
+    /**
+     * Keeps [keys] in this node's memory **without** marking the merchant online (a top-up with the PIN while
+     * offline, 2026-11-23): they take no order, and `ramp.end-sessions` drops them once nothing open needs them. Keys
+     * this node already holds are left as they are.
+     */
+    fun hold(merchantId: MerchantId, keys: UnlockedKeys)
+
     /** Extends an open-ended session's mark, if this node holds the merchant's keys. */
     suspend fun renew(merchantId: MerchantId)
 

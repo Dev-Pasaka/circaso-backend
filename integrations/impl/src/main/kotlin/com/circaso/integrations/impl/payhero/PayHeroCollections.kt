@@ -15,6 +15,10 @@ import com.circaso.integrations.api.PayoutRequest
 import com.circaso.integrations.api.PayoutResult
 import com.circaso.integrations.api.PayoutStatus
 import com.circaso.integrations.api.ProviderBalances
+import com.circaso.integrations.api.TopUpLookup
+import com.circaso.integrations.api.TopUpRequest
+import com.circaso.integrations.api.TopUpResult
+import com.circaso.integrations.api.TopUpStatus
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
@@ -47,7 +51,8 @@ import kotlin.math.roundToLong
  * numbers and amounts.
  *
  * The **payout half** (2026-11-23) is [PayHeroPayouts] ([sendPayout], [lookUpPayout]) and [PayHeroBalances]
- * ([balances]), over the hosts and the fallback order in [PayHeroHosts].
+ * ([balances]), over the hosts and the fallback order in [PayHeroHosts]. A merchant's own **top-ups** of their two
+ * wallets are [PayHeroTopUps] ([requestTopUp], [lookUpTopUp]).
  *
  * [balance] reads the **service wallet**, the prepaid float PayHero's per-transaction fees are taken from: when it is
  * empty PayHero refuses the prompt (`400 … merchant has insufficient balance …`, seen in the first real test), which
@@ -58,6 +63,7 @@ class PayHeroCollections(hosts: PayHeroHosts) : MobileCollections {
     private val http: HttpClient = hosts.legacy
     private val payouts = PayHeroPayouts(hosts)
     private val providerBalances = PayHeroBalances(hosts)
+    private val topUps = PayHeroTopUps(hosts, payouts)
 
     override suspend fun requestPayment(
         credentials: CollectionCredentials,
@@ -118,6 +124,12 @@ class PayHeroCollections(hosts: PayHeroHosts) : MobileCollections {
 
     override suspend fun lookUpPayout(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus =
         payouts.lookUp(credentials, lookup)
+
+    override suspend fun requestTopUp(credentials: CollectionCredentials, request: TopUpRequest): TopUpResult =
+        topUps.send(credentials, request)
+
+    override suspend fun lookUpTopUp(credentials: CollectionCredentials, lookup: TopUpLookup): TopUpStatus =
+        topUps.lookUp(credentials, lookup)
 
     override suspend fun balances(credentials: CollectionCredentials, accountId: String?): Resource<ProviderBalances> =
         providerBalances.read(credentials, accountId)

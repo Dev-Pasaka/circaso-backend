@@ -65,7 +65,20 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
         return whenNoHostTookIt(passedOver)
     }
 
-    suspend fun lookUp(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus {
+    suspend fun lookUp(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus =
+        lookUp(credentials, lookup, PAYOUT, checkEcho = true)
+
+    /**
+     * The same two lookups for anything else this account sent ([what] names it in the logs: `topup`). With
+     * [checkEcho], an answer that echoes another `external_reference` than ours is not used; a call that sent none
+     * (the service wallet's top-up) can't be checked that way.
+     */
+    internal suspend fun lookUp(
+        credentials: CollectionCredentials,
+        lookup: PayoutLookup,
+        what: String,
+        checkEcho: Boolean,
+    ): PayoutStatus {
         val keys =
             listOfNotNull(
                 lookup.providerReference?.takeIf { it.isNotBlank() }?.let { it to PayoutReference.PROVIDER },
@@ -74,7 +87,8 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
         var unread = keys.isEmpty()
         for ((key, _) in keys) {
             for (source in LookupSource.entries) {
-                when (val found = read(source, ask(source, credentials, key), lookup.reference)) {
+                val ours = lookup.reference.takeIf { checkEcho }
+                when (val found = read(source, ask(source, credentials, key), ours, what)) {
                     is Looked.Found -> return found.status
                     Looked.NotKnown -> Unit
                     Looked.Unread -> unread = true
@@ -165,10 +179,11 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
     private fun read(
         source: LookupSource,
         answer: Answer,
-        ours: String,
+        ours: String?,
+        what: String,
     ): Looked {
         if (answer !is Answer.Replied) return Looked.Unread
-        shapes.note(source.operation, answer.status, answer.body)
+        shapes.note(source.operation.replace(PAYOUT, what), answer.status, answer.body)
         val reply =
             runCatching {
                 payHeroJson.decodeFromString(
@@ -178,29 +193,39 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
             }.getOrNull()
         val looked =
             when {
-                answer.status in SUCCESS -> reply?.let { found(it, ours) } ?: Looked.Unread
+                answer.status in SUCCESS -> reply?.let { found(it, ours, what) } ?: Looked.Unread
                 answer.status == NOT_FOUND -> Looked.NotKnown
                 answer.status in CLIENT_ERROR && saysNotFound(refusal(answer.body).said) -> Looked.NotKnown
                 else -> Looked.Unread
             }
-        log.info("payhero payout status: source={} status={} read={}", source.operation, answer.status, looked.label)
+        log.info(
+            "payhero {} status: source={} status={} read={}",
+            what,
+            source.operation.replace(PAYOUT, what),
+            answer.status,
+            looked.label,
+        )
         return looked
     }
 
-    private fun found(reply: PayoutLookupReply, ours: String): Looked {
-        reply.candidates.firstNotNullOfOrNull { mpesaResult(it) }?.let { return it }
+    private fun found(
+        reply: PayoutLookupReply,
+        ours: String?,
+        what: String,
+    ): Looked {
+        reply.candidates.firstNotNullOfOrNull { mpesaResult(it, what) }?.let { return it }
         for (candidate in reply.candidates) {
             val status = candidate.statusWords.firstNotNullOfOrNull { statusOf(it, candidate) } ?: continue
             val echoed = candidate.ours ?: reply.ours
-            if (echoed != null && echoed != ours) {
-                log.warn("payhero payout status: the answer is about another reference; not used")
+            if (ours != null && echoed != null && echoed != ours) {
+                log.warn("payhero {} status: the answer is about another reference; not used", what)
                 return Looked.Unread
             }
             return Looked.Found(if (status is PayoutStatus.Paid) status.copy(reference = echoed) else status)
         }
         if (saysNotFound(reply.said) || reply.candidates.any { saysNotFound(it.said) }) return Looked.NotKnown
         val words = reply.candidates.flatMap { it.statusWords }.joinToString(",") { word(it) }
-        log.warn("payhero payout status: no status this client knows (words={})", words.ifEmpty { "-" })
+        log.warn("payhero {} status: no status this client knows (words={})", what, words.ifEmpty { "-" })
         return Looked.Unread
     }
 
@@ -212,7 +237,7 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
      * allow a second payout; it stays unknown (the ramp then waits, and sends the order to review in time). An answer
      * with no `ResultCode` yet is pending.
      */
-    private fun mpesaResult(reply: PayoutLookupReply): Looked? {
+    private fun mpesaResult(reply: PayoutLookupReply, what: String): Looked? {
         if (reply.resultCode == null && reply.transactionReceipt == null && reply.resultDesc == null) return null
         val code = reply.resultCode?.trim().orEmpty()
         val receipt = reply.transactionReceipt?.trim().orEmpty()
@@ -223,7 +248,8 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
                 else -> Looked.Unread
             }
         log.info(
-            "payhero payout status: mpesa layout code={} receipt={}",
+            "payhero {} status: mpesa layout code={} receipt={}",
+            what,
             word(code.ifEmpty { "-" }),
             receipt.isNotEmpty(),
         )
@@ -307,6 +333,7 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
         const val WITHDRAW_PATH = "/api/v2/withdraw"
         const val API_STATUS_PATH = "/api/global/transaction-status"
         const val LEGACY_STATUS_PATH = "/api/v2/transaction-status"
+        private const val PAYOUT = "payout"
 
         private const val KES = "KES"
         private const val PAYOUT_LINE = "payhero payout: host={} status={} outcome={} reason={} fields={}"

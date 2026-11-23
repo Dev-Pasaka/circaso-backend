@@ -144,7 +144,7 @@ class CollectionsTest {
             val rung = CompletableDeferred<Pair<String, String>>()
             val log =
                 LogCollections(
-                    payoutDelay = Duration.ofMillis(50),
+                    payoutDelay = Duration.ofMillis(1_000),
                     notifications = { listener { key, reference -> rung.complete(key to reference) } },
                 )
 

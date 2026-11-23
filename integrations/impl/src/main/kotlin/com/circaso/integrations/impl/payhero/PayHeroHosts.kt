@@ -30,6 +30,9 @@ import java.util.Base64
  *   `GET /api/v2/transaction-status`, when the first gives no status.
  * - **Fee balance (service wallet):** [LEGACY_URL] wallets, then [AUTH_URL] account, when the first gives no balance.
  * - **Payout balance:** [LEGACY_URL] wallets (`payment_wallet`), then [API_URL] account balance, likewise.
+ * - **Service wallet top-up (`POST /api/v2/topup`):** [LEGACY_URL] only, the one host that documents it.
+ * - **Payment wallet top-up (`POST /api/v2/payments`, wallet-based):** [API_URL], then [LEGACY_URL], moving on only
+ *   when the first provably took nothing, as the payout does. Its status is the payout's two lookups.
  *
  * **No client here is ever retried** (`maxAttempts = 1` on all five): the shared client repeats a POST on a `429` or
  * `503`, an STK push repeated is a second M-Pesa prompt on a buyer's phone, and a payout repeated is a payout paid

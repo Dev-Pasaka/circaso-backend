@@ -49,6 +49,9 @@ import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.SubjectKind
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.models.TopUp
+import com.circaso.ramp.domain.models.TopUpState
+import com.circaso.ramp.domain.models.TopUpTarget
 import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.models.VerificationChange
 import com.circaso.ramp.domain.models.VerificationStatus
@@ -74,6 +77,7 @@ import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
 import com.circaso.ramp.domain.repositories.TestPayoutRepository
+import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.domain.support.Stats
@@ -747,6 +751,41 @@ class MemoryTestPayouts : TestPayoutRepository {
 
     override suspend fun open(before: Instant, limit: Int) =
         rows.values.filter { it.state.isOpen && it.updatedAt.isBefore(before) }.take(limit)
+}
+
+class MemoryTopUps : TopUpRepository {
+    val rows = linkedMapOf<UUID, TopUp>()
+
+    override suspend fun insert(topUp: TopUp): Boolean {
+        if (rows.values.any { it.merchantId == topUp.merchantId && it.target == topUp.target && it.state.isOpen }) {
+            return false
+        }
+        rows[topUp.topUpId] = topUp
+        return true
+    }
+
+    override suspend fun find(topUpId: UUID) = rows[topUpId]
+
+    override suspend fun open(merchantId: MerchantId, target: TopUpTarget) =
+        rows.values.firstOrNull { it.merchantId == merchantId && it.target == target && it.state.isOpen }
+
+    override suspend fun recent(merchantId: MerchantId, limit: Int) =
+        rows.values
+            .filter { it.merchantId == merchantId }
+            .reversed()
+            .take(limit)
+
+    override suspend fun move(topUp: TopUp, from: Set<TopUpState>): Boolean {
+        val current = rows[topUp.topUpId]?.takeIf { it.state in from } ?: return false
+        rows[current.topUpId] = topUp
+        return true
+    }
+
+    override suspend fun stale(before: Instant, limit: Int) =
+        rows.values.filter { it.state.isOpen && it.updatedAt.isBefore(before) }.take(limit)
+
+    override suspend fun hasOpen(merchantId: MerchantId) =
+        rows.values.any { it.merchantId == merchantId && it.state.isOpen }
 }
 
 class MemoryLedger(private val orders: MemoryOrders) :

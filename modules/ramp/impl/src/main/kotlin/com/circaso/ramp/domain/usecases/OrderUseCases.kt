@@ -25,6 +25,7 @@ import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.Gates
+import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PayoutFees
 import com.circaso.ramp.domain.support.SaleFlow
@@ -275,6 +276,8 @@ class CancelOrder(
  * happened ([OrderFlow.verify], which ignores an order that isn't waiting for a payment). A forged callback can at
  * most cause one status query for a real open order of that same merchant.
  *
+ * A reference that is no order may be one of the merchant's top-ups of their own wallets ([MerchantTopUps.rung]).
+ *
  * One more case is told to the people on call: a callback for an order that was closed as `prompt_unconfirmed` (the
  * provider gave no answer when the prompt was sent, and couldn't say afterwards whether it went out).
  */
@@ -283,10 +286,16 @@ class HandlePaymentCallback(
     private val orders: OrderRepository,
     private val flow: OrderFlow,
     private val alerts: RampAlerts,
+    private val topUps: MerchantTopUps,
 ) {
     suspend operator fun invoke(callbackKey: String, reference: String): Resource<Unit> {
         val merchant = merchants.byCallbackKey(callbackKey) ?: return Resource.success(Unit)
-        val order = RampOrderId.parse(reference)?.let { orders.find(it) } ?: return Resource.success(Unit)
+        val order = RampOrderId.parse(reference)?.let { orders.find(it) }
+        // Not an order: it may be one of this merchant's own top-ups (2026-11-23), which asks the provider in turn.
+        if (order == null) {
+            topUps.rung(merchant.merchantId, reference)
+            return Resource.success(Unit)
+        }
         if (order.merchantId != merchant.merchantId) return Resource.success(Unit)
         // The order was closed because nobody could say whether its prompt went out, and now the provider rings
         // about it: a prompt did go out. The callback proves nothing, so nothing moves; a person must look.

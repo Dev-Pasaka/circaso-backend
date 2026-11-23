@@ -16,6 +16,7 @@ import com.circaso.ramp.data.repositories.ReservationRepositoryImpl
 import com.circaso.ramp.data.repositories.SettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.StatementRepositoryImpl
 import com.circaso.ramp.data.repositories.TestPayoutRepositoryImpl
+import com.circaso.ramp.data.repositories.TopUpRepositoryImpl
 import com.circaso.ramp.di.rampDatabaseSpec
 import com.circaso.ramp.domain.models.BalanceRead
 import com.circaso.ramp.domain.models.Direction
@@ -34,6 +35,11 @@ import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.models.TopUp
+import com.circaso.ramp.domain.models.TopUpConfirmation
+import com.circaso.ramp.domain.models.TopUpFailure
+import com.circaso.ramp.domain.models.TopUpState
+import com.circaso.ramp.domain.models.TopUpTarget
 import com.circaso.ramp.domain.support.Fees
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.shared.FiatAmount
@@ -69,6 +75,7 @@ class OffRampDataTest {
     private val reservations = ReservationRepositoryImpl(database)
     private val holds = PayoutHoldRepositoryImpl(database)
     private val tests = TestPayoutRepositoryImpl(database)
+    private val topUps = TopUpRepositoryImpl(database)
     private val commissions = CommissionRepositoryImpl(database)
     private val statements = StatementRepositoryImpl(database)
     private val now: Instant = Instant.now().truncatedTo(ChronoUnit.MICROS)
@@ -350,6 +357,76 @@ class OffRampDataTest {
             assertEquals(paid, tests.latest(merchant.merchantId))
             assertTrue(tests.open(now.plusSeconds(1), 10).isEmpty())
             assertTrue(tests.insert(test.copy(testId = Uuid7.generate(now.plusSeconds(1)))), "a new one once it ended")
+        }
+
+    @Test
+    fun `one open top-up per merchant and wallet, closed by its state, read back whole (V10)`() =
+        runBlocking<Unit> {
+            val merchant = merchant()
+            val topUp =
+                TopUp(
+                    topUpId = Uuid7.generate(now),
+                    merchantId = merchant.merchantId,
+                    target = TopUpTarget.SERVICE,
+                    provider = PAYHERO,
+                    amountMinor = 50_000,
+                    payer = PhoneNumber.parse("+254700000000")!!,
+                    state = TopUpState.REQUESTED,
+                    failure = null,
+                    outcome = "sending",
+                    providerReference = null,
+                    checkoutId = null,
+                    receipt = null,
+                    confirmedBy = null,
+                    balanceBeforeMinor = 5_000,
+                    balanceAfterMinor = null,
+                    createdAt = now,
+                    updatedAt = now,
+                    closedAt = null,
+                )
+            assertTrue(topUps.insert(topUp))
+            assertFalse(topUps.insert(topUp.copy(topUpId = Uuid7.generate(now))), "topups_open_key")
+            val payment = topUp.copy(topUpId = Uuid7.generate(now.plusMillis(1)), target = TopUpTarget.PAYMENT)
+            assertTrue(topUps.insert(payment), "the other wallet is free")
+            assertEquals(topUp, topUps.open(merchant.merchantId, TopUpTarget.SERVICE))
+            assertTrue(topUps.hasOpen(merchant.merchantId))
+            assertEquals(
+                setOf(topUp.topUpId, payment.topUpId),
+                topUps.stale(now.plusSeconds(1), 10).map { it.topUpId }.toSet(),
+            )
+
+            val confirmed =
+                topUp.copy(
+                    state = TopUpState.CONFIRMED,
+                    providerReference = "TU-1",
+                    checkoutId = "ws_CO_1",
+                    receipt = "QT1",
+                    confirmedBy = TopUpConfirmation.STATUS,
+                    balanceAfterMinor = 55_000,
+                    updatedAt = now.plusSeconds(2),
+                    closedAt = now.plusSeconds(2),
+                )
+            assertTrue(topUps.move(confirmed, setOf(TopUpState.REQUESTED)))
+            assertFalse(
+                topUps.move(confirmed.copy(state = TopUpState.FAILED), setOf(TopUpState.REQUESTED)),
+                "moved once",
+            )
+            val failed = payment.copy(state = TopUpState.FAILED, failure = TopUpFailure.CANCELLED, closedAt = now)
+            assertTrue(topUps.move(failed, setOf(TopUpState.REQUESTED)))
+
+            assertEquals(confirmed, topUps.find(topUp.topUpId))
+            assertEquals(
+                listOf(payment.topUpId, topUp.topUpId),
+                topUps.recent(merchant.merchantId, 10).map { it.topUpId },
+            )
+            assertFalse(topUps.hasOpen(merchant.merchantId))
+            assertNull(topUps.open(merchant.merchantId, TopUpTarget.SERVICE))
+            assertTrue(
+                topUps.insert(topUp.copy(topUpId = Uuid7.generate(now.plusSeconds(3)))),
+                "a new one once it closed",
+            )
+            val cents = runCatching { topUps.insert(payment.copy(topUpId = Uuid7.generate(now), amountMinor = 1_050)) }
+            assertTrue(cents.isFailure, "whole shillings (CHECK)")
         }
 
     @Test

@@ -29,6 +29,7 @@ import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Callbacks
 import com.circaso.ramp.domain.support.MerchantViews
@@ -332,6 +333,7 @@ class EndSessions(
     private val sessions: TradingSessions,
     private val email: EmailGateway,
     private val clock: Clock,
+    private val topUps: TopUpRepository,
 ) {
     suspend operator fun invoke(): Int {
         val now = clock.instant()
@@ -339,7 +341,7 @@ class EndSessions(
         handled += endLostSessions(now)
         sessions.held().forEach { merchantId ->
             val online = merchants.find(merchantId)?.isTradingUntil(now) == true
-            if (!online && !orders.needsKeys(merchantId)) {
+            if (!online && !orders.needsKeys(merchantId) && !topUps.hasOpen(merchantId)) {
                 sessions.end(merchantId)
                 handled++
             }
