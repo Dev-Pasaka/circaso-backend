@@ -42,7 +42,7 @@ data class OrderUpdatedFrame(
  * (`document`, `document_expired`, `document_unreadable`, `liveness`, `face_match`, `not_approved`, `declined`,
  * `identity_in_use`, `blocked`, `session_expired`, `resubmission_requested`), never the provider's text. Pushed when
  * it is `VERIFIED` ("You're verified. You can add money now."), `DECLINED`, asked to be redone, or expired with the
- * document.
+ * document. Sent, never pushed, when [submitted] flips.
  */
 @Serializable
 data class KycUpdatedFrame(
@@ -56,4 +56,9 @@ data class KycUpdatedFrame(
     val reason: String? = null,
     /** When the daily cap on new checks lifts, ISO-8601 UTC; null when it isn't what stands in the way. */
     val retryAt: String? = null,
+    /**
+     * The person has finished their part and the provider hasn't decided: true for a `PENDING` check they completed
+     * and for `IN_REVIEW`. Then [canStart] is false: show "we're checking", never "finish verifying".
+     */
+    val submitted: Boolean = false,
 )

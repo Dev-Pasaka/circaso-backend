@@ -136,7 +136,8 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "plus Circaso's share not yet swept), and `missing`: what still stands between you and going " +
                 "online (`profile`, `kyc`, `approval`, `wallet`, `payments`, `float`, `provider_balance`). `kyc` " +
                 "is your identity verification on this network (`status`, `required`, `canStart`, `reason`, " +
-                "`retryAt`): start or continue it with RM3. " +
+                "`retryAt`, `submitted`): start or continue it with RM3; `submitted` true means it was finished " +
+                "and waits for the provider's answer, so there is nothing to continue. " +
                 "`paymentsIssue` (`{ code, since }`, null when there is none) says your payment provider refused a " +
                 "prompt for a reason only you can fix: `SERVICE_BALANCE` is an empty prepaid service wallet " +
                 "(\"Top up your PayHero service wallet\"). It takes you offline and puts `provider_balance` in " +
@@ -180,7 +181,9 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "finishes it returns to the portal at `/kyc/done?verificationSessionId=…&status=…`. Never trust " +
                 "that `status`: read RM2, whose `kyc` is the truth (it asks the provider while the check is " +
                 "unfinished). Calling again returns the same open check. With no `session` there is nothing to do " +
-                "now: `status` and `reason` say why. A declined or expired check may be started again a few times " +
+                "now: `status`, `submitted` and `reason` say why (`submitted` true: finished, waiting for the " +
+                "answer). " +
+                "A declined or expired check may be started again a few times " +
                 "a day (`ramp.kyc_attempts_exceeded`, 429).",
     )
 

@@ -69,12 +69,16 @@ data class LimitsDto(
 /**
  * Identity verification as the app shows it (R1's `verification`, R0's answer, the `ramp/kyc.updated` frame).
  *
- * - `status`: `NONE` (never started) | `PENDING` (a check is open: finish it) | `IN_REVIEW` (being reviewed: wait) |
- *   `VERIFIED` | `DECLINED` | `EXPIRED`.
+ * - `status`: `NONE` (never started) | `PENDING` (a check is open and undecided: finish it, or, when `submitted`,
+ *   wait) | `IN_REVIEW` (being reviewed: wait) | `VERIFIED` | `DECLINED` | `EXPIRED`.
  * - `required`: whether this network asks for verification before trading.
  * - `canStart`: whether R0 will hand out a check now: start one (`NONE`), continue the open one (`PENDING`), or try
- *   again (`DECLINED`, `EXPIRED`). False while in review, once verified, when the reason can't be fixed by trying
- *   again, and when today's tries are used up (`retryAt` says when they come back).
+ *   again (`DECLINED`, `EXPIRED`). False once submitted, while in review, once verified, when the reason can't be
+ *   fixed by trying again, and when today's tries are used up (`retryAt` says when they come back).
+ * - `submitted`: the person has finished their part and the provider hasn't decided. True for a `PENDING` check they
+ *   completed (the provider is still working on it) and for `IN_REVIEW`; false everywhere else. It is what tells
+ *   "submitted, waiting for the answer" from "started, not finished", which are both `PENDING`. While it is true
+ *   `canStart` is false and R0 hands out no `session`.
  * - `reason`: a code to word, never the provider's text: `document`, `document_expired`, `document_unreadable`,
  *   `liveness`, `face_match`, `not_approved`, `declined`, `identity_in_use`, `blocked`, `session_expired`,
  *   `resubmission_requested`.
@@ -86,6 +90,7 @@ data class VerificationDto(
     val canStart: Boolean,
     val reason: String? = null,
     val retryAt: String? = null,
+    val submitted: Boolean = false,
 )
 
 /**
@@ -97,7 +102,10 @@ data class KycSessionDto(val sessionToken: String?, val url: String?, val expire
     override fun toString(): String = "KycSessionDto(***)"
 }
 
-/** R0 (and RM3) response: the state, and `session` while a check is open for the person to do. */
+/**
+ * R0 (and RM3) response: the state, and `session` while a check is open for the person to do. `session` is null once
+ * they have `submitted` it, as it is in review.
+ */
 @Serializable
 data class KycResponse(
     val status: String,
@@ -105,6 +113,7 @@ data class KycResponse(
     val canStart: Boolean,
     val reason: String? = null,
     val retryAt: String? = null,
+    val submitted: Boolean = false,
     val session: KycSessionDto? = null,
 )
 

@@ -45,6 +45,13 @@ class KycTest {
             assertEquals(first.sessionId, same.sessionId)
             val pending = (fake.decision(KycEnvironment.SANDBOX, first.sessionId) as Resource.Success).data
             assertEquals(KycStatus.PENDING, pending.status)
+            assertEquals(false, pending.isSubmitted, "started, not finished")
+
+            fake.submit(first.sessionId)
+            val waiting = (fake.decision(KycEnvironment.SANDBOX, first.sessionId) as Resource.Success).data
+            assertEquals(KycStatus.PENDING to true, waiting.status to waiting.isSubmitted)
+            val still = (fake.startSession(request("user:1")) as Resource.Success).data
+            assertEquals(first.sessionId, still.sessionId, "submitted is still the open session")
 
             fake.decline(first.sessionId)
             val declined = (fake.decision(KycEnvironment.SANDBOX, first.sessionId) as Resource.Success).data

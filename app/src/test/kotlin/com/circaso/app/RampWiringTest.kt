@@ -223,7 +223,7 @@ class RampWiringTest {
             val unverified = client.get("/v1/ramp") { asBuyer(buyer) }.bodyAsText()
             assertTrue(
                 "\"verification\":{\"status\":\"NONE\",\"required\":true,\"canStart\":true," +
-                    "\"reason\":null,\"retryAt\":null}" in unverified,
+                    "\"reason\":null,\"retryAt\":null,\"submitted\":false}" in unverified,
                 unverified,
             )
             assertTrue("\"kyc\":\"NONE\"" in unverified && "\"canTrade\":false" in unverified, unverified)

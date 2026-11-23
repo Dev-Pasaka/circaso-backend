@@ -106,6 +106,30 @@ class MerchantKycTest {
         }
 
     @Test
+    fun `a merchant who finished the hosted page reads submitted on RM2, and RM3 hands out no link`() =
+        runTest {
+            ramp.requireKyc()
+            ramp.startMerchantKyc(crynce.merchantId, TESTNET)
+            ramp.didit.submit(session())
+
+            // Back from the hosted page before the provider decided: the portal reads RM2.
+            ramp.clock.advance(6)
+            val waiting = overview()
+            assertEquals(KycState.PENDING, waiting.kyc.state)
+            assertTrue(waiting.kyc.submitted && !waiting.kyc.canStart)
+            assertTrue("kyc" in waiting.missing, "not verified yet")
+            val again = (ramp.startMerchantKyc(crynce.merchantId, TESTNET) as Resource.Success).data
+            assertTrue(again.submitted)
+            assertNull(again.link, "the hosted page is not reopened")
+            assertEquals(1, ramp.didit.started.size)
+
+            ramp.didit.approve(session())
+            ramp.clock.advance(6)
+            val after = overview()
+            assertEquals(KycState.VERIFIED to false, after.kyc.state to after.kyc.submitted)
+        }
+
+    @Test
     fun `a declined merchant sees why and may try again`() =
         runTest {
             ramp.requireKyc()

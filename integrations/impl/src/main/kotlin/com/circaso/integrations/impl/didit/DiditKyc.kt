@@ -42,6 +42,10 @@ internal class DiditAccount(val http: HttpClient, val apiKey: String) {
  *   returns to. Didit keeps one unfinished session per workflow and reference, so asking again returns the open one.
  *   The answer's `session_token` starts Didit's native SDK; `url` is the hosted page.
  * - **Decision:** `GET /v3/session/{id}/decision/`, the V3 shape. Statuses are Didit's exact strings, with spaces.
+ * - **Submitted:** the decision has no word for "the person finished and Didit is still deciding": that session is
+ *   `In Progress` like one the person left halfway. `GET /v3/session/{id}/features/overrides/` says which
+ *   (`person_in_flow`, `flow_finished_at`), so it is asked for an `In Progress` or `Resubmitted` session only. When
+ *   it can't be read the decision stands and says nothing about it.
  *
  * Bodies are never logged in either direction: a decision carries a person's name, face and document. Log lines name
  * the operation, the environment and a status code, and for a refusal the names of the fields Didit complained about.
@@ -82,22 +86,57 @@ internal class DiditKyc(private val accounts: Map<KycEnvironment, DiditAccount>)
         val account = accounts[environment] ?: return notConfigured(environment)
         // Didit's router answers anything but a UUID with an HTML page, not its JSON: refuse it here.
         if (runCatching { UUID.fromString(sessionId) }.isFailure) return rejected("That isn't a session id.")
-        return call("session_decision", environment) {
-            account.http.get("/v3/session/$sessionId/decision/") {
-                operation("session_decision")
-                header(API_KEY_HEADER, account.apiKey)
+        val read =
+            call("session_decision", environment) {
+                account.http.get("/v3/session/$sessionId/decision/") {
+                    operation("session_decision")
+                    header(API_KEY_HEADER, account.apiKey)
+                }
+            }.flatMapBody("session_decision", environment) { text ->
+                diditJson.decodeFromString(DecisionReply.serializer(), text).takeIf { statusOf(it.status) != null }
             }
-        }.flatMapBody("session_decision", environment) { text ->
-            val reply = diditJson.decodeFromString(DecisionReply.serializer(), text)
-            statusOf(reply.status)?.let { status ->
-                KycDecision(
-                    status = status,
-                    subject = reply.vendorData?.takeIf { it.isNotEmpty() },
-                    document = if (status == KycStatus.APPROVED) documentOf(reply) else null,
-                    declineReason = if (status == KycStatus.DECLINED) declineReasonOf(reply) else null,
-                )
+        val reply =
+            when (read) {
+                is Resource.Error -> return read
+                is Resource.Success -> read.data
             }
-        }
+        val status = statusOf(reply.status) ?: return Resource.error(IntegrationError.Unavailable(VENDOR))
+        return Resource.success(
+            KycDecision(
+                status = status,
+                subject = reply.vendorData?.takeIf { it.isNotEmpty() },
+                document = if (status == KycStatus.APPROVED) documentOf(reply) else null,
+                declineReason = if (status == KycStatus.DECLINED) declineReasonOf(reply) else null,
+                isSubmitted = isSubmitted(account, environment, sessionId, reply.status),
+            ),
+        )
+    }
+
+    /**
+     * Whether the person has finished the flow of a session Didit hasn't decided: asked only where the answer can be
+     * yes. A session nobody opened is not submitted; a decided one has nothing to say (null). Null too when Didit
+     * can't be asked or doesn't say: never a guess.
+     */
+    private suspend fun isSubmitted(
+        account: DiditAccount,
+        environment: KycEnvironment,
+        sessionId: String,
+        status: String,
+    ): Boolean? {
+        if (status == NOT_STARTED) return false
+        if (status != IN_PROGRESS && status != RESUBMITTED) return null
+        val read =
+            call("session_flow", environment) {
+                account.http.get("/v3/session/$sessionId/features/overrides/") {
+                    operation("session_flow")
+                    header(API_KEY_HEADER, account.apiKey)
+                }
+            }.flatMapBody("session_flow", environment) { text ->
+                diditJson.decodeFromString(FlowReply.serializer(), text)
+            }
+        val flow = (read as? Resource.Success)?.data ?: return null
+        val isInFlow = flow.personInFlow ?: return null
+        return !isInFlow && !flow.flowFinishedAt.isNullOrBlank()
     }
 
     /** The status and body of an answer, or the failure when Didit couldn't be reached. */
@@ -200,8 +239,8 @@ internal class DiditKyc(private val accounts: Map<KycEnvironment, DiditAccount>)
          */
         internal fun statusOf(status: String): KycStatus? =
             when (status) {
-                "Not Started", "In Progress", "Awaiting User" -> KycStatus.PENDING
-                "Resubmitted" -> KycStatus.RESUBMIT
+                NOT_STARTED, IN_PROGRESS, "Awaiting User" -> KycStatus.PENDING
+                RESUBMITTED -> KycStatus.RESUBMIT
                 "In Review" -> KycStatus.IN_REVIEW
                 "Approved" -> KycStatus.APPROVED
                 "Declined" -> KycStatus.DECLINED
@@ -253,6 +292,9 @@ internal class DiditKyc(private val accounts: Map<KycEnvironment, DiditAccount>)
         private fun instantOrNull(text: String?): Instant? =
             text?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
+        private const val NOT_STARTED = "Not Started"
+        private const val IN_PROGRESS = "In Progress"
+        private const val RESUBMITTED = "Resubmitted"
         private const val APPROVED = "Approved"
         private const val DECLINED = "Declined"
         private const val DOCUMENT_EXPIRED = "DOCUMENT_EXPIRED"

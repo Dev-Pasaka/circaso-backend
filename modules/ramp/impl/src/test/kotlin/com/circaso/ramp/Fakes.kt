@@ -239,8 +239,9 @@ class FakeKyc(private val real: KycGate, var verified: Boolean = false) : KycGat
 }
 
 /**
- * An in-memory KYC provider: a session is `PENDING` until the test says what the provider decided. Like Didit it
- * keeps one unfinished session per environment, workflow and subject. [failure] fails every call; [available] are
+ * An in-memory KYC provider: a session is `PENDING`, with the person still in it, until the test says what the
+ * provider decided, or that the person finished and it hasn't decided yet ([submit]). Like Didit it keeps one
+ * unfinished session per environment, workflow and subject. [failure] fails every call; [available] are
  * the environments that have keys.
  */
 class FakeKycProvider(private val clock: Clock) : KycProvider {
@@ -263,14 +264,19 @@ class FakeKycProvider(private val clock: Clock) : KycProvider {
     fun decline(sessionId: String, reason: KycDeclineReason = KycDeclineReason.DOCUMENT) =
         set(sessionId, KycStatus.DECLINED, reason = reason)
 
+    /** The person finished everything the session asked; the provider is still deciding. */
+    fun submit(sessionId: String, status: KycStatus = KycStatus.PENDING) = set(sessionId, status, isSubmitted = true)
+
+    /** [isSubmitted]: "not yet" for an unfinished session unless said; null is the provider not saying. */
     fun set(
         sessionId: String,
         status: KycStatus,
         document: KycDocument? = null,
         reason: KycDeclineReason? = null,
         subject: String? = kept(sessionId).request.subject,
+        isSubmitted: Boolean? = if (status in UNFINISHED) false else null,
     ) {
-        kept(sessionId).decision = KycDecision(status, subject, document, reason)
+        kept(sessionId).decision = KycDecision(status, subject, document, reason, isSubmitted)
     }
 
     /** The provider no longer knows the session (deleted on its side). */
@@ -289,7 +295,7 @@ class FakeKycProvider(private val clock: Clock) : KycProvider {
                 it.request.environment == request.environment &&
                     it.request.subject == request.subject &&
                     it.request.workflowId == request.workflowId &&
-                    it.decision.status in setOf(KycStatus.PENDING, KycStatus.RESUBMIT)
+                    it.decision.status in UNFINISHED
             }
         if (open != null) return Resource.success(open.session)
         val number = sessions.size + 1
@@ -300,7 +306,7 @@ class FakeKycProvider(private val clock: Clock) : KycProvider {
                 url = "https://verify.test/session/token-$number",
                 expiresAt = clock.instant().plus(request.validFor ?: Duration.ofDays(7)),
             )
-        sessions += Kept(request, session, KycDecision(KycStatus.PENDING, request.subject))
+        sessions += Kept(request, session, KycDecision(KycStatus.PENDING, request.subject, isSubmitted = false))
         return Resource.success(session)
     }
 
@@ -313,6 +319,10 @@ class FakeKycProvider(private val clock: Clock) : KycProvider {
     }
 
     private fun kept(sessionId: String) = sessions.first { it.session.sessionId == sessionId }
+
+    private companion object {
+        val UNFINISHED = setOf(KycStatus.PENDING, KycStatus.RESUBMIT)
+    }
 }
 
 /** A provider that needs nothing from the person and approves at once, as the local `log` stand-in does. */

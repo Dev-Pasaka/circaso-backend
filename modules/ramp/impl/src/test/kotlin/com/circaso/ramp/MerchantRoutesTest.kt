@@ -165,7 +165,7 @@ class MerchantRoutesTest {
                 "the testnet doesn't ask for an identity check here, so that step is done",
             )
             assertEquals(
-                """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null}""",
+                """{"status":"NONE","required":false,"canStart":true,"reason":null,"retryAt":null,"submitted":false}""",
                 merchant.getValue("kyc").toString(),
             )
             assertEquals("""{"online":false,"until":null}""", merchant.getValue("online").toString())
@@ -332,7 +332,7 @@ class MerchantRoutesTest {
             )
             assertEquals("""["kyc","approval","wallet","payments"]""", applied.getValue("missing").toString())
             assertEquals(
-                """{"status":"NONE","required":true,"canStart":true,"reason":null,"retryAt":null}""",
+                """{"status":"NONE","required":true,"canStart":true,"reason":null,"retryAt":null,"submitted":false}""",
                 applied.getValue("kyc").toString(),
             )
 
@@ -341,7 +341,8 @@ class MerchantRoutesTest {
             val expires = ramp.clock.instant().plusSeconds(24 * 3_600)
             assertEquals(
                 """{"status":"PENDING","required":true,"canStart":true,"reason":null,"retryAt":null,""" +
-                    """"session":{"sessionToken":"token-1","url":"https://verify.test/session/token-1",""" +
+                    """"submitted":false,"session":{"sessionToken":"token-1",""" +
+                    """"url":"https://verify.test/session/token-1",""" +
                     """"expiresAt":"$expires"}}""",
                 started.data().toString(),
             )
@@ -360,7 +361,7 @@ class MerchantRoutesTest {
             ramp.clock.advance(6)
             val account = client.get(base) { header("X-Merchant-Session", session) }.data()
             assertEquals(
-                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,"retryAt":null}""",
+                """{"status":"VERIFIED","required":true,"canStart":false,"reason":null,"retryAt":null,"submitted":false}""",
                 account.getValue("kyc").toString(),
             )
             assertEquals("""["approval","wallet","payments"]""", account.getValue("missing").toString())

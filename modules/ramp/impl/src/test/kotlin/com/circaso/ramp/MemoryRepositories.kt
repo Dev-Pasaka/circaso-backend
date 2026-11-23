@@ -694,8 +694,17 @@ class MemoryVerifications : VerificationRepository {
         at: Instant,
     ): Verification? {
         val row = rows[subject to environment]?.takeIf { it.sessionId == sessionId } ?: return null
-        if (row.status == change.status && row.reason == change.reason) return null
-        val moved = row.copy(status = change.status, reason = change.reason, checkedAt = at, updatedAt = at)
+        val isThere =
+            row.status == change.status && row.reason == change.reason && row.isSubmitted == change.isSubmitted
+        if (isThere) return null
+        val moved =
+            row.copy(
+                status = change.status,
+                reason = change.reason,
+                isSubmitted = change.isSubmitted,
+                checkedAt = at,
+                updatedAt = at,
+            )
         rows[subject to environment] = moved
         return moved
     }
@@ -723,6 +732,7 @@ class MemoryVerifications : VerificationRepository {
             row.copy(
                 status = VerificationStatus.VERIFIED,
                 reason = null,
+                isSubmitted = false,
                 identityKey = identityKey ?: row.identityKey,
                 sessionToken = null,
                 sessionUrl = null,

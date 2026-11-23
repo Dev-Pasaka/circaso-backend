@@ -117,6 +117,7 @@ fun KycView.toDto() =
         canStart = canStart,
         reason = reason?.code,
         retryAt = retryAt?.toString(),
+        submitted = submitted,
     )
 
 /** R0 and RM3: the state, and the open check's link when there is one. */
@@ -127,6 +128,7 @@ fun KycView.toResponse() =
         canStart = canStart,
         reason = reason?.code,
         retryAt = retryAt?.toString(),
+        submitted = submitted,
         session = link?.let { KycSessionDto(it.token, it.url, it.expiresAt?.toString()) },
     )
 

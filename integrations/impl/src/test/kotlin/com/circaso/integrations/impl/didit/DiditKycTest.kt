@@ -31,7 +31,20 @@ class DiditKycTest {
             """"expires_at":"2026-11-23T12:00:00.443172Z"}"""
     private var down = false
 
-    private val clients = FakeHttpClients { _ -> if (down) throw IOException("down") else json(reply, status) }
+    /** What `…/features/overrides/` answers: where the person is in the flow. */
+    private var flowStatus = 200
+    private var flow =
+        """{"session_id":"4c5c7f3a-1f82-4f3b-8d8e-1a8d2d2f9b7a","person_in_flow":true,""" +
+            """"flow_finished_at":null,"overrides":[]}"""
+
+    private val clients =
+        FakeHttpClients { request ->
+            when {
+                down -> throw IOException("down")
+                request.url.encodedPath.endsWith("/features/overrides/") -> json(flow, flowStatus)
+                else -> json(reply, status)
+            }
+        }
     private val sandbox = DiditAccount(clients.named("didit-sandbox") { baseUrl = DiditKyc.BASE_URL }, "sandbox-key")
     private val didit = DiditKyc(mapOf(KycEnvironment.SANDBOX to sandbox))
     private val sessionId = "4c5c7f3a-1f82-4f3b-8d8e-1a8d2d2f9b7a"
@@ -157,10 +170,68 @@ class DiditKycTest {
 
             assertEquals(KycStatus.PENDING, read.status)
             assertEquals("user:42", read.subject)
-            assertEquals(HttpMethod.Get, clients.last.method)
-            assertEquals("https://verification.didit.me/v3/session/$sessionId/decision/", clients.last.url.toString())
-            assertEquals("sandbox-key", clients.last.headers["x-api-key"])
+            val sent = clients.requests.first()
+            assertEquals(HttpMethod.Get, sent.method)
+            assertEquals("https://verification.didit.me/v3/session/$sessionId/decision/", sent.url.toString())
+            assertEquals("sandbox-key", sent.headers["x-api-key"])
         }
+
+    private fun submitted(didits: String, flowBody: String = flow): Boolean? {
+        flow = flowBody
+        clients.requests.clear()
+        val read = decision("""{"session_id":"$sessionId","status":"$didits","vendor_data":"user:42"}""")
+        return (read as Resource.Success).data.isSubmitted
+    }
+
+    private fun finished(at: String? = "2026-11-23T09:15:00Z", inFlow: Boolean? = false) =
+        """{"session_id":"$sessionId","person_in_flow":$inFlow,"flow_finished_at":${at?.let { "\"$it\"" }},""" +
+            """"overrides":[{"id":"9b2f4c1e-8d3a-4e5f-a6b7-c8d9e0f1a2b3","state":"applied"}]}"""
+
+    @Test
+    fun `an undecided session is submitted once didit says the person finished the flow`() {
+        assertEquals(false, submitted("In Progress"), "still in the flow")
+        val asked = clients.last
+        assertEquals(HttpMethod.Get, asked.method)
+        assertEquals(
+            "https://verification.didit.me/v3/session/$sessionId/features/overrides/",
+            asked.url.toString(),
+        )
+        assertEquals("sandbox-key", asked.headers["x-api-key"])
+
+        assertEquals(true, submitted("In Progress", finished()), "finished: didit is deciding")
+        assertEquals(true, submitted("Resubmitted", finished()), "the steps asked for again are done")
+        assertEquals(false, submitted("Resubmitted", finished(at = null, inFlow = true)), "redoing them")
+
+        // Both halves must agree: a finish time alone, or leaving the flow with none, is not "submitted".
+        assertEquals(false, submitted("In Progress", finished(inFlow = true)))
+        assertEquals(false, submitted("In Progress", finished(at = null)))
+    }
+
+    @Test
+    fun `the flow is asked about only where the answer can be yes`() {
+        assertEquals(false, submitted("Not Started", finished()), "nobody opened it")
+        assertEquals(1, clients.requests.size, "the decision alone")
+
+        for (decided in listOf("Approved", "Declined", "In Review", "Expired", "Abandoned", "Kyc Expired")) {
+            assertNull(submitted(decided, finished()), decided)
+            assertEquals(1, clients.requests.size, decided)
+        }
+        assertNull(submitted("Awaiting User", finished()), "a business session's wait: never ours")
+    }
+
+    @Test
+    fun `when the flow can't be read the decision stands and says nothing about it`() {
+        flowStatus = 403
+        assertNull(submitted("In Progress", """{"detail":"You do not have permission to perform this action."}"""))
+
+        flowStatus = 500
+        assertNull(submitted("In Progress", "oops"))
+
+        flowStatus = 200
+        assertNull(submitted("In Progress", """{"session_id":"$sessionId","overrides":[]}"""), "didit didn't say")
+        assertNull(submitted("In Progress", "<html>"), "unreadable")
+        assertEquals(KycStatus.PENDING, statusOf("In Progress"), "the decision itself is still read")
+    }
 
     @Test
     fun `didit's statuses are exact strings with spaces, each read into ours`() {

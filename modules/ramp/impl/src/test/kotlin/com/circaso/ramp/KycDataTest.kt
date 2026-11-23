@@ -178,6 +178,39 @@ class KycDataTest {
         }
 
     @Test
+    fun `submitted is kept with the row, is a move of its own, and is cleared by every other outcome`() =
+        runBlocking<Unit> {
+            val amina = user()
+            val row = started(amina)
+            assertFalse(rows.find(amina, row.environment)!!.isSubmitted, "a started check is not a finished one")
+            val submitted = VerificationChange(VerificationStatus.PENDING, isSubmitted = true)
+
+            val moved = assertNotNull(rows.move(amina, row.environment, row.sessionId!!, submitted, now))
+            assertTrue(moved.isSubmitted && moved.status == VerificationStatus.PENDING)
+            assertNotNull(moved.sessionToken, "the link is kept: a step may be asked for again")
+            assertNull(rows.move(amina, row.environment, row.sessionId!!, submitted, now), "already exactly there")
+            assertTrue(rows.bySession(row.sessionId!!)!!.isSubmitted)
+
+            // Back in the check is a move too; and any other outcome clears it.
+            val pending = VerificationChange(VerificationStatus.PENDING)
+            assertFalse(assertNotNull(rows.move(amina, row.environment, row.sessionId!!, pending, now)).isSubmitted)
+            rows.move(amina, row.environment, row.sessionId!!, submitted, now)
+            val review = VerificationChange(VerificationStatus.IN_REVIEW)
+            assertFalse(assertNotNull(rows.move(amina, row.environment, row.sessionId!!, review, now)).isSubmitted)
+
+            val bob = user()
+            val bobs = started(bob)
+            rows.move(bob, bobs.environment, bobs.sessionId!!, submitted, now)
+            val verified = rows.verify(bob, bobs.environment, bobs.sessionId!!, "key-bob", now)
+            assertFalse(assertIs<VerifiedOutcome.Moved>(verified).verification.isSubmitted)
+
+            // Written whole by a new session: a new check starts unfinished.
+            rows.move(amina, row.environment, row.sessionId!!, submitted, now)
+            rows.save(row.copy(sessionId = "session-2"))
+            assertFalse(rows.find(amina, row.environment)!!.isSubmitted)
+        }
+
+    @Test
     fun `racing outcomes for one session are applied once`() =
         runBlocking<Unit> {
             val amina = user()

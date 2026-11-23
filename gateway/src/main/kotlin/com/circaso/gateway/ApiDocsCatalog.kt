@@ -375,7 +375,8 @@ internal object ApiDocsCatalog {
                             "- **Verify once:** before a first purchase, where the network asks for it, the person " +
                             "passes an identity check (R0): an ID document, a liveness selfie and a face match, run " +
                             "by the identity provider's SDK from the `sessionToken` R0 answers. R1's `verification` " +
-                            "says where it stands, whether a check may be started and why it was declined, so the " +
+                            "says where it stands, whether a check may be started, whether it was finished and " +
+                            "waits for its decision (`submitted`) and why it was declined, so the " +
                             "app never guesses; `ramp` / `kyc.updated` frames follow it. One identity verifies one " +
                             "account. Until then R2 and R3 answer `ramp.kyc_required`.\n" +
                             "- **Quote, then order:** R2 prices an amount (the fee is inside what you pay, and the " +
