@@ -32,6 +32,7 @@ import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.integrations.api.NoVendorVerification
 import com.circaso.integrations.api.PhoneVerificationGateway
+import com.circaso.integrations.api.ProviderFees
 import com.circaso.integrations.api.PushGateway
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.api.SocialSignIn
@@ -103,6 +104,8 @@ import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
 import com.circaso.integrations.impl.googlemaps.GoogleStaticMaps
 import com.circaso.integrations.impl.payhero.PayHeroCollections
+import com.circaso.integrations.impl.payhero.PayHeroFees
+import com.circaso.integrations.impl.payhero.PayHeroHosts
 import com.circaso.integrations.impl.payhero.PayHeroWebhook
 import com.circaso.integrations.impl.placeholder.FirebaseCarrierPhoneVerification
 import com.circaso.integrations.impl.resend.ResendEmail
@@ -354,15 +357,17 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         // is NOT a start-up line: it is a row staff switch in the admin (`ramp.settings.collections_provider`), so
         // every provider is bound at once and the ramp names the one it wants on each call. `log` reports every prompt
         // as paid, so it is offered on a developer's machine only.
+        // Payouts (2026-11-23) go through the same provider. PayHero is becoming FinoQ and serves its calls from
+        // several hosts: which host each call tries, and in what order, is PayHeroHosts.
+        single { PayHeroHosts.of(get<HttpClients>()) }
         single<CollectionProviders> {
-            val payHero =
-                PayHeroCollections(get<HttpClients>().named("payhero") { baseUrl = PayHeroCollections.BASE_URL })
             OfferedCollections(
-                real = mapOf(CollectionProviders.PAYHERO to payHero),
+                real = mapOf(CollectionProviders.PAYHERO to PayHeroCollections(get<PayHeroHosts>())),
                 local =
                     if (config.environment.isLocal) {
                         mapOf(
-                            CollectionProviders.LOG to LogCollections(),
+                            CollectionProviders.LOG to
+                                LogCollections(notifications = { getOrNull<CollectionNotifications>() }),
                         )
                     } else {
                         emptyMap()
@@ -373,6 +378,14 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         // bell, and a callback on an address no merchant was given is ignored.
         single<WebhookVendor>(named("payhero.webhook")) {
             PayHeroWebhook(notifications = { getOrNull<CollectionNotifications>() })
+        }
+        // What the provider itself charges per collection and per payout, from the tables it publishes. Kept in
+        // memory and refreshed as PayHeroFees says; no fee is ever invented when a table can't be read.
+        single<ProviderFees> {
+            PayHeroFees(
+                hosts = get<PayHeroHosts>(),
+                pricing = get<HttpClients>().named("payhero-pricing") { baseUrl = PayHeroFees.PRICING_URL },
+            )
         }
         // The ramp's identity checks (decision 2026-11-22): Didit. Like the collections provider, which KYC provider a
         // network uses is a row staff switch in the admin (`ramp.settings.kyc_provider`), so every provider is bound at

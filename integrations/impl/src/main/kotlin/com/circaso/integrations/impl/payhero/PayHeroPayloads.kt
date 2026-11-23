@@ -49,9 +49,21 @@ internal data class TransactionStatusReply(
     @SerialName("phone_number") val phoneNumber: String? = null,
 )
 
-/** The callback PayHero posts to `callback_url`. Unsigned: only [CallbackResult.externalReference] is used. */
+/**
+ * The callback PayHero posts to `callback_url`, in **both** layouts it documents: the old site's, nested under
+ * `response` in PascalCase ([CallbackResult]), and FinoQ's flat snake_case one, which also says whether it is about a
+ * pay-in or a pay-out (`transaction_type`). Which of them a payout sends is not documented, so one class reads both.
+ * Unsigned: only the references and the type are used, never what it claims happened.
+ */
 @Serializable
-internal data class CallbackBody(val response: CallbackResult? = null)
+internal data class CallbackBody(
+    val response: CallbackResult? = null,
+    @SerialName("external_reference") val externalReference: String? = null,
+    val reference: String? = null,
+    @SerialName("transaction_type") val transactionType: String? = null,
+    @SerialName("transaction_id") val transactionId: String? = null,
+    val status: String? = null,
+)
 
 @Serializable
 internal data class CallbackResult(
