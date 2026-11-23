@@ -127,7 +127,7 @@ Circaso earns on every trade, and staff set the numbers in the admin.
 
 ### How an off-ramp runs (designed, waiting on a payout provider)
 
-**Status: not built, and not buildable on PayHero today.** PayHero has no payouts today (Pasaka, 2026-11-22; **unverified until PayHero replies in writing**). Its current docs agree: no payout endpoint, and the old "withdraw to mobile" page is gone. Collections on a merchant's own till settle straight there, so PayHero holds nothing to pay out of either. The automated off-ramp therefore waits on a **payout provider** (Open questions): the merchant's own Daraja B2C, another aggregator, or PayHero if it brings payouts back. `MobileCollections.payout`, `payoutStatus` and `balance` stay in the contract for that provider; nothing implements them yet. The engine checks **no KES float** until then.
+**Status: the ramp side is not built. Superseded in part on 2026-11-23:** PayHero, now FinoQ, documents a payout (`POST /api/v2/withdraw`), and the integrations half (contract, client, callback, fees) is built and waiting on a first real payout: see "As built: payouts through FinoQ". What follows in this paragraph is the earlier reading. PayHero has no payouts today (Pasaka, 2026-11-22; **unverified until PayHero replies in writing**). Its current docs agree: no payout endpoint, and the old "withdraw to mobile" page is gone. Collections on a merchant's own till settle straight there, so PayHero holds nothing to pay out of either. The automated off-ramp therefore waits on a **payout provider** (Open questions): the merchant's own Daraja B2C, another aggregator, or PayHero if it brings payouts back. `MobileCollections.payout`, `payoutStatus` and `balance` stay in the contract for that provider; nothing implements them yet. The engine checks **no KES float** until then.
 
 The designed flow, for whichever provider pays out:
 
@@ -274,7 +274,7 @@ interface CollectionNotifications {                  // implemented by ramp, wir
 - **Collect:** STK push `POST /api/v2/payments` (`amount` in whole shillings, `phone_number`, `channel_id`, `provider: "m-pesa"`, `external_reference`, `callback_url`) → `reference`, `CheckoutRequestID`, `status: QUEUED`. Status `GET /api/v2/transaction-status?reference=…` (PayHero's reference or the M-Pesa code) → `status` (`QUEUED`, `SUCCESS`, `FAILED`), amount, phone, references. Authentication is HTTP Basic from the merchant's API username and password. `channel_id` names one registered till, paybill or bank account, registered per PayHero account.
 - **Where collections settle:** on a merchant's own till, paybill or bank channel, straight into it ("receive payments directly into your linked MPESA Paybill, Till, or bank account"). PayHero holds nothing, so there is no shilling balance to withdraw.
 - **Two wallets at PayHero.** The **service wallet** is a prepaid float PayHero's per-transaction fees are taken from (KES 0–20 by amount; `GET /api/v2/wallets?wallet_type=service_wallet`, read as `available_balance`); it can't be cashed out. When it is empty PayHero refuses the STK push with `400 … merchant has insufficient balance to allow you complete this transaction` (seen in the first real test, 2026-11-22), so RM6 refuses to go online on a service wallet below a floor (`ramp.settings.provider_fee_floor_minor`, edited in the admin; see "As built", when the provider refuses the prompt). 
-- **No payouts.** PayHero has none today (Pasaka, 2026-11-22; unverified until PayHero replies in writing). An archived page describes `POST /api/v2/withdraw` from a "payments wallet", but it is gone from the current docs and no payout status query is documented. `PayHeroCollections` answers `payout` and `payoutStatus` with `IntegrationError.NotImplemented`; `balance` answers the service wallet as `fees` (and zero for `payout`).
+- **No payouts (superseded 2026-11-23, see "As built: payouts through FinoQ").** The earlier reading: PayHero has none today (Pasaka, 2026-11-22; unverified until PayHero replies in writing). An archived page describes `POST /api/v2/withdraw` from a "payments wallet", but it is gone from the current docs and no payout status query is documented. `PayHeroCollections` answers `payout` and `payoutStatus` with `IntegrationError.NotImplemented`; `balance` answers the service wallet as `fees` (and zero for `payout`).
 - **Each merchant has a callback address of their own (Pasaka, 2026-11-22).** The portal generates it when the merchant connects PayHero (RM5): `<callback_base_url>/v1/hooks/payhero/<name>-<token>`, the merchant's name as a readable slug and 16 random base62 characters (`merchants.callback_key`, unique). The merchant pastes it into PayHero, and the ramp sends the same address with every prompt it makes for them. The token is a shared secret in the address, which is the best guard a vendor that signs nothing allows: a callback on an address that isn't a merchant's is refused, and one that is may only ring for **that merchant's** orders. The merchant can generate a new one (RM14); the old one stops working at once. This needs the gateway's webhook path to take one more segment, `/v1/hooks/{vendor}/{key}` (additive; `WebhookVendor` is handed the key).
 - **The callbacks are unsigned.** PayHero documents no signature, secret, source address list or retry policy. `PayHeroWebhook` therefore takes exactly one thing from the body, `ExternalReference`, and hands it to `CollectionNotifications`; ramp ignores it unless it names an order in a state that is waiting for it, and then runs the status query. A forged callback can at most cause one status query for a real open order. The gateway's duplicate guard uses `CheckoutRequestID`.
 - **No idempotency.** No idempotency header, and `external_reference` isn't documented as unique. A prompt or payout is never retried by the HTTP client; after a timeout the status query decides.
@@ -989,10 +989,140 @@ What the code does where it differs from, or settles, what is written above. Dec
 
 **Not changed:** the ops gateway's verification lookup (`GET /ops/ramp/users/{userId}/verification`) and the merchant list still show `PENDING` without `submitted`.
 
+## As built: payouts through FinoQ, integrations only (2026-11-23, `feat/finoq-payouts`)
+
+PayHero is becoming **FinoQ** (docs.payhero.africa, "FinoQ API 2.0.0", host `api.finoq.africa`) and its new docs describe a payout to an M-Pesa number. This supersedes "PayHero has no payouts" above. **Only the integrations half is built**: the contract, the PayHero/FinoQ client, the callback, the provider's fees, `log` and `fake`. The ramp's off-ramp (R7, `PAYING_OUT`, `ramp.reconcile`) is not built here and does not call any of it yet. Nothing below has run against a real account: the first real payout (the runbook at the end) is what confirms it.
+
+### The contract (`integrations:api`)
+
+```kotlin
+interface MobileCollections {
+    // requestPayment, paymentStatus, balance, verify: unchanged (the on-ramp)
+
+    /** Sent once; never repeated by the client. Not a Resource: every case must be handled. */
+    suspend fun sendPayout(credentials: CollectionCredentials, request: PayoutRequest): PayoutResult
+
+    /** What the provider itself says became of a payout: the only thing an off-ramp may rest on. */
+    suspend fun lookUpPayout(credentials: CollectionCredentials, lookup: PayoutLookup): PayoutStatus
+
+    /** Payout and fee balances, each null when it could not be read (never zero), with the call that gave it. */
+    suspend fun balances(credentials: CollectionCredentials, accountId: String? = null): Resource<ProviderBalances>
+}
+
+data class PayoutRequest(val payee: PhoneNumber, val amount: FiatAmount, val reference: String, val callbackUrl: String, val accountId: String)
+data class PayoutReceipt(val providerReference: String, val secondaryReference: String? = null)
+
+sealed interface PayoutResult {
+    data class Accepted(val receipt: PayoutReceipt)                              // queued, not paid
+    data class Rejected(val reason: PayoutRejection, val cost: FiatAmount? = null) // permanent, nothing sent
+    data object InsufficientBalance                                              // nothing sent; the merchant tops up
+    data object Unknown                                                          // MAY have been sent: look it up first
+    data object Unavailable                                                      // provably nothing sent
+}
+enum class PayoutRejection { INVALID_REQUEST, AMOUNT_BELOW_COST, CREDENTIALS_REFUSED, NOT_SUPPORTED, REFUSED }
+
+data class PayoutLookup(val reference: String, val providerReference: String? = null)
+sealed interface PayoutStatus {
+    data object Pending
+    data class Paid(val providerReceipt: String?, val amount: FiatAmount?, val reference: String? = null)
+    data class Failed(val reason: String)             // the provider's status word: FAILED, CANCELLED…
+    data class NotFound(val by: PayoutReference)      // PROVIDER (its own reference) or OURS (weaker, see below)
+    data object Unknown
+}
+
+data class ProviderBalances(val payout: BalanceReading?, val fees: BalanceReading?)
+data class BalanceReading(val amount: FiatAmount, val source: String)
+
+interface CollectionNotifications {
+    suspend fun onPaymentCallback(callbackKey: String, reference: String): Resource<Unit>
+    suspend fun onPayoutCallback(callbackKey: String, reference: String): Resource<Unit>   // a doorbell, like the first
+}
+
+interface ProviderFees {
+    suspend fun collectionFee(provider: String, amount: FiatAmount): ProviderFee
+    suspend fun payoutFee(provider: String, amount: FiatAmount): ProviderFee
+}
+data class ProviderFee(val fee: FiatAmount?, val source: FeeSource, val asOf: Instant? = null)   // fee null iff UNKNOWN
+enum class FeeSource { LIVE_TABLE, CACHED, UNKNOWN }
+```
+
+The old `payout` and `payoutStatus` (which returned a `Resource` and could not tell "may have been sent" from "nothing was sent") stay in the interface with default bodies that answer `NotImplemented`, only because the ramp's test fake still overrides them; they go when the ramp moves over. `balance` stays as the on-ramp's fee-floor check; its `payout` field is not a reading.
+
+### What the ramp must do to use it (not built)
+
+- **Collect one more thing from the merchant: the account id.** FinoQ's withdraw needs `account_id`, the integer id of the merchant's account ("team") on its dashboard. RM5 and the portal collect username, password and channel id today. The id is not a secret; it can be a plain column on the merchant or a fourth field in the envelope. It is passed as `PayoutRequest.accountId` and to `balances`.
+- **Send once.** Persist the order as `PAYING_OUT` **before** calling `sendPayout`, with the order id as `reference`. Never call it twice for one order unless a lookup has shown the first did not go out: nothing in FinoQ's docs says a repeated `external_reference` is paid once.
+- **On each result:**
+
+| `sendPayout` answers | The order | Next |
+| --- | --- | --- |
+| `Accepted(receipt)` | stays `PAYING_OUT`; store `receipt.providerReference` (and the secondary one) | wait for the doorbell or the reconcile job, then `lookUpPayout` |
+| `Rejected(reason, cost)` | nothing was sent: back to `FUNDED` for another merchant, or refund | `CREDENTIALS_REFUSED` and `INVALID_REQUEST` take the merchant offline with a reason; `AMOUNT_BELOW_COST` is a quote that should not have been given (`cost` is the provider's charge) |
+| `InsufficientBalance` | nothing was sent: back to `FUNDED` | the merchant is off the off-ramp until `balances` shows enough; they are told to top up |
+| `Unknown` | stays `PAYING_OUT`, marked "outcome unknown" | **`lookUpPayout` before anything else**; no resend, no refund, no other merchant |
+| `Unavailable` | nothing was sent: stays `FUNDED` | try again later or another merchant |
+
+  A call that is cancelled or throws (a caller's own timeout around `sendPayout`) is `Unknown` too.
+- **Only `lookUpPayout` decides.** `Paid` completes the order, after checking `amount` and `reference` against the order where they are given. `Failed` allows a resend or the refund. `Pending` waits. `Unknown` waits and is asked again. `NotFound(PROVIDER)` (the provider denies a reference it gave us) and `NotFound(OURS)` after an `Unknown` send both go to **`REVIEW` for staff**, not to a resend: whether FinoQ's lookups search by our reference is unconfirmed, so "not found by ours" is not yet proof that nothing was sent. Once the first real payouts show that a lookup by `external_reference` works, `NotFound(OURS)` can allow a resend.
+- **The doorbell.** Implement `onPayoutCallback(callbackKey, reference)` in `RampCollectionNotifications`: check the key is the merchant's and the reference is an order of theirs in `PAYING_OUT`, then run the lookup. It can ring twice, and a callback whose layout doesn't say whether it is a payment or a payout rings **both** bells, so each handler ignores a reference that isn't its kind. The same callback address is sent with payouts as with prompts.
+- **Float.** Before picking a merchant for an off-ramp, `balances(credentials, accountId)`: `payout` must cover the amount **plus** `ProviderFees.payoutFee`, and a null `payout` means "unknown", which must not be treated as enough or as empty without a decision.
+- **Fees.** `ProviderFees` is bound in integrations (`PayHeroFees`). When it answers `UNKNOWN`, fall back to the table staff set in the admin.
+
+### What the client does
+
+- **Hosts and their order** (`PayHeroHosts`, constants in code):
+  - Collect, its status, `verify`, the on-ramp's `balance`: `https://backend.payhero.co.ke` only. Unchanged.
+  - Payout: `POST /api/v2/withdraw` on `https://api.finoq.africa`, then on `https://backend.payhero.co.ke`. It moves to the second host **only when the first provably took nothing**: it could not be reached, it refused the credentials (`401`/`403`), or it has no such route (a bare `404`/`405`). After a timeout, a 5xx or any answer it can't read, no other host is asked.
+  - Payout status: `POST /api/global/transaction-status` `{ "request_id": … }` on the new host, then `GET /api/v2/transaction-status?reference=…` on the old one; by the provider's reference first, then by ours.
+  - Fee balance: `GET /api/v2/wallets?wallet_type=service_wallet` (old host), then `GET https://auth.payhero.africa/api/v2/account/{id}` (`account.service_wallet_balance`).
+  - Payout balance: `GET /api/v2/wallets?wallet_type=payment_wallet` (old host; a guess, believed only when the answer says it is that wallet), then `GET /api/global/accounts/{id}/balance` (new host).
+- **Never retried.** The two payout clients (`finoq-payout`, `payhero-payout`) have `maxAttempts = 1`: the shared client would otherwise repeat a POST on `429` or `503`.
+- **The request:** `external_reference` (the order id), `account_id`, `amount` (whole shillings), `phone_number` and `account_number` (the local form, `0712345678`), `network_code: "63902"`, `channel: "phone"`, `recipient_type: "MSISDN"`, `callback_url`. An amount with cents, another currency or an account id that isn't a number is `Rejected(INVALID_REQUEST)` without a call.
+- **Reading the answer:** a 2xx with a reference is `Accepted`; a 2xx without one, a 5xx, a `408` and a timeout are `Unknown`; a `429` is `Unavailable`; any other 4xx is a rejection, told apart by the provider's words: "wont cater for cost" → `AMOUNT_BELOW_COST` (the cost in brackets is handed on, not logged), "insufficient balance/funds/float" → `InsufficientBalance`, `invalid_argument`/`invalid_arguments` → `INVALID_REQUEST`, anything else → `REFUSED`.
+- **Reading a status:** the status word is looked for at the top level, or inside `data`/`response`/`transaction` when there is such a wrapper (a wrapper's own `status: "success"` is never read as "paid"). `SUCCESS`/`COMPLETED`/`PAID`… → `Paid`; `FAILED`/`CANCELLED`/`REJECTED`/`REVERSED`/`EXPIRED`… → `Failed`; `QUEUED`/`PENDING`/`PROCESSING`… → `Pending`; any other word → `Unknown`. A `404`, or words like "not found", is "not known to this lookup". An answer about another `external_reference` is not used.
+- **The callback** (`/v1/hooks/payhero/{key}`, the same keyed route; the gateway is unchanged): both documented layouts are read. FinoQ's flat one carries `transaction_type`: `inbound_payment` rings `onPaymentCallback`, `outbound_payment` rings `onPayoutCallback`. The old nested one (`response.ExternalReference`) carries no type and rings both. Only our reference is taken; `status` is used for nothing but the delivery id (so a second callback that says something new isn't dropped as a repeat). A layout with no reference rings nothing; the gateway has already answered `200`.
+- **Layouts are logged, values never.** The first time a layout of each answer or callback is seen, one INFO line: `payhero layout first seen: what=<call> status=<http> shape={field:kind,…}` (field names and `string`/`number`/`bool`/`null` only, long digit runs in a name masked). Bodies, numbers and amounts are never logged; a refusal's reason is logged with every digit masked.
+- **Fees** (`PayHeroFees`): collections from `GET /api/transaction_fees` (unauthenticated; the old host first, because that is where the prompt goes, then the new one; they differed below KES 50 on 2026-11-23; a row whose `amount_to` is below its `amount_from` is dropped). Payouts from `GET https://api.payhero.africa/api/pricing` (the public pricing page's data): bands with a fee at the first and last amount, **interpolated in a straight line and rounded up to the cent**. That formula is ours, not published; the bands read as a flat part plus 0.8 %, which a straight line fits exactly. A table is fetched on first use, kept in memory per node, refreshed after 6 hours, served as `CACHED` while a refresh fails for up to 7 days, then `UNKNOWN`; a failed fetch isn't retried for 5 minutes.
+- **`log` and `fake`:** `LogCollections` accepts a payout, reports it paid after 3 seconds and rings the payout doorbell on the callback address's key. `FakeCollections` is scripted with `nextPayout` (`ACCEPT`, `REJECT`, `INSUFFICIENT_BALANCE`, `UNKNOWN_SENT`, `UNKNOWN_NOT_SENT`, `UNAVAILABLE`), `completePayout`, `failPayout`, `ringPayout(…, times = 2)` and `payoutBalanceMinor`; `FakeProviderFees` answers what a test sets.
+
+### Confirmed and unconfirmed
+
+**Confirmed from the docs (read 2026-11-23):** the withdraw request and its 200 (`status: QUEUED`, `merchant_reference`, `checkout_request_id`, `conversation_id`); HTTP Basic with the account's API username and password; the error body (`error_code`, `error_message`, `status_code`, `invalid_arguments[]`); "a 4xx is a permanent rejection" and "a timeout or 5xx may still have started the payment"; the flat callback with `transaction_type`; the new status lookup's request; the two fee tables.
+
+**Not confirmed (each is what the code assumes):**
+
+- That the withdraw endpoint is enabled for a merchant's account, and on which host. Assumed: the new host, the old one as a fallback.
+- That the same API username and password work on `api.finoq.africa` and `backend.payhero.co.ke`. The new docs only say the API and auth hosts share a key. Assumed: tried on both.
+- Which callback layout a withdraw sends, whether it is signed (assumed: no), whether it is retried (assumed: no; the reconcile job must poll).
+- The **status answer's fields**, on both lookups, for a payout. Assumed: a `status` word as above, `provider_reference`/`third_party_reference` as the M-Pesa receipt, `amount`, `external_reference`.
+- Whether either lookup finds a payout by **our** reference. Assumed: maybe; hence `NotFound(OURS)` is not trusted.
+- Idempotency. Assumed: none; a repeated `external_reference` may pay twice.
+- **Which balance a payout spends**, and how to read it: the "payment wallet" (the owner's and the old dashboard's name) has no documented query, and the new account balance has no documented answer. Assumed: the names in "What the client does"; unread is null.
+- The payout fee formula, and whether the fee is taken from the payout balance, the service wallet or the amount. Assumed: the pricing page's bands, linear.
+- The words FinoQ uses for a balance refusal on a withdraw. Assumed: "insufficient … balance/funds/float".
+- The phone format `phone_number` wants on withdraw. Assumed: the docs' example, `0712345678`.
+
+### Runbook: first real payout (KES 10): what to look for in the logs
+
+The off-ramp isn't wired, so the first payout is made by whatever calls `sendPayout` once (a one-off ops action or a test hook, with a real merchant's credentials and account id), followed by `lookUpPayout` and `balances`. Raise nothing: every line below is INFO or WARN under `com.circaso.integrations.impl.payhero` (`LOG_LEVEL_INTEGRATIONS`). Expect the provider's charge on KES 10 to be about **KES 0.09** if the published bands are linear.
+
+1. **Before sending, `balances`.** Look for `payhero balances: payout=<source|unread> fees=<source|unread>` and the `payhero layout first seen: what=payhero.wallets.payment_wallet …`, `what=finoq.account.balance …` lines. They show which call answered and the field names of each. `payout=unread` with a 200 layout line means the balance is there under a name the client doesn't read yet: add the name to `BalanceReply`.
+2. **The send.** `attempt … url.path=/api/v2/withdraw http.status=…` (the shared client's line, with the vendor name: `finoq-payout` or `payhero-payout`), then `payhero payout: host=<finoq|payhero> status=<http> outcome=<…> reason=<masked> fields=<…>`.
+   - `outcome=accepted`: note the layout line `what=withdraw status=200 shape={…}` and check it has `merchant_reference`.
+   - `outcome=next_host:CREDENTIALS` or `next_host:NO_ROUTE` on `finoq`, then an answer from `payhero`: the account lives on the old host. Record which.
+   - `outcome=rejected:AMOUNT_BELOW_COST`: KES 10 is under the charge; the caller's `Rejected.cost` has the number. Send more.
+   - `outcome=rejected:INVALID_REQUEST fields=…`: the named fields are wrong (most likely `account_id` or the phone format).
+   - `outcome=insufficient_balance`: the payout wallet is empty. If the reason was a balance refusal but the outcome is `rejected:REFUSED`, the wording is new: add it to `LOW_BALANCE`.
+   - `outcome=unknown`: **do not send again.** Go to step 4 and check the M-Pesa statement.
+3. **The callback.** `payhero layout first seen: what=callback status=- shape={…}` and `payhero callback: layout=<flat|nested> about=<PAYOUT|PAYMENT|EITHER>`. `about=PAYOUT` means FinoQ's flat layout with `transaction_type`. `about=EITHER` means it sent the old layout (or no type). No callback line within a few minutes: callbacks may not be sent for withdraws, or went to an address set on the dashboard instead; the gateway's `webhook` lines say whether anything arrived. `webhook not translated: vendor=payhero code=integrations.not_implemented` is expected until the ramp implements `onPayoutCallback`.
+4. **The lookup.** `payhero payout status: source=<payout_status|payout_status_legacy> status=<http> read=<Paid|Pending|Failed|not_found|unread>` and the layout lines `what=payout_status …`, `what=payout_status_legacy …`. `read=unread` with `no status this client knows (words=…)` names the status word to add. Do it twice: once with the provider's reference, once with **only ours** (`PayoutLookup(reference, null)`), to learn whether a lookup by our reference finds it.
+5. **After it is paid.** `balances` again: the difference in the payout balance, less KES 10, is the real fee; the service wallet's difference shows whether the fee came from there instead. Compare with `ProviderFees.payoutFee`. Check the M-Pesa message for the receipt and compare it with `Paid.providerReceipt`.
+6. **Write down** in "Confirmed and unconfirmed": the host, the callback layout and whether it repeated, each status layout and word, whether our reference is searchable, the balance source that moved, the fee, and what a second send of the same reference does (only if FinoQ says in writing that it is safe to try).
+
 ## To check against the vendor before building on it
 
-- **PayHero, payouts:** PayHero's written answer that it has no payouts today (and whether or when they return). Until then the off-ramp waits on a payout provider.
-- **PayHero, which API:** docs.payhero.africa is branded "FinoQ", names another base (`api.finoq.africa`) and other payout fields (`account_id`, `recipient_type`), and never says it is PayHero's API. This design follows docs.payhero.co.ke and `backend.payhero.co.ke`; PayHero must say which one a new integration should use.
+- **PayHero, payouts:** superseded 2026-11-23: FinoQ's docs describe `POST /api/v2/withdraw`, and the integrations half is built on them (see "As built: payouts through FinoQ"). Still to get in writing: that withdraws are enabled for a merchant's account, and every "Not confirmed" item there.
+- **PayHero, which API:** docs.payhero.africa is branded "FinoQ", names another base (`api.finoq.africa`) and other payout fields (`account_id`, `recipient_type`), and never says it is PayHero's API. The on-ramp follows docs.payhero.co.ke and `backend.payhero.co.ke`; payouts try the new host first and the old one when the new one provably took nothing. PayHero must say which one a new integration should use.
 - **PayHero, the on-ramp:** whether callbacks are retried; whether the status query's amount and phone are always present on `SUCCESS` (the match depends on them); the format `phone_number` wants; what an empty service wallet does to a prompt.
 - **PayHero, the business:** its terms don't name crypto or P2P trading as prohibited, but keep "sole discretion" over restricted categories, and its newer docs sell a crypto on-ramp as a product that must be enabled per account. Merchants should have PayHero's agreement in writing before real volume.
 - **Circle:** settled by main: one account holds both wallet types (the fee wallets), the webhook marks them `custodyType: DEVELOPER`, and `EntitySecret` already encrypts for Circle. Still to check: that Gas Station sponsors a developer-controlled `SCA` wallet's transfers on the testnet policy and what mainnet's policy must allow.
