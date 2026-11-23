@@ -79,6 +79,9 @@ internal data class PayoutLookupReply(
     @SerialName("ExternalReference") val externalReferenceLegacy: String? = null,
     val message: String? = null,
     @SerialName("error_message") val errorMessage: String? = null,
+    @SerialName("ResultCode") val resultCode: String? = null,
+    @SerialName("ResultDesc") val resultDesc: String? = null,
+    @SerialName("TransactionReceipt") val transactionReceipt: String? = null,
     val data: PayoutLookupReply? = null,
     val response: PayoutLookupReply? = null,
     val transaction: PayoutLookupReply? = null,
@@ -96,7 +99,10 @@ internal data class PayoutLookupReply(
     val paidAmount: String? get() = amount ?: amountLegacy
 
     val receipt: String?
-        get() = listOf(providerReference, thirdPartyReference, mpesaReceipt).firstOrNull { !it.isNullOrBlank() }
+        get() =
+            listOf(providerReference, thirdPartyReference, mpesaReceipt, transactionReceipt).firstOrNull {
+                !it.isNullOrBlank()
+            }
 
     val ours: String? get() = listOf(externalReference, externalReferenceLegacy).firstOrNull { !it.isNullOrBlank() }
 

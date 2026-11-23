@@ -236,6 +236,29 @@ class PayHeroPayoutsTest {
     }
 
     @Test
+    fun `FinoQ's M-Pesa layout is paid only with result code 0 and a receipt, and never read as failed`() {
+        fun mpesa(code: String, receipt: String) =
+            """{"CheckoutRequestID":"0aaef9ef-15a6","ErrorMessage":"","MerchantRequestID":"m-1",""" +
+                """"RequestId":"UFD003742176.eO","ResponseCode":"0","ResponseDescription":"Accepted",""" +
+                """"ResultCode":"$code","ResultDesc":"done","TransactionReceipt":"$receipt"}"""
+
+        vendor.answer("$API$API_STATUS", mpesa("0", "TKN3H2X1QP"))
+        val paid = assertIs<PayoutStatus.Paid>(lookUp())
+        assertEquals("TKN3H2X1QP", paid.providerReceipt)
+        assertNull(paid.amount, "the layout carries no amount")
+
+        vendor.answer("$API$API_STATUS", mpesa("", ""))
+        assertEquals(PayoutStatus.Pending, lookUp(), "no result yet")
+
+        vendor.answer("$API$API_STATUS", mpesa("0", ""))
+        assertIs<PayoutStatus.Unknown>(lookUp(), "code 0 without a receipt is not proof of payment")
+
+        vendor.answer("$API$API_STATUS", mpesa("2001", ""))
+        vendor.answer("$LEGACY$LEGACY_STATUS", "", 404)
+        assertIs<PayoutStatus.Unknown>(lookUp(), "a non-zero code is never read as failed, which would allow a resend")
+    }
+
+    @Test
     fun `when the new lookup gives nothing the legacy one is asked, and its words are read the same`() {
         vendor.answer(
             "$LEGACY$LEGACY_STATUS",

@@ -188,6 +188,7 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
     }
 
     private fun found(reply: PayoutLookupReply, ours: String): Looked {
+        reply.candidates.firstNotNullOfOrNull { mpesaResult(it) }?.let { return it }
         for (candidate in reply.candidates) {
             val status = candidate.statusWords.firstNotNullOfOrNull { statusOf(it, candidate) } ?: continue
             val echoed = candidate.ours ?: reply.ours
@@ -201,6 +202,32 @@ class PayHeroPayouts(hosts: PayHeroHosts) {
         val words = reply.candidates.flatMap { it.statusWords }.joinToString(",") { word(it) }
         log.warn("payhero payout status: no status this client knows (words={})", words.ifEmpty { "-" })
         return Looked.Unread
+    }
+
+    /**
+     * FinoQ's global status lookup answers a payout in M-Pesa's own layout (first seen 2026-11-23 on a real KES 10
+     * payout): `ResultCode`, `ResultDesc`, `TransactionReceipt`, `ResponseCode`… with no status word. Only a
+     * `ResultCode` of 0 **with** an M-Pesa receipt is a payout that was made. Any other code is not read as failed,
+     * because M-Pesa's codes in a status answer can be about the query rather than the payment, and "failed" would
+     * allow a second payout; it stays unknown (the ramp then waits, and sends the order to review in time). An answer
+     * with no `ResultCode` yet is pending.
+     */
+    private fun mpesaResult(reply: PayoutLookupReply): Looked? {
+        if (reply.resultCode == null && reply.transactionReceipt == null && reply.resultDesc == null) return null
+        val code = reply.resultCode?.trim().orEmpty()
+        val receipt = reply.transactionReceipt?.trim().orEmpty()
+        val looked =
+            when {
+                code == "0" && receipt.isNotEmpty() -> Looked.Found(PayoutStatus.Paid(receipt, null, null))
+                code.isEmpty() -> Looked.Found(PayoutStatus.Pending)
+                else -> Looked.Unread
+            }
+        log.info(
+            "payhero payout status: mpesa layout code={} receipt={}",
+            word(code.ifEmpty { "-" }),
+            receipt.isNotEmpty(),
+        )
+        return looked
     }
 
     private fun statusOf(raw: String, reply: PayoutLookupReply): PayoutStatus? =
