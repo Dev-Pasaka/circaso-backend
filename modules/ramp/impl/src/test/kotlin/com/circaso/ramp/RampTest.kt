@@ -9,6 +9,7 @@ import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.Exclusion
 import com.circaso.ramp.domain.models.KycStanding
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.OrderState
@@ -624,7 +625,7 @@ class RampTest {
                 ramp.orders.rows.values
                     .single()
             assertEquals(OrderState.FAILED, order.state)
-            assertEquals("prompt_failed", order.failureReason)
+            assertEquals("prompt_unconfirmed", order.failureReason, "the provider couldn't say whether it went out")
             assertEquals(0, ramp.reservations.openTotal(ramp.crynce.merchantId, TESTNET))
             assertEquals(0, ramp.counters.daily.getValue(ramp.amina to TESTNET))
         }
@@ -678,7 +679,16 @@ class RampTest {
 
             val bob = ramp.user("+254700000002")
             assertEquals(RampError.NoMerchantAvailable, ramp.buy(bob, phoneOf("+254700000002")).error())
-            assertEquals(listOf(ramp.crynce.merchantId, ramp.crynce.merchantId), ramp.merchants.locked)
+            // left out before any lock is taken: 15 - 9.8 promised < 9.8
+            assertEquals(
+                Exclusion.FLOAT_SHORT,
+                ramp
+                    .lastRouting()
+                    .plan.candidates
+                    .single()
+                    .exclusion,
+            )
+            assertEquals(listOf(ramp.crynce.merchantId), ramp.merchants.locked)
 
             // an order completes: 9.8 USDC leaves, and 0.06 USDC of what is left is Circaso's until the sweep
             val h = Harness()

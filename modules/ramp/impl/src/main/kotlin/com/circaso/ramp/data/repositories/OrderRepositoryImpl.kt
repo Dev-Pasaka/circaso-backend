@@ -5,6 +5,7 @@ import com.circaso.infrastructure.api.DatabaseException
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.data.tables.OrderEventsTable
 import com.circaso.ramp.data.tables.OrdersTable
 import com.circaso.ramp.data.tables.QuotesTable
 import com.circaso.ramp.domain.models.Direction
@@ -21,6 +22,7 @@ import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.UserId
+import com.circaso.shared.Uuid7
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
@@ -103,37 +105,41 @@ internal fun after(
  * `ramp.orders`. A quote makes one order per attempt (`orders_quote_attempt_key`; a second attempt exists only after
  * the provider refused the first merchant's prompt) and a user has one open order
  * (`orders_user_open_key`), so an insert that finds either adds nothing. A state moves only by the guard
- * `WHERE order_id = ? AND state IN (<allowed predecessors>)`: whoever's update finds the row made the step.
+ * `WHERE order_id = ? AND state IN (<allowed predecessors>)`: whoever's update finds the row made the step, and the
+ * same transaction writes that step into `ramp.order_events` (decision 2026-11-23).
  */
 class OrderRepositoryImpl(private val database: Database) : OrderRepository {
     override suspend fun insert(order: Order): Boolean =
         database.tx("orders.insert") {
-            OrdersTable
-                .insertIgnore {
-                    it[orderId] = order.orderId.value
-                    it[userId] = order.userId.value
-                    it[merchantId] = order.merchantId.value
-                    it[quoteId] = order.quoteId.value
-                    it[network] = order.network.name
-                    it[direction] = order.direction.name
-                    it[state] = order.state.name
-                    it[blockchain] = order.blockchain
-                    it[fiatCurrency] = order.fiat.currency
-                    it[fiatAmountMinor] = order.fiat.amountMinor
-                    it[asset] = RampSettings.ASSET
-                    it[assetAmountMinor] = order.assetMinor
-                    it[rate] = order.rate.toPlainString()
-                    it[feeMinor] = order.feeMinor
-                    it[feeBps] = order.feeBps
-                    it[merchantShareBps] = order.merchantShareBps
-                    it[collectionsProvider] = order.collectionsProvider
-                    it[payerPhone] = order.payerPhone.e164
-                    it[destinationAddress] = order.destinationAddress
-                    it[paymentDeadline] = order.paymentDeadline
-                    it[createdAt] = order.createdAt
-                    it[updatedAt] = order.updatedAt
-                    it[attempt] = order.attempt
-                }.insertedCount > 0
+            val inserted =
+                OrdersTable
+                    .insertIgnore {
+                        it[orderId] = order.orderId.value
+                        it[userId] = order.userId.value
+                        it[merchantId] = order.merchantId.value
+                        it[quoteId] = order.quoteId.value
+                        it[network] = order.network.name
+                        it[direction] = order.direction.name
+                        it[state] = order.state.name
+                        it[blockchain] = order.blockchain
+                        it[fiatCurrency] = order.fiat.currency
+                        it[fiatAmountMinor] = order.fiat.amountMinor
+                        it[asset] = RampSettings.ASSET
+                        it[assetAmountMinor] = order.assetMinor
+                        it[rate] = order.rate.toPlainString()
+                        it[feeMinor] = order.feeMinor
+                        it[feeBps] = order.feeBps
+                        it[merchantShareBps] = order.merchantShareBps
+                        it[collectionsProvider] = order.collectionsProvider
+                        it[payerPhone] = order.payerPhone.e164
+                        it[destinationAddress] = order.destinationAddress
+                        it[paymentDeadline] = order.paymentDeadline
+                        it[createdAt] = order.createdAt
+                        it[updatedAt] = order.updatedAt
+                        it[attempt] = order.attempt
+                    }.insertedCount > 0
+            if (inserted) record(order, order.createdAt, detail = null)
+            inserted
         }
 
     override suspend fun find(orderId: RampOrderId): Order? = database.tx("orders.find") { read(orderId) }
@@ -218,7 +224,7 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                     patch.txHash?.let { value -> it[txHash] = value }
                     patch.failureReason?.let { value -> it[failureReason] = value }
                 }
-            if (moved == 0) null else read(orderId)
+            if (moved == 0) null else read(orderId)?.also { record(it, at, patch.failureReason) }
         }
 
     override suspend fun markPaid(
@@ -237,7 +243,9 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                         it[updatedAt] = at
                         it[mpesaReceipt] = receipt
                     }
-                read(orderId)?.takeIf { moved > 0 }?.let { PaidOutcome.Moved(it) } ?: PaidOutcome.AlreadyMoved
+                val paid = read(orderId)?.takeIf { moved > 0 }
+                paid?.let { record(it, at, detail = null) }
+                paid?.let { PaidOutcome.Moved(it) } ?: PaidOutcome.AlreadyMoved
             }
         } catch (e: DatabaseException) {
             // orders_receipt_key: this M-Pesa payment already settled another order.
@@ -263,6 +271,24 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                 .toList()
         }
 
+    override suspend fun recent(
+        network: Network,
+        direction: Direction,
+        limit: Int,
+    ): List<Order> =
+        database.tx("orders.recent") {
+            OrdersTable
+                .selectAll()
+                .where {
+                    (OrdersTable.network eq network.name) and
+                        (OrdersTable.direction eq direction.name) and
+                        (OrdersTable.attempt eq 1)
+                }.orderBy(OrdersTable.createdAt to SortOrder.DESC, OrdersTable.orderId to SortOrder.DESC)
+                .limit(limit)
+                .map { it.toOrder() }
+                .toList()
+        }
+
     override suspend fun inReview(
         network: Network?,
         after: RampOrderId?,
@@ -280,6 +306,27 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                 .map { it.toOrder() }
                 .toList()
         }
+
+    /**
+     * The order's timeline: the state it has just entered, written by the transaction that put it there (the caller's
+     * own, when there is one), so no move is ever kept without its time.
+     */
+    private suspend fun record(
+        order: Order,
+        at: Instant,
+        detail: String?,
+    ) {
+        OrderEventsTable.insert {
+            it[eventId] = Uuid7.generate(at)
+            it[orderId] = order.orderId.value
+            it[merchantId] = order.merchantId.value
+            it[network] = order.network.name
+            it[direction] = order.direction.name
+            it[state] = order.state.name
+            it[OrderEventsTable.detail] = detail
+            it[OrderEventsTable.at] = at
+        }
+    }
 
     private suspend fun read(orderId: RampOrderId): Order? =
         OrdersTable

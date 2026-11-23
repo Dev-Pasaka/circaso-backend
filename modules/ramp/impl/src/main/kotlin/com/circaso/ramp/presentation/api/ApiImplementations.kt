@@ -252,7 +252,7 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
 }
 
 /** A verification for staff: where it stands and why, never the session's link or the identity key itself. */
-private fun Verification.toOps() =
+internal fun Verification.toOps() =
     OpsRampVerification(
         environment = environment.name,
         status = status.name,
@@ -269,7 +269,7 @@ private fun Verification.toOps() =
 private fun Block.toOps(): OpsRampBlock? =
     userId?.let { OpsRampBlock(blockId, it, reason.name, note, createdBy, createdAt) }
 
-private fun MerchantRecord.toOps() =
+internal fun MerchantRecord.toOps() =
     OpsMerchant(
         merchantId = merchant.merchantId,
         email = merchant.email,
@@ -283,6 +283,10 @@ private fun MerchantRecord.toOps() =
         approvedAt = merchant.approvedAt,
         createdAt = merchant.createdAt,
         verifications = verifications.map { it.toOps() },
+        merchantType = merchant.merchantType.name,
+        orderLimitMinor = merchant.orderLimitMinor,
+        offersOnRamp = merchant.offersOnramp,
+        offersOffRamp = merchant.offersOfframp,
     )
 
 private fun OrderView.toOps() =

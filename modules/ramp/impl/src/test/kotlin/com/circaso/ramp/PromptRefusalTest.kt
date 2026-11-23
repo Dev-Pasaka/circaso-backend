@@ -10,6 +10,7 @@ import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.support.OrderFlow
+import com.circaso.ramp.domain.support.Prompted
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.shared.ErrorKind
 import com.circaso.shared.PhoneNumber
@@ -125,9 +126,10 @@ class PromptRefusalTest {
             val order =
                 ramp.orders.rows.values
                     .single()
-            assertEquals(OrderState.FAILED to "prompt_failed", order.state to order.failureReason)
+            assertEquals(OrderState.FAILED to "prompt_unconfirmed", order.state to order.failureReason)
             assertTrue(ramp.collections.prompts.isEmpty(), "a prompt may have gone out: a second one never follows it")
             assertEquals(listOf(OrderState.FAILED), ramp.frames.states)
+            assertTrue("prompt_unconfirmed" in ramp.alerts.stuck, "a prompt may be open: people are told")
         }
 
     @Test
@@ -194,7 +196,7 @@ class PromptRefusalTest {
             ramp.orders.rows[reserved.orderId] = reserved
             ramp.merchants.setPaymentsIssue(crynce, PaymentsIssue.SERVICE_BALANCE, ramp.clock.instant())
 
-            assertIs<Resource.Success<*>>(ramp.flow.requestPayment(reserved))
+            assertIs<Prompted.Sent>(ramp.flow.requestPayment(reserved))
 
             assertNull(ramp.merchants.find(crynce)!!.paymentsIssue)
         }

@@ -34,6 +34,11 @@ import java.time.Duration
  * session while the first one's link works). The answer is the whole state and, while a check is open, its link: the
  * token the provider's native SDK starts with, and the hosted page as the fallback. Someone already verified, in
  * review, or declined for good gets their state with no link.
+ *
+ * **Verifying is not a trade** (decision 2026-11-23): it is open to any signed-in person with an active account who
+ * isn't barred, whenever the network's identity provider is set up, whether or not the network requires KYC, with
+ * the ramp `OFF`, and in `PREVIEW` without being on the list. So a person can verify from their profile before they
+ * ever buy. Where checks can't run yet the answer is `ramp.kyc_not_configured`.
  */
 class StartUserKyc(
     private val gates: Gates,
@@ -41,11 +46,7 @@ class StartUserKyc(
     private val verifications: Verifications,
 ) {
     suspend operator fun invoke(userId: UserId, network: Network): Resource<KycView> {
-        val settings =
-            when (val open = gates.open(userId, network)) {
-                is Resource.Error -> return open
-                is Resource.Success -> open.data
-            }
+        val settings = gates.settingsOf(network)
         if (accounts.status(userId) != AccountStatus.ACTIVE) return Resource.error(RampError.AccountRestricted)
         if (gates.isBlocked(userId, settings)) return Resource.error(RampError.Blocked)
         return verifications.start(Subject.user(userId), settings)
@@ -54,7 +55,8 @@ class StartUserKyc(
 
 /**
  * R0's read: the user's verification on a network. While a check is unfinished the provider itself is asked (at most
- * every few seconds), so the app sees the outcome the moment the SDK closes, webhook or no webhook.
+ * every few seconds), so the app sees the outcome the moment the SDK closes, webhook or no webhook. Open like R0
+ * itself, whatever the ramp's state; someone barred reads their state with nothing to start.
  */
 class GetUserKyc(
     private val gates: Gates,
@@ -62,13 +64,10 @@ class GetUserKyc(
     private val verifications: Verifications,
 ) {
     suspend operator fun invoke(userId: UserId, network: Network): Resource<KycView> {
-        val settings =
-            when (val open = gates.open(userId, network)) {
-                is Resource.Error -> return open
-                is Resource.Success -> open.data
-            }
+        val settings = gates.settingsOf(network)
         val row = verifications.refreshIfDue(rows.find(Subject.user(userId), settings.kycEnvironment))
-        return Resource.success(verifications.view(row, settings))
+        val view = verifications.view(row, settings)
+        return Resource.success(if (gates.isBlocked(userId, settings)) view.copy(canStart = false) else view)
     }
 }
 

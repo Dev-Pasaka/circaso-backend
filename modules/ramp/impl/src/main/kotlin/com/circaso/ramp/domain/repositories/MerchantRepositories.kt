@@ -6,6 +6,7 @@ import com.circaso.ramp.domain.models.DayTotals
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
+import com.circaso.ramp.domain.models.MerchantType
 import com.circaso.ramp.domain.models.MerchantWallet
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
@@ -39,14 +40,29 @@ interface MerchantRepository {
     suspend fun page(before: MerchantId?, limit: Int): List<Merchant>
 
     /**
-     * Approved merchants with a float wallet on [network] and [blockchain] whose trading window lasts past [until]
-     * and who have no payments issue to fix.
+     * Every merchant with a float wallet on [network] and [blockchain], whatever their state: the engine's pool. Who
+     * of them may take an order is the engine's own filter, which records why each of the others was left out. At
+     * most [limit].
      */
-    suspend fun candidates(
+    suspend fun pool(
         network: Network,
         blockchain: String,
-        until: Instant,
+        limit: Int,
     ): List<Candidate>
+
+    /** Staff's call: the merchant's type and their own order limit (null: the type's default). True when they exist. */
+    suspend fun setTier(
+        merchantId: MerchantId,
+        type: MerchantType,
+        orderLimitMinor: Long?,
+    ): Boolean
+
+    /** The merchant's own switches: which directions they take orders in. */
+    suspend fun setOffers(
+        merchantId: MerchantId,
+        onRamp: Boolean,
+        offRamp: Boolean,
+    )
 
     /** The merchant's row, locked until the transaction ends: reservations and withdrawals take it first. */
     suspend fun lock(merchantId: MerchantId): Merchant?

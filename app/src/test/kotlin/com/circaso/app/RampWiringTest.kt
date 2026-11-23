@@ -2,6 +2,7 @@ package com.circaso.app
 
 import com.circaso.infrastructure.api.DatabaseModuleSpec
 import com.circaso.infrastructure.api.OpsJob
+import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.impl.config.EnvConfig
 import com.circaso.infrastructure.impl.config.EnvSecrets
 import com.circaso.infrastructure.testing.TestPostgres
@@ -10,7 +11,9 @@ import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.SmsGateway
 import com.circaso.integrations.impl.dev.FakeEmail
 import com.circaso.integrations.impl.dev.FakeSms
+import com.circaso.ramp.api.OpsRoutingQuery
 import com.circaso.ramp.api.RampAdmin
+import com.circaso.ramp.api.RampEngineAdmin
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -264,6 +267,31 @@ class RampWiringTest {
             val admin = koin!!.get<RampAdmin>()
             val left = admin.settings(Network.TESTNET).copy(state = "OFF", kycRequired = false)
             assertIs<Resource.Success<*>>(admin.updateSettings(left, UUID.randomUUID()))
+
+            // The merchant engine is wired: the purchase's routing was logged, under the testnet's seeded settings.
+            val engine = koin!!.get<RampEngineAdmin>()
+            val settings = (engine.settings(Network.TESTNET, "ON_RAMP") as Resource.Success).data
+            assertEquals("ACTIVE" to 1L, settings.settings.mode to settings.version)
+            val routed = (engine.decisions(OpsRoutingQuery(Network.TESTNET), null, 10) as Resource.Success).data
+            val decision = routed.first()
+            assertEquals(
+                Triple("ROUTED", "ACTIVE", 1L),
+                Triple(decision.outcome, decision.mode, decision.settingsVersion),
+            )
+            assertEquals(listOf("prompted"), decision.steps.map { it.result })
+            assertTrue(koin!!.getAll<ScheduledJob>().any { it.name == "ramp.prune-routing" }, "and its log is pruned")
+
+            // Verifying is not a trade (decision 2026-11-23): with buying switched off again and KYC not required,
+            // the profile still reads the person's verification, and R0 still answers.
+            val closed = client.get("/v1/ramp") { asBuyer(buyer) }
+            assertEquals(HttpStatusCode.Forbidden, closed.status, closed.bodyAsText())
+            assertTrue("ramp.unavailable" in closed.bodyAsText(), closed.bodyAsText())
+            val profile = client.get("/v1/ramp/kyc") { asBuyer(buyer) }
+            assertEquals(HttpStatusCode.OK, profile.status, profile.bodyAsText())
+            assertTrue("\"status\":\"VERIFIED\",\"required\":false" in profile.bodyAsText(), profile.bodyAsText())
+            val again = client.post("/v1/ramp/kyc") { asBuyer(buyer, "{}") }
+            assertEquals(HttpStatusCode.OK, again.status, again.bodyAsText())
+            assertTrue("\"status\":\"VERIFIED\"" in again.bodyAsText(), again.bodyAsText())
         }
     }
 

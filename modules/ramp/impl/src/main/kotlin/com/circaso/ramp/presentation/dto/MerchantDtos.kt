@@ -89,7 +89,70 @@ data class MerchantResponse(
     val paymentsIssue: MerchantPaymentsIssueDto? = null,
     /** The merchant's identity verification on this network: start or continue it with RM3. */
     val kyc: VerificationDto,
+    /** `INDIVIDUAL` or `BUSINESS`, set by Circaso: it decides the order limit you start with (RM16 shows the limit). */
+    val merchantType: String = "INDIVIDUAL",
+    /** Which directions you take orders in: your own switches (RM17). */
+    val offers: MerchantOffersDto = MerchantOffersDto(onRamp = true, offRamp = false),
 )
+
+/** `onRamp`: people buying USDC from you with M-Pesa. `offRamp`: people selling USDC to you for M-Pesa. */
+@Serializable
+data class MerchantOffersDto(val onRamp: Boolean, val offRamp: Boolean)
+
+/** RM17 request: either switch may be left out, and then stays as it is. */
+@Serializable
+data class MerchantOffersRequest(val onRamp: Boolean? = null, val offRamp: Boolean? = null)
+
+/** The statistics window of RM16: your last `orders` finished orders within `days` days. */
+@Serializable
+data class PerformanceWindowDto(val orders: Int, val days: Int)
+
+/**
+ * RM16's newcomer line. `applies` is true while you have completed fewer than `until` trades: new merchants are given
+ * extra turns so they can build a record. `tradesLeft` is how many more completed trades until it ends.
+ */
+@Serializable
+data class NewcomerDto(val applies: Boolean, val until: Int, val tradesLeft: Int)
+
+/**
+ * RM16: how you are doing in one direction, in the terms orders are shared out by.
+ *
+ * `finished` is every order of yours that ended in the window; `counted` is the ones a rate is taken over:
+ * `completed` and `failed`. **`failed` is only what was down to you**: your payment provider refused the prompt, your
+ * prepaid balance there was empty, you were offline when the prompt had to go out, or (selling) a payout failed or
+ * was missed. `notCounted` is everything else, and never moves a rate: a buyer who ignored or cancelled the prompt, a
+ * cancelled order, the provider being out of reach. The two rates are percentages of `counted` (null with nothing
+ * counted yet).
+ *
+ * `medianSeconds` and `p90Seconds` are how long your completed orders took from the payment being confirmed to the
+ * USDC arriving (selling: from the USDC arriving to the payout). `speed`: `NO_DATA`, `ON_TARGET` (the median is
+ * within `targetSeconds`), `WITHIN_SLA` (within `slaSeconds`) or `SLOW`.
+ */
+@Serializable
+data class PerformanceDto(
+    val direction: String,
+    val offered: Boolean,
+    val orderLimit: RampAmount,
+    val window: PerformanceWindowDto,
+    val finished: Int,
+    val counted: Int,
+    val completed: Int,
+    val failed: Int,
+    val notCounted: Int,
+    val completionRatePercent: String?,
+    val failureRatePercent: String?,
+    val medianSeconds: Long?,
+    val p90Seconds: Long?,
+    val targetSeconds: Int,
+    val slaSeconds: Int,
+    val speed: String,
+    val trades: Int,
+    val newcomer: NewcomerDto,
+)
+
+/** RM16 response: your own figures only, one entry per direction (`ON_RAMP`, `OFF_RAMP`). */
+@Serializable
+data class PerformanceResponse(val network: String, val merchantType: String, val directions: List<PerformanceDto>)
 
 /** RM1 request. */
 @Serializable

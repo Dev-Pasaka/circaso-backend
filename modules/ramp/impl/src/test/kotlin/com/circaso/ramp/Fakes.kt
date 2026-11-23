@@ -86,6 +86,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.UUID
+import kotlin.random.Random
 
 const val USDC_CONTRACT = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 
@@ -373,6 +374,9 @@ class FakeProviders(private val offered: Map<String, MobileCollections>) : Colle
 /** The payment provider: a prompt is `QUEUED` until the test says what the payer did, or sets any status at all. */
 class FakeCollections : MobileCollections {
     val prompts = mutableListOf<CollectionRequest>()
+
+    /** Prompts that got no answer: whether one reached the phone is exactly what nobody knows. */
+    val unansweredPrompts = mutableListOf<CollectionRequest>()
     val promptedWith = mutableListOf<CollectionCredentials>()
     val statuses = mutableMapOf<String, CollectionStatus>()
     val statusQueries = mutableListOf<String>()
@@ -400,12 +404,32 @@ class FakeCollections : MobileCollections {
         statuses[referenceOf(order)] = CollectionStatus(CollectionState.FAILED, null, null, null, null)
     }
 
+    /**
+     * Whose prompts get no answer, by API username: the request fails with the given cause (a timeout, an open
+     * circuit) and no reference comes back.
+     */
+    val unanswered = mutableMapOf<String, Throwable>()
+
+    /**
+     * What the provider says when asked about a prompt by **our** reference after it gave no answer: the state it
+     * reports, or absent when it can't look a prompt up that way (PayHero today).
+     */
+    val byOurReference = mutableMapOf<String, CollectionState>()
+
+    /** The same for every prompt that gets no answer, whichever order it is for. */
+    var unansweredState: CollectionState? = null
+
     override suspend fun requestPayment(
         credentials: CollectionCredentials,
         request: CollectionRequest,
     ): Resource<CollectionReceipt> {
         failure?.let { return Resource.error(it) }
         refusals[credentials.username]?.let { return Resource.error(it) }
+        unanswered[credentials.username]?.let { cause ->
+            unansweredState?.let { byOurReference[request.reference] = it }
+            unansweredPrompts += request
+            return Resource.error(IntegrationError.Unavailable("PayHero"), cause)
+        }
         prompts += request
         promptedWith += credentials
         val reference = "PH-${prompts.size}"
@@ -419,7 +443,13 @@ class FakeCollections : MobileCollections {
     ): Resource<CollectionStatus> {
         failure?.let { return Resource.error(it) }
         statusQueries += providerReference
-        return Resource.success(statuses.getValue(providerReference))
+        byOurReference[providerReference]?.let { state ->
+            val asked = unansweredPrompts.first { it.reference == providerReference }
+            return Resource.success(CollectionStatus(state, asked.amount, asked.payer, providerReference, null))
+        }
+        val known =
+            statuses[providerReference] ?: return Resource.error(IntegrationError.Rejected("Unknown reference."))
+        return Resource.success(known)
     }
 
     override suspend fun payout(credentials: CollectionCredentials, request: PayoutRequest): Resource<PayoutReceipt> =
@@ -683,4 +713,11 @@ class MemorySignInCodes(private val clock: Clock) : SignInCodes {
         codes.remove(emailKey)
         return CodeCheck.MATCH
     }
+}
+
+/** A [Random] that asks for the one to use on every draw, so a test can swap the seed after the harness is built. */
+class SwitchableRandom(private val current: () -> Random) : Random() {
+    override fun nextBits(bitCount: Int): Int = current().nextBits(bitCount)
+
+    override fun nextDouble(): Double = current().nextDouble()
 }

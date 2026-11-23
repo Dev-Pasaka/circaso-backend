@@ -25,6 +25,7 @@ enum class AuditTarget(val wire: String) {
     FEE_WITHDRAWAL("fee_withdrawal"),
     RAMP_MERCHANT("ramp_merchant"),
     RAMP_SETTINGS("ramp_settings"),
+    RAMP_ENGINE_SETTINGS("ramp_engine_settings"),
     EMAIL_TEMPLATE("email_template"),
     ;
 
@@ -67,6 +68,8 @@ enum class AuditAction(val wire: String, val target: AuditTarget) {
     RAMP_UNBLOCK("user.ramp_unblock", AuditTarget.USER),
     RAMP_VERIFICATION_RESET("user.ramp_verification_reset", AuditTarget.USER),
     RAMP_MERCHANT_VERIFICATION_RESET("ramp_merchant.verification_reset", AuditTarget.RAMP_MERCHANT),
+    RAMP_ENGINE_SETTINGS_UPDATE("ramp_engine_settings.update", AuditTarget.RAMP_ENGINE_SETTINGS),
+    RAMP_MERCHANT_TIER("ramp_merchant.tier", AuditTarget.RAMP_MERCHANT),
     EMAIL_TEMPLATE_SET("email_template.set", AuditTarget.EMAIL_TEMPLATE),
     ;
 

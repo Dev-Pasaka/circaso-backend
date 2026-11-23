@@ -6,6 +6,7 @@ import com.circaso.integrations.api.CollectionRequest
 import com.circaso.integrations.api.CollectionState
 import com.circaso.integrations.api.CollectionStatus
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Order
@@ -14,6 +15,7 @@ import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PaidOutcome
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.ports.FrameSender
+import com.circaso.ramp.domain.ports.PromptTransport
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RampCounters
 import com.circaso.ramp.domain.ports.RampOutbox
@@ -26,6 +28,21 @@ import com.circaso.shared.EventBus
 import com.circaso.shared.Resource
 import com.circaso.shared.envelope
 import java.time.Clock
+
+/** How sending an order's prompt ended, and with it what the caller may do next. */
+sealed interface Prompted {
+    /** The prompt is on the payer's phone. */
+    data class Sent(val order: Order) : Prompted
+
+    /**
+     * The order is closed ([reason]) and nothing of it can be on the payer's phone: the next merchant may be asked.
+     * [error] is the answer when nobody is left.
+     */
+    data class NotSent(val reason: String, val error: RampError) : Prompted
+
+    /** The order is closed ([reason]) and nobody else may be asked for its quote; [error] is the answer. */
+    data class Stopped(val reason: String, val error: RampError) : Prompted
+}
 
 /**
  * The steps an on-ramp order takes in the app's processes after it is reserved, shared by every way in (the request,
@@ -51,56 +68,70 @@ class OrderFlow(
     private val sessions: TradingSessions,
     private val settings: SettingsBook,
     private val presence: Presence,
+    private val transport: PromptTransport,
     private val clock: Clock,
 ) {
     /**
-     * Sends the M-Pesa prompt for a reserved order. A prompt that can't be sent closes the order and frees the float.
+     * Sends the M-Pesa prompt for a reserved order. A prompt that can't be sent closes the order and frees the float,
+     * and the answer says what the caller may do next (decision 2026-11-23):
      *
-     * The two ways it can't be sent are told apart. The provider **out of reach** (`ramp.collections_unavailable`):
-     * whether a prompt went out is unknown, so nothing more is tried. The provider **refusing this merchant's
-     * request** (`ramp.merchant_unavailable`): nothing was sent, so the caller may ask the next merchant; the user is
-     * told nothing about the order that was closed, because they never saw it.
+     * - [Prompted.NotSent]: **nothing of this order can be on the payer's phone**, so the next merchant may be
+     *   asked. The provider refused this merchant's request, the merchant's keys were gone, the request provably never
+     *   left ([PromptTransport.neverSent]), or it may have left and the provider itself then said the prompt is over.
+     *   The user is told nothing about the closed order: they never saw it.
+     * - [Prompted.Stopped]: a prompt **may** be on the phone and the provider couldn't say, or the provider isn't
+     *   offered here at all. Nobody else is asked for this quote: a buyer never gets a second prompt while the first
+     *   may still be open.
      */
-    suspend fun requestPayment(order: Order): Resource<Order> {
+    suspend fun requestPayment(order: Order): Prompted {
         val keys = keysFor(order)
         val merchant = merchants.find(order.merchantId)
         val callbackKey = merchant?.callbackKey
         if (keys == null || callbackKey == null) {
-            close(order, OrderState.FAILED, "merchant_offline")
-            return Resource.error(RampError.NoMerchantAvailable)
+            close(order, OrderState.FAILED, MERCHANT_OFFLINE, tellUser = false)
+            return Prompted.NotSent(MERCHANT_OFFLINE, RampError.MerchantUnavailable)
         }
         val collections = providers.named(order.collectionsProvider)
         if (collections == null) {
             close(order, OrderState.FAILED, "provider_unavailable")
-            return Resource.error(RampError.CollectionsUnavailable)
+            return Prompted.Stopped("provider_unavailable", RampError.CollectionsUnavailable)
         }
         // The merchant's own callback address goes with every prompt made for them (decision 2026-11-22).
         val callbackUrl = Callbacks.url(settings.of(order.network).callbackBaseUrl, callbackKey)
         val request = CollectionRequest(order.payerPhone, order.fiat, order.orderId.toString(), callbackUrl)
         return when (val prompted = collections.requestPayment(keys, request)) {
             is Resource.Error -> {
-                notPrompted(order, prompted)
+                notPrompted(order, prompted, keys, collections)
             }
 
             is Resource.Success -> {
                 // A prompt that went through shows whatever the provider refused before has been put right.
-                if (merchant?.paymentsIssue != null) merchants.setPaymentsIssue(order.merchantId, null, clock.instant())
+                if (merchant.paymentsIssue != null) merchants.setPaymentsIssue(order.merchantId, null, clock.instant())
                 val patch =
                     OrderPatch(
                         providerReference = prompted.data.providerReference,
                         checkoutId = prompted.data.checkoutId,
                     )
-                val from = setOf(OrderState.RESERVED)
-                val waiting =
-                    orders.move(order.orderId, OrderState.PAYMENT_REQUESTED, from, patch, clock.instant())
-                        ?: current(order)
-                frames.orderUpdated(waiting)
-                Resource.success(waiting)
+                Prompted.Sent(waitingFor(order, patch))
             }
         }
     }
 
-    private suspend fun notPrompted(order: Order, prompted: Resource.Error): Resource<Order> =
+    /** `RESERVED → PAYMENT_REQUESTED`, and the user is told. */
+    private suspend fun waitingFor(order: Order, patch: OrderPatch): Order {
+        val from = setOf(OrderState.RESERVED)
+        val waiting =
+            orders.move(order.orderId, OrderState.PAYMENT_REQUESTED, from, patch, clock.instant()) ?: current(order)
+        frames.orderUpdated(waiting)
+        return waiting
+    }
+
+    private suspend fun notPrompted(
+        order: Order,
+        prompted: Resource.Error,
+        keys: CollectionCredentials,
+        collections: MobileCollections,
+    ): Prompted =
         when (prompted.error) {
             // The merchant's prepaid balance at the provider is empty: every prompt of theirs will be refused until
             // they top it up, so the engine stops routing to them and they are told on the portal.
@@ -109,20 +140,71 @@ class OrderFlow(
                 merchants.setPaymentsIssue(order.merchantId, PaymentsIssue.SERVICE_BALANCE, clock.instant())
                 presence.goOffline(order.merchantId)
                 alerts.stuck("merchant ${order.merchantId} prompts", PROVIDER_BALANCE)
-                Resource.error(RampError.MerchantUnavailable, prompted.cause)
+                Prompted.NotSent(PROVIDER_BALANCE, RampError.MerchantUnavailable)
             }
 
             is IntegrationError.Rejected -> {
                 close(order, OrderState.FAILED, PROMPT_REFUSED, tellUser = false)
-                Resource.error(RampError.MerchantUnavailable, prompted.cause)
+                Prompted.NotSent(PROMPT_REFUSED, RampError.MerchantUnavailable)
             }
 
-            // The prompt carries no idempotency key, so it is never repeated here; the user starts again.
             else -> {
-                close(order, OrderState.FAILED, "prompt_failed")
-                Resource.error(RampError.CollectionsUnavailable, prompted.cause)
+                unanswered(order, prompted, keys, collections)
             }
         }
+
+    /**
+     * The provider gave no answer. The prompt carries no idempotency key, so it is never repeated; what happens next
+     * rests on whether a prompt can be on the phone.
+     *
+     * - The request never left (the circuit was open, no connection was made): nothing is on the phone, and the next
+     *   merchant may be asked.
+     * - It may have left (a timeout, a dropped answer, a server error): **the provider is asked about this order
+     *   before anybody else is prompted**, by our own reference, since it never gave us one of its own. Only an
+     *   answer that names this very order counts. "It failed": the prompt is over, the next merchant may be asked.
+     *   "It is queued" or "it was paid": the prompt went out after all, and the order carries on as if it had been
+     *   answered. No such answer (the provider is still out of reach, or can't look a prompt up by our reference):
+     *   nobody knows, so the order is closed, nobody else is asked, and the people on call are told that a prompt
+     *   may be open with no order behind it.
+     */
+    private suspend fun unanswered(
+        order: Order,
+        prompted: Resource.Error,
+        keys: CollectionCredentials,
+        collections: MobileCollections,
+    ): Prompted {
+        if (transport.neverSent(prompted)) {
+            close(order, OrderState.FAILED, PROVIDER_UNREACHABLE, tellUser = false)
+            return Prompted.NotSent(PROVIDER_UNREACHABLE, RampError.CollectionsUnavailable)
+        }
+        val reference = order.orderId.toString()
+        return when (promptState(reference, keys, collections)) {
+            CollectionState.FAILED -> {
+                close(order, OrderState.FAILED, PROMPT_FAILED, tellUser = false)
+                Prompted.NotSent(PROMPT_FAILED, RampError.CollectionsUnavailable)
+            }
+
+            CollectionState.QUEUED, CollectionState.SUCCESS -> {
+                Prompted.Sent(waitingFor(order, OrderPatch(providerReference = reference)))
+            }
+
+            null -> {
+                close(order, OrderState.FAILED, PROMPT_UNCONFIRMED)
+                alerts.stuck("order ${order.orderId} prompt", PROMPT_UNCONFIRMED)
+                Prompted.Stopped(PROMPT_UNCONFIRMED, RampError.CollectionsUnavailable)
+            }
+        }
+    }
+
+    /** What the provider says about the prompt we named [reference]; null unless its answer names that reference. */
+    private suspend fun promptState(
+        reference: String,
+        keys: CollectionCredentials,
+        collections: MobileCollections,
+    ): CollectionState? {
+        val status = (collections.paymentStatus(keys, reference) as? Resource.Success)?.data ?: return null
+        return status.state.takeIf { status.reference == reference }
+    }
 
     /**
      * Asks the provider what happened to the order's payment and applies the answer: nothing while it is still
@@ -232,6 +314,18 @@ class OrderFlow(
     private suspend fun current(order: Order): Order = orders.find(order.orderId) ?: order
 
     companion object {
+        /** Why an order ended when this node no longer held its merchant's keys as the prompt had to go out. */
+        const val MERCHANT_OFFLINE = "merchant_offline"
+
+        /** Why an order ended when the prompt's request provably never reached the provider. */
+        const val PROVIDER_UNREACHABLE = "provider_unreachable"
+
+        /** Why an order ended when the provider gave no answer and then said itself that the prompt was over. */
+        const val PROMPT_FAILED = "prompt_failed"
+
+        /** Why an order ended when the provider gave no answer and couldn't say whether a prompt went out. */
+        const val PROMPT_UNCONFIRMED = "prompt_unconfirmed"
+
         /** Why an order ended when its merchant's provider refused the prompt for their service balance. */
         const val PROVIDER_BALANCE = "provider_balance"
 

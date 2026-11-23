@@ -17,6 +17,7 @@ import com.circaso.ramp.domain.models.RampStatus
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.ports.Pricing
+import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RealtimeLog
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
@@ -179,16 +180,25 @@ class CancelOrder(
  * that isn't an order **of the merchant that key belongs to**. For one that is, the provider itself is asked what
  * happened ([OrderFlow.verify], which ignores an order that isn't waiting for a payment). A forged callback can at
  * most cause one status query for a real open order of that same merchant.
+ *
+ * One more case is told to the people on call: a callback for an order that was closed as `prompt_unconfirmed` (the
+ * provider gave no answer when the prompt was sent, and couldn't say afterwards whether it went out).
  */
 class HandlePaymentCallback(
     private val merchants: MerchantRepository,
     private val orders: OrderRepository,
     private val flow: OrderFlow,
+    private val alerts: RampAlerts,
 ) {
     suspend operator fun invoke(callbackKey: String, reference: String): Resource<Unit> {
         val merchant = merchants.byCallbackKey(callbackKey) ?: return Resource.success(Unit)
         val order = RampOrderId.parse(reference)?.let { orders.find(it) } ?: return Resource.success(Unit)
-        if (order.merchantId == merchant.merchantId) flow.verify(order)
+        if (order.merchantId != merchant.merchantId) return Resource.success(Unit)
+        // The order was closed because nobody could say whether its prompt went out, and now the provider rings
+        // about it: a prompt did go out. The callback proves nothing, so nothing moves; a person must look.
+        val wasUnconfirmed = order.state == OrderState.FAILED && order.failureReason == OrderFlow.PROMPT_UNCONFIRMED
+        if (wasUnconfirmed) alerts.stuck("order ${order.orderId} callback", "callback_after_unconfirmed_prompt")
+        flow.verify(order)
         return Resource.success(Unit)
     }
 }

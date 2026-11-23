@@ -265,6 +265,12 @@ sealed class RampError(
             ErrorDetails(fields = listOf(FieldError(field, problem))),
         )
 
+    data object RoutingNotFound : RampError(
+        "ramp.routing_not_found",
+        "We couldn't find that routing decision.",
+        ErrorKind.NOT_FOUND,
+    )
+
     data object SettingsChanged : RampError(
         "ramp.settings_changed",
         "Someone else changed these settings. Read them again.",

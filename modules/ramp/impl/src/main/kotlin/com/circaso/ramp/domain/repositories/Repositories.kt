@@ -3,6 +3,7 @@ package com.circaso.ramp.domain.repositories
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.FeeSplit
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
@@ -57,6 +58,11 @@ interface QuoteRepository {
     suspend fun find(quoteId: QuoteId, now: Instant): Quote?
 }
 
+/**
+ * `ramp.orders`. **Every insert and every move also writes the order's timeline** (`ramp.order_events`: the state
+ * entered, when, and the reason when there is one) in the same transaction, so a step can't happen without its time
+ * being kept (decision 2026-11-23). The timeline is read through [OrderEventRepository].
+ */
 interface OrderRepository {
     /**
      * True when the order was added. False when its quote already made an order for this attempt, or the user already
@@ -114,6 +120,13 @@ interface OrderRepository {
         limit: Int,
     ): List<Order>
 
+    /** The latest [limit] purchases on [network] in [direction] (each quote's first order), newest first. */
+    suspend fun recent(
+        network: Network,
+        direction: Direction,
+        limit: Int,
+    ): List<Order>
+
     /** Orders in `REVIEW` (on [network], or both when null), oldest first, after the id [after]. */
     suspend fun inReview(
         network: Network?,
@@ -151,4 +164,7 @@ interface CommissionRepository {
      * collected, in USDC minor units. Subtracted from free float.
      */
     suspend fun owedTotal(merchantId: MerchantId, network: Network): Long
+
+    /** How many trades the merchant has completed on [network], ever: one commission is one completed trade. */
+    suspend fun completedCount(merchantId: MerchantId, network: Network): Int
 }

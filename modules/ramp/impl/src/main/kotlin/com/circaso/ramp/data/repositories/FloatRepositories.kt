@@ -137,6 +137,17 @@ class CommissionRepositoryImpl(private val database: Database) : CommissionRepos
                         CommissionsTable.settledAt.isNull()
                 }.single()[total] ?: 0
         }
+
+    override suspend fun completedCount(merchantId: MerchantId, network: Network): Int =
+        database.tx("commissions.completed-count") {
+            val trades = CommissionsTable.orderId.count()
+            CommissionsTable
+                .select(trades)
+                .where {
+                    (CommissionsTable.merchantId eq merchantId.value) and (CommissionsTable.network eq network.name)
+                }.single()[trades]
+                .toInt()
+        }
 }
 
 /**

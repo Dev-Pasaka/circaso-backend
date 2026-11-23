@@ -42,7 +42,7 @@ private const val MAX_LIMIT = 200
 
 /**
  * The ramp for the app: buying USDC with M-Pesa from a partner merchant (decision 2026-11-22). R0 verifying your
- * identity once, R1 whether you can trade, R2 a price, R3 the order and its M-Pesa prompt, R4 and R5 your orders, R6
+ * identity once (open from the profile whatever the ramp's state: decision 2026-11-23), R1 whether you can trade, R2 a price, R3 the order and its M-Pesa prompt, R4 and R5 your orders, R6
  * cancelling before you pay. Every
  * route is about money on one network, so all of them sit in the wallet-network group. Selling waits on a payout
  * provider.
@@ -78,7 +78,6 @@ fun Route.rampController(ramp: RampService) {
                     "R0 · Verify your identity (start or continue)",
                     TAG,
                     listOf(
-                        UNAVAILABLE,
                         RESTRICTED,
                         BLOCKED,
                         "ramp.kyc_attempts_exceeded",
@@ -86,7 +85,11 @@ fun Route.rampController(ramp: RampService) {
                         "ramp.kyc_not_configured",
                     ),
                     notes =
-                        "$SCOPE Once, before your first purchase. While `session` is there a check is open: start " +
+                        "$SCOPE Once: from the profile at any time, or before a first purchase. **Verifying is " +
+                            "not a trade**: it works for any signed-in person with an active account who isn't " +
+                            "barred, whether or not this network requires it (`required` says which), with " +
+                            "buying switched off, and for someone buying isn't open to yet (it never answers " +
+                            "`ramp.unavailable`). While `session` is there a check is open: start " +
                             "the identity provider's native SDK with `session.sessionToken` (or open `session.url`, " +
                             "its hosted page, as the fallback); both work until `session.expiresAt`. Calling again " +
                             "returns the same open check, never a second one. A declined or expired check may be " +
@@ -96,7 +99,8 @@ fun Route.rampController(ramp: RampService) {
                             "`submitted` true: finished and waiting for the provider's answer, or declined for " +
                             "a reason trying again can't fix). The outcome arrives as a `ramp/kyc.updated` " +
                             "frame, and a push when it is final. `ramp.kyc_unavailable` (502): the provider is " +
-                            "out of reach, try again in a moment. `ramp.kyc_not_configured` (503): checks aren't set up on this network yet.",
+                            "out of reach, try again in a moment. `ramp.kyc_not_configured` (503): checks aren't " +
+                            "set up on this network yet, so hide the button.",
                 )
 
                 get {
@@ -105,9 +109,11 @@ fun Route.rampController(ramp: RampService) {
                 }.docs<NoBody, VerificationDto>(
                     "R0 · Your identity verification",
                     TAG,
-                    listOf(UNAVAILABLE),
                     notes =
-                        "$SCOPE The same fields as R1's `verification`. Call it when the provider's SDK closes: " +
+                        "$SCOPE The same fields as R1's `verification`, for the profile's \"Identity\" row as " +
+                            "much as for a purchase: it answers whatever the state of buying on this network " +
+                            "(never `ramp.unavailable`). Someone barred reads their status with `canStart` false. " +
+                            "Call it when the provider's SDK closes: " +
                             "while a check is unfinished this asks the provider itself (at most every few seconds), " +
                             "so the outcome shows at once even before the frame arrives. `PENDING` with `submitted` " +
                             "true means the check was finished and the provider hasn't decided yet: keep reading " +

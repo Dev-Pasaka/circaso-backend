@@ -5,11 +5,13 @@ import com.circaso.ramp.presentation.dto.ChangePinRequest
 import com.circaso.ramp.presentation.dto.EarningsResponse
 import com.circaso.ramp.presentation.dto.GoOnlineRequest
 import com.circaso.ramp.presentation.dto.KycResponse
+import com.circaso.ramp.presentation.dto.MerchantOffersRequest
 import com.circaso.ramp.presentation.dto.MerchantOrdersResponse
 import com.circaso.ramp.presentation.dto.MerchantResponse
 import com.circaso.ramp.presentation.dto.OnlineResponse
 import com.circaso.ramp.presentation.dto.PaymentsRequest
 import com.circaso.ramp.presentation.dto.PaymentsSavedResponse
+import com.circaso.ramp.presentation.dto.PerformanceResponse
 import com.circaso.ramp.presentation.dto.PinChangedResponse
 import com.circaso.ramp.presentation.dto.ProfileRequest
 import com.circaso.ramp.presentation.dto.SignInCodeRequest
@@ -26,6 +28,7 @@ import com.circaso.ramp.presentation.mappers.toPins
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.ramp.presentation.mappers.toSavedResponse
 import com.circaso.ramp.presentation.mappers.toSignIn
+import com.circaso.ramp.presentation.mappers.toSwitches
 import com.circaso.ramp.presentation.mappers.toWindow
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
@@ -142,7 +145,8 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "prompt for a reason only you can fix: `SERVICE_BALANCE` is an empty prepaid service wallet " +
                 "(\"Top up your PayHero service wallet\"). It takes you offline and puts `provider_balance` in " +
                 "`missing`; `canGoOnline` stays true, because going online again (RM6) checks the balance and " +
-                "clears it.",
+                "clears it. `merchantType` (`INDIVIDUAL` or `BUSINESS`) is set by Circaso; `offers` are your own " +
+                "switches for which orders you take (RM17); RM16 shows how you are doing.",
     )
 
     put("profile") {
@@ -185,6 +189,47 @@ private fun Route.accountRoutes(merchants: MerchantService) {
                 "answer). " +
                 "A declined or expired check may be started again a few times " +
                 "a day (`ramp.kyc_attempts_exceeded`, 429).",
+    )
+
+    get("performance") {
+        val result = merchants.performance(call.merchantId(), call.merchantNetwork())
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<NoBody, PerformanceResponse>(
+        "RM16 · How you are doing",
+        TAG,
+        listOf(INVALID, NOT_FOUND),
+        notes =
+            "$MONEY Your own figures only, per direction (`ON_RAMP`: people buying from you; `OFF_RAMP`: people " +
+                "selling to you): what Circaso looks at when it shares orders out between merchants. `window` is " +
+                "what is counted: your last `orders` finished orders within `days` days. `completed` and `failed` " +
+                "add up to `counted`; **`failed` is only what was down to you** (your provider refused the prompt, " +
+                "your prepaid balance there was empty, you were offline when the prompt had to go out). A buyer " +
+                "who ignored or cancelled the M-Pesa prompt is in `notCounted` and never moves a rate. " +
+                "`completionRatePercent` and `failureRatePercent` are of `counted` (null until something is). " +
+                "`medianSeconds` and `p90Seconds` are how long your completed orders took once the payment was " +
+                "confirmed; `speed` is `NO_DATA`, `ON_TARGET` (within `targetSeconds`), `WITHIN_SLA` (within " +
+                "`slaSeconds`) or `SLOW`. `trades` is every trade you have completed on this network. " +
+                "`newcomer.applies` is true while you are still given a new merchant's extra turns, with " +
+                "`tradesLeft` to go. `orderLimit` is the largest single order you are sent; `merchantType` " +
+                "(`INDIVIDUAL` or `BUSINESS`) is set by Circaso. Nothing here is about any other merchant.",
+    )
+
+    put("offers") {
+        val request = call.receive<MerchantOffersRequest>()
+        val result =
+            request.toSwitches().flatMap { (onRamp, offRamp) ->
+                merchants.setOffers(call.merchantId(), call.merchantNetwork(), onRamp, offRamp)
+            }
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<MerchantOffersRequest, MerchantResponse>(
+        "RM17 · Which orders you take",
+        TAG,
+        listOf(INVALID, NOT_FOUND, MALFORMED),
+        notes =
+            "$MONEY Your own switches: `onRamp` (people buying USDC from you with M-Pesa; on to start with) and " +
+                "`offRamp` (people selling USDC to you; off to start with, and not open yet). One left out stays " +
+                "as it is. Switched off, you are sent no new order in that direction; open ones finish. Answers " +
+                "your account as RM2 does (`offers`).",
     )
 
     put("pin") {

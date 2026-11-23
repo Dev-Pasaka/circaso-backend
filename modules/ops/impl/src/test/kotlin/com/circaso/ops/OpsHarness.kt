@@ -14,6 +14,7 @@ import com.circaso.ops.domain.repositories.AuditRepository
 import com.circaso.ops.domain.repositories.EmailTemplateRepository
 import com.circaso.ops.domain.repositories.StaffRepository
 import com.circaso.ramp.api.RampAdmin
+import com.circaso.ramp.api.RampEngineAdmin
 import com.circaso.shared.StaffRole
 import com.circaso.support.api.DiagnosticLogDesk
 import com.circaso.support.api.SupportDesk
@@ -62,6 +63,7 @@ class OpsHarness(
     val networks = FakeNetworks()
     val feeWallets = FakeFeeWallets()
     val ramp = FakeRampAdmin()
+    val rampEngine = FakeRampEngineAdmin(ramp.merchants)
 
     val koin: Koin =
         koinApplication {
@@ -76,6 +78,7 @@ class OpsHarness(
                     single<NetworkAdmin> { networks }
                     single<FeeWalletAdmin> { feeWallets }
                     single<RampAdmin> { ramp }
+                    single<RampEngineAdmin> { rampEngine }
                     single<EmailTemplateRepository> { emailTemplates }
                     single<EmailTemplateSeeds> { emailSeeds }
                     single<SupportDesk> { desk }
