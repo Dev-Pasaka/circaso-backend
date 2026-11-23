@@ -24,6 +24,38 @@ sealed class RampError(
         ErrorKind.FORBIDDEN,
     )
 
+    /** The user, or the identity they verified with, is barred from the ramp. */
+    data object Blocked : RampError(
+        "ramp.blocked",
+        "You can't buy or sell here. Contact support if you think this is a mistake.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    /** The identity provider can't be reached right now. */
+    data object KycUnavailable : RampError(
+        "ramp.kyc_unavailable",
+        "We couldn't start your verification. Try again in a moment.",
+        ErrorKind.UPSTREAM,
+    )
+
+    /**
+     * Identity checks can't run on this network yet: the provider's keys for its environment aren't on the server,
+     * no workflow is named in the settings, or the server can't compute identity keys.
+     */
+    data object KycNotConfigured : RampError(
+        "ramp.kyc_not_configured",
+        "Identity verification isn't available yet. Try again later.",
+        ErrorKind.UNAVAILABLE,
+    )
+
+    class KycAttemptsExceeded(retryAfterSeconds: Long) :
+        RampError(
+            "ramp.kyc_attempts_exceeded",
+            "You've tried to verify too many times today. Try again tomorrow.",
+            ErrorKind.RATE_LIMITED,
+            ErrorDetails(retryAfterSeconds = retryAfterSeconds),
+        )
+
     data object AccountRestricted : RampError(
         "ramp.account_restricted",
         "Your account can't trade right now.",
@@ -182,6 +214,23 @@ sealed class RampError(
         ErrorKind.CONFLICT,
         ErrorDetails(fields = listOf(FieldError("provider_balance", "below the minimum needed to send prompts"))),
     )
+
+    /** RM6 before the merchant's identity is verified on a network that requires it. */
+    data object MerchantKycMissing : RampError(
+        "ramp.merchant_setup_incomplete",
+        "Verify your identity before you go online.",
+        ErrorKind.CONFLICT,
+        ErrorDetails(fields = listOf(FieldError("kyc", "identity not verified"))),
+    )
+
+    /** Staff approving a merchant whose identity isn't verified where a network that is open requires it. */
+    class MerchantKycRequired(networks: String) :
+        RampError(
+            "ramp.merchant_kyc_required",
+            "This merchant hasn't passed identity verification yet ($networks).",
+            ErrorKind.CONFLICT,
+            ErrorDetails(fields = listOf(FieldError("kyc", "not verified on $networks"))),
+        )
 
     data object PinInvalid : RampError("ramp.pin_invalid", "That PIN isn't right.", ErrorKind.INVALID)
 

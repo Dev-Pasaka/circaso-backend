@@ -2,7 +2,7 @@
 
 Ramp answers "how do I turn shillings into USDC and back": it is an automated P2P merchant desk for USDC ↔ KES over M-Pesa. Vetted partner merchants supply the USDC float and their own M-Pesa collection account and earn commission; Circaso's merchant engine runs every trade, so a merchant does nothing per trade. Schema `ramp`, Redis prefix `rmp:`, stream `events:ramp`.
 
-Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
+Status: **first slice built on `feat/ramp` (2026-11-22; see "As built" below), then staff visibility per merchant and the provider-refusal handling on `feat/ramp-merchant-insights` (same day), then identity verification with Didit on `feat/ramp-kyc` (same day; see "As built: identity verification"); the rest is design.** Earlier: draft, revised 2026-11-22 for `main`, for Pasaka's review. The first draft and a first on-ramp slice were written against an old branch (`feat/all-chains`, 2026-10-30) that predates wallet networks, settings in the database, the ops server and Circaso's own developer-controlled wallets. That code is parked (a stash) and is not on this branch. "How this fits main" below is what changes; the slice is ported only after Pasaka approves it. Items marked **Proposed** are choices this draft made that the agreed design did not settle; they are listed again under Open questions. Vendor details are from PayHero's docs (docs.payhero.co.ke, its removed pages from the web archive, and docs.payhero.africa), Circle's developer-controlled wallets reference, Didit's docs (docs.didit.me) and the Didit account as read on 2026-11-22; points the docs did not confirm are marked **unconfirmed** and listed under "To check against the vendor".
 
 **This is the one module that moves money.** Everywhere else the backend prepares and the user signs (principle 7, principle 11). Ramp sends USDC on its own, but only from a partner merchant's developer-controlled wallet, and only against a payment it has verified itself (decision 2026-11-22). It never signs for a user's wallet: an off-ramp is still an ordinary W4 transfer signed with the user's PIN.
 
@@ -12,7 +12,7 @@ Four rules already decided on `main` reshape the first draft. Each is followed h
 
 **1. The environment holds only keys and secrets; every other setting lives in the database and is edited in the admin (decision 2026-11-18).**
 
-- **Secrets only in the environment:** nothing new for Circle (`CIRCLE_API_KEY`, `CIRCLE_MAINNET_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_MAINNET_ENTITY_SECRET` exist), `RAMP_CREDENTIALS_MASTER_KEY` (the envelope's master half, with the portal), and `DIDIT_API_KEY` and `DIDIT_WEBHOOK_SECRET` (with Didit). **A merchant's PayHero credentials are never in the environment and never supplied by Circaso** (Pasaka, 2026-11-22): they belong to the merchant, who enters them on the portal, and they exist only sealed in `merchant_credentials`.
+- **Secrets only in the environment:** nothing new for Circle (`CIRCLE_API_KEY`, `CIRCLE_MAINNET_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_MAINNET_ENTITY_SECRET` exist), `RAMP_CREDENTIALS_MASTER_KEY` (the envelope's master half, with the portal; the KYC identity key's own key is derived from it too), and Didit's four, named per Didit environment (decided 2026-11-22): `DIDIT_SANDBOX_API_KEY`, `DIDIT_SANDBOX_WEBHOOK_SECRET`, `DIDIT_LIVE_API_KEY`, `DIDIT_LIVE_WEBHOOK_SECRET`. Either pair may be absent: the server starts, and that environment is unavailable (`ramp.kyc_not_configured`). **A merchant's PayHero credentials are never in the environment and never supplied by Circaso** (Pasaka, 2026-11-22): they belong to the merchant, who enters them on the portal, and they exist only sealed in `merchant_credentials`.
 - **Everything else is a row:** `ramp.settings`, one row per network (Data), seeded once from built-in defaults, read at most every 10 seconds per process as the wallet's network settings are, and edited by staff through the ops server (RO5). That covers the ramp's state (`OFF` | `PREVIEW` | `ON`), the chains it delivers on, the limits, the prompts per hour, the fee, the quote lifetime, the payment window, whether KYC is enforced, and the origin callback addresses are made on. None of the `RAMP_*` or `INTEGRATIONS_MERCHANT_CUSTODY_*` variables of the first draft exist.
 - **The collections provider is a database setting too (decided by Pasaka, 2026-11-22; replaces the first version of this rule, which made it a start-up line).** There is no `INTEGRATIONS_COLLECTIONS_PROVIDER`. `ramp.settings.collections_provider` names it per network; staff switch it in the admin (RO5) at any time and it applies within the settings cache's 10 seconds, with no restart. Integrations binds every implementation at once behind `CollectionProviders` (`named(name)`, `names`) and the ramp names the one it wants on each call, so integrations never depends on the ramp. Real providers (`payhero` today) are always offered; `log`, which reports every prompt as paid, is offered only where the process runs in the local environment, and `fake` only where a test builds it. **This is the one place the ramp differs from the other `INTEGRATIONS_*_PROVIDER` start-up lines.** An order keeps the provider that prompted it (`orders.collections_provider`), so a switch mid-order never asks the wrong provider for its status; a merchant's sealed credentials name the provider they are an account at (`merchant_credentials.provider`), and a merchant whose account is at another provider than the network's current one is not a candidate and reconnects (RM5; RM2 `missing` says `payments`). The merchant float has no provider setting of its own: it uses the treasury (below), which follows the custody provider and the keys present.
 
@@ -70,7 +70,7 @@ Circle stays the source of truth for a merchant's balance (principle 11); the M-
 
 **The ramp owns this gate (Proposed).** KYC is required for the ramp only, and a merchant is not an identity account, so ramp keeps the result itself (`verifications`) and is the one module that calls `KycProvider`. `identity.accounts.verification` (used by support recovery) is left alone; whether an approved ramp KYC should also set it is an Open question.
 
-- **Flow.** R0 (users) or RM3 (merchants) creates a Didit session (`vendor_data` = `user:<id>` or `merchant:<id>`) and returns its hosted URL. The result arrives at `/v1/hooks/didit`; ramp re-reads the decision from Didit before trusting `Approved`, then writes the status and the identity key.
+- **Flow.** R0 (users) or RM3 (merchants) creates a Didit session (`vendor_data` = `user:<id>` or `merchant:<id>`). The app starts Didit's native SDK with the session's `session_token` (the hosted `url` is the fallback); the merchant portal sends the browser to the hosted `url`, which returns to the portal. The result arrives at `/v1/hooks/didit`; ramp re-reads the decision from Didit before trusting `Approved`, then writes the status and the identity key. **Built: see "As built: identity verification".**
 - **The KYC identity key** is `HMAC-SHA256(server key, issuing country | document type | document number)` of the approved document, like `phoneHmac`. No document, number, name or image is stored or put on a stream; Didit keeps the record.
 - **One identity, one ramp user.** The identity key is unique among verified users: a second account presenting the same document is refused (`ramp.identity_in_use`), which is also what makes a block stick.
 - **Workflows** (in the Didit sandbox application today; nothing was created or changed):
@@ -318,9 +318,11 @@ interface KycNotifications {                         // implemented by ramp, wir
 
 | Setting | Example | Purpose |
 | --- | --- | --- |
-| `INTEGRATIONS_KYC_PROVIDER` (start-up) | `log` \| `fake` \| `didit` | `log` locally, `fake` in tests |
-| `DIDIT_API_KEY`, `DIDIT_WEBHOOK_SECRET` (secrets) | — | Per Didit application (sandbox or live) |
-| `ramp.settings.kyc_workflow_user`, `kyc_workflow_merchant` (database) | workflow ids | Which Didit workflow each kind runs; edited in the admin |
+| `ramp.settings.kyc_provider` (database, per network) | `didit` (a server); `log` (seeded and offered on a local run only) | Who runs the checks; switched in the admin with no restart, as the collections provider is. There is no `INTEGRATIONS_KYC_PROVIDER` line. `fake` exists only where a test builds it |
+| `ramp.settings.kyc_environment` (database) | `SANDBOX` (TESTNET) \| `LIVE` (MAINNET) | Which Didit application a network's checks run in, and whose approvals it trusts |
+| `DIDIT_SANDBOX_API_KEY`, `DIDIT_SANDBOX_WEBHOOK_SECRET`, `DIDIT_LIVE_API_KEY`, `DIDIT_LIVE_WEBHOOK_SECRET` (secrets) | — | Per Didit application; both can be set at once, either may be absent |
+| `ramp.settings.kyc_workflow_user`, `kyc_workflow_merchant` (database) | workflow ids | Which Didit workflow each kind runs; edited in the admin; empty: that kind can't be verified on the network yet |
+| `ramp.settings.merchant_portal_url`, `kyc_attempts_per_day`, `kyc_pending_hours` (database) | `https://merchants.circaso.com`, 3, 24 | The hosted flow's way back to the portal; the daily cap on new checks; how long a started check may stay unfinished |
 
 The `log` providers print what they were asked and answer with made-up references; `fake` records calls, and lets a test settle a payment or a transaction by hand.
 
@@ -350,7 +352,7 @@ Paths relative to `https://api.circaso.com/v1`. Every POST, PUT and DELETE takes
 
 | # | Route | Use case (domain) | Does | First slice |
 | --- | --- | --- | --- | --- |
-| R0 | `POST /ramp/kyc` | `StartUserKyc` | Starts (or returns the open) Didit check for this user: `{ status, url? }`. Already `VERIFIED` answers so with no link | Later (with Didit) |
+| R0 | `POST /ramp/kyc` · `GET /ramp/kyc` | `StartUserKyc` · `GetUserKyc` | Starts (or returns the open) Didit check for this user: `{ status, required, canStart, reason, retryAt, session: { sessionToken, url, expiresAt }? }`. Already `VERIFIED` answers so with no session. The `GET` reads the state, asking Didit while a check is unfinished | Built 2026-11-22 |
 | R1 | `GET /ramp` | `GetRampStatus` | Whether this user can trade now: KYC status, blocked or not, the limits, the chains offered, whether any merchant is online. Never a list of merchants | Yes |
 | R2 | `POST /ramp/quotes` | `CreateQuote` | Prices an amount in one direction; a quote lasts 60 s and reserves nothing | Yes (on-ramp) |
 | R3 | `POST /ramp/onramp/orders` | `StartOnRamp` | Picks a merchant, reserves float, sends the M-Pesa prompt | Yes |
@@ -462,7 +464,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | --- | --- | --- | --- |
 | RM1 | `PUT /ramp/merchant/profile` | `ApplyAsMerchant` | The merchant's name and contact phone; applies as a partner (`NEW` → `APPLIED`) |
 | RM2 | `GET /ramp/merchant` | `GetMerchant` | State and what is still missing, USDC float (balance, reserved, free), and while online the PayHero service wallet balance; online or not and until when |
-| RM3 | `POST /ramp/merchant/kyc` | `StartMerchantKyc` | The Didit session link for the merchant (ID, liveness, face match, AML) |
+| RM3 | `POST /ramp/merchant/kyc` | `StartMerchantKyc` | The Didit session link for the merchant (ID, liveness, face match, AML): the hosted `url`, which returns to `<merchant_portal_url>/kyc/done`. Built 2026-11-22 |
 | RM5 | `PUT /ramp/merchant/payments` | `StorePaymentAccount` | PayHero username, password, the till or paybill channel id, and the PIN that seals them; answers the merchant's callback address to paste into PayHero; checked with `MobileCollections.verify` first |
 | RM6 | `POST /ramp/merchant/session` / `DELETE` | `GoOnline` / `GoOffline` | PIN and a window in minutes; unlocks the keys on this node. Going offline stops new orders; open ones finish |
 | RM7 | `GET /ramp/merchant/orders?cursor=` | `ListMerchantOrders` | The merchant's orders, payer numbers masked |
@@ -481,7 +483,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | --- | --- | --- |
 | RO1 | `GET /ops/ramp/merchants` | Merchants and their states |
 | RO2 | `POST /ops/ramp/merchants/{id}/approve` · `/suspend` | Partner approval; suspension takes the merchant offline at once |
-| RO3 | `GET` · `POST` · `DELETE /ops/ramp/blocks` | The block list; block or unblock a user (and identity) |
+| RO3 | `GET` · `POST /ops/ramp/blocks` · `DELETE /ops/ramp/blocks/{userId}` | The block list; block or unblock a user (and identity). Built 2026-11-22, with `GET /ops/ramp/users/{userId}/verification` and the two verification resets (see "As built: identity verification") |
 | RO4 | `GET /ops/ramp/orders?state=REVIEW` · `POST /ops/ramp/orders/{id}/resolve` | Orders waiting for a person, and their resolution (release, refund, close) with a reason, audited |
 | RO5 | `GET` · `PUT /ops/ramp/settings?network=` | One network's ramp settings (state, chains, limits, fee, windows, KYC enforcement, callback origin), with a version check; audited; in force within 10 seconds |
 
@@ -499,7 +501,7 @@ PostgreSQL tables in schema `ramp` (role `ramp`, Flyway location `db/ramp`), and
 
 ```sql
 -- V1__ramp.sql (first slice: merchants, quotes, orders, reservations, commissions, realtime, outbox);
--- verifications, merchant_credentials, blocks and withdrawals arrive with Didit, the portal and the off-ramp
+-- verifications and blocks arrived with Didit (V4__kyc.sql, shown below as built); withdrawals arrive with the off-ramp
 
 CREATE TABLE ramp.settings (                             -- one row per network; edited in the admin (RO5), seeded once
     network                text        PRIMARY KEY,      -- MAINNET | TESTNET
@@ -514,7 +516,9 @@ CREATE TABLE ramp.settings (                             -- one row per network;
     fee_settle_hour_utc    integer     NOT NULL CHECK (fee_settle_hour_utc BETWEEN 0 AND 23),    -- the daily sweep of Circaso's share
     quote_seconds          integer     NOT NULL,         -- 60
     payment_window_seconds integer     NOT NULL,         -- 120
-    kyc_required           boolean     NOT NULL,         -- false only while Didit isn't built; never false on MAINNET (CHECK)
+    kyc_required           boolean     NOT NULL,         -- staff's switch; never false on MAINNET (CHECK)
+    -- V4: kyc_provider (didit), kyc_environment (SANDBOX | LIVE), kyc_workflow_user, kyc_workflow_merchant,
+    --     merchant_portal_url, kyc_attempts_per_day (1..20, 3), kyc_pending_hours (1..672, 24)
     callback_base_url      text        NOT NULL,         -- the public origin merchants' callback addresses are made on
     collections_provider   text        NOT NULL,         -- who sends the M-Pesa prompts (payhero); switched in the admin
     provider_fee_floor_minor bigint    NOT NULL DEFAULT 5000 CHECK (provider_fee_floor_minor >= 0),  -- V3: the least a merchant's service balance at the provider must hold to go online (KES minor units; 0: no check)
@@ -581,20 +585,32 @@ CREATE TABLE ramp.merchants (
 CREATE INDEX merchants_online_idx ON ramp.merchants (blockchain, online_until)
     WHERE state = 'APPROVED' AND online_until IS NOT NULL;                    -- the engine's candidates; ramp.end-sessions
 
-CREATE TABLE ramp.verifications (                        -- who passed KYC for the ramp; never a document
-    subject_kind  text        NOT NULL,                  -- USER | MERCHANT
-    subject_id    uuid        NOT NULL,
-    status        text        NOT NULL,                  -- PENDING | VERIFIED | DECLINED | IN_REVIEW
-    tier          text        NOT NULL DEFAULT 'BASIC',  -- for tiered limits (Open question)
-    session_id    text,                                  -- the provider's current session: the webhook finds the row by it
-    identity_key  text,                                  -- HMAC of the approved document; set with VERIFIED
-    verified_at   timestamptz,
-    updated_at    timestamptz NOT NULL,
-    PRIMARY KEY (subject_kind, subject_id)
+CREATE TABLE ramp.verifications (                        -- V4: who passed KYC for the ramp; never a document
+    subject_kind       text        NOT NULL,             -- USER | MERCHANT
+    subject_id         uuid        NOT NULL,
+    environment        text        NOT NULL,             -- SANDBOX | LIVE: the provider environment the check ran in, not the network
+    status             text        NOT NULL,             -- PENDING | IN_REVIEW | VERIFIED | DECLINED | EXPIRED (no row: NONE)
+    reason             text,                             -- our own code (document, identity_in_use, …); never the provider's text
+    provider           text        NOT NULL,             -- who holds the session (didit): its decision is asked there
+    session_id         text,                             -- the provider's current session: the webhook finds the row by it
+    session_token      text,                             -- what the provider's SDK starts with; kept only while the check is unfinished
+    session_url        text,                             -- the provider's hosted page for the same session
+    session_expires_at timestamptz,
+    identity_key       text,                             -- HMAC of the approved document (live only); set with VERIFIED
+    attempts           integer     NOT NULL DEFAULT 0,   -- sessions ever started
+    attempt_day        date,                             -- the Nairobi day the count below is for
+    attempts_on_day    integer     NOT NULL DEFAULT 0,   -- the daily cap
+    started_at         timestamptz,
+    checked_at         timestamptz NOT NULL,             -- when the provider was last asked: the sweep's order
+    verified_at        timestamptz,
+    created_at         timestamptz NOT NULL,
+    updated_at         timestamptz NOT NULL,
+    PRIMARY KEY (subject_kind, subject_id, environment)
 );
 CREATE UNIQUE INDEX verifications_session_key ON ramp.verifications (session_id) WHERE session_id IS NOT NULL;
-CREATE UNIQUE INDEX verifications_identity_key ON ramp.verifications (subject_kind, identity_key)
+CREATE UNIQUE INDEX verifications_identity_key ON ramp.verifications (subject_kind, environment, identity_key)
     WHERE identity_key IS NOT NULL;                      -- one verified ramp user (and one merchant) per real identity
+CREATE INDEX verifications_open_idx ON ramp.verifications (checked_at) WHERE status IN ('PENDING', 'IN_REVIEW');
 
 CREATE TABLE ramp.merchant_credentials (                 -- sealed; never plaintext
     merchant_id  uuid        PRIMARY KEY,
@@ -683,17 +699,20 @@ CREATE TABLE ramp.commissions (
 );
 CREATE INDEX commissions_merchant_idx ON ramp.commissions (merchant_id, earned_at DESC);       -- RM8
 
-CREATE TABLE ramp.blocks (
-    block_id     uuid        PRIMARY KEY,
-    user_id      uuid,                                   -- one of the two is set
-    identity_key text,                                   -- identity's KYC identity key (an HMAC), never a document number
-    reason       text        NOT NULL,                   -- REVERSAL | OPS
-    order_id     uuid,
-    created_by   text        NOT NULL,
-    created_at   timestamptz NOT NULL
+CREATE TABLE ramp.blocks (                               -- V4
+    block_id       uuid        PRIMARY KEY,
+    user_id        uuid,                                 -- exactly one of the two is set (CHECK)
+    identity_key   text,                                 -- a KYC identity key (an HMAC), never a document number
+    reason         text        NOT NULL,                 -- OPS | REVERSAL | IDENTITY (verified as a barred identity)
+    note           text        NOT NULL DEFAULT '',      -- what staff wrote; never personal data
+    source_user_id uuid,                                 -- on an identity row: the user whose block it came from
+    created_by     text        NOT NULL,                 -- a staff id, or `system`
+    created_at     timestamptz NOT NULL
 );
 CREATE UNIQUE INDEX blocks_user_key ON ramp.blocks (user_id) WHERE user_id IS NOT NULL;
 CREATE UNIQUE INDEX blocks_identity_key ON ramp.blocks (identity_key) WHERE identity_key IS NOT NULL;
+CREATE INDEX blocks_source_idx ON ramp.blocks (source_user_id) WHERE source_user_id IS NOT NULL;
+CREATE INDEX blocks_listed_idx ON ramp.blocks (created_at DESC, block_id DESC) WHERE user_id IS NOT NULL;
 
 CREATE TABLE ramp.withdrawals (
     withdrawal_id uuid       PRIMARY KEY,
@@ -716,13 +735,13 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | --- | --- | --- |
 | `settings` | — | RO5 writes with `version = version + 1 WHERE version = ?`; 0 rows is a concurrent edit. Read through a 10-second cache per process; on a database error the last read stays in force |
 | `merchants` | — | The row is the lock for everything about a merchant's float: reservations and withdrawals take it `FOR UPDATE` first. Edits use `version` |
-| `verifications` | — | The webhook moves a row by `updateReturning` on `session_id`; `verifications_identity_key` refuses a second account on one identity, inside the transaction that would verify it |
+| `verifications` | — (a staff reset deletes a row) | Every outcome moves a row by `updateReturning` guarded on its `session_id` and on not already being there, so a webhook, the sweep and a status read apply it once; `verifications_identity_key` refuses a second account on one identity, in the statement that would verify it |
 | `merchant_credentials` | — | One row per merchant, replaced whole by RM5 and RM9 |
 | `quotes` | `expires_at`, purged by `ramp.purge-expired` | — |
 | `orders` | — (kept for the retention period) | R3 inserts with `insertIgnore` on `(quote_id, attempt)`: a repeat finds the quote's latest order. `orders_user_open_key` refuses a second open order. States move only by the transition guard, so two callbacks, a callback and the reconcile job, or two nodes can't both release. `orders_receipt_key` stops one M-Pesa payment from settling two orders |
 | `reservations` | — | Inserted in the same transaction as the order, under the merchant's row lock. Closed by `updateReturning … WHERE state = 'OPEN'`: only the caller that closes it writes what follows |
 | `commissions` | — | `insertIgnore` on `order_id`, in the transaction that completes the order |
-| `blocks` | — | `insertIgnore` on each unique key |
+| `blocks` | — | `insertIgnore` on each unique key; lifting a user's block deletes their row and the identity rows that came from it |
 | `withdrawals` | — | Written under the merchant's row lock with the offline and no-open-orders checks |
 | `realtime`, `outbox` | Daily partitions, 7 days | — |
 
@@ -747,6 +766,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | `ramp.expire-orders` | 30 s | An order unpaid 2 minutes after its prompt: **asks PayHero first**. `FAILED` or no payment → `EXPIRED` and the reservation `RELEASED`, in one transaction; `SUCCESS` → the normal verify and release; still `QUEUED` → left for the next run, and to `REVIEW` after 10 minutes. When the merchant's keys aren't available it changes nothing | Yes |
 | `ramp.reconcile` | 2 min | Orders stuck in `PAID`, `RELEASING`, `FUNDED` or `PAYING_OUT`: reads Circle and PayHero and applies what they say (a lost webhook or callback), retries a failed release with the same key, and alerts on anything in `REVIEW` or waiting on a locked merchant | Later (the first slice covers `RELEASING` through Circle's webhook and a manual re-read) |
 | `ramp.end-sessions` | 1 min | Merchants whose `online_until` passed, or whose `rmp:session` is gone: marks them offline. Open orders finish | Later |
+| `ramp.sweep-verifications` | 2 min | Re-reads from the provider every `PENDING` verification not asked about in 5 minutes and every `IN_REVIEW` one not asked about in 30 (a lost webhook, an abandoned session). One the provider still calls unfinished after its time (`kyc_pending_hours`) is marked `EXPIRED`, and so is one whose provider can't be asked any more; while the provider is only out of reach nothing changes | Built 2026-11-22 |
 | `ramp.purge-expired` | 5 min | Expired quotes; tomorrow's partitions and old ones for `realtime` and `outbox` | Yes |
 
 ## Events
@@ -778,6 +798,7 @@ No event carries a phone number, an M-Pesa receipt or a credential.
 | Type | `data` | Goes to | Push if offline |
 | --- | --- | --- | --- |
 | `order.updated` | `orderId`, `direction`, `state`, `blockchain`, `pay`, `receive`, `failureReason?` | The user, each time their order moves | Yes on `COMPLETED`, `FAILED`, `EXPIRED` and `REFUNDED`: "Your USDC has arrived" / "Your top-up didn't go through"; never an amount on the lock screen |
+| `kyc.updated` | `network`, `status`, `required`, `canStart`, `reason?`, `retryAt?` (the same as R1's `verification`) | The user, each time their verification moves after a check was started | Yes when `VERIFIED` ("You're verified. You can add money now."), `DECLINED`, `PENDING` with `resubmission_requested`, and `EXPIRED` with `document_expired`; never the reason on the lock screen. Push `kind` `ramp.kyc` |
 
 Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no frames: the portal polls RM2 and RM7.
 
@@ -786,9 +807,11 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | Code | Kind → status | When |
 | --- | --- | --- |
 | `ramp.unavailable` | FORBIDDEN → 403 | The ramp is `OFF` on this network, or `PREVIEW` and the user isn't on the list |
-| `ramp.kyc_required` | FORBIDDEN → 403 | The user hasn't passed KYC; `data.verification` says `NONE` or `PENDING` |
-| `ramp.identity_in_use` | CONFLICT → 409 | This identity already verified another ramp account |
-| `ramp.kyc_unavailable` | UPSTREAM → 502 | Didit is down |
+| `ramp.kyc_required` | FORBIDDEN → 403 | The user hasn't passed KYC on this network (R2, R3); R1's `verification` says where it stands |
+| `ramp.kyc_unavailable` | UPSTREAM → 502 | Didit is out of reach, or refused the session (R0, RM3) |
+| `ramp.kyc_not_configured` | UNAVAILABLE → 503 | Checks can't run on this network yet: the environment's key isn't on the server, the workflow id is empty, the provider isn't offered, or (live) the master key is missing |
+| `ramp.kyc_attempts_exceeded` | RATE_LIMITED → 429 | Today's checks are used up (`kyc_attempts_per_day`); `retryAfterSeconds` to the next Nairobi midnight |
+| `ramp.merchant_kyc_required` | CONFLICT → 409 | Staff approving a merchant whose identity isn't verified on an open network that requires KYC |
 | `ramp.blocked` | FORBIDDEN → 403 | The user or their KYC identity is barred from the ramp |
 | `ramp.account_restricted` | FORBIDDEN → 403 | The account isn't `ACTIVE` |
 | `ramp.wallet_required` | CONFLICT → 409 | No wallet that receives on the order's chain |
@@ -810,7 +833,7 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.custody_unavailable` | UPSTREAM → 502 | Circle is down |
 | `ramp.merchant_not_found` | NOT_FOUND → 404 | The account is not a merchant |
 | `ramp.merchant_not_approved` | FORBIDDEN → 403 | Not yet KYC-verified and partner-approved, or suspended |
-| `ramp.merchant_setup_incomplete` | CONFLICT → 409 | Going online without a float wallet or a payment account, or with the provider's service wallet below its floor (then with `details.fields`: `provider_balance`) |
+| `ramp.merchant_setup_incomplete` | CONFLICT → 409 | Going online without a float wallet or a payment account, with the provider's service wallet below its floor (then with `details.fields`: `provider_balance`), or before identity verification where the network requires it (`details.fields`: `kyc`); also RM3 before the profile |
 | `ramp.pin_invalid` | INVALID → 400 | Wrong PIN |
 | `ramp.pin_locked` | RATE_LIMITED → 429 | Five wrong PINs; `retryAfterSeconds` |
 | `ramp.credentials_rejected` | INVALID → 400 | PayHero refused the username, password or channel |
@@ -867,7 +890,7 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 
 **Codes added:** `ramp.email_unavailable` (502, the code couldn't be sent), `ramp.vault_unavailable` (502), `ramp.merchant_not_ready` (409, approving a merchant who hasn't applied), `ramp.settings_invalid` (400, the field named) and `ramp.settings_changed` (409).
 
-**Not built in this slice:** the Didit integration (`KycGate` answers "not verified", so only a network whose settings don't require KYC trades), blocks, withdrawals, the off-ramp, `ramp.reconcile`, the `rmp:float` cache and success-rate ranking, metrics, and the agent route. (The PayHero service-wallet floor on RM6 was built on 2026-11-22: see below.)
+**Not built in this slice:** the Didit integration and blocks (both built on `feat/ramp-kyc` the same day: see "As built: identity verification"), withdrawals, the off-ramp, `ramp.reconcile`, the `rmp:float` cache and success-rate ranking, metrics, and the agent route. (The PayHero service-wallet floor on RM6 was built on 2026-11-22: see below.)
 
 **The hourly prompt limit is optional (2026-11-22, Pasaka: limits must not frustrate a buyer).** `settings.prompts_per_hour` 0 means no limit, which is the default (V2). When staff set one, only prompts the provider accepted (ones that reached the phone) are counted: an attempt that was refused, failed, or found no merchant never counts. It remains as a tool for protecting a merchant's account at the provider, which blocks a number after repeated failed prompts.
 
@@ -889,6 +912,58 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 
 **Codes added (2026-11-22):** `ramp.merchant_unavailable` (409).
 
+## As built: identity verification (2026-11-22, `feat/ramp-kyc`)
+
+What the code does where it differs from, or settles, what is written above. Decided by Pasaka on 2026-11-22: users verify once before their first on- or off-ramp ("Basic KYC": ID, liveness, face match); merchants verify before approval ("ID, selfie and AML"); blocks are by identity; one identity verifies one ramp user; the app uses Didit's native SDK and the portal the hosted page; the secrets are named per Didit environment; which environment a network uses is a setting; one webhook address for both environments; the webhook is a signed doorbell.
+
+**A verification belongs to a Didit environment, not a network.** `ramp.verifications` is keyed `(subject_kind, subject_id, environment)`, `environment` `SANDBOX` or `LIVE`. A sandbox approval is simulated, so it must never count where real people are verified, whichever network asks; and a real (live) verification is the same fact on any network that trusts live. Each network's settings name the environment it trusts (`kyc_environment`: TESTNET `SANDBOX`, MAINNET `LIVE`), and a subject is verified on a network when their row in that environment is `VERIFIED`. A row also keeps the `provider` that holds its session (as an order keeps its collections provider), so a switch of provider never asks the wrong one.
+
+**The identity key, and why only live keeps one.** `HMAC-SHA256(secret, COUNTRY|TYPE|NUMBER)` as hex (`HmacIdentityKeys`). The parts are trimmed and upper-cased, inner whitespace collapsed in the country and the type, and everything but letters and digits removed from the number. The secret is derived, not a new secret: `HMAC-SHA256(RAMP_CREDENTIALS_MASTER_KEY, "ramp:identity-key:v1")`. **The master key must never change**: under another key the same document gives another identity key, so "one identity, one account" and every block by identity silently stop matching. The document is read from Didit once, on approval, and is never stored or logged. **In the sandbox no key is kept**: Didit's sandbox fabricates every document from one pinned sample identity (docs.didit.me → Sandbox testing), so a key there would make every tester the same person. One identity, one account and blocks by identity are therefore live-only; `verifications_identity_key` is unique on `(subject_kind, environment, identity_key)`, so one person may be one user **and** one merchant.
+
+**Statuses.** `PENDING` | `IN_REVIEW` | `VERIFIED` | `DECLINED` | `EXPIRED`; no row is `NONE`. From Didit's exact strings: `Not Started`, `In Progress`, `Awaiting User` → `PENDING`; `Resubmitted` → `PENDING` with reason `resubmission_requested` (the same session reopens); `In Review` → `IN_REVIEW`; `Approved` → the approval path below; `Declined` → `DECLINED`; `Expired`, `Abandoned` → `EXPIRED` (`session_expired`); `Kyc Expired` → `EXPIRED` (`document_expired`: a verified person whose document has since expired must verify again). An unknown string is never guessed at. The ramp follows whatever Didit says now, so an approval a reviewer takes back un-verifies the subject.
+
+**Reason codes** (`verifications.reason`, the app's `reason`; never Didit's text): `document`, `document_expired`, `document_unreadable` (a live approval with no country, type or number: another document), `liveness`, `face_match`, `declined` (no check named), `not_approved` (a screening hit, never named to the person; no retry), `identity_in_use` (no retry), `blocked` (no retry), `session_expired`, `resubmission_requested`. Didit's reason is read from which feature declined (`id_verifications`, `liveness_checks`, `face_matches`, `aml_screenings`) and the `DOCUMENT_EXPIRED` risk.
+
+**On approval** (`Verifications.approve`): in the sandbox, `VERIFIED` with no key. Live: no readable document → `DECLINED` `document_unreadable`; the key is barred (`blocks`) → `DECLINED` `blocked`, and a user is barred too (`blocks` row, reason `IDENTITY`, by `system`), in one transaction; otherwise `VerificationRepository.verify` claims the key under the unique index: the loser of the claim is `DECLINED` `identity_in_use` and nothing of theirs is written.
+
+**Only the provider's own answer moves a verification.** The webhook, the app's status read and `ramp.sweep-verifications` all end in `Verifications.refresh`: read the decision from Didit (`KycProvider.decision`), check its `vendor_data` is the row's own reference, apply it through the repository's guards (`WHERE session_id = ? AND NOT (status = ? AND reason IS NOT DISTINCT FROM ?)`), and tell the user only when the row moved. So the same outcome is applied once, and an old session's late news never touches the session that replaced it.
+
+**Starting and resuming** (`Verifications.start`). The session's link (`session_token`, `session_url`, `session_expires_at`) is kept on the row while the check is unfinished and cleared on `VERIFIED`. R0 and RM3 answer the stored link while it works, without calling Didit; a new session is made only for no row, a `PENDING` whose link ran out, or a retryable `DECLINED`/`EXPIRED`. Each new session counts one attempt (`attempts`; `attempt_day` and `attempts_on_day` for the cap, by Nairobi day); `kyc_attempts_per_day` (3) refuses more with `ramp.kyc_attempts_exceeded` and `retryAt` at the next Nairobi midnight. Didit is asked for a link lasting `kyc_pending_hours` (`session_expiration_time`). A provider that needs nothing from the person (the local `log`) returns no link and is read at once, so a local run goes straight to `VERIFIED`.
+
+**Routes as built.**
+
+- **R0 `POST /v1/ramp/kyc`** (`app`, in the wallet-network group, `Idempotency-Key`) → `{ status, required, canStart, reason, retryAt, session: { sessionToken, url, expiresAt } | null }`. Gates first: the ramp open to the user (`ramp.unavailable`), the account active, not barred (`ramp.blocked`). Allowed where KYC isn't required yet.
+- **`GET /v1/ramp/kyc`** → `{ status, required, canStart, reason, retryAt }`. While the check is unfinished it asks the provider (at most every 5 seconds), so the app sees the outcome the moment the SDK closes. Never a link.
+- **R1 `GET /v1/ramp`** gains `verification` (the same five fields) and `blocked`; `kyc` stays `VERIFIED` | `NONE` | `NOT_REQUIRED` for apps built before it, and `canTrade` also needs `blocked` false. `canStart` is true for `NONE`, for a `PENDING` whose link works (continue) or whose cap allows a new one, and for a retryable `DECLINED`/`EXPIRED` under the cap; false in review, once verified, for a reason that can't be retried, and when barred.
+- **R2, R3**: `ramp.blocked` (the user, or the identity they verified with) before `ramp.kyc_required`.
+- **RM3 `POST /v1/ramp/merchant/kyc`** → the same shape as R0; the link is the hosted `url`, created with `callback` = `<merchant_portal_url>/kyc/done` (Didit appends `?verificationSessionId=…&status=…`, which the portal must not trust: it reads RM2). Needs the profile first; a suspended merchant can't.
+- **RM2** gains `kyc` `{ status, required, canStart, reason, retryAt }` and `steps.kyc`; `missing` has `kyc` (before `approval`) while the network requires it and the merchant isn't verified. RM2 asks the provider while the merchant's check is unfinished (the portal reads it after the callback). Merchants get no frames.
+- **RM6** refuses with `ramp.merchant_setup_incomplete` and `details.fields: [{ field: "kyc" }]`; **the engine** takes no merchant who isn't verified in the order's network's environment where that network requires KYC (a merchant's trading window is one for both networks, so being online never stands in for being verified).
+- **Staff approval** (`RampAdmin.approve`, `DecideMerchant`): `ramp.merchant_kyc_required` (409, the networks named) while the merchant isn't `VERIFIED` on every network whose ramp is open (`PREVIEW` or `ON`) and requires KYC. A network that is `OFF` asks nothing yet; when it opens, RM6 and the engine keep an unverified merchant out.
+- **Ops gateway** (`ramp.read` for FINANCE and ADMIN, `ramp.manage` for ADMIN, every write audited with a reason): `GET /ops/ramp/users/{userId}/verification` → `{ userId, verifications: [ { environment, status, reason, provider, attempts, hasIdentity, startedAt, verifiedAt, updatedAt } ], blocked, block }`; `GET /ops/ramp/blocks?cursor=&limit=` → `{ blocks: [ { blockId, userId, reason, note, createdBy, createdAt } ], nextCursor }`; `POST /ops/ramp/blocks` `{ userId, reason }` (audit `user.ramp_block`); `DELETE /ops/ramp/blocks/{userId}?reason=` (`user.ramp_unblock`); `POST /ops/ramp/users/{userId}/verification/reset` and `POST /ops/ramp/merchants/{merchantId}/verification/reset` `{ environment, reason }` (`user.ramp_verification_reset`, `ramp_merchant.verification_reset`). The merchant list gains `verifications` and RO7's `merchant` gains `kyc`. RO5 reads and writes the identity settings (each left out on an update stays as it is) and answers `kycProviders`. No document, name or key is ever shown: `hasIdentity` only says a key is held.
+
+**Blocks.** `ramp.blocks` rows name a user or an identity key, never both. Barring a user (`BlockUser`) also bars every identity key their verifications hold (`source_user_id` = the user), so the same person on a new account is refused at verification and barred. Lifting a user's block lifts the identity rows that came from it. A block is checked on R0, R1, R2 and R3 (`blocks.isBlocked(userId, their identity key)`). **The reset** is staff's way out of a dead end (a lost account holding the identity; a decline that can't be retried): it deletes the row and frees the key, and never lifts a block. `ramp.UserBlocked` is not published yet.
+
+**Settings** (V4, seeded, validated in `UpdateSettings`, audited by name in RO5): `kyc_required` (unchanged; never false on MAINNET), `kyc_provider` (one of the offered names: `didit` everywhere, `log` on a local run only, where it is also the seed), `kyc_environment`, `kyc_workflow_user` and `kyc_workflow_merchant` (seeded on TESTNET with the sandbox's `a3cb5782-d5c1-4c35-832d-ed373d80a0ea` and `dabdb52a-b4bc-435a-b2bf-a636bb17bad6`; empty on MAINNET until the live workflows exist), `merchant_portal_url` (an origin), `kyc_attempts_per_day` (1 to 20, default 3), `kyc_pending_hours` (1 to 672, default 24).
+
+**Didit, as built** (`integrations/impl/.../didit/`). `DiditKyc` over `HttpClients.named("didit-sandbox")` and `"didit-live"`, base `https://verification.didit.me`, `x-api-key`: `POST /v3/session/` (`workflow_id`, `vendor_data`, `callback?`, `session_expiration_time?`; never retried by the client) and `GET /v3/session/{id}/decision/` (the V3 plural arrays only). `KycProviders` binds every provider at once (`OfferedKyc`); an environment with no key answers `IntegrationError.NotConfigured`. `DiditWebhook` is the vendor `didit` at `/v1/hooks/didit` for both environments: the delivery's `environment` picks the secret; `X-Signature-V2` (HMAC-SHA256 hex over the canonical JSON: keys sorted by code point, compact, Unicode unescaped, whole floats as integers) is checked first and `X-Signature` over the raw bytes is the fallback; `X-Signature-Simple` is never accepted; the `-Previous` headers are accepted during a secret rotation; the `timestamp` inside the signed body must be within 300 seconds (and `X-Timestamp` too when sent); `event_id` is the delivery id. Only `status.updated` and `data.updated` of user sessions ring the bell, with the environment and the session id; a session the ramp never started is ignored, and so is one whose row belongs to the other environment. The gateway waits for the translation (as for Circle): when Didit can't be asked the answer is a 502 and Didit delivers again (twice, after about one and four minutes); the sweep is the net under that. The canonical JSON is rebuilt by a small reader of its own (`DiditCanonicalJson`), not by untyped JSON elements: it is not payload reading (the typed `WebhookEnvelope` does that).
+
+**Codes added:** `ramp.blocked` (403), `ramp.kyc_unavailable` (502), `ramp.kyc_not_configured` (503), `ramp.kyc_attempts_exceeded` (429), `ramp.merchant_kyc_required` (409). `ramp.identity_in_use` is a reason code on the verification, not an HTTP error.
+
+**Assumptions about Didit** (from the docs on 2026-11-22; to confirm against real sessions):
+
+- A session's `session_token` and `url` keep working until `expires_at` (the docs call the token "short-lived" without a figure). If a stored link stops working earlier, R0 should ask Didit again instead (Didit returns the open session for the same workflow and `vendor_data`).
+- The body's `timestamp` is always present and equals `X-Timestamp`; the ramp checks the signed one in the body.
+- `id_verifications[].document_type` is stable for one document across sessions (it is Didit's human-readable class, "Identity Card"); a change of wording would change identity keys.
+- The decision's `vendor_data` echoes what the session was created with.
+- A decline's cause can be read from the per-feature `status` (`Declined`) of `id_verifications`, `liveness_checks`, `face_matches`, `aml_screenings`.
+- Didit answers a 5xx from us by redelivering; a `Rejected` (400) from us is not retried, which is what an unreadable delivery should get.
+- Non-whole floats in a delivery are written as Python's shortest form (the canonical form keeps them as written).
+
+**To configure in Didit's console** (each application, sandbox and live): a webhook destination with URL `https://<api host>/v1/hooks/didit`, version `v3`, event `status.updated` (and `data.updated` if reviewers edit sessions); its `secret_shared_key` is that environment's `DIDIT_*_WEBHOOK_SECRET`. If the application has allowed domains, add the merchant portal's origin (the callback). The user workflow ("Basic KYC") must be published. Recommended in the workflows: decline duplicate faces, since a second document for the same person gives a second identity key.
+
+**Not built:** the `ramp.UserBlocked` event; reversal reports (RM11) that would add `REVERSAL` blocks; tiered limits; a frame when staff reset a verification or bar a user (R1 says both); a deep-link callback for the app's hosted-page fallback.
+
 ## To check against the vendor before building on it
 
 - **PayHero, payouts:** PayHero's written answer that it has no payouts today (and whether or when they return). Until then the off-ramp waits on a payout provider.
@@ -896,7 +971,7 @@ What the code on `feat/ramp` does where it differs from, or settles, what is wri
 - **PayHero, the on-ramp:** whether callbacks are retried; whether the status query's amount and phone are always present on `SUCCESS` (the match depends on them); the format `phone_number` wants; what an empty service wallet does to a prompt.
 - **PayHero, the business:** its terms don't name crypto or P2P trading as prohibited, but keep "sole discretion" over restricted categories, and its newer docs sell a crypto on-ramp as a product that must be enabled per account. Merchants should have PayHero's agreement in writing before real volume.
 - **Circle:** settled by main: one account holds both wallet types (the fee wallets), the webhook marks them `custodyType: DEVELOPER`, and `EntitySecret` already encrypts for Circle. Still to check: that Gas Station sponsors a developer-controlled `SCA` wallet's transfers on the testnet policy and what mainnet's policy must allow.
-- **Didit:** which fields of the decision carry the document's country, type and number in the chosen workflows' returned data (the identity key needs them).
+- **Didit:** settled from the docs (2026-11-22): the decision's `id_verifications[]` carry `issuing_state`, `document_type` and `document_number`. Still to confirm against a real live session: see "Assumptions about Didit" under "As built: identity verification".
 
 ## Open questions
 

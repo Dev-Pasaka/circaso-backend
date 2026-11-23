@@ -22,6 +22,7 @@ import com.circaso.integrations.api.VoipRingEnded
 import com.circaso.messaging.api.InviteReceivedFrame
 import com.circaso.messaging.api.MemberAddedFrame
 import com.circaso.messaging.api.MessageNewFrame
+import com.circaso.ramp.api.KycUpdatedFrame
 import com.circaso.ramp.api.OrderUpdatedFrame
 import com.circaso.ramp.api.RampFrames
 import com.circaso.shared.Realtime
@@ -347,6 +348,11 @@ class GatewayRealtime(
             // The end of a purchase with M-Pesa (decision 2026-11-22), to the buyer. Never an amount on the lock screen.
             "${RampFrames.MODULE}.${RampFrames.ORDER_UPDATED}" -> {
                 decode(OrderUpdatedFrame.serializer(), frame)?.let(::rampOrderPush)
+            }
+
+            // The outcome of an identity check for the ramp (decision 2026-11-22). Never why, on the lock screen.
+            "${RampFrames.MODULE}.${RampFrames.KYC_UPDATED}" -> {
+                decode(KycUpdatedFrame.serializer(), frame)?.let(::rampKycPush)
             }
 
             "${WalletFrames.MODULE}.${WalletFrames.PAYMENT_RECEIVED}" -> {
@@ -773,6 +779,38 @@ class GatewayRealtime(
         }
     }
 
+    /**
+     * Identity verification's final outcomes, and the two that need the person back: approved, declined, asked to
+     * redo a step, and a document that has expired. Never the reason: the app words that once it is open. A check
+     * still running, in review or simply left unfinished pushes nothing.
+     */
+    private fun rampKycPush(frame: KycUpdatedFrame): PushMessage? {
+        val ids = PushPayload(kind = RAMP_KYC_KIND, network = frame.network)
+        val text =
+            when {
+                frame.status == "VERIFIED" -> {
+                    "You're verified. You can add money now."
+                }
+
+                frame.status == "DECLINED" -> {
+                    "We couldn't verify your identity yet. Open Circaso to see what to do next."
+                }
+
+                frame.status == "PENDING" && frame.reason == "resubmission_requested" -> {
+                    "We need one more thing to finish verifying you. Open Circaso to continue."
+                }
+
+                frame.status == "EXPIRED" && frame.reason == "document_expired" -> {
+                    "Your ID has expired. Open Circaso to verify again."
+                }
+
+                else -> {
+                    return null
+                }
+            }
+        return PushMessage("Circaso", text, ids)
+    }
+
     private fun transferPush(frame: TransferUpdatedFrame): PushMessage? =
         when (frame.state) {
             "CONFIRMED" -> PushMessage("Circaso", "Payment sent", transferIds(frame))
@@ -803,6 +841,9 @@ class GatewayRealtime(
 
 /** A ramp order ended (`ramp` / `order.updated`): arrived, or didn't go through. A tap opens the order. */
 private const val RAMP_ORDER_KIND = "ramp.order"
+
+/** Identity verification for the ramp moved (`ramp` / `kyc.updated`). A tap opens Add money, which reads R1. */
+private const val RAMP_KYC_KIND = "ramp.kyc"
 
 /** An incoming call's push; to an iPhone with a PushKit token it goes through APNs as a VoIP push. */
 private const val RINGING_KIND = "call.ringing"

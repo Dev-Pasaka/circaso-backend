@@ -5,7 +5,64 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class RampMerchantWalletDto(val network: String, val blockchain: String, val address: String)
 
-/** A ramp merchant. `state`: NEW | APPLIED | APPROVED | SUSPENDED. Their payment credentials are never shown. */
+/**
+ * An identity verification in one provider environment (`environment`: SANDBOX | LIVE; a network's settings name the
+ * one it trusts). `status`: PENDING | IN_REVIEW | VERIFIED | DECLINED | EXPIRED. `reason` is the ramp's own code
+ * (`document`, `document_expired`, `document_unreadable`, `liveness`, `face_match`, `not_approved`, `declined`,
+ * `identity_in_use`, `blocked`, `session_expired`, `resubmission_requested`). `hasIdentity` says an identity key is
+ * held (a live approval); no document, name or key is ever shown.
+ */
+@Serializable
+data class RampVerificationDto(
+    val environment: String,
+    val status: String,
+    val reason: String? = null,
+    val provider: String,
+    val attempts: Int,
+    val hasIdentity: Boolean,
+    val startedAt: String? = null,
+    val verifiedAt: String? = null,
+    val updatedAt: String,
+)
+
+/** A user barred from the ramp. `reason`: OPS | REVERSAL | IDENTITY (they verified as a barred identity). */
+@Serializable
+data class RampBlockDto(
+    val blockId: String,
+    val userId: String,
+    val reason: String,
+    val note: String,
+    val createdBy: String,
+    val createdAt: String,
+)
+
+@Serializable
+data class RampBlocksResponse(val blocks: List<RampBlockDto>, val nextCursor: String? = null)
+
+/** A user's ramp verification in each environment they have one (none: never started), and their block if barred. */
+@Serializable
+data class RampUserVerificationResponse(
+    val userId: String,
+    val verifications: List<RampVerificationDto>,
+    val blocked: Boolean,
+    val block: RampBlockDto? = null,
+)
+
+/** `POST /ops/ramp/blocks`: who to bar and why (3 to 500 characters; audited and kept on the block). */
+@Serializable
+data class RampBlockRequest(val userId: String = "", val reason: String = "")
+
+/** Resetting a verification: which environment (SANDBOX | LIVE) and why. */
+@Serializable
+data class RampVerificationResetRequest(val environment: String = "", val reason: String = "")
+
+@Serializable
+data class RampVerificationResetResponse(val removed: Boolean)
+
+/**
+ * A ramp merchant. `state`: NEW | APPLIED | APPROVED | SUSPENDED. Their payment credentials are never shown.
+ * `verifications` is their identity verification in each provider environment they have one.
+ */
 @Serializable
 data class RampMerchantDto(
     val merchantId: String,
@@ -20,6 +77,7 @@ data class RampMerchantDto(
     val approvedBy: String? = null,
     val approvedAt: String? = null,
     val createdAt: String,
+    val verifications: List<RampVerificationDto> = emptyList(),
 )
 
 @Serializable
@@ -33,6 +91,12 @@ data class RampMerchantsResponse(val merchants: List<RampMerchantDto>, val nextC
  * merchant's prepaid service balance at the provider must hold for them to go online (KES cents as a string; `"0"`
  * switches the check off). `version` rises on each change; sent back on an update, a change made meanwhile answers
  * `ramp.settings_changed`. `walletSetId`, `updatedBy` and `updatedAt` are read-only too.
+ *
+ * Identity: `kycRequired` (never false on MAINNET), `kycProvider` (one of `kycProviders`, read-only: what this server
+ * offers), `kycEnvironment` (SANDBOX | LIVE: which side of the provider this network's checks run in and whose
+ * approvals it trusts), `kycWorkflowUser` and `kycWorkflowMerchant` (the provider's workflow ids; empty: that kind
+ * can't be verified here yet), `merchantPortalUrl` (where the provider's hosted page sends a merchant back to),
+ * `kycAttemptsPerDay` (1 to 20) and `kycPendingHours` (1 to 672: how long a started check may stay unfinished).
  */
 @Serializable
 data class RampSettingsDto(
@@ -57,11 +121,21 @@ data class RampSettingsDto(
     val updatedBy: String? = null,
     val updatedAt: String? = null,
     val collectionsProviders: List<String> = emptyList(),
+    val kycProvider: String = "",
+    val kycEnvironment: String = "",
+    val kycWorkflowUser: String = "",
+    val kycWorkflowMerchant: String = "",
+    val merchantPortalUrl: String = "",
+    val kycAttemptsPerDay: Int = 0,
+    val kycPendingHours: Int = 0,
+    val kycProviders: List<String> = emptyList(),
 )
 
 /**
  * `PUT /ops/ramp/settings?network=`: the settings and why they change. Read-only fields are ignored when sent.
- * `providerFeeFloorMinor` left out keeps the floor as it is (a form from before the setting existed).
+ * `providerFeeFloorMinor` and each identity setting (`kycProvider`, `kycEnvironment`, `kycWorkflowUser`,
+ * `kycWorkflowMerchant`, `merchantPortalUrl`, `kycAttemptsPerDay`, `kycPendingHours`) left out keeps that one as it
+ * is (a form from before the setting existed).
  */
 @Serializable
 data class UpdateRampSettingsRequest(
@@ -87,6 +161,14 @@ data class UpdateRampSettingsRequest(
     val updatedBy: String? = null,
     val updatedAt: String? = null,
     val collectionsProviders: List<String>? = null,
+    val kycProvider: String? = null,
+    val kycEnvironment: String? = null,
+    val kycWorkflowUser: String? = null,
+    val kycWorkflowMerchant: String? = null,
+    val merchantPortalUrl: String? = null,
+    val kycAttemptsPerDay: Int? = null,
+    val kycPendingHours: Int? = null,
+    val kycProviders: List<String>? = null,
 )
 
 @Serializable
@@ -206,6 +288,8 @@ data class RampSummaryMerchantDto(
     val paymentsConnected: Boolean,
     val collectionsProvider: String? = null,
     val paymentsIssue: RampPaymentsIssueDto? = null,
+    /** Their identity verification in the environment this network trusts; null when they never started. */
+    val kyc: RampVerificationDto? = null,
 )
 
 @Serializable

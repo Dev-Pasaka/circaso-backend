@@ -143,6 +143,7 @@ fun MerchantOverview.toResponse() =
         steps =
             MerchantStepsDto(
                 profile = merchant.state != MerchantState.NEW,
+                kyc = !kyc.blocksTrading,
                 approved = merchant.state == MerchantState.APPROVED,
                 wallet = wallet != null,
                 payments = payments != null && paymentsCurrent,
@@ -166,6 +167,7 @@ fun MerchantOverview.toResponse() =
         missing = missing,
         paymentsIssue =
             merchant.paymentsIssue?.let { MerchantPaymentsIssueDto(it.name, merchant.paymentsIssueAt?.toString()) },
+        kyc = kyc.toDto(),
     )
 
 fun OnlineView.toResponse() = OnlineResponse(online, until?.toString())

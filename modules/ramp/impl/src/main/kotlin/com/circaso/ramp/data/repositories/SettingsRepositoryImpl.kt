@@ -1,6 +1,7 @@
 package com.circaso.ramp.data.repositories
 
 import com.circaso.infrastructure.api.Database
+import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.data.tables.PreviewAccessTable
 import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.domain.models.PreviewAccess
@@ -100,6 +101,13 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.callbackBaseUrl] = settings.callbackBaseUrl
         this[SettingsTable.collectionsProvider] = settings.collectionsProvider
         this[SettingsTable.providerFeeFloorMinor] = settings.providerFeeFloorMinor
+        this[SettingsTable.kycProvider] = settings.kycProvider
+        this[SettingsTable.kycEnvironment] = settings.kycEnvironment.name
+        this[SettingsTable.kycWorkflowUser] = settings.kycWorkflowUser
+        this[SettingsTable.kycWorkflowMerchant] = settings.kycWorkflowMerchant
+        this[SettingsTable.merchantPortalUrl] = settings.merchantPortalUrl
+        this[SettingsTable.kycAttemptsPerDay] = settings.kycAttemptsPerDay
+        this[SettingsTable.kycPendingHours] = settings.kycPendingHours
     }
 
     private fun ResultRow.toSettings(): RampSettings? {
@@ -125,6 +133,14 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             updatedBy = this[SettingsTable.updatedBy],
             updatedAt = this[SettingsTable.updatedAt],
             version = this[SettingsTable.version],
+            kycProvider = this[SettingsTable.kycProvider],
+            kycEnvironment =
+                KycEnvironment.parse(this[SettingsTable.kycEnvironment]) ?: RampSettings.environmentOf(network),
+            kycWorkflowUser = this[SettingsTable.kycWorkflowUser],
+            kycWorkflowMerchant = this[SettingsTable.kycWorkflowMerchant],
+            merchantPortalUrl = this[SettingsTable.merchantPortalUrl],
+            kycAttemptsPerDay = this[SettingsTable.kycAttemptsPerDay],
+            kycPendingHours = this[SettingsTable.kycPendingHours],
         )
     }
 }

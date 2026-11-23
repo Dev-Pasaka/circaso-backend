@@ -14,8 +14,47 @@ import java.util.UUID
 data class OpsMerchantWallet(val network: Network, val blockchain: String, val address: String)
 
 /**
+ * A subject's identity verification in one provider environment ([environment]: `SANDBOX` or `LIVE`; a network's
+ * settings name the one it trusts). [status]: `PENDING`, `IN_REVIEW`, `VERIFIED`, `DECLINED` or `EXPIRED`; someone who
+ * never started has none. [reason] is the ramp's own code (`document`, `identity_in_use`, `blocked`, …).
+ * [hasIdentity] says an identity key is held (a live approval); the key itself, like the document, never leaves the ramp.
+ */
+data class OpsRampVerification(
+    val environment: String,
+    val status: String,
+    val reason: String?,
+    val provider: String,
+    val attempts: Int,
+    val hasIdentity: Boolean,
+    val startedAt: Instant?,
+    val verifiedAt: Instant?,
+    val updatedAt: Instant,
+)
+
+/** A user barred from the ramp. [reason]: `OPS`, `REVERSAL`, or `IDENTITY` (they verified as a barred identity). */
+data class OpsRampBlock(
+    val blockId: UUID,
+    val userId: UserId,
+    val reason: String,
+    val note: String,
+    val createdBy: String,
+    val createdAt: Instant,
+)
+
+/** Where a page of blocks continues: after the block made at [at] with [blockId]. */
+data class OpsRampBlockCursor(val at: Instant, val blockId: UUID)
+
+/** A user's ramp verification in each environment they have one, and their block when they are barred. */
+data class OpsRampUserVerification(
+    val userId: UserId,
+    val verifications: List<OpsRampVerification>,
+    val block: OpsRampBlock?,
+)
+
+/**
  * A partner merchant as staff see it. [state] is `NEW`, `APPLIED`, `APPROVED` or `SUSPENDED`. [paymentsConnected] says
- * whether the merchant has stored a payment account; what it is stays sealed.
+ * whether the merchant has stored a payment account; what it is stays sealed. [verifications] is their identity
+ * verification in each provider environment they have one.
  */
 data class OpsMerchant(
     val merchantId: MerchantId,
@@ -29,6 +68,7 @@ data class OpsMerchant(
     val approvedBy: String?,
     val approvedAt: Instant?,
     val createdAt: Instant,
+    val verifications: List<OpsRampVerification> = emptyList(),
 ) {
     override fun toString(): String = "OpsMerchant($merchantId, $state)"
 }
@@ -66,6 +106,23 @@ data class OpsRampSettings(
     val updatedAt: Instant? = null,
     /** Read-only: the providers this server offers, to choose [collectionsProvider] from. */
     val collectionsProviders: List<String> = emptyList(),
+    // The identity settings. Always set on a read; null on an update leaves that one as it is.
+    /** Who runs the identity checks: one of [kycProviders]. */
+    val kycProvider: String? = null,
+    /** `SANDBOX` or `LIVE`: which side of the provider this network's checks run in, and whose approvals it trusts. */
+    val kycEnvironment: String? = null,
+    /** The provider's workflow for a user; empty: users can't be verified on this network yet. */
+    val kycWorkflowUser: String? = null,
+    /** The provider's workflow for a merchant; empty: merchants can't be verified on this network yet. */
+    val kycWorkflowMerchant: String? = null,
+    /** The merchant portal's origin: where the provider's hosted page sends a merchant back to. */
+    val merchantPortalUrl: String? = null,
+    /** How many checks one person may start in a day (1 to 20). */
+    val kycAttemptsPerDay: Int? = null,
+    /** Hours a started check may stay unfinished before it is marked expired (1 to 672). */
+    val kycPendingHours: Int? = null,
+    /** Read-only: the KYC providers this server offers, to choose [kycProvider] from. */
+    val kycProviders: List<String> = emptyList(),
 )
 
 data class OpsRampSettingsChange(val before: OpsRampSettings, val after: OpsRampSettings)
@@ -101,14 +158,18 @@ data class OpsRampOrder(
 
 /**
  * Staff's view of the ramp. Errors: `ramp.merchant_not_found` (404), `ramp.merchant_not_ready` (409: approving a
- * merchant who hasn't applied), `ramp.settings_invalid` (400, the field named in the details) and
- * `ramp.settings_changed` (409).
+ * merchant who hasn't applied), `ramp.merchant_kyc_required` (409: approving one whose identity isn't verified),
+ * `ramp.settings_invalid` (400, the field named in the details) and `ramp.settings_changed` (409).
  */
 interface RampAdmin {
     /** Merchants, newest first; [before] is the last id of the previous page. */
     suspend fun merchants(before: MerchantId?, limit: Int): List<OpsMerchant>
 
-    /** Partner approval: an `APPLIED` or `SUSPENDED` merchant becomes `APPROVED`. Approving twice changes nothing. */
+    /**
+     * Partner approval: an `APPLIED` or `SUSPENDED` merchant becomes `APPROVED`. Approving twice changes nothing.
+     * Refused with `ramp.merchant_kyc_required` while the merchant's identity isn't verified on a network whose ramp
+     * is open and requires KYC.
+     */
     suspend fun approve(merchantId: MerchantId, by: UUID): Resource<OpsMerchant>
 
     /** Suspends the merchant and takes them offline at once; their open orders still finish. */
@@ -168,6 +229,47 @@ interface RampAdmin {
         after: OpsRampOrderCursor?,
         limit: Int,
     ): Resource<List<OpsRampMerchantOrder>>
+
+    /** A user's ramp verification in each provider environment, and their block. Someone unknown has neither. */
+    suspend fun userVerification(userId: UserId): OpsRampUserVerification
+
+    /** The users barred from the ramp, newest first; [after] is the last block of the previous page. */
+    suspend fun blocks(after: OpsRampBlockCursor?, limit: Int): List<OpsRampBlock>
+
+    /**
+     * Bars [userId] from the ramp, and with them the identity they verified with, so the same person can't come back
+     * on a new account. Barring someone already barred changes nothing and answers the block there is.
+     */
+    suspend fun block(
+        userId: UserId,
+        note: String,
+        by: UUID,
+    ): Resource<OpsRampBlock>
+
+    /** Lifts the user's block and the identity blocks that came from it; true when there was one. */
+    suspend fun unblock(userId: UserId, by: UUID): Boolean
+
+    /**
+     * Removes a user's verification in [environment] (`SANDBOX` or `LIVE`), freeing the identity it holds, so the
+     * person can verify again on this account or another; true when there was one.
+     */
+    suspend fun resetUserVerification(
+        userId: UserId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean>
+
+    /** The same for a merchant. `ramp.merchant_not_found` when there is no such merchant. */
+    suspend fun resetMerchantVerification(
+        merchantId: MerchantId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean>
+}
+
+/** The provider environments a verification can be in, as [RampAdmin.resetUserVerification] takes them. */
+object RampKycEnvironments {
+    val ALL: List<String> = listOf("SANDBOX", "LIVE")
 }
 
 /** The states an order can be in, as [RampAdmin.merchantOrders] takes them. */

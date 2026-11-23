@@ -15,6 +15,7 @@ import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.ProfileCommand
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.RampTokens
@@ -23,20 +24,32 @@ import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Callbacks
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import java.time.Clock
 import java.time.Duration
 
 /** RM2: the merchant, what is set up, the float, and what is still missing before they can go online. */
-class GetMerchant(private val merchants: MerchantRepository, private val views: MerchantViews) {
+class GetMerchant(
+    private val merchants: MerchantRepository,
+    private val views: MerchantViews,
+    private val rows: VerificationRepository,
+    private val verifications: Verifications,
+    private val settings: SettingsBook,
+) {
     suspend operator fun invoke(merchantId: MerchantId, network: Network): Resource<MerchantOverview> {
         val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
+        // The portal reads this when the provider's hosted check sends the merchant back: while a check is
+        // unfinished the provider is asked (at most every few seconds), so the outcome shows without a webhook.
+        val environment = settings.of(network).kycEnvironment
+        verifications.refreshIfDue(rows.find(Subject.merchant(merchantId), environment))
         return Resource.success(views.overview(merchant, network))
     }
 }
@@ -135,8 +148,9 @@ class RotateCallback(
 
 /**
  * RM6: goes online for a trading window. The PIN unwraps the payment keys **into this node's memory only**; the
- * merchant must be approved, with a float wallet on the network and a payment account. A float the custodian reports
- * as too small for the smallest order refuses too; one it can't report doesn't.
+ * merchant must be approved, verified where the network requires KYC (`kyc`), with a float wallet on the network and
+ * a payment account. A float the custodian reports as too small for the smallest order refuses too; one it can't
+ * report doesn't.
  *
  * **The provider's service balance is checked before going online**: the prepaid wallet the provider takes its fee
  * from, per prompt. Below the network's floor (`provider_fee_floor_minor`, 0 for no check) the provider would refuse
@@ -164,8 +178,10 @@ class GoOnline(
         if (merchant.state != MerchantState.APPROVED) return Resource.error(RampError.MerchantNotApproved)
         val sealed = credentials.find(merchantId) ?: return Resource.error(RampError.MerchantSetupIncomplete)
         wallets.find(merchantId, network) ?: return Resource.error(RampError.MerchantSetupIncomplete)
-        // A payment account at another provider than the network's current one must be reconnected first.
         val missing = views.overview(merchant, network).missing
+        // Identity, where the network requires it: the field says which step, as for the provider's balance.
+        if (MerchantOverview.KYC in missing) return Resource.error(RampError.MerchantKycMissing)
+        // A payment account at another provider than the network's current one must be reconnected first.
         if ("float" in missing || "payments" in missing) return Resource.error(RampError.MerchantSetupIncomplete)
         val keys =
             when (val opened = pins.open(merchantId, sealed, pin)) {

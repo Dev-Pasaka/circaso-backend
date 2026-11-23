@@ -23,6 +23,13 @@ object Periods {
     /** The Nairobi day of [at]. */
     fun merchantDay(at: Instant): LocalDate = at.atOffset(MERCHANT_ZONE).toLocalDate()
 
+    /** The first instant of the Nairobi day after the one [at] is in: when a daily cap lifts. */
+    fun nextMerchantDay(at: Instant): Instant =
+        merchantDay(at)
+            .plusDays(1)
+            .atStartOfDay()
+            .toInstant(MERCHANT_ZONE)
+
     /** The Nairobi calendar month [now] is in. */
     fun thisMonth(now: Instant): Period {
         val today = merchantDay(now)

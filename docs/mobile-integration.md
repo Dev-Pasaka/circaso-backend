@@ -9,6 +9,14 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-22, the ramp: identity verification (KYC) before a first purchase (new routes R0, new fields on R1, one new frame and push, new error codes; additive, old apps keep working):**
+> 1. **A person verifies their identity once**, only before their first purchase on a network that asks for it; the rest of the app stays KYC-free. The checks (an ID document, a liveness selfie, a face match) run in **Didit's native SDK**, started with the `sessionToken` the backend returns. See "Identity verification (KYC)" under "Ramp" in section 7 for the whole contract.
+> 2. **R0 `POST /v1/ramp/kyc`** starts the check or returns the one still open: `{ status, required, canStart, reason, retryAt, session: { sessionToken, url, expiresAt } | null }`. **`GET /v1/ramp/kyc`** reads the state (call it when the SDK closes).
+> 3. **R1 `GET /v1/ramp` gains `verification`** `{ status, required, canStart, reason, retryAt }` (`status`: `NONE` | `PENDING` | `IN_REVIEW` | `VERIFIED` | `DECLINED` | `EXPIRED`) **and `blocked`**. Build every KYC screen from `verification`: the app never guesses. The old `kyc` field is unchanged (`VERIFIED` | `NONE` | `NOT_REQUIRED`) and `canTrade` now also needs `blocked` false.
+> 4. **New socket frame** `ramp` / `kyc.updated` `{ network, status, required, canStart, reason?, retryAt? }` (the same fields as R1's `verification`), and a **new push `kind: "ramp.kyc"`** with `network`: "You're verified. You can add money now." when approved; a calm line when declined, asked to redo a step, or the ID has expired. Never the reason on the lock screen.
+> 5. **New error codes:** `ramp.blocked` (403), `ramp.kyc_attempts_exceeded` (429), `ramp.kyc_unavailable` (502), `ramp.kyc_not_configured` (503). `ramp.kyc_required` (403) on R2 and R3 now means what it says: send the person to verify.
+> 6. An app from before this change keeps working: it reads `kyc: "NONE"` and R2/R3 answer `ramp.kyc_required`, which it already shows as "Verify". It only has nowhere to verify until it is updated.
+>
 > **Changed on 2026-11-22, the ramp: a new error code on R3, `ramp.merchant_unavailable` (additive):**
 > 1. **`409 ramp.merchant_unavailable`** on `POST /v1/ramp/onramp/orders`: the payment couldn't be started with any seller right now (the seller's payment provider refused the M-Pesa prompt). **Nothing was taken and no prompt was sent.** Show the server's message ("We couldn't start this payment right now. Nothing was taken. Please try again in a moment.") with a "Try again" action that asks for a new quote (R2) and then R3 again. No order is left open, so nothing needs cancelling.
 > 2. **`502 ramp.collections_unavailable` now means only that M-Pesa is out of reach**, as before. Until now a seller-side refusal also arrived as this code; the backend now tries the next seller by itself first, and answers `ramp.merchant_unavailable` only when none could take it.
@@ -325,7 +333,7 @@ Of the **110** routes the phone calls: **82 READY**, **27 PARTIAL**, **1 DEV STU
 | Transaction history (W6) | **PARTIAL** | Your payments, newest first, paged; recent across months or one month. Lists what Circaso recorded: inbound payments appear once Circle reports them (webhook, or the reconcile job within minutes). |
 | Statements, PIN change and restore | **MISSING** | Designed (wallet W7, W8); being built in slices. |
 | Share links (receipts, statements, invites, pay me, addresses) | **READY** | SH1–SH4 and the public page at `<SHARE_BASE_URL>/s/{code}` (sandbox: `https://sandbox.circaso.com`). App Links need the signing certificate's SHA-256 in `SHARE_ANDROID_CERT_SHA256`; Universal Links need the Associated Domains capability on the App ID. |
-| Buying USDC with M-Pesa (the ramp) | **PARTIAL** | R1–R6, the `ramp` / `order.updated` frame and the `ramp.order` push (2026-11-22). Gated per network by staff (`ramp.unavailable` until opened to the person). Identity verification (KYC) is not built: the testnet runs without it, mainnet stays closed. Selling (USDC to M-Pesa) is **MISSING**. |
+| Buying USDC with M-Pesa (the ramp) | **PARTIAL** | R0–R6, the `ramp` / `order.updated` frame and the `ramp.order` push (2026-11-22). Gated per network by staff (`ramp.unavailable` until opened to the person). Identity verification (KYC) is built (R0, R1's `verification`, the `ramp` / `kyc.updated` frame and the `ramp.kyc` push, 2026-11-22): it is required where staff switch it on (always on mainnet), and runs in Didit's native SDK. Selling (USDC to M-Pesa) is **MISSING**. |
 | Support tickets (open, list, read, reply) | **READY** | SU1–SU4, the `support` frames and the `support.ticket` push (2026-11-08). Staff answer from the ops dashboard, which is being built; until it is live, replies arrive only from the server side. |
 | Calls (voice and video, up to 8 people) | **PARTIAL** | CL1–CL9 and the `calls` frames work. On dev the SFU is Cloudflare Realtime once `INTEGRATIONS_CALLS_PROVIDER=cloudflare` is set on the sandbox; with the `log` provider the routes answer with made-up SDP, so no media flows. Show "Secure call", never "end-to-end encrypted" (decision 2026-10-29). |
 | Notification inbox, identity verification (KYC) | **MISSING** | Not designed yet. |
@@ -665,16 +673,120 @@ A Circle user-controlled wallet: the server never holds keys and never moves mon
 
 ### Ramp (buying USDC with M-Pesa)
 
-A partner merchant sells the USDC; Circaso's engine picks one who is online with enough float, so the app never lists merchants. The flow is: R1 (show the entry point or hide it) → R2 (a price, good until `expiresAt`) → R3 (an M-Pesa prompt lands on the person's own verified number) → the person approves it on their phone → `ramp` / `order.updated` frames (`PAYMENT_REQUESTED` → `PAID` → `RELEASING` → `COMPLETED`) → the USDC is in their wallet on the quote's chain. Every route takes `X-Wallet-Network`. Amounts are `{ unit, amountMinor, amount }` (`unit` is `KES` or `USDC`).
+A partner merchant sells the USDC; Circaso's engine picks one who is online with enough float, so the app never lists merchants. The flow is: R1 (show the entry point or hide it) → **R0 once, when R1's `verification` says identity is required and not `VERIFIED`** → R2 (a price, good until `expiresAt`) → R3 (an M-Pesa prompt lands on the person's own verified number) → the person approves it on their phone → `ramp` / `order.updated` frames (`PAYMENT_REQUESTED` → `PAID` → `RELEASING` → `COMPLETED`) → the USDC is in their wallet on the quote's chain. Every route takes `X-Wallet-Network`. Amounts are `{ unit, amountMinor, amount }` (`unit` is `KES` or `USDC`).
 
 | Call | Scope | Request → response | Status | What to know |
 | --- | --- | --- | --- | --- |
-| `GET /v1/ramp`<br>**R1** Can I buy now | `app` | — → RampStatusResponse | **READY** | `canTrade` is every gate at once; `kyc` (`VERIFIED` \| `NONE` \| `NOT_REQUIRED`), `accountActive`, `merchantOnline`, `openOrderId`, `limits`, `feePercent`, `blockchains`. `403 ramp.unavailable`: hide the feature. |
-| `POST /v1/ramp/quotes`<br>**R2** Price an amount | `app` | QuoteRequest → QuoteResponse | **READY** | `{ direction: "ON_RAMP", blockchain, fiat: { amount } }` (whole shillings) or `crypto: { amount }`. The `fee` is inside `pay`. Reserves nothing. Errors: `ramp.unavailable`, `ramp.kyc_required`, `ramp.account_restricted`, `ramp.chain_unsupported`, `ramp.amount_invalid`, `ramp.limit_exceeded`, `ramp.offramp_unavailable`, `ramp.pricing_unavailable`. |
+| `POST /v1/ramp/kyc`<br>**R0** Verify identity (start or continue) | `app` | — → KycResponse | **READY** | Send an `Idempotency-Key`. `{ status, required, canStart, reason, retryAt, session }`. While `session` is not null a check is open: start Didit's SDK with `session.sessionToken` (`session.url` is the hosted page, the fallback); both work until `session.expiresAt`. Calling again returns the **same** open check. With `session: null` there is nothing to do now (`VERIFIED`, `IN_REVIEW`, or a decline trying again can't fix). Errors: `ramp.unavailable`, `ramp.account_restricted`, `ramp.blocked`, `ramp.kyc_attempts_exceeded` (429), `ramp.kyc_unavailable` (502), `ramp.kyc_not_configured` (503). See "Identity verification (KYC)" below. |
+| `GET /v1/ramp/kyc`<br>**R0** My identity verification | `app` | — → VerificationDto | **READY** | `{ status, required, canStart, reason, retryAt }`, the same as R1's `verification`. **Call it when the SDK closes**: while a check is unfinished it asks Didit itself (at most every 5 s), so the outcome shows at once, before the frame. Never returns a link. Errors: `ramp.unavailable`. |
+| `GET /v1/ramp`<br>**R1** Can I buy now | `app` | — → RampStatusResponse | **READY** | `canTrade` is every gate at once (verified or not required, not blocked, account active, a merchant online, no open order). **`verification`** `{ status, required, canStart, reason, retryAt }` is the identity check in full; **`blocked`** is a bar on the account or its identity. `kyc` (`VERIFIED` \| `NONE` \| `NOT_REQUIRED`) is the short form older apps read. Also `accountActive`, `merchantOnline`, `openOrderId`, `limits`, `feePercent`, `blockchains`. `403 ramp.unavailable`: hide the feature. |
+| `POST /v1/ramp/quotes`<br>**R2** Price an amount | `app` | QuoteRequest → QuoteResponse | **READY** | `{ direction: "ON_RAMP", blockchain, fiat: { amount } }` (whole shillings) or `crypto: { amount }`. The `fee` is inside `pay`. Reserves nothing. Errors: `ramp.unavailable`, `ramp.blocked`, `ramp.kyc_required`, `ramp.account_restricted`, `ramp.chain_unsupported`, `ramp.amount_invalid`, `ramp.limit_exceeded`, `ramp.offramp_unavailable`, `ramp.pricing_unavailable`. |
 | `POST /v1/ramp/onramp/orders`<br>**R3** Buy | `app` | StartOnRampRequest → OrderResponse | **READY** | `{ quoteId, phone }`; `phone` must be the account's own verified number. Sends the M-Pesa prompt. The same quote again returns the same order and no second prompt. Errors: the R2 gates, `ramp.quote_not_found`, `ramp.quote_expired` (ask R2 again), `ramp.order_in_progress`, `ramp.phone_not_yours`, `ramp.wallet_required`, `ramp.too_many_prompts`, `ramp.limit_exceeded`, `ramp.no_merchant_available`, `ramp.merchant_unavailable` (409: the payment couldn't be started with any seller; nothing was taken, no prompt was sent; offer "Try again" with a new quote), `ramp.collections_unavailable` (502: M-Pesa is out of reach), `ramp.custody_unavailable`. |
 | `GET /v1/ramp/orders/{orderId}`<br>**R4** One order | `app` | — → OrderResponse | **READY** | `state`: `RESERVED`, `PAYMENT_REQUESTED`, `PAID`, `RELEASING`, `COMPLETED`, `EXPIRED`, `CANCELLED`, `FAILED`, `REVIEW` (a person at Circaso is looking; point to Support). `txHash` once completed. |
 | `GET /v1/ramp/orders`<br>**R5** My orders | `app` | — → OrdersResponse | **READY** | Newest first; `?limit=` (≤200), `?cursor=` from the previous page's `next`. |
 | `POST /v1/ramp/orders/{orderId}/cancel`<br>**R6** Cancel before paying | `app` | — → OrderResponse | **READY** | While the prompt is still open on the phone it answers `ramp.order_not_cancellable`: dismissing the prompt ends the order by itself. |
+
+#### Identity verification (KYC)
+
+**The rule.** A person verifies once, before their first purchase on a network that requires it (`verification.required`; always on mainnet, switched on for the testnet by staff). Nothing else in the app asks for it. The checks are an ID document, a liveness selfie and a face match, run by **Didit's native SDK** inside the app; the backend creates the session and tells the app the outcome. **One identity verifies one account**: a second account presenting the same document is declined with `identity_in_use`.
+
+**The flow.**
+
+1. R1 (`GET /v1/ramp`). If `verification.required` is false, or `verification.status` is `VERIFIED`, go on to buying. Otherwise show the state from the table below.
+2. When the person taps the button and `verification.canStart` is true: **R0 `POST /v1/ramp/kyc`** (with an `Idempotency-Key`).
+3. If the answer has a `session`: start Didit's SDK with **`session.sessionToken`** (Android, `me.didit:didit-sdk`: `DiditSdk.initialize(context)` once, then `DiditSdk.startVerification(token = sessionToken) { result -> … }`; iOS: `DiditSdk.shared.startVerification(token: sessionToken)`; see docs.didit.me → Native SDKs, "Backend Session"). If the SDK can't run, open `session.url` (Didit's hosted page) in an in-app browser instead. Never ship a Didit API key in the app: the token is all it needs.
+4. When the SDK closes (whatever it reports): **`GET /v1/ramp/kyc`** and show `status`. The SDK's own result is a hint, never the truth: the backend reads the decision from Didit.
+5. The outcome also arrives as a `ramp` / `kyc.updated` frame, and as a push when the app is closed. On either, replace what is shown; on `VERIFIED` carry on to the purchase the person came for.
+
+```json
+// R0 POST /v1/ramp/kyc → data   (a check is open: run the SDK)
+{ "status": "PENDING", "required": true, "canStart": true, "reason": null, "retryAt": null,
+  "session": { "sessionToken": "abc123…", "url": "https://verify.didit.me/session/abc123…",
+               "expiresAt": "2026-11-23T12:00:00Z" } }
+// R0 → data   (nothing to do now)
+{ "status": "VERIFIED", "required": true, "canStart": false, "reason": null, "retryAt": null, "session": null }
+
+// GET /v1/ramp/kyc → data, and `verification` on R1 (GET /v1/ramp), and the `data` of the frame (plus `network`)
+{ "status": "DECLINED", "required": true, "canStart": true, "reason": "face_match", "retryAt": null }
+
+// R1 GET /v1/ramp → data (the new fields beside the old ones)
+{ "canTrade": false, "network": "TESTNET", "kyc": "NONE", "blocked": false,
+  "verification": { "status": "NONE", "required": true, "canStart": true, "reason": null, "retryAt": null },
+  "accountActive": true, "blockchains": ["BASE-SEPOLIA"], "merchantOnline": true, "offRampAvailable": false,
+  "openOrderId": null, "limits": { … }, "feePercent": "1.5" }
+```
+
+**What to show for each state** (`verification.status`, with `canStart`, `reason` and `retryAt`):
+
+| `status` | Means | Show | Button |
+| --- | --- | --- | --- |
+| `NONE` | Never started | "Verify your identity to add money. It takes about two minutes: your ID and a selfie." | "Verify" → R0 |
+| `PENDING`, `canStart` true, no `reason` | A check is open and unfinished | "Finish verifying your identity." | "Continue" → R0 (returns the same session) |
+| `PENDING`, `reason` `resubmission_requested` | A reviewer asked for a step again | "We need one more thing to finish verifying you." | "Continue" → R0 |
+| `PENDING`, `canStart` false | The open check's link ran out and today's tries are used up | "You can try again" + the time of `retryAt` | none until `retryAt` |
+| `IN_REVIEW` | Didit's reviewers are looking | "We're reviewing your details. This usually takes a few minutes; we'll tell you as soon as it's done." | none (wait for the frame or the push) |
+| `VERIFIED` | Done | Nothing: go on to buying. Once, right after: "You're verified." | — |
+| `DECLINED`, `canStart` true | Declined for something another try can fix | The line for `reason` below | "Try again" → R0 |
+| `DECLINED`, `canStart` false, `retryAt` set | Declined, and today's tries are used up | The line for `reason`, then "You can try again" + the time of `retryAt` | none until `retryAt` |
+| `DECLINED`, `canStart` false, no `retryAt` | Declined for good (`identity_in_use`, `blocked`, `not_approved`) | The line for `reason` below | "Contact support" |
+| `EXPIRED` | The check wasn't finished in time, or the ID has since expired | The line for `reason` below | "Verify again" → R0 (when `canStart`) |
+
+`blocked: true` on R1 wins over all of it: "You can't add money on Circaso. Contact support if you think this is a mistake.", with "Contact support" and no verify button.
+
+**Reason codes** (`reason`; word them in the app, the backend never sends Didit's text or anything personal):
+
+| `reason` | Say |
+| --- | --- |
+| `document` | "We couldn't verify your ID. Try again with a clear photo of a valid ID, with all four corners showing." |
+| `document_expired` | "Your ID has expired. Verify again with a valid one." |
+| `document_unreadable` | "We couldn't read your ID's details. Try again with your national ID or passport." |
+| `liveness` | "The selfie check didn't pass. Try again in good light, with your face uncovered." |
+| `face_match` | "Your selfie didn't match the photo on your ID. Try again with your own ID." |
+| `declined` | "We couldn't verify your identity this time. Please try again." |
+| `not_approved` | "We couldn't verify your identity. Contact support for help." (no retry) |
+| `identity_in_use` | "This ID is already verified on another Circaso account. Sign in to that account, or contact support." (no retry) |
+| `blocked` | "You can't add money on Circaso. Contact support if you think this is a mistake." (no retry) |
+| `session_expired` | "Your verification wasn't finished in time. Start again when you're ready." |
+| `resubmission_requested` | "We need one more thing to finish verifying you." |
+
+An unknown `reason` (a newer backend): use the line for `declined` when `canStart`, else the one for `not_approved`.
+
+**Errors** (the envelope's `code`; the server's `message` is already a calm sentence and safe to show):
+
+| Code | Status | From | What the app does |
+| --- | --- | --- | --- |
+| `ramp.kyc_required` | 403 | R2, R3 | The person isn't verified on this network. Read R1 and show the verification state (above). Never a dead end. |
+| `ramp.blocked` | 403 | R0, R2, R3 | The account or its identity is barred from the ramp. Show the `blocked` line with "Contact support". Don't offer to verify. |
+| `ramp.kyc_attempts_exceeded` | 429 | R0 | Today's tries are used up. `details.retryAfterSeconds` (and `verification.retryAt` on R1) say when: "You've tried a few times today. You can try again tomorrow." |
+| `ramp.kyc_unavailable` | 502 | R0 | Didit is out of reach. "We couldn't start your verification. Try again in a moment.", with "Try again". Nothing was counted. |
+| `ramp.kyc_not_configured` | 503 | R0 | Verification isn't set up on this network yet (staff haven't finished). "Identity verification isn't available yet. Please try again later." No retry button. |
+| `ramp.unavailable` | 403 | R0, R1 | The ramp isn't open to this person: hide the feature, as before. |
+| `ramp.account_restricted` | 403 | R0 | The account isn't active: the app's usual restricted-account screen. |
+
+**Frame and push.** `ramp` / `kyc.updated`, replayed like `order.updated` (the same `last` entry, `{ "module": "ramp", "seq": … }`):
+
+```json
+{ "module": "ramp", "type": "kyc.updated", "seq": 12, "ts": "2026-11-22T12:03:10Z",
+  "data": { "network": "TESTNET", "status": "VERIFIED", "required": true, "canStart": false,
+            "reason": null, "retryAt": null } }
+```
+
+It is sent each time the verification moves after a check was started (`IN_REVIEW`, `VERIFIED`, `DECLINED`, `EXPIRED`, `PENDING` again), never for the start itself (R0's answer has that). Use the frame whose `network` is the one the app is on. Push (`kind: "ramp.kyc"`, `network`; a tap opens Add money, which reads R1):
+
+| When | Push body |
+| --- | --- |
+| `VERIFIED` | "You're verified. You can add money now." |
+| `DECLINED` (any reason) | "We couldn't verify your identity yet. Open Circaso to see what to do next." |
+| `PENDING` with `resubmission_requested` | "We need one more thing to finish verifying you. Open Circaso to continue." |
+| `EXPIRED` with `document_expired` | "Your ID has expired. Open Circaso to verify again." |
+| Anything else (`IN_REVIEW`, a check left unfinished) | No push |
+
+**Good to know.**
+
+- **Sessions.** A session lasts 24 hours by default (`session.expiresAt`; staff set it). R0 never makes a second session while one is open, so calling it on every tap is right. A person may start a few checks a day (3 by default).
+- **The testnet** verifies in Didit's sandbox: the SDK shows sample documents and a scenario picker, every check is simulated, and nothing is real. A sandbox verification never counts on mainnet: each network has its own `verification`.
+- **Consent.** Before starting the SDK, show Circaso's own notice that Didit runs the check and link the privacy notice; the SDK asks for the camera itself.
+- **Nothing personal reaches the app from the backend**: no name, document or picture, only the state and a reason code.
 
 ### Group wallets (Spaces phase 2)
 

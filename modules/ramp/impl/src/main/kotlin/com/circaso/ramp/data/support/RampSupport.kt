@@ -4,25 +4,14 @@ import com.circaso.integrations.api.CustodySeeds
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.RampSettings
-import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.UsdcContracts
 import com.circaso.shared.Network
-import com.circaso.shared.UserId
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
-
-/**
- * The KYC gate until Didit is built: nobody is verified, since nothing can verify anyone yet. Only a network whose
- * settings don't require KYC (the testnet, by its row and the table's CHECK) lets anyone trade meanwhile.
- * TODO(decision: KYC tiers and limits) Didit's checks arrive behind this port.
- */
-class NoKycYet : KycGate {
-    override suspend fun isVerified(userId: UserId): Boolean = false
-}
 
 /** What needs a person, as a WARN line for the people on call: ids and reasons, nothing else. */
 class LoggedAlerts : RampAlerts {

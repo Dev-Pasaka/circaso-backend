@@ -27,6 +27,7 @@ import com.circaso.ops.domain.support.UserViews
 import com.circaso.ops.domain.usecases.AddFeeDestination
 import com.circaso.ops.domain.usecases.AddStaff
 import com.circaso.ops.domain.usecases.AssignTicket
+import com.circaso.ops.domain.usecases.BlockRampUser
 import com.circaso.ops.domain.usecases.ChangeFeeRule
 import com.circaso.ops.domain.usecases.ChangeLimitRule
 import com.circaso.ops.domain.usecases.ChangeTicketStatus
@@ -46,6 +47,7 @@ import com.circaso.ops.domain.usecases.GetEmailTemplateId
 import com.circaso.ops.domain.usecases.GetFeeWallets
 import com.circaso.ops.domain.usecases.GetFinanceReport
 import com.circaso.ops.domain.usecases.GetGroup
+import com.circaso.ops.domain.usecases.GetRampBlocks
 import com.circaso.ops.domain.usecases.GetRampMerchantOrders
 import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchants
@@ -53,6 +55,7 @@ import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
 import com.circaso.ops.domain.usecases.GetRampSettings
+import com.circaso.ops.domain.usecases.GetRampUserVerification
 import com.circaso.ops.domain.usecases.GetTicket
 import com.circaso.ops.domain.usecases.GetTransaction
 import com.circaso.ops.domain.usecases.GetUserAccount
@@ -80,12 +83,15 @@ import com.circaso.ops.domain.usecases.OpenDiagnosticLog
 import com.circaso.ops.domain.usecases.RecordDevLogin
 import com.circaso.ops.domain.usecases.RemoveFeeDestination
 import com.circaso.ops.domain.usecases.ReplyToTicket
+import com.circaso.ops.domain.usecases.ResetRampMerchantVerification
+import com.circaso.ops.domain.usecases.ResetRampUserVerification
 import com.circaso.ops.domain.usecases.SearchUsers
 import com.circaso.ops.domain.usecases.SetEmailTemplate
 import com.circaso.ops.domain.usecases.SetRampPreviewAccess
 import com.circaso.ops.domain.usecases.SetUserNetworkAccess
 import com.circaso.ops.domain.usecases.SignInStaff
 import com.circaso.ops.domain.usecases.SuspendUser
+import com.circaso.ops.domain.usecases.UnblockRampUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateRampSettings
@@ -299,7 +305,32 @@ fun opsModule(config: Config): Module =
         single { GetRampOverview(get()) }
         single { GetRampMerchantSummary(get()) }
         single { GetRampMerchantOrders(get()) }
-        single { RampService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { GetRampUserVerification(get(), get()) }
+        single { GetRampBlocks(get()) }
+        single { BlockRampUser(get(), get(), get()) }
+        single { UnblockRampUser(get(), get()) }
+        single { ResetRampUserVerification(get(), get()) }
+        single { ResetRampMerchantVerification(get(), get()) }
+        single {
+            RampService(
+                getRampMerchants = get(),
+                decideRampMerchant = get(),
+                getRampSettings = get(),
+                updateRampSettings = get(),
+                getRampPreviewAccess = get(),
+                setRampPreviewAccess = get(),
+                getRampReviewOrders = get(),
+                getRampOverview = get(),
+                getRampMerchantSummary = get(),
+                getRampMerchantOrders = get(),
+                getRampUserVerification = get(),
+                getRampBlocks = get(),
+                blockRampUser = get(),
+                unblockRampUser = get(),
+                resetRampUserVerification = get(),
+                resetRampMerchantVerification = get(),
+            )
+        }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()

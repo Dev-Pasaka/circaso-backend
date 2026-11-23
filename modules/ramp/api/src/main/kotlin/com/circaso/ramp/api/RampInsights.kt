@@ -82,6 +82,8 @@ data class OpsRampMerchantProfile(
     val paymentsConnected: Boolean,
     val collectionsProvider: String?,
     val paymentsIssue: OpsRampPaymentsIssue?,
+    /** Their identity verification in the environment the summary's network trusts; null when they never started. */
+    val kyc: OpsRampVerification? = null,
 ) {
     override fun toString(): String = "OpsRampMerchantProfile($merchantId, $state)"
 }

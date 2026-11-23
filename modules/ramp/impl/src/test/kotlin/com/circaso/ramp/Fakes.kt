@@ -14,6 +14,15 @@ import com.circaso.integrations.api.Email
 import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.EmailReceipt
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.KycDecision
+import com.circaso.integrations.api.KycDeclineReason
+import com.circaso.integrations.api.KycDocument
+import com.circaso.integrations.api.KycEnvironment
+import com.circaso.integrations.api.KycProvider
+import com.circaso.integrations.api.KycProviders
+import com.circaso.integrations.api.KycSession
+import com.circaso.integrations.api.KycSessionRequest
+import com.circaso.integrations.api.KycStatus
 import com.circaso.integrations.api.MerchantFloat
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.integrations.api.PayoutReceipt
@@ -31,9 +40,11 @@ import com.circaso.messaging.api.ChatId
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.CodeCheck
 import com.circaso.ramp.domain.models.Direction
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.KycGate
@@ -132,8 +143,19 @@ class MemoryBus : EventBus {
 class RecordingFrames : FrameSender {
     val states = mutableListOf<OrderState>()
 
+    /** Every `kyc.updated` frame: who, on which network, and the state they were told. */
+    val kyc = mutableListOf<Triple<UserId, Network, KycView>>()
+
     override suspend fun orderUpdated(order: Order) {
         states += order.state
+    }
+
+    override suspend fun kycUpdated(
+        userId: UserId,
+        network: Network,
+        view: KycView,
+    ) {
+        kyc += Triple(userId, network, view)
     }
 }
 
@@ -205,8 +227,109 @@ class FakeWallets : Wallets {
     override suspend fun depositAddress(userId: UserId, blockchain: String) = addresses[userId to blockchain]
 }
 
-class FakeKyc(var verified: Boolean = false) : KycGate {
-    override suspend fun isVerified(userId: UserId) = verified
+/**
+ * The identity gate with a switch: [verified] waves everybody through (the tests that aren't about KYC); otherwise
+ * [real] answers, which is the ramp's own rows.
+ */
+class FakeKyc(private val real: KycGate, var verified: Boolean = false) : KycGate {
+    override suspend fun isVerified(subject: Subject, environment: KycEnvironment) =
+        verified || real.isVerified(subject, environment)
+
+    override suspend fun isBlocked(userId: UserId, environment: KycEnvironment) = real.isBlocked(userId, environment)
+}
+
+/**
+ * An in-memory KYC provider: a session is `PENDING` until the test says what the provider decided. Like Didit it
+ * keeps one unfinished session per environment, workflow and subject. [failure] fails every call; [available] are
+ * the environments that have keys.
+ */
+class FakeKycProvider(private val clock: Clock) : KycProvider {
+    val started = mutableListOf<KycSessionRequest>()
+    val decisionQueries = mutableListOf<String>()
+    val available = KycEnvironment.entries.toMutableSet()
+    var failure: IntegrationError? = null
+
+    private class Kept(val request: KycSessionRequest, val session: KycSession, var decision: KycDecision)
+
+    private val sessions = mutableListOf<Kept>()
+
+    /** The id of the session last started for [subject]. */
+    fun sessionOf(subject: Subject): String =
+        sessions.last { it.request.subject == subject.reference }.session.sessionId
+
+    fun approve(sessionId: String, document: KycDocument? = KycDocument("KEN", "Identity Card", "12345678")) =
+        set(sessionId, KycStatus.APPROVED, document = document)
+
+    fun decline(sessionId: String, reason: KycDeclineReason = KycDeclineReason.DOCUMENT) =
+        set(sessionId, KycStatus.DECLINED, reason = reason)
+
+    fun set(
+        sessionId: String,
+        status: KycStatus,
+        document: KycDocument? = null,
+        reason: KycDeclineReason? = null,
+        subject: String? = kept(sessionId).request.subject,
+    ) {
+        kept(sessionId).decision = KycDecision(status, subject, document, reason)
+    }
+
+    /** The provider no longer knows the session (deleted on its side). */
+    fun forget(sessionId: String) {
+        sessions.remove(kept(sessionId))
+    }
+
+    override fun isAvailable(environment: KycEnvironment) = environment in available
+
+    override suspend fun startSession(request: KycSessionRequest): Resource<KycSession> {
+        failure?.let { return Resource.error(it) }
+        if (request.environment !in available) return Resource.error(IntegrationError.NotConfigured("fake"))
+        started += request
+        val open =
+            sessions.firstOrNull {
+                it.request.environment == request.environment &&
+                    it.request.subject == request.subject &&
+                    it.request.workflowId == request.workflowId &&
+                    it.decision.status in setOf(KycStatus.PENDING, KycStatus.RESUBMIT)
+            }
+        if (open != null) return Resource.success(open.session)
+        val number = sessions.size + 1
+        val session =
+            KycSession(
+                sessionId = UUID.randomUUID().toString(),
+                token = "token-$number",
+                url = "https://verify.test/session/token-$number",
+                expiresAt = clock.instant().plus(request.validFor ?: Duration.ofDays(7)),
+            )
+        sessions += Kept(request, session, KycDecision(KycStatus.PENDING, request.subject))
+        return Resource.success(session)
+    }
+
+    override suspend fun decision(environment: KycEnvironment, sessionId: String): Resource<KycDecision> {
+        failure?.let { return Resource.error(it) }
+        if (environment !in available) return Resource.error(IntegrationError.NotConfigured("fake"))
+        decisionQueries += sessionId
+        val found = sessions.firstOrNull { it.session.sessionId == sessionId && it.request.environment == environment }
+        return found?.let { Resource.success(it.decision) } ?: Resource.error(IntegrationError.Rejected("No session."))
+    }
+
+    private fun kept(sessionId: String) = sessions.first { it.session.sessionId == sessionId }
+}
+
+/** A provider that needs nothing from the person and approves at once, as the local `log` stand-in does. */
+class InstantKycProvider : KycProvider {
+    override fun isAvailable(environment: KycEnvironment) = true
+
+    override suspend fun startSession(request: KycSessionRequest): Resource<KycSession> =
+        Resource.success(KycSession("instant-${request.subject}", token = null, url = null, expiresAt = null))
+
+    override suspend fun decision(environment: KycEnvironment, sessionId: String): Resource<KycDecision> =
+        Resource.success(KycDecision(KycStatus.APPROVED, null, KycDocument("KEN", "Local", sessionId)))
+}
+
+class FakeKycProviders(private val offered: Map<String, KycProvider>) : KycProviders {
+    override val names: List<String> get() = offered.keys.toList()
+
+    override fun named(name: String): KycProvider? = offered[name]
 }
 
 /** 130 shillings a dollar; the fee is the settings' rate of what is paid: 1 300 at 2 % is a fee of 26, buying 9.8 USDC. */

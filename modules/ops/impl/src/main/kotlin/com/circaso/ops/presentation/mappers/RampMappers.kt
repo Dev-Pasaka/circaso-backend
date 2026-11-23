@@ -1,6 +1,8 @@
 package com.circaso.ops.presentation.mappers
 
 import com.circaso.ops.presentation.dto.RampAmountDto
+import com.circaso.ops.presentation.dto.RampBlockDto
+import com.circaso.ops.presentation.dto.RampBlocksResponse
 import com.circaso.ops.presentation.dto.RampDayDto
 import com.circaso.ops.presentation.dto.RampFloatDto
 import com.circaso.ops.presentation.dto.RampMerchantDto
@@ -22,9 +24,13 @@ import com.circaso.ops.presentation.dto.RampSettingsDto
 import com.circaso.ops.presentation.dto.RampSummaryMerchantDto
 import com.circaso.ops.presentation.dto.RampSummaryWalletDto
 import com.circaso.ops.presentation.dto.RampSweepDto
+import com.circaso.ops.presentation.dto.RampUserVerificationResponse
+import com.circaso.ops.presentation.dto.RampVerificationDto
 import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsRampBlock
+import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
 import com.circaso.ramp.api.OpsRampMerchantActivity
 import com.circaso.ramp.api.OpsRampMerchantOrder
@@ -36,6 +42,8 @@ import com.circaso.ramp.api.OpsRampOverview
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
+import com.circaso.ramp.api.OpsRampUserVerification
+import com.circaso.ramp.api.OpsRampVerification
 import com.circaso.ramp.api.RampAmount
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.api.RampOrderStates
@@ -45,6 +53,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 fun parseMerchantId(raw: String?, field: String = "merchantId"): Resource<MerchantId> =
     raw?.let(MerchantId::parse)?.let { Resource.success(it) } ?: malformed(field, "must be a merchant id")
@@ -58,6 +67,55 @@ fun orderCursor(raw: String?): Resource<RampOrderId?> =
         raw == null -> Resource.success(null)
         else -> RampOrderId.parse(raw)?.let { Resource.success(it) } ?: malformed("cursor", "must be an order id")
     }
+
+fun OpsRampVerification.toDto() =
+    RampVerificationDto(
+        environment = environment,
+        status = status,
+        reason = reason,
+        provider = provider,
+        attempts = attempts,
+        hasIdentity = hasIdentity,
+        startedAt = startedAt?.toString(),
+        verifiedAt = verifiedAt?.toString(),
+        updatedAt = updatedAt.toString(),
+    )
+
+fun OpsRampBlock.toDto() =
+    RampBlockDto(
+        blockId = blockId.toString(),
+        userId = userId.toString(),
+        reason = reason,
+        note = note,
+        createdBy = createdBy,
+        createdAt = createdAt.toString(),
+    )
+
+fun OpsRampUserVerification.toResponse() =
+    RampUserVerificationResponse(
+        userId = userId.toString(),
+        verifications = verifications.map { it.toDto() },
+        blocked = block != null,
+        block = block?.toDto(),
+    )
+
+/** A page of blocks; `nextCursor` continues after its last block, null on the last page. */
+fun List<OpsRampBlock>.toBlocksResponse(limit: Int) =
+    RampBlocksResponse(
+        blocks = map { it.toDto() },
+        nextCursor = lastOrNull()?.takeIf { size >= limit }?.let { "${it.createdAt}$CURSOR_SEPARATOR${it.blockId}" },
+    )
+
+/** A page's cursor: `<createdAt>~<blockId>` of its last block, as `nextCursor` gave it. */
+fun blockCursor(raw: String?): Resource<OpsRampBlockCursor?> {
+    if (raw == null) return Resource.success(null)
+    val parts = raw.split(CURSOR_SEPARATOR)
+    val cursor =
+        runCatching { OpsRampBlockCursor(Instant.parse(parts[0]), UUID.fromString(parts[1])) }
+            .getOrNull()
+            ?.takeIf { parts.size == 2 }
+    return cursor?.let { Resource.success(it) } ?: malformed("cursor", "must be a nextCursor of this list")
+}
 
 private fun OpsMerchant.toDto(now: Instant) =
     RampMerchantDto(
@@ -73,6 +131,7 @@ private fun OpsMerchant.toDto(now: Instant) =
         approvedBy = approvedBy,
         approvedAt = approvedAt?.toString(),
         createdAt = createdAt.toString(),
+        verifications = verifications.map { it.toDto() },
     )
 
 fun OpsMerchant.toResponse(now: Instant) = toDto(now)
@@ -106,6 +165,14 @@ fun OpsRampSettings.toDto() =
         updatedBy = updatedBy,
         updatedAt = updatedAt?.toString(),
         collectionsProviders = collectionsProviders,
+        kycProvider = kycProvider.orEmpty(),
+        kycEnvironment = kycEnvironment.orEmpty(),
+        kycWorkflowUser = kycWorkflowUser.orEmpty(),
+        kycWorkflowMerchant = kycWorkflowMerchant.orEmpty(),
+        merchantPortalUrl = merchantPortalUrl.orEmpty(),
+        kycAttemptsPerDay = kycAttemptsPerDay ?: 0,
+        kycPendingHours = kycPendingHours ?: 0,
+        kycProviders = kycProviders,
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -138,6 +205,13 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             collectionsProvider = collectionsProvider.trim().lowercase(),
             providerFeeFloorMinor = floor,
             version = version,
+            kycProvider = kycProvider?.trim()?.lowercase(),
+            kycEnvironment = kycEnvironment?.trim()?.uppercase(),
+            kycWorkflowUser = kycWorkflowUser?.trim(),
+            kycWorkflowMerchant = kycWorkflowMerchant?.trim(),
+            merchantPortalUrl = merchantPortalUrl?.trim(),
+            kycAttemptsPerDay = kycAttemptsPerDay,
+            kycPendingHours = kycPendingHours,
         ),
     )
 }
@@ -287,6 +361,7 @@ private fun OpsRampMerchantProfile.toDto() =
         paymentsConnected = paymentsConnected,
         collectionsProvider = collectionsProvider,
         paymentsIssue = paymentsIssue?.let { RampPaymentsIssueDto(it.code, it.since?.toString()) },
+        kyc = kyc?.toDto(),
     )
 
 private fun OpsRampDay.toDto() =

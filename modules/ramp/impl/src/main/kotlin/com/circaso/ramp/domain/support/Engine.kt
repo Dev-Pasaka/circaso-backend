@@ -7,6 +7,8 @@ import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.repositories.CommissionRepository
@@ -20,8 +22,9 @@ import java.time.Clock
 
 /**
  * The merchant engine, in its simple first version: the candidates are approved merchants with a float wallet on the
- * order's network and chain whose trading window outlasts the order **and whose payment keys this node holds, for
- * the collections provider the network uses now**, taken
+ * order's network and chain whose trading window outlasts the order, **whose payment keys this node holds, for
+ * the collections provider the network uses now**, and who passed identity verification where the network requires
+ * it, taken
  * least recently assigned first so equal merchants take turns. (Ranking by recent success rate, splitting an order and
  * handing work to the node that holds a merchant's keys arrive later: with one node, a merchant unlocked elsewhere is
  * simply not a candidate here.)
@@ -40,6 +43,7 @@ class Engine(
     private val transactor: Transactor,
     private val float: MerchantFloat,
     private val sessions: TradingSessions,
+    private val kyc: KycGate,
     private val clock: Clock,
 ) {
     /** Whether anybody could take an order on [blockchain] right now (their float isn't looked at). */
@@ -93,7 +97,15 @@ class Engine(
         merchants
             .candidates(network, blockchain, until = clock.instant().plus(settings.paymentWindow))
             .filter { sessions.of(it.merchant.merchantId)?.provider == settings.collectionsProvider }
+            .filter { isCleared(it.merchant.merchantId, settings) }
             .sortedWith(compareBy(nullsFirst()) { it.merchant.lastAssignedAt })
+
+    /**
+     * Whether the merchant passed identity verification where this network requires it. A merchant's trading window
+     * is one for both networks, so being online never stands in for being verified on the network of the order.
+     */
+    private suspend fun isCleared(merchantId: MerchantId, settings: RampSettings): Boolean =
+        !settings.enforcesKyc || kyc.isVerified(Subject.merchant(merchantId), settings.kycEnvironment)
 
     private suspend fun reserveWith(
         candidate: Candidate,

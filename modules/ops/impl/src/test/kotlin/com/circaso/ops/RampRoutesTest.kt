@@ -426,7 +426,8 @@ class RampRoutesTest {
                     "\"email\":\"pay@crynce.co.ke\",\"contactPhone\":\"+254712000111\",\"state\":\"APPROVED\"," +
                     "\"createdAt\":\"2026-11-22T12:00:00Z\",\"approvedAt\":\"2026-11-22T12:00:00Z\"," +
                     "\"online\":true,\"onlineUntil\":\"2026-11-22T13:00:00Z\"," +
-                    "\"paymentsConnected\":true,\"collectionsProvider\":\"payhero\",\"paymentsIssue\":null}" in body,
+                    "\"paymentsConnected\":true,\"collectionsProvider\":\"payhero\",\"paymentsIssue\":null," +
+                    "\"kyc\":null}" in body,
                 body,
             )
             assertTrue("\"wallet\":{\"blockchain\":\"BASE-SEPOLIA\",\"address\":\"0xfloat\"}" in body, body)

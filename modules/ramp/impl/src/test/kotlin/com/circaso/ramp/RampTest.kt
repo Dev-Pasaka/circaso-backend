@@ -303,13 +303,14 @@ class RampTest {
     @Test
     fun `a network starts on PayHero, and on log only where the server offers it - a developer's machine`() =
         runTest {
-            val server = SettingsBook(MemorySettings(), RecordingAlerts(), ramp.providers, ramp.clock)
+            val server =
+                SettingsBook(MemorySettings(), RecordingAlerts(), ramp.providers, ramp.kycProviders, ramp.clock)
             assertEquals(PAYHERO, server.of(TESTNET).collectionsProvider)
             assertEquals(PAYHERO, server.of(Network.MAINNET).collectionsProvider)
 
             val local = FakeProviders(mapOf(PAYHERO to FakeCollections(), "log" to FakeCollections()))
             val rows = MemorySettings()
-            val laptop = SettingsBook(rows, RecordingAlerts(), local, ramp.clock)
+            val laptop = SettingsBook(rows, RecordingAlerts(), local, ramp.kycProviders, ramp.clock)
             assertEquals("log", laptop.of(TESTNET).collectionsProvider)
             assertEquals("log", rows.rows.getValue(TESTNET).collectionsProvider, "written once as the row")
             assertEquals("log" to PAYHERO, Providers.seed(local) to Providers.seed(ramp.providers))

@@ -1,8 +1,10 @@
 package com.circaso.ramp
 
+import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.CommissionFigures
 import com.circaso.ramp.domain.models.DayTotals
@@ -30,6 +32,13 @@ import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.Stamped
 import com.circaso.ramp.domain.models.StatementLine
 import com.circaso.ramp.domain.models.StatementTotals
+import com.circaso.ramp.domain.models.Subject
+import com.circaso.ramp.domain.models.SubjectKind
+import com.circaso.ramp.domain.models.Verification
+import com.circaso.ramp.domain.models.VerificationChange
+import com.circaso.ramp.domain.models.VerificationStatus
+import com.circaso.ramp.domain.models.VerifiedOutcome
+import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.InsightRepository
@@ -44,6 +53,7 @@ import com.circaso.ramp.domain.repositories.SessionRepository
 import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
+import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Periods
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
@@ -654,4 +664,127 @@ class MemoryLedger(private val orders: MemoryOrders) :
                 }
             StaffOrder(order, commission)
         }
+}
+
+class MemoryVerifications : VerificationRepository {
+    val rows = mutableMapOf<Pair<Subject, KycEnvironment>, Verification>()
+
+    override suspend fun find(subject: Subject, environment: KycEnvironment) = rows[subject to environment]
+
+    override suspend fun bySession(sessionId: String) = rows.values.firstOrNull { it.sessionId == sessionId }
+
+    override suspend fun ofSubject(subject: Subject) =
+        rows.values.filter { it.subject == subject }.sortedBy { it.environment }
+
+    override suspend fun save(verification: Verification) {
+        val key = verification.subject to verification.environment
+        val before = rows[key]
+        rows[key] =
+            verification.copy(
+                identityKey = before?.identityKey ?: verification.identityKey,
+                createdAt = before?.createdAt ?: verification.createdAt,
+            )
+    }
+
+    override suspend fun move(
+        subject: Subject,
+        environment: KycEnvironment,
+        sessionId: String,
+        change: VerificationChange,
+        at: Instant,
+    ): Verification? {
+        val row = rows[subject to environment]?.takeIf { it.sessionId == sessionId } ?: return null
+        if (row.status == change.status && row.reason == change.reason) return null
+        val moved = row.copy(status = change.status, reason = change.reason, checkedAt = at, updatedAt = at)
+        rows[subject to environment] = moved
+        return moved
+    }
+
+    override suspend fun verify(
+        subject: Subject,
+        environment: KycEnvironment,
+        sessionId: String,
+        identityKey: String?,
+        at: Instant,
+    ): VerifiedOutcome {
+        val row =
+            rows[subject to environment]?.takeIf { it.sessionId == sessionId } ?: return VerifiedOutcome.AlreadyThere
+        if (row.status == VerificationStatus.VERIFIED) return VerifiedOutcome.AlreadyThere
+        val taken =
+            identityKey != null &&
+                rows.values.any {
+                    it.identityKey == identityKey &&
+                        it.environment == environment &&
+                        it.subject.kind == subject.kind &&
+                        it.subject != subject
+                }
+        if (taken) return VerifiedOutcome.IdentityInUse
+        val verified =
+            row.copy(
+                status = VerificationStatus.VERIFIED,
+                reason = null,
+                identityKey = identityKey ?: row.identityKey,
+                sessionToken = null,
+                sessionUrl = null,
+                sessionExpiresAt = null,
+                verifiedAt = at,
+                checkedAt = at,
+                updatedAt = at,
+            )
+        rows[subject to environment] = verified
+        return VerifiedOutcome.Moved(verified)
+    }
+
+    override suspend fun touch(
+        subject: Subject,
+        environment: KycEnvironment,
+        at: Instant,
+    ) {
+        rows[subject to environment]?.let { rows[subject to environment] = it.copy(checkedAt = at) }
+    }
+
+    override suspend fun stale(
+        statuses: Set<VerificationStatus>,
+        checkedBefore: Instant,
+        limit: Int,
+    ) = rows.values
+        .filter { it.status in statuses && it.checkedAt.isBefore(checkedBefore) }
+        .sortedBy { it.checkedAt }
+        .take(limit)
+
+    override suspend fun delete(subject: Subject, environment: KycEnvironment) = rows.remove(subject to environment)
+}
+
+class MemoryBlocks : BlockRepository {
+    val rows = mutableListOf<Block>()
+
+    override suspend fun ofUser(userId: UserId) = rows.firstOrNull { it.userId == userId }
+
+    override suspend fun isBlocked(userId: UserId, identityKey: String?) =
+        rows.any { it.userId == userId || (identityKey != null && it.identityKey == identityKey) }
+
+    override suspend fun hasIdentity(identityKey: String) = rows.any { it.identityKey == identityKey }
+
+    override suspend fun add(block: Block): Boolean {
+        val taken =
+            rows.any {
+                (block.userId != null && it.userId == block.userId) ||
+                    (block.identityKey != null && it.identityKey == block.identityKey)
+            }
+        if (!taken) rows += block
+        return !taken
+    }
+
+    override suspend fun removeUser(userId: UserId): Int {
+        val before = rows.size
+        rows.removeAll { it.userId == userId || it.sourceUserId == userId }
+        return before - rows.size
+    }
+
+    override suspend fun users(after: PageCursor?, limit: Int) =
+        rows
+            .filter { it.userId != null }
+            .sortedWith(compareByDescending<Block> { it.createdAt }.thenByDescending { it.blockId })
+            .filter { after == null || it.createdAt < after.at || (it.createdAt == after.at && it.blockId < after.id) }
+            .take(limit)
 }

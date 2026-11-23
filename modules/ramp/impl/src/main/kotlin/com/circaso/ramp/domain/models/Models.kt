@@ -157,8 +157,16 @@ data class RampStatus(
     val openOrderId: RampOrderId?,
     val limits: RampLimits,
     val feeBps: Int,
+    /** The user's identity verification in full, so the app never guesses what to show. */
+    val verification: KycView,
+    /** Barred from the ramp, as a user or as the identity they verified with. */
+    val blocked: Boolean,
 )
 
+/**
+ * The gate's short answer, kept for apps built before [RampStatus.verification]: verified, not verified (whatever
+ * the reason), or not asked for on this network.
+ */
 enum class KycStanding { VERIFIED, NONE, NOT_REQUIRED }
 
 data class RampLimits(

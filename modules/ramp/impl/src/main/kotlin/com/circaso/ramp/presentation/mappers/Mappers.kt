@@ -5,6 +5,7 @@ import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycStanding
+import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Quote
@@ -13,6 +14,8 @@ import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampStatus
 import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.support.Amounts
+import com.circaso.ramp.presentation.dto.KycResponse
+import com.circaso.ramp.presentation.dto.KycSessionDto
 import com.circaso.ramp.presentation.dto.LimitsDto
 import com.circaso.ramp.presentation.dto.OrderResponse
 import com.circaso.ramp.presentation.dto.OrdersResponse
@@ -20,6 +23,7 @@ import com.circaso.ramp.presentation.dto.QuoteRequest
 import com.circaso.ramp.presentation.dto.QuoteResponse
 import com.circaso.ramp.presentation.dto.RampStatusResponse
 import com.circaso.ramp.presentation.dto.StartOnRampRequest
+import com.circaso.ramp.presentation.dto.VerificationDto
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.FieldError
 import com.circaso.shared.Network
@@ -105,9 +109,30 @@ fun List<OrderView>.toResponse(limit: Int) =
         next = lastOrNull()?.takeIf { size >= limit }?.let { cursor(it.order.createdAt, it.order.orderId.value) },
     )
 
+/** The state without the link: R1's `verification`, RM2's `kyc`. */
+fun KycView.toDto() =
+    VerificationDto(
+        status = state.name,
+        required = required,
+        canStart = canStart,
+        reason = reason?.code,
+        retryAt = retryAt?.toString(),
+    )
+
+/** R0 and RM3: the state, and the open check's link when there is one. */
+fun KycView.toResponse() =
+    KycResponse(
+        status = state.name,
+        required = required,
+        canStart = canStart,
+        reason = reason?.code,
+        retryAt = retryAt?.toString(),
+        session = link?.let { KycSessionDto(it.token, it.url, it.expiresAt?.toString()) },
+    )
+
 fun RampStatus.toResponse() =
     RampStatusResponse(
-        canTrade = kyc != KycStanding.NONE && accountActive && merchantOnline && openOrderId == null,
+        canTrade = kyc != KycStanding.NONE && !blocked && accountActive && merchantOnline && openOrderId == null,
         network = network.name,
         kyc = kyc.name,
         accountActive = accountActive,
@@ -123,4 +148,6 @@ fun RampStatus.toResponse() =
                 daily = Amounts.fiat(limits.dailyMinor),
             ),
         feePercent = Amounts.percent(feeBps),
+        verification = verification.toDto(),
+        blocked = blocked,
     )

@@ -1,9 +1,13 @@
 package com.circaso.ramp.presentation.api
 
 import com.circaso.integrations.api.CollectionNotifications
+import com.circaso.integrations.api.KycEnvironment
+import com.circaso.integrations.api.KycNotifications
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsMerchantWallet
+import com.circaso.ramp.api.OpsRampBlock
+import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
 import com.circaso.ramp.api.OpsRampFloat
 import com.circaso.ramp.api.OpsRampMerchantActivity
@@ -21,12 +25,16 @@ import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
+import com.circaso.ramp.api.OpsRampUserVerification
+import com.circaso.ramp.api.OpsRampVerification
 import com.circaso.ramp.api.Ramp
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampFrames
+import com.circaso.ramp.api.RampKycEnvironments
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.api.RampOrderStates
 import com.circaso.ramp.domain.errors.RampError
+import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.MerchantFigures
 import com.circaso.ramp.domain.models.MerchantRecord
 import com.circaso.ramp.domain.models.MerchantSummary
@@ -40,6 +48,7 @@ import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.StaffOrder
 import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.StatementTotals
+import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.presentation.services.RampAdminService
 import com.circaso.ramp.presentation.services.RampEventsService
@@ -71,6 +80,15 @@ class RampCollectionNotifications(private val events: RampEventsService) : Colle
         events.paymentCallback(callbackKey, reference)
 }
 
+/**
+ * Integrations' KYC webhook rings here with the session's id and the environment its signature was checked against;
+ * the ramp reads the decision from the provider itself.
+ */
+class RampKycNotifications(private val events: RampEventsService) : KycNotifications {
+    override suspend fun onStatusChanged(environment: KycEnvironment, sessionId: String): Resource<Unit> =
+        events.kycNotification(environment, sessionId)
+}
+
 /** The gateway's replay after a reconnect: the frames since `seq`, or a `resync` when the gap is older than what is kept. */
 class RampRealtimeReplay(private val events: RampEventsService) : RealtimeReplay {
     override suspend fun since(userId: UserId, seq: Long): Resource<List<RealtimeEnvelope>> {
@@ -96,24 +114,32 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
     override suspend fun suspend(merchantId: MerchantId, by: UUID): Resource<OpsMerchant> =
         admin.decide(merchantId, approve = false, by = by.toString()).map { it.toOps() }
 
-    override suspend fun settings(network: Network): OpsRampSettings {
-        val settings = admin.settings(network).getOrNull() ?: RampSettings.defaults(network, Instant.EPOCH)
-        return settings.toOps(offered())
-    }
+    override suspend fun settings(network: Network): OpsRampSettings = current(network).toOps(offered(), offeredKyc())
 
     override suspend fun updateSettings(settings: OpsRampSettings, by: UUID): Resource<OpsRampSettingsChange> =
-        settings.toDomain(currentFloor(settings.network)).flatMap { wanted ->
+        settings.toDomain(current(settings.network)).flatMap { wanted ->
             val offered = offered()
+            val offeredKyc = offeredKyc()
             admin
                 .updateSettings(wanted, settings.version, by.toString())
-                .map { OpsRampSettingsChange(it.before.toOps(offered), it.after.toOps(offered)) }
+                .map {
+                    OpsRampSettingsChange(
+                        it.before.toOps(offered, offeredKyc),
+                        it.after.toOps(offered, offeredKyc),
+                    )
+                }
         }
 
     private suspend fun offered(): List<String> = admin.collectionProviders().getOrNull().orEmpty()
 
-    /** The floor in force, for an update that doesn't name one (a form from before the setting existed). */
-    private suspend fun currentFloor(network: Network): Long =
-        admin.settings(network).getOrNull()?.providerFeeFloorMinor ?: RampSettings.DEFAULT_PROVIDER_FEE_FLOOR_MINOR
+    private suspend fun offeredKyc(): List<String> = admin.kycProviders().getOrNull().orEmpty()
+
+    /**
+     * The settings in force: what a read answers, and what stands in for anything an update doesn't name (a form
+     * from before that setting existed).
+     */
+    private suspend fun current(network: Network): RampSettings =
+        admin.settings(network).getOrNull() ?: RampSettings.defaults(network, Instant.EPOCH)
 
     override suspend fun overview(network: Network, period: OpsRampPeriod?): OpsRampOverview =
         admin
@@ -133,7 +159,10 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
         network: Network,
         period: OpsRampPeriod?,
     ): Resource<OpsRampMerchantSummary> =
-        admin.merchantSummary(merchantId, network, period?.toDomain()).map { it.toOps() }
+        admin.merchantSummary(merchantId, network, period?.toDomain()).map { summary ->
+            val kyc = admin.merchantVerification(merchantId, network).getOrNull()?.toOps()
+            summary.toOps().let { it.copy(merchant = it.merchant.copy(kyc = kyc)) }
+        }
 
     override suspend fun merchantOrders(
         merchantId: MerchantId,
@@ -177,7 +206,68 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
             .getOrNull()
             .orEmpty()
             .map { it.toOps() }
+
+    override suspend fun userVerification(userId: UserId): OpsRampUserVerification {
+        val found = admin.userVerifications(userId).getOrNull()
+        return OpsRampUserVerification(
+            userId = userId,
+            verifications = found?.verifications.orEmpty().map { it.toOps() },
+            block = found?.block?.toOps(),
+        )
+    }
+
+    override suspend fun blocks(after: OpsRampBlockCursor?, limit: Int): List<OpsRampBlock> =
+        admin
+            .blocks(after?.let { PageCursor(it.at, it.blockId) }, limit)
+            .getOrNull()
+            .orEmpty()
+            .mapNotNull { it.toOps() }
+
+    override suspend fun block(
+        userId: UserId,
+        note: String,
+        by: UUID,
+    ): Resource<OpsRampBlock> =
+        admin.block(userId, note, by.toString()).flatMap { block ->
+            block.toOps()?.let { Resource.success(it) } ?: Resource.error(SharedError.Internal)
+        }
+
+    override suspend fun unblock(userId: UserId, by: UUID): Boolean = admin.unblock(userId).getOrNull() ?: false
+
+    override suspend fun resetUserVerification(
+        userId: UserId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean> = environmentOf(environment).flatMap { admin.resetUserVerification(userId, it) }
+
+    override suspend fun resetMerchantVerification(
+        merchantId: MerchantId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean> = environmentOf(environment).flatMap { admin.resetMerchantVerification(merchantId, it) }
+
+    private fun environmentOf(name: String): Resource<KycEnvironment> =
+        KycEnvironment.parse(name)?.let { Resource.success(it) }
+            ?: Resource.error(SharedError.Malformed("environment", "must be one of ${RampKycEnvironments.ALL}"))
 }
+
+/** A verification for staff: where it stands and why, never the session's link or the identity key itself. */
+private fun Verification.toOps() =
+    OpsRampVerification(
+        environment = environment.name,
+        status = status.name,
+        reason = reason?.code,
+        provider = provider,
+        attempts = attempts,
+        hasIdentity = identityKey != null,
+        startedAt = startedAt,
+        verifiedAt = verifiedAt,
+        updatedAt = updatedAt,
+    )
+
+/** A user's block for staff; an identity's own row is never listed. */
+private fun Block.toOps(): OpsRampBlock? =
+    userId?.let { OpsRampBlock(blockId, it, reason.name, note, createdBy, createdAt) }
 
 private fun MerchantRecord.toOps() =
     OpsMerchant(
@@ -192,6 +282,7 @@ private fun MerchantRecord.toOps() =
         approvedBy = merchant.approvedBy,
         approvedAt = merchant.approvedAt,
         createdAt = merchant.createdAt,
+        verifications = verifications.map { it.toOps() },
     )
 
 private fun OrderView.toOps() =
@@ -213,7 +304,7 @@ private fun OrderView.toOps() =
         updatedAt = order.updatedAt,
     )
 
-private fun RampSettings.toOps(offered: List<String>) =
+private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) =
     OpsRampSettings(
         network = network,
         state = state.name,
@@ -236,16 +327,29 @@ private fun RampSettings.toOps(offered: List<String>) =
         updatedBy = updatedBy,
         updatedAt = updatedAt,
         collectionsProviders = offered,
+        kycProvider = kycProvider,
+        kycEnvironment = kycEnvironment.name,
+        kycWorkflowUser = kycWorkflowUser,
+        kycWorkflowMerchant = kycWorkflowMerchant,
+        merchantPortalUrl = merchantPortalUrl,
+        kycAttemptsPerDay = kycAttemptsPerDay,
+        kycPendingHours = kycPendingHours,
+        kycProviders = offeredKyc,
     )
 
 /**
- * Staff's settings as the domain's; the read-only fields are whatever the row has. [currentFloor] stands in when the
- * update names no provider fee floor.
+ * Staff's settings as the domain's; the read-only fields are whatever the row has. [current] stands in for each newer
+ * setting the update doesn't name (the provider fee floor, the identity settings).
  */
-private fun OpsRampSettings.toDomain(currentFloor: Long): Resource<RampSettings> {
+private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettings> {
     val wanted =
         RampState.entries.firstOrNull { it.name == state.trim().uppercase() }
             ?: return Resource.error(RampError.SettingsInvalid("state", "must be OFF, PREVIEW or ON"))
+    val environment =
+        kycEnvironment?.let {
+            KycEnvironment.parse(it)
+                ?: return Resource.error(RampError.SettingsInvalid("kycEnvironment", "must be SANDBOX or LIVE"))
+        }
     return Resource.success(
         RampSettings(
             network = network,
@@ -263,11 +367,18 @@ private fun OpsRampSettings.toDomain(currentFloor: Long): Resource<RampSettings>
             kycRequired = kycRequired,
             callbackBaseUrl = callbackBaseUrl.trim(),
             collectionsProvider = collectionsProvider.trim().lowercase(),
-            providerFeeFloorMinor = providerFeeFloorMinor ?: currentFloor,
+            providerFeeFloorMinor = providerFeeFloorMinor ?: current.providerFeeFloorMinor,
             walletSetId = null,
             updatedBy = null,
             updatedAt = Instant.EPOCH,
             version = version ?: 0,
+            kycProvider = kycProvider?.trim()?.lowercase() ?: current.kycProvider,
+            kycEnvironment = environment ?: current.kycEnvironment,
+            kycWorkflowUser = kycWorkflowUser?.trim() ?: current.kycWorkflowUser,
+            kycWorkflowMerchant = kycWorkflowMerchant?.trim() ?: current.kycWorkflowMerchant,
+            merchantPortalUrl = merchantPortalUrl?.trim() ?: current.merchantPortalUrl,
+            kycAttemptsPerDay = kycAttemptsPerDay ?: current.kycAttemptsPerDay,
+            kycPendingHours = kycPendingHours ?: current.kycPendingHours,
         ),
     )
 }

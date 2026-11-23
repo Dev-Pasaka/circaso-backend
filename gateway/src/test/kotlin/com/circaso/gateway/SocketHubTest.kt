@@ -40,6 +40,11 @@ import com.circaso.messaging.api.MessageNewFrame
 import com.circaso.observability.api.Metrics
 import com.circaso.observability.api.NoopTelemetry
 import com.circaso.observability.api.Telemetry
+import com.circaso.ramp.api.KycUpdatedFrame
+import com.circaso.ramp.api.OrderUpdatedFrame
+import com.circaso.ramp.api.RampAmount
+import com.circaso.ramp.api.RampFrames
+import com.circaso.ramp.api.RampOrderId
 import com.circaso.shared.CircasoJson
 import com.circaso.shared.ClientFrame
 import com.circaso.shared.DeviceId
@@ -1395,6 +1400,74 @@ class SocketHubTest {
                 push.sent[3]
                     .second.data.kind,
             )
+        }
+
+    @Test
+    fun `ramp frames push the end of a purchase and of an identity check, never an amount or a reason`() =
+        runBlocking {
+            val push = RecordingPush()
+            val realtime = GatewayRealtime(hub(), push, registrations, NoVoip)
+            val user = UserId.new()
+            val orderId = RampOrderId.new()
+            val pay = RampAmount("KES", "130000", "1300")
+            val receive = RampAmount("USDC", "9800000", "9.8")
+
+            fun order(state: String) =
+                RealtimeEnvelope.of(
+                    RampFrames.MODULE,
+                    RampFrames.ORDER_UPDATED,
+                    1,
+                    OrderUpdatedFrame(orderId, "ON_RAMP", state, "BASE", pay, receive),
+                    OrderUpdatedFrame.serializer(),
+                )
+
+            fun kyc(
+                status: String,
+                reason: String? = null,
+                canStart: Boolean = false,
+            ) = RealtimeEnvelope.of(
+                RampFrames.MODULE,
+                RampFrames.KYC_UPDATED,
+                2,
+                KycUpdatedFrame("TESTNET", status, required = true, canStart = canStart, reason = reason),
+                KycUpdatedFrame.serializer(),
+            )
+            realtime.deliver(user, order("PAID"))
+            realtime.deliver(user, order("COMPLETED"))
+            realtime.deliver(user, order("FAILED"))
+            // A check still running, in review or simply left unfinished pushes nothing.
+            realtime.deliver(user, kyc("PENDING", canStart = true))
+            realtime.deliver(user, kyc("IN_REVIEW"))
+            realtime.deliver(user, kyc("EXPIRED", "session_expired", canStart = true))
+            realtime.deliver(user, kyc("VERIFIED"))
+            realtime.deliver(user, kyc("DECLINED", "face_match", canStart = true))
+            realtime.deliver(user, kyc("DECLINED", "identity_in_use"))
+            realtime.deliver(user, kyc("PENDING", "resubmission_requested", canStart = true))
+            realtime.deliver(user, kyc("EXPIRED", "document_expired", canStart = true))
+
+            assertEquals(
+                listOf(
+                    "Your USDC has arrived",
+                    "Your top-up didn't go through",
+                    "You're verified. You can add money now.",
+                    "We couldn't verify your identity yet. Open Circaso to see what to do next.",
+                    "We couldn't verify your identity yet. Open Circaso to see what to do next.",
+                    "We need one more thing to finish verifying you. Open Circaso to continue.",
+                    "Your ID has expired. Open Circaso to verify again.",
+                ),
+                push.sent.map { it.second.body },
+            )
+            assertTrue(push.sent.none { "1300" in it.second.body || "face" in it.second.body })
+            assertEquals(listOf("ramp.order", "ramp.order"), push.sent.take(2).map { it.second.data.kind })
+            assertEquals(
+                orderId.toString(),
+                push.sent
+                    .first()
+                    .second.data.orderId,
+            )
+            val verified = push.sent[2].second.data
+            assertEquals("ramp.kyc" to "TESTNET", verified.kind to verified.network)
+            assertTrue(push.sent.drop(2).all { it.second.data.kind == "ramp.kyc" })
         }
 
     @Test

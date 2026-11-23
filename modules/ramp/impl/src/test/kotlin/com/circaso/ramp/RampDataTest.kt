@@ -8,6 +8,7 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.data.cache.RampExpiry
+import com.circaso.ramp.data.repositories.BlockRepositoryImpl
 import com.circaso.ramp.data.repositories.CommissionRepositoryImpl
 import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
@@ -24,6 +25,9 @@ import com.circaso.ramp.data.repositories.SessionRepositoryImpl
 import com.circaso.ramp.data.repositories.SettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.SettlementRepositoryImpl
 import com.circaso.ramp.data.repositories.StatementRepositoryImpl
+import com.circaso.ramp.data.repositories.VerificationRepositoryImpl
+import com.circaso.ramp.data.support.EnvelopeVault
+import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.di.rampDatabaseSpec
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Candidate
@@ -54,6 +58,7 @@ import com.circaso.ramp.domain.support.Periods
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
 import com.circaso.shared.PhoneNumber
@@ -110,9 +115,28 @@ class RampDataTest {
     private val alerts = RecordingAlerts()
     private val outbox = RampOutboxImpl(database)
     private val providers = FakeProviders(mapOf(PAYHERO to collections))
-    private val book = SettingsBook(settingsRows, alerts, providers, clock)
+    private val verificationRows = VerificationRepositoryImpl(database)
+    private val blocks = BlockRepositoryImpl(database)
+    private val didit = FakeKycProvider(clock)
+    private val kycProviders = FakeKycProviders(mapOf(DIDIT to didit))
+    private val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
+    private val frames = RecordingFrames()
+    private val identities = HmacIdentityKeys { EnvelopeVault.masterKey(MASTER_KEY) }
+    private val verifications =
+        Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
     private val engine =
-        Engine(merchants, merchantWallets, reservations, commissions, orders, transactor, treasury, sessions, clock)
+        Engine(
+            merchants,
+            merchantWallets,
+            reservations,
+            commissions,
+            orders,
+            transactor,
+            treasury,
+            sessions,
+            verifications,
+            clock,
+        )
     private val flow =
         OrderFlow(
             orders,

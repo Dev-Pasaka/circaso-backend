@@ -10,6 +10,7 @@ import com.circaso.infrastructure.api.Secrets
 import com.circaso.integrations.api.CollectionNotifications
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.integrations.api.DEV_TREASURY
+import com.circaso.integrations.api.KycNotifications
 import com.circaso.integrations.api.TreasuryCustody
 import com.circaso.ramp.api.Ramp
 import com.circaso.ramp.api.RampAdmin
@@ -20,6 +21,7 @@ import com.circaso.ramp.data.cache.RealtimeFramesImpl
 import com.circaso.ramp.data.cache.RedisCounters
 import com.circaso.ramp.data.cache.RedisPinAttempts
 import com.circaso.ramp.data.cache.RedisSignInCodes
+import com.circaso.ramp.data.repositories.BlockRepositoryImpl
 import com.circaso.ramp.data.repositories.CommissionRepositoryImpl
 import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
@@ -36,12 +38,14 @@ import com.circaso.ramp.data.repositories.SessionRepositoryImpl
 import com.circaso.ramp.data.repositories.SettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.SettlementRepositoryImpl
 import com.circaso.ramp.data.repositories.StatementRepositoryImpl
+import com.circaso.ramp.data.repositories.VerificationRepositoryImpl
 import com.circaso.ramp.data.support.EnvelopeVault
+import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.LoggedAlerts
-import com.circaso.ramp.data.support.NoKycYet
 import com.circaso.ramp.data.support.ReferenceRatePricing
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.data.support.SettingsUsdcContracts
+import com.circaso.ramp.data.tables.BlocksTable
 import com.circaso.ramp.data.tables.CommissionsTable
 import com.circaso.ramp.data.tables.FeeSettlementsTable
 import com.circaso.ramp.data.tables.MerchantCredentialsTable
@@ -55,8 +59,10 @@ import com.circaso.ramp.data.tables.RealtimeTable
 import com.circaso.ramp.data.tables.ReservationsTable
 import com.circaso.ramp.data.tables.RevenueWalletsTable
 import com.circaso.ramp.data.tables.SettingsTable
+import com.circaso.ramp.data.tables.VerificationsTable
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.FrameSender
+import com.circaso.ramp.domain.ports.IdentityKeys
 import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.PinAttempts
 import com.circaso.ramp.domain.ports.Pricing
@@ -69,6 +75,7 @@ import com.circaso.ramp.domain.ports.SignInCodes
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.ports.UsdcContracts
+import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.InsightRepository
@@ -83,6 +90,7 @@ import com.circaso.ramp.domain.repositories.SessionRepository
 import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
 import com.circaso.ramp.domain.repositories.StatementRepository
+import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
@@ -94,7 +102,9 @@ import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.Verifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
+import com.circaso.ramp.domain.usecases.BlockUser
 import com.circaso.ramp.domain.usecases.CancelOrder
 import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
@@ -103,16 +113,22 @@ import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetMerchant
 import com.circaso.ramp.domain.usecases.GetMerchantSummary
+import com.circaso.ramp.domain.usecases.GetMerchantVerification
 import com.circaso.ramp.domain.usecases.GetOrder
 import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
+import com.circaso.ramp.domain.usecases.GetUserKyc
+import com.circaso.ramp.domain.usecases.GetUserVerifications
 import com.circaso.ramp.domain.usecases.GoOffline
 import com.circaso.ramp.domain.usecases.GoOnline
+import com.circaso.ramp.domain.usecases.HandleKycNotification
 import com.circaso.ramp.domain.usecases.HandlePaymentCallback
 import com.circaso.ramp.domain.usecases.HasOpenOrder
+import com.circaso.ramp.domain.usecases.ListBlocks
 import com.circaso.ramp.domain.usecases.ListCollectionProviders
+import com.circaso.ramp.domain.usecases.ListKycProviders
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
@@ -122,19 +138,26 @@ import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.ReplayFrames
 import com.circaso.ramp.domain.usecases.RequestSignInCode
+import com.circaso.ramp.domain.usecases.ResetMerchantVerification
+import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveSession
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SignOut
+import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartOnRamp
+import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
+import com.circaso.ramp.domain.usecases.SweepVerifications
+import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.ramp.presentation.api.RampAdminImpl
 import com.circaso.ramp.presentation.api.RampCollectionNotifications
 import com.circaso.ramp.presentation.api.RampImpl
+import com.circaso.ramp.presentation.api.RampKycNotifications
 import com.circaso.ramp.presentation.api.RampRealtimeReplay
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.controllers.rampController
@@ -176,6 +199,8 @@ internal val rampDatabaseSpec =
                 CommissionsTable,
                 FeeSettlementsTable,
                 RealtimeTable,
+                VerificationsTable,
+                BlocksTable,
             ),
         migrationsLocation = "classpath:db/ramp",
         outbox = true,
@@ -185,6 +210,7 @@ private const val REDIS_PREFIX = "rmp"
 private val SWEEP_INTERVAL: Duration = Duration.ofSeconds(30)
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 private val END_SESSIONS_INTERVAL: Duration = Duration.ofMinutes(1)
+private val VERIFICATIONS_INTERVAL: Duration = Duration.ofMinutes(2)
 private val RELEASE_INTERVAL: Duration = Duration.ofSeconds(5)
 private val SETTLE_INTERVAL: Duration = Duration.ofMinutes(10)
 
@@ -197,11 +223,14 @@ private suspend fun onEachNetwork(job: suspend (Network) -> Int): Int =
  * listener integrations ring for a payment callback, its replay and its jobs.
  *
  * It reads no setting from the environment (decision 2026-11-18): everything staff can change lives in
- * `ramp.settings`, the collections provider included (decision 2026-11-22: integrations offers every provider at
- * once, and the ramp names the one the network's row says on each call). The one secret is `RAMP_CREDENTIALS_MASTER_KEY`, the master half of the credential envelope, read
- * when a merchant stores or unlocks a payment account; the server starts without it.
+ * `ramp.settings`, the collections and KYC providers included (decision 2026-11-22: integrations offers every
+ * provider at once, and the ramp names the one the network's row says on each call). The one secret is
+ * `RAMP_CREDENTIALS_MASTER_KEY`: the master half of the credential envelope, read when a merchant stores or unlocks a
+ * payment account, and what the KYC identity key's own key is derived from, read when a live verification is
+ * approved; the server starts without it.
  *
- * Both processes load the module. The app runs the routes, the callback listener and the `ScheduledJob`s; the ops
+ * Both processes load the module. The app runs the routes, the callback and KYC listeners and the `ScheduledJob`s;
+ * the ops
  * process runs the two `OpsJob`s, `ramp.release` and `ramp.settle-fees`, because only it can sign for the wallets
  * (decision 2026-11-22). The treasury they sign with is the real one where custody is Circle, and the named stand-in
  * (`DEV_TREASURY`) with `log` or `fake`; in the app's processes there is neither and the jobs are never collected.
@@ -232,6 +261,8 @@ fun rampModule(config: Config): Module =
         single<SettlementRepository> { SettlementRepositoryImpl(get(named("ramp.database"))) }
         single<StatementRepository> { StatementRepositoryImpl(get(named("ramp.database"))) }
         single<InsightRepository> { InsightRepositoryImpl(get(named("ramp.database"))) }
+        single<VerificationRepository> { VerificationRepositoryImpl(get(named("ramp.database"))) }
+        single<BlockRepository> { BlockRepositoryImpl(get(named("ramp.database"))) }
         single<RampCounters> { RedisCounters(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<PinAttempts> { RedisPinAttempts(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<SignInCodes> { RedisSignInCodes(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -251,7 +282,10 @@ fun rampModule(config: Config): Module =
             EnvelopeVault(masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) })
         }
         single<RampTokens> { SecureTokens() }
-        single<KycGate> { NoKycYet() }
+        single<IdentityKeys> {
+            val secrets = get<Secrets>()
+            HmacIdentityKeys(masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) })
+        }
         single<Pricing> { ReferenceRatePricing(get()) }
         single<RampAlerts> { LoggedAlerts() }
         single<UsdcContracts> {
@@ -260,9 +294,23 @@ fun rampModule(config: Config): Module =
         }
 
         // domain
-        single { SettingsBook(get(), get(), get(), clock) }
+        single { SettingsBook(get(), get(), get(), get(), clock) }
+        single {
+            Verifications(
+                rows = get(),
+                blocks = get(),
+                providers = get(),
+                identities = get(),
+                settings = get(),
+                transactor = get(),
+                frames = get(),
+                alerts = get(),
+                clock = clock,
+            )
+        }
+        single<KycGate> { get<Verifications>() }
         single { Gates(get(), get(), get()) }
-        single { Engine(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { Engine(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single {
             OrderFlow(
                 orders = get(),
@@ -284,10 +332,23 @@ fun rampModule(config: Config): Module =
         single { Releases(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { FloatWallets(get(), get(), get(), get(), get(), clock) }
         single { FeeSweeps(get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { MerchantViews(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { MerchantViews(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { PinGuard(get(), get()) }
         single { Presence(get(), get(), get()) }
-        single { GetRampStatus(get(), get(), get(), get()) }
+        single { GetRampStatus(get(), get(), get(), get(), get()) }
+        single { StartUserKyc(get(), get(), get()) }
+        single { GetUserKyc(get(), get(), get()) }
+        single { StartMerchantKyc(get(), get(), get()) }
+        single { HandleKycNotification(get(), get(), get()) }
+        single { SweepVerifications(get(), get(), get(), clock) }
+        single { GetUserVerifications(get(), get()) }
+        single { GetMerchantVerification(get(), get()) }
+        single { ListBlocks(get()) }
+        single { BlockUser(get(), get(), get(), clock) }
+        single { UnblockUser(get()) }
+        single { ResetVerification(get()) }
+        single { ResetMerchantVerification(get(), get()) }
+        single { ListKycProviders(get()) }
         single { CreateQuote(get(), get(), get(), get(), clock) }
         single { StartOnRamp(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetOrder(get(), get()) }
@@ -301,7 +362,7 @@ fun rampModule(config: Config): Module =
         single { VerifySignInCode(get(), get(), get(), get(), get(), clock) }
         single { ResolveSession(get(), get(), clock) }
         single { SignOut(get(), get(), get(), clock) }
-        single { GetMerchant(get(), get()) }
+        single { GetMerchant(get(), get(), get(), get(), get()) }
         single { ApplyAsMerchant(get(), get()) }
         single { StorePaymentAccount(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { RotateCallback(get(), get(), get(), get()) }
@@ -312,10 +373,10 @@ fun rampModule(config: Config): Module =
         single { EndSessions(get(), get(), get(), clock) }
         single { GetEarnings(get(), get(), get(), clock) }
         single { GetStatement(get(), clock) }
-        single { ListMerchants(get(), get(), get()) }
-        single { DecideMerchant(get(), get(), get(), get(), clock) }
+        single { ListMerchants(get(), get(), get(), get()) }
+        single { DecideMerchant(get(), get(), get(), get(), get(), get(), clock) }
         single { GetSettings(get(), get()) }
-        single { UpdateSettings(get(), get(), get(), clock) }
+        single { UpdateSettings(get(), get(), get(), get(), clock) }
         single { ListCollectionProviders(get()) }
         single { ListPreviewAccess(get()) }
         single { SetPreviewAccess(get(), clock) }
@@ -329,10 +390,10 @@ fun rampModule(config: Config): Module =
         single { SettleFees(treasury(), get()) }
 
         // presentation
-        single { RampService(get(), get(), get(), get(), get(), get()) }
+        single { RampService(get(), get(), get(), get(), get(), get(), get(), get()) }
         single { MerchantAuthService(get(), get(), get(), get()) }
-        single { MerchantService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-        single { RampEventsService(get(), get(), get(), get(), get()) }
+        single { MerchantService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { RampEventsService(get(), get(), get(), get(), get(), get(), get()) }
         single { RampOpsJobsService(get(), get()) }
         single {
             RampAdminService(
@@ -347,6 +408,14 @@ fun rampModule(config: Config): Module =
                 getRampOverview = get(),
                 getMerchantSummary = get(),
                 listStaffMerchantOrders = get(),
+                listKycProviders = get(),
+                getUserVerifications = get(),
+                getMerchantVerification = get(),
+                listBlocks = get(),
+                blockUser = get(),
+                unblockUser = get(),
+                resetVerification = get(),
+                resetMerchantVerificationUseCase = get(),
             )
         }
         single<RouteContributor>(named("ramp.routes")) {
@@ -361,6 +430,7 @@ fun rampModule(config: Config): Module =
         single<Ramp> { RampImpl(get()) }
         single<RampAdmin> { RampAdminImpl(get()) }
         single<CollectionNotifications> { RampCollectionNotifications(get()) }
+        single<KycNotifications> { RampKycNotifications(get()) }
         single(named("ramp.replay")) { RealtimeModule(RampFrames.MODULE, RampRealtimeReplay(get())) }
 
         // the app's jobs
@@ -371,6 +441,10 @@ fun rampModule(config: Config): Module =
         single(named("ramp.end-sessions")) {
             val events = get<RampEventsService>()
             ScheduledJob("ramp.end-sessions", END_SESSIONS_INTERVAL) { events.endSessions() }
+        }
+        single(named("ramp.sweep-verifications")) {
+            val events = get<RampEventsService>()
+            ScheduledJob("ramp.sweep-verifications", VERIFICATIONS_INTERVAL) { events.sweepVerifications() }
         }
         single(named("ramp.purge-expired")) {
             val expiry = RampExpiry(get(named("ramp.database")))

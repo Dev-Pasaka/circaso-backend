@@ -9,6 +9,8 @@ import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.Reasons
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsRampBlock
+import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampMerchantOrder
 import com.circaso.ramp.api.OpsRampMerchantSummary
 import com.circaso.ramp.api.OpsRampOrder
@@ -17,6 +19,7 @@ import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
+import com.circaso.ramp.api.OpsRampUserVerification
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.shared.Network
@@ -58,8 +61,9 @@ class GetRampSettings(private val ramp: RampAdmin) {
 }
 
 /**
- * Replaces one network's ramp settings (state, chains, limits, fee and split, sweep hour, windows, KYC, callback
- * origin, collections provider). A reason is required; the audit line says what changed, by name, never a secret (there is none here).
+ * Replaces one network's ramp settings (state, chains, limits, fee and split, sweep hour, windows, KYC and how it
+ * is run, callback origin, collections provider). A reason is required; the audit line says what changed, by name,
+ * never a secret (there is none here).
  */
 class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTrail) {
     suspend operator fun invoke(
@@ -105,6 +109,13 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         changed("callbackBaseUrl", before.callbackBaseUrl, after.callbackBaseUrl)
         changed("collectionsProvider", before.collectionsProvider, after.collectionsProvider)
         changed("providerFeeFloorMinor", before.providerFeeFloorMinor, after.providerFeeFloorMinor)
+        changed("kycProvider", before.kycProvider, after.kycProvider)
+        changed("kycEnvironment", before.kycEnvironment, after.kycEnvironment)
+        changed("kycWorkflowUser", before.kycWorkflowUser, after.kycWorkflowUser)
+        changed("kycWorkflowMerchant", before.kycWorkflowMerchant, after.kycWorkflowMerchant)
+        changed("merchantPortalUrl", before.merchantPortalUrl, after.merchantPortalUrl)
+        changed("kycAttemptsPerDay", before.kycAttemptsPerDay, after.kycAttemptsPerDay)
+        changed("kycPendingHours", before.kycPendingHours, after.kycPendingHours)
         return parts.joinToString("; ")
     }
 }
@@ -178,4 +189,117 @@ class GetRampMerchantSummary(private val ramp: RampAdmin) {
 class GetRampMerchantOrders(private val ramp: RampAdmin) {
     suspend operator fun invoke(query: RampMerchantOrdersQuery, limit: Int): Resource<List<OpsRampMerchantOrder>> =
         ramp.merchantOrders(query.merchantId, query.network, query.period, query.state, query.after, limit)
+}
+
+/** A user's ramp verification in each provider environment, and their block. The person must exist. */
+class GetRampUserVerification(private val accounts: AccountAdmin, private val ramp: RampAdmin) {
+    suspend operator fun invoke(userId: UserId): Resource<OpsRampUserVerification> {
+        accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
+        return Resource.success(ramp.userVerification(userId))
+    }
+}
+
+/** The users barred from the ramp, newest first. */
+class GetRampBlocks(private val ramp: RampAdmin) {
+    suspend operator fun invoke(after: OpsRampBlockCursor?, limit: Int): Resource<List<OpsRampBlock>> =
+        Resource.success(ramp.blocks(after, limit))
+}
+
+/**
+ * Bars a person from the ramp, and the identity they verified with, so they can't come back on a new account. A
+ * reason is required: it is audited and kept on the block. The person must exist.
+ */
+class BlockRampUser(private val accounts: AccountAdmin, private val ramp: RampAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(
+        actor: Actor,
+        userId: UserId,
+        reason: String,
+    ): Resource<OpsRampBlock> {
+        val why = Reasons.check(reason) ?: return Resource.error(OpsError.ReasonRequired)
+        accounts.account(userId) ?: return Resource.error(OpsError.UserNotFound)
+        return trail.record<OpsRampBlock>(
+            actor,
+            AuditAction.RAMP_BLOCK,
+            userId.toString(),
+            reason = why,
+            outcome = { "blocked (${it.reason})" },
+        ) { ramp.block(userId, why, actor.staffId) }
+    }
+}
+
+/** Lifts a person's ramp block, and the identity blocks that came from it. A reason is required and audited. */
+class UnblockRampUser(private val ramp: RampAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(
+        actor: Actor,
+        userId: UserId,
+        reason: String?,
+    ): Resource<OpsRampUserVerification> {
+        val why = Reasons.check(reason.orEmpty()) ?: return Resource.error(OpsError.ReasonRequired)
+        var lifted = false
+        return trail.record<OpsRampUserVerification>(
+            actor,
+            AuditAction.RAMP_UNBLOCK,
+            userId.toString(),
+            reason = why,
+            outcome = { if (lifted) "unblocked" else "was not blocked" },
+        ) {
+            lifted = ramp.unblock(userId, actor.staffId)
+            Resource.success(ramp.userVerification(userId))
+        }
+    }
+}
+
+/**
+ * Removes a user's ramp verification in one provider environment, freeing the identity it holds, so the person can
+ * verify again (on this account or another). A reason is required and audited.
+ */
+class ResetRampUserVerification(private val ramp: RampAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(
+        actor: Actor,
+        userId: UserId,
+        environment: String,
+        reason: String,
+    ): Resource<OpsRampUserVerification> {
+        val why = Reasons.check(reason) ?: return Resource.error(OpsError.ReasonRequired)
+        var removed = false
+        return trail.record<OpsRampUserVerification>(
+            actor,
+            AuditAction.RAMP_VERIFICATION_RESET,
+            userId.toString(),
+            reason = why,
+            detail = "reset ${environment.trim().uppercase()}",
+            outcome = { "reset ${environment.trim().uppercase()}: ${if (removed) "removed" else "nothing to remove"}" },
+        ) {
+            when (val reset = ramp.resetUserVerification(userId, environment, actor.staffId)) {
+                is Resource.Error -> {
+                    reset
+                }
+
+                is Resource.Success -> {
+                    removed = reset.data
+                    Resource.success(ramp.userVerification(userId))
+                }
+            }
+        }
+    }
+}
+
+/** The same for a merchant; whether there was a verification to remove. */
+class ResetRampMerchantVerification(private val ramp: RampAdmin, private val trail: AuditTrail) {
+    suspend operator fun invoke(
+        actor: Actor,
+        merchantId: MerchantId,
+        environment: String,
+        reason: String,
+    ): Resource<Boolean> {
+        val why = Reasons.check(reason) ?: return Resource.error(OpsError.ReasonRequired)
+        return trail.record<Boolean>(
+            actor,
+            AuditAction.RAMP_MERCHANT_VERIFICATION_RESET,
+            merchantId.toString(),
+            reason = why,
+            detail = "reset ${environment.trim().uppercase()}",
+            outcome = { "reset ${environment.trim().uppercase()}: ${if (it) "removed" else "nothing to remove"}" },
+        ) { ramp.resetMerchantVerification(merchantId, environment, actor.staffId) }
+    }
 }

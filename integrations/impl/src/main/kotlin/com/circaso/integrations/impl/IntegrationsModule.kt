@@ -21,6 +21,10 @@ import com.circaso.integrations.api.EmailTemplate
 import com.circaso.integrations.api.EmailTemplateIds
 import com.circaso.integrations.api.EmailTemplateSeeds
 import com.circaso.integrations.api.ExchangeRates
+import com.circaso.integrations.api.KycEnvironment
+import com.circaso.integrations.api.KycNotifications
+import com.circaso.integrations.api.KycProvider
+import com.circaso.integrations.api.KycProviders
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
@@ -81,6 +85,7 @@ import com.circaso.integrations.impl.dev.LogCryptoPrices
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogEmail
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.LogKyc
 import com.circaso.integrations.impl.dev.LogMerchantFloat
 import com.circaso.integrations.impl.dev.LogPush
 import com.circaso.integrations.impl.dev.LogSms
@@ -90,6 +95,9 @@ import com.circaso.integrations.impl.dev.NoAiBilling
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
 import com.circaso.integrations.impl.dev.NoVoipPush
+import com.circaso.integrations.impl.didit.DiditAccount
+import com.circaso.integrations.impl.didit.DiditKyc
+import com.circaso.integrations.impl.didit.DiditWebhook
 import com.circaso.integrations.impl.exchangerate.OpenErApiRates
 import com.circaso.integrations.impl.fcm.FcmPush
 import com.circaso.integrations.impl.fcm.ServiceAccount
@@ -366,6 +374,36 @@ fun integrationsModule(config: Config, secrets: Secrets) =
         single<WebhookVendor>(named("payhero.webhook")) {
             PayHeroWebhook(notifications = { getOrNull<CollectionNotifications>() })
         }
+        // The ramp's identity checks (decision 2026-11-22): Didit. Like the collections provider, which KYC provider a
+        // network uses is a row staff switch in the admin (`ramp.settings.kyc_provider`), so every provider is bound at
+        // once. Didit has a sandbox and a live application, each with its own key; either may be absent, and that
+        // environment then answers "not configured" instead of stopping the server. `log` approves everybody at once,
+        // so it is offered on a developer's machine only.
+        single<KycProviders> {
+            val http = get<HttpClients>()
+            val accounts =
+                KycEnvironment.entries
+                    .mapNotNull { environment ->
+                        diditSecret(secrets, environment, "api-key")?.let { key ->
+                            val client = http.named(diditClientName(environment)) { baseUrl = DiditKyc.BASE_URL }
+                            environment to DiditAccount(client, key)
+                        }
+                    }.toMap()
+            OfferedKyc(
+                real = mapOf(KycProviders.DIDIT to DiditKyc(accounts)),
+                local = if (config.environment.isLocal) mapOf(KycProviders.LOG to LogKyc()) else emptyMap(),
+            )
+        }
+        // One address for both Didit applications, `/v1/hooks/didit`: each delivery names its environment and is
+        // verified with that environment's own destination secret. Always served; with no secret it refuses everything.
+        single<WebhookVendor>(named("didit.webhook")) {
+            val webhookSecrets =
+                KycEnvironment.entries
+                    .mapNotNull { environment ->
+                        diditSecret(secrets, environment, "webhook-secret")?.let { environment to it }
+                    }.toMap()
+            DiditWebhook(secrets = webhookSecrets, notifications = { getOrNull<KycNotifications>() })
+        }
         // The wallet's fiat balance (decision 2026-10-28). The open endpoint needs no key; its table is kept in Redis
         // under `fx:` so every node shares one fetch a day.
         single<ExchangeRates> {
@@ -594,6 +632,33 @@ class OfferedCollections(
 
     override fun named(name: String): MobileCollections? = real[name] ?: local[name]
 }
+
+/**
+ * The KYC providers a server offers ([KycProviders]): the [real] ones always, and the [local] stand-ins only where the
+ * module was given any (a developer's machine). Tests that want an in-memory provider build one of these themselves
+ * with it; the module never offers `fake`.
+ */
+class OfferedKyc(
+    private val real: Map<String, KycProvider>,
+    private val local: Map<String, KycProvider> = emptyMap(),
+) : KycProviders {
+    override val names: List<String> = real.keys.toList() + local.keys
+
+    override fun named(name: String): KycProvider? = real[name] ?: local[name]
+}
+
+/**
+ * A Didit secret, named per Didit environment (decision 2026-11-22): `DIDIT_SANDBOX_API_KEY`,
+ * `DIDIT_SANDBOX_WEBHOOK_SECRET`, `DIDIT_LIVE_API_KEY`, `DIDIT_LIVE_WEBHOOK_SECRET`. Null when it isn't set.
+ */
+private fun diditSecret(
+    secrets: Secrets,
+    environment: KycEnvironment,
+    what: String,
+): String? = secrets.get("didit.${environment.name.lowercase()}-$what")?.trim()?.takeIf { it.isNotEmpty() }
+
+/** Each Didit application has its own client, so one being down never opens the other's circuit. */
+private fun diditClientName(environment: KycEnvironment) = "didit-${environment.name.lowercase()}"
 
 /**
  * The USDC contract on a chain as custody's settings name it (the database's once the wallet has read them, the seeds

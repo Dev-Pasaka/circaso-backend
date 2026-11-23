@@ -3,6 +3,8 @@ package com.circaso.ops
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsMerchantWallet
+import com.circaso.ramp.api.OpsRampBlock
+import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
 import com.circaso.ramp.api.OpsRampFloat
 import com.circaso.ramp.api.OpsRampMerchantActivity
@@ -20,6 +22,8 @@ import com.circaso.ramp.api.OpsRampPreviewAccess
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
+import com.circaso.ramp.api.OpsRampUserVerification
+import com.circaso.ramp.api.OpsRampVerification
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampAmount
 import com.circaso.ramp.api.RampOrderId
@@ -88,6 +92,76 @@ class FakeRampAdmin : RampAdmin {
         return id
     }
 
+    val verifications = ConcurrentHashMap<UserId, List<OpsRampVerification>>()
+    val merchantVerifications = ConcurrentHashMap<MerchantId, List<OpsRampVerification>>()
+    val blocked = CopyOnWriteArrayList<OpsRampBlock>()
+    val resets = CopyOnWriteArrayList<Triple<String, String, UUID>>()
+
+    override suspend fun userVerification(userId: UserId) =
+        OpsRampUserVerification(userId, verifications[userId].orEmpty(), blocked.firstOrNull { it.userId == userId })
+
+    override suspend fun blocks(after: OpsRampBlockCursor?, limit: Int): List<OpsRampBlock> =
+        blocked
+            .sortedByDescending { it.createdAt }
+            .filter { after == null || it.createdAt < after.at }
+            .take(limit)
+
+    override suspend fun block(
+        userId: UserId,
+        note: String,
+        by: UUID,
+    ): Resource<OpsRampBlock> {
+        refused()?.let { return it }
+        val existing = blocked.firstOrNull { it.userId == userId }
+        if (existing != null) return Resource.success(existing)
+        val at = AT.plusSeconds(blocked.size.toLong())
+        val block = OpsRampBlock(UUID.randomUUID(), userId, "OPS", note, by.toString(), at)
+        blocked += block
+        return Resource.success(block)
+    }
+
+    override suspend fun unblock(userId: UserId, by: UUID): Boolean = blocked.removeIf { it.userId == userId }
+
+    private fun reset(
+        who: String,
+        environment: String,
+        by: UUID,
+    ): Resource<Unit> {
+        refused()?.let { return it }
+        if (environment.uppercase() !in listOf("SANDBOX", "LIVE")) {
+            return Resource.Error(RampRefusal("request.malformed", ErrorKind.INVALID))
+        }
+        resets += Triple(who, environment.uppercase(), by)
+        return Resource.success(Unit)
+    }
+
+    override suspend fun resetUserVerification(
+        userId: UserId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean> =
+        when (val checked = reset(userId.toString(), environment, by)) {
+            is Resource.Error -> checked
+            is Resource.Success -> Resource.success(verifications.remove(userId) != null)
+        }
+
+    override suspend fun resetMerchantVerification(
+        merchantId: MerchantId,
+        environment: String,
+        by: UUID,
+    ): Resource<Boolean> {
+        if (!merchants.containsKey(
+                merchantId,
+            )
+        ) {
+            return Resource.Error(RampRefusal("ramp.merchant_not_found", ErrorKind.NOT_FOUND))
+        }
+        return when (val checked = reset(merchantId.toString(), environment, by)) {
+            is Resource.Error -> checked
+            is Resource.Success -> Resource.success(merchantVerifications.remove(merchantId) != null)
+        }
+    }
+
     override suspend fun merchants(before: MerchantId?, limit: Int): List<OpsMerchant> =
         merchants.values.sortedByDescending { it.merchantId.value }.take(limit)
 
@@ -120,6 +194,14 @@ class FakeRampAdmin : RampAdmin {
         val after =
             settings.copy(
                 providerFeeFloorMinor = settings.providerFeeFloorMinor ?: before.providerFeeFloorMinor,
+                kycProvider = settings.kycProvider ?: before.kycProvider,
+                kycEnvironment = settings.kycEnvironment ?: before.kycEnvironment,
+                kycWorkflowUser = settings.kycWorkflowUser ?: before.kycWorkflowUser,
+                kycWorkflowMerchant = settings.kycWorkflowMerchant ?: before.kycWorkflowMerchant,
+                merchantPortalUrl = settings.merchantPortalUrl ?: before.merchantPortalUrl,
+                kycAttemptsPerDay = settings.kycAttemptsPerDay ?: before.kycAttemptsPerDay,
+                kycPendingHours = settings.kycPendingHours ?: before.kycPendingHours,
+                kycProviders = listOf("didit"),
                 version = (before.version ?: 0) + 1,
                 updatedBy = by.toString(),
                 collectionsProviders = OFFERED,
@@ -199,6 +281,7 @@ class FakeRampAdmin : RampAdmin {
                         paymentsConnected = true,
                         collectionsProvider = "payhero",
                         paymentsIssue = issue,
+                        kyc = merchant.verifications.firstOrNull(),
                     ),
                 network = network,
                 period = period ?: MONTH,
@@ -335,6 +418,14 @@ class FakeRampAdmin : RampAdmin {
                 providerFeeFloorMinor = 5_000,
                 version = 1,
                 collectionsProviders = OFFERED,
+                kycProvider = "didit",
+                kycEnvironment = if (network == Network.TESTNET) "SANDBOX" else "LIVE",
+                kycWorkflowUser = if (network == Network.TESTNET) "a3cb5782-d5c1-4c35-832d-ed373d80a0ea" else "",
+                kycWorkflowMerchant = if (network == Network.TESTNET) "dabdb52a-b4bc-435a-b2bf-a636bb17bad6" else "",
+                merchantPortalUrl = "https://merchants.circaso.com",
+                kycAttemptsPerDay = 3,
+                kycPendingHours = 24,
+                kycProviders = listOf("didit"),
             )
     }
 }

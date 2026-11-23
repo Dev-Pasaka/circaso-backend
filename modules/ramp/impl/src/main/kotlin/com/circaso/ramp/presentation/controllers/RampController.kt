@@ -1,14 +1,17 @@
 package com.circaso.ramp.presentation.controllers
 
+import com.circaso.ramp.presentation.dto.KycResponse
 import com.circaso.ramp.presentation.dto.OrderResponse
 import com.circaso.ramp.presentation.dto.OrdersResponse
 import com.circaso.ramp.presentation.dto.QuoteRequest
 import com.circaso.ramp.presentation.dto.QuoteResponse
 import com.circaso.ramp.presentation.dto.RampStatusResponse
 import com.circaso.ramp.presentation.dto.StartOnRampRequest
+import com.circaso.ramp.presentation.dto.VerificationDto
 import com.circaso.ramp.presentation.mappers.cursorOf
 import com.circaso.ramp.presentation.mappers.orderIdOf
 import com.circaso.ramp.presentation.mappers.toCommand
+import com.circaso.ramp.presentation.mappers.toDto
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.ramp.presentation.services.RampService
 import com.circaso.shared.Scope
@@ -32,13 +35,15 @@ private const val MALFORMED = "request.malformed"
 private const val UNAVAILABLE = "ramp.unavailable"
 private const val KYC = "ramp.kyc_required"
 private const val RESTRICTED = "ramp.account_restricted"
+private const val BLOCKED = "ramp.blocked"
 private const val NOT_FOUND = "ramp.order_not_found"
 private const val DEFAULT_LIMIT = 50
 private const val MAX_LIMIT = 200
 
 /**
- * The ramp for the app: buying USDC with M-Pesa from a partner merchant (decision 2026-11-22). R1 whether you can
- * trade, R2 a price, R3 the order and its M-Pesa prompt, R4 and R5 your orders, R6 cancelling before you pay. Every
+ * The ramp for the app: buying USDC with M-Pesa from a partner merchant (decision 2026-11-22). R0 verifying your
+ * identity once, R1 whether you can trade, R2 a price, R3 the order and its M-Pesa prompt, R4 and R5 your orders, R6
+ * cancelling before you pay. Every
  * route is about money on one network, so all of them sit in the wallet-network group. Selling waits on a payout
  * provider.
  */
@@ -53,10 +58,57 @@ fun Route.rampController(ramp: RampService) {
                 TAG,
                 listOf(UNAVAILABLE),
                 notes =
-                    "$SCOPE `canTrade` is every gate at once: identity verified (or not required), the account " +
-                        "active, a merchant online and no order of yours still open. No merchant is ever listed. " +
+                    "$SCOPE `canTrade` is every gate at once: identity verified (or not required), not barred, the " +
+                        "account active, a merchant online and no order of yours still open. No merchant is ever " +
+                        "listed. `verification` is the identity check in full: `status` (`NONE`, `PENDING`, " +
+                        "`IN_REVIEW`, `VERIFIED`, `DECLINED`, `EXPIRED`), `required` (whether this network asks " +
+                        "for it), `canStart` (whether R0 will hand out a check now), `reason` (a code to word) " +
+                        "and `retryAt` (when today's tries come back). `kyc` is the short form older apps read. " +
+                        "`blocked` is a bar on the account or its identity: say so and point to support. " +
                         "`ramp.unavailable` means buying isn't open to you on this network: hide the feature.",
             )
+
+            route("/kyc") {
+                post {
+                    val result = ramp.startKyc(call.principal().userId, call.walletNetwork())
+                    call.respondDefault(result.toDefaultResponse { it.toResponse() })
+                }.docs<NoBody, KycResponse>(
+                    "R0 · Verify your identity (start or continue)",
+                    TAG,
+                    listOf(
+                        UNAVAILABLE,
+                        RESTRICTED,
+                        BLOCKED,
+                        "ramp.kyc_attempts_exceeded",
+                        "ramp.kyc_unavailable",
+                        "ramp.kyc_not_configured",
+                    ),
+                    notes =
+                        "$SCOPE Once, before your first purchase. While `session` is there a check is open: start " +
+                            "the identity provider's native SDK with `session.sessionToken` (or open `session.url`, " +
+                            "its hosted page, as the fallback); both work until `session.expiresAt`. Calling again " +
+                            "returns the same open check, never a second one. A declined or expired check may be " +
+                            "started again, a few times a day (`ramp.kyc_attempts_exceeded`, 429, with " +
+                            "`details.retryAfterSeconds`). With no `session` there is nothing to do now: `status` " +
+                            "and `reason` say why (already `VERIFIED`, `IN_REVIEW`, or declined for a reason trying " +
+                            "again can't fix). The outcome arrives as a `ramp/kyc.updated` frame, and a push when it " +
+                            "is final. `ramp.kyc_unavailable` (502): the provider is out of reach, try again in a " +
+                            "moment. `ramp.kyc_not_configured` (503): checks aren't set up on this network yet.",
+                )
+
+                get {
+                    val result = ramp.kyc(call.principal().userId, call.walletNetwork())
+                    call.respondDefault(result.toDefaultResponse { it.toDto() })
+                }.docs<NoBody, VerificationDto>(
+                    "R0 · Your identity verification",
+                    TAG,
+                    listOf(UNAVAILABLE),
+                    notes =
+                        "$SCOPE The same fields as R1's `verification`. Call it when the provider's SDK closes: " +
+                            "while a check is unfinished this asks the provider itself (at most every few seconds), " +
+                            "so the outcome shows at once even before the frame arrives. It never returns a link.",
+                )
+            }
 
             post("quotes") {
                 val userId = call.principal().userId
@@ -69,6 +121,7 @@ fun Route.rampController(ramp: RampService) {
                 listOf(
                     UNAVAILABLE,
                     KYC,
+                    BLOCKED,
                     RESTRICTED,
                     "ramp.chain_unsupported",
                     "ramp.amount_invalid",
@@ -94,6 +147,7 @@ fun Route.rampController(ramp: RampService) {
                 listOf(
                     UNAVAILABLE,
                     KYC,
+                    BLOCKED,
                     RESTRICTED,
                     "ramp.quote_not_found",
                     "ramp.quote_expired",

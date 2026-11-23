@@ -20,6 +20,8 @@ import com.circaso.integrations.api.EmailTemplateSeeds
 import com.circaso.integrations.api.ExchangeRates
 import com.circaso.integrations.api.ImageInput
 import com.circaso.integrations.api.IntegrationError
+import com.circaso.integrations.api.KycEnvironment
+import com.circaso.integrations.api.KycProviders
 import com.circaso.integrations.api.LanguageModel
 import com.circaso.integrations.api.LiveSpeech
 import com.circaso.integrations.api.LiveTranscription
@@ -60,11 +62,13 @@ import com.circaso.integrations.impl.dev.LogCallMedia
 import com.circaso.integrations.impl.dev.LogCollections
 import com.circaso.integrations.impl.dev.LogCustody
 import com.circaso.integrations.impl.dev.LogExchangeRates
+import com.circaso.integrations.impl.dev.LogKyc
 import com.circaso.integrations.impl.dev.LogLanguageModel
 import com.circaso.integrations.impl.dev.LogMerchantFloat
 import com.circaso.integrations.impl.dev.NoAiBilling
 import com.circaso.integrations.impl.dev.NoCryptoMarkets
 import com.circaso.integrations.impl.dev.NoCryptoPrices
+import com.circaso.integrations.impl.didit.DiditKyc
 import com.circaso.integrations.impl.llm.RetryingLanguageModel
 import com.circaso.integrations.impl.llm.RoutedLanguageModel
 import com.circaso.integrations.impl.llm.UnavailableLanguageModel
@@ -665,9 +669,9 @@ class IntegrationsModuleTest {
             assertTrue((custody.createWallet("u-1", UUID.randomUUID()) as Resource.Success).data.needsSignature)
             assertEquals(1, (custody.wallets("u-1") as Resource.Success).data.size)
             assertEquals(
-                listOf("payhero"),
-                koin.getAll<WebhookVendor>().map { it.name },
-                "only PayHero's, always served",
+                listOf("didit", "payhero"),
+                koin.getAll<WebhookVendor>().map { it.name }.sorted(),
+                "only PayHero's and Didit's, always served",
             )
         }
 
@@ -692,9 +696,52 @@ class IntegrationsModuleTest {
             val offered = server.get<CollectionProviders>()
             assertEquals(listOf("payhero"), offered.names, "$environment")
             assertNull(offered.named("log"), "log reports every prompt paid: never on a server")
-            assertEquals(listOf("payhero"), server.getAll<WebhookVendor>().map { it.name })
+            assertEquals(listOf("didit", "payhero"), server.getAll<WebhookVendor>().map { it.name }.sorted())
             stopKoin()
         }
+    }
+
+    @Test
+    fun `every KYC provider is bound at once - didit everywhere, log on a developer's machine only`() {
+        val local = koin().get<KycProviders>()
+        assertEquals(listOf("didit", "log"), local.names)
+        assertIs<DiditKyc>(local.named("didit"))
+        assertIs<LogKyc>(local.named("log"))
+        assertNull(local.named("fake"), "the in-memory provider is never offered by the module")
+        stopKoin()
+
+        for (environment in listOf(Environment.STAGING, Environment.PRODUCTION)) {
+            val server =
+                startKoin {
+                    modules(
+                        integrationsModule(MapConfig(emptyMap(), environment = environment), noSecrets),
+                        module { single<HttpClients> { FakeHttpClients { _ -> respondOk() } } },
+                    )
+                }.koin
+            val offered = server.get<KycProviders>()
+            assertEquals(listOf("didit"), offered.names, "$environment")
+            assertNull(offered.named("log"), "log approves everybody: never on a server")
+            stopKoin()
+        }
+    }
+
+    @Test
+    fun `didit's two environments are bound side by side, and either may be absent without stopping the server`() {
+        val neither = koin().get<KycProviders>().named("didit")!!
+        assertFalse(neither.isAvailable(KycEnvironment.SANDBOX))
+        assertFalse(neither.isAvailable(KycEnvironment.LIVE))
+        stopKoin()
+
+        val sandboxOnly = koin(mapOf("didit.sandbox-api-key" to "sandbox-key")).get<KycProviders>().named("didit")!!
+        assertTrue(sandboxOnly.isAvailable(KycEnvironment.SANDBOX))
+        assertFalse(sandboxOnly.isAvailable(KycEnvironment.LIVE), "no DIDIT_LIVE_API_KEY: live is unavailable")
+        stopKoin()
+
+        val both =
+            koin(mapOf("didit.sandbox-api-key" to "sandbox-key", "didit.live-api-key" to "live-key"))
+                .get<KycProviders>()
+                .named("didit")!!
+        assertTrue(both.isAvailable(KycEnvironment.SANDBOX) && both.isAvailable(KycEnvironment.LIVE))
     }
 
     @Test
@@ -746,7 +793,7 @@ class IntegrationsModuleTest {
         assertEquals(setOf(Network.TESTNET), custody.networks, "no CIRCLE_MAINNET_API_KEY: mainnet is unavailable")
         assertEquals(listOf("BASE-SEPOLIA", "SOL-DEVNET"), custody.supported.chains.map { it.blockchain })
         val webhooks = koin.getAll<WebhookVendor>().map { it.name }.sorted()
-        assertEquals(listOf("circle", "circle-mainnet", "payhero"), webhooks)
+        assertEquals(listOf("circle", "circle-mainnet", "didit", "payhero"), webhooks)
         assertEquals(listOf("circle"), clients.names)
         assertEquals("https://api.circle.com", clients.configs.getValue("circle").baseUrl)
     }

@@ -59,7 +59,7 @@ circaso-backend/
 │  │                             EmailGateway, SocialSignIn, CarrierPhoneVerification,
 │  │                             PushGateway, StablecoinCustody, ExchangeRates, CallMedia,
 │  │                             WebSearch,
-│  │                             MerchantFloat, MobileCollections, KycProvider (ramp, draft)
+│  │                             MerchantFloat, MobileCollections, KycProvider (ramp)
 │  └─ impl/                      vendor code, one package per vendor, never visible outside
 │     ├─ sms/africastalking/
 │     ├─ sms/twilio/             (later, same SmsGateway contract)
@@ -70,7 +70,7 @@ circaso-backend/
 │     ├─ push/apns/
 │     ├─ circle/                 user-controlled (StablecoinCustody) and developer-controlled (TreasuryCustody: fee wallets, ramp merchant float)
 │     ├─ payhero/                M-Pesa collections and payouts (MobileCollections; ramp, draft)
-│     ├─ didit/                  KYC (KycProvider; draft)
+│     ├─ didit/                  KYC (KycProvider, the signed webhook; built 2026-11-22)
 │     ├─ exchangerate/           open.er-api.com (ExchangeRates)
 │     ├─ coingecko/              api.coingecko.com (CryptoPrices, CryptoMarkets)
 │     ├─ tavily/                 Tavily search API (WebSearch, Asha)
@@ -1009,7 +1009,7 @@ data class SmsReceipt(val messageId: String, val provider: String)
 | `CallMedia` | Create call sessions and join tokens | calls (later) | Cloudflare Realtime (REST) | LiveKit |
 | `MerchantFloat` (draft, decision 2026-11-22) | A partner merchant's float balance, read-only (API key only). Creating the wallet and sending from it go through `TreasuryCustody`, in the ops process | ramp | Circle (REST) | — |
 | `MobileCollections` (draft; the planned `MobileMoney` slot) | Mobile-money payment prompt (M-Pesa STK push), payment status, payout to a phone (no provider yet: PayHero has no payouts). Credentials are passed per call: each merchant brings their own account | ramp | PayHero (REST) | Daraja direct, another aggregator |
-| `KycProvider` (draft) | Start a hosted identity check and read its decision | ramp (the KYC gate before a first on- or off-ramp, and merchant KYC) | Didit (REST, hosted session) | Another KYC vendor |
+| `KycProvider` (built 2026-11-22; every provider bound at once behind `KycProviders`, the one in force a `ramp.settings` row) | Start an identity check for a subject with a workflow (a token for the native SDK, a hosted page) and read a session's decision; a sandbox and a live environment side by side | ramp (the KYC gate before a first on- or off-ramp, and merchant KYC) | Didit (REST; signed webhook at `/v1/hooks/didit`) | Another KYC vendor |
 
 **Rules**
 

@@ -3,6 +3,9 @@ package com.circaso.ops.presentation.controllers
 import com.circaso.ops.domain.models.Permission
 import com.circaso.ops.domain.models.RampMerchantOrdersQuery
 import com.circaso.ops.domain.support.OpsSettings
+import com.circaso.ops.presentation.dto.RampBlockDto
+import com.circaso.ops.presentation.dto.RampBlockRequest
+import com.circaso.ops.presentation.dto.RampBlocksResponse
 import com.circaso.ops.presentation.dto.RampMerchantDto
 import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
 import com.circaso.ops.presentation.dto.RampMerchantSummaryResponse
@@ -12,6 +15,9 @@ import com.circaso.ops.presentation.dto.RampOverviewResponse
 import com.circaso.ops.presentation.dto.RampPreviewAccessRequest
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
+import com.circaso.ops.presentation.dto.RampUserVerificationResponse
+import com.circaso.ops.presentation.dto.RampVerificationResetRequest
+import com.circaso.ops.presentation.dto.RampVerificationResetResponse
 import com.circaso.ops.presentation.dto.ReasonRequest
 import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ops.presentation.mappers.FORBIDDEN
@@ -19,6 +25,7 @@ import com.circaso.ops.presentation.mappers.MALFORMED
 import com.circaso.ops.presentation.mappers.PAGED
 import com.circaso.ops.presentation.mappers.TAG_RAMP
 import com.circaso.ops.presentation.mappers.actor
+import com.circaso.ops.presentation.mappers.blockCursor
 import com.circaso.ops.presentation.mappers.malformed
 import com.circaso.ops.presentation.mappers.merchantCursor
 import com.circaso.ops.presentation.mappers.merchantOrderCursor
@@ -31,6 +38,7 @@ import com.circaso.ops.presentation.mappers.query
 import com.circaso.ops.presentation.mappers.rampOrderState
 import com.circaso.ops.presentation.mappers.rampPeriod
 import com.circaso.ops.presentation.mappers.roles
+import com.circaso.ops.presentation.mappers.toBlocksResponse
 import com.circaso.ops.presentation.mappers.toDto
 import com.circaso.ops.presentation.mappers.toMerchantOrdersResponse
 import com.circaso.ops.presentation.mappers.toResponse
@@ -50,6 +58,7 @@ import com.circaso.web.toDefaultResponse
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
@@ -101,7 +110,9 @@ private fun Route.rampReads(
         notes =
             "${roles("FINANCE", "ADMIN")} Newest first. $PAGED `state`: NEW (signed in only), APPLIED (waiting for " +
                 "approval), APPROVED, SUSPENDED. `wallets` are the float wallets the ops server made, one per " +
-                "network. A merchant's payment credentials are sealed under their own PIN and never shown.",
+                "network. `verifications` is their identity verification in each provider environment they have " +
+                "one (`status`: PENDING, IN_REVIEW, VERIFIED, DECLINED, EXPIRED; none: never started). A " +
+                "merchant's payment credentials are sealed under their own PIN and never shown.",
     )
 
     get("settings") {
@@ -127,6 +138,7 @@ private fun Route.rampReads(
     )
 
     rampInsights(ramp, settings)
+    rampIdentityReads(ramp, settings)
 
     get("orders") {
         val state = call.query("state") ?: REVIEW
@@ -206,7 +218,8 @@ private fun Route.rampInsights(ramp: RampService, settings: OpsSettings) {
                     "other counts on the day the order was made. `daily` has one row per Nairobi day with " +
                     "activity, oldest first. `merchant.paymentsIssue` (`code`: `SERVICE_BALANCE`) says the " +
                     "provider refused a prompt because the merchant's prepaid service wallet is empty: no order is " +
-                    "routed to them until they top it up and go online again. $SAME_FIGURES",
+                    "routed to them until they top it up and go online again. `merchant.kyc` is their identity " +
+                    "verification in the environment this network trusts (null: never started). $SAME_FIGURES",
         )
 
         get("orders") {
@@ -250,7 +263,118 @@ private suspend fun ApplicationCall.merchantOrdersQuery(): Resource<RampMerchant
         }
     }
 
+private const val USER_NOT_FOUND = "ops.user_not_found"
+
+private const val IDENTITY =
+    "A verification belongs to a provider environment (SANDBOX: simulated checks; LIVE: real people), and each " +
+        "network's settings name the one it trusts. No document, name, picture or identity key is ever shown: " +
+        "`hasIdentity` only says a key is held."
+
+/** A user's identity verification for the ramp, and the block list (decision 2026-11-22). */
+private fun Route.rampIdentityReads(ramp: RampService, settings: OpsSettings) {
+    get("users/{userId}/verification") {
+        val result = parseUserId(call.parameters["userId"]).flatMap { ramp.userVerification(it) }
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<NoBody, RampUserVerificationResponse>(
+        "OPS · A user's ramp identity verification",
+        TAG_RAMP,
+        listOf(USER_NOT_FOUND, MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("FINANCE", "ADMIN")} Their verification in each environment they have one (an empty list: " +
+                "they never started), and `block` when they are barred from the ramp. $IDENTITY",
+    )
+
+    get("blocks") {
+        val result =
+            call.pageLimit(settings).flatMap { limit ->
+                blockCursor(call.query("cursor")).flatMap { ramp.blocks(it, limit) }.map { it.toBlocksResponse(limit) }
+            }
+        call.respondDefault(result.toDefaultResponse { it })
+    }.docs<NoBody, RampBlocksResponse>(
+        "OPS · Who is barred from the ramp",
+        TAG_RAMP,
+        listOf(MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("FINANCE", "ADMIN")} Barred users, newest first. $PAGED `reason`: OPS (staff), REVERSAL (a " +
+                "payment reversed after the USDC was released), IDENTITY (the account verified as an identity " +
+                "that was already barred; `createdBy` is `system`). `note` is what staff wrote.",
+    )
+}
+
+private fun Route.rampIdentityWrites(ramp: RampService) {
+    route("/blocks") {
+        post {
+            val request = call.receive<RampBlockRequest>()
+            val result = parseUserId(request.userId).flatMap { ramp.block(call.actor(), it, request.reason) }
+            call.respondDefault(result.toDefaultResponse { it.toDto() })
+        }.docs<RampBlockRequest, RampBlockDto>(
+            "OPS · Bar a user from the ramp",
+            TAG_RAMP,
+            listOf(REASON, USER_NOT_FOUND, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("ADMIN")} Audited with the reason, which is kept on the block. The identity they verified " +
+                    "with is barred too, so the same person can't come back on a new account: an account that " +
+                    "verifies as it is refused and barred at once. Barring someone already barred changes nothing " +
+                    "and answers the block there is. Their quotes and orders answer `ramp.blocked` from now on; " +
+                    "an order already open still finishes.",
+        )
+
+        delete("{userId}") {
+            val result =
+                parseUserId(call.parameters["userId"]).flatMap { ramp.unblock(call.actor(), it, call.query("reason")) }
+            call.respondDefault(result.toDefaultResponse { it.toResponse() })
+        }.docs<NoBody, RampUserVerificationResponse>(
+            "OPS · Lift a user's ramp block",
+            TAG_RAMP,
+            listOf(REASON, MALFORMED, FORBIDDEN),
+            notes =
+                "${roles("ADMIN")} `?reason=` is required and audited. Lifts the user's block and the identity " +
+                    "blocks that came from it; answers the user as they stand afterwards. An account barred " +
+                    "because it verified as someone else's barred identity (`IDENTITY`) stays refused until that " +
+                    "other user's block is lifted and this one's verification is reset.",
+        )
+    }
+
+    post("users/{userId}/verification/reset") {
+        val request = call.receive<RampVerificationResetRequest>()
+        val result =
+            parseUserId(call.parameters["userId"]).flatMap {
+                ramp.resetUserVerification(call.actor(), it, request.environment, request.reason)
+            }
+        call.respondDefault(result.toDefaultResponse { it.toResponse() })
+    }.docs<RampVerificationResetRequest, RampUserVerificationResponse>(
+        "OPS · Reset a user's ramp identity verification",
+        TAG_RAMP,
+        listOf(REASON, MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("ADMIN")} Audited with the reason. Removes the user's verification in `environment` " +
+                "(SANDBOX or LIVE) and frees the identity it held, so the person can verify again, on this " +
+                "account or another. The way out when someone lost an account that holds their identity " +
+                "(`identity_in_use` on the new one), or was declined for a reason trying again can't fix. It " +
+                "never lifts a block.",
+    )
+
+    post("merchants/{merchantId}/verification/reset") {
+        val request = call.receive<RampVerificationResetRequest>()
+        val result =
+            parseMerchantId(call.parameters["merchantId"]).flatMap {
+                ramp.resetMerchantVerification(call.actor(), it, request.environment, request.reason)
+            }
+        call.respondDefault(result.toDefaultResponse { RampVerificationResetResponse(it) })
+    }.docs<RampVerificationResetRequest, RampVerificationResetResponse>(
+        "OPS · Reset a ramp merchant's identity verification",
+        TAG_RAMP,
+        listOf(REASON, MERCHANT_NOT_FOUND, MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("ADMIN")} Audited with the reason. Removes the merchant's verification in `environment` " +
+                "(SANDBOX or LIVE), so they can verify again on the portal. `removed` is false when there was " +
+                "none. A merchant already approved keeps their state, but can't go online on a network that " +
+                "requires KYC until they are verified again.",
+    )
+}
+
 private fun Route.rampWrites(ramp: RampService, clock: Clock) {
+    rampIdentityWrites(ramp)
     route("/merchants/{merchantId}") {
         post("approve") {
             val request = call.receive<ReasonRequest>()
@@ -262,9 +386,18 @@ private fun Route.rampWrites(ramp: RampService, clock: Clock) {
         }.docs<ReasonRequest, RampMerchantDto>(
             "OPS · Approve a ramp merchant",
             TAG_RAMP,
-            listOf(REASON, MERCHANT_NOT_FOUND, "ramp.merchant_not_ready", MALFORMED, FORBIDDEN),
+            listOf(
+                REASON,
+                MERCHANT_NOT_FOUND,
+                "ramp.merchant_not_ready",
+                "ramp.merchant_kyc_required",
+                MALFORMED,
+                FORBIDDEN,
+            ),
             notes =
-                "${roles("ADMIN")} Audited with the reason. The merchant must have applied. The ops server then " +
+                "${roles("ADMIN")} Audited with the reason. The merchant must have applied, and must have passed " +
+                    "identity verification on every network whose ramp is open (PREVIEW or ON) and requires KYC: " +
+                    "otherwise `ramp.merchant_kyc_required` (409), naming the networks. The ops server then " +
                     "makes their float wallet within seconds.",
         )
 
@@ -300,7 +433,11 @@ private fun Route.rampWrites(ramp: RampService, clock: Clock) {
             "${roles("ADMIN")} `?network=` is required. Replaces the settings; audited with the reason and what " +
                 "changed. The fee is 0 to 500 basis points and the merchant's share 0 to 10000; KYC can't be " +
                 "switched off on MAINNET; every chain must be the network's own; `collectionsProvider` must be " +
-                "one of `collectionsProviders` (what this server offers). A change applies to quotes made " +
+                "one of `collectionsProviders` (what this server offers). Identity: `kycProvider` must be one " +
+                "of `kycProviders`, `kycEnvironment` SANDBOX or LIVE, the two workflow ids the provider's (empty: " +
+                "that kind can't be verified here yet), `merchantPortalUrl` an origin, `kycAttemptsPerDay` 1 to " +
+                "20 and `kycPendingHours` 1 to 672; each of them left out stays as it is. A change applies to " +
+                "quotes made " +
                 "after it; an order already prompted keeps the provider that prompted it. " +
                 "`providerFeeFloorMinor` (KES cents as a string, `\"0\"` for no check) is the least a merchant's " +
                 "prepaid service wallet at the provider must hold for them to go online; left out, it stays as it " +
