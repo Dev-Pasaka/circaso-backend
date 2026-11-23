@@ -286,13 +286,6 @@ sealed class RampError(
         ErrorKind.UPSTREAM,
     )
 
-    /** A sale is past waiting for the user's USDC, or past what the user may still change. */
-    data object OrderNotFundable : RampError(
-        "ramp.order_not_fundable",
-        "This sale can't take a transfer any more.",
-        ErrorKind.CONFLICT,
-    )
-
     /** A merchant asked for something that needs their unlocked payment account while they are offline. */
     data object MerchantOffline : RampError(
         "ramp.merchant_offline",

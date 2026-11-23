@@ -59,6 +59,7 @@ import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.KycGate
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.PinAttempts
 import com.circaso.ramp.domain.ports.Pricing
 import com.circaso.ramp.domain.ports.RampAlerts
@@ -839,5 +840,18 @@ class FakeProviderFees(var payoutFeeMinor: Long? = 500) : ProviderFees {
         asked += amount.amountMinor
         val fee = payoutFeeMinor ?: return ProviderFee.UNKNOWN
         return ProviderFee(FiatAmount(fee, amount.currency), FeeSource.LIVE_TABLE)
+    }
+}
+
+/** The payout steps the ramp writes down, as `what id outcome`. */
+class RecordingJournal : PayoutJournal {
+    val steps = mutableListOf<String>()
+
+    override fun step(
+        what: String,
+        id: String,
+        outcome: String,
+    ) {
+        steps += "$what $id $outcome"
     }
 }

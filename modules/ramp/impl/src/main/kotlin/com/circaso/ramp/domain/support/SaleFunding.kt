@@ -7,6 +7,7 @@ import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.UsdcContracts
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
@@ -14,7 +15,6 @@ import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.shared.Resource
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.Wallets
-import org.slf4j.LoggerFactory
 import java.math.BigInteger
 import java.time.Clock
 import java.util.UUID
@@ -45,9 +45,8 @@ class SaleFunding(
     private val flow: SaleFlow,
     private val alerts: RampAlerts,
     private val clock: Clock,
+    private val journal: PayoutJournal,
 ) {
-    private val log = LoggerFactory.getLogger(SaleFunding::class.java)
-
     /** The wallet confirmed [transferId] funding [order]: record it, then check it with the custodian. */
     suspend fun transferConfirmed(order: Order, transferId: UUID): Order {
         if (order.direction != Direction.OFF_RAMP) return order
@@ -105,12 +104,8 @@ class SaleFunding(
                 .takeIf { it.bitLength() < Long.SIZE_BITS }
                 ?.toLong()
                 ?: return flow.review(order, MISMATCH)
-        log.info(
-            "ramp sale funded: order={} state={} exact={}",
-            order.orderId,
-            order.state,
-            received == order.assetMinor,
-        )
+        val exact = if (received == order.assetMinor) "exact" else "other_amount"
+        journal.step("sale funded", order.orderId.toString(), "${order.state}:$exact")
         return flow.funded(order, received, txHash)
     }
 

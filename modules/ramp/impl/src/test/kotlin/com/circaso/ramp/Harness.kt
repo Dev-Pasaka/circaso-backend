@@ -233,7 +233,8 @@ class Harness {
     val testPayoutRows = MemoryTestPayouts()
     val providerFees = FakeProviderFees()
     val payoutFees = PayoutFees(providerFees)
-    val balancesReader = ProviderBalancesReader(sessions, providers, merchants, clock)
+    val journal = RecordingJournal()
+    val balancesReader = ProviderBalancesReader(sessions, providers, merchants, clock, journal)
     val engineFacts =
         EngineFacts(merchants, reservations, ledger, treasury, sessions, kyc, statsBook, clock, payoutHolds)
     val engine =
@@ -277,11 +278,11 @@ class Harness {
     val saleFlow =
         SaleFlow(orders, reservations, payoutHolds, ledger, transactor, outbox, bus, frames, counters, alerts, clock)
     val salePayouts =
-        SalePayouts(orders, merchants, saleFlow, providers, sessions, book, payoutFees, frames, alerts, clock)
-    val saleFunding = SaleFunding(orders, wallets, merchantWallets, treasury, usdc, saleFlow, alerts, clock)
+        SalePayouts(orders, merchants, saleFlow, providers, sessions, book, payoutFees, frames, alerts, clock, journal)
+    val saleFunding = SaleFunding(orders, wallets, merchantWallets, treasury, usdc, saleFlow, alerts, clock, journal)
     val saleRefunds = SaleRefunds(orders, merchantWallets, releases, saleFlow, clock)
     val testPayouts =
-        TestPayouts(testPayoutRows, merchants, sessions, providers, balancesReader, payoutFees, book, clock)
+        TestPayouts(testPayoutRows, merchants, sessions, providers, balancesReader, payoutFees, book, clock, journal)
     val startOffRamp =
         StartOffRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, balancesReader, clock)
     val saleTransfer = HandleSaleTransfer(orders, saleFunding, salePayouts)

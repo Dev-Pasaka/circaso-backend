@@ -13,6 +13,7 @@ import com.circaso.ramp.domain.models.BalanceRead
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.TestPayoutRepository
@@ -22,7 +23,6 @@ import com.circaso.shared.PhoneNumber
 import com.circaso.shared.Resource
 import com.circaso.shared.Uuid7
 import kotlinx.coroutines.CancellationException
-import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 import java.util.UUID
@@ -46,9 +46,8 @@ class TestPayouts(
     private val fees: PayoutFees,
     private val settings: SettingsBook,
     private val clock: Clock,
+    private val journal: PayoutJournal,
 ) {
-    private val log = LoggerFactory.getLogger(TestPayouts::class.java)
-
     /** Sends a test payout of [amountMinor] to the merchant's own contact phone. */
     suspend fun start(
         merchantId: MerchantId,
@@ -103,7 +102,7 @@ class TestPayouts(
                 accountId = accountId,
             )
         val result = send(collections, keys.credentials, request)
-        log.info("ramp test payout sent: test={} merchant={} outcome={}", test.testId, merchantId, said(result))
+        journal.step("test payout sent", "${test.testId} merchant=$merchantId", said(result))
         return Resource.success(sent(test, result))
     }
 
@@ -152,7 +151,7 @@ class TestPayouts(
             } catch (e: Exception) {
                 PayoutStatus.Unknown
             }
-        log.info("ramp test payout looked up: test={} said={}", test.testId, SalePayouts.said(status))
+        journal.step("test payout looked up", test.testId.toString(), SalePayouts.said(status))
         val after =
             when (status) {
                 is PayoutStatus.Paid -> {
@@ -241,7 +240,7 @@ class TestPayouts(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("ramp test payout call failed: test={} error={}", request.reference, e::class.simpleName)
+            journal.step("test payout call failed", request.reference, e::class.simpleName.orEmpty())
             PayoutResult.Unknown
         }
 

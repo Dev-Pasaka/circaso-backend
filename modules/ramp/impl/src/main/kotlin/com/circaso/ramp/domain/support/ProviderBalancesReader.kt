@@ -7,11 +7,11 @@ import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.ports.KesFloat
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.shared.Resource
 import kotlinx.coroutines.CancellationException
-import org.slf4j.LoggerFactory
 import java.time.Clock
 
 /**
@@ -28,9 +28,8 @@ class ProviderBalancesReader(
     private val providers: CollectionProviders,
     private val merchants: MerchantRepository,
     private val clock: Clock,
+    private val journal: PayoutJournal,
 ) : KesFloat {
-    private val log = LoggerFactory.getLogger(ProviderBalancesReader::class.java)
-
     override suspend fun of(merchantId: MerchantId): Long? = merchants.find(merchantId)?.let { read(it)?.payoutMinor }
 
     /** The merchant's balances as the provider reads them now; null when nobody can ask (offline, provider down). */
@@ -48,7 +47,7 @@ class ProviderBalancesReader(
         val balances =
             when (read) {
                 is Resource.Error -> {
-                    log.info("ramp balances unread: merchant={} error={}", merchant.merchantId, read.error.code)
+                    journal.step("balances unread", merchant.merchantId.toString(), read.error.code)
                     return null
                 }
 
@@ -71,6 +70,8 @@ class ProviderBalancesReader(
                 }
             }
         merchants.recordBalances(merchant.merchantId, balances)
+        val sources = "payout=${balances.payoutSource ?: "unread"} fees=${balances.feeSource ?: "unread"}"
+        journal.step("balances read", merchant.merchantId.toString(), sources)
         return balances
     }
 }

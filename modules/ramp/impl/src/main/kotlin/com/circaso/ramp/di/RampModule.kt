@@ -49,6 +49,7 @@ import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.data.support.LoggedAlerts
+import com.circaso.ramp.data.support.LoggedPayoutJournal
 import com.circaso.ramp.data.support.ReferenceRatePricing
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.data.support.SettingsUsdcContracts
@@ -78,6 +79,7 @@ import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.IdentityKeys
 import com.circaso.ramp.domain.ports.KesFloat
 import com.circaso.ramp.domain.ports.KycGate
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.PinAttempts
 import com.circaso.ramp.domain.ports.Pricing
 import com.circaso.ramp.domain.ports.PromptTransport
@@ -420,13 +422,14 @@ fun rampModule(config: Config): Module =
         single { Releases(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         // Selling (decision 2026-11-23).
         single { PayoutFees(get()) }
-        single { ProviderBalancesReader(get(), get(), get(), clock) }
+        single<PayoutJournal> { LoggedPayoutJournal() }
+        single { ProviderBalancesReader(get(), get(), get(), clock, get()) }
         single<KesFloat> { get<ProviderBalancesReader>() }
         single { SaleFlow(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { SalePayouts(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock) }
-        single { SaleFunding(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { SalePayouts(get(), get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
+        single { SaleFunding(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { SaleRefunds(get(), get(), get(), get(), clock) }
-        single { TestPayouts(get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { TestPayouts(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { FloatWallets(get(), get(), get(), get(), get(), clock) }
         single { FeeSweeps(get(), get(), get(), get(), get(), get(), get(), clock) }
         single {

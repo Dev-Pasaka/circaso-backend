@@ -16,12 +16,12 @@ import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.ports.FrameSender
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
 import kotlinx.coroutines.CancellationException
-import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -54,9 +54,8 @@ class SalePayouts(
     private val frames: FrameSender,
     private val alerts: RampAlerts,
     private val clock: Clock,
+    private val journal: PayoutJournal,
 ) {
-    private val log = LoggerFactory.getLogger(SalePayouts::class.java)
-
     /** Sends the payout of a `FUNDED` sale when it is due and this node can; otherwise the sale is left as it is. */
     suspend fun pay(order: Order): Order {
         val now = clock.instant()
@@ -87,7 +86,7 @@ class SalePayouts(
         val callbackUrl = Callbacks.url(settings.of(order.network).callbackBaseUrl, callbackKey)
         val request = PayoutRequest(order.payerPhone, order.fiat, reference, callbackUrl, accountId)
         val result = send(collections, keys, request)
-        log.info("ramp payout sent: order={} attempt={} outcome={}", order.orderId, attempt, result::class.simpleName)
+        journal.step("payout sent", "${order.orderId}#$attempt", result::class.simpleName.orEmpty())
         return sent(sending, merchant, result)
     }
 
@@ -102,7 +101,7 @@ class SalePayouts(
         val keys = keysFor(order) ?: return Looked(order, null)
         val collections = providers.named(order.collectionsProvider) ?: return Looked(order, null)
         val status = lookUp(collections, keys, PayoutLookup(reference, order.payoutProviderReference))
-        log.info("ramp payout looked up: order={} said={}", order.orderId, said(status))
+        journal.step("payout looked up", order.orderId.toString(), said(status))
         val after =
             if (order.state == OrderState.REVIEW) {
                 inReview(order, status)
@@ -312,7 +311,7 @@ class SalePayouts(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("ramp payout call failed: reference={} error={}", request.reference, e::class.simpleName)
+            journal.step("payout call failed", request.reference, e::class.simpleName.orEmpty())
             PayoutResult.Unknown
         }
 
@@ -326,7 +325,7 @@ class SalePayouts(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn("ramp payout lookup failed: reference={} error={}", lookup.reference, e::class.simpleName)
+            journal.step("payout lookup failed", lookup.reference, e::class.simpleName.orEmpty())
             PayoutStatus.Unknown
         }
 

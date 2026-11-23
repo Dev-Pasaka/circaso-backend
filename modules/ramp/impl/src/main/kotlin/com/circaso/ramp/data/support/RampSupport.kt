@@ -4,6 +4,7 @@ import com.circaso.integrations.api.CustodySeeds
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.RampAlerts
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.UsdcContracts
@@ -23,6 +24,19 @@ class LoggedAlerts : RampAlerts {
 
     override fun stuck(what: String, reason: String) {
         log.warn("ramp step not done, will be tried again: what={} reason={}", what, reason)
+    }
+}
+
+/** The payout steps at INFO under `com.circaso.ramp` (`LOG_LEVEL_RAMP`): ids and outcomes only. */
+class LoggedPayoutJournal : PayoutJournal {
+    private val log = LoggerFactory.getLogger(LoggedPayoutJournal::class.java)
+
+    override fun step(
+        what: String,
+        id: String,
+        outcome: String,
+    ) {
+        log.info("ramp {}: id={} outcome={}", what, id, outcome)
     }
 }
 

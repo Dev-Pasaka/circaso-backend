@@ -173,3 +173,16 @@ interface PromptTransport {
 fun interface KesFloat {
     suspend fun of(merchantId: MerchantId): Long?
 }
+
+/**
+ * One line per step of a payout, a deposit check or a balance read (decision 2026-11-23): which sale or test, what was
+ * done and what came back, in our words and with ids only, never an amount, a phone number or a credential. With the
+ * integration's own layout lines, what the first real payouts are read from.
+ */
+interface PayoutJournal {
+    fun step(
+        what: String,
+        id: String,
+        outcome: String,
+    )
+}
