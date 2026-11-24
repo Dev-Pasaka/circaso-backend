@@ -38,7 +38,18 @@ data class FeeTermsDto(
     @Deprecated("No longer prices anything (2026-11-08); kept for compatibility.")
     val gasShareMaxBps: Int = 2_500,
     val gasMarginBps: Int = 2_000,
+    /**
+     * Amount bands (2026-11-24): the band the payment's dollar amount falls in sets the rate for the whole amount.
+     * From 0 upward, no gaps or overlaps, the last with `toUsdMicros` null; every rate within the bounds. Left out or
+     * empty on a write: one band at `rateBps`. With bands, `rateBps` is ignored and stored as the first band's rate.
+     * Always present on a read (one band for a flat rule).
+     */
+    val bands: List<FeeBandDto> = emptyList(),
 )
+
+/** A payment worth at least `fromUsdMicros` and below `toUsdMicros` (null: no end) pays `rateBps` on all of it. */
+@Serializable
+data class FeeBandDto(val fromUsdMicros: Long, val toUsdMicros: Long? = null, val rateBps: Int)
 
 /**
  * What one payment's network cost is priced on now, before a rule's margin, in micro-dollars. `source`: RECENT (the

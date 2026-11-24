@@ -477,6 +477,9 @@ data class Earnings(
     val feeBps: Int,
     val merchantShareBps: Int,
     val sweeps: List<Settlement>,
+    /** The fee bands in force for buying and for selling (2026-11-24). */
+    val buyingFeeBands: List<RampFeeBand> = emptyList(),
+    val sellingFeeBands: List<RampFeeBand> = emptyList(),
 )
 
 /** RM15: a page of lines, and the totals of the whole period. */

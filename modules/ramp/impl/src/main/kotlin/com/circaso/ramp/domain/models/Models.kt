@@ -132,6 +132,8 @@ data class Quote(
     val providerFeeSource: String? = null,
     /** How [rate] was made (decision 2026-11-24); null on quotes made before it was recorded. */
     val rateBasis: RateBasis? = null,
+    /** Where the fee band that set [feeBps] starts, KES minor units (2026-11-24); null for one flat band. */
+    val feeBandFromMinor: Long? = null,
 )
 
 data class Order(
@@ -192,6 +194,8 @@ data class Order(
     val payoutRetryAt: Instant? = null,
     /** How [rate] was made, copied from the quote (decision 2026-11-24); null on orders from before. */
     val rateBasis: RateBasis? = null,
+    /** The fee band that set [feeBps], copied from the quote; null for one flat band. */
+    val feeBandFromMinor: Long? = null,
 ) {
     /** Selling: the shillings held at the merchant's provider for it, the payout and its fee. */
     val payoutHoldMinor: Long get() = fiat.amountMinor + providerFeeMinor
@@ -287,10 +291,18 @@ data class RampStatus(
     val onRampOpen: Boolean = true,
     /** Selling: whether it is open to the user, whether anyone could take a sale now, and its limits. */
     val offRamp: OffRampStatus = OffRampStatus(open = false, merchantOnline = false, limits = limits),
+    /** Buying's fee bands (2026-11-24); one band when the fee is flat. */
+    val feeBands: List<RampFeeBand> = emptyList(),
 )
 
 /** R1's `offRamp`. */
-data class OffRampStatus(val open: Boolean, val merchantOnline: Boolean, val limits: RampLimits)
+data class OffRampStatus(
+    val open: Boolean,
+    val merchantOnline: Boolean,
+    val limits: RampLimits,
+    /** Selling's fee bands (2026-11-24); one band when the fee is flat. */
+    val feeBands: List<RampFeeBand> = emptyList(),
+)
 
 /**
  * The gate's short answer, kept for apps built before [RampStatus.verification]: verified, not verified (whatever
@@ -312,6 +324,9 @@ data class Priced(
     val rate: BigDecimal,
     val feeMinor: Long,
     val rateBasis: RateBasis? = null,
+    /** The band's rate that priced it, and where that band starts (null for one flat band). */
+    val feeBps: Int = 0,
+    val feeBandFromMinor: Long? = null,
 )
 
 /** How an order's fee is shared: the merchant's part and Circaso's in the fiat currency, and Circaso's in USDC. */

@@ -412,6 +412,8 @@ fun Earnings.toResponse() =
         feeRatePercent = Amounts.percent(feeBps),
         yourSharePercent = Amounts.percent(merchantShareBps),
         sweeps = sweeps.map { it.toDto() },
+        buyingFeeBands = buyingFeeBands.map { it.toDto() },
+        sellingFeeBands = sellingFeeBands.map { it.toDto() },
     )
 
 private fun StatementLine.toDto() =

@@ -74,10 +74,14 @@ class Pricing(
     fun feeFor(amountMinor: BigInteger): Fee {
         val applied = rule
         val gas = gasMinor
+        val usd = coin.usdMinor(amountMinor)
+        // The band the whole amount falls in sets the rate (2026-11-24); a rule without bands is one flat band.
+        val band = applied?.bandFor(usd)
+        val bandFrom = band?.fromMinor?.takeIf { applied.bands.isNotEmpty() }
         if (applied == null || reason != null || feeAddress == null || gas == null) {
             return Fee(
                 BigInteger.ZERO,
-                applied?.rateBps ?: 0,
+                band?.rateBps ?: 0,
                 false,
                 applied?.ruleId,
                 applied?.version,
@@ -89,17 +93,19 @@ class Pricing(
                 usdMinor = 0,
                 usdPrice = coin.usdPrice,
                 gasSource = gasSource,
+                bandFromMinor = bandFrom,
             )
         }
+        val rateBps = checkNotNull(band).rateBps
         val network = networkPart(applied, gas)
-        val base = BigDecimal.valueOf(minOf(coin.usdMinor(amountMinor), applied.capBaseMinor))
-        val rated = cents((base * BigDecimal.valueOf(applied.rateBps.toLong())).divide(BPS), RoundingMode.HALF_UP)
+        val base = BigDecimal.valueOf(minOf(usd, applied.capBaseMinor))
+        val rated = cents((base * BigDecimal.valueOf(rateBps.toLong())).divide(BPS), RoundingMode.HALF_UP)
         val priced = network + rated
         val floor = applied.minFeeMinor?.let { cents(BigDecimal.valueOf(it), RoundingMode.CEILING) } ?: 0
         val fee = maxOf(priced, floor)
         return Fee(
             coin.minorOf(fee),
-            applied.rateBps,
+            rateBps,
             fee > priced,
             applied.ruleId,
             applied.version,
@@ -110,6 +116,7 @@ class Pricing(
             usdMinor = fee,
             usdPrice = coin.usdPrice,
             gasSource = gasSource,
+            bandFromMinor = bandFrom,
         )
     }
 
@@ -127,6 +134,9 @@ class Pricing(
      * is at most [capUsdMinor] (one payment's cap) and, with its fee, at most [leftUsdMinor] (what is left of the
      * window), both in micro-dollars; 0 when none does. The total only grows with the amount, so a binary search finds
      * it. For USDC this is the amount within `min(budget, left)` and the cap, as before.
+     *
+     * With amount bands (2026-11-24) the total only grows with the amount **within** a band: crossing into a cheaper
+     * band can lower it. So each band's stretch of amounts is searched on its own and the largest fit wins.
      */
     fun maxAmount(
         budgetMinor: BigInteger,
@@ -141,13 +151,48 @@ class Pricing(
             if (amount + fee.amountMinor > budgetMinor) return false
             return leftUsdMinor == null || coin.usdMinor(amount) + fee.usdMinor <= leftUsdMinor
         }
-        var low = BigInteger.ZERO
-        var high = budgetMinor
-        while (low < high) {
-            val mid = low + (high - low + BigInteger.ONE).shiftRight(1)
-            if (fits(mid)) low = mid else high = mid - BigInteger.ONE
+        val bands = rule?.bands.orEmpty()
+        if (bands.size <= 1) return largest(BigInteger.ZERO, budgetMinor, ::fits) ?: BigInteger.ZERO
+        return bands
+            .mapNotNull { band ->
+                val low = smallest(BigInteger.ZERO, budgetMinor) { coin.usdMinor(it) >= band.fromMinor }
+                val high =
+                    band.toMinor?.let { to -> largest(BigInteger.ZERO, budgetMinor) { coin.usdMinor(it) < to } }
+                        ?: budgetMinor
+                if (low == null || low > high || !fits(low)) null else largest(low, high, ::fits)
+            }.maxOrNull() ?: BigInteger.ZERO
+    }
+
+    /** The largest amount in [low]..[high] for which [holds] (true up to a point, then false), or null when none. */
+    private fun largest(
+        low: BigInteger,
+        high: BigInteger,
+        holds: (BigInteger) -> Boolean,
+    ): BigInteger? {
+        if (!holds(low)) return null
+        var from = low
+        var to = high
+        while (from < to) {
+            val mid = from + (to - from + BigInteger.ONE).shiftRight(1)
+            if (holds(mid)) from = mid else to = mid - BigInteger.ONE
         }
-        return low
+        return from
+    }
+
+    /** The smallest amount in [low]..[high] for which [holds] (false up to a point, then true), or null when none. */
+    private fun smallest(
+        low: BigInteger,
+        high: BigInteger,
+        holds: (BigInteger) -> Boolean,
+    ): BigInteger? {
+        if (!holds(high)) return null
+        var from = low
+        var to = high
+        while (from < to) {
+            val mid = from + (to - from).shiftRight(1)
+            if (holds(mid)) to = mid else from = mid + BigInteger.ONE
+        }
+        return from
     }
 
     /** The legacy form, all in one dollar stablecoin's minor units (the budget already within what is left). */
@@ -211,7 +256,7 @@ class FeeCalculator(
                 .maxWithOrNull(compareBy<FeeRule> { it.specificity }.thenBy { it.effectiveFrom }.thenBy { it.ruleId })
                 ?: return Resource.success(Pricing(parties, null, null, null, NoFeeReason.NO_RULE, coin))
         // A 0 % rule where no fee leg can be carried (Solana) charges nothing, quietly, as it always has.
-        val free = rule.rateBps == 0 && rule.minFeeMinor == null
+        val free = rule.rates.all { it == 0 } && rule.minFeeMinor == null
         if (!custody.canSplit(chain)) return untaken(parties, rule, NoFeeReason.NO_SPLIT, coin, quiet = free)
         val feeAddress = config.feeAddress(chain)?.let { Addresses.normalise(it) }
         if (feeAddress.isNullOrEmpty()) return untaken(parties, rule, NoFeeReason.NO_FEE_WALLET, coin, quiet = free)

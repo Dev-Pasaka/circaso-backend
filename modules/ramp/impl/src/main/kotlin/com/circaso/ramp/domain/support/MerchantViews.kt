@@ -164,7 +164,7 @@ class MerchantViews(
                     Direction.ON_RAMP,
                     current.orderMinMinor,
                     null,
-                    current.feeBps,
+                    current.feeBandsOf(Direction.ON_RAMP),
                 )
         ) {
             is Resource.Success -> priced.data.assetMinor

@@ -82,7 +82,7 @@ group's name is always null (end-to-end encrypted). Groups and profiles are look
 **Fees and limits** (decision 2026-11-08): the rules are the wallet's, edited through `FeeAdmin`. A change is a new
 version (`baseVersion` the version edited; `effectiveFrom` null for now, never in the past); ending sets the latest
 version's end; nothing is deleted. Every write needs a `reason` and is audited as `fee_rule.create|change|end`,
-`limit_rule.create|change|end` or `fee_bounds.update` with the wallet's before and after in `detail`.
+`limit_rule.create|change|end` or `fee_bounds.update` with the wallet's before and after in `detail`. Since 2026-11-24 a fee rule's `terms` carry `bands` (`[{fromUsdMicros, toUsdMicros|null, rateBps}]`, always at least one on a read; see wallet.md, "Amount bands"), and the audit detail lists them (`bands [$0-$1: 200 bps; $1+: 100 bps]`). The ramp settings (RO5) carry `onRampFeeBands` and `offRampFeeBands` (`[{fromMinor, toMinor|null, feeBps}]`, KES cents as strings; ramp.md, "As built: fee bands").
 Every change needs an `Idempotency-Key`; limits: `OPS_RATE_LIMIT_PER_MINUTE` per staff member (300),
 `OPS_PUBLIC_RATE_LIMIT_PER_MINUTE` per address (30), the dev login 5 a minute per address.
 

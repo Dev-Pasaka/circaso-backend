@@ -29,9 +29,20 @@ data class FeeRuleScope(
 )
 
 /**
+ * One amount band of a fee rule (decision 2026-11-24, "the band sets the rate"): a payment worth at least
+ * [fromUsdMicros] and less than [toUsdMicros] (null: no upper end) pays [rateBps] on its whole amount.
+ */
+data class FeeRuleBand(val fromUsdMicros: Long, val toUsdMicros: Long?, val rateBps: Int)
+
+/**
  * What a fee rule charges, gas inclusive (decision 2026-11-08): `ceil_cent(network cost × (1 + gasMargin)) +
  * half_up_cent(rate × min(amount, capBase))`, raised to [minFeeUsdMicros] when set. The network cost always passes
  * through, so a 0 % rule charges it alone.
+ *
+ * [bands] (2026-11-24): the rate is the rate of the band the payment's dollar amount falls in, for the whole amount.
+ * They run from 0 upward with no gap or overlap and the last is open-ended. Empty means one band at [rateBps], which
+ * is exactly the flat rate; on a read they are always given, one band for a flat rule. On a write with bands,
+ * [rateBps] is ignored and becomes the first band's rate (what older readers show).
  */
 data class FeeRuleTerms(
     val rateBps: Int,
@@ -40,6 +51,7 @@ data class FeeRuleTerms(
     /** Deprecated (2026-11-08): stored for compatibility, no longer prices anything. */
     val gasShareMaxBps: Int,
     val gasMarginBps: Int,
+    val bands: List<FeeRuleBand> = emptyList(),
 )
 
 /** Where a chain's network cost figure comes from: recent confirmed transfers, or Circle's last estimate quoted. */

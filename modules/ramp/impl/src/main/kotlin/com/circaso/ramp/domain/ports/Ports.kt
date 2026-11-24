@@ -8,6 +8,7 @@ import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RateReading
 import com.circaso.ramp.domain.models.ReferenceRate
 import com.circaso.ramp.domain.models.Subject
@@ -92,7 +93,8 @@ interface IdentityKeys {
 }
 
 /**
- * Prices one side from the other at [feeBps] basis points, the fee inside what the user pays, at the rate staff's
+ * Prices one side from the other with the fee [bands] (2026-11-24: the band the KES paid falls in sets the rate for the
+ * whole amount), the fee inside what the user pays, at the rate staff's
  * pricing settings give the side (decision 2026-11-24: the buy rate for buying, the sell rate for selling; see
  * `RatePolicy`). A side whose rate is paused (no reference, a stale one, an expired manual rate) is
  * `ramp.pricing_unavailable`: never a silent fallback to another rate.
@@ -112,7 +114,7 @@ interface Pricing {
         direction: Direction,
         fiatMinor: Long?,
         assetMinor: Long?,
-        feeBps: Int,
+        bands: List<RampFeeBand>,
     ): Resource<Priced>
 }
 

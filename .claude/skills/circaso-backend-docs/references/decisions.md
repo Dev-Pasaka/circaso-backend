@@ -315,6 +315,15 @@ Asked for by the owner (Pasaka): a merchant can send USDC out of their float wal
 - **Not built:** an email on each withdrawal or new address (needs a new template; recommended before more merchants, since it is what makes the delay useful against a stolen session).
 
 
+## 2026-11-24 — Fee bands, and the spread stays the merchant's
+
+Decided by Pasaka. As built in wallet.md ("Amount bands") and ramp.md ("As built: fee bands").
+
+- **"The band sets the rate."** A fee is an ordered list of bands `[from, to) → rate`; the band the amount falls in sets the percentage for the **whole** amount (not marginal, like a tax bracket). Chosen for its simplicity to explain; it has cliffs at the boundaries (just above can cost less than just below), which the admin shows as a warning without blocking a save. One band is exactly the old flat rate, so existing rules and settings were migrated as one band each and no live number changed.
+- **Wallet:** bands by the payment's dollar amount on each fee rule version (V15); every band rate within `fee_bounds`; `rate_bps` keeps the first band's rate for old readers; the band used is recorded on `fee_quotes` and `fee_ledger`.
+- **Ramp:** bands by the order's KES amount, per network and per direction (V15). Selling's band is picked by the KES value of what is sold (the amount its fee is charged on), not the payout: decided in the build so the rule reads the same in both directions. A quote asked by the other side is solved so the amount lands in the band whose rate priced it; in a cliff it is priced at the start of the cheaper band.
+- **The rate margin belongs entirely to the merchant** (Pasaka, 2026-11-24). A configurable split of the buy/sell spread between the merchant and Circaso was considered and dropped: Circaso earns only its share of the fee, swept daily as before. Nothing about the spread changed.
+
 ## 2026-11-24 — The verified badge
 
 Asked for by Pasaka: a person who passed identity verification shows a verified badge on their avatar wherever it appears, and their profile says they are verified. The rules: verified means an **approved user verification in Didit's live environment** (`ramp.verifications`, `subject_kind = 'USER'`, `environment = 'LIVE'`, `status = 'VERIFIED'`); a sandbox approval never counts (it is simulated); taken back on review, declined, expired or reset by staff, the badge goes; only the boolean and the date are ever shown to others; merchants, support accounts and Asha have none. The design calls below were made by the backend session.

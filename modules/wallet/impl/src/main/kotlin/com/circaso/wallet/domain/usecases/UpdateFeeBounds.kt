@@ -35,7 +35,7 @@ class UpdateFeeBounds(
             val outside =
                 rules
                     .feeRules()
-                    .filter { it.liveAt(now) && it.rateBps !in minRateBps..maxRateBps }
+                    .filter { rule -> rule.liveAt(now) && rule.rates.any { it !in minRateBps..maxRateBps } }
                     .map { it.ruleId }
                     .distinct()
             if (outside.isNotEmpty()) return@attempt Resource.error(WalletError.FeeBoundsExcludeRules(outside))

@@ -14,6 +14,7 @@ import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.repositories.RuleRepository
 import com.circaso.wallet.domain.support.RuleChecks
 import com.circaso.wallet.domain.support.RuleTimeline
+import com.circaso.wallet.domain.support.feeBands
 import com.circaso.wallet.domain.support.scope
 import com.circaso.wallet.domain.support.toFeeKind
 import java.time.Clock
@@ -38,9 +39,9 @@ class CreateFeeRule(
         val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
             RuleChecks.feeScope(scope).flatMap { wanted ->
-                RuleChecks.fee(terms).flatMap {
+                RuleChecks.fee(terms).flatMap { stored ->
                     RuleTimeline.at(effectiveFrom, now, "effectiveFrom").flatMap { from ->
-                        write(draft(wanted, terms, from, why, now), now)
+                        write(draft(wanted, stored, from, why, now), now)
                     }
                 }
             }
@@ -60,7 +61,7 @@ class CreateFeeRule(
                     .firstOrNull { it.scope() == rule.scope() }
             if (taken != null) return@attempt Resource.error(WalletError.RuleScopeTaken(taken.ruleId))
             RuleChecks
-                .rate(rule.rateBps, bounds)
+                .rates(rule, bounds)
                 .flatMap { RuleChecks.written(admin.insertFeeVersion(rule), bounds) }
                 .map { RuleChange(null, rule) }
         }
@@ -86,6 +87,7 @@ class CreateFeeRule(
         minFeeMinor = terms.minFeeUsdMicros,
         gasShareMaxBps = terms.gasShareMaxBps,
         gasMarginBps = terms.gasMarginBps,
+        bands = terms.feeBands(),
         effectiveFrom = from,
         effectiveTo = null,
         note = note,

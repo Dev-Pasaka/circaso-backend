@@ -136,7 +136,7 @@ class RoutingSimulator(
                         command.direction,
                         fiatMinor,
                         null,
-                        rampSettings.feeBps,
+                        rampSettings.feeBandsOf(command.direction),
                     )
             ) {
                 is Resource.Error -> return priced

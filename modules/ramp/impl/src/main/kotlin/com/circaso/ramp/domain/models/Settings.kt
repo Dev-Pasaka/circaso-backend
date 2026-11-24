@@ -89,9 +89,21 @@ data class RampSettings(
      * it, the next restart asks the merchant for their PIN again. A timed window's copy lasts as long as the window.
      */
     val onlineSessionMaxDays: Int = DEFAULT_ONLINE_SESSION_MAX_DAYS,
+    /**
+     * Buying's fee by the order's KES amount (2026-11-24, "the band sets the rate"); empty: one band at [feeBps].
+     * Ordered from 0 upward, no gaps or overlaps, the last open-ended.
+     */
+    val onRampFeeBands: List<RampFeeBand> = emptyList(),
+    /** Selling's own bands, by the KES value of the USDC sold (what its fee is charged on); empty: one at [feeBps]. */
+    val offRampFeeBands: List<RampFeeBand> = emptyList(),
 ) {
     /** How long an open-ended session survives restarts without the merchant's PIN. */
     val onlineSessionMax: Duration get() = Duration.ofDays(onlineSessionMaxDays.toLong())
+
+    /** The bands [direction] is priced with: its own, or one band at [feeBps] when none are set. */
+    fun feeBandsOf(direction: Direction): List<RampFeeBand> =
+        (if (direction == Direction.ON_RAMP) onRampFeeBands else offRampFeeBands)
+            .ifEmpty { listOf(RampFeeBand(0, null, feeBps)) }
 
     /** The cooling-off delay of a new withdrawal address. */
     val withdrawDestinationDelay: Duration get() = Duration.ofHours(withdrawDestinationDelayHours.toLong())
@@ -221,6 +233,15 @@ data class RampSettings(
                 kycWorkflowMerchant = if (network == Network.TESTNET) SANDBOX_WORKFLOW_MERCHANT else "",
             )
     }
+}
+
+/**
+ * One band of a ramp fee (decision 2026-11-24, "the band sets the rate"): an order of at least [fromMinor] and below
+ * [toMinor] KES minor units (null: no upper end) pays [feeBps] of its whole amount. A boundary is a cliff: just above
+ * it can cost less than just below it, which staff see in the admin before they save.
+ */
+data class RampFeeBand(val fromMinor: Long, val toMinor: Long?, val feeBps: Int) {
+    fun covers(amountMinor: Long): Boolean = amountMinor >= fromMinor && (toMinor == null || amountMinor < toMinor)
 }
 
 data class SettingsChange(val before: RampSettings, val after: RampSettings)

@@ -37,6 +37,10 @@ object SettingsTable : Table("ramp.settings") {
     val transferWindowSeconds = integer("transfer_window_seconds").default(900)
     val payoutWindowSeconds = integer("payout_window_seconds").default(1_800)
     val payoutFeeBands = text("payout_fee_bands").default("[]")
+
+    /** V15 (2026-11-24): buying's and selling's fee bands as JSON lists; `[]` is one band at [feeBps]. */
+    val onrampFeeBands = text("onramp_fee_bands").default("[]")
+    val offrampFeeBands = text("offramp_fee_bands").default("[]")
     val payoutBalanceLowMinor = long("payout_balance_low_minor").default(100_000)
     val withdrawDestinationDelayHours = integer("withdraw_destination_delay_hours").default(24)
     val withdrawMinMinor = long("withdraw_min_minor").default(1_000_000)
@@ -169,6 +173,9 @@ object QuotesTable : Table("ramp.quotes") {
     val rateSource = text("rate_source").nullable()
     val referenceRate = text("reference_rate").nullable()
     val spreadBps = integer("spread_bps").nullable()
+
+    /** V15 (2026-11-24): where the fee band that set `fee_bps` starts, KES minor units; null for one flat band. */
+    val feeBandFromMinor = long("fee_band_from_minor").nullable()
     override val primaryKey = PrimaryKey(quoteId)
 }
 
@@ -213,6 +220,9 @@ object OrdersTable : Table("ramp.orders") {
     val rateSource = text("rate_source").nullable()
     val referenceRate = text("reference_rate").nullable()
     val spreadBps = integer("spread_bps").nullable()
+
+    /** V15 (2026-11-24): where the fee band that set `fee_bps` starts, KES minor units; null for one flat band. */
+    val feeBandFromMinor = long("fee_band_from_minor").nullable()
     val refundAddress = text("refund_address").nullable()
     val payoutAttempts = integer("payout_attempts").default(0)
     val payoutFailures = integer("payout_failures").default(0)

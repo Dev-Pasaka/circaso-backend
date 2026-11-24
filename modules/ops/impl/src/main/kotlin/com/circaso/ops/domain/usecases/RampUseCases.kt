@@ -11,6 +11,7 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
+import com.circaso.ramp.api.OpsRampFeeBand
 import com.circaso.ramp.api.OpsRampMerchantOrder
 import com.circaso.ramp.api.OpsRampMerchantSummary
 import com.circaso.ramp.api.OpsRampOrder
@@ -84,6 +85,12 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         ) { ramp.updateSettings(settings, actor.staffId) }
     }
 
+    /** Bands for the audit line: `0-100000:200,100000+:150` (KES cents, bps). */
+    private fun bands(list: List<OpsRampFeeBand>?): String? =
+        list?.joinToString(",") { band ->
+            "${band.fromMinor}${band.toMinor?.let { "-$it" } ?: "+"}:${band.feeBps}"
+        }
+
     private fun describe(change: OpsRampSettingsChange): String {
         val before = change.before
         val after = change.after
@@ -130,6 +137,8 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         ) {
             parts += "payoutFeeBands changed"
         }
+        changed("onRampFeeBands", bands(before.onRampFeeBands), bands(after.onRampFeeBands))
+        changed("offRampFeeBands", bands(before.offRampFeeBands), bands(after.offRampFeeBands))
         changed("payoutBalanceLowMinor", before.payoutBalanceLowMinor, after.payoutBalanceLowMinor)
         changed(
             "withdrawDestinationDelayHours",

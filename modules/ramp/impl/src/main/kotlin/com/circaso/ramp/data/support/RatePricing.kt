@@ -5,11 +5,13 @@ import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.AppliedRate
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RateReading
 import com.circaso.ramp.domain.models.ReferenceRate
 import com.circaso.ramp.domain.ports.Pricing
 import com.circaso.ramp.domain.support.PricingBook
+import com.circaso.ramp.domain.support.RampFeeBands
 import com.circaso.ramp.domain.support.RatePolicy
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
@@ -26,7 +28,7 @@ import java.time.Clock
  * at the sell rate. A side with no rate in force (no reference, a stale one, an expired manual rate) is
  * `ramp.pricing_unavailable`, never a fallback.
  *
- * The fee is the settings' rate of what the user pays and sits inside it (decision 2026-11-22): paying 1 300 shillings
+ * The fee is the rate of the band what the user pays falls in (2026-11-24) and sits inside it (decision 2026-11-22): paying 1 300 shillings
  * at 2 % is a fee of 26, and the user receives the USDC 1 274 shillings buy. M-Pesa carries whole shillings, so the
  * fiat side is always whole shillings; rounding always favours the merchant (the fee rounds up to a shilling, the USDC
  * rounds down, a spread rate rounds the merchant's way), so a merchant never sells below the quoted rate.
@@ -58,7 +60,7 @@ class RatePricing(private val rates: ExchangeRates, private val book: PricingBoo
         direction: Direction,
         fiatMinor: Long?,
         assetMinor: Long?,
-        feeBps: Int,
+        bands: List<RampFeeBand>,
     ): Resource<Priced> {
         val applied =
             when (val read = rate(network, direction)) {
@@ -67,24 +69,47 @@ class RatePricing(private val rates: ExchangeRates, private val book: PricingBoo
             }
         val rate = applied.rate
         val paid =
-            fiatMinor ?: assetMinor?.let { fiatFor(it, rate, feeBps) } ?: return Resource.error(RampError.AmountInvalid)
+            fiatMinor ?: assetMinor?.let { fiatFor(it, rate, bands) } ?: return Resource.error(RampError.AmountInvalid)
         if (paid <= 0 || paid % FiatAmount.MINOR_PER_UNIT != 0L) return Resource.error(RampError.AmountInvalid)
 
-        val fee = roundUpToShilling(BigDecimal(paid).multiply(BigDecimal(feeBps)).divide(BPS, 0, RoundingMode.CEILING))
-        val bought =
-            BigDecimal(paid - fee)
-                .movePointLeft(FiatAmount.MINOR_DIGITS)
-                .divide(rate, RampSettings.ASSET_DECIMALS, RoundingMode.FLOOR)
-                .movePointRight(RampSettings.ASSET_DECIMALS)
-                .longValueExact()
+        // The band the shillings paid fall in sets the rate for the whole amount (decision 2026-11-24).
+        val band = RampFeeBands.bandFor(bands, paid)
+        val fee = feeOf(paid, band.feeBps)
+        val bought = assetOf(paid - fee, rate)
         if (bought <= 0) return Resource.error(RampError.AmountInvalid)
         return Resource.success(
-            Priced(fiatMinor = paid, assetMinor = bought, rate = rate, feeMinor = fee, rateBasis = applied.basis),
+            Priced(
+                fiatMinor = paid,
+                assetMinor = bought,
+                rate = rate,
+                feeMinor = fee,
+                rateBasis = applied.basis,
+                feeBps = band.feeBps,
+                feeBandFromMinor = band.fromMinor.takeIf { RampFeeBands.banded(bands) },
+            ),
         )
     }
 
-    /** What the user pays, in whole shillings, to receive at least [assetMinor] after the fee. */
+    /**
+     * What the user pays, in whole shillings, to receive at least [assetMinor] after the fee, solved so that the
+     * amount lands in the band whose rate priced it (2026-11-24). For each band: the least paid at that band's rate,
+     * raised to where the band starts when it falls below it (more shillings at a cheaper rate still buy at least
+     * [assetMinor]); a band whose answer runs past its end can't hold it. The least of those that fit wins, so the
+     * user pays the least that gets them what they asked for; rounding still favours the merchant.
+     */
     private fun fiatFor(
+        assetMinor: Long,
+        rate: BigDecimal,
+        bands: List<RampFeeBand>,
+    ): Long? =
+        bands
+            .mapNotNull { band ->
+                val paid = maxOf(fiatAt(assetMinor, rate, band.feeBps), roundUpToShilling(BigDecimal(band.fromMinor)))
+                paid.takeIf { band.covers(it) && assetOf(it - feeOf(it, band.feeBps), rate) >= assetMinor }
+            }.minOrNull()
+
+    /** What the user pays at one rate [feeBps] to receive at least [assetMinor]. */
+    private fun fiatAt(
         assetMinor: Long,
         rate: BigDecimal,
         feeBps: Int,
@@ -94,6 +119,18 @@ class RatePricing(private val rates: ExchangeRates, private val book: PricingBoo
         val gross = net.multiply(BPS).divide(afterFee, FiatAmount.MINOR_DIGITS, RoundingMode.CEILING)
         return roundUpToShilling(gross.movePointRight(FiatAmount.MINOR_DIGITS).setScale(0, RoundingMode.CEILING))
     }
+
+    /** The fee on [paid] at [feeBps], rounded up to a whole shilling. */
+    private fun feeOf(paid: Long, feeBps: Int): Long =
+        roundUpToShilling(BigDecimal(paid).multiply(BigDecimal(feeBps)).divide(BPS, 0, RoundingMode.CEILING))
+
+    /** The USDC [netMinor] shillings buy at [rate], rounded down to the smallest unit. */
+    private fun assetOf(netMinor: Long, rate: BigDecimal): Long =
+        BigDecimal(netMinor)
+            .movePointLeft(FiatAmount.MINOR_DIGITS)
+            .divide(rate, RampSettings.ASSET_DECIMALS, RoundingMode.FLOOR)
+            .movePointRight(RampSettings.ASSET_DECIMALS)
+            .longValueExact()
 
     private fun roundUpToShilling(minor: BigDecimal): Long {
         val cents = minor.longValueExact()

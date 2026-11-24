@@ -4,6 +4,7 @@ import com.circaso.ops.presentation.dto.RampAmountDto
 import com.circaso.ops.presentation.dto.RampBlockDto
 import com.circaso.ops.presentation.dto.RampBlocksResponse
 import com.circaso.ops.presentation.dto.RampDayDto
+import com.circaso.ops.presentation.dto.RampFeeBandDto
 import com.circaso.ops.presentation.dto.RampFloatDto
 import com.circaso.ops.presentation.dto.RampKesBalancesDto
 import com.circaso.ops.presentation.dto.RampMerchantDto
@@ -40,6 +41,7 @@ import com.circaso.ramp.api.OpsPayoutFeeBand
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
+import com.circaso.ramp.api.OpsRampFeeBand
 import com.circaso.ramp.api.OpsRampMerchantActivity
 import com.circaso.ramp.api.OpsRampMerchantOrder
 import com.circaso.ramp.api.OpsRampMerchantProfile
@@ -206,6 +208,23 @@ fun OpsRampSettings.toDto() =
         withdrawMinMinor = (withdrawMinMinor ?: 0).toString(),
         withdrawDailyMaxMinor = (withdrawDailyMaxMinor ?: 0).toString(),
         onlineSessionMaxDays = onlineSessionMaxDays ?: 0,
+        onRampFeeBands = onRampFeeBands.orEmpty().map { it.toDto() },
+        offRampFeeBands = offRampFeeBands.orEmpty().map { it.toDto() },
+    )
+
+private fun OpsRampFeeBand.toDto() = RampFeeBandDto(fromMinor.toString(), toMinor?.toString(), feeBps)
+
+/** Bands as the request sent them; an amount that isn't whole cents is refused, naming its field. */
+private fun List<RampFeeBandDto>.toBands(field: String): Resource<List<OpsRampFeeBand>> =
+    Resource.success(
+        mapIndexed { index, band ->
+            val from = band.fromMinor.trim().toLongOrNull() ?: return malformed("$field[$index].fromMinor", NOT_CENTS)
+            val to =
+                band.toMinor?.let {
+                    it.trim().toLongOrNull() ?: return malformed("$field[$index].toMinor", NOT_CENTS)
+                }
+            OpsRampFeeBand(from, to, band.feeBps)
+        },
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -234,6 +253,20 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             val fee = band.feeMinor.trim().toLongOrNull()
             if (upTo == null || fee == null) return malformed("payoutFeeBands[$index]", NOT_CENTS)
             OpsPayoutFeeBand(upTo, fee)
+        }
+    val buying =
+        onRampFeeBands?.let { list ->
+            when (val parsed = list.toBands("onRampFeeBands")) {
+                is Resource.Error -> return parsed
+                is Resource.Success -> parsed.data
+            }
+        }
+    val sellingBands =
+        offRampFeeBands?.let { list ->
+            when (val parsed = list.toBands("offRampFeeBands")) {
+                is Resource.Error -> return parsed
+                is Resource.Success -> parsed.data
+            }
         }
     return Resource.success(
         OpsRampSettings(
@@ -273,6 +306,8 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             withdrawMinMinor = selling[4],
             withdrawDailyMaxMinor = selling[5],
             onlineSessionMaxDays = onlineSessionMaxDays,
+            onRampFeeBands = buying,
+            offRampFeeBands = sellingBands,
         ),
     )
 }

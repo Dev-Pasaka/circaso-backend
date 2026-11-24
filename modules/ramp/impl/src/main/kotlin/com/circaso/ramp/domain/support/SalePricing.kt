@@ -3,6 +3,7 @@ package com.circaso.ramp.domain.support
 import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.ProviderFees
 import com.circaso.ramp.domain.models.PayoutFee
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.shared.FiatAmount
 import java.math.BigDecimal
@@ -10,7 +11,7 @@ import java.math.RoundingMode
 
 /**
  * The price of a sale (decision 2026-11-23). The user sends USDC; at the reference rate it is worth [gross] shillings;
- * Circaso's fee is the settings' rate of that, as on a purchase; the provider's payout fee is added to the user's cost
+ * Circaso's fee is the rate of the band that worth falls in (2026-11-24), as on a purchase; the provider's payout fee is added to the user's cost
  * (the merchant pays the provider and receives their full amount); what is left, in whole shillings (M-Pesa pays no
  * cents), is what the user receives. Rounding always favours the merchant: the fee rounds up and the payout down, so a
  * merchant never pays out more than the USDC they receive was worth less the fee.
@@ -22,6 +23,9 @@ object SalePricing {
         val payoutMinor: Long,
         val feeMinor: Long,
         val providerFeeMinor: Long,
+        /** The band's rate that priced it, and where that band starts (null for one flat band). */
+        val feeBps: Int = 0,
+        val feeBandFromMinor: Long? = null,
     )
 
     /** What [assetMinor] USDC is worth at [rate], in KES minor units, rounded down to the cent. */
@@ -41,55 +45,77 @@ object SalePricing {
             .longValueExact()
 
     /**
-     * Selling [assetMinor] USDC. [providerFee] prices a payout amount; it is asked for the payout before its own fee
-     * comes off, which is never less than the fee of what is finally paid (the provider's charge grows with the
-     * amount), so the user is never charged less than the provider will take. Null when the provider's fee can't be
-     * found, or nothing is left to pay out.
+     * Selling [assetMinor] USDC. The band [grossMinor] falls in sets the fee rate (2026-11-24): selling's bands are by
+     * the KES value of what is sold, the amount its fee is charged on. [providerFee] prices a payout amount; it is
+     * asked for the payout before its own fee comes off, which is never less than the fee of what is finally paid
+     * (the provider's charge grows with the amount), so the user is never charged less than the provider will take.
+     * Null when the provider's fee can't be found, or nothing is left to pay out.
      */
     suspend fun ofAsset(
         assetMinor: Long,
         rate: BigDecimal,
-        feeBps: Int,
+        bands: List<RampFeeBand>,
         providerFee: suspend (Long) -> Long?,
     ): Sale? {
         if (assetMinor <= 0 || rate.signum() <= 0) return null
         val gross = grossOf(assetMinor, rate)
-        val fee = feeOf(gross, feeBps)
+        val band = RampFeeBands.bandFor(bands, gross)
+        val fee = feeOf(gross, band.feeBps)
         val before = floorToShilling(gross - fee)
         if (before <= 0) return null
         val provider = providerFee(before) ?: return null
         val payout = floorToShilling(gross - fee - provider)
         if (payout <= 0) return null
-        return Sale(assetMinor, payout, fee, provider)
+        return Sale(assetMinor, payout, fee, provider, band.feeBps, bandStart(bands, band))
     }
 
     /**
      * Receiving exactly [payoutMinor] shillings (whole shillings). The USDC to send is rounded up to its smallest unit,
      * and Circaso's fee is what is left of its worth after the payout and the provider's fee, which is never less than
-     * the settings' rate of it (the rounding goes to the fee, never to the user's payout). Null when the provider's
-     * fee can't be found.
+     * the band's rate of it (the rounding goes to the fee, never to the user's payout). The band is solved so that the
+     * sale's worth lands in the band whose rate priced it (2026-11-24): at each band's rate, the USDC needed, raised
+     * to where the band starts when it falls below it (the extra goes to the fee); a band whose answer runs past its
+     * end can't hold it; the least USDC of those wins. Null when the provider's fee can't be found.
      */
     suspend fun ofPayout(
         payoutMinor: Long,
         rate: BigDecimal,
-        feeBps: Int,
+        bands: List<RampFeeBand>,
         providerFee: suspend (Long) -> Long?,
     ): Sale? {
         if (payoutMinor <= 0 || payoutMinor % FiatAmount.MINOR_PER_UNIT != 0L || rate.signum() <= 0) return null
         val provider = providerFee(payoutMinor) ?: return null
-        val needed =
-            BigDecimal(payoutMinor + provider)
-                .multiply(BPS)
-                .divide(BPS.subtract(BigDecimal(feeBps)), 0, RoundingMode.CEILING)
-        val assetMinor =
-            needed
-                .movePointLeft(FiatAmount.MINOR_DIGITS)
-                .divide(rate, RampSettings.ASSET_DECIMALS, RoundingMode.CEILING)
-                .movePointRight(RampSettings.ASSET_DECIMALS)
-                .longValueExact()
-        val fee = grossOf(assetMinor, rate) - payoutMinor - provider
-        return Sale(assetMinor, payoutMinor, fee, provider)
+        return bands
+            .mapNotNull { band ->
+                val needed =
+                    BigDecimal(payoutMinor + provider)
+                        .multiply(BPS)
+                        .divide(BPS.subtract(BigDecimal(band.feeBps)), 0, RoundingMode.CEILING)
+                        .max(BigDecimal(band.fromMinor))
+                val assetMinor = assetFor(needed, rate)
+                val gross = grossOf(assetMinor, rate)
+                if (!band.covers(gross)) return@mapNotNull null
+                Sale(
+                    assetMinor,
+                    payoutMinor,
+                    gross - payoutMinor - provider,
+                    provider,
+                    band.feeBps,
+                    bandStart(bands, band),
+                )
+            }.minByOrNull { it.assetMinor }
     }
+
+    /** The USDC, rounded up to the smallest unit, worth at least [kesMinor] at [rate]. */
+    private fun assetFor(kesMinor: BigDecimal, rate: BigDecimal): Long =
+        kesMinor
+            .movePointLeft(FiatAmount.MINOR_DIGITS)
+            .divide(rate, RampSettings.ASSET_DECIMALS, RoundingMode.CEILING)
+            .movePointRight(RampSettings.ASSET_DECIMALS)
+            .longValueExact()
+
+    private fun bandStart(bands: List<RampFeeBand>, band: RampFeeBand): Long? =
+        band.fromMinor.takeIf { RampFeeBands.banded(bands) }
 
     private fun floorToShilling(minor: Long): Long = minor - Math.floorMod(minor, FiatAmount.MINOR_PER_UNIT)
 
