@@ -57,7 +57,7 @@ for (const name of names) {
   if (!entry) throw new Error(`no template named ${name} in templates.json`);
   const html = readFileSync(join(import.meta.dir, entry.file), 'utf8');
   const created = await call('/templates', {
-    name: `${name} (${entry.file})`,
+    name: name.slice(0, 50), // Resend allows at most 50 characters
     subject: entry.subject,
     html,
     variables: entry.variables.map((v) => ({ key: v, type: NUMBERS.has(v) ? 'number' : 'string' })),
