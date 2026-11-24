@@ -11,6 +11,7 @@ import com.circaso.ramp.domain.models.OffRampStatus
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.Priced
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampSettings
@@ -23,11 +24,13 @@ import com.circaso.ramp.domain.ports.RealtimeLog
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
+import com.circaso.ramp.domain.support.CollectionFees
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PayoutFees
+import com.circaso.ramp.domain.support.PurchaseTotals
 import com.circaso.ramp.domain.support.SaleFlow
 import com.circaso.ramp.domain.support.SalePricing
 import com.circaso.ramp.domain.support.Verifications
@@ -92,8 +95,8 @@ class GetRampStatus(
 }
 
 /**
- * R2: prices an amount for the settings' quote lifetime. A quote reserves nothing; it fixes the rate, the fee and the
- * fee's split its order will use. Selling waits on a payout provider, so only buying is quoted.
+ * R2: prices an amount for the settings' quote lifetime. A quote reserves nothing; it fixes the rate, the fee, the
+ * fee's split and the provider's fee its order will use, in either direction.
  */
 class CreateQuote(
     private val gates: Gates,
@@ -102,6 +105,7 @@ class CreateQuote(
     private val quotes: QuoteRepository,
     private val clock: Clock,
     private val payoutFees: PayoutFees,
+    private val collectionFees: CollectionFees,
 ) {
     suspend operator fun invoke(command: QuoteCommand): Resource<Quote> {
         val settings =
@@ -115,21 +119,51 @@ class CreateQuote(
         if (accounts.status(command.userId) != AccountStatus.ACTIVE) return Resource.error(RampError.AccountRestricted)
         gates.refusal(command.userId, settings)?.let { return Resource.error(it) }
         if (command.direction == Direction.OFF_RAMP) return sale(command, settings)
+        return purchase(command, settings)
+    }
 
-        val asked =
-            pricing.price(
-                command.network,
-                command.direction,
-                command.fiatMinor,
-                command.assetMinor,
-                settings.feeBandsOf(command.direction),
-            )
-        val priced =
-            when (asked) {
-                is Resource.Error -> return asked
-                is Resource.Success -> asked.data
-            }
-        if (priced.fiatMinor !in settings.orderMinMinor..settings.orderMaxMinor) {
+    /**
+     * A purchase. PayHero's collection fee is passed to the buyer (decision 2026-11-24): the prompt asks for the
+     * merchant's quote plus PayHero's fee for the amount prompted ([PurchaseTotals]), so the merchant nets their quote.
+     *
+     * - Asked in shillings ("I pay X"): X is the total prompted. PayHero's fee for X comes out of it, and the rest is
+     *   priced as before (Circaso's fee inside it, by its band). What the user types is what leaves their M-Pesa.
+     * - Asked in USDC ("I want Y"): Y is priced as before, and PayHero's fee is added on top. What the user types is
+     *   what arrives in their wallet.
+     *
+     * The fee is PayHero's table (live or kept), else staff's, else no quote (`ramp.pricing_unavailable`): never zero
+     * by default. The order limits are on the total, the amount that moves over M-Pesa (as selling's are on its
+     * payout); the merchant's float is held for the USDC alone.
+     */
+    private suspend fun purchase(command: QuoteCommand, settings: RampSettings): Resource<Quote> {
+        val feeOf: suspend (Long) -> Pair<Long, String>? = { amount ->
+            collectionFees.of(settings, amount)?.let { it.feeMinor to it.source }
+        }
+        val bands = settings.feeBandsOf(Direction.ON_RAMP)
+        val asked = command.fiatMinor
+        val total: PurchaseTotals.Total
+        val priced: Priced
+        if (asked != null) {
+            if (asked <= 0 || asked % FiatAmount.MINOR_PER_UNIT != 0L) return Resource.error(RampError.AmountInvalid)
+            // The rate first: a paused side answers as it always did, whatever the fee table says.
+            pricing.rate(command.network, Direction.ON_RAMP).let { if (it is Resource.Error) return it }
+            total = PurchaseTotals.forTotal(asked, feeOf) ?: return Resource.error(feeOrAmount(settings, asked))
+            priced =
+                when (val p = pricing.price(command.network, Direction.ON_RAMP, total.baseMinor, null, bands)) {
+                    is Resource.Error -> return p
+                    is Resource.Success -> p.data
+                }
+        } else {
+            priced =
+                when (val p = pricing.price(command.network, Direction.ON_RAMP, null, command.assetMinor, bands)) {
+                    is Resource.Error -> return p
+                    is Resource.Success -> p.data
+                }
+            total =
+                PurchaseTotals.forBase(priced.fiatMinor, feeOf)
+                    ?: return Resource.error(feeOrAmount(settings, priced.fiatMinor))
+        }
+        if (total.totalMinor !in settings.orderMinMinor..settings.orderMaxMinor) {
             return Resource.error(RampError.LimitExceeded)
         }
 
@@ -140,19 +174,25 @@ class CreateQuote(
                 network = command.network,
                 direction = command.direction,
                 blockchain = command.blockchain,
-                fiat = FiatAmount(priced.fiatMinor, RampSettings.FIAT),
+                fiat = FiatAmount(total.totalMinor, RampSettings.FIAT),
                 assetMinor = priced.assetMinor,
                 rate = priced.rate,
                 feeMinor = priced.feeMinor,
                 feeBps = priced.feeBps,
                 merchantShareBps = settings.merchantShareBps,
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
+                providerFeeMinor = total.providerFeeMinor,
+                providerFeeSource = total.source,
                 rateBasis = priced.rateBasis,
                 feeBandFromMinor = priced.feeBandFromMinor,
             )
         quotes.insert(quote)
         return Resource.success(quote)
     }
+
+    /** No fee for [amountMinor] anywhere is `ramp.pricing_unavailable`; a fee that leaves nothing is a bad amount. */
+    private suspend fun feeOrAmount(settings: RampSettings, amountMinor: Long): RampError =
+        if (collectionFees.of(settings, amountMinor) == null) RampError.PricingUnavailable else RampError.AmountInvalid
 
     /**
      * A sale (decision 2026-11-23): the user names the USDC to send or the shillings to receive (whole shillings).

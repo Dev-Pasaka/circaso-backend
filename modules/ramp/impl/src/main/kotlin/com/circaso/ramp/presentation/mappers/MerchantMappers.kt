@@ -193,6 +193,12 @@ fun TestPayout.toResponse(): TestPayoutResponse {
         balanceAfter = after?.let { KesBalanceDto(Amounts.fiat(it.amountMinor), it.source) },
         charged = charged,
         createdAt = createdAt.toString(),
+        serviceBalanceBefore = serviceBefore?.let { KesBalanceDto(Amounts.fiat(it.amountMinor), it.source) },
+        serviceBalanceAfter = serviceAfter?.let { KesBalanceDto(Amounts.fiat(it.amountMinor), it.source) },
+        chargedFromService =
+            serviceBefore?.takeIf { state == TestPayoutState.PAID }?.let { from ->
+                serviceAfter?.let { Amounts.fiat(from.amountMinor - it.amountMinor) }
+            },
         updatedAt = updatedAt.toString(),
     )
 }

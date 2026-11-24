@@ -74,8 +74,16 @@ data class RampSettings(
      * merchant offline) keeps being retried with its merchant before the USDC is refunded.
      */
     val payoutWindowSeconds: Int = DEFAULT_PAYOUT_WINDOW_SECONDS,
-    /** Staff's payout fee table: used only when the provider's own published table can't be read. Empty: none. */
-    val payoutFeeBands: List<PayoutFeeBand> = emptyList(),
+    /**
+     * Staff's payout fee table: used only when the provider's own published table can't be read. Empty: none, and a
+     * sale the provider's table can't price isn't quoted. Seeded from FinoQ's pricing on 2026-11-24 (V17).
+     */
+    val payoutFeeBands: List<StaffFeeBand> = StaffFeeTables.FINOQ_PAYOUTS,
+    /**
+     * Staff's collection fee table (2026-11-24): PayHero's charge for one M-Pesa prompt, used only when PayHero's own
+     * published table can't be read. Empty: none, and a purchase isn't quoted. Seeded from PayHero's table (V17).
+     */
+    val collectionFeeBands: List<StaffFeeBand> = StaffFeeTables.PAYHERO_COLLECTIONS,
     /** Below this payout balance a merchant's portal says `payout_balance_low` (KES minor units; 0: never). */
     val payoutBalanceLowMinor: Long = DEFAULT_PAYOUT_BALANCE_LOW_MINOR,
     /** How long a merchant's new withdrawal address waits before it can be withdrawn to (2026-11-24); 0 to 720. */
@@ -253,3 +261,49 @@ data class PreviewAccess(
     val grantedBy: String?,
     val at: Instant,
 )
+
+/**
+ * The staff fee tables' seeds (2026-11-24), read from the providers that day. Fixed fee per band, **up to** an amount
+ * (KES minor units, inclusive). Payouts: FinoQ's phone bands from `api.payhero.africa/api/pricing`, each charged the
+ * fee at its **last** amount (the published bands slide within a band; the fallback never undercharges the merchant's
+ * cost). Collections: PayHero's `GET /api/transaction_fees` as it stands, without its one upside-down row.
+ */
+object StaffFeeTables {
+    private fun table(vararg bands: Pair<Long, Long>): List<StaffFeeBand> =
+        bands.map { (upToShillings, feeMinor) -> StaffFeeBand(upToShillings * 100, feeMinor) }
+
+    val PAYHERO_COLLECTIONS: List<StaffFeeBand> =
+        table(
+            10L to 0L,
+            49L to 100L,
+            499L to 600L,
+            999L to 1_000L,
+            1_499L to 1_500L,
+            2_499L to 2_000L,
+            3_499L to 2_500L,
+            4_999L to 3_000L,
+            7_499L to 4_000L,
+            9_999L to 4_500L,
+            14_999L to 5_000L,
+            19_999L to 5_500L,
+            34_999L to 8_000L,
+            49_999L to 10_500L,
+            149_999L to 13_000L,
+            249_999L to 16_000L,
+            349_999L to 19_500L,
+            549_999L to 23_000L,
+            749_999L to 27_500L,
+            999_999L to 32_000L,
+        )
+
+    val FINOQ_PAYOUTS: List<StaffFeeBand> =
+        table(
+            100L to 80L,
+            500L to 1_100L,
+            1_000L to 1_900L,
+            2_500L to 3_900L,
+            10_000L to 10_400L,
+            20_000L to 18_900L,
+            250_000L to 203_900L,
+        )
+}

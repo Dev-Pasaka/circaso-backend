@@ -94,7 +94,7 @@ fun Quote.toResponse(): QuoteResponse {
         rate = rate.stripTrailingZeros().toPlainString(),
         fee = Amounts.fiat(feeMinor),
         expiresAt = expiresAt.toString(),
-        providerFee = if (selling) Amounts.fiat(providerFeeMinor) else null,
+        providerFee = Amounts.fiat(providerFeeMinor),
         worth = if (selling) Amounts.fiat(SalePricing.grossOf(assetMinor, rate)) else null,
     )
 }
@@ -123,7 +123,7 @@ fun OrderView.toResponse(): OrderResponse {
         expiresAt = order.paymentDeadline.toString(),
         createdAt = order.createdAt.toString(),
         updatedAt = order.updatedAt.toString(),
-        providerFee = if (selling) Amounts.fiat(order.providerFeeMinor) else null,
+        providerFee = Amounts.fiat(order.providerFeeMinor),
         deposit = depositAddress?.takeIf { awaiting }?.let { deposit(it) },
         receipt = order.mpesaReceipt.takeIf { selling && order.state == OrderState.COMPLETED },
     )

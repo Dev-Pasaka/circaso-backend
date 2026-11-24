@@ -1,7 +1,9 @@
 package com.circaso.integrations.impl.dev
 
+import com.circaso.integrations.api.FeeKind
 import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.ProviderFee
+import com.circaso.integrations.api.ProviderFeeTable
 import com.circaso.integrations.api.ProviderFees
 import com.circaso.shared.FiatAmount
 import java.util.concurrent.CopyOnWriteArrayList
@@ -22,6 +24,12 @@ class FakeProviderFees : ProviderFees {
 
     @Volatile
     var source: FeeSource = FeeSource.LIVE_TABLE
+
+    /** The whole tables staff see (empty: none read). */
+    @Volatile
+    var tables: Map<FeeKind, ProviderFeeTable> = emptyMap()
+
+    override suspend fun table(provider: String, kind: FeeKind): ProviderFeeTable? = tables[kind]
 
     override suspend fun collectionFee(provider: String, amount: FiatAmount): ProviderFee =
         answer(provider, amount, collectionFeeMinor)

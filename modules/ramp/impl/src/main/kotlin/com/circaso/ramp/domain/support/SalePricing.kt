@@ -1,10 +1,12 @@
 package com.circaso.ramp.domain.support
 
 import com.circaso.integrations.api.FeeSource
+import com.circaso.integrations.api.ProviderFee
 import com.circaso.integrations.api.ProviderFees
 import com.circaso.ramp.domain.models.PayoutFee
 import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.StaffFeeBand
 import com.circaso.shared.FiatAmount
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -129,15 +131,45 @@ object SalePricing {
  * A fee in cents is rounded up to the cent; the provider charges what it charges.
  */
 class PayoutFees(private val fees: ProviderFees) {
-    suspend fun of(settings: RampSettings, payoutMinor: Long): PayoutFee? {
-        val published = fees.payoutFee(settings.collectionsProvider, FiatAmount(payoutMinor, RampSettings.FIAT))
+    suspend fun of(settings: RampSettings, payoutMinor: Long): PayoutFee? =
+        ProviderFeeLookup.of(
+            fees.payoutFee(settings.collectionsProvider, FiatAmount(payoutMinor, RampSettings.FIAT)),
+            settings.payoutFeeBands,
+            payoutMinor,
+        )
+}
+
+/**
+ * The collections provider's fee for one M-Pesa prompt of [totalMinor] shillings (decision 2026-11-24: passed to the
+ * buyer): PayHero's published table first ([ProviderFees.collectionFee], live or kept), else staff's table
+ * ([RampSettings.collectionFeeBands]), else null (no quote). Rounded **up** to a whole shilling: M-Pesa carries whole
+ * shillings and the merchant must never be short.
+ */
+class CollectionFees(private val fees: ProviderFees) {
+    suspend fun of(settings: RampSettings, totalMinor: Long): PayoutFee? =
+        ProviderFeeLookup
+            .of(
+                fees.collectionFee(settings.collectionsProvider, FiatAmount(totalMinor, RampSettings.FIAT)),
+                settings.collectionFeeBands,
+                totalMinor,
+            )?.let { it.copy(feeMinor = PurchaseTotals.roundUpToShilling(it.feeMinor)) }
+}
+
+/** The order every provider fee is looked up in: `LIVE` → `CACHED` → `STAFF_TABLE` → none. */
+object ProviderFeeLookup {
+    fun of(
+        published: ProviderFee,
+        staff: List<StaffFeeBand>,
+        amountMinor: Long,
+    ): PayoutFee? {
         val fee = published.fee
         if (fee != null && published.source != FeeSource.UNKNOWN && fee.currency == RampSettings.FIAT) {
-            return PayoutFee(fee.amountMinor.coerceAtLeast(0), published.source.name)
+            val source = if (published.source == FeeSource.LIVE_TABLE) PayoutFee.LIVE else PayoutFee.CACHED
+            return PayoutFee(fee.amountMinor.coerceAtLeast(0), source)
         }
-        return settings.payoutFeeBands
+        return staff
             .sortedBy { it.upToMinor }
-            .firstOrNull { payoutMinor <= it.upToMinor }
-            ?.let { PayoutFee(it.feeMinor, PayoutFee.ADMIN_TABLE) }
+            .firstOrNull { amountMinor <= it.upToMinor }
+            ?.let { PayoutFee(it.feeMinor.coerceAtLeast(0), PayoutFee.STAFF_TABLE) }
     }
 }

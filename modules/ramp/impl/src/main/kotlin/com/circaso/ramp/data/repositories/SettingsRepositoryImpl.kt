@@ -2,8 +2,8 @@ package com.circaso.ramp.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.integrations.api.KycEnvironment
-import com.circaso.ramp.data.support.PayoutFeeBands
 import com.circaso.ramp.data.support.RampFeeBandDocuments
+import com.circaso.ramp.data.support.StaffFeeBands
 import com.circaso.ramp.data.tables.PreviewAccessTable
 import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.domain.models.PreviewAccess
@@ -116,7 +116,8 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.offrampDailyLimitMinor] = settings.offRampDailyLimitMinor
         this[SettingsTable.transferWindowSeconds] = settings.transferWindowSeconds
         this[SettingsTable.payoutWindowSeconds] = settings.payoutWindowSeconds
-        this[SettingsTable.payoutFeeBands] = PayoutFeeBands.encode(settings.payoutFeeBands)
+        this[SettingsTable.payoutFeeBands] = StaffFeeBands.encode(settings.payoutFeeBands)
+        this[SettingsTable.collectionFeeBands] = StaffFeeBands.encode(settings.collectionFeeBands)
         this[SettingsTable.onrampFeeBands] = RampFeeBandDocuments.encode(settings.onRampFeeBands)
         this[SettingsTable.offrampFeeBands] = RampFeeBandDocuments.encode(settings.offRampFeeBands)
         this[SettingsTable.payoutBalanceLowMinor] = settings.payoutBalanceLowMinor
@@ -163,7 +164,8 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             offRampDailyLimitMinor = this[SettingsTable.offrampDailyLimitMinor],
             transferWindowSeconds = this[SettingsTable.transferWindowSeconds],
             payoutWindowSeconds = this[SettingsTable.payoutWindowSeconds],
-            payoutFeeBands = PayoutFeeBands.decode(this[SettingsTable.payoutFeeBands]),
+            payoutFeeBands = StaffFeeBands.decode(this[SettingsTable.payoutFeeBands]),
+            collectionFeeBands = StaffFeeBands.decode(this[SettingsTable.collectionFeeBands]),
             payoutBalanceLowMinor = this[SettingsTable.payoutBalanceLowMinor],
             withdrawDestinationDelayHours = this[SettingsTable.withdrawDestinationDelayHours],
             withdrawMinMinor = this[SettingsTable.withdrawMinMinor],

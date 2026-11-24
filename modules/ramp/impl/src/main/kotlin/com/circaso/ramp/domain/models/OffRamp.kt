@@ -7,11 +7,12 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * One line of staff's payout fee table (decision 2026-11-23): an amount up to [upToMinor] (KES minor units, inclusive)
- * costs [feeMinor]. Used only when the provider's own published table can't be read; an amount above every band has
- * no fee there, and a sale of it is not quoted.
+ * One line of a staff fee table (decisions 2026-11-23 and 2026-11-24): an amount up to [upToMinor] (KES minor units,
+ * inclusive) costs [feeMinor]. There is one table per direction: what the collections provider charges for a prompt
+ * (buying) and what the payout provider charges for a payout (selling). Used only when the provider's own published
+ * table can't be read; an amount above every band has no fee there, and it is not quoted.
  */
-data class PayoutFeeBand(val upToMinor: Long, val feeMinor: Long)
+data class StaffFeeBand(val upToMinor: Long, val feeMinor: Long)
 
 /** FinoQ numbers its accounts ("teams"): an integer, as its dashboard shows it. Not a secret. */
 object PayoutAccount {
@@ -27,10 +28,17 @@ enum class PayoutIssue {
     PAYOUT_REFUSED,
 }
 
-/** The provider's payout fee for one amount, and where it came from (`LIVE_TABLE`, `CACHED` or `ADMIN_TABLE`). */
+/**
+ * The provider's fee for one amount (a payout when selling, a prompt when buying), and where it came from: `LIVE`
+ * (its published table, fetched for this quote), `CACHED` (the copy of that table this server keeps) or `STAFF_TABLE`
+ * (staff's fallback table in the admin). Before 2026-11-24 the first and last were stored as `LIVE_TABLE` and
+ * `ADMIN_TABLE`; V17 renamed them.
+ */
 data class PayoutFee(val feeMinor: Long, val source: String) {
     companion object {
-        const val ADMIN_TABLE = "ADMIN_TABLE"
+        const val LIVE = "LIVE"
+        const val CACHED = "CACHED"
+        const val STAFF_TABLE = "STAFF_TABLE"
     }
 }
 
@@ -133,6 +141,9 @@ data class TestPayout(
     val balanceAfter: BalanceRead?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /** FinoQ's service wallet before and after (2026-11-24): the payout fee may be taken from there instead. */
+    val serviceBefore: BalanceRead? = null,
+    val serviceAfter: BalanceRead? = null,
 ) {
     override fun toString(): String = "TestPayout($testId, $state)"
 }

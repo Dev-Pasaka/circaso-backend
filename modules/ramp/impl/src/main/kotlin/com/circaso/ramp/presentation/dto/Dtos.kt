@@ -8,7 +8,8 @@ import kotlinx.serialization.Serializable
 data class AmountDto(val amountMinor: String? = null, val amount: String? = null)
 
 /**
- * R2 request. Buying (`ON_RAMP`): give `fiat` (what you pay, whole shillings) or `crypto` (the USDC you want).
+ * R2 request. Buying (`ON_RAMP`): give `fiat` (what you pay in all, whole shillings: PayHero's fee comes out of it)
+ * or `crypto` (the USDC you want: PayHero's fee is added on top).
  * Selling (`OFF_RAMP`, 2026-11-23): give `crypto` (the USDC you send) or `fiat` (the shillings you want to receive,
  * whole shillings). Not both.
  */
@@ -31,14 +32,16 @@ data class QuoteResponse(
     /** Shillings per USDC, a decimal string. */
     val rate: String,
     /**
-     * Circaso's fee. Buying: inside `pay` (what is paid, less this, buys the USDC). Selling: taken from what the USDC
-     * is worth at `rate`, before `receive`.
+     * Circaso's fee. Buying: inside `pay` (`pay − providerFee` is the merchant's quote; that, less this, buys the
+     * USDC). Selling: taken from what the USDC is worth at `rate`, before `receive`.
      */
     val fee: RampAmount,
     val expiresAt: String,
     /**
-     * Selling only: the payout provider's charge for sending `receive` to M-Pesa, which you pay on top of `fee` (the
-     * merchant pays the provider). Null when buying.
+     * The M-Pesa provider's own charge, passed to you (decision 2026-11-24). Buying: PayHero's fee for the prompt,
+     * **inside `pay`** (the total prompted); it buys no USDC, it covers what PayHero takes from the merchant. Selling:
+     * the payout provider's charge for sending `receive`, which you pay on top of `fee`. Always present since
+     * 2026-11-24 (it was null when buying before); `0` when the provider charges nothing for the amount.
      */
     val providerFee: RampAmount? = null,
     /** Selling only: `pay` at `rate`, before the two fees: `worth − fee − providerFee` is `receive`, rounded down. */
@@ -85,7 +88,7 @@ data class OrderResponse(
     val expiresAt: String,
     val createdAt: String,
     val updatedAt: String,
-    /** Selling: the payout provider's charge you pay on top of `fee`. Null when buying. */
+    /** The M-Pesa provider's charge, as on the quote: inside `pay` when buying, on top of `fee` when selling. */
     val providerFee: RampAmount? = null,
     /** Selling, while `AWAITING_TRANSFER`: where and what to send. Null otherwise. */
     val deposit: DepositDto? = null,

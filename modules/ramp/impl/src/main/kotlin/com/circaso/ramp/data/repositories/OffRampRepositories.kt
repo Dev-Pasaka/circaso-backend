@@ -151,6 +151,10 @@ class TestPayoutRepositoryImpl(private val database: Database) : TestPayoutRepos
         this[TestPayoutsTable.balanceBeforeSource] = test.balanceBefore?.source
         this[TestPayoutsTable.balanceAfterMinor] = test.balanceAfter?.amountMinor
         this[TestPayoutsTable.balanceAfterSource] = test.balanceAfter?.source
+        this[TestPayoutsTable.serviceBeforeMinor] = test.serviceBefore?.amountMinor
+        this[TestPayoutsTable.serviceBeforeSource] = test.serviceBefore?.source
+        this[TestPayoutsTable.serviceAfterMinor] = test.serviceAfter?.amountMinor
+        this[TestPayoutsTable.serviceAfterSource] = test.serviceAfter?.source
         this[TestPayoutsTable.updatedAt] = test.updatedAt
     }
 
@@ -173,6 +177,8 @@ class TestPayoutRepositoryImpl(private val database: Database) : TestPayoutRepos
                 },
             balanceBefore = read(this[TestPayoutsTable.balanceBeforeMinor], this[TestPayoutsTable.balanceBeforeSource]),
             balanceAfter = read(this[TestPayoutsTable.balanceAfterMinor], this[TestPayoutsTable.balanceAfterSource]),
+            serviceBefore = read(this[TestPayoutsTable.serviceBeforeMinor], this[TestPayoutsTable.serviceBeforeSource]),
+            serviceAfter = read(this[TestPayoutsTable.serviceAfterMinor], this[TestPayoutsTable.serviceAfterSource]),
             createdAt = this[TestPayoutsTable.createdAt],
             updatedAt = this[TestPayoutsTable.updatedAt],
         )

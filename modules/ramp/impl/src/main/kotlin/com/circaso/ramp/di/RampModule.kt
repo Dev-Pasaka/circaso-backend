@@ -154,6 +154,7 @@ import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.repositories.WithdrawalDestinationRepository
 import com.circaso.ramp.domain.repositories.WithdrawalRepository
 import com.circaso.ramp.domain.support.AlertSender
+import com.circaso.ramp.domain.support.CollectionFees
 import com.circaso.ramp.domain.support.DailySummaries
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
@@ -614,6 +615,7 @@ fun rampModule(config: Config): Module =
         single { Releases(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         // Selling (decision 2026-11-23).
         single { PayoutFees(get()) }
+        single { CollectionFees(get()) }
         single<PayoutJournal> { LoggedPayoutJournal() }
         single { ProviderBalancesReader(get(), get(), get(), clock, get()) }
         single<KesFloat> { get<ProviderBalancesReader>() }
@@ -680,7 +682,7 @@ fun rampModule(config: Config): Module =
         single { AnnounceVerifications(get(), get(), get(), get(), clock) }
         single { ResetMerchantVerification(get(), get()) }
         single { ListKycProviders(get()) }
-        single { CreateQuote(get(), get(), get(), get(), clock, get()) }
+        single { CreateQuote(get(), get(), get(), get(), clock, get(), get()) }
         single { PurchaseRouting(get(), get(), get(), clock) }
         single { StartOnRamp(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
         single { GetOrder(get(), get()) }
@@ -881,7 +883,7 @@ fun rampModule(config: Config): Module =
             }
         }
         single<Ramp> { RampImpl(get()) }
-        single<RampAdmin> { RampAdminImpl(get()) }
+        single<RampAdmin> { RampAdminImpl(get(), getOrNull()) }
         single<RampEngineAdmin> { RampEngineAdminImpl(get()) }
         single { RampRatesService(get(), get(), get()) }
         single<RampRatesAdmin> { RampRatesAdminImpl(get()) }

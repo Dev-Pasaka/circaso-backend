@@ -42,6 +42,7 @@ import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.support.AlertSender
+import com.circaso.ramp.domain.support.CollectionFees
 import com.circaso.ramp.domain.support.DailySummaries
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
@@ -296,6 +297,7 @@ class Harness {
     val testPayoutRows = MemoryTestPayouts()
     val providerFees = FakeProviderFees()
     val payoutFees = PayoutFees(providerFees)
+    val collectionFees = CollectionFees(providerFees)
     val journal = RecordingJournal()
     val balancesReader = ProviderBalancesReader(sessions, providers, merchants, clock, journal)
     val engineFacts =
@@ -411,7 +413,7 @@ class Harness {
     val unblockUser = UnblockUser(blocks)
     val resetVerification = ResetVerification(verificationRows, verifications, transactor, outbox, bus, clock)
     val announceVerifications = AnnounceVerifications(verificationRows, verifications, outbox, bus, clock)
-    val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock, payoutFees)
+    val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock, payoutFees, collectionFees)
     val purchases = PurchaseRouting(engine, flow, counters, clock)
     val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, purchases, clock)
     val getOrder = GetOrder(orders, merchants)

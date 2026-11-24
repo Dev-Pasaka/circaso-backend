@@ -579,7 +579,8 @@ class RampRoutesTest {
             assertTrue(
                 "\"failureReason\":null,\"settlementId\":\"${FakeRampAdmin.SWEEP}\",\"txHash\":\"0xrelease\"," +
                     "\"collectionsProvider\":\"payhero\",\"rateSource\":null,\"referenceRate\":null," +
-                    "\"spreadBps\":null}" in body,
+                    "\"spreadBps\":null,\"providerFee\":null,\"providerFeeSource\":null,\"providerFeeActual\":null}" in
+                    body,
                 body,
             )
             assertTrue(

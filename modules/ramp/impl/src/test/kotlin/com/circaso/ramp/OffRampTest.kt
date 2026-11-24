@@ -9,12 +9,12 @@ import com.circaso.ramp.api.OrderFailed
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
-import com.circaso.ramp.domain.models.PayoutFeeBand
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.QuoteCommand
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.Resolution
 import com.circaso.ramp.domain.models.ResolveCommand
+import com.circaso.ramp.domain.models.StaffFeeBand
 import com.circaso.ramp.domain.models.StartOffRampCommand
 import com.circaso.ramp.domain.support.SaleFlow
 import com.circaso.ramp.domain.support.SalePayouts
@@ -69,7 +69,7 @@ class OffRampTest {
             assertEquals(10_000_000, quote.assetMinor)
             assertEquals(FiatAmount(126_900, "KES"), quote.fiat, "1300 - 26 - 5, rounded down to the shilling")
             assertEquals(2_600L to 500L, quote.feeMinor to quote.providerFeeMinor)
-            assertEquals("LIVE_TABLE", quote.providerFeeSource)
+            assertEquals("LIVE", quote.providerFeeSource)
             assertEquals(listOf(127_400L), ramp.providerFees.asked, "the payout fee is asked of the amount before it")
         }
 
@@ -100,15 +100,17 @@ class OffRampTest {
         runTest {
             ramp.openSelling()
             ramp.providerFees.payoutFeeMinor = null
+            ramp.settingsRows.set(TESTNET) { it.copy(payoutFeeBands = emptyList()) }
+            ramp.book.invalidate()
 
             assertEquals("ramp.payout_fee_unavailable", ramp.saleQuote().error().code, "no table at all: no quote")
 
             ramp.settingsRows.set(TESTNET) {
-                it.copy(payoutFeeBands = listOf(PayoutFeeBand(50_000, 300), PayoutFeeBand(200_000, 1_100)))
+                it.copy(payoutFeeBands = listOf(StaffFeeBand(50_000, 300), StaffFeeBand(200_000, 1_100)))
             }
             ramp.book.invalidate()
             val quote = ramp.saleQuote().data()
-            assertEquals(1_100L to "ADMIN_TABLE", quote.providerFeeMinor to quote.providerFeeSource)
+            assertEquals(1_100L to "STAFF_TABLE", quote.providerFeeMinor to quote.providerFeeSource)
             assertEquals(FiatAmount(126_300, "KES"), quote.fiat)
 
             val tooBig = ramp.createQuote(QuoteCommand(ramp.amina, TESTNET, Direction.OFF_RAMP, CHAIN, 300_000, null))

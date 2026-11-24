@@ -15,6 +15,7 @@ import com.circaso.ops.presentation.dto.RampOrdersResponse
 import com.circaso.ops.presentation.dto.RampOverviewResponse
 import com.circaso.ops.presentation.dto.RampPreviewAccessRequest
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
+import com.circaso.ops.presentation.dto.RampProviderFeesResponse
 import com.circaso.ops.presentation.dto.RampResolveRequest
 import com.circaso.ops.presentation.dto.RampResolveResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
@@ -129,6 +130,23 @@ private fun Route.rampReads(
         notes =
             "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required. `state`: OFF (nobody), PREVIEW " +
                 "(only people on the preview list), ON.",
+    )
+
+    get("provider-fees") {
+        val result = requiredNetwork().flatMap { ramp.providerFees(it) }
+        call.respondDefault(result.toDefaultResponse { it.toResponse(clock.instant()) })
+    }.docs<NoBody, RampProviderFeesResponse>(
+        "OPS · The providers' own fee tables, beside staff's fallbacks",
+        TAG_RAMP,
+        listOf(MALFORMED, FORBIDDEN),
+        notes =
+            "${roles("FINANCE", "ADMIN")} `?network=MAINNET|TESTNET` is required. Since 2026-11-24 the M-Pesa " +
+                "provider's own fee is passed to the customer on both sides: PayHero's fee per prompt (buying, " +
+                "`collection`) and the payout fee (selling, `payout`). They are read from the provider's published " +
+                "tables (`source` LIVE or CACHED, `asOf`, `ageSeconds`; null when it can't be read now); when a " +
+                "table can't be read, the network's `collectionFallback` / `payoutFallback` (edited with " +
+                "`PUT /ops/ramp/settings` as `collectionFeeBands` / `payoutFeeBands`) prices it (`STAFF_TABLE`); " +
+                "with neither, nothing is quoted.",
     )
 
     get("preview-access") {
