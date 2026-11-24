@@ -15,6 +15,7 @@ import com.circaso.wallet.domain.models.Direction
 import com.circaso.wallet.domain.models.Fee
 import com.circaso.wallet.domain.models.FeeEntry
 import com.circaso.wallet.domain.models.FeeState
+import com.circaso.wallet.domain.models.NoFeeReason
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.PreparedTransfer
 import com.circaso.wallet.domain.models.Transfer
@@ -143,7 +144,11 @@ class PrepareTransfer(
      * long as it isn't more than the one shown (none shown is a fee of zero).
      */
     private suspend fun feeOf(plan: PaymentPlan, command: TransferCommand): Resource<Fee> {
-        val named = quotes.named(plan, command)
+        // Funding the payer's own open sale exactly carries no fee (decision 2026-11-24), whatever was quoted before.
+        if (plan.pricing.reason == NoFeeReason.RAMP_SALE) return Resource.success(plan.feeFor(plan.amount.amountMinor))
+        // A sale's waived fee holds only while the sale does: once it doesn't (expired, cancelled), it is priced
+        // afresh, and a fee now is shown first (`wallet.fee_changed`), as for any payment quoted without one.
+        val named = quotes.named(plan, command)?.takeUnless { it.fee.reason == NoFeeReason.RAMP_SALE }
         if (named != null && quotes.holds(named)) return Resource.success(named.fee)
         val now = plan.feeFor(plan.amount.amountMinor)
         val shown = named?.fee?.amountMinor ?: BigInteger.ZERO

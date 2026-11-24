@@ -1496,6 +1496,10 @@ Why not have the wallet pass developer-wallet updates on: it would have to tell 
 
 **Locally** (`log` custody) `LogMerchantFloat.deposits` reports the deposit asked for as arrived (no coin moves); the `fake` reports what a test recorded.
 
+### The funding send carries no wallet fee (2026-11-24)
+
+Decided by Pasaka: a Cash Out carries only the ramp's sell fee (the fee bands) and the payout provider's fee, never the wallet's outside-payment fee on the USDC the user sends (on 2026-11-24 a $1.76 sale on dev had been charged the wallet's $5 minimum). The app funds a sale with the ordinary W17 quote and W4 transfer to `depositAddress`, naming the order as `rampOrderId`; there is no ramp-specific send. The ramp implements the wallet's `RampSaleDeposits` (`wallet:api`) with `FindSaleDeposit`: for an `OFF_RAMP` order in `AWAITING_TRANSFER`, with no `wallet_transfer_id` and before its `payment_deadline`, it answers the payer, the chain, `destination_address` (the merchant's float), the USDC contract the network's settings name (`UsdcContracts`) and `asset_minor`; anything else is null. The wallet waives its fee only when the payment matches that exactly (wallet.md, W4); an over- or under-funding is priced normally and, as before, refunded whole (`amount_mismatch`). Nothing about the sale's quote, its fee, the merchant's share or the payout fee changes, and the funding check (`SaleFunding`) is untouched: the merchant receives exactly `asset_minor`, as it always had to.
+
 ### The payout (`SalePayouts`, the app's process)
 
 The table "On each result" of "As built: payouts through FinoQ" is applied exactly, with these choices:

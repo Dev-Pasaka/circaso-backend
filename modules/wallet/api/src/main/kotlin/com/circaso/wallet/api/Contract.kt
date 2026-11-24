@@ -84,6 +84,35 @@ data class MembershipCharge(val paymentId: UUID, val spaceId: UUID, val amountMi
     override fun toString(): String = "MembershipCharge($paymentId)"
 }
 
+/**
+ * Asked by the wallet about the off-ramp sale a payment says it funds (W17/W4 `rampOrderId`; decision 2026-11-24, Cash
+ * Out carries no wallet fee). Ramp implements it and its Koin module binds it, as spaces does [SpaceWalletPolicy]; the
+ * wallet never names ramp, and without a binding every payment is priced as it always was.
+ */
+fun interface RampSaleDeposits {
+    /**
+     * The sale [orderId] while it still waits for its USDC (`AWAITING_TRANSFER`, no transfer known, before its
+     * deadline), or null: unknown, a purchase, already funded, expired, cancelled or the chain's USDC unknown.
+     */
+    suspend fun awaiting(orderId: UUID): SaleDeposit?
+}
+
+/**
+ * What funds one sale: exactly [amountMinor] of the USDC contract [tokenAddress] on [blockchain], from [payer]'s own
+ * wallet to the merchant's float at [address], before [fundBy]. Never logged whole.
+ */
+data class SaleDeposit(
+    val orderId: UUID,
+    val payer: UserId,
+    val blockchain: String,
+    val address: String,
+    val tokenAddress: String,
+    val amountMinor: Long,
+    val fundBy: Instant,
+) {
+    override fun toString(): String = "SaleDeposit($orderId)"
+}
+
 /** A transfer's facts for another module: who sent what to whom, from which chat, and where it stands. */
 data class TransferSummary(
     val transferId: TransferId,

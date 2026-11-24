@@ -201,6 +201,7 @@ import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
 import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.EndSessions
+import com.circaso.ramp.domain.usecases.FindSaleDeposit
 import com.circaso.ramp.domain.usecases.FinishPasskeyRegistration
 import com.circaso.ramp.domain.usecases.FinishPasskeySignIn
 import com.circaso.ramp.domain.usecases.GetEarnings
@@ -301,6 +302,7 @@ import com.circaso.ramp.presentation.api.RampImpl
 import com.circaso.ramp.presentation.api.RampKycNotifications
 import com.circaso.ramp.presentation.api.RampRatesAdminImpl
 import com.circaso.ramp.presentation.api.RampRealtimeReplay
+import com.circaso.ramp.presentation.api.RampSaleDepositsImpl
 import com.circaso.ramp.presentation.api.RampSecurityAdminImpl
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.controllers.rampController
@@ -314,12 +316,14 @@ import com.circaso.ramp.presentation.services.RampOpsJobsService
 import com.circaso.ramp.presentation.services.RampRatesService
 import com.circaso.ramp.presentation.services.RampSecurityService
 import com.circaso.ramp.presentation.services.RampService
+import com.circaso.ramp.presentation.services.SaleDepositService
 import com.circaso.ramp.presentation.services.SecurityService
 import com.circaso.ramp.presentation.services.WithdrawalService
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Network
 import com.circaso.shared.RealtimeModule
 import com.circaso.shared.WalletNetwork
+import com.circaso.wallet.api.RampSaleDeposits
 import com.circaso.web.RouteContributor
 import kotlinx.coroutines.withContext
 import org.koin.core.module.Module
@@ -883,6 +887,10 @@ fun rampModule(config: Config): Module =
             }
         }
         single<Ramp> { RampImpl(get()) }
+        // Cash Out carries no wallet fee (decision 2026-11-24): the wallet asks what funds an open sale.
+        single { FindSaleDeposit(get(), get(), clock) }
+        single { SaleDepositService(get()) }
+        single<RampSaleDeposits> { RampSaleDepositsImpl(get()) }
         single<RampAdmin> { RampAdminImpl(get(), getOrNull()) }
         single<RampEngineAdmin> { RampEngineAdminImpl(get()) }
         single { RampRatesService(get(), get(), get()) }

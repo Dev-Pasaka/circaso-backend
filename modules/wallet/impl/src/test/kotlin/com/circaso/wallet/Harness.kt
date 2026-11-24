@@ -148,7 +148,10 @@ class Harness(
     val coins =
         com.circaso.wallet.domain.support
             .PaymentCoins(custody, holdings, prices)
-    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces, coins)
+
+    /** Ramp's open sales, as the wallet asks about them (decision 2026-11-24). */
+    val sales = FakeRampSales(clock)
+    private val planner = PaymentPlanner(rules, payees, fees, limits, spaces, coins, sales)
     private val quotes = FeeQuotes(quoteRows, clock)
     val quoter = TransferQuoter(holders, planner, quotes, clock)
     val quoteTransfer = QuoteTransfer(quoter)

@@ -449,7 +449,7 @@ fun walletModule(config: Config): Module =
         single { NetworkCosts(get(), get(), clock) }
         single { FeeCalculator(get(), get(), get(), get(), get(), get(), clock, get()) }
         single { PaymentCoins(get(), get(), get()) }
-        single { PaymentPlanner(get(), get(), get(), get(), getOrNull(), get()) }
+        single { PaymentPlanner(get(), get(), get(), get(), getOrNull(), get(), getOrNull()) }
         single { FeeQuotes(get(), clock) }
         single { FeeSettlement(get(), get(), get()) }
         single { TransferEvents(get()) }

@@ -4,11 +4,13 @@ import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.RampSaleDeposits
 import com.circaso.wallet.api.SpaceWalletPolicy
 import com.circaso.wallet.domain.errors.WalletError
 import com.circaso.wallet.domain.models.Allowance
 import com.circaso.wallet.domain.models.Fee
 import com.circaso.wallet.domain.models.FeeQuote
+import com.circaso.wallet.domain.models.NoFeeReason
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.Transfer
 import com.circaso.wallet.domain.models.TransferCommand
@@ -69,6 +71,8 @@ class PaymentPlanner(
     private val spaces: SpaceWalletPolicy? = null,
     /** Finds the coin the payment names on the chain (2026-11-07: any held coin). */
     private val coins: PaymentCoins? = null,
+    /** Ramp's open sales (decision 2026-11-24): a payment that funds one exactly carries no fee. */
+    private val sales: RampSaleDeposits? = null,
 ) {
     suspend fun plan(
         owner: WalletOwner,
@@ -108,8 +112,16 @@ class PaymentPlanner(
         // neither needs the other (perf, 2026-11-05). A pricing error wins over a balance error, as asking them in
         // turn gave, and a balance read whose answer isn't needed is cancelled. A coin whose holding is already known
         // needs no read at all.
+        val sale = saleFunded(owner, command, sender, destination, coin, amount)
         return coroutineScope {
-            val priced = async { fees.pricing(owner, sender, destination, coin) }
+            val priced =
+                async {
+                    if (sale) {
+                        Resource.success(fees.waived(owner, sender, destination, coin, NoFeeReason.RAMP_SALE))
+                    } else {
+                        fees.pricing(owner, sender, destination, coin)
+                    }
+                }
             val read = if (coin.heldMinor == null) async { rules.balance(sender, coin) } else null
             val pricing =
                 when (val answer = priced.await()) {
@@ -130,6 +142,38 @@ class PaymentPlanner(
             Resource.success(PaymentPlan(owner, sender, destination, pricing, allowance, balance, amount))
         }
     }
+
+    /**
+     * Whether this payment funds the payer's own off-ramp sale, exactly (decision 2026-11-24: Cash Out carries no
+     * wallet fee). Every one of these must hold, or the payment is priced as any other: it names a sale (`rampOrderId`)
+     * that ramp says still waits for its USDC; it leaves the payer's own wallet (never a group's or a space's), and the
+     * sale is theirs; it goes on the sale's chain, to the sale's deposit address (an address, not a person); it is the
+     * USDC contract the sale takes; and it is **exactly** the sale's amount. Any other amount is priced normally: the
+     * ramp refunds a wrong amount whole, so a waived over- or under-funding would be a free round trip.
+     */
+    private suspend fun saleFunded(
+        owner: WalletOwner,
+        command: TransferCommand,
+        sender: Sender,
+        destination: Destination,
+        coin: PaymentCoin,
+        amount: Money,
+    ): Boolean {
+        val orderId = command.rampOrderId ?: return false
+        if (owner !is WalletOwner.Person || owner.userId != command.senderId) return false
+        if (destination.recipientId != null || destination.isAnyPerson) return false
+        val sale = sales?.awaiting(orderId) ?: return false
+        return sale.orderId == orderId &&
+            sale.payer == owner.userId &&
+            sale.blockchain == command.blockchain &&
+            sale.blockchain == sender.wallet.blockchain &&
+            sameAddress(sale.address, destination.address) &&
+            sameAddress(sale.tokenAddress, coin.tokenAddress) &&
+            amount.amountMinor == BigInteger.valueOf(sale.amountMinor)
+    }
+
+    private fun sameAddress(a: String, b: String): Boolean =
+        Addresses.normalise(a.trim()) == Addresses.normalise(b.trim())
 
     /**
      * Where the payment goes. An estimate for nobody yet ([Payee.Anyone], 2026-11-17) is priced as a payment to a

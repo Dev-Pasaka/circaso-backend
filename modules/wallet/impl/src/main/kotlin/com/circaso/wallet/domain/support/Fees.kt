@@ -270,6 +270,21 @@ class FeeCalculator(
         return Resource.success(Pricing(parties, rule, gas, feeAddress, null, coin, source))
     }
 
+    /**
+     * A payment that carries no Circaso fee whatever the rules say ([reason]: [NoFeeReason.RAMP_SALE], decision
+     * 2026-11-24). Priced as "no rule, no fee" is: no fee leg and no network cost passed on, so W4 asks Circle for a
+     * plain transfer, whose gas Circle Gas Station sponsors on the SCA wallets (and pays as fee payer on Solana). Circle
+     * isn't asked for an estimate.
+     */
+    suspend fun waived(
+        owner: WalletOwner,
+        sender: Sender,
+        destination: Destination,
+        coin: PaymentCoin,
+        reason: NoFeeReason,
+    ): Pricing =
+        Pricing(parties(owner, destination, sender.wallet.blockchain, coin.asset), null, null, null, reason, coin)
+
     /** The legacy form for a dollar stablecoin offered on the chain. */
     suspend fun pricing(
         owner: WalletOwner,
