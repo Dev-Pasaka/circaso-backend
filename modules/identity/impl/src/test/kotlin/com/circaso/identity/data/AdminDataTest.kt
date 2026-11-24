@@ -59,8 +59,11 @@ class AdminDataTest {
         createdAt: Instant = now,
         status: AccountStatus = AccountStatus.ACTIVE,
         kind: AccountKind = AccountKind.PERSON,
+        verifiedAt: Instant? = null,
     ): Account {
-        val account = Account(UserId.new(), null, status, null, Verification.NONE, 1, createdAt, kind = kind)
+        val verification = if (verifiedAt != null) Verification.VERIFIED else Verification.NONE
+        val account =
+            Account(UserId.new(), null, status, null, verification, 1, createdAt, kind = kind, verifiedAt = verifiedAt)
         pg.transactor.run("test.create") { pg.accounts.create(account) }
         return account
     }
@@ -89,6 +92,31 @@ class AdminDataTest {
             assertEquals(listOf(pending.userId, oldest.userId), second.accounts.map { it.account.userId })
             assertNull(second.nextCursor)
             assertEquals("request.malformed", list("not-a-cursor", 2, includePending = true).errorCode())
+        }
+
+    @Test
+    fun `the verified filter lists only verified accounts, newest first, with when they were verified`() =
+        runBlocking<Unit> {
+            val verifiedAt = now.minusSeconds(5)
+            val older = account(now.minusSeconds(20), verifiedAt = verifiedAt)
+            val plain = account(now.minusSeconds(10))
+            val newer = account(now, verifiedAt = verifiedAt)
+            val list = ListNewestAccounts(admin)
+
+            val first = list(null, 1, includePending = false, verifiedOnly = true).data()
+            val second = list(first.nextCursor, 1, includePending = false, verifiedOnly = true).data()
+
+            assertEquals(listOf(newer.userId), first.accounts.map { it.account.userId })
+            assertEquals(listOf(older.userId), second.accounts.map { it.account.userId })
+            assertNull(second.nextCursor)
+            assertEquals(
+                verifiedAt,
+                first.accounts
+                    .single()
+                    .account.verifiedAt,
+            )
+            assertEquals(3, list(null, 10, includePending = false).data().accounts.size, "without the filter: everyone")
+            assertTrue(plain.userId !in (first.accounts + second.accounts).map { it.account.userId })
         }
 
     @Test

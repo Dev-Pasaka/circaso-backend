@@ -11,6 +11,10 @@ data class UserSummaryDto(
     val kind: String,
     val maskedPhone: String? = null,
     val createdAt: String,
+    /** `VERIFIED` or `NONE`: the verified badge (an approved Didit check in the live environment; 2026-11-24). */
+    val verification: String = "NONE",
+    /** When it was verified; null unless [verification] is `VERIFIED`. */
+    val verifiedAt: String? = null,
 )
 
 @Serializable
@@ -38,6 +42,8 @@ data class UserAccountResponse(
     val suspension: SuspensionDto? = null,
     /** The person's wallet network access rows (added 2026-11-18). */
     val networkAccess: List<NetworkAccessDto> = emptyList(),
+    /** When [verification] became `VERIFIED` (the verified badge, 2026-11-24); null otherwise. */
+    val verifiedAt: String? = null,
 )
 
 @Serializable

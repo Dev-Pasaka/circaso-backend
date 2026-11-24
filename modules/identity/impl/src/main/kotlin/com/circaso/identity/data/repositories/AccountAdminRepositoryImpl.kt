@@ -12,6 +12,7 @@ import com.circaso.identity.domain.models.Device
 import com.circaso.identity.domain.models.DeviceStatus
 import com.circaso.identity.domain.models.ProviderLink
 import com.circaso.identity.domain.models.SessionRecord
+import com.circaso.identity.domain.models.Verification
 import com.circaso.identity.domain.repositories.AccountAdminRepository
 import com.circaso.infrastructure.api.Database
 import com.circaso.shared.UserId
@@ -85,13 +86,22 @@ class AccountAdminRepositoryImpl(private val database: Database) : AccountAdminR
         after: AccountKey?,
         limit: Int,
         includePending: Boolean,
+        verifiedOnly: Boolean,
     ): List<Account> =
         database.tx("admin.newest-accounts") {
             val page = after?.let(::before) ?: Op.TRUE
+            val shown =
+                if (includePending) {
+                    page
+                } else {
+                    page and
+                        (AccountsTable.status neq AccountStatus.PENDING_PHONE.name)
+                }
             AccountsTable
                 .selectAll()
                 .where {
-                    if (includePending) page else page and (AccountsTable.status neq AccountStatus.PENDING_PHONE.name)
+                    // Verified only: accounts_verified_idx (V11), the same order over just those rows.
+                    if (verifiedOnly) shown and (AccountsTable.verification eq Verification.VERIFIED.name) else shown
                 }.orderBy(AccountsTable.createdAt to SortOrder.DESC, AccountsTable.userId to SortOrder.DESC)
                 .limit(limit)
                 .map { it.toAccount() }

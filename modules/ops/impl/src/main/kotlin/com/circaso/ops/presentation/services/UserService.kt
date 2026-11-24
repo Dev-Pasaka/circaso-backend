@@ -35,7 +35,8 @@ class UserService(
         cursor: String?,
         limit: Int,
         includePending: Boolean,
-    ): Resource<UserPage> = searchUsers(query, cursor, limit, includePending)
+        verifiedOnly: Boolean = false,
+    ): Resource<UserPage> = searchUsers(query, cursor, limit, includePending, verifiedOnly)
 
     suspend fun pendingSignUps(): Resource<Long> = countPendingSignUps()
 

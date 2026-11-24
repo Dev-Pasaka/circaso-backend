@@ -47,7 +47,8 @@ class AccountAdminImpl(private val admin: AccountAdminService) : AccountAdmin {
         cursor: String?,
         limit: Int,
         includePending: Boolean,
-    ): Resource<AccountPage> = admin.newest(cursor, limit, includePending).map { it.toAdmin() }
+        verifiedOnly: Boolean,
+    ): Resource<AccountPage> = admin.newest(cursor, limit, includePending, verifiedOnly).map { it.toAdmin() }
 
     override suspend fun pendingSignUps(): Long = admin.pendingSignUps().getOrThrow()
 

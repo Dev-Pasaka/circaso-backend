@@ -31,6 +31,9 @@ import com.circaso.wallet.api.WalletReports
  * One search box for everything staff search people by (decision 2026-11-08): a user id, an @handle (prefix), a phone
  * number (exact, E.164), an email (exact) or a name (prefix). Empty: the newest accounts, without unfinished sign-ups
  * unless [includePending] is set (2026-11-13); a search by id, phone or email still finds them.
+ * [verifiedOnly] (the verified badge, 2026-11-24): the newest list asks identity for verified accounts only (an index,
+ * so pages stay full); a search keeps only the verified among what it found (a page can come back short, its cursor
+ * still good).
  */
 class SearchUsers(
     private val accounts: AccountAdmin,
@@ -42,15 +45,30 @@ class SearchUsers(
         cursor: String?,
         limit: Int,
         includePending: Boolean = false,
+        verifiedOnly: Boolean = false,
     ): Resource<UserPage> {
         val q = query.trim()
-        return when {
-            q.isEmpty() -> {
-                accounts.newest(cursor, limit, includePending).map { page ->
-                    UserPage(views.rows(page.accounts.map { it.userId }), page.nextCursor)
-                }
+        if (q.isEmpty()) {
+            return accounts.newest(cursor, limit, includePending, verifiedOnly).map { page ->
+                UserPage(views.rows(page.accounts.map { it.userId }), page.nextCursor)
             }
+        }
+        val found = search(q, cursor, limit)
+        return if (verifiedOnly) {
+            found.map { page ->
+                page.copy(items = page.items.filter { it.verification == VERIFIED })
+            }
+        } else {
+            found
+        }
+    }
 
+    private suspend fun search(
+        q: String,
+        cursor: String?,
+        limit: Int,
+    ): Resource<UserPage> =
+        when {
             UserId.parse(q) != null -> {
                 single(UserId.parse(q))
             }
@@ -76,11 +94,12 @@ class SearchUsers(
                 profiles.searchByName(q, cursor, limit).map { UserPage(views.rows(it.userIds), it.nextCursor) }
             }
         }
-    }
 
     private suspend fun single(userId: UserId?): Resource<UserPage> =
         Resource.success(UserPage(userId?.let { views.rows(listOf(it)) }.orEmpty(), null))
 }
+
+private const val VERIFIED = "VERIFIED"
 
 class GetUserAccount(private val views: UserViews) {
     suspend operator fun invoke(userId: UserId): Resource<UserAccount> =

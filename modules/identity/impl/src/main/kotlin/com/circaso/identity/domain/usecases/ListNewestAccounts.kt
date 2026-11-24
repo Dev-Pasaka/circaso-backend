@@ -13,19 +13,21 @@ import com.circaso.shared.SharedError
  * `accounts_newest_idx`, never by offset. Suspended and support accounts are listed too: staff look for them.
  * Unfinished sign-ups (`PENDING_PHONE`) only with [includePending] (2026-11-13): most are Google Play's test robots,
  * which sign in with Google and stop at the phone screen, so by default they'd bury the real people.
+ * [verifiedOnly] (the verified badge, 2026-11-24): only verified accounts, through `accounts_verified_idx` (V11).
  */
 class ListNewestAccounts(private val admin: AccountAdminRepository) {
     suspend operator fun invoke(
         cursor: String?,
         limit: Int,
         includePending: Boolean,
+        verifiedOnly: Boolean = false,
     ): Resource<AccountRecordPage> {
         val after =
             cursor?.let {
                 AdminCursors.decode(it) ?: return Resource.error(SharedError.Malformed("cursor", "invalid"))
             }
         val page = limit.coerceIn(1, MAX_PAGE)
-        val found = admin.newest(after, page + 1, includePending)
+        val found = admin.newest(after, page + 1, includePending, verifiedOnly)
         val shown = found.take(page)
         val links = admin.links(shown.map { it.userId }.toSet())
         val next =
