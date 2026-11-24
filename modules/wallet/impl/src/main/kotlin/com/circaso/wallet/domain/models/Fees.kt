@@ -181,6 +181,12 @@ enum class NoFeeReason {
 
     /** No Circaso fee wallet is configured on the chain. */
     NO_FEE_WALLET,
+
+    /**
+     * It funds the payer's own open off-ramp sale, exactly (decision 2026-11-24): Cash Out carries only the ramp's
+     * sell fee and the payout provider's fee. No fee leg, so a plain transfer whose gas Circle Gas Station sponsors.
+     */
+    RAMP_SALE,
 }
 
 /**
