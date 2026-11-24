@@ -227,6 +227,8 @@ private fun AccountsTable.write(
     row[status] = account.status.name
     row[activeDeviceId] = account.activeDeviceId?.value
     row[verification] = account.verification.name
+    row[verifiedAt] = account.verifiedAt
+    row[verificationChangedAt] = account.verificationChangedAt
     row[sessionVersion] = account.sessionVersion
     row[deleteAfter] = account.deleteAfter
     row[updatedAt] = now
@@ -244,4 +246,6 @@ internal fun ResultRow.toAccount() =
         deleteAfter = this[AccountsTable.deleteAfter],
         version = this[AccountsTable.version],
         kind = AccountKind.valueOf(this[AccountsTable.kind]),
+        verifiedAt = this[AccountsTable.verifiedAt],
+        verificationChangedAt = this[AccountsTable.verificationChangedAt],
     )

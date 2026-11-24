@@ -86,8 +86,10 @@ Sixteen routes, all with the `app` scope; reads that return another person's dat
 
 ```json
 // PublicProfile — the only shape other people ever see
-{ "userId": "0193…", "displayName": "Amina Otieno", "handle": "amina", "avatarUrl": "https://cdn.circaso.com/a/0193….jpg", "about": "Chama treasurer", "support": false }
+{ "userId": "0193…", "displayName": "Amina Otieno", "handle": "amina", "avatarUrl": "https://cdn.circaso.com/a/0193….jpg", "about": "Chama treasurer", "support": false, "verified": true, "verifiedAt": "2026-11-24T09:12:00Z" }
 // "support": true only on Circaso's own support account (decision 2026-10-31; additive, defaults to false)
+// "verified": the verified badge (decision 2026-11-24; additive, defaults to false): identity verified with a government
+// ID and a selfie in Didit's live environment; "verifiedAt" when. MyProfile carries both too. Nothing else from the ID.
 
 // MyProfile — U1, and the response of U2, U4, U6
 {
@@ -340,3 +342,7 @@ Users' own codes; the shared `request.*`, `auth.*` and `internal.error` codes ar
 | `users.invite_invalid` | NOT_FOUND → 404 | Invite expired or revoked, or its owner's account is gone or not active |
 | `users.sync_too_large` | INVALID → 400 | Over 1,000 numbers in a batch |
 | `users.cannot_block_self` | INVALID → 400 | Blocking yourself |
+
+## The verified badge (2026-11-24)
+
+Decision 2026-11-24. `profiles.verified_at` (V5, with `verified_changed_at`) is set only by identity's `identity.IdentityVerificationChanged` (`ApplyIdentityVerification`, ordered by the event's `occurredAt`; an older event changes nothing). It moves the profile one version on, publishes `users.ProfileUpdated` with `changed: ["verified"]` and sends `users/profile.updated` to the person and to everyone who has them saved. A profile edit never writes it. `PublicProfile` (and so `Profiles.get` for every other module) carries `verified` and `verifiedAt`; `PublicProfileDto` and `MyProfileResponse` carry both, other modules' person shapes carry `verified`.

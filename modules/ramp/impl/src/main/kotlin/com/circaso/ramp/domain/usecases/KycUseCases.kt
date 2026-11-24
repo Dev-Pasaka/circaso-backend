@@ -15,6 +15,7 @@ import com.circaso.ramp.domain.models.UserVerifications
 import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.models.VerificationStatus
 import com.circaso.ramp.domain.ports.RampAlerts
+import com.circaso.ramp.domain.ports.RampOutbox
 import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
@@ -22,12 +23,14 @@ import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.shared.EventBus
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
 import java.time.Clock
 import java.time.Duration
+import java.util.UUID
 
 /**
  * R0: starts the user's identity check on a network, or hands back the one still open (a tap never makes a second
@@ -229,9 +232,62 @@ class UnblockUser(private val blocks: BlockRepository) {
  * Staff's way out of a dead end: removes a subject's verification in one environment, which frees the identity it
  * holds, so the person can verify again (on this account or another). Whether there was one to remove.
  */
-class ResetVerification(private val rows: VerificationRepository) {
-    suspend operator fun invoke(subject: Subject, environment: KycEnvironment): Resource<Boolean> =
-        Resource.success(rows.delete(subject, environment) != null)
+class ResetVerification(
+    private val rows: VerificationRepository,
+    private val verifications: Verifications,
+    private val transactor: Transactor,
+    private val outbox: RampOutbox,
+    private val bus: EventBus,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(subject: Subject, environment: KycEnvironment): Resource<Boolean> {
+        val now = clock.instant()
+        // A user's live verification going away takes their verified badge with it (`ramp.UserVerificationChanged`).
+        val (removed, event) =
+            transactor.run("kyc.reset") {
+                val removed = rows.delete(subject, environment)
+                removed to removed?.let { verifications.removal(it, now) }?.also { outbox.write(it) }
+            }
+        event?.let { bus.publish(it) }
+        return Resource.success(removed != null)
+    }
+}
+
+/**
+ * `ramp.announce-verifications` (the verified badge, 2026-11-24): says `ramp.UserVerificationChanged` again for every
+ * user's live verification that moved in the last [LOOKBACK]. Consumers ignore what isn't newer than what they hold,
+ * so this only fills a gap: an approval whose event was lost between its commit and the outbox write, and the
+ * approvals made before the event existed (live verification started on 2026-11-22, inside the window). How many were
+ * said again.
+ */
+class AnnounceVerifications(
+    private val rows: VerificationRepository,
+    private val verifications: Verifications,
+    private val outbox: RampOutbox,
+    private val bus: EventBus,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(): Int {
+        val since = clock.instant().minus(LOOKBACK)
+        var after: UUID? = null
+        var count = 0
+        while (true) {
+            val page = rows.liveUsersChangedSince(since, after, PAGE)
+            page.forEach { row ->
+                val event = verifications.announcement(row) ?: return@forEach
+                outbox.write(event)
+                bus.publish(event)
+                count++
+            }
+            if (page.size < PAGE) return count
+            after = page.last().subject.id
+        }
+    }
+
+    companion object {
+        val LOOKBACK: Duration = Duration.ofDays(14)
+        private const val PAGE = 200
+    }
 }
 
 /** A merchant's verification in the environment [Network]'s settings trust; null when they never started. */

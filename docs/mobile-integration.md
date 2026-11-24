@@ -9,6 +9,12 @@ For **Claude Code working in the Circaso mobile app** (Kotlin Multiplatform: one
 - **Status words used below:** **READY** (backend finished, safe to build on), **DEV STUB** (the HTTP contract is final but a vendor behind it is faked on dev), **PARTIAL** (works, with a named gap), **MISSING** (not built in the backend; do not invent an endpoint).
 - If the backend says something different from this file, the backend wins: tell Pasaka and fix the file.
 
+> **Changed on 2026-11-24, the verified badge (one new field on every profile shape; additive, old apps keep working, and an older server simply never sends it):**
+> 1. **What it means.** `verified: true` when Circaso verified the person's identity with a government ID and a selfie: an **approved identity verification in Didit's live environment** (the same check as the ramp's, section 7 "Identity verification (KYC)"). A sandbox approval (the testnet's simulated checks) **never** counts. A verification that is later taken back, declined on review, expired or reset by staff turns it off again. Nothing else from the ID is ever sent to anyone: no name, no document, no country.
+> 2. **Where it is.** `verified: boolean` (default `false`) and `verifiedAt?: string|null` (ISO-8601, when it was approved) on **PublicProfileDto** (U8 contacts, U7 sync matches, U9, U10, U11 connections, U13 blocks) and **MyProfileResponse** (U1, U2, U4, U6: your own badge). `verified` only (no date) on **ChatProfileDto** (chat members in M4–M11, invites and group links: the inbox peers and group members), **CounterpartyDto** (W6, the person on a payment), and Spaces' person and member shapes. Calls, Moments and chama frames carry names only, as before: draw their avatars from what the app already holds for that `userId`.
+> 3. **Live updates.** When someone's badge comes or goes their profile moves one `version` on and `users` / `profile.updated` goes to everyone who has them saved **and to the person themselves**: reload that profile (U10, or U1 for your own) and update the badge. Otherwise the next fetch of any of the shapes above picks it up.
+> 4. **Store it with the profile** (contacts, chat members, your own profile) so the badge shows offline, and treat a missing field as `false`. Draw it on the avatar wherever it appears; its accessible name is "verified". Your own profile, when not verified, keeps showing the verification state from `GET /v1/ramp/kyc` and its "Verify" entry.
+>
 > **Changed on 2026-11-23, the ramp: verify from the profile (R0 is no longer gated by the ramp's state; no new fields, nothing to migrate):**
 > 1. **Verifying is not a trade.** `POST /v1/ramp/kyc` and `GET /v1/ramp/kyc` now work for anyone signed in **whatever the ramp's state on the network**: the ramp `OFF`, `PREVIEW` without the person on the list, and on a network where `required` is false. They never answer `ramp.unavailable` any more. So the profile can show "Identity verification" with its state and a "Verify" button for everyone, and a person who verifies early can buy the moment the ramp opens to them.
 > 2. **What still refuses (on `POST`):** `ramp.kyc_not_configured` (503) when the network's identity provider isn't set up (show "not available yet", no retry button); `ramp.account_restricted`; `ramp.blocked`. `GET` always answers the state; a barred person reads it with `canStart: false`.
@@ -1249,7 +1255,7 @@ Any other close (network drop, server restart) means reconnect with backoff.
 | `system` / `session.revoked` | empty (`{}`) | The session ended: you signed out (on this socket's session), a new phone took over, or the account was closed. Clear tokens, show sign-in. The socket then closes with `session revoked`. |
 | `users` / `contact.joined` | `userId`, `displayName` | Someone from your phone book joined: add them to the contacts list. |
 | `users` / `connection.added` | `userId`, `displayName` | Someone connected with you (QR or invite). |
-| `users` / `profile.updated` | `userId`, `version` (number) | A contact changed their profile: reload that profile if `version` is newer than yours. |
+| `users` / `profile.updated` | `userId`, `version` (number) | A contact changed their profile: reload that profile if `version` is newer than yours. Since 2026-11-24 also sent when a contact's verified badge comes or goes, and to the person themselves when **their own** does (reload U1). |
 | `messaging` / `member.added` | `chatId`, `userIds` (everyone this action added), `byUserId`, `joined` (boolean), `viaLink` (boolean, since 2026-11-14: joined with the group's link, which `byUserId` made; show "X joined using the group link") | One frame per member per action, to every member and the people added. Since 2026-11-09 people join by accepting an invite: then `joined` is true, `userIds` is the one person and `byUserId` who invited them; show "X joined". Send the newcomers your current sender key; if you are in `userIds`, load the chat (`GET /v1/chats/{chatId}`). Not pushed when `joined`. |
 | `messaging` / `invite.received` | `inviteId`, `chatId`, `byUserId`, `byName` | To the person invited. Load M23 and show the invite at the top of Chats. Pushed when offline (`kind` `chat.invite`, data-only, `chatId`, `userId` the inviter). |
 | `messaging` / `invite.removed` | `inviteId`, `chatId` | To the person invited: an admin or the inviter cancelled it. Drop it from the inbox. |
@@ -1490,7 +1496,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ChatDto** — `chatId`: string; `kind`: string (`DIRECT` | `GROUP`); `sealedMeta`?: string|null; `metaVersion`: integer; `members`: [ChatMemberDto]; `settings`: ChatSettingsDto; `lastMessageId`?: string|null; `version`: integer; `created`?: boolean|null (M4 only); `notAdded`?: [string]|null (M5, M9 only); `avatarMediaId`?: string|null (the group photo, an attachment for AT3)
 - **ChatMemberDto** — `user`: ChatProfileDto; `role`: string (`OWNER` | `ADMIN` | `MEMBER`); `joinedAt`: string
 - **ChatMessageDto** — `messageId`: string; `role`: string; `text`: string; `replyTo`?: string|null; `askedFrom`?: string|null; `readNote`?: ReadNoteDto; `at`: string; `conversationId`: string
-- **ChatProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false)
+- **ChatProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false); `verified`?: boolean (default false, 2026-11-24)
 - **ChatResponse** — `messages`: [ChatMessageDto]; `nextCursor`?: string|null
 - **ChatSettingsDto** — `membersCanAdd`?: boolean
 - **ChatsResponse** — `chats`: [ChatDto]
@@ -1501,7 +1507,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **ConnectResponse** — `user`: PublicProfileDto2; `created`: boolean
 - **ContactDto** — `user`: PublicProfileDto2; `source`: string; `addedAt`: string
 - **ContactsResponse** — `contacts`: [ContactDto]; `nextCursor`?: string|null
-- **CounterpartyDto** — `userId`?: string|null; `displayName`?: string|null; `handle`?: string|null; `avatarUrl`?: string|null; `address`?: string|null
+- **CounterpartyDto** — `userId`?: string|null; `displayName`?: string|null; `handle`?: string|null; `avatarUrl`?: string|null; `address`?: string|null; `groupId`?: string|null; `verified`?: boolean (default false, 2026-11-24)
 - **CreateConversationRequest** (C2; the body may be empty) — `title`?: string|null (1 to 80 characters)
 - **CreateGroupRequest** — `sealedMeta`: string; `memberIds`?: [string]
 - **DeletedResponse** — `deleted`: boolean
@@ -1538,7 +1544,7 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **MessagingSettingsResponse** — `readReceipts`: boolean; `typing`: boolean
 - **MomentDto** — `momentId`: string; `posterId`: string; `ciphertext`: string; `keyCopy`: string|null; `mediaIds`: [string]; `postedAt`: string; `expiresAt`: string; `mine`: boolean; `viewed`: boolean; `reacted`: boolean; `reaction`: string|null; `viewCount`: integer|null; `reactionCount`: integer|null
 - **MomentsResponse** — `moments`: [MomentDto]; `next`: string|null
-- **MyProfileResponse** — `userId`: string; `displayName`: string; `about`?: string|null; `handle`?: string|null; `handleChangeableAt`?: string|null; `avatarUrl`?: string|null; `privacy`: PrivacyDto; `version`: integer
+- **MyProfileResponse** — `userId`: string; `displayName`: string; `about`?: string|null; `handle`?: string|null; `handleChangeableAt`?: string|null; `avatarUrl`?: string|null; `privacy`: PrivacyDto; `version`: integer; `verified`?: boolean (default false, 2026-11-24); `verifiedAt`?: string|null
 - **NoBody** — `unused`?: string|null
 - **NonceResponse** — `nonce`: string; `expiresInSeconds`: integer
 - **OneTimePreKeyDto** — `keyId`: integer; `publicKey`: string
@@ -1557,8 +1563,8 @@ Generated from the spec. `?` marks an optional field. Every response is wrapped 
 - **PrivacyChangeDto** — `avatar`?: string|null; `about`?: string|null; `handleLookup`?: boolean|null
 - **PrivacyDto** — `avatar`: string; `about`: string; `handleLookup`: boolean
 - **ProviderDto** — `provider`: string; `maskedEmail`?: string|null; `linkedAt`: string
-- **PublicProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false)
-- **PublicProfileDto2** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false)
+- **PublicProfileDto** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false); `verified`?: boolean (default false, 2026-11-24); `verifiedAt`?: string|null
+- **PublicProfileDto2** — `userId`: string; `displayName`: string; `handle`?: string|null; `avatarUrl`?: string|null; `about`?: string|null; `support`?: boolean (default false); `verified`?: boolean (default false, 2026-11-24); `verifiedAt`?: string|null
 - **PublishKeysRequest** — `identityKey`: string; `signedPreKey`: SignedPreKeyDto; `kyberPreKey`: KyberPreKeyDto; `oneTimePreKeys`?: [OneTimePreKeyDto]
 - **PushTokenRequest** — `pushToken`: string
 - **SaveGroupKeyRequest** — `ciphertext`: string (base64, at most 512 bytes decoded)

@@ -143,7 +143,19 @@ class RampDataTest {
     private val frames = RecordingFrames()
     private val identities = HmacIdentityKeys { EnvelopeVault.masterKey(MASTER_KEY) }
     private val verifications =
-        Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
+        Verifications(
+            verificationRows,
+            blocks,
+            kycProviders,
+            identities,
+            book,
+            transactor,
+            frames,
+            alerts,
+            outbox,
+            MemoryBus(),
+            clock,
+        )
     private val orderEvents = OrderEventRepositoryImpl(database)
     private val engineRows = EngineSettingsRepositoryImpl(database)
     private val routingLog = RoutingLogRepositoryImpl(database)

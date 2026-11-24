@@ -1133,6 +1133,19 @@ class MemoryVerifications : VerificationRepository {
         .sortedBy { it.checkedAt }
         .take(limit)
 
+    override suspend fun liveUsersChangedSince(
+        since: Instant,
+        afterSubjectId: UUID?,
+        limit: Int,
+    ) = rows.values
+        .filter {
+            it.subject.kind == SubjectKind.USER &&
+                it.environment == KycEnvironment.LIVE &&
+                !it.updatedAt.isBefore(since) &&
+                (afterSubjectId == null || it.subject.id > afterSubjectId)
+        }.sortedBy { it.subject.id }
+        .take(limit)
+
     override suspend fun delete(subject: Subject, environment: KycEnvironment) = rows.remove(subject to environment)
 }
 

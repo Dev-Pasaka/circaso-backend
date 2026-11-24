@@ -123,6 +123,8 @@ class ProfileViews(private val avatars: AvatarStorage, private val contacts: Con
             avatarUrl = profile.avatarKey?.takeIf { avatarShown }?.let { avatars.urlOf(it) },
             about = profile.about.takeIf { aboutShown },
             support = profile.support,
+            verified = profile.verified,
+            verifiedAt = profile.verifiedAt,
         )
     }
 
@@ -138,6 +140,8 @@ class ProfileViews(private val avatars: AvatarStorage, private val contacts: Con
                 }?.let { avatars.urlOf(it) },
             null,
             profile.support,
+            profile.verified,
+            profile.verifiedAt,
         )
 
     suspend fun avatarUrl(profile: Profile) = profile.avatarKey?.let { avatars.urlOf(it) }
@@ -150,6 +154,15 @@ class UserNotifier(private val frames: RealtimeFrames, private val contacts: Con
 
     suspend fun connectionAdded(to: UserId, other: Profile) =
         frames.send(to, UsersFrame.ConnectionAdded(other.userId, other.displayName))
+
+    /**
+     * The verified badge changed (2026-11-24): the people who have [userId] saved, and the person themselves, whose
+     * own profile shows it too.
+     */
+    suspend fun verificationChanged(userId: UserId, version: Long) {
+        frames.send(userId, UsersFrame.ProfileUpdated(userId, version))
+        profileUpdated(userId, version)
+    }
 
     /** Tells the people who have [userId] saved that the profile changed. */
     suspend fun profileUpdated(userId: UserId, version: Long) {

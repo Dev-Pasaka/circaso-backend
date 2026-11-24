@@ -10,6 +10,7 @@ import com.circaso.users.domain.models.AvatarVisibility
 import com.circaso.users.domain.models.Privacy
 import com.circaso.users.domain.models.Profile
 import com.circaso.users.domain.repositories.ProfileRepository
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.singleOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.serialization.Serializable
@@ -103,6 +104,28 @@ class ProfileRepositoryImpl(private val database: Database, private val clock: C
             updated == 1
         }
 
+    override suspend fun recordVerification(
+        userId: UserId,
+        verifiedAt: Instant?,
+        at: Instant,
+    ): Long? =
+        database.tx("profiles.verification") {
+            ProfilesTable
+                .updateReturning(
+                    returning = listOf(ProfilesTable.version),
+                    where = {
+                        (ProfilesTable.userId eq userId.value) and
+                            (ProfilesTable.verifiedChangedAt.isNull() or (ProfilesTable.verifiedChangedAt less at))
+                    },
+                ) {
+                    it[ProfilesTable.verifiedAt] = verifiedAt
+                    it[verifiedChangedAt] = at
+                    it[version] = version + 1
+                    it[updatedAt] = clock.instant()
+                }.map { it[ProfilesTable.version] }
+                .singleOrNull()
+        }
+
     /** The columns a profile change can touch; the key, `created_at` and `version` are set by the caller. */
     private fun UpdateBuilder<*>.write(profile: Profile) {
         this[ProfilesTable.displayName] = profile.displayName
@@ -147,4 +170,5 @@ private fun ResultRow.toProfile() =
         version = this[ProfilesTable.version],
         hidden = this[ProfilesTable.accountStatus] != AccountStatus.ACTIVE.name,
         support = this[ProfilesTable.support],
+        verifiedAt = this[ProfilesTable.verifiedAt],
     )

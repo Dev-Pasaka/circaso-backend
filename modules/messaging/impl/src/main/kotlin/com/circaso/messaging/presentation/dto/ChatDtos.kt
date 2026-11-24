@@ -21,6 +21,8 @@ data class ChatProfileDto(
     val about: String? = null,
     /** True only for Circaso's own support account: the app shows the chat as verified support (2026-10-31). */
     val support: Boolean = false,
+    /** The verified badge (2026-11-24): identity verified with a government ID and a selfie. Nothing else from the ID. */
+    val verified: Boolean = false,
 )
 
 @Serializable

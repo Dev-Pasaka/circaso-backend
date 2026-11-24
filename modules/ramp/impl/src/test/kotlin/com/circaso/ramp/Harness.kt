@@ -61,6 +61,7 @@ import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
 import com.circaso.ramp.domain.usecases.CallbackSigningSecret
@@ -201,7 +202,19 @@ class Harness {
     val presence = Presence(merchants, orders, sessions, clock)
     val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
     val verifications =
-        Verifications(verificationRows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
+        Verifications(
+            verificationRows,
+            blocks,
+            kycProviders,
+            identities,
+            book,
+            transactor,
+            frames,
+            alerts,
+            outbox,
+            bus,
+            clock,
+        )
 
     /** The gate with a switch: `kyc.verified = true` waves everybody through; otherwise the real rows answer. */
     val kyc = FakeKyc(verifications)
@@ -325,7 +338,8 @@ class Harness {
     val listBlocks = ListBlocks(blocks)
     val blockUser = BlockUser(verificationRows, blocks, transactor, clock)
     val unblockUser = UnblockUser(blocks)
-    val resetVerification = ResetVerification(verificationRows)
+    val resetVerification = ResetVerification(verificationRows, verifications, transactor, outbox, bus, clock)
+    val announceVerifications = AnnounceVerifications(verificationRows, verifications, outbox, bus, clock)
     val createQuote = CreateQuote(gates, accounts, pricing, quotes, clock, payoutFees)
     val purchases = PurchaseRouting(engine, flow, counters, clock)
     val startOnRamp = StartOnRamp(gates, accounts, wallets, quotes, orders, merchants, counters, purchases, clock)

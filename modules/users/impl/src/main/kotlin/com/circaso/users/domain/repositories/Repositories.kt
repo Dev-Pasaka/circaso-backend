@@ -38,6 +38,17 @@ interface ProfileRepository {
         status: AccountStatus,
         at: Instant,
     ): Boolean
+
+    /**
+     * Records the identity verification as of [at] (the event's time): [verifiedAt] when verified, null when not. The
+     * profile moves one version on, so the app refetches it; an older report than the one recorded changes nothing.
+     * The new version, or null when nothing changed.
+     */
+    suspend fun recordVerification(
+        userId: UserId,
+        verifiedAt: Instant?,
+        at: Instant,
+    ): Long?
 }
 
 interface HandleRepository {

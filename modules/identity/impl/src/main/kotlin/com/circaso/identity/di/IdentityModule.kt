@@ -59,6 +59,7 @@ import com.circaso.identity.domain.support.DeviceProofs
 import com.circaso.identity.domain.support.IdentityConfig
 import com.circaso.identity.domain.support.PhoneOwnership
 import com.circaso.identity.domain.support.SessionOpener
+import com.circaso.identity.domain.usecases.ApplyIdentityVerification
 import com.circaso.identity.domain.usecases.ClearVoipToken
 import com.circaso.identity.domain.usecases.CompleteDeletions
 import com.circaso.identity.domain.usecases.CountActiveUsers
@@ -132,6 +133,7 @@ import com.circaso.identity.presentation.controllers.phoneController
 import com.circaso.identity.presentation.controllers.recoveryController
 import com.circaso.identity.presentation.controllers.vaultController
 import com.circaso.identity.presentation.controllers.webDeletionController
+import com.circaso.identity.presentation.events.RampEventHandler
 import com.circaso.identity.presentation.services.AccountAdminService
 import com.circaso.identity.presentation.services.AccountService
 import com.circaso.identity.presentation.services.AuthService
@@ -141,6 +143,7 @@ import com.circaso.identity.presentation.services.IdentityAgentService
 import com.circaso.identity.presentation.services.KeyBackupService
 import com.circaso.identity.presentation.services.MaintenanceService
 import com.circaso.identity.presentation.services.PhoneService
+import com.circaso.identity.presentation.services.RampEventsService
 import com.circaso.identity.presentation.services.RecoveryService
 import com.circaso.identity.presentation.services.SupportAccountService
 import com.circaso.identity.presentation.services.VaultService
@@ -155,6 +158,7 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
 import com.circaso.infrastructure.api.WarmUp
+import com.circaso.shared.EventSubscription
 import com.circaso.shared.PhoneNumber
 import com.circaso.shared.getOrNull
 import com.circaso.web.RouteContributor
@@ -348,6 +352,7 @@ fun identityModule(config: Config): Module =
         single { ListAccountSessions(get(), clock) }
         single { SuspendAccount(get(), get(), get(), get(), get(), get(), get()) }
         single { UnsuspendAccount(get(), get(), get(), get(), get()) }
+        single { ApplyIdentityVerification(get(), get(), get(), get()) }
         single { CountSignUps(get()) }
         single { CountActiveUsers(get()) }
 
@@ -361,6 +366,9 @@ fun identityModule(config: Config): Module =
         single { DirectoryService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SupportAccountService(get(), get()) }
         single { MaintenanceService(get(), get()) }
+        single { RampEventsService(get()) }
+        // The verified badge (2026-11-24): ramp's live user verifications become the account's verification.
+        single<EventSubscription>(named("identity.ramp-events")) { RampEventHandler(get()).subscription() }
         single { VaultService(get(), get(), get(), get()) }
         single { KeyBackupService(get(), get(), get(), get(), get(), get(), get()) }
         single { WebDeletionService(get()) }

@@ -27,6 +27,10 @@ data class Account(
     val version: Long = 0,
     /** Set at creation and never changed: a support account can't become a person's, or the other way round. */
     val kind: AccountKind = AccountKind.PERSON,
+    /** When the identity was verified with Didit's live environment (the verified badge); null unless [verification] is `VERIFIED`. */
+    val verifiedAt: Instant? = null,
+    /** When ramp last said where the verification stands: a report no newer than this is ignored. */
+    val verificationChangedAt: Instant? = null,
 ) {
     /** A support account never gets an `app` session (decision 2026-10-31); ops reaches it instead. */
     val isSupport: Boolean get() = kind == AccountKind.SUPPORT
@@ -109,6 +113,12 @@ enum class SecurityEventType {
 
     /** Group key backup was turned off: its root and every group key deleted by the owner. */
     KEY_BACKUP_OFF,
+
+    /** The person's identity was verified (Didit live, through ramp; 2026-11-24): the verified badge. */
+    IDENTITY_VERIFIED,
+
+    /** The verification was taken back, expired or reset by staff: the badge went away. */
+    IDENTITY_UNVERIFIED,
 }
 
 data class SecurityEvent(

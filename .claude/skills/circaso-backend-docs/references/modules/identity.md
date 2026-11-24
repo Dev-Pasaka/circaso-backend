@@ -11,7 +11,7 @@ Identity answers "is this really the person behind this account, and is this req
 - **Phone number** — exactly one verified number per account, one account per number.
 - **Devices** — one active phone per account (model ready for several), each with a hardware-backed public key.
 - **Sessions** — 15-minute access tokens and device-bound refresh tokens, with scopes `onboarding`, `app`, `agent`, `ops`.
-- **Recovery eligibility** — whether the account completed identity verification (status and a reference only, never the documents). A lost Google/Apple login can only be relinked by support, and only for verified accounts.
+- **Recovery eligibility** — whether the account completed identity verification (status and a reference only, never the documents). A lost Google/Apple login can only be relinked by support, and only for verified accounts. Since 2026-11-24 it is set from ramp's live identity verification (`ramp.UserVerificationChanged`, see "The verified badge" below), which is also what users shows as the verified badge.
 - **Security log** — every sign-in, device change, verification and recovery.
 - **PIN Vault and group key backup** — opaque blobs the phone sealed under a circaso.com passkey's PRF key: the wallet PIN (V1–V4) and the group meta keys under a backup root (KB1–KB5, 2026-11-12), and the person's names for their contacts as one blob under the same root (KB6–KB7). The server never sees a key.
 
@@ -293,6 +293,7 @@ CREATE TABLE identity.accounts (
     status           text        NOT NULL,              -- PENDING_PHONE | ACTIVE | RECOVERY_PENDING | SUSPENDED | BLOCKED | DELETED
     active_device_id uuid,
     verification     text        NOT NULL DEFAULT 'NONE', -- NONE | PENDING | VERIFIED (KYC)
+    -- V10 (2026-11-24): verified_at timestamptz (set while VERIFIED), verification_changed_at timestamptz (orders ramp's reports)
     session_version  int         NOT NULL DEFAULT 1,    -- bump to invalidate every token at once
     delete_after     timestamptz,                       -- DELETED: when the grace period ends and deletion completes
     created_at       timestamptz NOT NULL,
@@ -455,7 +456,7 @@ Refresh tokens have the form `rt_<sessionId>.<secret>`, so a refresh reads one r
 
 ## Events published
 
-All on stream `events:identity`, in the envelope described on the Architecture tab. Identity consumes no other module's events.
+All on stream `events:identity`, in the envelope described on the Architecture tab. Identity consumes one other module's event (2026-11-24): `ramp.UserVerificationChanged`, below.
 
 | Event | When | `data` | Consumers and what they do |
 | --- | --- | --- | --- |
@@ -465,6 +466,7 @@ All on stream `events:identity`, in the envelope described on the Architecture t
 | `identity.SignedOut` v1 | A session signed out (I8), only when it goes from active to revoked | `userId`, `sessionId` | gateway: send `system.session.revoked` to that session's socket and close it (no push) |
 | `identity.AccountStatusChanged` v1 | Suspended, reinstated, blocked | `userId`, `status` | users: hide or restore the profile, clear cached reach decisions; gateway: close sockets when not active |
 | `identity.AccountRelinked` v1 | Support recovery completed after the 48-hour notice | `userId`, `provider` | gateway: close old sockets; the user id is unchanged, so the Circle user and wallets carry over |
+| `identity.IdentityVerificationChanged` v1 | The account's live identity verification changed its answer (2026-11-24) | `userId`, `verified`, `verifiedAt?` | users: show or drop the verified badge (`profiles.verified_at`), move the profile's version, send `profile.updated` |
 | `identity.SupportAccountCreated` v1 | Ops created a support account (OPS1; decision 2026-10-31) | `userId`, `displayName`, `handle` (no `phoneHmac`: it has no phone) | users: make the profile marked `support` and claim the handle |
 | `identity.PinVaultOpened` v1 | V2 handed over the PIN Vault's blob (2026-11-11) | `userId` | wallet: `payment_holds` row, reason `VAULT_OPENED`, until `occurredAt` + 24 h |
 | `identity.AccountDeleted` v1 | Deletion completed, 30 days after I14 (written in the transaction that deletes the rows) | `userId` | users: delete profile, contacts, blocks; release the handle into its 30-day hold; every later module removes or anonymises its data |
@@ -546,3 +548,11 @@ Identity's own codes; the shared `request.*`, `auth.*` and `internal.error` code
 
 The mainnet wallet has its own PIN, so a person may keep one PIN Vault per wallet network. V9 adds `network` (default `TESTNET`) to `pin_vaults`, primary key `(user_id, network)`. V1 to V4 are inside `authenticateOnNetwork` (`X-Wallet-Network`, decided by the wallet's `WalletNetworkGate`; a missing header is the wallet's fallback) and read, save and delete the vault of `currentNetwork()`. `PinVaultOpened` carries `network`, and the wallet pauses payments on that network only. Deleting the account deletes both.
 
+
+## The verified badge (2026-11-24)
+
+Decision 2026-11-24. Identity keeps whether the person's identity is verified, as ramp reports it; users shows it.
+
+- **Consumed:** `ramp.UserVerificationChanged` (group `identity`, stream `events:ramp`), published by ramp for every move of a user's verification in Didit's **live** environment, and again by `ramp.announce-verifications` for rows that moved in the last 14 days. Sandbox verifications are never reported.
+- **`ApplyIdentityVerification`:** locks the account; ignores the report when its `changedAt` is no newer than `verification_changed_at` (V10), or the account is unknown; otherwise sets `verification` to `VERIFIED` (with `verified_at` = the approval's time) or `NONE` (with `verified_at` null), stamps `verification_changed_at`, writes `IDENTITY_VERIFIED` / `IDENTITY_UNVERIFIED` in the security log when the answer flips, and publishes `identity.IdentityVerificationChanged` when the answer or its date changed.
+- **Effects:** I11 and AG1 report `VERIFIED`; I15 support recovery becomes possible for the account; users shows the badge.

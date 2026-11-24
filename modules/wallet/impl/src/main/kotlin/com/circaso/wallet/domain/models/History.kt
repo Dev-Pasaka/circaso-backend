@@ -59,6 +59,8 @@ data class Counterparty(
     val address: String?,
     /** Set when the other side is a group's wallet ([userId] is then that wallet's id; added 2026-11-03). */
     val groupId: ChatId? = null,
+    /** The verified badge of the person on the other side (2026-11-24). */
+    val verified: Boolean = false,
 )
 
 data class HistoryEntry(val transaction: WalletTransaction, val counterparty: Counterparty)

@@ -69,6 +69,16 @@ interface VerificationRepository {
         limit: Int,
     ): List<Verification>
 
+    /**
+     * Users' rows in the live environment that moved at or after [since], by subject id after [afterSubjectId]: what
+     * `ramp.announce-verifications` says again.
+     */
+    suspend fun liveUsersChangedSince(
+        since: Instant,
+        afterSubjectId: UUID?,
+        limit: Int,
+    ): List<Verification>
+
     /** Removes the subject's row in [environment], freeing its identity key; the row that was there, or null. */
     suspend fun delete(subject: Subject, environment: KycEnvironment): Verification?
 }

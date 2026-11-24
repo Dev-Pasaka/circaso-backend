@@ -80,7 +80,8 @@ fun parseUserId(raw: String?): UserId? = raw?.let(UserId::parse)
 
 // ---- result → response ----
 
-fun PublicProfile.toDto() = PublicProfileDto(userId.toString(), displayName, handle, avatarUrl, about, support)
+fun PublicProfile.toDto() =
+    PublicProfileDto(userId.toString(), displayName, handle, avatarUrl, about, support, verified, verifiedAt)
 
 fun MyProfile.toResponse() =
     MyProfileResponse(
@@ -92,6 +93,8 @@ fun MyProfile.toResponse() =
         avatarUrl,
         PrivacyDto(profile.privacy.avatar.name, profile.privacy.about.name, profile.privacy.handleLookup),
         profile.version,
+        profile.verified,
+        profile.verifiedAt,
     )
 
 fun UploadTarget.toResponse() = UploadUrlResponse(uploadUrl, objectKey, expiresInSeconds)

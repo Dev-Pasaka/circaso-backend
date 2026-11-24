@@ -3,6 +3,7 @@ package com.circaso.users.presentation.events
 import com.circaso.identity.api.AccountActivated
 import com.circaso.identity.api.AccountDeleted
 import com.circaso.identity.api.AccountStatusChanged
+import com.circaso.identity.api.IdentityVerificationChanged
 import com.circaso.identity.api.PhoneChanged
 import com.circaso.identity.api.SupportAccountCreated
 import com.circaso.shared.DomainException
@@ -29,6 +30,9 @@ class IdentityEventHandler(private val events: IdentityEventsService) {
                     // the event's time orders status changes, since stream retries can reorder them
                     AccountStatusChanged.TYPE to
                         EventHandler { orThrow(events.statusChanged(it.decode(), it.occurredAt)) },
+                    // the verified badge (2026-11-24), ordered by the event's time like a status change
+                    IdentityVerificationChanged.TYPE to
+                        EventHandler { orThrow(events.verificationChanged(it.decode(), it.occurredAt)) },
                     AccountDeleted.TYPE to EventHandler { orThrow(events.accountDeleted(it.decode())) },
                     SupportAccountCreated.TYPE to
                         EventHandler { orThrow(events.supportAccountCreated(it.decode())) },

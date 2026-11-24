@@ -159,6 +159,21 @@ class MemoryUsers :
         return true
     }
 
+    val verificationTimes = mutableMapOf<UserId, Instant>()
+
+    override suspend fun recordVerification(
+        userId: UserId,
+        verifiedAt: Instant?,
+        at: Instant,
+    ): Long? {
+        val profile = profiles[userId] ?: return null
+        if (verificationTimes[userId]?.let { !it.isBefore(at) } == true) return null
+        verificationTimes[userId] = at
+        val updated = profile.copy(verifiedAt = verifiedAt, version = profile.version + 1)
+        profiles[userId] = updated
+        return updated.version
+    }
+
     override suspend fun find(handle: String) = handles[handle]
 
     override suspend fun claim(
@@ -364,7 +379,11 @@ class MemoryBus : EventBus {
     override fun <E : DomainEvent> envelope(event: E, eventSerializer: KSerializer<E>) =
         EventEnvelope.of(event, eventSerializer)
 
-    override suspend fun publish(envelope: EventEnvelope) = Unit
+    val published = java.util.concurrent.CopyOnWriteArrayList<EventEnvelope>()
+
+    override suspend fun publish(envelope: EventEnvelope) {
+        published += envelope
+    }
 
     override fun subscribe(subscription: EventSubscription) = Unit
 }
