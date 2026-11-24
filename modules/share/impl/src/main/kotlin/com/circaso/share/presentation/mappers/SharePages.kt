@@ -3,19 +3,23 @@ package com.circaso.share.presentation.mappers
 import com.circaso.messaging.api.GroupLinkPage
 import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.domain.models.FiatRate
+import com.circaso.share.domain.models.PayLink
 import com.circaso.share.domain.models.ShareContent
 import com.circaso.share.domain.models.ShareKind
 import com.circaso.share.domain.models.ShareLink
 import com.circaso.share.domain.models.StatementLine
 import com.circaso.share.domain.support.Amounts
 import com.circaso.share.domain.support.Explorers
+import com.circaso.share.domain.support.PayLinks
 import com.circaso.share.domain.support.ShareConfig
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.util.Base64
 import java.util.Locale
 
 /** Which store "Get Circaso" points to, from the browser's User-Agent. */
@@ -203,6 +207,222 @@ object SharePages {
             lead = "Lots of links were opened from this connection. Try again in a minute.",
             note = null,
         )
+
+    // ---- a pay link: the address to pay, its network and coin, and a way into the app ----------------------------
+
+    /**
+     * The one script any of these pages runs: the pay page's Copy button (the clipboard needs a script). It only copies
+     * the address already on the page, by `navigator.clipboard`, else (in-app browsers that refuse it) a throwaway
+     * read-only text area and `execCommand('copy')`, so the exact characters are copied; failing both it selects the
+     * address and says so, aloud too. Without the script the button stays hidden and the hint says to select it.
+     */
+    private const val COPY_SCRIPT =
+        "(function(){var b=document.querySelector('[data-copy]');if(!b)return;" +
+            "var l=b.querySelector('.copy-label'),s=document.getElementById('copy-status')," +
+            "h=document.getElementById('copy-hint'),t;b.hidden=false;" +
+            "if(h)h.textContent='Or '+h.textContent.charAt(0).toLowerCase()+h.textContent.slice(1);" +
+            "function say(m){s.textContent='';setTimeout(function(){s.textContent=m;},50);}" +
+            "function done(ok){l.textContent=ok?'Copied':'Select the address to copy it';" +
+            "say(ok?'Address copied':\"Couldn't copy. Select the address to copy it.\");" +
+            "b.classList.toggle('done',ok);clearTimeout(t);" +
+            "t=setTimeout(function(){l.textContent='Copy address';b.classList.remove('done');},1800);}" +
+            "function fallback(a){var x=document.createElement('textarea'),ok=false;x.value=a;" +
+            "x.setAttribute('readonly','');x.style.position='fixed';x.style.opacity='0';" +
+            "document.body.appendChild(x);x.select();try{ok=document.execCommand('copy');}catch(e){}" +
+            "document.body.removeChild(x);if(!ok){var r=document.createRange(),g=window.getSelection();" +
+            "r.selectNodeContents(document.querySelector('.address'));g.removeAllRanges();g.addRange(r);}return ok;}" +
+            "b.addEventListener('click',function(){var a=b.getAttribute('data-copy');" +
+            "if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(a)" +
+            ".then(function(){done(true);},function(){done(fallback(a));});}else{done(fallback(a));}});})();"
+
+    /** A pay link's page may run [COPY_SCRIPT] and nothing else (by its hash), on top of what every page may load. */
+    val PAY_CONTENT_SECURITY_POLICY: String =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src https://assets.circaso.com; " +
+            "script-src 'sha256-${sha256(COPY_SCRIPT)}'; " +
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+    /**
+     * A pay link (decision 2026-11-24): what a phone's camera or another app opens when the Circaso app isn't there to
+     * take it. The network in the heading, the address grouped in fours with Copy, the one warning, "Open in Circaso".
+     * Only what is in the link is shown; nothing is looked up, and nothing here takes input.
+     */
+    fun pay(
+        link: PayLink.Payable,
+        config: ShareConfig,
+        platform: Platform,
+    ): String {
+        val chain = Explorers.chainName(link.blockchain)
+        val chainHtml = esc(chain)
+        val groups = addressGroups(link.address)
+        val testnet = chain.endsWith("(testnet)")
+        val hint = if (platform == Platform.OTHER) "Select the address to copy it." else "Press and hold the address to copy it."
+        val amount =
+            link.amount?.let {
+                "<p class=\"pay-amount\"><span class=\"pay-amount-label\">Amount</span> " +
+                    "<span class=\"pay-amount-num\">${esc(ShareTexts.usdc(BigDecimal(it)))}</span> " +
+                    "<span class=\"amount-code\">USDC</span></p>"
+            }.orEmpty()
+        val amountWarn =
+            if (link.amountUnreadable) {
+                "<aside class=\"warn rise\">$WARN<p>This link had an amount that couldn't be read, so none is shown. " +
+                    "Check the amount with the person you're paying.</p></aside>"
+            } else {
+                ""
+            }
+        val chip =
+            if (testnet) "<p class=\"network\"><span class=\"dot\" aria-hidden=\"true\"></span>Test network</p>" else ""
+        val testnetWords = if (testnet) " This is a test network: only test USDC belongs here." else ""
+        val query = payQuery(link)
+        val main =
+            """
+            <section class="address-head rise">
+              <span class="coin" aria-hidden="true">$COIN</span>
+              <h1>Send USDC <span class="pay-on">on <b>$chainHtml</b></span></h1>
+              $chip
+              $amount
+            </section>
+            $amountWarn
+            <article class="address-card rise">
+              <p class="address-label">To this address</p>
+              <p class="sr">${groups.joinToString(", ") { esc(it) }}</p>
+              <p class="address" aria-hidden="true">${groups.joinToString("") { "<span>${esc(it)}</span>" }}</p>
+              <button class="copy" type="button" data-copy="${esc(link.address)}" hidden>$COPY$COPIED<span class="copy-label">Copy address</span></button>
+              <span class="sr" id="copy-status" role="status" aria-live="polite"></span>
+              <p class="address-hint" id="copy-hint">$hint</p>
+            </article>
+            <aside class="warn rise">$WARN<p>Send only USDC on $chainHtml to this address. Other coins, or USDC on another network, can be lost.$testnetWords</p></aside>
+            <script>$COPY_SCRIPT</script>
+            """.trimIndent()
+        val spoken = link.amount?.let { "${ShareTexts.usdc(BigDecimal(it))} USDC" } ?: "USDC"
+        return document(
+            title = "Send USDC on $chain",
+            description = "Send $spoken on $chain. Open to see the full address.",
+            url = "${config.baseUrl}/pay/${link.address}?$query",
+            config = config,
+            kind = "Payment address",
+            main = main,
+            cta = payActions(link.address, query, config, platform),
+            footerHtml = "$LOCK<span>A Circaso pay link. This page only shows what is in the link.</span>",
+        )
+    }
+
+    /** A pay link that can't be paid: never an address to copy, only why and what to ask for. */
+    fun payProblem(
+        problem: PayLink,
+        config: ShareConfig,
+        platform: Platform,
+    ): String =
+        when (problem) {
+            is PayLink.UnknownChain -> {
+                // The link's own word is repeated only when it looks like a network's name.
+                val named = problem.chain?.takeIf { CHAIN_WORD.matches(it) }
+                notice(
+                    config,
+                    platform,
+                    glyph = GLYPH_MISSING,
+                    title = "Unknown network",
+                    lead =
+                        when {
+                            named != null -> "This link is for a network Circaso doesn't support ($named). $NOTHING"
+                            problem.chain != null -> "This link is for a network Circaso doesn't support. $NOTHING"
+                            else -> "This link doesn't say which network to pay on. $NOTHING"
+                        },
+                    note = "Ask for a USDC address on $SUPPORTED.",
+                )
+            }
+
+            PayLink.NotUsdc -> {
+                notice(
+                    config,
+                    platform,
+                    glyph = GLYPH_MISSING,
+                    title = "This link isn't for USDC",
+                    lead = "Circaso pay links are for USDC only, so nothing here can be paid.",
+                    note = "Ask for a USDC address instead.",
+                )
+            }
+
+            else -> {
+                notice(
+                    config,
+                    platform,
+                    glyph = GLYPH_MISSING,
+                    title = "This address isn't valid",
+                    lead = "The address in this link is incomplete or has a typo, so nothing here can be paid.",
+                    note = "Ask for the address again, or copy it from the person's wallet.",
+                )
+            }
+        }
+
+    /** The pay page couldn't be made (a fault here, not the link's): said as ours, never as a bad address. */
+    fun payUnavailable(config: ShareConfig, platform: Platform): String =
+        notice(
+            config,
+            platform,
+            glyph = GLYPH_WAIT,
+            title = "This page couldn't be shown",
+            lead = "Something went wrong on our side. Try again in a minute.",
+            note = null,
+        )
+
+    /** "Base, Polygon, Ethereum or Solana": the mainnets pay links accept, by name. */
+    private val SUPPORTED: String =
+        PayLinks.CHAINS
+            .map { Explorers.chainName(it) }
+            .filterNot { it.endsWith("(testnet)") }
+            .distinct()
+            .let { names -> names.dropLast(1).joinToString(", ") + " or " + names.last() }
+
+    private const val NOTHING = "Nothing here can be paid."
+
+    private val CHAIN_WORD = Regex("^[A-Z0-9-]{1,16}$")
+
+    /** `chain=…&asset=USDC[&amount=…]`: only what the link had, all of it checked, nothing added. */
+    private fun payQuery(link: PayLink.Payable): String =
+        "chain=${link.blockchain}&asset=USDC" + (link.amount?.let { "&amount=$it" } ?: "")
+
+    /**
+     * "Open in Circaso" and "Get Circaso". On Android the intent opens the app's `circaso://pay/…` filter and falls
+     * back to the store. On iOS this page shows almost only when the app isn't installed (a Universal Link would have
+     * opened it), and the scheme dead-ends without the app, so "Get Circaso" leads there. A computer gets only the store.
+     */
+    private fun payActions(
+        address: String,
+        query: String,
+        config: ShareConfig,
+        platform: Platform,
+    ): String {
+        val store = storeUrl(config, platform)
+        return when (platform) {
+            Platform.ANDROID -> {
+                val fallback = URLEncoder.encode(config.androidStoreUrl, StandardCharsets.UTF_8)
+                actions(
+                    "intent://pay/$address?$query#Intent;scheme=circaso;package=${config.androidPackage};" +
+                        "S.browser_fallback_url=$fallback;end",
+                    store,
+                    "Open in Circaso",
+                )
+            }
+
+            Platform.IOS -> {
+                "<nav class=\"cta\" aria-label=\"Circaso\"><a class=\"button\" href=\"${esc(store)}\">Get Circaso</a>" +
+                    "<a class=\"button secondary\" href=\"${esc("circaso://pay/$address?$query")}\">Open in Circaso</a></nav>"
+            }
+
+            Platform.OTHER -> {
+                actions(null, store, "Open in Circaso")
+            }
+        }
+    }
+
+    /** `0x7a3f 9c21 …`: an address in fours, the `0x` kept with the first group, as the app and the portal write it. */
+    private fun addressGroups(address: String): List<String> {
+        val prefix = if (address.startsWith("0x")) "0x" else ""
+        return address.removePrefix(prefix).chunked(4).mapIndexed { i, g -> if (i == 0) prefix + g else g }
+    }
+
+    private fun sha256(text: String): String =
+        Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(text.toByteArray(StandardCharsets.UTF_8)))
 
     // ---- a payment: who paid whom, the money card, its status like a message's -----------------------------------
 
@@ -454,7 +674,8 @@ object SharePages {
             if (platform == Platform.OTHER) "Select the address to copy it." else "Press and hold the address to copy it."
         val chain = esc(Explorers.chainName(a.blockchain))
         val owner = a.name?.let { "<p class=\"sub\">${esc(it)}'s wallet</p>" }.orEmpty()
-        val groups = a.address.chunked(4).joinToString("") { "<span>${esc(it)}</span>" }
+        val parts = addressGroups(a.address)
+        val groups = parts.joinToString("") { "<span>${esc(it)}</span>" }
         return """
             <section class="address-head rise">
               <span class="coin" aria-hidden="true">$COIN</span>
@@ -464,7 +685,7 @@ object SharePages {
             </section>
             <article class="address-card rise">
               <p class="address-label">Address</p>
-              <p class="sr">${esc(a.address)}</p>
+              <p class="sr">${parts.joinToString(", ") { esc(it) }}</p>
               <p class="address" aria-hidden="true">$groups</p>
               <p class="address-hint">$hint</p>
             </article>
@@ -751,6 +972,16 @@ object SharePages {
             "c-1.7 0-2.9.9-2.9 2.1s1.1 1.8 2.9 2.1s3.1 1 3.1 2.3s-1.3 2.1-3.1 2.1c-1.5 0-2.7-.6-3.2-1.6\" " +
             "fill=\"none\" " +
             "stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/></svg>"
+    private const val COPY =
+        "<svg class=\"copy-icon\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">" +
+            "<rect x=\"8.5\" y=\"8.5\" " +
+            "width=\"11\" height=\"11\" rx=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/>" +
+            "<path d=\"M15.5 8.5V7a2.5 2.5 0 0 0-2.5-2.5H7A2.5 2.5 0 0 0 4.5 7v6A2.5 2.5 0 0 0 7 15.5h1.5\" " +
+            "fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/></svg>"
+    private const val COPIED =
+        "<svg class=\"done-icon\" width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">" +
+            "<path d=\"M6.5 12.5l3.5 3.5 7.5-8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" " +
+            "stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>"
     private const val PERSON =
         "<svg width=\"55%\" height=\"55%\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"8.5\" r=\"4\" " +
             "fill=\"currentColor\"/><path d=\"M4.5 20c.8-3.8 3.9-6 7.5-6s6.7 2.2 7.5 6z\" fill=\"currentColor\"/></svg>"

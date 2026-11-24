@@ -4,6 +4,8 @@ import com.circaso.messaging.api.GroupLinkPhoto
 import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.domain.models.GroupPageLookup
 import com.circaso.share.domain.models.PageLookup
+import com.circaso.share.domain.models.PayLink
+import com.circaso.share.domain.usecases.ReadPayLink
 import com.circaso.share.domain.usecases.ViewGroupLinkPage
 import com.circaso.share.domain.usecases.ViewGroupLinkPhoto
 import com.circaso.share.domain.usecases.ViewSharePage
@@ -14,6 +16,7 @@ class SharePageService(
     private val viewSharePage: ViewSharePage,
     private val viewGroupLinkPage: ViewGroupLinkPage,
     private val viewGroupLinkPhoto: ViewGroupLinkPhoto,
+    private val readPayLink: ReadPayLink = ReadPayLink(),
 ) {
     suspend fun view(rawCode: String?, callerAddress: String): Resource<PageLookup> =
         viewSharePage(rawCode, callerAddress)
@@ -24,4 +27,12 @@ class SharePageService(
 
     suspend fun groupPhoto(token: GroupLinkToken, callerAddress: String): Resource<GroupLinkPhoto?> =
         viewGroupLinkPhoto(token, callerAddress)
+
+    /** A pay link's page (decision 2026-11-24): the link's own address, chain, coin and amount, checked. */
+    suspend fun payLink(
+        address: String?,
+        chain: String?,
+        asset: String?,
+        amount: String?,
+    ): Resource<PayLink> = readPayLink(address, chain, asset, amount)
 }

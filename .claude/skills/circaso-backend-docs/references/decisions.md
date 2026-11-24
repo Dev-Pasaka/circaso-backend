@@ -249,6 +249,15 @@ Decided by Pasaka; the design calls below made by the backend session to the pre
 - **Opening the app**: Android App Links (`assetlinks.json`, `SHARE_ANDROID_CERT_SHA256`) and iOS Universal Links (`apple-app-site-association`, `/s/*`) on the share host; the page's "Open in Circaso" is `circaso://s/{code}`; the app calls SH4 and shows the link natively.
 - **Public routes outside `/v1`** go through a new `shared-web` seam, `PageContributor`, mounted by the gateway at the root; the gateway's version check, tokens, scopes and idempotency don't apply to them, so the page brings its own guards.
 
+## 2026-11-24 — Pay links: Circaso's payment QR codes carry only the recipient
+
+Approved by Pasaka. The app's Receive code and the merchant portal's top-up code were EIP-681 (`ethereum:<USDC contract>@<chain>/transfer?address=<to>`); some exchange withdrawal scanners take the first `0x…` in a code, which is the token contract, and funds sent there are lost. Both codes are now one Circaso pay link, `https://<share host>/pay/<address>?chain=<Circle name>&asset=USDC[&amount=<decimal>]`.
+
+- **The only `0x…` is the recipient.** A naive scanner gets the right address; a strict one rejects the code and the person copies the address. Nobody can grab the contract.
+- **Circaso still prefills everything.** The app reads the link (scan, paste, App Links and Universal Links on the share host, `/pay/*` added to the association file) into Send to a Wallet with the recipient, chain and coin (and amount).
+- **Anything else opens a page** (`GET /pay/{address}`, share module, `ReadPayLink`): static and read-only, nothing stored or looked up, no form. Strict validation: EIP-55 when mixed case (Keccak-256 in plain Kotlin so the domain stays library-free), a 32-byte base58 key on Solana chains, the chains Circaso offers, USDC only; an invalid link never shows an address. The Copy button is the only script on any share page, allowed by its hash in the CSP.
+- **nginx** passes `/pay/` through like `/s/` (`deploy/nginx/locations.inc`), so its 404/400 pages are the designed ones; the server's copy of the file must be updated by hand (the deploy copies nothing there).
+
 ## 2026-11-14 — Group join links and the group description
 
 Owner's request: "Add a way where people can share links and people can join from those links. The link should have a preview (group name, etc.). We don't have a group description today; add one." The purpose is moving existing WhatsApp groups onto Circaso without the admin adding everyone.

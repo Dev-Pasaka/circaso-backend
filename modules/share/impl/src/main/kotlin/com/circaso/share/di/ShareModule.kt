@@ -17,6 +17,7 @@ import com.circaso.share.domain.usecases.CreateShareLink
 import com.circaso.share.domain.usecases.ListShareLinks
 import com.circaso.share.domain.usecases.OpenGroupLink
 import com.circaso.share.domain.usecases.OpenShareLink
+import com.circaso.share.domain.usecases.ReadPayLink
 import com.circaso.share.domain.usecases.RemoveAccountLinks
 import com.circaso.share.domain.usecases.RevokeShareLink
 import com.circaso.share.domain.usecases.ViewGroupLinkPage
@@ -106,10 +107,11 @@ fun shareModule(config: Config): Module =
         single { ViewGroupLinkPage(get(), get(), share) }
         single { ViewGroupLinkPhoto(get(), get(), share) }
         single { OpenGroupLink(get()) }
+        single { ReadPayLink() }
 
         // presentation
         single { ShareService(get(), get(), get(), get(), get()) }
-        single { SharePageService(get(), get(), get()) }
+        single { SharePageService(get(), get(), get(), get()) }
         single { IdentityEventsService(get()) }
         single<RouteContributor>(named("share.routes")) {
             val shares = get<ShareService>()

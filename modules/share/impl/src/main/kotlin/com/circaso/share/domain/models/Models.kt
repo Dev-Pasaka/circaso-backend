@@ -157,3 +157,26 @@ sealed interface GroupPageLookup {
 
     data class Throttled(val retryAfterSeconds: Long) : GroupPageLookup
 }
+
+/**
+ * What a pay link (`/pay/<address>?chain=…&asset=USDC[&amount=…]`, decision 2026-11-24) says, read strictly: payable
+ * only with a valid address for a chain Circaso offers and USDC.
+ */
+sealed interface PayLink {
+    /** [amount] is normalised ("12.5"); [amountUnreadable] when the link had one that couldn't be read exactly. */
+    data class Payable(
+        val address: String,
+        val blockchain: String,
+        val amount: String?,
+        val amountUnreadable: Boolean = false,
+    ) : PayLink
+
+    /** Not an address, a mistyped one (EIP-55), or one of the other kind for its chain. */
+    data object BadAddress : PayLink
+
+    /** No chain, or one Circaso doesn't offer ([chain], cut short, as the link had it). */
+    data class UnknownChain(val chain: String?) : PayLink
+
+    /** A coin other than USDC. */
+    data object NotUsdc : PayLink
+}

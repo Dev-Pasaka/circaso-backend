@@ -23,6 +23,7 @@ import com.circaso.share.domain.usecases.CreateShareLink
 import com.circaso.share.domain.usecases.ListShareLinks
 import com.circaso.share.domain.usecases.OpenGroupLink
 import com.circaso.share.domain.usecases.OpenShareLink
+import com.circaso.share.domain.usecases.ReadPayLink
 import com.circaso.share.domain.usecases.RemoveAccountLinks
 import com.circaso.share.domain.usecases.RevokeShareLink
 import com.circaso.share.domain.usecases.ViewGroupLinkPage
@@ -243,6 +244,7 @@ class ShareHarness {
             ViewSharePage(links, snapshots, throttle, config, clock),
             ViewGroupLinkPage(groupLinks, throttle, config),
             ViewGroupLinkPhoto(groupLinks, throttle, config),
+            ReadPayLink(),
         )
     val identity = IdentityEventsService(RemoveAccountLinks(links))
 

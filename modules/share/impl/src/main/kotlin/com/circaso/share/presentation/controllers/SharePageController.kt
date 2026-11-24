@@ -3,6 +3,7 @@ package com.circaso.share.presentation.controllers
 import com.circaso.messaging.api.GroupLinkToken
 import com.circaso.share.domain.models.GroupPageLookup
 import com.circaso.share.domain.models.PageLookup
+import com.circaso.share.domain.models.PayLink
 import com.circaso.share.domain.support.ShareConfig
 import com.circaso.share.presentation.dto.AppLinksComponentDto
 import com.circaso.share.presentation.dto.AppLinksDetailDto
@@ -34,7 +35,8 @@ import kotlinx.serialization.builtins.ListSerializer
 /**
  * The public side of share links, at the root of the share host rather than under `/v1` (decision 2026-11-06):
  * `GET /s/{code}`, the page for browsers and link previews (a share link's, or a group join link's with its published
- * photo at `/s/{token}/photo`, decision 2026-11-14), and the two files that make a link open the app when it
+ * photo at `/s/{token}/photo`, decision 2026-11-14), `GET /pay/{address}`, a pay link's page (decision 2026-11-24), and
+ * the two files that make a link open the app when it
  * is installed, `/.well-known/assetlinks.json` (Android App Links) and `/.well-known/apple-app-site-association` (iOS
  * Universal Links). No token, no envelope: they answer with the page or the file. The page counts views per caller
  * address itself, is `noindex`, never cached, and loads nothing but its own style and the logo. Hidden from the
@@ -92,6 +94,49 @@ fun Route.sharePageController(pages: SharePageService, config: ShareConfig) {
         }.hide()
     }
 
+    // A pay link (decision 2026-11-24): `/pay/<address>?chain=…&asset=USDC[&amount=…]`, the form Circaso's payment
+    // QR codes take. The app opens it when installed (App Links, Universal Links); anything else gets this page.
+    route("/pay") {
+        get("{address}") {
+            val platform = Platform.of(call.request.header(HttpHeaders.UserAgent))
+            val q = call.request.queryParameters
+            val link =
+                (
+                    pages.payLink(
+                        call.parameters["address"],
+                        q["chain"],
+                        q["asset"],
+                        q["amount"],
+                    ) as? Resource.Success
+                )?.data
+            when (link) {
+                is PayLink.Payable -> {
+                    call.respondPage(
+                        SharePages.pay(link, config, platform),
+                        HttpStatusCode.OK,
+                        SharePages.PAY_CONTENT_SECURITY_POLICY,
+                    )
+                }
+
+                PayLink.BadAddress -> {
+                    call.respondPage(
+                        SharePages.payProblem(PayLink.BadAddress, config, platform),
+                        HttpStatusCode.NotFound,
+                    )
+                }
+
+                // A fault here, not the link's: never blamed on the person's address.
+                null -> {
+                    call.respondPage(SharePages.payUnavailable(config, platform), HttpStatusCode.InternalServerError)
+                }
+
+                else -> {
+                    call.respondPage(SharePages.payProblem(link, config, platform), HttpStatusCode.BadRequest)
+                }
+            }
+        }.hide()
+    }
+
     route("/.well-known") {
         get("assetlinks.json") {
             if (config.androidCertFingerprints.isEmpty()) {
@@ -118,8 +163,12 @@ fun Route.sharePageController(pages: SharePageService, config: ShareConfig) {
                             listOf(
                                 AppLinksDetailDto(
                                     appIDs = config.iosAppIds,
-                                    components = listOf(AppLinksComponentDto("/s/*", "Share links")),
-                                    paths = listOf("/s/*"),
+                                    components =
+                                        listOf(
+                                            AppLinksComponentDto("/s/*", "Share links"),
+                                            AppLinksComponentDto("/pay/*", "Pay links"),
+                                        ),
+                                    paths = listOf("/s/*", "/pay/*"),
                                 ),
                             ),
                     ),
