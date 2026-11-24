@@ -29,8 +29,9 @@ import java.time.Duration
 /**
  * The merchant as the portal shows them (RM2): what is set up, the float wallet to fund and what it holds, and what
  * still stands between them and going online. Online means inside a session (a timed window, or open-ended until they
- * stop it) **and** unlocked on this node: a node that restarted holds no keys, so its merchants read as offline, with
- * the reason `RESTART`, until they unlock again.
+ * stop it) **and** unlocked on this node. A node that restarted restores its merchants' keys before it starts its jobs
+ * (2026-11-24); one whose session couldn't be restored reads as offline, with the reason `RESTART`, until they unlock
+ * again.
  */
 class MerchantViews(
     private val wallets: MerchantWalletRepository,
@@ -108,8 +109,9 @@ class MerchantViews(
     }
 
     /**
-     * The session as the portal shows it. A session the database still holds but whose keys this node lost reads as
-     * offline for `RESTART` at once, before `ramp.end-sessions` ends it in the database within the minute.
+     * The session as the portal shows it. A session the database still holds but whose keys this node doesn't hold
+     * (its working copy couldn't be restored) reads as offline for `RESTART` at once, before `ramp.end-sessions` ends
+     * it in the database within the minute.
      */
     fun presenceOf(merchant: Merchant): OnlineView {
         val now = clock.instant()

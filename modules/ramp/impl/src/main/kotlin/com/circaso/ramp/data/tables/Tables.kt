@@ -41,6 +41,7 @@ object SettingsTable : Table("ramp.settings") {
     val withdrawDestinationDelayHours = integer("withdraw_destination_delay_hours").default(24)
     val withdrawMinMinor = long("withdraw_min_minor").default(1_000_000)
     val withdrawDailyMaxMinor = long("withdraw_daily_max_minor").default(0)
+    val onlineSessionMaxDays = integer("online_session_max_days").default(30)
     val walletSetId = text("wallet_set_id").nullable()
     val updatedBy = text("updated_by").nullable()
     val updatedAt = timestamp("updated_at")

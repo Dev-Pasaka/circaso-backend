@@ -1,6 +1,7 @@
 package com.circaso.ramp.presentation.services
 
 import com.circaso.integrations.api.KycEnvironment
+import com.circaso.ramp.domain.models.SessionTally
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.TestPayouts
@@ -14,6 +15,7 @@ import com.circaso.ramp.domain.usecases.HandleSaleTransfer
 import com.circaso.ramp.domain.usecases.HasOpenOrder
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.ReplayFrames
+import com.circaso.ramp.domain.usecases.RestoreSessions
 import com.circaso.ramp.domain.usecases.RunRechecks
 import com.circaso.ramp.domain.usecases.SettleFees
 import com.circaso.ramp.domain.usecases.SweepOrders
@@ -44,6 +46,7 @@ class RampEventsService(
     private val callbackSigningSecret: CallbackSigningSecret,
     private val topUps: MerchantTopUps,
     private val announceVerificationsUseCase: AnnounceVerifications,
+    private val restoreSessionsUseCase: RestoreSessions,
 ) {
     /** The webhook signing secret for a callback on the address ending in [callbackKey], or null. */
     suspend fun callbackSecret(callbackKey: String): String? = callbackSigningSecret(callbackKey)
@@ -75,6 +78,12 @@ class RampEventsService(
     suspend fun sweep(network: Network): Int = sweepOrders(network)
 
     suspend fun endSessions(): Int = endSessionsUseCase()
+
+    /** What the last `ramp.end-sessions` run restored or ended. */
+    fun lastSessionTally(): SessionTally = endSessionsUseCase.last
+
+    /** As the app starts: the merchants' sessions restored from their working copies, or ended. */
+    suspend fun restoreSessions(): SessionTally = restoreSessionsUseCase()
 
     suspend fun missedFrames(userId: UserId, seq: Long): Resource<List<LoggedFrame>?> = replayFrames(userId, seq)
 

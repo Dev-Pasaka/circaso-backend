@@ -205,6 +205,7 @@ fun OpsRampSettings.toDto() =
         withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: 0,
         withdrawMinMinor = (withdrawMinMinor ?: 0).toString(),
         withdrawDailyMaxMinor = (withdrawDailyMaxMinor ?: 0).toString(),
+        onlineSessionMaxDays = onlineSessionMaxDays ?: 0,
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -271,6 +272,7 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             withdrawDestinationDelayHours = withdrawDestinationDelayHours,
             withdrawMinMinor = selling[4],
             withdrawDailyMaxMinor = selling[5],
+            onlineSessionMaxDays = onlineSessionMaxDays,
         ),
     )
 }

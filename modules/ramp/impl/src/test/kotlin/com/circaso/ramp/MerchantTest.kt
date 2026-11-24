@@ -535,7 +535,7 @@ class MerchantTest {
             val order = ramp.prompted()
             ramp.collections.pay(order)
 
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
 
             assertFalse(ramp.getMerchant(id, TESTNET).getOrNull()!!.online)
             assertEquals(

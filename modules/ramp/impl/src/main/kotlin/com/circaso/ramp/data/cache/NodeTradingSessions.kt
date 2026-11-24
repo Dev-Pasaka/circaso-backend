@@ -10,12 +10,12 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Unlocked payment keys, **in this process's memory and nowhere else**. `rmp:session:{merchantId}` in Redis holds only
- * this node's id, for the length of the trading window: it says the merchant is online and where their keys are, never
- * what they are. A session with no end (online until stopped) is marked for [OPEN_ENDED_MARK] at a time, renewed by
- * `ramp.end-sessions` while this node runs. A restart empties the map, so this node's merchants are offline until they
- * unlock again (`ramp.end-sessions` ends their sessions with `RESTART`); their Redis marks name a node id that no
- * longer exists and expire with the window, or within [OPEN_ENDED_MARK].
+ * Unlocked payment keys in this process's memory. `rmp:session:{merchantId}` in Redis holds only this node's id, for
+ * the length of the trading window: it says the merchant is online and where their keys are, never what they are. A
+ * session with no end (online until stopped) is marked for [OPEN_ENDED_MARK] at a time, renewed by
+ * `ramp.end-sessions` while this node runs. A restart empties the map; the session's encrypted working copy
+ * (`rmp:online:{merchantId}`, [com.circaso.ramp.domain.ports.OnlineSessionCopies], written and deleted by the domain)
+ * is what the restarted node restores the keys from, through [adopt].
  *
  * One node is enough for now: nothing hands a provider call to the node that holds the keys, so a merchant unlocked on
  * another node isn't a candidate here.
@@ -55,6 +55,25 @@ class NodeTradingSessions(private val redis: RedisScope, private val nodeId: Str
     }
 
     override fun held(): Set<MerchantId> = keys.keys.toSet()
+
+    override suspend fun adopt(
+        merchantId: MerchantId,
+        keys: UnlockedKeys,
+        until: Instant?,
+    ): Boolean {
+        if (this.keys.putIfAbsent(merchantId, keys) != null) return false
+        if (until == null) {
+            redis.set(mark(merchantId), nodeId, OPEN_ENDED_MARK)
+        } else {
+            val window = Duration.between(clock.instant(), until).takeIf { !it.isNegative && !it.isZero }
+            if (window != null) redis.set(mark(merchantId), nodeId, window)
+        }
+        return true
+    }
+
+    override fun release(merchantId: MerchantId, keys: UnlockedKeys) {
+        this.keys.remove(merchantId, keys)
+    }
 
     private fun mark(merchantId: MerchantId) = "session:$merchantId"
 

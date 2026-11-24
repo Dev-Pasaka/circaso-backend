@@ -164,6 +164,11 @@ data class RampSettingsDto(
     val withdrawDestinationDelayHours: Int = 24,
     val withdrawMinMinor: String = "1000000",
     val withdrawDailyMaxMinor: String = "0",
+    /**
+     * Days an open-ended merchant session survives server restarts and deploys without the merchant's PIN (1 to 90,
+     * default 30): how long the server keeps its encrypted working copy of their unlocked payment account.
+     */
+    val onlineSessionMaxDays: Int = 30,
 )
 
 /** One band of the fallback payout fee table: a payout up to `upToMinor` KES cents (inclusive) costs `feeMinor`. */
@@ -220,6 +225,7 @@ data class UpdateRampSettingsRequest(
     val withdrawDestinationDelayHours: Int? = null,
     val withdrawMinMinor: String? = null,
     val withdrawDailyMaxMinor: String? = null,
+    val onlineSessionMaxDays: Int? = null,
 )
 
 /**

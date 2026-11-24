@@ -12,6 +12,7 @@ import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Scheduler
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.StartupJob
 import com.circaso.infrastructure.api.WarmUp
 import com.circaso.infrastructure.impl.database.PoolTouch
 import com.circaso.infrastructure.impl.database.PostgresDatabases
@@ -42,6 +43,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.slf4j.MDCContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -109,7 +111,12 @@ fun Application.startInfrastructure() {
     koin.get<OutboxRelay>().register(scheduler)
     scheduler.registerAll(koin.getAll<ScheduledJob>())
     bus.start(scope)
-    scheduler.start(scope)
+    val startupJobs = koin.getAll<StartupJob>()
+    // The start-up jobs first, then the scheduler: a job never runs on state a start-up job is still putting back.
+    scope.launch {
+        runStartupJobs(startupJobs)
+        scheduler.start(scope)
+    }
 
     monitor.subscribe(ApplicationStopping) {
         bus.close()
@@ -176,6 +183,27 @@ internal fun CoroutineScope.launchAtStart(scheduler: Scheduler, jobs: Collection
         }
     }
 }
+
+/**
+ * Runs the app's [StartupJob]s one after the other, each within [STARTUP_JOB_BUDGET]; the scheduler starts after them.
+ * One that fails or runs out of time is logged by name and the rest go on.
+ */
+internal suspend fun runStartupJobs(jobs: Collection<StartupJob>) {
+    val log = LoggerFactory.getLogger("com.circaso.infrastructure.StartupJobs")
+    jobs.forEach { job ->
+        try {
+            withTimeoutOrNull(STARTUP_JOB_BUDGET.toMillis()) { job.job() }
+                ?: log.warn("startup job ran out of time: job={}", job.name)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("startup job failed: job={} error={}", job.name, e::class.simpleName)
+        }
+    }
+}
+
+/** The most one start-up job may hold up the start. */
+private val STARTUP_JOB_BUDGET: Duration = Duration.ofSeconds(20)
 
 /** How long one start-up run may hold its lock before another ops process may try. */
 private val OPS_START_LEASE: Duration = Duration.ofMinutes(5)

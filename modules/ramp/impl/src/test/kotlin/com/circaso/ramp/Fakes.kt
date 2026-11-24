@@ -59,6 +59,7 @@ import com.circaso.ramp.domain.models.AppliedRate
 import com.circaso.ramp.domain.models.CodeCheck
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
+import com.circaso.ramp.domain.models.OnlineSessionCopy
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.Priced
@@ -67,10 +68,12 @@ import com.circaso.ramp.domain.models.RateMode
 import com.circaso.ramp.domain.models.RatePause
 import com.circaso.ramp.domain.models.RateReading
 import com.circaso.ramp.domain.models.ReferenceRate
+import com.circaso.ramp.domain.models.StoredSession
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.KycGate
+import com.circaso.ramp.domain.ports.OnlineSessionCopies
 import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.PinAttempts
 import com.circaso.ramp.domain.ports.Pricing
@@ -835,8 +838,33 @@ class MemorySessions : TradingSessions {
 
     override fun held(): Set<MerchantId> = keys.keys.toSet()
 
-    /** The node restarted: nothing it held survives. */
+    override suspend fun adopt(
+        merchantId: MerchantId,
+        keys: UnlockedKeys,
+        until: Instant?,
+    ): Boolean {
+        if (this.keys.putIfAbsent(merchantId, keys) != null) return false
+        marks[merchantId] = until ?: Instant.MAX
+        return true
+    }
+
+    override fun release(merchantId: MerchantId, keys: UnlockedKeys) {
+        this.keys.remove(merchantId, keys)
+    }
+
+    /** The node restarted: nothing it held in memory survives (Redis, and the working copies in it, do). */
     fun restart() = keys.clear()
+}
+
+/** No working copies: for tests that never go online through RM6. */
+object NoSessionCopies : OnlineSessionCopies {
+    override suspend fun save(copy: OnlineSessionCopy, until: Instant) = Unit
+
+    override suspend fun load(merchantId: MerchantId): StoredSession = StoredSession.Missing
+
+    override suspend fun rekey(merchantId: MerchantId, keys: UnlockedKeys) = Unit
+
+    override suspend fun delete(merchantId: MerchantId) = Unit
 }
 
 class MemoryPinAttempts(private val clock: Clock) : PinAttempts {

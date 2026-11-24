@@ -210,9 +210,17 @@ class UpdateSettings(
     }
 
     private fun invalid(s: RampSettings): RampError.SettingsInvalid? {
-        val problem = moneyProblem(s) ?: kycProblem(s) ?: withdrawalProblem(s)
+        val problem = moneyProblem(s) ?: kycProblem(s) ?: withdrawalProblem(s) ?: sessionProblem(s)
         return problem?.let { (field, what) -> RampError.SettingsInvalid(field, what) }
     }
+
+    /** How long an open-ended session's working copy lasts: at least a day, at most [RampSettings.MAX_ONLINE_SESSION_MAX_DAYS]. */
+    private fun sessionProblem(s: RampSettings): Pair<String, String>? =
+        if (s.onlineSessionMaxDays !in 1..RampSettings.MAX_ONLINE_SESSION_MAX_DAYS) {
+            "onlineSessionMaxDays" to "must be 1 to ${RampSettings.MAX_ONLINE_SESSION_MAX_DAYS}"
+        } else {
+            null
+        }
 
     /** Float withdrawals (2026-11-24): the address delay within its range, a minimum, a daily cap of 0 or above it. */
     private fun withdrawalProblem(s: RampSettings): Pair<String, String>? =

@@ -220,7 +220,7 @@ class RampTest {
             val order = ramp.prompted()
             ramp.collections.pay(order)
 
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
             ramp.callback(order)
             ramp.clock.advance(3_600)
             ramp.sweep(TESTNET)

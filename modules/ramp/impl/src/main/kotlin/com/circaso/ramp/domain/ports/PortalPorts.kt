@@ -3,8 +3,10 @@ package com.circaso.ramp.domain.ports
 import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.CodeCheck
+import com.circaso.ramp.domain.models.OnlineSessionCopy
 import com.circaso.ramp.domain.models.Rewrapped
 import com.circaso.ramp.domain.models.SealedCredentials
+import com.circaso.ramp.domain.models.StoredSession
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.models.Unsealed
 import java.time.Duration
@@ -54,9 +56,28 @@ interface WebhookSecretVault {
 }
 
 /**
- * The merchants whose payment keys this node holds unlocked, in its own memory only (never the database, Redis, a log
- * or an event). Redis holds just the fact that a merchant is online and on which node (`rmp:session:{merchantId}`).
- * A node that restarts holds nothing: its merchants are offline until they unlock again.
+ * The encrypted working copy of each online merchant's unlocked keys, in Redis (`rmp:online:{merchantId}`, decision
+ * 2026-11-24): what lets a restarted server put its merchants back online without their PIN. AES-256-GCM under a key
+ * derived from the ramp's master key alone (HKDF, `ramp/online-session/v1`), bound to the merchant, the network and
+ * the session; never plaintext, never logged. It lasts as long as the session may (a window's end, or
+ * `online_session_max_days` for an open-ended one) and is deleted the moment the session ends.
+ */
+interface OnlineSessionCopies {
+    /** Writes [copy], kept until [until]; nothing when [until] has passed or the server has no master key. */
+    suspend fun save(copy: OnlineSessionCopy, until: Instant)
+
+    suspend fun load(merchantId: MerchantId): StoredSession
+
+    /** Swaps the keys of the merchant's copy, if there is one, keeping its session and its expiry. */
+    suspend fun rekey(merchantId: MerchantId, keys: UnlockedKeys)
+
+    suspend fun delete(merchantId: MerchantId)
+}
+
+/**
+ * The merchants whose payment keys this node holds unlocked, in its memory. Redis holds the fact that a merchant is
+ * online and on which node (`rmp:session:{merchantId}`), and, separately and encrypted, the session's working copy
+ * ([OnlineSessionCopies]) a restarted node restores them from.
  *
  * One node is enough for now: a step that needs a merchant's keys runs only on the node that holds them, and nothing
  * routes work to another node yet.
@@ -96,6 +117,19 @@ interface TradingSessions {
 
     /** Every merchant whose keys this node holds. */
     fun held(): Set<MerchantId>
+
+    /**
+     * Keeps [keys] restored from a working copy and marks the merchant online on this node as [unlock] does, unless
+     * this node already holds keys for them (then nothing changes). True when this call put them there.
+     */
+    suspend fun adopt(
+        merchantId: MerchantId,
+        keys: UnlockedKeys,
+        until: Instant?,
+    ): Boolean
+
+    /** Drops [keys] if they are still the ones held: a restore that lost a race with going offline. */
+    fun release(merchantId: MerchantId, keys: UnlockedKeys)
 }
 
 /** Wrong-PIN tries per merchant (`rmp:pin:{merchantId}`): five lock PIN entry for thirty minutes. */

@@ -9,6 +9,7 @@ import com.circaso.integrations.api.KycDocument
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.data.cache.RedisOnlineSessionCopies
 import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.Eip55Addresses
 import com.circaso.ramp.data.support.EnvelopeVault
@@ -60,6 +61,7 @@ import com.circaso.ramp.domain.support.SaleFlow
 import com.circaso.ramp.domain.support.SaleFunding
 import com.circaso.ramp.domain.support.SalePayouts
 import com.circaso.ramp.domain.support.SaleRefunds
+import com.circaso.ramp.domain.support.SessionRestorer
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
@@ -106,6 +108,7 @@ import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveOrder
 import com.circaso.ramp.domain.usecases.ResolveSession
+import com.circaso.ramp.domain.usecases.RestoreSessions
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.RunRechecks
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
@@ -203,7 +206,9 @@ class Harness {
 
     private val transactor = DirectTransactor()
     val transport = HttpPromptTransport()
-    val presence = Presence(merchants, orders, sessions, clock)
+    val redis = MemoryRedis(clock)
+    val copies = RedisOnlineSessionCopies(redis, { EnvelopeVault.masterKey(masterKey) }, clock)
+    val presence = Presence(merchants, orders, sessions, clock, copies)
     val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
     val verifications =
         Verifications(
@@ -383,14 +388,23 @@ class Harness {
     val getMerchant = GetMerchant(merchants, views, verificationRows, verifications, book)
     val applyAsMerchant = ApplyAsMerchant(merchants, views)
     val storePayments =
-        StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock)
+        StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock, copies)
     val rotateCallback = RotateCallback(merchants, credentials, tokens, book)
     val goOnline =
-        GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, providers, book, clock)
+        GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, providers, book, clock, copies)
     val goOffline = GoOffline(presence, clock)
     val changePin = ChangePin(credentials, pins, clock)
     val merchantOrders = ListMerchantOrders(orders)
-    val endSessions = EndSessions(merchants, orders, sessions, email, clock, topUpRows)
+    val restorer = SessionRestorer(merchants, sessions, copies, email, clock)
+    val endSessions = EndSessions(merchants, orders, sessions, clock, topUpRows, restorer)
+    val restoreSessions = RestoreSessions(merchants, restorer, clock)
+
+    /** A restart that also lost Redis (or its working copies): what used to happen on every restart. */
+    fun restartLosingCopies() {
+        sessions.restart()
+        redis.flush()
+    }
+
     val earnings = GetEarnings(ledger, ledger, book, clock)
     val statement = GetStatement(ledger, clock)
 

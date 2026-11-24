@@ -385,7 +385,7 @@ class MerchantRoutesTest {
             val later = client.get(base) { header("X-Merchant-Session", portal) }.data()
             assertEquals(expected, later.getValue("online").toString(), "no end time: days later it is still on")
 
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
 
             val restarted = client.get(base) { header("X-Merchant-Session", portal) }.data().getValue("online")
             assertEquals(
@@ -1007,7 +1007,7 @@ class MerchantRoutesTest {
     fun `RM19 offline asks for the PIN on field pin`() =
         testApplication {
             serve()
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
             val session = signIn("crynce@example.com")
 
             val offline =
