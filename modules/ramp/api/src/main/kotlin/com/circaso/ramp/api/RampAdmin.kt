@@ -158,7 +158,21 @@ data class OpsRampSettings(
     val withdrawDailyMaxMinor: Long? = null,
     /** Days an open-ended trading session survives server restarts without the PIN (1 to 90); null: unchanged. */
     val onlineSessionMaxDays: Int? = null,
+    /**
+     * Buying's fee bands by the order's KES amount (2026-11-24): the band what the user pays falls in sets [feeBps]
+     * for the whole amount. Always set on a read (one band when the fee is flat); null on an update keeps them, unless
+     * [feeBps] changed, which then sets both directions to one band at it (what an older admin meant).
+     */
+    val onRampFeeBands: List<OpsRampFeeBand>? = null,
+    /** Selling's own bands, by the KES value of the USDC sold (what its fee is charged on); as [onRampFeeBands]. */
+    val offRampFeeBands: List<OpsRampFeeBand>? = null,
 )
+
+/**
+ * One band of a ramp fee: an order of at least [fromMinor] and below [toMinor] (null: no end) KES minor units pays
+ * [feeBps] of its whole amount. From 0 upward, no gaps or overlaps, the last open-ended, each 0 to 500 bps.
+ */
+data class OpsRampFeeBand(val fromMinor: Long, val toMinor: Long?, val feeBps: Int)
 
 /** One band of staff's payout fee table: an amount up to [upToMinor] (inclusive) costs [feeMinor]. KES minor units. */
 data class OpsPayoutFeeBand(val upToMinor: Long, val feeMinor: Long)

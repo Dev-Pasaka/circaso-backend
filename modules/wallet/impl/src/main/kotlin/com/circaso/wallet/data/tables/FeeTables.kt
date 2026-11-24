@@ -32,6 +32,9 @@ object FeeRulesTable : Table("wallet.fee_rules") {
     val minFeeUsd = decimal("min_fee_usd", 20, 6).nullable()
     val gasShareMaxBps = integer("gas_share_max_bps").default(2_500)
     val gasMarginBps = integer("gas_margin_bps").default(2_000)
+
+    /** V15 (2026-11-24): the amount bands as a JSON list; null is the flat [rateBps]. */
+    val bands = text("bands").nullable()
     val effectiveFrom = timestamp("effective_from")
     val effectiveTo = timestamp("effective_to").nullable()
     val note = text("note").nullable()
@@ -82,6 +85,9 @@ object FeeQuotesTable : Table("wallet.fee_quotes") {
     val gasMinor = long("gas_minor").nullable()
     val gasShareMaxBps = integer("gas_share_max_bps")
     val gasSource = text("gas_source").nullable()
+
+    /** V15: the lower end of the band that set [rateBps], in dollars; null for a flat rule. */
+    val bandFromUsd = decimal("band_from_usd", 20, 6).nullable()
     val kind = text("kind")
     val senderType = text("sender_type")
     val receiverType = text("receiver_type").nullable()
@@ -122,6 +128,9 @@ object FeeLedgerTable : Table("wallet.fee_ledger") {
     val gasEstimateMinor = long("gas_estimate_minor").nullable()
     val gasShareMaxBps = integer("gas_share_max_bps")
     val gasSource = text("gas_source").nullable()
+
+    /** V15: the lower end of the band that set [rateBps], in dollars; null for a flat rule. */
+    val bandFromUsd = decimal("band_from_usd", 20, 6).nullable()
     val state = text("state")
     val txHash = text("tx_hash").nullable()
     val actualGasNative = text("actual_gas_native").nullable()

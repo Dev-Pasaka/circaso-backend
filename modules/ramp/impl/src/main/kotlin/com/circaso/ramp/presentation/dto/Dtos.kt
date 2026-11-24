@@ -171,8 +171,13 @@ data class RampStatusResponse(
     val offRampAvailable: Boolean,
     val openOrderId: String? = null,
     val limits: LimitsDto,
-    /** The fee on a purchase as a percentage ("1.5"), inside what is paid. */
+    /**
+     * The fee on a purchase as a percentage ("1.5"), inside what is paid. With amount bands (2026-11-24) it is the
+     * first band's (the smallest amounts'); `feeBands` has them all and the quote's `feePercent` is the one that applies.
+     */
     val feePercent: String,
+    /** Buying's fee bands by the KES paid (2026-11-24); one band when flat. */
+    val feeBands: List<FeeBandDto> = emptyList(),
     val verification: VerificationDto,
     val blocked: Boolean = false,
     /**
@@ -190,4 +195,13 @@ data class OffRampStatusDto(
     val merchantOnline: Boolean,
     val canSell: Boolean,
     val limits: LimitsDto,
+    /** Selling's fee by the KES value of what is sold (2026-11-24); one band when flat. */
+    val feeBands: List<FeeBandDto> = emptyList(),
 )
+
+/**
+ * One band of the ramp fee (2026-11-24): an amount from `from` up to (not including) `to` (null: and up) pays
+ * `feePercent` of the whole amount. The quote is always what counts; this is for showing the schedule.
+ */
+@Serializable
+data class FeeBandDto(val from: RampAmount, val to: RampAmount? = null, val feePercent: String)

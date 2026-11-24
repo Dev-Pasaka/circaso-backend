@@ -168,6 +168,7 @@ class PurchaseRouting(
             feeMinor = quote.feeMinor,
             feeBps = quote.feeBps,
             merchantShareBps = quote.merchantShareBps,
+            feeBandFromMinor = quote.feeBandFromMinor,
             collectionsProvider = purchase.settings.collectionsProvider,
             payerPhone = purchase.command.phone,
             destinationAddress = purchase.address,

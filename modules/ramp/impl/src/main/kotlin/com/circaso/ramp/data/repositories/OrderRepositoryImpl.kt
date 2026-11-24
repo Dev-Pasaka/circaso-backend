@@ -76,6 +76,7 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
                 it[rateSource] = quote.rateBasis?.source?.name
                 it[referenceRate] = quote.rateBasis?.referenceRate?.toPlainString()
                 it[spreadBps] = quote.rateBasis?.spreadBps
+                it[feeBandFromMinor] = quote.feeBandFromMinor
             }
         }
     }
@@ -111,6 +112,7 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
                     this[QuotesTable.referenceRate],
                     this[QuotesTable.spreadBps],
                 ),
+            feeBandFromMinor = this[QuotesTable.feeBandFromMinor],
         )
 }
 
@@ -163,6 +165,7 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                         it[rateSource] = order.rateBasis?.source?.name
                         it[referenceRate] = order.rateBasis?.referenceRate?.toPlainString()
                         it[spreadBps] = order.rateBasis?.spreadBps
+                        it[feeBandFromMinor] = order.feeBandFromMinor
                     }.insertedCount > 0
             if (inserted) record(order, order.createdAt, detail = null)
             inserted
@@ -540,6 +543,7 @@ internal fun ResultRow.toOrder() =
         payoutOutcome = this[OrdersTable.payoutOutcome],
         payoutSentAt = this[OrdersTable.payoutSentAt],
         payoutRetryAt = this[OrdersTable.payoutRetryAt],
+        feeBandFromMinor = this[OrdersTable.feeBandFromMinor],
     )
 
 internal fun payer(stored: String): PhoneNumber =

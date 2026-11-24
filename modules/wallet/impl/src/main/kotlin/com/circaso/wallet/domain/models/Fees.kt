@@ -63,7 +63,21 @@ data class FeeRule(
     val createdAt: Instant? = null,
     /** The one network the rule is for (2026-11-18); null applies on both. */
     val network: Network? = null,
+    /**
+     * The amount bands (2026-11-24), ordered from 0 upward, the last open-ended; empty is one band at [rateBps] (the
+     * flat rate). When set, [rateBps] is the first band's rate, kept for readers that know only one rate.
+     */
+    val bands: List<FeeBand> = emptyList(),
 ) : VersionedRule {
+    /** The band a payment worth [usdMinor] falls in: it sets the rate for the whole amount. */
+    fun bandFor(usdMinor: Long): FeeBand = bands.lastOrNull { it.fromMinor <= usdMinor } ?: FeeBand(0, null, rateBps)
+
+    /** Every rate the rule can charge: what the bounds must allow. */
+    val rates: List<Int> get() = if (bands.isEmpty()) listOf(rateBps) else bands.map { it.rateBps }
+
+    /** The bands as priced: the stored ones, or the one flat band. */
+    val effectiveBands: List<FeeBand> get() = bands.ifEmpty { listOf(FeeBand(0, null, rateBps)) }
+
     fun matches(parties: FeeParties): Boolean =
         (kind == null || kind == parties.kind) &&
             (network == null || network == Network.ofChain(parties.blockchain)) &&
@@ -82,6 +96,15 @@ data class FeeRule(
             (if (walletId != null) 64 else 0) + (if (blockchain != null) 32 else 0) + (if (asset != null) 16 else 0) +
                 (if (senderType != null) 4 else 0) + (if (receiverType != null) 4 else 0) +
                 (if (kind != null) 2 else 0) + (if (network != null) 1 else 0)
+}
+
+/**
+ * One amount band of a fee rule (decision 2026-11-24, "the band sets the rate"): a payment worth at least [fromMinor]
+ * and less than [toMinor] micro-dollars (null: no upper end) pays [rateBps] on its whole amount. A boundary is a
+ * cliff: just above it can cost less than just below it, which staff see in the admin before they save.
+ */
+data class FeeBand(val fromMinor: Long, val toMinor: Long?, val rateBps: Int) {
+    fun covers(usdMinor: Long): Boolean = usdMinor >= fromMinor && (toMinor == null || usdMinor < toMinor)
 }
 
 /**
@@ -108,6 +131,8 @@ data class Fee(
     /** What one whole coin of the payment was worth in US dollars when it was priced; one for a dollar stablecoin. */
     val usdPrice: BigDecimal = BigDecimal.ONE,
     val gasSource: GasSource? = null,
+    /** The lower end of the band that set [rateBps] (2026-11-24); null when the rule has no bands (a flat rate). */
+    val bandFromMinor: Long? = null,
 ) {
     val charged: Boolean get() = amountMinor.signum() > 0 && feeAddress != null
 

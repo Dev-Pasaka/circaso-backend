@@ -10,6 +10,7 @@ import com.circaso.wallet.domain.ports.Transactor
 import com.circaso.wallet.domain.repositories.RuleAdminRepository
 import com.circaso.wallet.domain.support.RuleChecks
 import com.circaso.wallet.domain.support.RuleTimeline
+import com.circaso.wallet.domain.support.feeBands
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -34,9 +35,9 @@ class ChangeFeeRule(
     ): Resource<RuleChange<FeeRule>> {
         val now = RuleTimeline.now(clock)
         return RuleChecks.note(note).flatMap { why ->
-            RuleChecks.fee(terms).flatMap {
+            RuleChecks.fee(terms).flatMap { stored ->
                 RuleTimeline.at(effectiveFrom, now, "effectiveFrom").flatMap { from ->
-                    write(ruleId, baseVersion, terms, from, why, now)
+                    write(ruleId, baseVersion, stored, from, why, now)
                 }
             }
         }
@@ -53,20 +54,21 @@ class ChangeFeeRule(
         transactor.attempt("fee-rules.change") {
             val bounds = admin.lockFeeBounds()
             RuleTimeline.superseded(admin.feeVersions(ruleId), baseVersion, from, now).flatMap { latest ->
-                RuleChecks.rate(terms.rateBps, bounds).flatMap {
-                    val next =
-                        latest.copy(
-                            version = latest.version + 1,
-                            rateBps = terms.rateBps,
-                            capBaseMinor = terms.capBaseUsdMicros,
-                            minFeeMinor = terms.minFeeUsdMicros,
-                            gasShareMaxBps = terms.gasShareMaxBps,
-                            gasMarginBps = terms.gasMarginBps,
-                            effectiveFrom = from,
-                            effectiveTo = latest.effectiveTo,
-                            note = note,
-                            createdAt = now,
-                        )
+                val next =
+                    latest.copy(
+                        version = latest.version + 1,
+                        rateBps = terms.rateBps,
+                        capBaseMinor = terms.capBaseUsdMicros,
+                        minFeeMinor = terms.minFeeUsdMicros,
+                        gasShareMaxBps = terms.gasShareMaxBps,
+                        gasMarginBps = terms.gasMarginBps,
+                        bands = terms.feeBands(),
+                        effectiveFrom = from,
+                        effectiveTo = latest.effectiveTo,
+                        note = note,
+                        createdAt = now,
+                    )
+                RuleChecks.rates(next, bounds).flatMap {
                     admin.endFeeVersion(ruleId, latest.version, from)
                     RuleChecks
                         .written(admin.insertFeeVersion(next), bounds)

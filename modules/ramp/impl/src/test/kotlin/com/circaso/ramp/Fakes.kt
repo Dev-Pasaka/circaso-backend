@@ -63,6 +63,7 @@ import com.circaso.ramp.domain.models.OnlineSessionCopy
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RateBasis
 import com.circaso.ramp.domain.models.RateMode
 import com.circaso.ramp.domain.models.RatePause
@@ -86,6 +87,7 @@ import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.ports.UsdcContracts
 import com.circaso.ramp.domain.support.MerchantSignIn
 import com.circaso.ramp.domain.support.PinGuard
+import com.circaso.ramp.domain.support.RampFeeBands
 import com.circaso.shared.Asset
 import com.circaso.shared.DomainEvent
 import com.circaso.shared.EventBus
@@ -421,12 +423,15 @@ class FixedPricing : Pricing {
         direction: Direction,
         fiatMinor: Long?,
         assetMinor: Long?,
-        feeBps: Int,
+        bands: List<RampFeeBand>,
     ): Resource<Priced> {
         failure?.let { return it }
         val paid = fiatMinor ?: (assetMinor!! * 130 / 10_000)
+        val feeBps = RampFeeBands.bandFor(bands, paid).feeBps
         val fee = paid * feeBps / 10_000
-        return Resource.success(Priced(paid, (paid - fee) * 10_000 / 130, BigDecimal("130"), fee, basis))
+        return Resource.success(
+            Priced(paid, (paid - fee) * 10_000 / 130, BigDecimal("130"), fee, basis, feeBps = feeBps),
+        )
     }
 }
 

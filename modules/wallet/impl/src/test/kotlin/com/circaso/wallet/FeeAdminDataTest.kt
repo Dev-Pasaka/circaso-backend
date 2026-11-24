@@ -6,6 +6,7 @@ import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
+import com.circaso.wallet.api.FeeRuleBand
 import com.circaso.wallet.api.FeeRuleKind
 import com.circaso.wallet.api.FeeRuleScope
 import com.circaso.wallet.api.FeeRuleTerms
@@ -25,6 +26,7 @@ import com.circaso.wallet.di.walletDatabaseSpec
 import com.circaso.wallet.domain.models.GasSource
 import com.circaso.wallet.domain.models.Payee
 import com.circaso.wallet.domain.models.TransferCommand
+import com.circaso.wallet.domain.models.VersionWrite
 import com.circaso.wallet.domain.support.RuleTimeline
 import com.circaso.wallet.domain.support.RuleVersions
 import com.circaso.wallet.domain.usecases.ChangeFeeRule
@@ -34,6 +36,7 @@ import com.circaso.wallet.domain.usecases.EndFeeRule
 import com.circaso.wallet.domain.usecases.EndLimitRule
 import com.circaso.wallet.domain.usecases.ListFeeRules
 import com.circaso.wallet.domain.usecases.UpdateFeeBounds
+import com.circaso.wallet.presentation.mappers.toOps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -166,6 +169,69 @@ class FeeAdminDataTest {
             val widened = bounds(0, 300).data()
             assertEquals(200 to 300, widened.before.maxRateBps to widened.after.maxRateBps)
             assertIs<Resource.Success<*>>(change(BETWEEN_PEOPLE, 1, terms(250), null, "Now within bounds"))
+        }
+
+    @Test
+    fun `a banded version is stored whole, every band within the bounds, and the bounds can't exclude a band`() =
+        runBlocking<Unit> {
+            val usd = 1_000_000L
+            val banded =
+                terms(0).copy(
+                    bands =
+                        listOf(
+                            FeeRuleBand(0, usd, 200),
+                            FeeRuleBand(usd, 100 * usd, 100),
+                            FeeRuleBand(100 * usd, null, 50),
+                        ),
+                )
+            change(BETWEEN_PEOPLE, 1, banded, null, "Bands by amount").data()
+            val stored = inForce(BETWEEN_PEOPLE)!!
+            assertEquals(200, stored.rateBps, "the first band's rate, for readers of one rate")
+            assertEquals(listOf(200, 100, 50), stored.bands.map { it.rateBps })
+            assertEquals(listOf(0L, usd, 100 * usd), stored.bands.map { it.fromMinor })
+            assertNull(stored.bands.last().toMinor)
+            assertEquals(100, stored.bandFor(5 * usd).rateBps)
+
+            val outside =
+                banded.copy(
+                    bands =
+                        banded.bands.mapIndexed { i, b ->
+                            if (i ==
+                                2
+                            ) {
+                                b.copy(rateBps = 250)
+                            } else {
+                                b
+                            }
+                        },
+                )
+            clock.advance(Duration.ofSeconds(1))
+            val refused = change(BETWEEN_PEOPLE, 2, outside, null, "A band at 2.5 %")
+            assertEquals("wallet.fee_rate_out_of_bounds", (refused as Resource.Error).error.code)
+            assertEquals(2, admin.feeVersions(BETWEEN_PEOPLE).size, "nothing written")
+
+            // The trigger checks band rates too, whatever the domain let through.
+            val sneaked = stored.copy(version = 3, bands = stored.bands.map { it.copy(rateBps = 900) })
+            assertEquals(VersionWrite.OUT_OF_BOUNDS, admin.insertFeeVersion(sneaked))
+
+            val excluding = bounds(60, 200)
+            assertEquals("wallet.fee_bounds_exclude_rules", (excluding as Resource.Error).error.code)
+
+            val listed = list().data().toOps()
+            val terms =
+                listed.rules
+                    .first { it.ruleId == BETWEEN_PEOPLE }
+                    .versions
+                    .first()
+                    .terms
+            assertEquals(3, terms.bands.size)
+            val flat =
+                listed.rules
+                    .first { it.ruleId == EXTERNAL }
+                    .versions
+                    .first()
+                    .terms
+            assertEquals(listOf(FeeRuleBand(0, null, flat.rateBps)), flat.bands, "a flat rule reads as one band")
         }
 
     @Test

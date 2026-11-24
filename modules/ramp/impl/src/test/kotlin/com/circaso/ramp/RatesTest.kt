@@ -6,6 +6,7 @@ import com.circaso.ramp.data.support.RatePricing
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.PricingSettings
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RateBasis
 import com.circaso.ramp.domain.models.RateMode
 import com.circaso.ramp.domain.models.RatePause
@@ -160,7 +161,16 @@ class RatesTest {
         runTest {
             rows.seed(settings { copy(buySpreadBps = 200, version = 1) })
             // 129.25 × 1.02 = 131.835; 1 300 at 2 %: fee 26, 1 274 / 131.835 = 9.663594 USDC (down)
-            val priced = (pricing.price(testnet, Direction.ON_RAMP, 130_000, null, 200) as Resource.Success).data
+            val priced =
+                (
+                    pricing.price(
+                        testnet,
+                        Direction.ON_RAMP,
+                        130_000,
+                        null,
+                        listOf(RampFeeBand(0, null, 200)),
+                    ) as Resource.Success
+                ).data
 
             assertEquals(BigDecimal("131.835"), priced.rate)
             assertEquals(2_600, priced.feeMinor)
@@ -178,7 +188,7 @@ class RatesTest {
             assertEquals(RampError.PricingUnavailable, pricing.rate(testnet, Direction.ON_RAMP).error())
             assertEquals(
                 RampError.PricingUnavailable,
-                pricing.price(testnet, Direction.ON_RAMP, 130_000, null, 200).error(),
+                pricing.price(testnet, Direction.ON_RAMP, 130_000, null, listOf(RampFeeBand(0, null, 200))).error(),
             )
 
             rows.rows[testnet] =

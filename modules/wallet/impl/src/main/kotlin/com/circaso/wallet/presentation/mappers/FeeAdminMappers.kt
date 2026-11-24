@@ -21,6 +21,7 @@ import com.circaso.wallet.domain.models.LimitRule
 import com.circaso.wallet.domain.models.LimitRuleSet
 import com.circaso.wallet.domain.models.RuleChange
 import com.circaso.wallet.domain.support.RuleTimeline
+import com.circaso.wallet.domain.support.ruleBands
 import com.circaso.wallet.domain.support.scope
 import com.circaso.wallet.domain.support.terms
 
@@ -34,7 +35,7 @@ fun FeeRule.toOps() =
         ruleId = ruleId,
         version = version,
         scope = scope(),
-        terms = FeeRuleTerms(rateBps, capBaseMinor, minFeeMinor, gasShareMaxBps, gasMarginBps),
+        terms = FeeRuleTerms(rateBps, capBaseMinor, minFeeMinor, gasShareMaxBps, gasMarginBps, ruleBands()),
         effectiveFrom = effectiveFrom,
         effectiveTo = effectiveTo,
         note = note,

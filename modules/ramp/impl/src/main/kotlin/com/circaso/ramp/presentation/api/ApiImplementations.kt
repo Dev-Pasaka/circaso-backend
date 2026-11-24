@@ -10,6 +10,7 @@ import com.circaso.ramp.api.OpsPayoutFeeBand
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
+import com.circaso.ramp.api.OpsRampFeeBand
 import com.circaso.ramp.api.OpsRampFloat
 import com.circaso.ramp.api.OpsRampKesBalances
 import com.circaso.ramp.api.OpsRampMerchantActivity
@@ -43,6 +44,7 @@ import com.circaso.ramp.api.RampOrderStates
 import com.circaso.ramp.api.RampResolutions
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Block
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.MerchantFigures
 import com.circaso.ramp.domain.models.MerchantRecord
 import com.circaso.ramp.domain.models.MerchantSummary
@@ -52,6 +54,7 @@ import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PayoutFeeBand
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProviderWalletView
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RampOverview
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
@@ -434,6 +437,8 @@ private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) 
         payoutWindowSeconds = payoutWindowSeconds,
         payoutFeeBands = payoutFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
         payoutBalanceLowMinor = payoutBalanceLowMinor,
+        onRampFeeBands = feeBandsOf(Direction.ON_RAMP).map { OpsRampFeeBand(it.fromMinor, it.toMinor, it.feeBps) },
+        offRampFeeBands = feeBandsOf(Direction.OFF_RAMP).map { OpsRampFeeBand(it.fromMinor, it.toMinor, it.feeBps) },
         withdrawDestinationDelayHours = withdrawDestinationDelayHours,
         withdrawMinMinor = withdrawMinMinor,
         withdrawDailyMaxMinor = withdrawDailyMaxMinor,
@@ -458,6 +463,15 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             RampState.entries.firstOrNull { it.name == name.trim().uppercase() }
                 ?: return Resource.error(RampError.SettingsInvalid("offRampState", "must be OFF, PREVIEW or ON"))
         }
+    // Bands left out keep what is set, unless an older admin changed the one `feeBps`: then both directions become one
+    // band at it, as that field always meant (2026-11-24).
+    val legacy = feeBps != current.feeBps
+    val buying =
+        onRampFeeBands?.map { RampFeeBand(it.fromMinor, it.toMinor, it.feeBps) }
+            ?: if (legacy) listOf(RampFeeBand(0, null, feeBps)) else current.onRampFeeBands
+    val sellingBands =
+        offRampFeeBands?.map { RampFeeBand(it.fromMinor, it.toMinor, it.feeBps) }
+            ?: if (legacy) listOf(RampFeeBand(0, null, feeBps)) else current.offRampFeeBands
     return Resource.success(
         RampSettings(
             network = network,
@@ -467,7 +481,8 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             orderMaxMinor = orderMaxMinor,
             dailyLimitMinor = dailyLimitMinor,
             promptsPerHour = promptsPerHour,
-            feeBps = feeBps,
+            // What older readers show: buying's first band.
+            feeBps = buying.firstOrNull()?.feeBps ?: feeBps,
             merchantShareBps = merchantShareBps,
             feeSettleHourUtc = feeSettleHourUtc,
             quoteSeconds = quoteSeconds,
@@ -500,6 +515,8 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             withdrawMinMinor = withdrawMinMinor ?: current.withdrawMinMinor,
             withdrawDailyMaxMinor = withdrawDailyMaxMinor ?: current.withdrawDailyMaxMinor,
             onlineSessionMaxDays = onlineSessionMaxDays ?: current.onlineSessionMaxDays,
+            onRampFeeBands = buying,
+            offRampFeeBands = sellingBands,
         ),
     )
 }

@@ -6,6 +6,7 @@ import com.circaso.shared.UserId
 import com.circaso.wallet.api.TransferId
 import com.circaso.wallet.api.WalletId
 import com.circaso.wallet.api.WalletOwnerType
+import com.circaso.wallet.data.support.FeeBandDocuments
 import com.circaso.wallet.data.tables.FeeLedgerTable
 import com.circaso.wallet.data.tables.FeeQuotesTable
 import com.circaso.wallet.data.tables.FeeRulesTable
@@ -52,6 +53,9 @@ private fun BigDecimal.toMicro(): Long = movePointRight(MICRO).setScale(0, Round
 
 private const val MICRO = 6
 
+/** Micro-dollars as dollars with six decimals, exactly. */
+private fun Long.toDollars(): BigDecimal = BigDecimal.valueOf(this, MICRO)
+
 /** Enough recent quotes to find every chain's last estimate. */
 private const val LATEST_ESTIMATE_ROWS = 500
 
@@ -76,6 +80,7 @@ internal fun ResultRow.toFeeRule() =
         minFeeMinor = this[FeeRulesTable.minFeeUsd]?.toMicro(),
         gasShareMaxBps = this[FeeRulesTable.gasShareMaxBps],
         gasMarginBps = this[FeeRulesTable.gasMarginBps],
+        bands = FeeBandDocuments.decode(this[FeeRulesTable.bands]),
         effectiveFrom = this[FeeRulesTable.effectiveFrom],
         effectiveTo = this[FeeRulesTable.effectiveTo],
         note = this[FeeRulesTable.note],
@@ -139,6 +144,7 @@ class FeeQuoteRepositoryImpl(private val database: Database) : FeeQuoteRepositor
                 it[gasMinor] = fee.gasMinor
                 it[gasShareMaxBps] = fee.gasShareMaxBps
                 it[gasSource] = fee.gasSource?.name
+                it[bandFromUsd] = fee.bandFromMinor?.toDollars()
                 it[kind] = fee.parties.kind.name
                 it[senderType] = fee.parties.senderType.name
                 it[receiverType] = fee.parties.receiverType?.name
@@ -210,6 +216,7 @@ class FeeQuoteRepositoryImpl(private val database: Database) : FeeQuoteRepositor
                     gasMinor = this[FeeQuotesTable.gasMinor],
                     gasShareMaxBps = this[FeeQuotesTable.gasShareMaxBps],
                     gasSource = this[FeeQuotesTable.gasSource]?.let { GasSource.valueOf(it) },
+                    bandFromMinor = this[FeeQuotesTable.bandFromUsd]?.toMicro(),
                     parties = parties,
                     feeAddress = this[FeeQuotesTable.feeAddress],
                     reason = this[FeeQuotesTable.noFeeReason]?.let { NoFeeReason.valueOf(it) },
@@ -249,6 +256,7 @@ class FeeLedgerRepositoryImpl(private val database: Database) : FeeLedgerReposit
                 it[gasEstimateMinor] = fee.gasMinor
                 it[gasShareMaxBps] = fee.gasShareMaxBps
                 it[gasSource] = fee.gasSource?.name
+                it[bandFromUsd] = fee.bandFromMinor?.toDollars()
                 it[state] = entry.state.name
                 it[createdAt] = entry.createdAt
                 it[updatedAt] = entry.createdAt
@@ -330,6 +338,7 @@ class FeeLedgerRepositoryImpl(private val database: Database) : FeeLedgerReposit
                     gasMinor = this[FeeLedgerTable.gasEstimateMinor],
                     gasShareMaxBps = this[FeeLedgerTable.gasShareMaxBps],
                     gasSource = this[FeeLedgerTable.gasSource]?.let { GasSource.valueOf(it) },
+                    bandFromMinor = this[FeeLedgerTable.bandFromUsd]?.toMicro(),
                     parties =
                         FeeParties(
                             kind = FeeKind.valueOf(this[FeeLedgerTable.kind]),

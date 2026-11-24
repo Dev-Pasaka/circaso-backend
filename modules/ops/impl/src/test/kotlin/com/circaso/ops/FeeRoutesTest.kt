@@ -71,6 +71,38 @@ class FeeRoutesTest {
         }
 
     @Test
+    fun `a banded change reaches the wallet band by band and is audited with its bands`() =
+        testApplication {
+            application { harness.install(this) }
+
+            val bands =
+                """[{"fromUsdMicros":0,"toUsdMicros":1000000,"rateBps":200},""" +
+                    """{"fromUsdMicros":1000000,"toUsdMicros":null,"rateBps":100}]"""
+            val response =
+                send(
+                    "POST",
+                    "/v1/ops/fees/rules/$rule/versions",
+                    """{"baseVersion":1,"terms":{"rateBps":0,"bands":$bands},"reason":"Bands by amount"}""",
+                )
+
+            assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+            val sent =
+                harness.fees.fees
+                    .getValue(rule)
+                    .last()
+                    .terms
+            assertEquals(listOf(200, 100), sent.bands.map { it.rateBps })
+            assertEquals(listOf(1_000_000L, null), sent.bands.map { it.toUsdMicros })
+            assertTrue(response.bodyAsText().contains("\"bands\":[{\"fromUsdMicros\":0"), response.bodyAsText())
+            val detail =
+                harness.audit.entries
+                    .single()
+                    .detail
+                    .orEmpty()
+            assertTrue(detail.contains("after v2 {bands [\$0-\$1: 200 bps; \$1+: 100 bps]"), detail)
+        }
+
+    @Test
     fun `a change without a reason is refused before the wallet is asked, and leaves no line`() =
         testApplication {
             application { harness.install(this) }

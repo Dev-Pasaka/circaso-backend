@@ -46,8 +46,20 @@ object RuleAudit {
         "v${rule.version} {${limit(rule.terms)}, ${window(rule.effectiveFrom, rule.effectiveTo)}}"
 
     private fun fee(terms: FeeRuleTerms): String =
-        "rate ${terms.rateBps} bps, cap ${usd(terms.capBaseUsdMicros)}, min ${usd(terms.minFeeUsdMicros)}, " +
+        "${rates(terms)}, cap ${usd(terms.capBaseUsdMicros)}, min ${usd(terms.minFeeUsdMicros)}, " +
             "network cost margin ${terms.gasMarginBps} bps"
+
+    /** One rate, or the bands as `bands [$0-$1: 200 bps; $1+: 150 bps]` (2026-11-24). */
+    private fun rates(terms: FeeRuleTerms): String {
+        if (terms.bands.size <= 1) return "rate ${terms.bands.firstOrNull()?.rateBps ?: terms.rateBps} bps"
+        val bands =
+            terms.bands.joinToString("; ") { band ->
+                val to = band.toUsdMicros
+                val range = if (to == null) "${usd(band.fromUsdMicros)}+" else "${usd(band.fromUsdMicros)}-${usd(to)}"
+                "$range: ${band.rateBps} bps"
+            }
+        return "bands [$bands]"
+    }
 
     private fun limit(terms: LimitRuleTerms): String =
         "per payment ${usd(terms.perPaymentMaxUsdMicros)}, per window ${usd(terms.dailyMaxUsdMicros)}, " +

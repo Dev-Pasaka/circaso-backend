@@ -175,6 +175,7 @@ class StartOffRamp(
         feeMinor = quote.feeMinor,
         feeBps = quote.feeBps,
         merchantShareBps = quote.merchantShareBps,
+        feeBandFromMinor = quote.feeBandFromMinor,
         collectionsProvider = settings.collectionsProvider,
         payerPhone = command.phone,
         // The merchant's float address on the sale's chain: where the user sends the USDC.

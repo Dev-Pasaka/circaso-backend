@@ -28,6 +28,7 @@ import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.RampFeeBands
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
@@ -319,6 +320,14 @@ class UpdateSettings(
 
             s.feeBps !in 0..RampSettings.MAX_FEE_BPS -> {
                 "feeBps" to "must be 0 to ${RampSettings.MAX_FEE_BPS}"
+            }
+
+            RampFeeBands.problem(s.onRampFeeBands, "onRampFeeBands") != null -> {
+                RampFeeBands.problem(s.onRampFeeBands, "onRampFeeBands")
+            }
+
+            RampFeeBands.problem(s.offRampFeeBands, "offRampFeeBands") != null -> {
+                RampFeeBands.problem(s.offRampFeeBands, "offRampFeeBands")
             }
 
             s.merchantShareBps !in 0..RampSettings.ALL_BPS -> {

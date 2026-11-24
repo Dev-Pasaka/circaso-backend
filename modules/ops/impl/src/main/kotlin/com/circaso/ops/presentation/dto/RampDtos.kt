@@ -169,7 +169,21 @@ data class RampSettingsDto(
      * default 30): how long the server keeps its encrypted working copy of their unlocked payment account.
      */
     val onlineSessionMaxDays: Int = 30,
+    /**
+     * The fee by amount (2026-11-24, "the band sets the rate"): buying's bands by the KES paid, selling's by the KES
+     * value of the USDC sold. The band an order falls in sets its rate for the whole amount. Always at least one band;
+     * `feeBps` is buying's first band.
+     */
+    val onRampFeeBands: List<RampFeeBandDto> = emptyList(),
+    val offRampFeeBands: List<RampFeeBandDto> = emptyList(),
 )
+
+/**
+ * One band of a ramp fee: from `fromMinor` up to (not including) `toMinor` KES cents (null: and up), `feeBps` of the
+ * whole amount. From "0" upward with no gaps or overlaps, the last open-ended, each rate 0 to 500.
+ */
+@Serializable
+data class RampFeeBandDto(val fromMinor: String, val toMinor: String? = null, val feeBps: Int)
 
 /** One band of the fallback payout fee table: a payout up to `upToMinor` KES cents (inclusive) costs `feeMinor`. */
 @Serializable
@@ -226,6 +240,12 @@ data class UpdateRampSettingsRequest(
     val withdrawMinMinor: String? = null,
     val withdrawDailyMaxMinor: String? = null,
     val onlineSessionMaxDays: Int? = null,
+    /**
+     * Fee bands (2026-11-24); each left out keeps what is set, unless `feeBps` changed (an older form): then both
+     * directions become one band at it.
+     */
+    val onRampFeeBands: List<RampFeeBandDto>? = null,
+    val offRampFeeBands: List<RampFeeBandDto>? = null,
 )
 
 /**

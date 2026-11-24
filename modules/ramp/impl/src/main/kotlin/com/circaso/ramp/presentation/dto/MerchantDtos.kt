@@ -381,9 +381,13 @@ data class EarningsResponse(
     val circasoShareUsdc: RampAmount,
     val swept: RampAmount,
     val held: RampAmount,
+    /** Buying's first band (the whole fee when it is flat); [buyingFeeBands] and [sellingFeeBands] have them all. */
     val feeRatePercent: String,
     val yourSharePercent: String,
     val sweeps: List<SweepDto>,
+    /** The fee schedules in force (2026-11-24): the band an order's KES amount falls in sets its rate. */
+    val buyingFeeBands: List<FeeBandDto> = emptyList(),
+    val sellingFeeBands: List<FeeBandDto> = emptyList(),
 )
 
 /** One completed exchange (RM15). `settlementId` is null while Circaso's share is still held in the float. */

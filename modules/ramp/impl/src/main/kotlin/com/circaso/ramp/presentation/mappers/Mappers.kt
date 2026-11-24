@@ -11,6 +11,7 @@ import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.QuoteCommand
+import com.circaso.ramp.domain.models.RampFeeBand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampStatus
 import com.circaso.ramp.domain.models.StartOffRampCommand
@@ -18,6 +19,7 @@ import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.support.Amounts
 import com.circaso.ramp.domain.support.SalePricing
 import com.circaso.ramp.presentation.dto.DepositDto
+import com.circaso.ramp.presentation.dto.FeeBandDto
 import com.circaso.ramp.presentation.dto.KycResponse
 import com.circaso.ramp.presentation.dto.KycSessionDto
 import com.circaso.ramp.presentation.dto.LimitsDto
@@ -186,6 +188,7 @@ fun RampStatus.toResponse() =
                 daily = Amounts.fiat(limits.dailyMinor),
             ),
         feePercent = Amounts.percent(feeBps),
+        feeBands = feeBands.map { it.toDto() },
         verification = verification.toDto(),
         blocked = blocked,
         offRampAvailable = canSell(),
@@ -201,8 +204,12 @@ fun RampStatus.toResponse() =
                         maxOrder = Amounts.fiat(offRamp.limits.maxOrderMinor),
                         daily = Amounts.fiat(offRamp.limits.dailyMinor),
                     ),
+                feeBands = offRamp.feeBands.map { it.toDto() },
             ),
     )
+
+internal fun RampFeeBand.toDto() =
+    FeeBandDto(Amounts.fiat(fromMinor), toMinor?.let { Amounts.fiat(it) }, Amounts.percent(feeBps))
 
 private fun RampStatus.canSell(): Boolean =
     offRamp.open && offRamp.merchantOnline && kyc != KycStanding.NONE && !blocked && accountActive &&

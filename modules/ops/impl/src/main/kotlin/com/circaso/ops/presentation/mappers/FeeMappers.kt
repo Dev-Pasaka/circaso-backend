@@ -1,5 +1,6 @@
 package com.circaso.ops.presentation.mappers
 
+import com.circaso.ops.presentation.dto.FeeBandDto
 import com.circaso.ops.presentation.dto.FeeBoundsChangeResponse
 import com.circaso.ops.presentation.dto.FeeBoundsDto
 import com.circaso.ops.presentation.dto.FeeRuleChangeResponse
@@ -21,6 +22,7 @@ import com.circaso.shared.flatMap
 import com.circaso.shared.map
 import com.circaso.wallet.api.FeeBoundsChange
 import com.circaso.wallet.api.FeeRateBounds
+import com.circaso.wallet.api.FeeRuleBand
 import com.circaso.wallet.api.FeeRuleBook
 import com.circaso.wallet.api.FeeRuleChange
 import com.circaso.wallet.api.FeeRuleKind
@@ -54,7 +56,15 @@ fun FeeScopeDto.toScope(asked: Network? = null): Resource<FeeRuleScope> =
     }
 
 @Suppress("DEPRECATION")
-fun FeeTermsDto.toTerms() = FeeRuleTerms(rateBps, capBaseUsdMicros, minFeeUsdMicros, gasShareMaxBps, gasMarginBps)
+fun FeeTermsDto.toTerms() =
+    FeeRuleTerms(
+        rateBps = rateBps,
+        capBaseUsdMicros = capBaseUsdMicros,
+        minFeeUsdMicros = minFeeUsdMicros,
+        gasShareMaxBps = gasShareMaxBps,
+        gasMarginBps = gasMarginBps,
+        bands = bands.map { FeeRuleBand(it.fromUsdMicros, it.toUsdMicros, it.rateBps) },
+    )
 
 fun LimitScopeDto.toScope(asked: Network? = null): Resource<LimitRuleScope> =
     parseEnum<WalletOwnerType>(ownerType, "scope.ownerType").flatMap { owner ->
@@ -103,6 +113,7 @@ fun FeeRuleVersion.toDto() =
                 minFeeUsdMicros = terms.minFeeUsdMicros,
                 gasShareMaxBps = terms.gasShareMaxBps,
                 gasMarginBps = terms.gasMarginBps,
+                bands = terms.bands.map { FeeBandDto(it.fromUsdMicros, it.toUsdMicros, it.rateBps) },
             ),
         effectiveFrom = effectiveFrom.toString(),
         effectiveTo = effectiveTo?.toString(),

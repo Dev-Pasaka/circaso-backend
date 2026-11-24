@@ -2,6 +2,7 @@ package com.circaso.wallet.data.repositories
 
 import com.circaso.infrastructure.api.Database
 import com.circaso.infrastructure.api.DatabaseException
+import com.circaso.wallet.data.support.FeeBandDocuments
 import com.circaso.wallet.data.tables.FeeBoundsTable
 import com.circaso.wallet.data.tables.FeeRulesTable
 import com.circaso.wallet.data.tables.LimitRulesTable
@@ -82,6 +83,7 @@ class RuleAdminRepositoryImpl(private val database: Database) : RuleAdminReposit
                     it[minFeeUsd] = rule.minFeeMinor?.toDollars()
                     it[gasShareMaxBps] = rule.gasShareMaxBps
                     it[gasMarginBps] = rule.gasMarginBps
+                    it[bands] = FeeBandDocuments.encode(rule.bands)
                     it[effectiveFrom] = rule.effectiveFrom
                     it[effectiveTo] = rule.effectiveTo
                     it[note] = rule.note

@@ -3,6 +3,7 @@ package com.circaso.wallet.domain.support
 import com.circaso.shared.FieldError
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import com.circaso.wallet.api.FeeRuleBand
 import com.circaso.wallet.api.FeeRuleKind
 import com.circaso.wallet.api.FeeRuleScope
 import com.circaso.wallet.api.FeeRuleTerms
@@ -11,6 +12,7 @@ import com.circaso.wallet.api.LimitRuleTerms
 import com.circaso.wallet.api.RuleStatus
 import com.circaso.wallet.api.WalletOwnerType
 import com.circaso.wallet.domain.errors.WalletError
+import com.circaso.wallet.domain.models.FeeBand
 import com.circaso.wallet.domain.models.FeeBounds
 import com.circaso.wallet.domain.models.FeeKind
 import com.circaso.wallet.domain.models.FeeRule
@@ -126,6 +128,7 @@ object RuleTimeline {
  */
 object RuleChecks {
     private const val BPS_MAX = 10_000
+    private const val BANDS_MAX = 20
 
     /** A trillion dollars in micro-dollars: far above any cap, far below `numeric(20,6)` and a Long. */
     private const val USD_MICROS_MAX = 1_000_000_000_000_000_000L
@@ -144,10 +147,17 @@ object RuleChecks {
         return Resource.success(note)
     }
 
+    /**
+     * The terms as they are stored: with bands (2026-11-24), [FeeRuleTerms.rateBps] becomes the first band's rate, and
+     * a single band from 0 with no end is the flat rate itself (no bands kept).
+     */
     fun fee(terms: FeeRuleTerms): Resource<FeeRuleTerms> {
         val problems =
             buildList {
-                if (terms.rateBps !in 0..BPS_MAX) add(FieldError("rateBps", "must be 0 to $BPS_MAX"))
+                if (terms.bands.isEmpty() && terms.rateBps !in 0..BPS_MAX) {
+                    add(FieldError("rateBps", "must be 0 to $BPS_MAX"))
+                }
+                addAll(bands(terms.bands))
                 if (terms.capBaseUsdMicros !in 1..USD_MICROS_MAX) {
                     add(FieldError("capBaseUsdMicros", "must be more than 0"))
                 }
@@ -158,8 +168,54 @@ object RuleChecks {
                 if (terms.gasShareMaxBps !in 1..BPS_MAX) add(FieldError("gasShareMaxBps", "must be 1 to $BPS_MAX"))
                 if (terms.gasMarginBps !in 0..BPS_MAX) add(FieldError("gasMarginBps", "must be 0 to $BPS_MAX"))
             }
-        return if (problems.isEmpty()) Resource.success(terms) else Resource.error(WalletError.RuleInvalid(problems))
+        if (problems.isNotEmpty()) return Resource.error(WalletError.RuleInvalid(problems))
+        val first = terms.bands.firstOrNull() ?: return Resource.success(terms)
+        val flat = terms.bands.size == 1
+        return Resource.success(terms.copy(rateBps = first.rateBps, bands = if (flat) emptyList() else terms.bands))
     }
+
+    /**
+     * What is wrong with a band list, by field (`bands[2].toUsdMicros`): it starts at 0, each band ends where the next
+     * starts and above where it starts (no gap, no overlap, no empty band), only the last is open-ended, every rate is
+     * 0 to 10 000 bps, and there are at most [BANDS_MAX]. Empty is fine: the flat rate.
+     */
+    fun bands(bands: List<FeeRuleBand>): List<FieldError> =
+        buildList {
+            if (bands.isEmpty()) return@buildList
+            if (bands.size > BANDS_MAX) add(FieldError("bands", "at most $BANDS_MAX bands"))
+            if (bands.first().fromUsdMicros !=
+                0L
+            ) {
+                add(FieldError("bands[0].fromUsdMicros", "the first band starts at 0"))
+            }
+            bands.forEachIndexed { index, band ->
+                val field = "bands[$index]"
+                val next = bands.getOrNull(index + 1)
+                val to = band.toUsdMicros
+                if (band.rateBps !in 0..BPS_MAX) add(FieldError("$field.rateBps", "must be 0 to $BPS_MAX"))
+                when {
+                    next == null && to != null -> {
+                        add(FieldError("$field.toUsdMicros", "the last band has no end"))
+                    }
+
+                    next != null && to == null -> {
+                        add(FieldError("$field.toUsdMicros", "only the last band has no end"))
+                    }
+
+                    to != null && to <= band.fromUsdMicros -> {
+                        add(FieldError("$field.toUsdMicros", "must be above from"))
+                    }
+
+                    to != null && to > USD_MICROS_MAX -> {
+                        add(FieldError("$field.toUsdMicros", "is too large"))
+                    }
+
+                    next != null && next.fromUsdMicros != to -> {
+                        add(FieldError("bands[${index + 1}].fromUsdMicros", "must be where the band before ends"))
+                    }
+                }
+            }
+        }
 
     fun rate(rateBps: Int, bounds: FeeBounds): Resource<Unit> =
         if (bounds.allows(rateBps)) {
@@ -167,6 +223,10 @@ object RuleChecks {
         } else {
             Resource.error(WalletError.FeeRateOutOfBounds(bounds.minRateBps, bounds.maxRateBps))
         }
+
+    /** Every rate the rule can charge, each band's, within [bounds]. */
+    fun rates(rule: FeeRule, bounds: FeeBounds): Resource<Unit> =
+        rule.rates.firstOrNull { !bounds.allows(it) }?.let { rate(it, bounds) } ?: Resource.success(Unit)
 
     /** The scope with its chain and coin in the form the payments carry (upper case), or what is wrong with it. */
     fun feeScope(scope: FeeRuleScope): Resource<FeeRuleScope> {
@@ -260,3 +320,9 @@ fun FeeRuleKind.toFeeKind(): FeeKind = FeeKind.valueOf(name)
 fun LimitRule.scope(): LimitRuleScope = LimitRuleScope(ownerType, walletId, asset, network)
 
 fun LimitRule.terms(): LimitRuleTerms = LimitRuleTerms(perPaymentMaxMinor, dailyMaxMinor, window.toHours().toInt())
+
+/** The bands staff wrote, as the domain keeps them. */
+fun FeeRuleTerms.feeBands(): List<FeeBand> = bands.map { FeeBand(it.fromUsdMicros, it.toUsdMicros, it.rateBps) }
+
+/** A rule's bands as the staff contract gives them: always at least one, the flat rate being one open band. */
+fun FeeRule.ruleBands(): List<FeeRuleBand> = effectiveBands.map { FeeRuleBand(it.fromMinor, it.toMinor, it.rateBps) }

@@ -3,6 +3,7 @@ package com.circaso.ramp.data.repositories
 import com.circaso.infrastructure.api.Database
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.data.support.PayoutFeeBands
+import com.circaso.ramp.data.support.RampFeeBandDocuments
 import com.circaso.ramp.data.tables.PreviewAccessTable
 import com.circaso.ramp.data.tables.SettingsTable
 import com.circaso.ramp.domain.models.PreviewAccess
@@ -116,6 +117,8 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.transferWindowSeconds] = settings.transferWindowSeconds
         this[SettingsTable.payoutWindowSeconds] = settings.payoutWindowSeconds
         this[SettingsTable.payoutFeeBands] = PayoutFeeBands.encode(settings.payoutFeeBands)
+        this[SettingsTable.onrampFeeBands] = RampFeeBandDocuments.encode(settings.onRampFeeBands)
+        this[SettingsTable.offrampFeeBands] = RampFeeBandDocuments.encode(settings.offRampFeeBands)
         this[SettingsTable.payoutBalanceLowMinor] = settings.payoutBalanceLowMinor
         this[SettingsTable.withdrawDestinationDelayHours] = settings.withdrawDestinationDelayHours
         this[SettingsTable.withdrawMinMinor] = settings.withdrawMinMinor
@@ -166,6 +169,8 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             withdrawMinMinor = this[SettingsTable.withdrawMinMinor],
             withdrawDailyMaxMinor = this[SettingsTable.withdrawDailyMaxMinor],
             onlineSessionMaxDays = this[SettingsTable.onlineSessionMaxDays],
+            onRampFeeBands = RampFeeBandDocuments.decode(this[SettingsTable.onrampFeeBands]),
+            offRampFeeBands = RampFeeBandDocuments.decode(this[SettingsTable.offrampFeeBands]),
         )
     }
 }

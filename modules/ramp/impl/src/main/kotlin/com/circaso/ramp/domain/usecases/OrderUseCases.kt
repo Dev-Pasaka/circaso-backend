@@ -83,7 +83,9 @@ class GetRampStatus(
                                     engine.anyoneOnline(network, it, settings, Direction.OFF_RAMP)
                                 },
                         limits = settings.offRampLimits,
+                        feeBands = settings.feeBandsOf(Direction.OFF_RAMP),
                     ),
+                feeBands = settings.feeBandsOf(Direction.ON_RAMP),
             ),
         )
     }
@@ -115,7 +117,13 @@ class CreateQuote(
         if (command.direction == Direction.OFF_RAMP) return sale(command, settings)
 
         val asked =
-            pricing.price(command.network, command.direction, command.fiatMinor, command.assetMinor, settings.feeBps)
+            pricing.price(
+                command.network,
+                command.direction,
+                command.fiatMinor,
+                command.assetMinor,
+                settings.feeBandsOf(command.direction),
+            )
         val priced =
             when (asked) {
                 is Resource.Error -> return asked
@@ -136,10 +144,11 @@ class CreateQuote(
                 assetMinor = priced.assetMinor,
                 rate = priced.rate,
                 feeMinor = priced.feeMinor,
-                feeBps = settings.feeBps,
+                feeBps = priced.feeBps,
                 merchantShareBps = settings.merchantShareBps,
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
                 rateBasis = priced.rateBasis,
+                feeBandFromMinor = priced.feeBandFromMinor,
             )
         quotes.insert(quote)
         return Resource.success(quote)
@@ -168,10 +177,11 @@ class CreateQuote(
         }
         val asset = command.assetMinor
         val fiat = command.fiatMinor
+        val bands = settings.feeBandsOf(Direction.OFF_RAMP)
         val priced =
             when {
-                asset != null -> SalePricing.ofAsset(asset, rate, settings.feeBps, feeOf)
-                fiat != null -> SalePricing.ofPayout(fiat, rate, settings.feeBps, feeOf)
+                asset != null -> SalePricing.ofAsset(asset, rate, bands, feeOf)
+                fiat != null -> SalePricing.ofPayout(fiat, rate, bands, feeOf)
                 else -> null
             }
         if (priced == null) {
@@ -191,12 +201,13 @@ class CreateQuote(
                 assetMinor = priced.assetMinor,
                 rate = rate,
                 feeMinor = priced.feeMinor,
-                feeBps = settings.feeBps,
+                feeBps = priced.feeBps,
                 merchantShareBps = settings.merchantShareBps,
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
                 providerFeeMinor = priced.providerFeeMinor,
                 providerFeeSource = feeSource,
                 rateBasis = applied.basis,
+                feeBandFromMinor = priced.feeBandFromMinor,
             )
         quotes.insert(quote)
         return Resource.success(quote)

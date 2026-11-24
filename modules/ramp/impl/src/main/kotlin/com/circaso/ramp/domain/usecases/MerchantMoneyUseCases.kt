@@ -1,6 +1,7 @@
 package com.circaso.ramp.domain.usecases
 
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.Earnings
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.Period
@@ -39,6 +40,8 @@ class GetEarnings(
                 feeBps = current.feeBps,
                 merchantShareBps = current.merchantShareBps,
                 sweeps = settlements.ofMerchant(merchantId, network, covered, MAX_SWEEPS),
+                buyingFeeBands = current.feeBandsOf(Direction.ON_RAMP),
+                sellingFeeBands = current.feeBandsOf(Direction.OFF_RAMP),
             ),
         )
     }
