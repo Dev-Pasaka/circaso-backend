@@ -155,7 +155,16 @@ class MerchantViews(
     }
 
     private suspend fun floatFloor(current: RampSettings): Long =
-        when (val priced = pricing.price(Direction.ON_RAMP, current.orderMinMinor, null, current.feeBps)) {
+        when (
+            val priced =
+                pricing.price(
+                    current.network,
+                    Direction.ON_RAMP,
+                    current.orderMinMinor,
+                    null,
+                    current.feeBps,
+                )
+        ) {
             is Resource.Success -> priced.data.assetMinor
             is Resource.Error -> 0
         }

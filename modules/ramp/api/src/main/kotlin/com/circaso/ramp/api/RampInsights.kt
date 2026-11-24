@@ -209,6 +209,13 @@ data class OpsRampMerchantOrder(
     val settlementId: UUID?,
     val txHash: String?,
     val collectionsProvider: String,
+    /**
+     * How [rate] was made (decision 2026-11-24): `REFERENCE_SPREAD` or `MANUAL`, the reference rate read at the time,
+     * and the margin over it in basis points. All null on orders made before it was recorded.
+     */
+    val rateSource: String? = null,
+    val referenceRate: String? = null,
+    val spreadBps: Int? = null,
 ) {
     override fun toString(): String = "OpsRampMerchantOrder($orderId, $state)"
 }

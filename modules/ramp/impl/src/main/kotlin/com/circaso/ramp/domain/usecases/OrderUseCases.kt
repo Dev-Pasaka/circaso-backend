@@ -114,7 +114,8 @@ class CreateQuote(
         gates.refusal(command.userId, settings)?.let { return Resource.error(it) }
         if (command.direction == Direction.OFF_RAMP) return sale(command, settings)
 
-        val asked = pricing.price(command.direction, command.fiatMinor, command.assetMinor, settings.feeBps)
+        val asked =
+            pricing.price(command.network, command.direction, command.fiatMinor, command.assetMinor, settings.feeBps)
         val priced =
             when (asked) {
                 is Resource.Error -> return asked
@@ -138,6 +139,7 @@ class CreateQuote(
                 feeBps = settings.feeBps,
                 merchantShareBps = settings.merchantShareBps,
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
+                rateBasis = priced.rateBasis,
             )
         quotes.insert(quote)
         return Resource.success(quote)
@@ -150,11 +152,13 @@ class CreateQuote(
      * (`ramp.payout_fee_unavailable`). The limits are selling's own, on what the user receives.
      */
     private suspend fun sale(command: QuoteCommand, settings: RampSettings): Resource<Quote> {
-        val rate =
-            when (val read = pricing.rate()) {
+        // Selling is quoted at the sell rate (decision 2026-11-24).
+        val applied =
+            when (val read = pricing.rate(command.network, Direction.OFF_RAMP)) {
                 is Resource.Error -> return read
                 is Resource.Success -> read.data
             }
+        val rate = applied.rate
         var feeMissing = false
         var feeSource: String? = null
         val feeOf: suspend (Long) -> Long? = { amount ->
@@ -192,6 +196,7 @@ class CreateQuote(
                 expiresAt = clock.instant().plus(settings.quoteLifetime),
                 providerFeeMinor = priced.providerFeeMinor,
                 providerFeeSource = feeSource,
+                rateBasis = applied.basis,
             )
         quotes.insert(quote)
         return Resource.success(quote)

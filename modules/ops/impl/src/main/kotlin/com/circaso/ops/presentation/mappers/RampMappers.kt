@@ -300,6 +300,10 @@ fun OpsRampOrder.toDto() =
         payoutAttempts = payoutAttempts,
         payoutOutcome = payoutOutcome,
         hasReceipt = hasReceipt,
+        rate = rate,
+        rateSource = rateSource,
+        referenceRate = referenceRate,
+        spreadBps = spreadBps,
     )
 
 fun OpsRampResolved.toResponse() = RampResolveResponse(order.toDto(), providerSaid)
@@ -533,6 +537,9 @@ private fun OpsRampMerchantOrder.toDto() =
         settlementId = settlementId?.toString(),
         txHash = txHash,
         collectionsProvider = collectionsProvider,
+        rateSource = rateSource,
+        referenceRate = referenceRate,
+        spreadBps = spreadBps,
     )
 
 /** A page of a merchant's orders; `nextCursor` continues after its last order, null on the last page. */

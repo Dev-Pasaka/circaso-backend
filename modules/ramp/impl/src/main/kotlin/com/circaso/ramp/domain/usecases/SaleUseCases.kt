@@ -171,6 +171,7 @@ class StartOffRamp(
         fiat = quote.fiat,
         assetMinor = quote.assetMinor,
         rate = quote.rate,
+        rateBasis = quote.rateBasis,
         feeMinor = quote.feeMinor,
         feeBps = quote.feeBps,
         merchantShareBps = quote.merchantShareBps,

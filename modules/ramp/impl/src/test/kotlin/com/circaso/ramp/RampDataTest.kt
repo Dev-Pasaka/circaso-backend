@@ -20,6 +20,7 @@ import com.circaso.ramp.data.repositories.OrderEventRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
 import com.circaso.ramp.data.repositories.PayoutHoldRepositoryImpl
 import com.circaso.ramp.data.repositories.PreviewAccessRepositoryImpl
+import com.circaso.ramp.data.repositories.PricingRepositoryImpl
 import com.circaso.ramp.data.repositories.QuoteRepositoryImpl
 import com.circaso.ramp.data.repositories.RampOutboxImpl
 import com.circaso.ramp.data.repositories.ReservationRepositoryImpl
@@ -50,9 +51,12 @@ import com.circaso.ramp.domain.models.PaidOutcome
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
+import com.circaso.ramp.domain.models.PricingSettings
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
+import com.circaso.ramp.domain.models.RateBasis
+import com.circaso.ramp.domain.models.RateMode
 import com.circaso.ramp.domain.models.RevenueWallet
 import com.circaso.ramp.domain.models.RoutingOrder
 import com.circaso.ramp.domain.models.Settlement
@@ -639,9 +643,13 @@ class RampDataTest {
                     200,
                     7_000,
                     now.plusSeconds(60),
+                    rateBasis = RateBasis(RateMode.MANUAL, BigDecimal("127.5"), 137),
                 )
             quotes.insert(quote)
-            val order = order(merchant.merchantId, quote.userId, quote.quoteId)
+            val order =
+                order(merchant.merchantId, quote.userId, quote.quoteId).copy(
+                    rateBasis = RateBasis(RateMode.REFERENCE_SPREAD, BigDecimal("129.25"), 150),
+                )
             assertTrue(orders.insert(order))
 
             assertEquals(quote, quotes.find(quote.quoteId, now))
@@ -650,6 +658,32 @@ class RampDataTest {
             assertEquals(order, orders.byQuote(quote.quoteId))
             assertEquals(order, orders.openOf(quote.userId))
             assertTrue(orders.needsKeys(merchant.merchantId))
+        }
+
+    @Test
+    fun `a network's pricing settings are seeded once, read back as written, and changed only at the version read`() =
+        runBlocking<Unit> {
+            val pricing = PricingRepositoryImpl(database)
+            val seed = PricingSettings.defaults(TESTNET, now)
+            pricing.seed(seed)
+            pricing.seed(seed.copy(buySpreadBps = 99))
+            assertEquals(seed, pricing.load()[TESTNET])
+
+            val manual =
+                seed.copy(
+                    mode = RateMode.MANUAL,
+                    buySpreadBps = 150,
+                    manualBuyRate = BigDecimal("131.5"),
+                    manualSellRate = BigDecimal("127.25"),
+                    manualExpiresAt = now.plusSeconds(3_600),
+                    updatedBy = "staff",
+                    reason = "P2P",
+                )
+            val changed = pricing.update(manual, 1)
+            assertEquals(manual.copy(version = 2), changed)
+            assertEquals(changed, pricing.load()[TESTNET])
+            assertNull(pricing.update(manual, 1), "someone changed it meanwhile")
+            assertEquals(3L, pricing.update(manual, null)?.version)
         }
 
     @Test

@@ -183,6 +183,16 @@ The engine's staff routes, under `/v1/ops/ramp` inside `networkFiltered { }`, in
 - **The merchant list and a tier change** now carry `merchantType`, `orderLimitMinor` (KES cents as a string, or null), `offersOnRamp` and `offersOffRamp`.
 - **What the admin needs:** an "Engine" page under Ramp with the settings form per network and direction (with the simulation beside it, run before saving), a "Routing" list with a detail view (the candidates table with each one's reason or score, the order tried, the steps), and on a merchant's page their type and limit (editable by an ADMIN) and their signals.
 
+## Ramp: rates (decision 2026-11-24)
+
+The ramp's buy and sell rates (ramp.md → "As built: rates"), under `/v1/ops/ramp` inside `networkFiltered { }`, in a controller of their own (`rampRatesController`), through a third contract in `ramp:api`, `RampRatesAdmin`. FINANCE and ADMIN read (`ramp.read`); ADMIN changes (`ramp.manage`). `?network=MAINNET|TESTNET` is required on each (`request.malformed` without).
+
+- **`GET /ramp/pricing?network=`** → `{ network, mode, buySpreadBps, sellSpreadBps, manualBuyRate, manualSellRate, manualExpiresAt, maxDeviationBps, maxReferenceAgeHours, version, updatedBy, reason, updatedAt }`. `mode`: `REFERENCE_SPREAD` or `MANUAL`. Rates are KES per USDC as decimal strings; `updatedBy` (a staff id) and `reason` are null on the seed.
+- **`PUT /ramp/pricing?network=`** `{ mode, buySpreadBps, sellSpreadBps, manualBuyRate?, manualSellRate?, manualExpiresAt?, maxDeviationBps, maxReferenceAgeHours, version, reason }` → the new version, in the GET's shape. `version` is the one read (left out: save over whatever is there); `manualExpiresAt` left out in `MANUAL` is 24 hours from now. Audit `ramp_pricing.update` (target `ramp_pricing`, the network); the line's detail is what changed, by name (`v1→v2; mode REFERENCE_SPREAD→MANUAL; manualBuyRate null→131.5`). Errors: `ops.reason_required`, `ramp.settings_invalid` (400, `details.fields` names the setting: a spread out of 0 to 2000, a buy rate below the sell rate, an expiry past or beyond 30 days, a manual rate outside `maxDeviationBps` of the reference, or no reference to check it against), `ramp.settings_changed` (409), `request.malformed` (a mode that isn't one, a rate that isn't a number, a time that isn't ISO-8601).
+- **`GET /ramp/rates?network=`** → `{ network, mode, referenceRate, referenceAsOf, referenceAgeSeconds, referenceStale, maxReferenceAgeHours, maxDeviationBps, manualExpiresAt, buy: { rate, source, spreadBps, paused }, sell: { … }, at }`. `rate` is null when the side is paused, and `paused` says why (`NO_REFERENCE`, `REFERENCE_STALE`, `MANUAL_MISSING`, `MANUAL_EXPIRED`): quoting that side answers `ramp.pricing_unavailable` until staff act. `spreadBps` is the margin over the reference (for a manual rate, what it works out to).
+- **Orders show how their rate was made:** the review list (RO4) gains `rate`, `rateSource`, `referenceRate`, `spreadBps`; a merchant's orders (RO8) gain `rateSource`, `referenceRate`, `spreadBps`. All null on orders from before 2026-11-24.
+- **What the admin needs:** a "Rates" page under Ramp (built in circaso-admin the same day).
+
 ## Ramp: selling (decision 2026-11-23)
 
 The off-ramp's staff side (ramp.md → "As built: the off-ramp"), on the same routes as "Ramp" with the same roles.

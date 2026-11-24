@@ -192,6 +192,11 @@ data class OpsRampOrder(
     val payoutOutcome: String? = null,
     /** Whether an M-Pesa receipt is on the order (it itself never leaves the ramp here). */
     val hasReceipt: Boolean = false,
+    /** The rate (KES per USDC) and how it was made; see [OpsRampMerchantOrder.rateSource]. */
+    val rate: String? = null,
+    val rateSource: String? = null,
+    val referenceRate: String? = null,
+    val spreadBps: Int? = null,
 ) {
     override fun toString(): String = "OpsRampOrder($orderId, $state)"
 }

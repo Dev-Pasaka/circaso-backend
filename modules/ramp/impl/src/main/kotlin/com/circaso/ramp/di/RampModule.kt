@@ -16,6 +16,7 @@ import com.circaso.ramp.api.Ramp
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampEngineAdmin
 import com.circaso.ramp.api.RampFrames
+import com.circaso.ramp.api.RampRatesAdmin
 import com.circaso.ramp.data.cache.NodeTradingSessions
 import com.circaso.ramp.data.cache.RampExpiry
 import com.circaso.ramp.data.cache.RealtimeFramesImpl
@@ -34,6 +35,7 @@ import com.circaso.ramp.data.repositories.OrderEventRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderRepositoryImpl
 import com.circaso.ramp.data.repositories.PayoutHoldRepositoryImpl
 import com.circaso.ramp.data.repositories.PreviewAccessRepositoryImpl
+import com.circaso.ramp.data.repositories.PricingRepositoryImpl
 import com.circaso.ramp.data.repositories.QuoteRepositoryImpl
 import com.circaso.ramp.data.repositories.RampOutboxImpl
 import com.circaso.ramp.data.repositories.ReservationRepositoryImpl
@@ -52,7 +54,7 @@ import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.data.support.LoggedAlerts
 import com.circaso.ramp.data.support.LoggedPayoutJournal
 import com.circaso.ramp.data.support.MasterKeyWebhookSecrets
-import com.circaso.ramp.data.support.ReferenceRatePricing
+import com.circaso.ramp.data.support.RatePricing
 import com.circaso.ramp.data.support.SecureTokens
 import com.circaso.ramp.data.support.SettingsUsdcContracts
 import com.circaso.ramp.data.tables.BlocksTable
@@ -107,6 +109,7 @@ import com.circaso.ramp.domain.repositories.OrderEventRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.PreviewAccessRepository
+import com.circaso.ramp.domain.repositories.PricingSettingsRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.RevenueWalletRepository
@@ -132,6 +135,7 @@ import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.PayoutFees
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.PricingBook
 import com.circaso.ramp.domain.support.ProviderBalancesReader
 import com.circaso.ramp.domain.support.PurchaseRouting
 import com.circaso.ramp.domain.support.Releases
@@ -158,8 +162,10 @@ import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetMerchantSummary
 import com.circaso.ramp.domain.usecases.GetMerchantVerification
 import com.circaso.ramp.domain.usecases.GetOrder
+import com.circaso.ramp.domain.usecases.GetPricingSettings
 import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
+import com.circaso.ramp.domain.usecases.GetRates
 import com.circaso.ramp.domain.usecases.GetRoutingDecision
 import com.circaso.ramp.domain.usecases.GetSettings
 import com.circaso.ramp.domain.usecases.GetStatement
@@ -215,6 +221,7 @@ import com.circaso.ramp.domain.usecases.SweepSales
 import com.circaso.ramp.domain.usecases.SweepVerifications
 import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateEngineSettings
+import com.circaso.ramp.domain.usecases.UpdatePricingSettings
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
 import com.circaso.ramp.presentation.api.RampAdminImpl
@@ -222,6 +229,7 @@ import com.circaso.ramp.presentation.api.RampCollectionNotifications
 import com.circaso.ramp.presentation.api.RampEngineAdminImpl
 import com.circaso.ramp.presentation.api.RampImpl
 import com.circaso.ramp.presentation.api.RampKycNotifications
+import com.circaso.ramp.presentation.api.RampRatesAdminImpl
 import com.circaso.ramp.presentation.api.RampRealtimeReplay
 import com.circaso.ramp.presentation.controllers.merchantController
 import com.circaso.ramp.presentation.controllers.rampController
@@ -232,6 +240,7 @@ import com.circaso.ramp.presentation.services.RampAdminService
 import com.circaso.ramp.presentation.services.RampEngineService
 import com.circaso.ramp.presentation.services.RampEventsService
 import com.circaso.ramp.presentation.services.RampOpsJobsService
+import com.circaso.ramp.presentation.services.RampRatesService
 import com.circaso.ramp.presentation.services.RampService
 import com.circaso.shared.EventSubscription
 import com.circaso.shared.Network
@@ -345,6 +354,7 @@ fun rampModule(config: Config): Module =
         single<BlockRepository> { BlockRepositoryImpl(get(named("ramp.database"))) }
         single<OrderEventRepository> { OrderEventRepositoryImpl(get(named("ramp.database"))) }
         single<EngineSettingsRepository> { EngineSettingsRepositoryImpl(get(named("ramp.database"))) }
+        single<PricingSettingsRepository> { PricingRepositoryImpl(get(named("ramp.database"))) }
         single<RoutingLogRepository> { RoutingLogRepositoryImpl(get(named("ramp.database"))) }
         single<PromptTransport> { HttpPromptTransport() }
         single<RampCounters> { RedisCounters(get<RedisScopes>().scope(REDIS_PREFIX)) }
@@ -376,7 +386,7 @@ fun rampModule(config: Config): Module =
             val secrets = get<Secrets>()
             HmacIdentityKeys(masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) })
         }
-        single<Pricing> { ReferenceRatePricing(get()) }
+        single<Pricing> { RatePricing(get(), get(), clock) }
         single<RampAlerts> { LoggedAlerts() }
         single<UsdcContracts> {
             val koin = this
@@ -401,6 +411,7 @@ fun rampModule(config: Config): Module =
         single<KycGate> { get<Verifications>() }
         single { Gates(get(), get(), get()) }
         single { EngineBook(get(), get(), clock) }
+        single { PricingBook(get(), get(), clock) }
         single { MerchantStatsBook(get(), get(), clock) }
         single { EngineFacts(get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single {
@@ -540,6 +551,9 @@ fun rampModule(config: Config): Module =
         single { ListStaffMerchantOrders(get(), get()) }
         single { GetEngineSettings(get(), get()) }
         single { UpdateEngineSettings(get(), get(), clock) }
+        single { GetPricingSettings(get(), get()) }
+        single { UpdatePricingSettings(get(), get(), get(), clock) }
+        single { GetRates(get(), get(), get(), clock) }
         single { ListRoutingDecisions(get(), get()) }
         single { GetRoutingDecision(get()) }
         single { RoutingSimulator(get(), get(), get(), get(), get(), clock) }
@@ -635,6 +649,8 @@ fun rampModule(config: Config): Module =
         single<Ramp> { RampImpl(get()) }
         single<RampAdmin> { RampAdminImpl(get()) }
         single<RampEngineAdmin> { RampEngineAdminImpl(get()) }
+        single { RampRatesService(get(), get(), get()) }
+        single<RampRatesAdmin> { RampRatesAdminImpl(get()) }
         single<CollectionNotifications> { RampCollectionNotifications(get()) }
         single<KycNotifications> { RampKycNotifications(get()) }
         single(named("ramp.replay")) { RealtimeModule(RampFrames.MODULE, RampRealtimeReplay(get())) }

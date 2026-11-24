@@ -162,6 +162,9 @@ object QuotesTable : Table("ramp.quotes") {
     val expiresAt = timestamp("expires_at")
     val providerFeeMinor = long("provider_fee_minor").default(0)
     val providerFeeSource = text("provider_fee_source").nullable()
+    val rateSource = text("rate_source").nullable()
+    val referenceRate = text("reference_rate").nullable()
+    val spreadBps = integer("spread_bps").nullable()
     override val primaryKey = PrimaryKey(quoteId)
 }
 
@@ -203,6 +206,9 @@ object OrdersTable : Table("ramp.orders") {
     val fundedMinor = long("funded_minor").nullable()
     val fundingTxHash = text("funding_tx_hash").nullable()
     val fundedAt = timestamp("funded_at").nullable()
+    val rateSource = text("rate_source").nullable()
+    val referenceRate = text("reference_rate").nullable()
+    val spreadBps = integer("spread_bps").nullable()
     val refundAddress = text("refund_address").nullable()
     val payoutAttempts = integer("payout_attempts").default(0)
     val payoutFailures = integer("payout_failures").default(0)
@@ -424,4 +430,22 @@ object RoutingDecisionsTable : Table("ramp.routing_decisions") {
     val steps = text("steps")
     val createdAt = timestamp("created_at")
     override val primaryKey = PrimaryKey(decisionId)
+}
+
+/** One network's pricing settings: where its buy and sell rates come from (V12). */
+object PricingSettingsTable : Table("ramp.pricing_settings") {
+    val network = text("network")
+    val mode = text("mode")
+    val buySpreadBps = integer("buy_spread_bps")
+    val sellSpreadBps = integer("sell_spread_bps")
+    val manualBuyRate = text("manual_buy_rate").nullable()
+    val manualSellRate = text("manual_sell_rate").nullable()
+    val manualExpiresAt = timestamp("manual_expires_at").nullable()
+    val maxDeviationBps = integer("max_deviation_bps")
+    val maxReferenceAgeHours = integer("max_reference_age_hours")
+    val version = long("version")
+    val updatedBy = text("updated_by").nullable()
+    val reason = text("reason").nullable()
+    val updatedAt = timestamp("updated_at")
+    override val primaryKey = PrimaryKey(network)
 }
