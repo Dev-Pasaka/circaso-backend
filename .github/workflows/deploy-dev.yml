@@ -138,8 +138,15 @@ jobs:
           cp -a nginx/. "$backup"/
           cp -a nginx-incoming/nginx/. nginx/
           rm -rf nginx-incoming
-          if out=$(docker compose exec -T nginx nginx -t 2>&1 </dev/null); then
-            docker compose exec -T nginx nginx -s reload </dev/null
+          # The container by its compose label: `docker compose exec` would need IMAGE and DOCS_IMAGE, set only in Roll out.
+          ngx=$(docker ps -q --filter label=com.docker.compose.service=nginx | head -n1)
+          if [ -z "$ngx" ]; then
+            cp -a "$backup"/. nginx/
+            echo "nginx: no running nginx container; the previous files are back and nothing was deployed"
+            exit 1
+          fi
+          if out=$(docker exec "$ngx" nginx -t 2>&1 </dev/null); then
+            docker exec "$ngx" nginx -s reload </dev/null
             echo "nginx: synced and reloaded (previous files in $backup)"
           else
             echo "$out" | tail -5
