@@ -3,7 +3,7 @@ name: Deploy to dev
 # Every push to main: test, build the image, publish it to Docker Hub, and roll it out to the dev server over SSH.
 # GitHub holds only the way in (the SSH key, the Docker Hub token, the Infisical machine identity) and the server's
 # address. Everything the server runs with lives on the server in /opt/circaso (docker-compose.yml, nginx, certs,
-# .env): this workflow copies nothing there. The app's .env is written from Infisical at each deploy (2026-11-15):
+# .env): this workflow copies nothing there but deploy/nginx (step "Sync nginx"). The app's .env is written from Infisical at each deploy (2026-11-15):
 # variable INFISICAL_MODE is `off` (or unset: the .env on the server is used as it is), `check` (fetch and say which
 # names differ from the .env in use, change nothing) or `on` (fetch, then replace .env; the one before is kept as
 # .env.prev). Values are never printed. If Infisical can't be reached the deploy stops before anything is restarted.
@@ -117,6 +117,38 @@ jobs:
         env:
           DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
           DEV_SSH_KNOWN_HOSTS: ${{ vars.DEV_SSH_KNOWN_HOSTS }}
+      - name: Check out the nginx config
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: deploy/nginx
+          sparse-checkout-cone-mode: false
+      - name: Sync nginx
+        # deploy/nginx is the source of truth for the server's /opt/circaso/nginx (mounted read-only as the nginx container's
+        # conf.d). Files only on the server (tls.conf, local extras) are left alone. The new files are tested with `nginx -t`
+        # before nginx reloads; a failing test puts the previous files back and stops the deploy before the app is touched, so a
+        # bad config can never take the site down. The last ten previous versions stay in /opt/circaso/nginx-backups.
+        run: |
+          SSH="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}"
+          tar czf - -C deploy nginx | $SSH 'rm -rf /opt/circaso/nginx-incoming && mkdir -p /opt/circaso/nginx-incoming && tar xzf - -C /opt/circaso/nginx-incoming'
+          $SSH bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /opt/circaso
+          backup="nginx-backups/$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$backup"
+          cp -a nginx/. "$backup"/
+          cp -a nginx-incoming/nginx/. nginx/
+          rm -rf nginx-incoming
+          if out=$(docker compose exec -T nginx nginx -t 2>&1 </dev/null); then
+            docker compose exec -T nginx nginx -s reload </dev/null
+            echo "nginx: synced and reloaded (previous files in $backup)"
+          else
+            echo "$out" | tail -5
+            cp -a "$backup"/. nginx/
+            echo "nginx: the new config failed its test; the previous files are back and nothing was deployed"
+            exit 1
+          fi
+          ls -1dt nginx-backups/* | tail -n +11 | xargs -r rm -rf
+          REMOTE
       - name: Roll out
         # Runs on the server, in /opt/circaso, with the docker-compose.yml and .env that live there. The Docker Hub token
         # goes in on stdin with the script, so it is never on a command line or in a file on the server.

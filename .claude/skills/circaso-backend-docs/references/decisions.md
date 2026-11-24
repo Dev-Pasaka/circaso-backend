@@ -257,7 +257,7 @@ Approved by Pasaka. The app's Receive code and the merchant portal's top-up code
 - **The only `0x…` is the recipient.** A naive scanner gets the right address; a strict one rejects the code and the person copies the address. Nobody can grab the contract.
 - **Circaso still prefills everything.** The app reads the link (scan, paste, App Links and Universal Links on the share host, `/pay/*` added to the association file) into Send to a Wallet with the recipient, chain and coin (and amount).
 - **Anything else opens a page** (`GET /pay/{address}`, share module, `ReadPayLink`): static and read-only, nothing stored or looked up, no form. Strict validation: EIP-55 when mixed case (Keccak-256 in plain Kotlin so the domain stays library-free), a 32-byte base58 key on Solana chains, the chains Circaso offers, USDC only; an invalid link never shows an address. The Copy button is the only script on any share page, allowed by its hash in the CSP.
-- **nginx** passes `/pay/` through like `/s/` (`deploy/nginx/locations.inc`), so its 404/400 pages are the designed ones; the server's copy of the file must be updated by hand (the deploy copies nothing there).
+- **nginx** passes `/pay/` through like `/s/` (`deploy/nginx/locations.inc`), so its 404/400 pages are the designed ones; the deploy now copies `deploy/nginx` to the server and tests it before reloading (2026-11-24, step "Sync nginx").
 
 ## 2026-11-14 — Group join links and the group description
 
