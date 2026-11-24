@@ -31,6 +31,7 @@ import com.circaso.ramp.domain.support.Presence
 import com.circaso.ramp.domain.support.Releases
 import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.WithdrawalSends
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
@@ -40,7 +41,7 @@ import java.time.Clock
  * `ramp.release` on one network, in the ops process: makes the wallets that are missing (the ramp's wallet set,
  * Circaso's ramp wallet, an approved merchant's float wallet), sends the USDC of every `PAID` order, and follows every
  * `RELEASING` one until the chain confirms it; sends back the USDC of every `REFUNDING` sale and follows it the same
- * way (2026-11-23). Does nothing where this server has no treasury or can't sign.
+ * way (2026-11-23); sends and follows merchants' float withdrawals (2026-11-24). Does nothing where this server has no treasury or can't sign.
  */
 class ReleaseOrders(
     private val treasury: TreasuryCustody?,
@@ -49,6 +50,7 @@ class ReleaseOrders(
     private val orders: OrderRepository,
     private val clock: Clock,
     private val refunds: SaleRefunds,
+    private val withdrawals: WithdrawalSends,
 ) {
     suspend operator fun invoke(network: Network): Int {
         val custody = treasury?.takeIf { it.canSign(network) } ?: return 0
@@ -68,6 +70,8 @@ class ReleaseOrders(
             refunds.advance(custody, order)
             handled++
         }
+        // Merchants' float withdrawals (2026-11-24): sent once with a key from the withdrawal, then followed.
+        handled += withdrawals.run(custody, network)
         return handled
     }
 
@@ -206,9 +210,29 @@ class UpdateSettings(
     }
 
     private fun invalid(s: RampSettings): RampError.SettingsInvalid? {
-        val problem = moneyProblem(s) ?: kycProblem(s)
+        val problem = moneyProblem(s) ?: kycProblem(s) ?: withdrawalProblem(s)
         return problem?.let { (field, what) -> RampError.SettingsInvalid(field, what) }
     }
+
+    /** Float withdrawals (2026-11-24): the address delay within its range, a minimum, a daily cap of 0 or above it. */
+    private fun withdrawalProblem(s: RampSettings): Pair<String, String>? =
+        when {
+            s.withdrawDestinationDelayHours !in 0..RampSettings.MAX_WITHDRAW_DESTINATION_DELAY_HOURS -> {
+                "withdrawDestinationDelayHours" to "must be 0 to ${RampSettings.MAX_WITHDRAW_DESTINATION_DELAY_HOURS}"
+            }
+
+            s.withdrawMinMinor <= 0 -> {
+                "withdrawMinMinor" to "must be above zero"
+            }
+
+            s.withdrawDailyMaxMinor != 0L && s.withdrawDailyMaxMinor < s.withdrawMinMinor -> {
+                "withdrawDailyMaxMinor" to "must be 0 (no cap) or at least the minimum"
+            }
+
+            else -> {
+                null
+            }
+        }
 
     /** The identity settings: a provider this server offers, workflow ids that look like ids, the portal's origin. */
     private fun kycProblem(s: RampSettings): Pair<String, String>? =

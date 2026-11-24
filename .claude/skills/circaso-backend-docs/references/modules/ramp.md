@@ -48,7 +48,7 @@ The first draft's `MerchantCustody` duplicated it and put the secret in the app.
 - **Float reservations**: the part of a merchant's float promised to open orders (USDC), so two orders never spend the same float.
 - **Commissions**: what each completed order earned its merchant (and Circaso, once the fee model is decided).
 - **Ramp blocks**: users, and their KYC identities, barred from the ramp (M-Pesa reversals).
-- **Withdrawals**: a merchant taking unreserved float out.
+- **Withdrawals**: a merchant taking free float out to an address they saved (built 2026-11-24).
 - Its realtime frames (`ramp/*`) and their push wording.
 
 Circle stays the source of truth for a merchant's balance (principle 11); the M-Pesa side's source of truth is PayHero's status query, never a callback body.
@@ -189,7 +189,7 @@ The row lock serialises reservations per merchant, so two orders can't both fit 
 
 ### Withdrawals
 
-A merchant withdraws USDC float to any address valid on that chain, their personal Circaso wallet's address included (RM10): only unreserved funds, and only while offline with no open orders. The check and the `withdrawals` row take the merchant's row lock, the same lock reservations take. The send is `TreasuryCustody.send`, in the ops process, with a key derived from the withdrawal id. There is no shilling withdrawal: collections already sit in the merchant's own till.
+**Superseded 2026-11-24: see "As built: float withdrawals" (RM20, RM21; saved addresses with a cooling-off delay, allowed online or offline, the amount reserved at once).** Earlier: a merchant withdraws USDC float to any address valid on that chain, their personal Circaso wallet's address included (RM10): only unreserved funds, and only while offline with no open orders. The check and the `withdrawals` row take the merchant's row lock, the same lock reservations take. The send is `TreasuryCustody.send`, in the ops process, with a key derived from the withdrawal id. There is no shilling withdrawal: collections already sit in the merchant's own till.
 
 ### Reversals
 
@@ -480,7 +480,9 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RM8 | `GET /ramp/merchant/earnings?from=&to=` | `GetEarnings` | The overview for a period: orders, shillings in, USDC sold, fees, the merchant's share, Circaso's share (swept and still held), and the daily sweeps |
 | RM15 | `GET /ramp/merchant/statement?from=&to=&cursor=` | `GetStatement` | Every exchange in the period, line by line, with the sweeps and the totals; the portal shows and exports it |
 | RM9 | `PUT /ramp/merchant/pin` | `ChangePin` | Re-wraps the data key under the new PIN (old PIN required) |
-| RM10 | `POST /ramp/merchant/withdrawals` | `WithdrawFloat` | Unreserved USDC float to an address (their Circaso wallet's or any other); offline and no open orders |
+| RM10 | — | — | Replaced by RM20 and RM21 (2026-11-24) |
+| RM20 | `GET` · `POST /ramp/merchant/withdrawal-addresses` · `POST /ramp/merchant/withdrawal-addresses/{destinationId}/remove` | `ListWithdrawalDestinations` / `AddWithdrawalDestination` / `RemoveWithdrawalDestination` | The addresses float may be withdrawn to: added and removed with the PIN, usable only after the cooling-off delay. Built 2026-11-24: see "As built: float withdrawals" |
+| RM21 | `POST /ramp/merchant/withdrawals` · `GET /ramp/merchant/withdrawals` · `GET /ramp/merchant/withdrawals/{withdrawalId}` | `WithdrawFloat` / `ListWithdrawals` / `GetWithdrawal` | Free float to a saved, usable address, with the PIN and an `Idempotency-Key`; online or offline; sent by the ops process. Built 2026-11-24 |
 | RM12 | `POST /ramp/merchant/orders/{orderId}/payout` | `ClaimPayout` | Manual payout: the merchant enters the M-Pesa receipt code after sending | 
 | RM13 | `POST /ramp/merchant/orders/{orderId}/decline` | `DeclinePayout` | Manual payout: the merchant can't pay; the held USDC is refunded |
 | RM14 | `POST /ramp/merchant/payments/callback` | `RotateCallback` | Generates a new callback address; the old one stops working |
@@ -512,6 +514,7 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RO15 | `GET /ops/ramp/pricing?network=` | One network's pricing settings: a spread on each side of the reference, or manual rates with an expiry (2026-11-24, "As built: rates") |
 | RO16 | `PUT /ops/ramp/pricing?network=` | Changes them, version-checked, audited with a reason |
 | RO17 | `GET /ops/ramp/rates?network=` | The buy and sell rates in force now (or why each is paused), the reference and its age |
+| RO18 | `GET /ops/ramp/merchants/{id}/withdrawals?network=&limit=` | The merchant's float withdrawals and every withdrawal address they saved (2026-11-24) |
 
 Every money read takes `?network=`, as the other ops routes do. RO6–RO8 are described under "As built" (staff visibility per merchant).
 
@@ -736,7 +739,7 @@ CREATE UNIQUE INDEX blocks_identity_key ON ramp.blocks (identity_key) WHERE iden
 CREATE INDEX blocks_source_idx ON ramp.blocks (source_user_id) WHERE source_user_id IS NOT NULL;
 CREATE INDEX blocks_listed_idx ON ramp.blocks (created_at DESC, block_id DESC) WHERE user_id IS NOT NULL;
 
-CREATE TABLE ramp.withdrawals (
+CREATE TABLE ramp.withdrawals (                          -- as designed; built differently in V13: see "As built: float withdrawals"
     withdrawal_id uuid       PRIMARY KEY,
     merchant_id  uuid        NOT NULL,
     destination_address text NOT NULL,
@@ -764,7 +767,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 | `reservations` | — | Inserted in the same transaction as the order, under the merchant's row lock. Closed by `updateReturning … WHERE state = 'OPEN'`: only the caller that closes it writes what follows |
 | `commissions` | — | `insertIgnore` on `order_id`, in the transaction that completes the order |
 | `blocks` | — | `insertIgnore` on each unique key; lifting a user's block deletes their row and the identity rows that came from it |
-| `withdrawals` | — | Written under the merchant's row lock with the offline and no-open-orders checks |
+| `withdrawals` | — | Written under the merchant's row lock with the free-float check, its amount reserved in the same transaction (V13, 2026-11-24) |
 | `realtime`, `outbox` | Daily partitions, 7 days | — |
 
 **V6 (2026-11-23, the merchant engine):** `ramp.order_events`, four columns on `merchants`, `ramp.engine_settings` with `ramp.engine_settings_history`, and `ramp.routing_decisions`. The DDL and how each race is settled are under "As built: the merchant engine".
@@ -785,7 +788,7 @@ CREATE TABLE ramp.outbox (…);                                -- the shared DDL
 
 | Job | Every | Does | First slice |
 | --- | --- | --- | --- |
-| `ramp.release` (`OpsJob`, the ops process) | 5 s | For each network: sends `PAID` orders through `TreasuryCustody.send` (key derived from the order) and moves them to `RELEASING`; re-reads `RELEASING` orders older than 15 s. At start-up, makes the merchants' wallet set and any approved merchant's missing wallet | Yes |
+| `ramp.release` (`OpsJob`, the ops process) | 5 s | For each network: sends `PAID` orders through `TreasuryCustody.send` (key derived from the order) and moves them to `RELEASING`; re-reads `RELEASING` orders older than 15 s. At start-up, makes the merchants' wallet set and any approved merchant's missing wallet. Since 2026-11-24 also sends `REQUESTED` float withdrawals and follows `SENT` ones | Yes |
 | `ramp.settle-fees` (`OpsJob`) | 10 min | Once a day, at the settings' hour: for each merchant owing Circaso anything, one transfer of the whole total from the merchant's float to Circaso's ramp wallet, then the orders it covers are marked settled. An unsent sweep is tried again each run | With fees |
 | `ramp.payouts` | 10 s | Selling (2026-11-23): unconfirmed fundings, due payouts, `PAYING_OUT` lookups, unfunded sales past their deadline, staff's re-checks, test payouts in flight. See "As built: the off-ramp" | Built 2026-11-23 |
 | `ramp.expire-orders` | 30 s | An order unpaid 2 minutes after its prompt: **asks PayHero first**. `FAILED` or no payment → `EXPIRED` and the reservation `RELEASED`, in one transaction; `SUCCESS` → the normal verify and release; still `QUEUED` → left for the next run, and to `REVIEW` after 10 minutes. When the merchant's keys aren't available it changes nothing | Yes |
@@ -1739,6 +1742,43 @@ A paused side is `ramp.pricing_unavailable` (502, unchanged for the app), **neve
 | RO17 | `GET /ops/ramp/rates?network=` (`ramp.read`) | The reference and its age (`referenceRate`, `referenceAsOf`, `referenceAgeSeconds`, `referenceStale`), and `buy` and `sell`: `{ rate, source, spreadBps, paused }` |
 
 **The admin's "Rates" page** (under Ramp, per network): the reference and its age with an alert when stale, the effective buy and sell rates (or why each is paused), a mode switch; in spread mode the two spreads with a live preview of the rates and the margin over the reference; in manual mode the two rates and the expiry, with the band shown; a reason on save.
+
+## As built: float withdrawals (2026-11-24, `feat/merchant-withdrawals`)
+
+The owner's request: a merchant sends USDC out of their float wallet to an external address of their own. Replaces RM10 and the "Withdrawals" design above (which allowed any address, offline only).
+
+**Saved addresses with a cooling-off delay (RM20).** A withdrawal goes only to an address the merchant saved first, with their PIN, and only from `usableAt` = when it was saved + `ramp.settings.withdraw_destination_delay_hours` (24, 0 to 720, edited in RO5; the delay in force when it was saved is stored on the row, so a later change doesn't move existing addresses). This is the defence if a portal session is stolen: a thief who also has the PIN must still wait out the delay while the merchant can see and remove the address. Checked: an EVM address (`0x` and 40 hex; mixed case must match its EIP-55 checksum; never the zero address), stored checksummed; never one of the merchant's own float wallets on either network (`ramp.destination_own_float`); not already saved (`ramp.destination_exists`, case-insensitive; `withdrawal_destinations_live_key`); at most 10 live (`ramp.destinations_full`). The address is on the float wallet's chain (`BASE` on mainnet, `BASE-SEPOLIA` on the testnet). Removing needs the PIN and keeps the row (`removed_at`): withdrawals name it; saving it again starts the delay again. The PIN is checked by opening the merchant's sealed payment account (`PinGuard`), so wrong tries count toward the same 30-minute lock as everywhere; a merchant who never set a PIN (RM5) gets `ramp.merchant_setup_incomplete`.
+
+```json
+// GET /v1/ramp/merchant/withdrawal-addresses → { "addresses": [ Address ], "delayHours": 24, "blockchain": "BASE", "max": 10 }
+// POST /v1/ramp/merchant/withdrawal-addresses ← { "address": "0x5aAe…", "label": "Ledger", "pin": "482913" } → Address
+// POST /v1/ramp/merchant/withdrawal-addresses/{destinationId}/remove ← { "pin": "482913" } → { "removed": true }
+// Address = { "destinationId", "label", "address", "blockchain", "network", "createdAt", "usableAt", "usable" }
+```
+
+**Withdrawing (RM21).** `{ amountMinor, destinationId, pin }` with an `Idempotency-Key` (also kept on the row: `withdrawals_idempotency_key (merchant_id, idempotency_key)`, so a repeat is the same withdrawal even past the gateway's 24-hour replay). Order of checks: an approved merchant with a float wallet on the network (`ramp.merchant_not_approved`, `ramp.merchant_setup_incomplete`); at least `withdraw_min_minor` (1 USDC; `ramp.amount_invalid`, field problem `at least <minor>`); the address is theirs, live, on this network (`ramp.destination_not_found`) and past `usableAt` (`ramp.destination_not_ready`, `usable from <instant>`); the PIN; then the custodian's balance is read **outside** the transaction (`ramp.custody_unavailable` when it can't be), and in `Transactor.attempt("withdrawals.request")` the merchant's row is locked (the lock every order's reservation takes), free float = balance − open reservations (orders and withdrawals) − Circaso's unswept share is computed, and the amount must fit (`ramp.insufficient_float`, `at most <minor>`), as must the daily cap when `withdraw_daily_max_minor` > 0 (per Nairobi day, failed withdrawals left out; `ramp.limit_exceeded`, `at most <minor> today`). The row is written `REQUESTED` and **its amount reserved in the same transaction**: a `ramp.reservations` row of kind `WITHDRAWAL` keyed by the withdrawal id, so routing, RM2, the fee sweep and staff all see less free float at once with no change to how they add it up. Allowed online or offline: the reservation keeps the engine from promising the same USDC.
+
+**Sending (the ops process).** `ramp.release` (every 5 s, each network) calls `WithdrawalSends.run` after the orders: a `REQUESTED` withdrawal is sent with `TreasuryCustody.send` from the float wallet (the network's USDC contract only, as releases), idempotency key `UUID.nameUUIDFromBytes("ramp:withdrawal:<id>")`, `refId` = the withdrawal id; Gas Station pays the gas (the float is an SCA). Circle answers → `SENT` with its transaction id (a `CHECK` keeps a `SENT`/`COMPLETED` row from lacking one). Circle `Unavailable`, or the balance unreadable → stays `REQUESTED` and the same key is asked again next run. Circle refuses → `FAILED` (`refused`); the wallet holds no USDC → `FAILED` (`float_short`); no float wallet → `wallet_missing`. Each `SENT` one is read every run: the hash is recorded as soon as Circle has it, `CONFIRMED` → `COMPLETED` with the reservation **consumed**, `FAILED` → `FAILED` (`failed_on_chain`) with the reservation **released**, in one transaction each. A failure alerts (`stuck`). **Nothing is ever resent after a definitive failure**: the merchant asks again. Circle's webhook is not used (as for releases).
+
+```json
+// POST /v1/ramp/merchant/withdrawals ← { "amountMinor": "25000000", "destinationId": "0193…", "pin": "482913" }
+// → Withdrawal (also GET /withdrawals/{withdrawalId})
+{ "withdrawalId": "0193…", "state": "REQUESTED", "amount": { "unit": "USDC", "amountMinor": "25000000", "amount": "25" },
+  "network": "MAINNET", "blockchain": "BASE",
+  "destination": { "destinationId": "0193…", "label": "Ledger", "address": "0x5aAe…" },
+  "txHash": null, "explorerUrl": null, "failureReason": null,
+  "createdAt": "…", "updatedAt": "…", "sentAt": null, "closedAt": null }
+// GET /v1/ramp/merchant/withdrawals?limit=20&cursor= → { "withdrawals": [ … ], "limits": { "min": { USDC 1 },
+//     "dailyMax": null, "usedToday": { USDC 25 } }, "next": "<withdrawalId>" | null }   (newest first; cursor = next)
+```
+
+`explorerUrl`: `https://basescan.org/tx/<hash>` on `BASE`, `https://sepolia.basescan.org/tx/<hash>` on `BASE-SEPOLIA`. **RM2's `float`** gains `withdrawing` (the open withdrawals' part of `reserved`); `free` already excludes it.
+
+**Data (V13).** `ramp.settings`: `withdraw_destination_delay_hours` (24), `withdraw_min_minor` (1 000 000), `withdraw_daily_max_minor` (0: no cap). `ramp.withdrawal_destinations` (`destination_id`, `merchant_id`, `network`, `blockchain`, `address`, `label`, `created_at`, `usable_at`, `removed_at`). `ramp.withdrawals` (`withdrawal_id`, `merchant_id`, `network`, `blockchain`, `destination_id`, `destination_address`, `destination_label`, `amount_minor`, `asset`, `state` `REQUESTED|SENT|COMPLETED|FAILED`, `idempotency_key`, `custody_tx_id`, `tx_hash`, `failure_reason`, `created_at`, `updated_at`, `sent_at`, `closed_at`), `withdrawals_open_idx` for the job. Moves are guarded (`WHERE state IN …`).
+
+**Staff (RO18, RO5).** `GET /v1/ops/ramp/merchants/{id}/withdrawals?network=&limit=` (`ramp.read`) → `{ withdrawals: [ { withdrawalId, state, amount, blockchain, destinationAddress, destinationLabel, txHash, explorerUrl, failureReason, createdAt, updatedAt, closedAt } ], destinations: [ { destinationId, label, address, blockchain, createdAt, usableAt, removedAt } ] }`, through `RampAdmin.merchantWithdrawals`. RO5 reads and writes `withdrawDestinationDelayHours` (0–720), `withdrawMinMinor` (> 0) and `withdrawDailyMaxMinor` (0 or at least the minimum), each left out on an update kept as it is, audited by name.
+
+**Not built.** An email to the merchant on each withdrawal or new address (the template mechanism needs a new template id set in the admin; worth adding: it is what makes the delay a real defence); staff cancelling a `REQUESTED` withdrawal; withdrawals to a Solana address.
 
 ## To check against the vendor before building on it
 

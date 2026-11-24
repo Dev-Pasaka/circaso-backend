@@ -27,6 +27,7 @@ import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
 import com.circaso.ramp.api.OpsRampUserVerification
 import com.circaso.ramp.api.OpsRampVerification
+import com.circaso.ramp.api.OpsRampWithdrawals
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampAmount
 import com.circaso.ramp.api.RampOrderId
@@ -361,6 +362,21 @@ class FakeRampAdmin : RampAdmin {
             return Resource.Error(RampRefusal("ramp.merchant_not_found", ErrorKind.NOT_FOUND))
         }
         return Resource.success(orders.filter { state == null || it.state == state }.take(limit))
+    }
+
+    /** Each merchant's withdrawals as the ramp hands them over (2026-11-24). */
+    val withdrawals = mutableMapOf<MerchantId, OpsRampWithdrawals>()
+
+    override suspend fun merchantWithdrawals(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<OpsRampWithdrawals> {
+        if (!merchants.containsKey(merchantId)) {
+            return Resource.Error(RampRefusal("ramp.merchant_not_found", ErrorKind.NOT_FOUND))
+        }
+        val found = withdrawals[merchantId] ?: OpsRampWithdrawals(emptyList(), emptyList())
+        return Resource.success(found.copy(withdrawals = found.withdrawals.take(limit)))
     }
 
     /** One of a merchant's orders as the ramp hands it over: the payer's number already masked. */

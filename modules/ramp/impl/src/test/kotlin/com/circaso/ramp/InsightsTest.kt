@@ -66,6 +66,7 @@ class InsightsTest {
                 resetVerification = ramp.resetVerification,
                 resetMerchantVerificationUseCase = ResetMerchantVerification(ramp.merchants, ramp.verificationRows),
                 resolveOrder = ramp.resolveOrder,
+                listStaffWithdrawals = ramp.staffWithdrawals,
             ),
         )
     private var buyers = 1

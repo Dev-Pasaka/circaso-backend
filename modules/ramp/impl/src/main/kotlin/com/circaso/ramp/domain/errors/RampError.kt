@@ -375,4 +375,80 @@ sealed class RampError(
         "The provider says this payout was paid or is still going through: it can't be refunded.",
         ErrorKind.CONFLICT,
     )
+
+    // ---- float withdrawals (2026-11-24) ----
+
+    class WithdrawAmountInvalid(minMinor: Long, minAmount: String) :
+        RampError(
+            "ramp.amount_invalid",
+            "Withdraw at least $minAmount USDC.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError("amountMinor", "at least $minMinor"))),
+        )
+
+    /** More than the float's free part: what open orders hold and Circaso's unswept share are never withdrawn. */
+    class InsufficientFloat(freeMinor: Long, freeAmount: String) :
+        RampError(
+            "ramp.insufficient_float",
+            "You can withdraw up to $freeAmount USDC: the rest is held for open orders and Circaso's share.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError("amountMinor", "at most $freeMinor"))),
+        )
+
+    class WithdrawLimitExceeded(leftMinor: Long, leftAmount: String) :
+        RampError(
+            "ramp.limit_exceeded",
+            "That's over today's withdrawal limit: you can withdraw $leftAmount USDC more today.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError("amountMinor", "at most $leftMinor today"))),
+        )
+
+    class AddressInvalid(problem: String) :
+        RampError(
+            "ramp.address_invalid",
+            "That isn't a valid address on this network: $problem.",
+            ErrorKind.INVALID,
+            ErrorDetails(fields = listOf(FieldError("address", problem))),
+        )
+
+    data object DestinationOwnFloat : RampError(
+        "ramp.destination_own_float",
+        "That's your float wallet's own address. Add the address you want the USDC sent to.",
+        ErrorKind.INVALID,
+        ErrorDetails(fields = listOf(FieldError("address", "your float wallet"))),
+    )
+
+    data object DestinationExists : RampError(
+        "ramp.destination_exists",
+        "You've already saved that address.",
+        ErrorKind.CONFLICT,
+    )
+
+    class DestinationsFull(max: Int) :
+        RampError(
+            "ramp.destinations_full",
+            "You can save up to $max addresses. Remove one first.",
+            ErrorKind.CONFLICT,
+        )
+
+    data object DestinationNotFound : RampError(
+        "ramp.destination_not_found",
+        "We couldn't find that address.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    /** The address is still in its cooling-off delay. */
+    class DestinationNotReady(usableAt: String) :
+        RampError(
+            "ramp.destination_not_ready",
+            "This address can be used from $usableAt.",
+            ErrorKind.CONFLICT,
+            ErrorDetails(fields = listOf(FieldError("destinationId", "usable from $usableAt"))),
+        )
+
+    data object WithdrawalNotFound : RampError(
+        "ramp.withdrawal_not_found",
+        "We couldn't find that withdrawal.",
+        ErrorKind.NOT_FOUND,
+    )
 }

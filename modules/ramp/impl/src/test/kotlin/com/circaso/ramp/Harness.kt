@@ -10,6 +10,7 @@ import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.data.support.Argon2Cost
+import com.circaso.ramp.data.support.Eip55Addresses
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
 import com.circaso.ramp.data.support.HttpPromptTransport
@@ -41,6 +42,7 @@ import com.circaso.ramp.domain.support.EngineBook
 import com.circaso.ramp.domain.support.EngineFacts
 import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
+import com.circaso.ramp.domain.support.FloatWithdrawals
 import com.circaso.ramp.domain.support.Gates
 import com.circaso.ramp.domain.support.MerchantInsights
 import com.circaso.ramp.domain.support.MerchantStatsBook
@@ -61,6 +63,7 @@ import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.ramp.domain.support.WithdrawalSends
 import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
@@ -96,6 +99,7 @@ import com.circaso.ramp.domain.usecases.ListOrders
 import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListRoutingDecisions
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
+import com.circaso.ramp.domain.usecases.ListStaffWithdrawals
 import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
 import com.circaso.ramp.domain.usecases.RequestSignInCode
@@ -348,7 +352,28 @@ class Harness {
     val cancelOrder = CancelOrder(orders, merchants, flow, saleFlow)
     val paymentCallback = HandlePaymentCallback(merchants, orders, flow, alerts, topUps)
     val sweep = SweepOrders(orders, flow, clock)
-    val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock, saleRefunds)
+    val withdrawalRows = MemoryWithdrawals()
+    val destinationRows = MemoryWithdrawalDestinations()
+    val withdrawalSends =
+        WithdrawalSends(withdrawalRows, merchantWallets, reservations, releases, transactor, alerts, clock)
+    val floatWithdrawals =
+        FloatWithdrawals(
+            merchants = merchants,
+            wallets = merchantWallets,
+            credentials = credentials,
+            pins = pins,
+            destinations = destinationRows,
+            withdrawals = withdrawalRows,
+            reservations = reservations,
+            commissions = ledger,
+            float = treasury,
+            settings = book,
+            addresses = Eip55Addresses(),
+            transactor = transactor,
+            clock = clock,
+        )
+    val staffWithdrawals = ListStaffWithdrawals(merchants, withdrawalRows, destinationRows)
+    val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock, saleRefunds, withdrawalSends)
     val settleFees = SettleFees(treasury, sweeps)
 
     val requestCode = RequestSignInCode(codes, tokens, email)

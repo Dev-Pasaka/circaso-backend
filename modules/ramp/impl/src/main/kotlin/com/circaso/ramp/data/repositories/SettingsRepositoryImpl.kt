@@ -117,6 +117,9 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.payoutWindowSeconds] = settings.payoutWindowSeconds
         this[SettingsTable.payoutFeeBands] = PayoutFeeBands.encode(settings.payoutFeeBands)
         this[SettingsTable.payoutBalanceLowMinor] = settings.payoutBalanceLowMinor
+        this[SettingsTable.withdrawDestinationDelayHours] = settings.withdrawDestinationDelayHours
+        this[SettingsTable.withdrawMinMinor] = settings.withdrawMinMinor
+        this[SettingsTable.withdrawDailyMaxMinor] = settings.withdrawDailyMaxMinor
     }
 
     private fun ResultRow.toSettings(): RampSettings? {
@@ -158,6 +161,9 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             payoutWindowSeconds = this[SettingsTable.payoutWindowSeconds],
             payoutFeeBands = PayoutFeeBands.decode(this[SettingsTable.payoutFeeBands]),
             payoutBalanceLowMinor = this[SettingsTable.payoutBalanceLowMinor],
+            withdrawDestinationDelayHours = this[SettingsTable.withdrawDestinationDelayHours],
+            withdrawMinMinor = this[SettingsTable.withdrawMinMinor],
+            withdrawDailyMaxMinor = this[SettingsTable.withdrawDailyMaxMinor],
         )
     }
 }

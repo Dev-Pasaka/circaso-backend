@@ -220,6 +220,28 @@ interface ReservationRepository {
 
     /** The float was spent on the order; true for the caller that closed it. */
     suspend fun consume(orderId: RampOrderId, at: Instant): Boolean
+
+    /**
+     * Holds a withdrawal's amount in the merchant's float (`WITHDRAWAL`, keyed by the withdrawal id, 2026-11-24), in the
+     * caller's transaction under the merchant's row lock: counted as reserved, so routing sees less free float at once.
+     */
+    suspend fun reserveWithdrawal(
+        withdrawalId: UUID,
+        merchantId: MerchantId,
+        network: Network,
+        amountMinor: Long,
+        at: Instant,
+    )
+
+    /** Closes a withdrawal's hold: consumed when the chain confirmed it, released when it failed. */
+    suspend fun closeWithdrawal(
+        withdrawalId: UUID,
+        consumed: Boolean,
+        at: Instant,
+    ): Boolean
+
+    /** The part of [openTotal] that open withdrawals hold. */
+    suspend fun withdrawingTotal(merchantId: MerchantId, network: Network): Long
 }
 
 /**

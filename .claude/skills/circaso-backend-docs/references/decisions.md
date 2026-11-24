@@ -301,6 +301,17 @@ Decided by Pasaka (2026-11-18, the fee-wallet follow-up to wallet networks): the
 
 Open questions: (1) changing `destination_delay_hours` has no route (a database setting, by hand for now); (2) with custody provider `log`/`fake` there is no treasury, so local runs show `NOT_CREATED` (a fake treasury for the portal's local development could be added); (3) whether Circle's idempotency keys expire isn't documented, so adoption by `refId` is what protects a restored database, not the key alone.
 
+## 2026-11-24 — Merchant float withdrawals
+
+Asked for by the owner (Pasaka): a merchant can send USDC out of their float wallet to an external address of their own. Testing phase, one merchant (the owner); mainnet ramp in `PREVIEW`. As built in ramp.md → "As built: float withdrawals".
+
+- **Saved addresses with a cooling-off delay** (`withdraw_destination_delay_hours`, 24, a database setting staff edit in RO5, as the fee wallets' destinations). The delay in force when an address is saved is stored on it (`usable_at`), so changing the setting never moves an existing address. Adding and removing need the PIN.
+- **Withdrawals are allowed online or offline** (the first design said offline with no open orders). The amount is reserved at once, as an order's float is, under the same row lock, so the engine never promises USDC a withdrawal took. Only free float: never an open order's or withdrawal's reservation, never Circaso's unswept share.
+- **The reservation is a `ramp.reservations` row of kind `WITHDRAWAL`** keyed by the withdrawal id (the column is named `order_id`): every reader of free float (engine, RM2, fee sweep, staff) already sums open reservations, so none had to change.
+- **The ops process sends**, inside `ramp.release` rather than a job of its own (same interval, same treasury, no new job to register): key derived from the withdrawal id, never resent after a definitive failure (Circle refused, or the chain failed it); while Circle is out of reach the withdrawal stays `REQUESTED` and is asked again with the same key.
+- **Addresses are checked locally** (EIP-55, Keccak from Bouncy Castle behind a domain port), not by Circle's `validateAddress`, which lives in the wallet module's custody contract.
+- **Minimum 1 USDC and an optional daily cap** (`withdraw_min_minor`, `withdraw_daily_max_minor`, 0: none), both settings.
+- **Not built:** an email on each withdrawal or new address (needs a new template; recommended before more merchants, since it is what makes the delay useful against a stolen session).
 
 
 ## 2026-11-24 — The verified badge

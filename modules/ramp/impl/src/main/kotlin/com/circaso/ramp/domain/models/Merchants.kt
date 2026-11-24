@@ -226,8 +226,11 @@ class SignedIn(val token: String, val expiresAt: Instant, val merchant: Merchant
 /** How a sign-in code check ended. */
 enum class CodeCheck { MATCH, WRONG, LOCKED }
 
-/** A merchant's float on one network, in USDC minor units. [reserved] is open orders plus what is held for Circaso. */
-data class FloatView(val balanceMinor: Long, val reservedMinor: Long) {
+/**
+ * A merchant's float on one network, in USDC minor units. [reserved] is open orders and open withdrawals plus what is
+ * held for Circaso; [withdrawingMinor] is the open withdrawals' part of it.
+ */
+data class FloatView(val balanceMinor: Long, val reservedMinor: Long, val withdrawingMinor: Long = 0) {
     val freeMinor: Long get() = (balanceMinor - reservedMinor).coerceAtLeast(0)
 }
 

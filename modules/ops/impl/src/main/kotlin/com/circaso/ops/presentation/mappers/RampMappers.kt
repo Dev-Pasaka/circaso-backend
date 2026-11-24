@@ -11,6 +11,7 @@ import com.circaso.ops.presentation.dto.RampMerchantOrderDto
 import com.circaso.ops.presentation.dto.RampMerchantOrdersResponse
 import com.circaso.ops.presentation.dto.RampMerchantSummaryResponse
 import com.circaso.ops.presentation.dto.RampMerchantWalletDto
+import com.circaso.ops.presentation.dto.RampMerchantWithdrawalsResponse
 import com.circaso.ops.presentation.dto.RampMerchantsResponse
 import com.circaso.ops.presentation.dto.RampOrderCountsDto
 import com.circaso.ops.presentation.dto.RampOrderDto
@@ -30,6 +31,8 @@ import com.circaso.ops.presentation.dto.RampSummaryWalletDto
 import com.circaso.ops.presentation.dto.RampSweepDto
 import com.circaso.ops.presentation.dto.RampUserVerificationResponse
 import com.circaso.ops.presentation.dto.RampVerificationDto
+import com.circaso.ops.presentation.dto.RampWithdrawalDestinationDto
+import com.circaso.ops.presentation.dto.RampWithdrawalDto
 import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
@@ -51,6 +54,7 @@ import com.circaso.ramp.api.OpsRampResolved
 import com.circaso.ramp.api.OpsRampSettings
 import com.circaso.ramp.api.OpsRampUserVerification
 import com.circaso.ramp.api.OpsRampVerification
+import com.circaso.ramp.api.OpsRampWithdrawals
 import com.circaso.ramp.api.RampAmount
 import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.api.RampOrderStates
@@ -198,6 +202,9 @@ fun OpsRampSettings.toDto() =
         payoutFeeBands =
             payoutFeeBands.orEmpty().map { RampPayoutFeeBandDto(it.upToMinor.toString(), it.feeMinor.toString()) },
         payoutBalanceLowMinor = (payoutBalanceLowMinor ?: 0).toString(),
+        withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: 0,
+        withdrawMinMinor = (withdrawMinMinor ?: 0).toString(),
+        withdrawDailyMaxMinor = (withdrawDailyMaxMinor ?: 0).toString(),
     )
 
 /** The request's settings for [network]; an amount that isn't a whole number of cents is refused, naming its field. */
@@ -217,6 +224,8 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             "offRampMaxMinor" to offRampMaxMinor,
             "offRampDailyLimitMinor" to offRampDailyLimitMinor,
             "payoutBalanceLowMinor" to payoutBalanceLowMinor,
+            "withdrawMinMinor" to withdrawMinMinor,
+            "withdrawDailyMaxMinor" to withdrawDailyMaxMinor,
         ).map { (field, raw) -> raw?.let { it.trim().toLongOrNull() ?: return malformed(field, NOT_CENTS) } }
     val bands =
         payoutFeeBands?.mapIndexed { index, band ->
@@ -259,6 +268,9 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             payoutWindowSeconds = payoutWindowSeconds,
             payoutFeeBands = bands,
             payoutBalanceLowMinor = selling[3],
+            withdrawDestinationDelayHours = withdrawDestinationDelayHours,
+            withdrawMinMinor = selling[4],
+            withdrawDailyMaxMinor = selling[5],
         ),
     )
 }
@@ -547,4 +559,37 @@ fun List<OpsRampMerchantOrder>.toMerchantOrdersResponse(limit: Int) =
     RampMerchantOrdersResponse(
         orders = map { it.toDto() },
         nextCursor = lastOrNull()?.takeIf { size >= limit }?.let { "${it.createdAt}$CURSOR_SEPARATOR${it.orderId}" },
+    )
+
+fun OpsRampWithdrawals.toResponse() =
+    RampMerchantWithdrawalsResponse(
+        withdrawals =
+            withdrawals.map {
+                RampWithdrawalDto(
+                    withdrawalId = it.withdrawalId.toString(),
+                    state = it.state,
+                    amount = it.amount.toDto(),
+                    blockchain = it.blockchain,
+                    destinationAddress = it.destinationAddress,
+                    destinationLabel = it.destinationLabel,
+                    txHash = it.txHash,
+                    explorerUrl = it.explorerUrl,
+                    failureReason = it.failureReason,
+                    createdAt = it.createdAt.toString(),
+                    updatedAt = it.updatedAt.toString(),
+                    closedAt = it.closedAt?.toString(),
+                )
+            },
+        destinations =
+            destinations.map {
+                RampWithdrawalDestinationDto(
+                    destinationId = it.destinationId.toString(),
+                    label = it.label,
+                    address = it.address,
+                    blockchain = it.blockchain,
+                    createdAt = it.createdAt.toString(),
+                    usableAt = it.usableAt.toString(),
+                    removedAt = it.removedAt?.toString(),
+                )
+            },
     )

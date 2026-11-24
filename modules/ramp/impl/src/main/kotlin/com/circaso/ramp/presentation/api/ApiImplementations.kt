@@ -31,6 +31,9 @@ import com.circaso.ramp.api.OpsRampSettingsChange
 import com.circaso.ramp.api.OpsRampSweep
 import com.circaso.ramp.api.OpsRampUserVerification
 import com.circaso.ramp.api.OpsRampVerification
+import com.circaso.ramp.api.OpsRampWithdrawal
+import com.circaso.ramp.api.OpsRampWithdrawalDestination
+import com.circaso.ramp.api.OpsRampWithdrawals
 import com.circaso.ramp.api.Ramp
 import com.circaso.ramp.api.RampAdmin
 import com.circaso.ramp.api.RampFrames
@@ -59,6 +62,7 @@ import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.StatementTotals
 import com.circaso.ramp.domain.models.Verification
 import com.circaso.ramp.domain.support.Amounts
+import com.circaso.ramp.domain.support.WithdrawalExplorer
 import com.circaso.ramp.presentation.services.RampAdminService
 import com.circaso.ramp.presentation.services.RampEventsService
 import com.circaso.shared.CircasoJson
@@ -197,6 +201,45 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
         val cursor = after?.let { PageCursor(it.at, it.orderId.value) }
         return admin.merchantOrders(filter, cursor, limit).map { page -> page.map { it.toOps() } }
     }
+
+    override suspend fun merchantWithdrawals(
+        merchantId: MerchantId,
+        network: Network,
+        limit: Int,
+    ): Resource<OpsRampWithdrawals> =
+        admin.withdrawals(merchantId, network, limit).map { found ->
+            OpsRampWithdrawals(
+                withdrawals =
+                    found.withdrawals.map {
+                        OpsRampWithdrawal(
+                            withdrawalId = it.withdrawalId,
+                            state = it.state.name,
+                            amount = Amounts.usdc(it.amountMinor),
+                            blockchain = it.blockchain,
+                            destinationAddress = it.destinationAddress,
+                            destinationLabel = it.destinationLabel,
+                            txHash = it.txHash,
+                            explorerUrl = WithdrawalExplorer.url(it.blockchain, it.txHash),
+                            failureReason = it.failureReason,
+                            createdAt = it.createdAt,
+                            updatedAt = it.updatedAt,
+                            closedAt = it.closedAt,
+                        )
+                    },
+                destinations =
+                    found.destinations.map {
+                        OpsRampWithdrawalDestination(
+                            destinationId = it.destinationId,
+                            label = it.label,
+                            address = it.address,
+                            blockchain = it.blockchain,
+                            createdAt = it.createdAt,
+                            usableAt = it.usableAt,
+                            removedAt = it.removedAt,
+                        )
+                    },
+            )
+        }
 
     override suspend fun previewAccess(network: Network): List<OpsRampPreviewAccess> =
         admin
@@ -391,6 +434,9 @@ private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) 
         payoutWindowSeconds = payoutWindowSeconds,
         payoutFeeBands = payoutFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
         payoutBalanceLowMinor = payoutBalanceLowMinor,
+        withdrawDestinationDelayHours = withdrawDestinationDelayHours,
+        withdrawMinMinor = withdrawMinMinor,
+        withdrawDailyMaxMinor = withdrawDailyMaxMinor,
     )
 
 /**
@@ -449,6 +495,9 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             payoutFeeBands =
                 payoutFeeBands?.map { PayoutFeeBand(it.upToMinor, it.feeMinor) } ?: current.payoutFeeBands,
             payoutBalanceLowMinor = payoutBalanceLowMinor ?: current.payoutBalanceLowMinor,
+            withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: current.withdrawDestinationDelayHours,
+            withdrawMinMinor = withdrawMinMinor ?: current.withdrawMinMinor,
+            withdrawDailyMaxMinor = withdrawDailyMaxMinor ?: current.withdrawDailyMaxMinor,
         ),
     )
 }

@@ -151,7 +151,7 @@ class MerchantViews(
         val reserved =
             reservations.openTotal(wallet.merchantId, wallet.network) +
                 commissions.owedTotal(wallet.merchantId, wallet.network)
-        return FloatView(balance, reserved)
+        return FloatView(balance, reserved, reservations.withdrawingTotal(wallet.merchantId, wallet.network))
     }
 
     private suspend fun floatFloor(current: RampSettings): Long =

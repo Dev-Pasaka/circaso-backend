@@ -42,6 +42,7 @@ import com.circaso.ramp.presentation.mappers.toTopUpsResponse
 import com.circaso.ramp.presentation.mappers.toWindow
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
+import com.circaso.ramp.presentation.services.WithdrawalService
 import com.circaso.ramp.presentation.support.MERCHANT_SESSION_HEADER
 import com.circaso.ramp.presentation.support.clientAddress
 import com.circaso.ramp.presentation.support.merchantId
@@ -87,7 +88,11 @@ private fun ApplicationCall.pageLimit(): Int =
  * app token. Staff approve a merchant on the ops gateway; the float wallet is made by the ops server, so it has no
  * route here.
  */
-fun Route.merchantController(auth: MerchantAuthService, merchants: MerchantService) {
+fun Route.merchantController(
+    auth: MerchantAuthService,
+    merchants: MerchantService,
+    withdrawals: WithdrawalService,
+) {
     route("/ramp/merchant") {
         route("/auth") { signInRoutes(auth) }
         merchantSession(auth) {
@@ -97,6 +102,7 @@ fun Route.merchantController(auth: MerchantAuthService, merchants: MerchantServi
             moneyRoutes(merchants)
             testPayoutRoutes(merchants)
             topUpRoutes(merchants)
+            withdrawalController(withdrawals)
         }
     }
 }
