@@ -53,6 +53,11 @@ interface RampAlerts {
 
     /** Something the ramp does by itself couldn't be done and will be tried again: [what] and [reason], ids only. */
     fun stuck(what: String, reason: String)
+
+    /** A merchant followed "This wasn't me": their withdrawals are locked and [cancelled] were cancelled (2026-11-24). */
+    fun securityLocked(merchantId: MerchantId, cancelled: Int) {
+        stuck("merchant $merchantId withdrawals locked by their own link", "cancelled=$cancelled")
+    }
 }
 
 /** The frames kept for replay after a reconnect. */

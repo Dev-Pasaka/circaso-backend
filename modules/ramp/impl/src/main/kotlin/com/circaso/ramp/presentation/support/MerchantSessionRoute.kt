@@ -2,6 +2,7 @@ package com.circaso.ramp.presentation.support
 
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
+import com.circaso.ramp.domain.models.SignInContext
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.shared.DomainException
 import com.circaso.shared.Network
@@ -76,3 +77,70 @@ fun Route.merchantSession(auth: MerchantAuthService, build: Route.() -> Unit): R
  */
 fun ApplicationCall.clientAddress(): String =
     request.header("CF-Connecting-IP")?.trim()?.takeIf { it.isNotEmpty() } ?: request.local.remoteHost
+
+/**
+ * Where a sign-in came from, as far as the request already says (2026-11-24; no new tracking): the browser and system
+ * read from `User-Agent`, and the country (and city) Cloudflare saw, which the portal's worker passes on as
+ * `X-Client-Country` / `X-Client-City` (else `CF-IPCountry`). Only used in the merchant's own sign-in email.
+ */
+fun ApplicationCall.signInContext(): SignInContext {
+    val agent = request.header("User-Agent").orEmpty()
+    val country =
+        (request.header("X-Client-Country") ?: request.header("CF-IPCountry"))
+            ?.trim()
+            ?.takeIf { it.length == 2 && it != "XX" && it != "T1" }
+    val city =
+        request
+            .header("X-Client-City")
+            ?.trim()
+            ?.take(MAX_CITY)
+            ?.takeIf { it.isNotEmpty() }
+    val place =
+        listOfNotNull(
+            city,
+            country?.let {
+                java.util.Locale
+                    .of("", it)
+                    .getDisplayCountry(java.util.Locale.ENGLISH)
+            },
+        ).joinToString(", ")
+            .ifEmpty { "unknown" }
+    return SignInContext(
+        device = UserAgents.describe(agent),
+        location =
+            "$place (approximate)".takeIf { place != "unknown" } ?: place,
+    )
+}
+
+private const val MAX_CITY = 60
+
+/** A browser and system in words ("Chrome on macOS") from a `User-Agent`; never the string itself. */
+object UserAgents {
+    fun describe(agent: String): String {
+        val browser =
+            when {
+                "Edg/" in agent -> "Edge"
+                "OPR/" in agent -> "Opera"
+                "Firefox/" in agent -> "Firefox"
+                "CriOS/" in agent || "Chrome/" in agent -> "Chrome"
+                "Safari/" in agent && "Version/" in agent -> "Safari"
+                else -> null
+            }
+        val system =
+            when {
+                "iPhone" in agent || "iPad" in agent -> "iOS"
+                "Android" in agent -> "Android"
+                "Mac OS X" in agent || "Macintosh" in agent -> "macOS"
+                "Windows" in agent -> "Windows"
+                "CrOS" in agent -> "ChromeOS"
+                "Linux" in agent -> "Linux"
+                else -> null
+            }
+        return when {
+            browser != null && system != null -> "$browser on $system"
+            browser != null -> browser
+            system != null -> "a browser on $system"
+            else -> "an unknown browser"
+        }
+    }
+}

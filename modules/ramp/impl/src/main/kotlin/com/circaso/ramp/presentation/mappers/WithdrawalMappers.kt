@@ -47,7 +47,7 @@ fun DestinationRequest.toCommand(): Resource<DestinationCommand> {
     if (raw.isEmpty() || raw.length > MAX_ADDRESS) return malformed("address", "required")
     return when (val code = pinOf(pin)) {
         is Resource.Error -> code
-        is Resource.Success -> Resource.success(DestinationCommand(raw, name, code.data))
+        is Resource.Success -> Resource.success(DestinationCommand(raw, name, code.data, passkey?.toAssertion()))
     }
 }
 
@@ -61,8 +61,13 @@ fun WithdrawRequest.toCommand(idempotencyKey: String?): Resource<WithdrawCommand
             is Resource.Success -> id.data
         }
     return when (val code = pinOf(pin)) {
-        is Resource.Error -> code
-        is Resource.Success -> Resource.success(WithdrawCommand(amount, destination, code.data, idempotencyKey))
+        is Resource.Error -> {
+            code
+        }
+
+        is Resource.Success -> {
+            Resource.success(WithdrawCommand(amount, destination, code.data, idempotencyKey, passkey?.toAssertion()))
+        }
     }
 }
 
@@ -78,6 +83,7 @@ private fun WithdrawalDestination.toResponse(usable: Boolean): DestinationRespon
         createdAt = createdAt.toString(),
         usableAt = usableAt.toString(),
         usable = usable,
+        frozen = frozenAt != null,
     )
 
 fun SavedDestination.toResponse(): DestinationResponse = destination.toResponse(usable)

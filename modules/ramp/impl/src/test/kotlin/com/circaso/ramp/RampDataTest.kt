@@ -14,6 +14,7 @@ import com.circaso.ramp.data.repositories.CredentialRepositoryImpl
 import com.circaso.ramp.data.repositories.DatabaseTransactor
 import com.circaso.ramp.data.repositories.EngineSettingsRepositoryImpl
 import com.circaso.ramp.data.repositories.InsightRepositoryImpl
+import com.circaso.ramp.data.repositories.MerchantAlertRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantRepositoryImpl
 import com.circaso.ramp.data.repositories.MerchantWalletRepositoryImpl
 import com.circaso.ramp.data.repositories.OrderEventRepositoryImpl
@@ -67,6 +68,7 @@ import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
 import com.circaso.ramp.domain.support.EngineFacts
 import com.circaso.ramp.domain.support.FeeSweeps
+import com.circaso.ramp.domain.support.MerchantAlerts
 import com.circaso.ramp.domain.support.MerchantStatsBook
 import com.circaso.ramp.domain.support.OrderFlow
 import com.circaso.ramp.domain.support.Periods
@@ -219,6 +221,7 @@ class RampDataTest {
             alerts,
             FixedUsdc(),
             clock,
+            MerchantAlerts(MerchantAlertRepositoryImpl(database)),
         )
     private val sweeps = FeeSweeps(settlements, merchantWallets, revenue, releases, book, transactor, alerts, clock)
     private val phone = PhoneNumber.parse("+254712345678")!!

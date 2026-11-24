@@ -427,4 +427,6 @@ data class OpsRampWithdrawalDestination(
     val createdAt: Instant,
     val usableAt: Instant,
     val removedAt: Instant?,
+    /** Frozen by a "This wasn't me" lock while it was cooling off (2026-11-24): never usable. */
+    val frozenAt: Instant? = null,
 )

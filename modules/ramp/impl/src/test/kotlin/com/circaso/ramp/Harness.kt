@@ -9,14 +9,17 @@ import com.circaso.integrations.api.KycDocument
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.MobileCollections
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.data.cache.RedisCeremonies
 import com.circaso.ramp.data.cache.RedisOnlineSessionCopies
 import com.circaso.ramp.data.support.Argon2Cost
 import com.circaso.ramp.data.support.Eip55Addresses
 import com.circaso.ramp.data.support.EnvelopeVault
 import com.circaso.ramp.data.support.HmacIdentityKeys
+import com.circaso.ramp.data.support.HmacLockLinks
 import com.circaso.ramp.data.support.HttpPromptTransport
 import com.circaso.ramp.data.support.MasterKeyWebhookSecrets
 import com.circaso.ramp.data.support.SecureTokens
+import com.circaso.ramp.data.support.YubicoPasskeys
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.EngineMode
 import com.circaso.ramp.domain.models.EngineSettings
@@ -38,6 +41,8 @@ import com.circaso.ramp.domain.models.StartOnRampCommand
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
+import com.circaso.ramp.domain.support.AlertSender
+import com.circaso.ramp.domain.support.DailySummaries
 import com.circaso.ramp.domain.support.Engine
 import com.circaso.ramp.domain.support.EngineBook
 import com.circaso.ramp.domain.support.EngineFacts
@@ -45,7 +50,9 @@ import com.circaso.ramp.domain.support.FeeSweeps
 import com.circaso.ramp.domain.support.FloatWallets
 import com.circaso.ramp.domain.support.FloatWithdrawals
 import com.circaso.ramp.domain.support.Gates
+import com.circaso.ramp.domain.support.MerchantAlerts
 import com.circaso.ramp.domain.support.MerchantInsights
+import com.circaso.ramp.domain.support.MerchantPasskeys
 import com.circaso.ramp.domain.support.MerchantStatsBook
 import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.MerchantViews
@@ -61,10 +68,14 @@ import com.circaso.ramp.domain.support.SaleFlow
 import com.circaso.ramp.domain.support.SaleFunding
 import com.circaso.ramp.domain.support.SalePayouts
 import com.circaso.ramp.domain.support.SaleRefunds
+import com.circaso.ramp.domain.support.SecurityCodes
+import com.circaso.ramp.domain.support.SecurityViews
 import com.circaso.ramp.domain.support.SessionRestorer
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.StepUp
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.ramp.domain.support.WithdrawalLock
 import com.circaso.ramp.domain.support.WithdrawalSends
 import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
@@ -75,11 +86,14 @@ import com.circaso.ramp.domain.usecases.ChangePin
 import com.circaso.ramp.domain.usecases.CreateQuote
 import com.circaso.ramp.domain.usecases.DecideMerchant
 import com.circaso.ramp.domain.usecases.EndSessions
+import com.circaso.ramp.domain.usecases.FinishPasskeyRegistration
+import com.circaso.ramp.domain.usecases.FinishPasskeySignIn
 import com.circaso.ramp.domain.usecases.GetEarnings
 import com.circaso.ramp.domain.usecases.GetEngineSettings
 import com.circaso.ramp.domain.usecases.GetMerchant
 import com.circaso.ramp.domain.usecases.GetMerchantPerformance
 import com.circaso.ramp.domain.usecases.GetMerchantSummary
+import com.circaso.ramp.domain.usecases.GetNotificationChoices
 import com.circaso.ramp.domain.usecases.GetOrder
 import com.circaso.ramp.domain.usecases.GetRampOverview
 import com.circaso.ramp.domain.usecases.GetRampStatus
@@ -98,12 +112,16 @@ import com.circaso.ramp.domain.usecases.ListBlocks
 import com.circaso.ramp.domain.usecases.ListMerchantOrders
 import com.circaso.ramp.domain.usecases.ListMerchants
 import com.circaso.ramp.domain.usecases.ListOrders
+import com.circaso.ramp.domain.usecases.ListPasskeys
 import com.circaso.ramp.domain.usecases.ListReviewOrders
 import com.circaso.ramp.domain.usecases.ListRoutingDecisions
 import com.circaso.ramp.domain.usecases.ListStaffMerchantOrders
 import com.circaso.ramp.domain.usecases.ListStaffWithdrawals
+import com.circaso.ramp.domain.usecases.LockWithdrawals
 import com.circaso.ramp.domain.usecases.PruneRoutingLog
 import com.circaso.ramp.domain.usecases.ReleaseOrders
+import com.circaso.ramp.domain.usecases.RemovePasskey
+import com.circaso.ramp.domain.usecases.RequestSecurityCode
 import com.circaso.ramp.domain.usecases.RequestSignInCode
 import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveOrder
@@ -113,6 +131,7 @@ import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.RunRechecks
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
 import com.circaso.ramp.domain.usecases.SetMerchantTier
+import com.circaso.ramp.domain.usecases.SetNotificationChoices
 import com.circaso.ramp.domain.usecases.SetPayoutAccount
 import com.circaso.ramp.domain.usecases.SetPreviewAccess
 import com.circaso.ramp.domain.usecases.SetWebhookSecret
@@ -122,6 +141,9 @@ import com.circaso.ramp.domain.usecases.SimulateRouting
 import com.circaso.ramp.domain.usecases.StartMerchantKyc
 import com.circaso.ramp.domain.usecases.StartOffRamp
 import com.circaso.ramp.domain.usecases.StartOnRamp
+import com.circaso.ramp.domain.usecases.StartPasskeyRegistration
+import com.circaso.ramp.domain.usecases.StartPasskeySignIn
+import com.circaso.ramp.domain.usecases.StartStepUp
 import com.circaso.ramp.domain.usecases.StartUserKyc
 import com.circaso.ramp.domain.usecases.StorePaymentAccount
 import com.circaso.ramp.domain.usecases.SweepOrders
@@ -131,6 +153,7 @@ import com.circaso.ramp.domain.usecases.UnblockUser
 import com.circaso.ramp.domain.usecases.UpdateEngineSettings
 import com.circaso.ramp.domain.usecases.UpdateSettings
 import com.circaso.ramp.domain.usecases.VerifySignInCode
+import com.circaso.ramp.presentation.services.SecurityService
 import com.circaso.shared.Asset
 import com.circaso.shared.Money
 import com.circaso.shared.Network
@@ -209,6 +232,18 @@ class Harness {
     val redis = MemoryRedis(clock)
     val copies = RedisOnlineSessionCopies(redis, { EnvelopeVault.masterKey(masterKey) }, clock)
     val presence = Presence(merchants, orders, sessions, clock, copies)
+
+    // Merchant security (2026-11-24): passkeys, the step-up, alerts and the lock.
+    val passkeyRows = MemoryPasskeys()
+    val securityRows = MemoryMerchantSecurity()
+    val alertRows = MemoryMerchantAlerts()
+    val securitySettings = MemorySecuritySettings()
+    val ceremonyStore = RedisCeremonies(redis)
+    val ceremonies = YubicoPasskeys()
+    val lockLinks = HmacLockLinks { EnvelopeVault.masterKey(masterKey) }
+    val merchantAlerts = MerchantAlerts(alertRows)
+    val stepUp = StepUp(passkeyRows, securitySettings, ceremonies, ceremonyStore, tokens, clock)
+    val securityViews = SecurityViews(passkeyRows, securityRows, securitySettings)
     val book = SettingsBook(settingsRows, alerts, providers, kycProviders, clock)
     val verifications =
         Verifications(
@@ -281,7 +316,20 @@ class Harness {
             payoutHolds = payoutHolds,
         )
     val releases =
-        Releases(orders, merchantWallets, reservations, ledger, transactor, outbox, bus, frames, alerts, usdc, clock)
+        Releases(
+            orders,
+            merchantWallets,
+            reservations,
+            ledger,
+            transactor,
+            outbox,
+            bus,
+            frames,
+            alerts,
+            usdc,
+            clock,
+            merchantAlerts,
+        )
     val floatWallets = FloatWallets(book, settingsRows, merchantWallets, revenue, alerts, clock)
     val sweeps = FeeSweeps(ledger, merchantWallets, revenue, releases, book, transactor, alerts, clock)
     val views =
@@ -304,7 +352,20 @@ class Harness {
 
     // Selling (2026-11-23).
     val saleFlow =
-        SaleFlow(orders, reservations, payoutHolds, ledger, transactor, outbox, bus, frames, counters, alerts, clock)
+        SaleFlow(
+            orders,
+            reservations,
+            payoutHolds,
+            ledger,
+            transactor,
+            outbox,
+            bus,
+            frames,
+            counters,
+            alerts,
+            clock,
+            merchantAlerts,
+        )
     val salePayouts =
         SalePayouts(orders, merchants, saleFlow, providers, sessions, book, payoutFees, frames, alerts, clock, journal)
     val saleFunding = SaleFunding(orders, wallets, merchantWallets, treasury, usdc, saleFlow, alerts, clock, journal)
@@ -324,6 +385,7 @@ class Harness {
             book,
             clock,
             journal,
+            merchantAlerts,
         )
     val startOffRamp =
         StartOffRamp(gates, accounts, wallets, quotes, orders, merchants, counters, engine, balancesReader, clock)
@@ -332,7 +394,7 @@ class Harness {
     val sweepSales = SweepSales(orders, saleFunding, salePayouts, saleFlow, clock)
     val resolveOrder = ResolveOrder(orders, merchants, flow, saleFlow, clock)
     val runRechecks = RunRechecks(orders, flow, salePayouts, saleFunding)
-    val setPayoutAccount = SetPayoutAccount(merchants, views, clock)
+    val setPayoutAccount = SetPayoutAccount(merchants, views, clock, credentials, pins, stepUp, merchantAlerts)
     val webhookSecrets = MasterKeyWebhookSecrets({ EnvelopeVault.masterKey(masterKey) })
     val setWebhookSecret = SetWebhookSecret(merchants, webhookSecrets, views, clock)
     val callbackSigningSecret = CallbackSigningSecret(merchants, webhookSecrets)
@@ -360,7 +422,16 @@ class Harness {
     val withdrawalRows = MemoryWithdrawals()
     val destinationRows = MemoryWithdrawalDestinations()
     val withdrawalSends =
-        WithdrawalSends(withdrawalRows, merchantWallets, reservations, releases, transactor, alerts, clock)
+        WithdrawalSends(
+            withdrawalRows,
+            merchantWallets,
+            reservations,
+            releases,
+            transactor,
+            alerts,
+            clock,
+            merchantAlerts,
+        )
     val floatWithdrawals =
         FloatWithdrawals(
             merchants = merchants,
@@ -376,24 +447,76 @@ class Harness {
             addresses = Eip55Addresses(),
             transactor = transactor,
             clock = clock,
+            stepUp = stepUp,
+            security = securityRows,
+            alerts = merchantAlerts,
         )
     val staffWithdrawals = ListStaffWithdrawals(merchants, withdrawalRows, destinationRows)
     val releaseOrders = ReleaseOrders(treasury, floatWallets, releases, orders, clock, saleRefunds, withdrawalSends)
     val settleFees = SettleFees(treasury, sweeps)
 
     val requestCode = RequestSignInCode(codes, tokens, email)
-    val verifyCode = VerifySignInCode(codes, tokens, merchants, portalSessions, views, clock)
+    val verifyCode = VerifySignInCode(codes, tokens, merchants, portalSessions, views, clock, merchantAlerts)
     val resolveSession = ResolveSession(portalSessions, tokens, clock)
     val signOut = SignOut(portalSessions, tokens, presence, clock)
-    val getMerchant = GetMerchant(merchants, views, verificationRows, verifications, book)
+    val getMerchant = GetMerchant(merchants, views, verificationRows, verifications, book, securityViews)
     val applyAsMerchant = ApplyAsMerchant(merchants, views)
     val storePayments =
-        StorePaymentAccount(merchants, credentials, providers, vault, pins, sessions, tokens, book, clock, copies)
+        StorePaymentAccount(
+            merchants,
+            credentials,
+            providers,
+            vault,
+            pins,
+            sessions,
+            tokens,
+            book,
+            clock,
+            copies,
+            stepUp,
+            merchantAlerts,
+        )
     val rotateCallback = RotateCallback(merchants, credentials, tokens, book)
     val goOnline =
         GoOnline(merchants, merchantWallets, credentials, views, pins, sessions, providers, book, clock, copies)
     val goOffline = GoOffline(presence, clock)
-    val changePin = ChangePin(credentials, pins, clock)
+    val changePin = ChangePin(credentials, pins, clock, stepUp, merchantAlerts, transactor)
+    val securityCodes = SecurityCodes(codes, tokens, email)
+    val merchantPasskeys =
+        MerchantPasskeys(
+            merchants,
+            passkeyRows,
+            credentials,
+            pins,
+            securityCodes,
+            ceremonies,
+            ceremonyStore,
+            stepUp,
+            securitySettings,
+            merchantAlerts,
+            transactor,
+            tokens,
+            clock,
+        )
+    val withdrawalLock =
+        WithdrawalLock(
+            merchants,
+            lockLinks,
+            alertRows,
+            securityRows,
+            withdrawalRows,
+            destinationRows,
+            reservations,
+            portalSessions,
+            presence,
+            merchantAlerts,
+            alerts,
+            transactor,
+            clock,
+        )
+    val alertSender =
+        AlertSender(alertRows, merchants, securityRows, email, null, lockLinks, book, clock)
+    val dailySummaries = DailySummaries(securityRows, ledger, merchantAlerts, clock)
     val merchantOrders = ListMerchantOrders(orders)
     val restorer = SessionRestorer(merchants, sessions, copies, email, clock)
     val endSessions = EndSessions(merchants, orders, sessions, clock, topUpRows, restorer)
@@ -724,6 +847,22 @@ class Harness {
 
     /** One run of the app's `ramp.payouts` on the testnet (and staff's re-checks and the test payouts). */
     suspend fun payoutSweep(): Int = sweepSales(TESTNET) + runRechecks() + testPayouts.sweep()
+
+    /** The portal's security routes over this harness (2026-11-24). */
+    fun securityService(): SecurityService =
+        SecurityService(
+            ListPasskeys(merchantPasskeys),
+            RequestSecurityCode(merchantPasskeys),
+            StartPasskeyRegistration(merchantPasskeys),
+            FinishPasskeyRegistration(merchantPasskeys),
+            RemovePasskey(merchantPasskeys),
+            StartStepUp(stepUp),
+            StartPasskeySignIn(stepUp),
+            FinishPasskeySignIn(stepUp, merchants, portalSessions, tokens, views, merchantAlerts, clock),
+            GetNotificationChoices(securityRows),
+            SetNotificationChoices(securityRows, clock),
+            LockWithdrawals(withdrawalLock),
+        )
 
     /** Signs [address] in to the portal the way a merchant does: ask for the code, read the email, send it back. */
     suspend fun verifyCodeFor(address: String, network: Network = TESTNET): SignedIn {

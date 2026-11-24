@@ -26,6 +26,9 @@ interface WithdrawalDestinationRepository {
 
     /** Marks a live address removed; true for the caller that removed it. */
     suspend fun remove(destinationId: UUID, at: Instant): Boolean
+
+    /** Freezes the merchant's live addresses still cooling off at [at] (a lock); how many. */
+    suspend fun freezeCooling(merchantId: MerchantId, at: Instant): Int
 }
 
 /**
@@ -65,12 +68,12 @@ interface WithdrawalRepository {
         at: Instant,
     ): Boolean
 
-    /** Records the chain's hash on a `SENT` withdrawal as soon as the custodian has it. */
+    /** Records the chain's hash on a `SENT` withdrawal as soon as the custodian has it; true the first time. */
     suspend fun noteHash(
         withdrawalId: UUID,
         txHash: String,
         at: Instant,
-    )
+    ): Boolean
 
     /** `SENT → COMPLETED`; true when it moved. */
     suspend fun complete(
@@ -78,6 +81,23 @@ interface WithdrawalRepository {
         txHash: String?,
         at: Instant,
     ): Boolean
+
+    /**
+     * Claims a `REQUESTED` withdrawal for sending, just before the custodian is asked: true when it is claimed (now or
+     * by an earlier run). False when it is no longer `REQUESTED` or its merchant's withdrawals are locked.
+     */
+    suspend fun claim(withdrawalId: UUID, at: Instant): Boolean
+
+    /**
+     * `REQUESTED → CANCELLED` for the merchant's withdrawals not yet claimed for sending ([destinationId]: only those to
+     * it); the ones it moved, whose reservations the caller releases.
+     */
+    suspend fun cancelUnclaimed(
+        merchantId: MerchantId,
+        destinationId: UUID?,
+        reason: String,
+        at: Instant,
+    ): List<Withdrawal>
 
     /** `REQUESTED | SENT → FAILED`; true when it moved. */
     suspend fun fail(

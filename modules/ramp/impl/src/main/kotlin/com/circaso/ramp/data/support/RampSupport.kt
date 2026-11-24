@@ -2,6 +2,7 @@ package com.circaso.ramp.data.support
 
 import com.circaso.integrations.api.CustodySeeds
 import com.circaso.integrations.api.CustodySetups
+import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.ports.PayoutJournal
@@ -24,6 +25,11 @@ class LoggedAlerts : RampAlerts {
 
     override fun stuck(what: String, reason: String) {
         log.warn("ramp step not done, will be tried again: what={} reason={}", what, reason)
+    }
+
+    override fun securityLocked(merchantId: MerchantId, cancelled: Int) {
+        // ERROR: the on-call alert. A merchant says a security email wasn't them.
+        log.error("ramp merchant locked withdrawals (this wasn't me): merchant={} cancelled={}", merchantId, cancelled)
     }
 }
 
@@ -53,6 +59,10 @@ class SecureTokens(private val random: SecureRandom = SecureRandom()) : RampToke
 
     override fun callbackToken(): String =
         (1..CALLBACK_LENGTH).map { BASE62[random.nextInt(BASE62.length)] }.joinToString("")
+
+    override fun nonce(): ByteArray = ByteArray(SESSION_BYTES).also(random::nextBytes)
+
+    override fun digest(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 
     private companion object {
         const val SESSION_BYTES = 32

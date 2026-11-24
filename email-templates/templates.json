@@ -1,0 +1,245 @@
+[
+  {
+    "template": "WELCOME",
+    "file": "welcome.html",
+    "subject": "Welcome to Circaso",
+    "variables": []
+  },
+  {
+    "template": "NEW_PHONE_SIGN_IN",
+    "file": "new-phone-sign-in.html",
+    "subject": "New phone signed in to your Circaso account",
+    "variables": [
+      "DEVICE_MODEL"
+    ]
+  },
+  {
+    "template": "PIN_VAULT_OPENED",
+    "file": "pin-vault-opened.html",
+    "subject": "Your Circaso PIN backup was opened",
+    "variables": [
+      "DEVICE_MODEL"
+    ]
+  },
+  {
+    "template": "RECOVERY_STARTED",
+    "file": "recovery-started.html",
+    "subject": "A request was made to recover your Circaso account",
+    "variables": []
+  },
+  {
+    "template": "RECOVERY_COMPLETED",
+    "file": "recovery-completed.html",
+    "subject": "Your Circaso account recovery is complete",
+    "variables": []
+  },
+  {
+    "template": "MERCHANT_SIGN_IN_CODE",
+    "file": "merchant-sign-in-code.html",
+    "subject": "Your Circaso Merchants sign-in code",
+    "variables": [
+      "CODE",
+      "MINUTES"
+    ]
+  },
+  {
+    "template": "MERCHANT_TAKEN_OFFLINE",
+    "file": "merchant-taken-offline.html",
+    "subject": "You were taken offline on Circaso Merchants",
+    "variables": []
+  },
+  {
+    "template": "MERCHANT_SECURITY_CODE",
+    "file": "merchant-security-code.html",
+    "subject": "Your Circaso Merchants security code",
+    "variables": [
+      "CODE",
+      "MINUTES",
+      "ACTION"
+    ]
+  },
+  {
+    "template": "MERCHANT_NEW_SIGN_IN",
+    "file": "merchant-new-sign-in.html",
+    "subject": "New sign-in to Circaso Merchants",
+    "variables": [
+      "METHOD",
+      "DEVICE",
+      "LOCATION",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_ADDRESS_ADDED",
+    "file": "merchant-address-added.html",
+    "subject": "A withdrawal address was added to your Circaso merchant account",
+    "variables": [
+      "LABEL",
+      "ADDRESS",
+      "NETWORK",
+      "USABLE_FROM",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_ADDRESS_REMOVED",
+    "file": "merchant-address-removed.html",
+    "subject": "A withdrawal address was removed from your Circaso merchant account",
+    "variables": [
+      "LABEL",
+      "ADDRESS",
+      "NETWORK",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_WITHDRAWAL_REQUESTED",
+    "file": "merchant-withdrawal-requested.html",
+    "subject": "Withdrawal requested from your Circaso float",
+    "variables": [
+      "AMOUNT",
+      "LABEL",
+      "ADDRESS",
+      "NETWORK",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_WITHDRAWAL_SENT",
+    "file": "merchant-withdrawal-sent.html",
+    "subject": "Your Circaso withdrawal is on its way",
+    "variables": [
+      "AMOUNT",
+      "LABEL",
+      "ADDRESS",
+      "TX_URL",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_WITHDRAWAL_COMPLETED",
+    "file": "merchant-withdrawal-completed.html",
+    "subject": "Your Circaso withdrawal is complete",
+    "variables": [
+      "AMOUNT",
+      "LABEL",
+      "ADDRESS",
+      "TX_URL",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_WITHDRAWAL_FAILED",
+    "file": "merchant-withdrawal-failed.html",
+    "subject": "Your Circaso withdrawal did not go through",
+    "variables": [
+      "AMOUNT",
+      "LABEL",
+      "ADDRESS",
+      "REASON",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_PIN_CHANGED",
+    "file": "merchant-pin-changed.html",
+    "subject": "Your Circaso Merchants PIN was changed",
+    "variables": [
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_PAYMENT_ACCOUNT_CHANGED",
+    "file": "merchant-payment-account-changed.html",
+    "subject": "Your Circaso Merchants payment account was changed",
+    "variables": [
+      "WHAT",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_PASSKEY_ADDED",
+    "file": "merchant-passkey-added.html",
+    "subject": "A passkey was added to your Circaso merchant account",
+    "variables": [
+      "LABEL",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_PASSKEY_REMOVED",
+    "file": "merchant-passkey-removed.html",
+    "subject": "A passkey was removed from your Circaso merchant account",
+    "variables": [
+      "LABEL",
+      "TIME",
+      "LOCK_URL"
+    ]
+  },
+  {
+    "template": "MERCHANT_WITHDRAWALS_LOCKED",
+    "file": "merchant-withdrawals-locked.html",
+    "subject": "Withdrawals are locked on your Circaso merchant account",
+    "variables": [
+      "CANCELLED",
+      "TIME"
+    ]
+  },
+  {
+    "template": "MERCHANT_BUY_COMPLETED",
+    "file": "merchant-buy-completed.html",
+    "subject": "A buy order you filled is complete",
+    "variables": [
+      "ORDER",
+      "KES_RECEIVED",
+      "USDC_SENT",
+      "EARNED",
+      "TIME"
+    ]
+  },
+  {
+    "template": "MERCHANT_SELL_COMPLETED",
+    "file": "merchant-sell-completed.html",
+    "subject": "A sell order you filled is complete",
+    "variables": [
+      "ORDER",
+      "USDC_RECEIVED",
+      "KES_PAID",
+      "EARNED",
+      "TIME"
+    ]
+  },
+  {
+    "template": "MERCHANT_TOPUP_RESULT",
+    "file": "merchant-topup-result.html",
+    "subject": "Your Circaso Merchants top-up",
+    "variables": [
+      "WALLET",
+      "AMOUNT",
+      "RESULT",
+      "TIME"
+    ]
+  },
+  {
+    "template": "MERCHANT_DAILY_SUMMARY",
+    "file": "merchant-daily-summary.html",
+    "subject": "Your Circaso Merchants daily summary",
+    "variables": [
+      "DAY",
+      "ORDERS",
+      "BOUGHT",
+      "SOLD",
+      "EARNED"
+    ]
+  }
+]

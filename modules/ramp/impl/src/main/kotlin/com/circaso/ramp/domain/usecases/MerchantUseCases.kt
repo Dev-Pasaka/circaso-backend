@@ -15,12 +15,14 @@ import com.circaso.ramp.domain.models.OnlineSessionCopy
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.PasskeyAssertion
 import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.SessionTally
+import com.circaso.ramp.domain.models.StepUpBinding
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
@@ -29,6 +31,7 @@ import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.OnlineSessionCopies
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.TradingSessions
+import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
@@ -36,11 +39,14 @@ import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.TopUpRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
 import com.circaso.ramp.domain.support.Callbacks
+import com.circaso.ramp.domain.support.MerchantAlerts
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.SecurityViews
 import com.circaso.ramp.domain.support.SessionRestorer
 import com.circaso.ramp.domain.support.SettingsBook
+import com.circaso.ramp.domain.support.StepUp
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
 import com.circaso.shared.Network
@@ -57,6 +63,7 @@ class GetMerchant(
     private val rows: VerificationRepository,
     private val verifications: Verifications,
     private val settings: SettingsBook,
+    private val security: SecurityViews,
 ) {
     suspend operator fun invoke(merchantId: MerchantId, network: Network): Resource<MerchantOverview> {
         val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
@@ -64,7 +71,7 @@ class GetMerchant(
         // unfinished the provider is asked (at most every few seconds), so the outcome shows without a webhook.
         val environment = settings.of(network).kycEnvironment
         verifications.refreshIfDue(rows.find(Subject.merchant(merchantId), environment))
-        return Resource.success(views.overview(merchant, network))
+        return Resource.success(views.overview(merchant, network).copy(security = security.of(merchantId)))
     }
 }
 
@@ -103,6 +110,8 @@ class StorePaymentAccount(
     private val settings: SettingsBook,
     private val clock: Clock,
     private val copies: OnlineSessionCopies,
+    private val stepUp: StepUp,
+    private val alerts: MerchantAlerts,
 ) {
     suspend operator fun invoke(
         merchantId: MerchantId,
@@ -115,10 +124,20 @@ class StorePaymentAccount(
             MerchantState.SUSPENDED -> return Resource.error(RampError.MerchantNotApproved)
             MerchantState.APPLIED, MerchantState.APPROVED -> Unit
         }
-        // A PIN already set must be the one given: storing a new account never resets it.
-        credentials.find(merchantId)?.let { existing ->
+        // A PIN already set must be the one given: storing a new account never resets it. Replacing an account is a
+        // sensitive change (2026-11-24): a passkey confirms it too, once the merchant has one, and it is emailed.
+        val replacing = credentials.find(merchantId)
+        replacing?.let { existing ->
             val opened = pins.open(merchantId, existing, command.pin)
             if (opened is Resource.Error) return opened
+            val binding =
+                StepUpBinding.paymentAccount(
+                    merchantId,
+                    command.credentials.username,
+                    command.credentials.collectionChannelId,
+                    command.payoutAccountId,
+                )
+            stepUp.check(binding, command.passkey)?.let { return it }
         }
         // The account is at whichever provider the network uses now, and is sealed as that provider's.
         val current = settings.of(network)
@@ -135,6 +154,7 @@ class StorePaymentAccount(
                 ?: return Resource.error(RampError.VaultUnavailable)
         credentials.save(merchantId, sealed, clock.instant())
         command.payoutAccountId?.let { merchants.setPayoutAccount(merchantId, it) }
+        if (replacing != null) alerts.accountChanged(merchantId, "payment account", clock.instant())
         val keys = UnlockedKeys(current.collectionsProvider, command.credentials)
         if (sessions.of(merchantId) != null) {
             sessions.replace(merchantId, keys)
@@ -160,17 +180,34 @@ class SetPayoutAccount(
     private val merchants: MerchantRepository,
     private val views: MerchantViews,
     private val clock: Clock,
+    private val credentials: CredentialRepository,
+    private val pins: PinGuard,
+    private val stepUp: StepUp,
+    private val alerts: MerchantAlerts,
 ) {
+    /**
+     * Setting it the first time needs nothing more; **changing** one already set is a sensitive change (2026-11-24):
+     * the PIN, a passkey confirmation once the merchant has one, and a security email.
+     */
     suspend operator fun invoke(
         merchantId: MerchantId,
         network: Network,
         accountId: String,
+        pin: String? = null,
+        passkey: PasskeyAssertion? = null,
     ): Resource<MerchantOverview> {
         val id = accountId.trim()
         if (!PayoutAccount.PATTERN.matches(id)) return Resource.error(RampError.PayoutAccountInvalid)
         val merchant = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
         if (merchant.state == MerchantState.NEW) return Resource.error(RampError.MerchantSetupIncomplete)
+        val changing = merchant.payoutAccountId != null && merchant.payoutAccountId != id
+        if (changing) {
+            val sealed = credentials.find(merchantId) ?: return Resource.error(RampError.MerchantSetupIncomplete)
+            (pins.open(merchantId, sealed, pin.orEmpty()) as? Resource.Error)?.let { return it }
+            stepUp.check(StepUpBinding.payoutAccount(merchantId, id), passkey)?.let { return it }
+        }
         merchants.setPayoutAccount(merchantId, id)
+        if (changing) alerts.accountChanged(merchantId, "FinoQ payout account", clock.instant())
         if (merchant.payoutIssue != null) merchants.setPayoutIssue(merchantId, null, clock.instant())
         val saved = merchants.find(merchantId) ?: return Resource.error(RampError.MerchantNotFound)
         return Resource.success(views.overview(saved, network))
@@ -317,20 +354,36 @@ class GoOffline(private val presence: Presence, private val clock: Clock) {
 }
 
 /** RM9: re-wraps the data key under a new PIN. The old PIN is required, and wrong tries count as everywhere. */
-class ChangePin(private val credentials: CredentialRepository, private val pins: PinGuard, private val clock: Clock) {
+class ChangePin(
+    private val credentials: CredentialRepository,
+    private val pins: PinGuard,
+    private val clock: Clock,
+    private val stepUp: StepUp,
+    private val alerts: MerchantAlerts,
+    private val transactor: Transactor,
+) {
+    /** The current PIN, a passkey confirmation once the merchant has one (2026-11-24), and a security email. */
     suspend operator fun invoke(
         merchantId: MerchantId,
         currentPin: String,
         newPin: String,
+        passkey: PasskeyAssertion? = null,
     ): Resource<Unit> {
         val sealed = credentials.find(merchantId) ?: return Resource.error(RampError.MerchantSetupIncomplete)
+        // The PIN is checked (and wrong tries counted) by the rewrap; the passkey only after it would succeed.
+        (pins.open(merchantId, sealed, currentPin) as? Resource.Error)?.let { return it }
+        stepUp.check(StepUpBinding.changePin(merchantId), passkey)?.let { return it }
         return when (val rewrapped = pins.rewrap(merchantId, sealed, currentPin, newPin)) {
             is Resource.Error -> {
                 rewrapped
             }
 
             is Resource.Success -> {
-                credentials.save(merchantId, rewrapped.data, clock.instant())
+                val now = clock.instant()
+                transactor.run("pin.change") {
+                    credentials.save(merchantId, rewrapped.data, now)
+                    alerts.pinChanged(merchantId, now)
+                }
                 Resource.success(Unit)
             }
         }

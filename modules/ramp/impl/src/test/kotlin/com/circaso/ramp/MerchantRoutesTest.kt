@@ -63,6 +63,7 @@ import kotlin.test.assertTrue
 class MerchantRoutesTest {
     private val ramp = Harness()
     private val auth = MerchantAuthService(ramp.requestCode, ramp.verifyCode, ramp.resolveSession, ramp.signOut)
+    private val security = ramp.securityService()
     private val merchants =
         MerchantService(
             ramp.getMerchant,
@@ -102,7 +103,7 @@ class MerchantRoutesTest {
             installRequestId()
             installJson()
             installStatusPages()
-            routing { route("/v1") { merchantController(auth, merchants, withdrawals) } }
+            routing { route("/v1") { merchantController(auth, merchants, withdrawals, security) } }
         }
     }
 

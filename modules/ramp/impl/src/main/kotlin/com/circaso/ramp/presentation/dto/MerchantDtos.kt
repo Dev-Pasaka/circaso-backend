@@ -117,6 +117,8 @@ data class MerchantResponse(
     val online: OnlineResponse,
     val canGoOnline: Boolean,
     val missing: List<String>,
+    /** Passkeys, the withdrawals lock and email choices (2026-11-24); null outside RM2. */
+    val security: MerchantSecurityDto? = null,
     val paymentsIssue: MerchantPaymentsIssueDto? = null,
     /** The merchant's identity verification on this network: start or continue it with RM3. */
     val kyc: VerificationDto,
@@ -197,7 +199,14 @@ data class WebhookSecretRequest(val secret: String = "") {
 
 /** `PUT /ramp/merchant/payments/account` request: the account's number on the FinoQ dashboard, digits only. */
 @Serializable
-data class PayoutAccountRequest(val accountId: String = "")
+data class PayoutAccountRequest(
+    val accountId: String = "",
+    /** Changing an account already set (2026-11-24): the PIN, and once you have a passkey its confirmation. */
+    val pin: String? = null,
+    val passkey: PasskeyProofDto? = null,
+) {
+    override fun toString(): String = "PayoutAccountRequest($accountId, ***)"
+}
 
 /** `POST /ramp/merchant/test-payout` request: KES cents as a string, 1000 to 10000 (KES 10 to 100), whole shillings. */
 @Serializable
@@ -304,6 +313,8 @@ data class PaymentsRequest(
     val pin: String = "",
     /** Selling (2026-11-23): your account's number on the FinoQ dashboard, digits only; left out stays as it is. */
     val accountId: String? = null,
+    /** Replacing an account already connected, once you have a passkey: its confirmation (2026-11-24). */
+    val passkey: PasskeyProofDto? = null,
 ) {
     override fun toString(): String = "PaymentsRequest(***)"
 }
@@ -327,7 +338,11 @@ data class GoOnlineRequest(val pin: String = "", val minutes: Int? = null, val u
 
 /** RM9 request. */
 @Serializable
-data class ChangePinRequest(val currentPin: String = "", val newPin: String = "") {
+data class ChangePinRequest(
+    val currentPin: String = "",
+    val newPin: String = "",
+    val passkey: PasskeyProofDto? = null,
+) {
     override fun toString(): String = "ChangePinRequest(***)"
 }
 

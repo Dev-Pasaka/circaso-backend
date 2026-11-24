@@ -50,6 +50,7 @@ import com.circaso.ops.domain.usecases.GetGroup
 import com.circaso.ops.domain.usecases.GetRampBlocks
 import com.circaso.ops.domain.usecases.GetRampEngineSettings
 import com.circaso.ops.domain.usecases.GetRampMerchantOrders
+import com.circaso.ops.domain.usecases.GetRampMerchantSecurity
 import com.circaso.ops.domain.usecases.GetRampMerchantSignals
 import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchantWithdrawals
@@ -61,6 +62,7 @@ import com.circaso.ops.domain.usecases.GetRampRates
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
 import com.circaso.ops.domain.usecases.GetRampRoutingDecision
 import com.circaso.ops.domain.usecases.GetRampRoutingDecisions
+import com.circaso.ops.domain.usecases.GetRampSecuritySettings
 import com.circaso.ops.domain.usecases.GetRampSettings
 import com.circaso.ops.domain.usecases.GetRampUserVerification
 import com.circaso.ops.domain.usecases.GetTicket
@@ -102,10 +104,12 @@ import com.circaso.ops.domain.usecases.SignInStaff
 import com.circaso.ops.domain.usecases.SimulateRampRouting
 import com.circaso.ops.domain.usecases.SuspendUser
 import com.circaso.ops.domain.usecases.UnblockRampUser
+import com.circaso.ops.domain.usecases.UnlockRampMerchantWithdrawals
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateRampEngineSettings
 import com.circaso.ops.domain.usecases.UpdateRampPricing
+import com.circaso.ops.domain.usecases.UpdateRampSecuritySettings
 import com.circaso.ops.domain.usecases.UpdateRampSettings
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.domain.usecases.UpdateWalletNetwork
@@ -126,6 +130,7 @@ import com.circaso.ops.presentation.controllers.networkController
 import com.circaso.ops.presentation.controllers.rampController
 import com.circaso.ops.presentation.controllers.rampEngineController
 import com.circaso.ops.presentation.controllers.rampRatesController
+import com.circaso.ops.presentation.controllers.rampSecurityController
 import com.circaso.ops.presentation.controllers.staffController
 import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
@@ -143,6 +148,7 @@ import com.circaso.ops.presentation.services.MoneyService
 import com.circaso.ops.presentation.services.NetworkService
 import com.circaso.ops.presentation.services.RampEngineService
 import com.circaso.ops.presentation.services.RampRatesService
+import com.circaso.ops.presentation.services.RampSecurityService
 import com.circaso.ops.presentation.services.RampService
 import com.circaso.ops.presentation.services.StaffDirectoryService
 import com.circaso.ops.presentation.services.StaffService
@@ -365,6 +371,12 @@ fun opsModule(config: Config): Module =
         single { UpdateRampPricing(get(), get()) }
         single { GetRampRates(get()) }
         single { RampRatesService(get(), get(), get()) }
+        // Ramp merchant security for staff (2026-11-24), through ramp:api's RampSecurityAdmin
+        single { GetRampMerchantSecurity(get()) }
+        single { UnlockRampMerchantWithdrawals(get(), get()) }
+        single { GetRampSecuritySettings(get()) }
+        single { UpdateRampSecuritySettings(get(), get()) }
+        single { RampSecurityService(get(), get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -385,6 +397,7 @@ fun opsModule(config: Config): Module =
             val ramp = get<RampService>()
             val rampEngine = get<RampEngineService>()
             val rampRates = get<RampRatesService>()
+            val rampSecurity = get<RampSecurityService>()
             val emailTemplates = get<EmailTemplateService>()
             OpsRouteContributor { root ->
                 // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
@@ -406,6 +419,7 @@ fun opsModule(config: Config): Module =
                     route.rampController(ramp, settings, clock)
                     route.rampEngineController(rampEngine, settings, clock)
                     route.rampRatesController(rampRates)
+                    route.rampSecurityController(rampSecurity)
                     route.emailTemplateController(emailTemplates)
                 }
             }

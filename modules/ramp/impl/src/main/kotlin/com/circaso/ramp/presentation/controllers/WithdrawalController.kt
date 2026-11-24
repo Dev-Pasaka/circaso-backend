@@ -10,6 +10,7 @@ import com.circaso.ramp.presentation.dto.WithdrawalResponse
 import com.circaso.ramp.presentation.dto.WithdrawalsResponse
 import com.circaso.ramp.presentation.mappers.idOf
 import com.circaso.ramp.presentation.mappers.pinOf
+import com.circaso.ramp.presentation.mappers.toAssertion
 import com.circaso.ramp.presentation.mappers.toCommand
 import com.circaso.ramp.presentation.mappers.toResponse
 import com.circaso.ramp.presentation.services.WithdrawalService
@@ -32,6 +33,8 @@ import java.util.UUID
 private const val TAG = "Merchant portal"
 private const val MONEY = "Needs `X-Merchant-Session`. Network: `X-Wallet-Network` (the testnet without it)."
 private const val PIN_ERRORS = "ramp.pin_invalid, ramp.pin_locked, ramp.vault_unavailable"
+private const val STEP_UP =
+    "Once you have a passkey, also `passkey: { challengeId, credential }` from `POST /security/step-up`"
 private const val DEFAULT_LIMIT = 20
 private const val MAX_LIMIT = 100
 
@@ -72,10 +75,16 @@ fun Route.withdrawalController(withdrawals: WithdrawalService) {
                 "ramp.pin_invalid",
                 "ramp.pin_locked",
                 "ramp.vault_unavailable",
+                "ramp.withdrawals_locked",
+                "ramp.step_up_required",
+                "ramp.step_up_invalid",
+                "ramp.passkey_required",
                 "request.malformed",
             ),
             notes =
-                "$MONEY `{ address, label, pin }`: an EVM address on your float wallet's chain (mixed case must " +
+                "$MONEY $STEP_UP (`ADD_ADDRESS`; 2026-11-24, as is the email each change sends). " +
+                    "Addresses can't be edited, not even their label: remove one and add it again. " +
+                    "`{ address, label, pin }`: an EVM address on your float wallet's chain (mixed case must " +
                     "match its EIP-55 checksum; never the zero address or your float wallet's own), a label of 1 to " +
                     "40 characters, and your PIN. It can be withdrawn to from `usableAt`: the network's cooling-off " +
                     "delay after now (24 hours unless Circaso changed it), so an address you didn't add can't be " +
@@ -87,16 +96,27 @@ fun Route.withdrawalController(withdrawals: WithdrawalService) {
             val result =
                 idOf(call.parameters["destinationId"], "destinationId").flatMap { id ->
                     pinOf(request.pin).flatMap { pin ->
-                        withdrawals.remove(call.merchantId(), call.merchantNetwork(), id, pin)
+                        val proof = request.passkey?.toAssertion()
+                        withdrawals.remove(call.merchantId(), call.merchantNetwork(), id, pin, proof)
                     }
                 }
             call.respondDefault(result.toDefaultResponse { RemovedResponse(true) })
         }.docs<PinRequest, RemovedResponse>(
             "RM20 · Remove a withdrawal address",
             TAG,
-            listOf("ramp.destination_not_found", "ramp.pin_invalid", "ramp.pin_locked", "request.malformed"),
+            listOf(
+                "ramp.destination_not_found",
+                "ramp.pin_invalid",
+                "ramp.pin_locked",
+                "ramp.step_up_required",
+                "ramp.step_up_invalid",
+                "ramp.passkey_required",
+                "request.malformed",
+            ),
             notes =
-                "$MONEY `{ pin }`. Withdrawals already made to it keep their record. Adding it again restarts " +
+                "$MONEY `{ pin }`; $STEP_UP (`REMOVE_ADDRESS`). A withdrawal to it not yet being sent is " +
+                    "cancelled (`CANCELLED`, `address_removed`) and its amount freed. " +
+                    "Withdrawals already made to it keep their record. Adding it again restarts " +
                     "the delay.",
         )
     }
@@ -129,10 +149,15 @@ fun Route.withdrawalController(withdrawals: WithdrawalService) {
                 "ramp.pin_invalid",
                 "ramp.pin_locked",
                 "ramp.vault_unavailable",
+                "ramp.withdrawals_locked",
+                "ramp.step_up_required",
+                "ramp.step_up_invalid",
+                "ramp.passkey_required",
                 "request.malformed",
             ),
             notes =
-                "$MONEY `{ amountMinor, destinationId, pin }` with an `Idempotency-Key` (the same key is " +
+                "$MONEY $STEP_UP (`WITHDRAW`, bound to this address and amount). " +
+                    "`{ amountMinor, destinationId, pin }` with an `Idempotency-Key` (the same key is " +
                     "the same withdrawal). Only your **free** float: never what open orders or withdrawals " +
                     "hold, nor Circaso's share held until the daily sweep. At least the network's minimum " +
                     "(1 USDC), within the daily cap when one is set. Online or offline. The amount is reserved " +

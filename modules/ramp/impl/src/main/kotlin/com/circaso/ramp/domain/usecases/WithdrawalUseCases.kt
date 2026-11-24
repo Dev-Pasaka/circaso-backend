@@ -4,6 +4,7 @@ import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.DestinationBook
 import com.circaso.ramp.domain.models.DestinationCommand
+import com.circaso.ramp.domain.models.PasskeyAssertion
 import com.circaso.ramp.domain.models.SavedDestination
 import com.circaso.ramp.domain.models.StaffWithdrawals
 import com.circaso.ramp.domain.models.WithdrawCommand
@@ -39,7 +40,8 @@ class RemoveWithdrawalDestination(private val withdrawals: FloatWithdrawals) {
         network: Network,
         destinationId: UUID,
         pin: String,
-    ): Resource<Unit> = withdrawals.removeDestination(merchantId, network, destinationId, pin)
+        passkey: PasskeyAssertion? = null,
+    ): Resource<Unit> = withdrawals.removeDestination(merchantId, network, destinationId, pin, passkey)
 }
 
 /** RM21: withdraws free float to a saved, usable address, with the PIN; the ops process sends it. */

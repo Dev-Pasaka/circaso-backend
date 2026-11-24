@@ -29,6 +29,7 @@ import com.circaso.ramp.presentation.dto.WebhookSecretRequest
 import com.circaso.ramp.presentation.mappers.cursorOf
 import com.circaso.ramp.presentation.mappers.periodOf
 import com.circaso.ramp.presentation.mappers.toAmount
+import com.circaso.ramp.presentation.mappers.toAssertion
 import com.circaso.ramp.presentation.mappers.toCommand
 import com.circaso.ramp.presentation.mappers.toEmail
 import com.circaso.ramp.presentation.mappers.toMerchantResponse
@@ -42,12 +43,14 @@ import com.circaso.ramp.presentation.mappers.toTopUpsResponse
 import com.circaso.ramp.presentation.mappers.toWindow
 import com.circaso.ramp.presentation.services.MerchantAuthService
 import com.circaso.ramp.presentation.services.MerchantService
+import com.circaso.ramp.presentation.services.SecurityService
 import com.circaso.ramp.presentation.services.WithdrawalService
 import com.circaso.ramp.presentation.support.MERCHANT_SESSION_HEADER
 import com.circaso.ramp.presentation.support.clientAddress
 import com.circaso.ramp.presentation.support.merchantId
 import com.circaso.ramp.presentation.support.merchantNetwork
 import com.circaso.ramp.presentation.support.merchantSession
+import com.circaso.ramp.presentation.support.signInContext
 import com.circaso.shared.Resource
 import com.circaso.shared.SharedError
 import com.circaso.shared.flatMap
@@ -76,6 +79,11 @@ private const val PIN_INVALID = "ramp.pin_invalid"
 private const val PIN_LOCKED = "ramp.pin_locked"
 private const val VAULT = "ramp.vault_unavailable"
 private const val SETUP = "ramp.merchant_setup_incomplete"
+private const val STEP_UP = "ramp.step_up_required"
+private const val STEP_UP_INVALID = "ramp.step_up_invalid"
+private const val PASSKEY_REQUIRED = "ramp.passkey_required"
+private const val STEP_UP_NOTE =
+    "Once you have a passkey, also send `passkey: { challengeId, credential }` from `POST /security/step-up`"
 private const val DEFAULT_LIMIT = 20
 private const val MAX_LIMIT = 200
 
@@ -92,10 +100,16 @@ fun Route.merchantController(
     auth: MerchantAuthService,
     merchants: MerchantService,
     withdrawals: WithdrawalService,
+    security: SecurityService,
 ) {
     route("/ramp/merchant") {
-        route("/auth") { signInRoutes(auth) }
+        route("/auth") {
+            signInRoutes(auth)
+            passkeySignInRoutes(security)
+        }
+        lockRoutes(security)
         merchantSession(auth) {
+            securityController(security)
             accountRoutes(merchants)
             paymentRoutes(merchants)
             tradingRoutes(merchants)
@@ -125,7 +139,10 @@ private fun Route.signInRoutes(auth: MerchantAuthService) {
 
     post("verify") {
         val request = call.receive<VerifyCodeRequest>()
-        val result = request.toSignIn().flatMap { (email, code) -> auth.verify(email, code, call.merchantNetwork()) }
+        val result =
+            request.toSignIn().flatMap { (email, code) ->
+                auth.verify(email, code, call.merchantNetwork(), call.signInContext())
+            }
         call.respondDefault(result.toDefaultResponse { it.toResponse() })
     }.docs<VerifyCodeRequest, SignedInResponse>(
         "MA2 · Sign in with the code",
@@ -264,13 +281,17 @@ private fun Route.accountRoutes(merchants: MerchantService) {
     put("pin") {
         val request = call.receive<ChangePinRequest>()
         val result =
-            request.toPins().flatMap { (current, new) -> merchants.changePin(call.merchantId(), current, new) }
+            request.toPins().flatMap { (current, new) ->
+                merchants.changePin(call.merchantId(), current, new, request.passkey?.toAssertion())
+            }
         call.respondDefault(result.toDefaultResponse { PinChangedResponse() })
     }.docs<ChangePinRequest, PinChangedResponse>(
         "RM9 · Change your PIN",
         TAG,
-        listOf(INVALID, PIN_INVALID, PIN_LOCKED, SETUP, VAULT, MALFORMED),
-        notes = "$SESSION The current PIN is required; five wrong PINs lock PIN entry for 30 minutes.",
+        listOf(INVALID, PIN_INVALID, PIN_LOCKED, SETUP, VAULT, MALFORMED, STEP_UP, STEP_UP_INVALID, PASSKEY_REQUIRED),
+        notes =
+            "$SESSION The current PIN is required; five wrong PINs lock PIN entry for 30 minutes. $STEP_UP_NOTE " +
+                "(`CHANGE_PIN`). The change is emailed to you.",
     )
 }
 
@@ -301,21 +322,31 @@ private fun Route.paymentRoutes(merchants: MerchantService) {
                 "$MONEY Allowed once you have applied (`APPLIED` or `APPROVED`). The credentials are checked with " +
                     "PayHero, then sealed under your 6-digit PIN: this call sets the PIN the first time, and needs " +
                     "the same PIN afterwards. Circaso can't read them without your PIN. Paste `callbackUrl` into " +
-                    "your PayHero account.",
+                    "your PayHero account. Replacing an account already connected (2026-11-24): $STEP_UP_NOTE " +
+                    "(`PAYMENT_ACCOUNT`), and the change is emailed to you.",
         )
 
         put("account") {
             val request = call.receive<PayoutAccountRequest>()
-            val result = merchants.payoutAccount(call.merchantId(), call.merchantNetwork(), request.accountId)
+            val result =
+                merchants.payoutAccount(
+                    call.merchantId(),
+                    call.merchantNetwork(),
+                    request.accountId,
+                    request.pin?.trim()?.takeIf { it.isNotEmpty() },
+                    request.passkey?.toAssertion(),
+                )
             call.respondDefault(result.toDefaultResponse { it.toResponse() })
         }.docs<PayoutAccountRequest, MerchantResponse>(
             "RM5b · Your payout account (selling)",
             TAG,
-            listOf(INVALID, NOT_FOUND, SETUP, "ramp.payout_account_invalid"),
+            listOf(INVALID, NOT_FOUND, SETUP, "ramp.payout_account_invalid", PIN_INVALID, STEP_UP, STEP_UP_INVALID),
             notes =
                 "$MONEY The number of your account on the FinoQ dashboard (digits only). Payouts to people selling " +
                     "you USDC are paid from that account's payout balance, so you can't take sales without it. It " +
-                    "isn't a secret and needs no PIN. Answers RM2; its `offRamp` card shows it.",
+                    "isn't a secret: setting it the first time needs no PIN. **Changing** one already set " +
+                    "(2026-11-24) takes `pin` and, once you have a passkey, `passkey` (`PAYOUT_ACCOUNT`), and is " +
+                    "emailed to you. Answers RM2; its `offRamp` card shows it.",
         )
 
         webhookSecretRoutes(merchants)

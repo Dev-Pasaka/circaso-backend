@@ -70,6 +70,7 @@ class MerchantTopUps(
     private val settings: SettingsBook,
     private val clock: Clock,
     private val journal: PayoutJournal,
+    private val alerts: MerchantAlerts,
 ) {
     suspend fun start(
         merchantId: MerchantId,
@@ -317,8 +318,12 @@ class MerchantTopUps(
     }
 
     /** Moves the row from the state it was read in; another caller that moved it first wins, and is what we answer. */
-    private suspend fun record(before: TopUp, after: TopUp): TopUp =
-        if (topUps.move(after, setOf(before.state))) after else topUps.find(before.topUpId) ?: before
+    private suspend fun record(before: TopUp, after: TopUp): TopUp {
+        if (!topUps.move(after, setOf(before.state))) return topUps.find(before.topUpId) ?: before
+        // Settled one way or the other (2026-11-24): the merchant's activity email, once per outcome.
+        if (after.state != before.state && after.state != TopUpState.REQUESTED) alerts.topUp(after, clock.instant())
+        return after
+    }
 
     private suspend fun ask(
         collections: MobileCollections,
