@@ -84,6 +84,8 @@ fun UserSummary.toDto() =
         kind = kind.name,
         maskedPhone = maskedPhone,
         createdAt = createdAt.toString(),
+        verification = verification,
+        verifiedAt = verifiedAt?.toString(),
     )
 
 fun UserAccount.toResponse() =
@@ -101,6 +103,7 @@ fun UserAccount.toResponse() =
         signIns = account.signIns.map { SignInDto(it.provider, it.maskedEmail, it.linkedAt.toString()) },
         suspension = suspension?.let { SuspensionDto(it.since.toString(), it.reason, it.byEmail) },
         networkAccess = networkAccess.map { it.toDto() },
+        verifiedAt = account.verifiedAt?.toString(),
     )
 
 fun UserDevices.toResponse() =

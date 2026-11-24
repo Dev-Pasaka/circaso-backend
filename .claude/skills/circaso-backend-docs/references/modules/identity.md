@@ -294,6 +294,8 @@ CREATE TABLE identity.accounts (
     active_device_id uuid,
     verification     text        NOT NULL DEFAULT 'NONE', -- NONE | PENDING | VERIFIED (KYC)
     -- V10 (2026-11-24): verified_at timestamptz (set while VERIFIED), verification_changed_at timestamptz (orders ramp's reports)
+    -- V11 (2026-11-24): accounts_verified_idx (created_at DESC, user_id DESC) WHERE verification = 'VERIFIED', for the
+    --   admin's "Verified" filter (AccountAdmin.newest(verifiedOnly); AdminAccount carries verifiedAt)
     session_version  int         NOT NULL DEFAULT 1,    -- bump to invalidate every token at once
     delete_after     timestamptz,                       -- DELETED: when the grace period ends and deletion completes
     created_at       timestamptz NOT NULL,

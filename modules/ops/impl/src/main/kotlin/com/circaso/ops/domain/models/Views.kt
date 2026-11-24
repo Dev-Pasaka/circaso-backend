@@ -34,6 +34,9 @@ data class UserSummary(
     val kind: AccountKind,
     val maskedPhone: String?,
     val createdAt: Instant,
+    /** `VERIFIED` or `NONE` (identity's `accounts.verification`; the verified badge, 2026-11-24). */
+    val verification: String = "NONE",
+    val verifiedAt: Instant? = null,
 )
 
 data class UserPage(val items: List<UserSummary>, val nextCursor: String?)

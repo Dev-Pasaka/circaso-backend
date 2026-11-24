@@ -61,6 +61,7 @@ fun Route.userController(
                             call.query("cursor"),
                             limit,
                             includePending = call.query("pending") == "true",
+                            verifiedOnly = call.query("verified") == "true",
                         )
                     }
                 call.respondDefault(
@@ -75,7 +76,9 @@ fun Route.userController(
                 notes =
                     "${roles("any")} `q`: a user id, an @handle (prefix), a phone number (+254…, exact), an email " +
                         "(exact) or a name (prefix). Empty: the newest accounts, without unfinished sign-ups (no " +
-                        "phone yet) unless `pending=true`. $PAGED",
+                        "phone yet) unless `pending=true`. `verified=true`: only people whose identity is verified " +
+                        "(the verified badge: an approved Didit check in the live environment). Each row carries " +
+                        "`verification` (`VERIFIED` | `NONE`) and `verifiedAt`. $PAGED",
             )
 
             get("pending-signups") {

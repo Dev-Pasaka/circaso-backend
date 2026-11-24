@@ -49,7 +49,8 @@ class AccountAdminService(
         cursor: String?,
         limit: Int,
         includePending: Boolean,
-    ): Resource<AccountRecordPage> = listNewestAccounts(cursor, limit, includePending)
+        verifiedOnly: Boolean = false,
+    ): Resource<AccountRecordPage> = listNewestAccounts(cursor, limit, includePending, verifiedOnly)
 
     suspend fun pendingSignUps(): Resource<Long> = countPendingSignUps()
 

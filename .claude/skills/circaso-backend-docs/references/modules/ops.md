@@ -65,6 +65,15 @@ Public: `GET auth/config`, `GET auth/handoff?return=`, `POST auth/dev-login`. Si
 `POST limits/rules`, `POST limits/rules/{ruleId}/versions`, `POST limits/rules/{ruleId}/end`, the ramp's routes
 (`ramp/…`, see "Ramp" and "Ramp: the merchant engine" below), and `GET openapi.json` outside production.
 
+**The verified badge on staff reads (2026-11-24, additive):** every `GET users` row carries `verification`
+(`VERIFIED` | `NONE`, identity's `accounts.verification`) and `verifiedAt` (null unless verified); `GET users/{id}`
+adds `verifiedAt` beside its `verification`. `GET users?verified=true` lists only verified people: with an empty `q`
+identity pages the verified accounts through `accounts_verified_idx` (identity V11, a partial index on the newest-first
+keyset), so pages stay full; with a search it keeps the verified among what the search found (a page can come back
+short; its `nextCursor` is still good). Only an approved Didit check in the **live** environment makes an account
+`VERIFIED` (ramp.md, identity.md → "The verified badge"); the ramp identity card (`ramp/users/{id}/verification`) shows
+the per-environment checks behind it.
+
 **Transfers** on every staff route (`transactions`, `transactions/{id}`, `users/{id}/transfers`) carry `sender` and
 `recipient` as typed parties `{kind: USER | GROUP | EXTERNAL | FEE, id, name, memberCount}` and `fee` (the fee leg to
 Circaso's fee wallet, with its amount) when the payment carried one; `senderName`/`recipientName` are deprecated. A

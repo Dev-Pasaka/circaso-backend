@@ -79,9 +79,11 @@ class FakeAccounts : AccountAdmin {
     val accounts = ConcurrentHashMap<UserId, AdminAccount>()
     val suspendCalls = CopyOnWriteArrayList<UserId>()
 
-    fun add(status: AccountStatus = AccountStatus.ACTIVE): UserId {
+    fun add(status: AccountStatus = AccountStatus.ACTIVE, verifiedAt: Instant? = null): UserId {
         val id = UserId.new()
-        accounts[id] = AdminAccount(id, AccountKind.PERSON, status, "+254•••••456", "NONE", EPOCH, emptyList())
+        val verification = if (verifiedAt != null) "VERIFIED" else "NONE"
+        accounts[id] =
+            AdminAccount(id, AccountKind.PERSON, status, "+254•••••456", verification, EPOCH, emptyList(), verifiedAt)
         return id
     }
 
@@ -97,9 +99,13 @@ class FakeAccounts : AccountAdmin {
         cursor: String?,
         limit: Int,
         includePending: Boolean,
+        verifiedOnly: Boolean,
     ) = Resource.success(
         AccountPage(
-            accounts.values.filter { includePending || it.status != AccountStatus.PENDING_PHONE }.take(limit),
+            accounts.values
+                .filter { includePending || it.status != AccountStatus.PENDING_PHONE }
+                .filter { !verifiedOnly || it.verification == "VERIFIED" }
+                .take(limit),
             null,
         ),
     )

@@ -239,4 +239,38 @@ class StaffActionsTest {
                     ?.displayName,
             )
         }
+
+    @Test
+    fun `people carry the verified badge, and the list can show only the verified`() =
+        runTest {
+            val at = java.time.Instant.parse("2026-11-24T08:00:00Z")
+            val verified = harness.accounts.add(verifiedAt = at)
+            val plain = harness.accounts.add()
+            harness.profiles.name(verified, "Ada Wanjiru", "ada")
+            harness.profiles.name(plain, "Ada Kamau", "adak")
+            val search = koin.get<SearchUsers>()
+
+            val all = search("", null, 50).getOrNull()!!.items
+            val row = all.single { it.userId == verified }
+            assertEquals("VERIFIED", row.verification)
+            assertEquals(at, row.verifiedAt)
+            assertEquals("NONE", all.single { it.userId == plain }.verification)
+            assertNull(all.single { it.userId == plain }.verifiedAt)
+            assertEquals(
+                listOf(verified),
+                search("", null, 50, verifiedOnly = true).getOrNull()?.items?.map { it.userId },
+            )
+            assertEquals(
+                listOf(verified),
+                search("ada", null, 50, verifiedOnly = true).getOrNull()?.items?.map { it.userId },
+            )
+            assertEquals(
+                at,
+                koin
+                    .get<GetUserAccount>()(verified)
+                    .getOrNull()
+                    ?.account
+                    ?.verifiedAt,
+            )
+        }
 }

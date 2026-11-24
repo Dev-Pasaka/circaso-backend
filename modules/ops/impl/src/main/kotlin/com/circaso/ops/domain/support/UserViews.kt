@@ -53,6 +53,8 @@ class UserViews(
                 kind = account.kind,
                 maskedPhone = account.maskedPhone,
                 createdAt = account.createdAt,
+                verification = account.verification,
+                verifiedAt = account.verifiedAt,
             )
         }
     }

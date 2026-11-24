@@ -22,6 +22,7 @@ fun AccountRecord.toAdmin() =
         verification = account.verification.name,
         createdAt = account.createdAt,
         signIns = links.map { AdminSignIn(it.provider.name, it.email?.let(::maskEmail), it.linkedAt) },
+        verifiedAt = account.verifiedAt,
     )
 
 fun AccountRecordPage.toAdmin() = AccountPage(accounts.map { it.toAdmin() }, nextCursor)

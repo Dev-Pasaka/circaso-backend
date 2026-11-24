@@ -22,6 +22,8 @@ data class AdminAccount(
     val verification: String,
     val createdAt: Instant,
     val signIns: List<AdminSignIn>,
+    /** When the identity was verified (Didit live; the verified badge, 2026-11-24); null unless [verification] is `VERIFIED`. */
+    val verifiedAt: Instant? = null,
 )
 
 /** One phone the account registered. [status] is `ACTIVE`, `REPLACED` or `REMOVED`; [active] is the account's current one. */
@@ -76,13 +78,15 @@ interface AccountAdmin {
     suspend fun findByEmail(email: String): List<UserId>
 
     /**
-     * Every account, newest first; unfinished sign-ups (`PENDING_PHONE`) only with [includePending]. Error:
+     * Every account, newest first; unfinished sign-ups (`PENDING_PHONE`) only with [includePending]; with
+     * [verifiedOnly], only accounts whose identity is verified (`verification = VERIFIED`, the verified badge). Error:
      * `request.malformed` for a cursor that isn't one. [limit] 1-200.
      */
     suspend fun newest(
         cursor: String?,
         limit: Int,
         includePending: Boolean,
+        verifiedOnly: Boolean = false,
     ): Resource<AccountPage>
 
     /** Unfinished sign-ups (Google/Apple sign-in, no phone yet) started over an hour ago: what a clean-up would delete. */

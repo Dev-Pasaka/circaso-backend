@@ -25,12 +25,13 @@ interface AccountAdminRepository {
 
     /**
      * Every account newest first, strictly after [after] in `(created_at, user_id) DESC` order, at most [limit]; without
-     * the unfinished sign-ups (`PENDING_PHONE`) unless [includePending].
+     * the unfinished sign-ups (`PENDING_PHONE`) unless [includePending]; only verified accounts with [verifiedOnly].
      */
     suspend fun newest(
         after: AccountKey?,
         limit: Int,
         includePending: Boolean,
+        verifiedOnly: Boolean = false,
     ): List<Account>
 
     /** Unfinished sign-ups (`PENDING_PHONE`) started before [createdBefore] (`accounts_pending_idx`). */
