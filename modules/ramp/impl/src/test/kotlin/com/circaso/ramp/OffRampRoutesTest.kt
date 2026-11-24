@@ -106,7 +106,11 @@ class OffRampRoutesTest {
             assertEquals(Triple("KES", "130000", "1300"), data.getValue("worth").amount())
 
             val buy = quote("""{"direction":"ON_RAMP","blockchain":"BASE-SEPOLIA","fiat":{"amount":"1300"}}""").data()
-            assertEquals(JsonNull, buy.getValue("providerFee"), "a purchase has no payout fee")
+            assertEquals(
+                Triple("KES", "0", "0"),
+                buy.getValue("providerFee").amount(),
+                "a purchase carries PayHero's prompt fee (none in this harness), not a payout fee",
+            )
         }
 
     @Test

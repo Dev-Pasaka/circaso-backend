@@ -9,6 +9,7 @@ import com.circaso.ops.domain.support.AuditTrail
 import com.circaso.ops.domain.support.Reasons
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
+import com.circaso.ramp.api.OpsProviderFeeTables
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampFeeBand
@@ -137,6 +138,12 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         ) {
             parts += "payoutFeeBands changed"
         }
+        changed("collectionFeeBands", before.collectionFeeBands?.size, after.collectionFeeBands?.size)
+        if (before.collectionFeeBands != after.collectionFeeBands &&
+            before.collectionFeeBands?.size == after.collectionFeeBands?.size
+        ) {
+            parts += "collectionFeeBands changed"
+        }
         changed("onRampFeeBands", bands(before.onRampFeeBands), bands(after.onRampFeeBands))
         changed("offRampFeeBands", bands(before.offRampFeeBands), bands(after.offRampFeeBands))
         changed("payoutBalanceLowMinor", before.payoutBalanceLowMinor, after.payoutBalanceLowMinor)
@@ -150,6 +157,12 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         changed("onlineSessionMaxDays", before.onlineSessionMaxDays, after.onlineSessionMaxDays)
         return parts.joinToString("; ")
     }
+}
+
+/** The providers' own fee tables for a network, beside staff's fallback tables (2026-11-24). */
+class GetRampProviderFees(private val ramp: RampAdmin) {
+    suspend operator fun invoke(network: Network): Resource<OpsProviderFeeTables> =
+        Resource.success(ramp.providerFeeTables(network))
 }
 
 /** Who may trade on a network while its ramp is in PREVIEW. */

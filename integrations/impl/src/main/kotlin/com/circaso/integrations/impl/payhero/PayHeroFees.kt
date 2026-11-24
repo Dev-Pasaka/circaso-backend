@@ -2,8 +2,11 @@ package com.circaso.integrations.impl.payhero
 
 import com.circaso.infrastructure.api.operation
 import com.circaso.integrations.api.CollectionProviders
+import com.circaso.integrations.api.FeeKind
 import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.ProviderFee
+import com.circaso.integrations.api.ProviderFeeBand
+import com.circaso.integrations.api.ProviderFeeTable
 import com.circaso.integrations.api.ProviderFees
 import com.circaso.shared.FiatAmount
 import io.ktor.client.HttpClient
@@ -51,6 +54,22 @@ class PayHeroFees(hosts: PayHeroHosts, private val pricing: HttpClient, private 
 
     override suspend fun payoutFee(provider: String, amount: FiatAmount): ProviderFee =
         fee(provider, amount, payouts) { bands, shillings -> bands.covering(shillings)?.let { slide(it, shillings) } }
+
+    override suspend fun table(provider: String, kind: FeeKind): ProviderFeeTable? {
+        if (provider != CollectionProviders.PAYHERO) return null
+        val (table, source) = (if (kind == FeeKind.COLLECTION) collections else payouts).read() ?: return null
+        return ProviderFeeTable(
+            bands =
+                table.bands.map {
+                    ProviderFeeBand(minor(it.from), minor(it.to), minor(it.feeFrom), minor(it.feeTo))
+                },
+            source = source,
+            asOf = table.fetchedAt,
+        )
+    }
+
+    private fun minor(shillings: BigDecimal): Long =
+        shillings.movePointRight(FiatAmount.MINOR_DIGITS).setScale(0, RoundingMode.CEILING).longValueExact()
 
     private suspend fun fee(
         provider: String,

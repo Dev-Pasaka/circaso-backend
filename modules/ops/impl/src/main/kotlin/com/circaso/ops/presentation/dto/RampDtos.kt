@@ -158,6 +158,11 @@ data class RampSettingsDto(
     val payoutFeeBands: List<RampPayoutFeeBandDto> = emptyList(),
     val payoutBalanceLowMinor: String = "0",
     /**
+     * The fallback for PayHero's fee per M-Pesa prompt (2026-11-24), used only when PayHero's published table can't
+     * be read; empty: none, and a purchase isn't quoted then. Same shape as `payoutFeeBands`.
+     */
+    val collectionFeeBands: List<RampPayoutFeeBandDto> = emptyList(),
+    /**
      * Float withdrawals (2026-11-24): hours before a merchant's new withdrawal address can be used (0 to 720), the
      * smallest withdrawal and the daily cap per merchant ("0": none), both USDC minor units (6 decimals).
      */
@@ -185,9 +190,48 @@ data class RampSettingsDto(
 @Serializable
 data class RampFeeBandDto(val fromMinor: String, val toMinor: String? = null, val feeBps: Int)
 
-/** One band of the fallback payout fee table: a payout up to `upToMinor` KES cents (inclusive) costs `feeMinor`. */
+/**
+ * One band of a fallback fee table (payouts; collections since 2026-11-24): an amount up to `upToMinor` KES cents
+ * (inclusive) costs `feeMinor`. Bands in rising `upToMinor`, each above the one before.
+ */
 @Serializable
 data class RampPayoutFeeBandDto(val upToMinor: String, val feeMinor: String)
+
+/**
+ * `GET /ops/ramp/provider-fees?network=` (2026-11-24): the providers' own fee tables as this server holds them, beside
+ * staff's fallback tables. `collection` is the collections provider's fee per M-Pesa prompt (buying), `payout` the
+ * payout fee (selling); each null when the provider publishes none or it can't be read now.
+ */
+@Serializable
+data class RampProviderFeesResponse(
+    val network: String,
+    val provider: String,
+    val collection: RampProviderFeeTableDto? = null,
+    val payout: RampProviderFeeTableDto? = null,
+    val collectionFallback: List<RampPayoutFeeBandDto>,
+    val payoutFallback: List<RampPayoutFeeBandDto>,
+)
+
+/**
+ * A provider's table: `source` `LIVE` (fetched for this read) or `CACHED` (this server's copy), `asOf` when it was
+ * fetched, `ageSeconds` how old that is. A band covers whole shillings `fromMinor` to `toMinor`, both included; its fee
+ * slides from `feeFromMinor` to `feeToMinor` across it (equal for a collection band). KES cents as strings.
+ */
+@Serializable
+data class RampProviderFeeTableDto(
+    val source: String,
+    val asOf: String,
+    val ageSeconds: Long,
+    val bands: List<RampProviderFeeBandDto>,
+)
+
+@Serializable
+data class RampProviderFeeBandDto(
+    val fromMinor: String,
+    val toMinor: String,
+    val feeFromMinor: String,
+    val feeToMinor: String,
+)
 
 /**
  * `PUT /ops/ramp/settings?network=`: the settings and why they change. Read-only fields are ignored when sent.
@@ -236,6 +280,8 @@ data class UpdateRampSettingsRequest(
     val payoutWindowSeconds: Int? = null,
     val payoutFeeBands: List<RampPayoutFeeBandDto>? = null,
     val payoutBalanceLowMinor: String? = null,
+    /** Left out: unchanged (2026-11-24). */
+    val collectionFeeBands: List<RampPayoutFeeBandDto>? = null,
     val withdrawDestinationDelayHours: Int? = null,
     val withdrawMinMinor: String? = null,
     val withdrawDailyMaxMinor: String? = null,
@@ -311,6 +357,13 @@ data class RampOrderDto(
     val rateSource: String? = null,
     val referenceRate: String? = null,
     val spreadBps: Int? = null,
+    /**
+     * Where `providerFeeMinor` came from (2026-11-24): `LIVE`, `CACHED` or `STAFF_TABLE`; null before it was
+     * recorded. A purchase's provider fee is PayHero's prompt fee, inside `fiatAmountMinor` (the total prompted).
+     */
+    val providerFeeSource: String? = null,
+    /** A sale: the provider's tariff when the payout was sent. */
+    val providerFeeActualMinor: String? = null,
 )
 
 @Serializable
@@ -557,6 +610,13 @@ data class RampMerchantOrderDto(
     val rateSource: String? = null,
     val referenceRate: String? = null,
     val spreadBps: Int? = null,
+    /**
+     * The M-Pesa provider's fee passed to the customer (2026-11-24): buying, PayHero's prompt fee inside `paid`;
+     * selling, the payout fee on top. `providerFeeSource`: `LIVE`, `CACHED` or `STAFF_TABLE`.
+     */
+    val providerFee: RampAmountDto? = null,
+    val providerFeeSource: String? = null,
+    val providerFeeActual: RampAmountDto? = null,
 )
 
 @Serializable

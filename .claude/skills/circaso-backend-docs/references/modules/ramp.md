@@ -1390,7 +1390,7 @@ The old `payout` and `payoutStatus` (which returned a `Resource` and could not t
 - **Only `lookUpPayout` decides.** `Paid` completes the order, after checking `amount` and `reference` against the order where they are given. `Failed` allows a resend or the refund. `Pending` waits. `Unknown` waits and is asked again. `NotFound(PROVIDER)` (the provider denies a reference it gave us) and `NotFound(OURS)` after an `Unknown` send both go to **`REVIEW` for staff**, not to a resend: whether FinoQ's lookups search by our reference is unconfirmed, so "not found by ours" is not yet proof that nothing was sent. Once the first real payouts show that a lookup by `external_reference` works, `NotFound(OURS)` can allow a resend.
 - **The doorbell.** Implement `onPayoutCallback(callbackKey, reference)` in `RampCollectionNotifications`: check the key is the merchant's and the reference is an order of theirs in `PAYING_OUT`, then run the lookup. It can ring twice, and a callback whose layout doesn't say whether it is a payment or a payout rings **both** bells, so each handler ignores a reference that isn't its kind. The same callback address is sent with payouts as with prompts.
 - **Float.** Before picking a merchant for an off-ramp, `balances(credentials, accountId)`: `payout` must cover the amount **plus** `ProviderFees.payoutFee`, and a null `payout` means "unknown", which must not be treated as enough or as empty without a decision.
-- **Fees.** `ProviderFees` is bound in integrations (`PayHeroFees`). When it answers `UNKNOWN`, fall back to the table staff set in the admin.
+- **Fees.** `ProviderFees` is bound in integrations (`PayHeroFees`). When it answers `UNKNOWN`, fall back to the table staff set in the admin (built: `payoutFeeBands`, seeded since 2026-11-24, and `collectionFeeBands` for buying; see "As built: provider fees passed on").
 
 ### What the client does
 
@@ -1469,7 +1469,7 @@ Every move is a transition guard (`SaleStates`), with what it holds or frees in 
 
 ### Pricing (R2, `direction: OFF_RAMP`)
 
-`SalePricing`, pure. The rate is the **sell rate** (`Pricing.rate(network, OFF_RAMP)`; until 2026-11-24 the reference rate: see "As built: rates"). From USDC `X`: `gross = floor_cent(X × rate)`, `fee = ceil_cent(gross × fee_bps)`, the provider's payout fee asked **of `gross − fee`** (never less than the fee of what is finally paid), `receive = floor_shilling(gross − fee − providerFee)`. From shillings `Y` (whole): `providerFee = fee(Y)`, `X = ceil_6dp((Y + providerFee) / (1 − fee_bps) / rate)`, `fee = floor_cent(X × rate) − Y − providerFee` (never below the rate: the rounding goes to the fee). The payout fee is `ProviderFees.payoutFee(network's provider, amount)` when it is `LIVE_TABLE` or `CACHED`, else the first band of `settings.payout_fee_bands` that covers the amount (`ADMIN_TABLE`), else **no quote** (`ramp.payout_fee_unavailable`, 502). The quote keeps `provider_fee_minor` and its source; the order copies them. Limits are selling's own (`offramp_min/max/daily_limit_minor`, on what the user receives); the day is counted on its own Redis key (`rmp:sold:…`).
+`SalePricing`, pure. The rate is the **sell rate** (`Pricing.rate(network, OFF_RAMP)`; until 2026-11-24 the reference rate: see "As built: rates"). From USDC `X`: `gross = floor_cent(X × rate)`, `fee = ceil_cent(gross × fee_bps)`, the provider's payout fee asked **of `gross − fee`** (never less than the fee of what is finally paid), `receive = floor_shilling(gross − fee − providerFee)`. From shillings `Y` (whole): `providerFee = fee(Y)`, `X = ceil_6dp((Y + providerFee) / (1 − fee_bps) / rate)`, `fee = floor_cent(X × rate) − Y − providerFee` (never below the rate: the rounding goes to the fee). The payout fee is `ProviderFees.payoutFee(network's provider, amount)` when it is `LIVE_TABLE` or `CACHED`, else the first band of `settings.payout_fee_bands` that covers the amount (`ADMIN_TABLE`; `STAFF_TABLE` since 2026-11-24), else **no quote** (`ramp.payout_fee_unavailable`, 502). The quote keeps `provider_fee_minor` and its source; the order copies them. Limits are selling's own (`offramp_min/max/daily_limit_minor`, on what the user receives); the day is counted on its own Redis key (`rmp:sold:…`).
 
 ### The order (R7) and the engine
 
@@ -1561,7 +1561,7 @@ Every set of header names is logged once, names only: `payhero callback headers 
 | `offRampMinMinor`, `offRampMaxMinor`, `offRampDailyLimitMinor` | 1 000, 500 000, 2 000 000 (KES 10, 5 000, 20 000) | on what the user receives |
 | `transferWindowSeconds` | 900 | 60 to 3600 |
 | `payoutWindowSeconds` | 1800 | 60 to 86400 |
-| `payoutFeeBands` | `[]` | `[{ upToMinor, feeMinor }]`, the fallback table |
+| `payoutFeeBands` | `[]` (seeded from FinoQ's pricing since 2026-11-24, V17) | `[{ upToMinor, feeMinor }]`, the fallback table |
 | `payoutBalanceLowMinor` | 100 000 (KES 1 000) | ≥ 0; 0: never |
 
 Engine settings for `OFF_RAMP` were already seeded (V6).
@@ -1886,6 +1886,58 @@ Security alerts are always sent; activity ones follow the merchant's choice (RM-
 **Files.** `domain/models/Security.kt`, `domain/ports/SecurityPorts.kt`, `domain/repositories/SecurityRepositories.kt`, `domain/support/Passkeys.kt` (`StepUp`, `SecurityCodes`, `MerchantPasskeys`, `WithdrawalLock`, `SecurityViews`), `domain/support/MerchantAlerts.kt` (`AlertText`, `MerchantAlerts`, `AlertSender`, `DailySummaries`), `domain/usecases/SecurityUseCases.kt`, `data/support/YubicoPasskeys.kt`, `data/support/HmacLockLinks.kt`, `data/cache/RedisCeremonies.kt`, `data/repositories/SecurityRepositories.kt`, `data/tables/SecurityTables.kt`, `presentation/controllers/SecurityController.kt`, `V16__merchant_security.sql`; integrations `Email.kt` (17 templates), `ResendEmail.kt`; email-templates (`build.ts`, `templates.json`, `publish.ts`). Tests: `MerchantSecurityTest` (a software authenticator, `TestAuthenticator`), `SecurityRoutesTest`, `SecurityDataTest`.
 
 **Not built / open.** The merchant can't lift a lock themselves (staff only, by choice). Passkey sign-in can't yet replace the email entirely (the email code stays as the fallback and for registration). A daily summary for the testnet (merchants work on mainnet only).
+
+## As built: provider fees passed on (2026-11-24, `feat/provider-fees`)
+
+Decided by Pasaka the same day: **PayHero's collection fee and FinoQ's payout fee are passed to the customer.** Recorded in decisions.md (2026-11-24).
+
+### Buying: PayHero's prompt fee on top of the merchant's quote
+
+PayHero takes a fee for every M-Pesa prompt from the merchant's prepaid **service wallet**, by the band of the amount **prompted** (KES 1–10 → 0, 11–49 → 1, 50–499 → 6, 500–999 → 10 … 750 000–999 999 → 320). Until now nobody charged it to the buyer, so the merchant paid it silently. Now the prompt asks for the merchant's quote **plus** PayHero's fee for the total prompted: the extra shillings land in the merchant's till and cover what PayHero takes from the service wallet, and the merchant nets their quote.
+
+**The total (`PurchaseTotals`, pure).** The band depends on the total and the total on the fee, so the total is the **least whole-shilling `T` with `T − fee(T) ≥ quote`**: start at `T = quote`, then `T = quote + fee(T)` until it stops moving (at most 32 steps; a fee that never falls as the amount grows, as PayHero's, reaches the least fixed point, where `T − fee(T) = quote` exactly). A fee in cents (a staff table) is rounded **up** to the shilling. The merchant is never short; a buyer never pays more than the band the total really falls in.
+
+**Which side is honest (decided in the build).** Asked in **shillings** (`fiat`, "I pay X"): X is the total prompted; PayHero's fee for X comes out of it and the rest is the merchant's quote, priced as before (Circaso's fee inside it, by its band; the USDC from what is left). Asked in **USDC** (`crypto`, "I want Y"): Y is priced as before into the merchant's quote, and PayHero's fee is added on top. So what the person types is always what happens: the shillings that leave M-Pesa, or the USDC that arrives. The USDC never pays PayHero's fee.
+
+**Worked examples** (rate 130, Circaso 1.5 % flat, PayHero's table; Circaso's fee rounds up to the shilling as always):
+
+| Asked | Prompted (total) | PayHero | Merchant's quote | Circaso fee | USDC |
+| --- | --- | --- | --- | --- | --- |
+| KES 100 | 100 | 6 | 94 | 2 (1.41 ↑) | 0.707692 |
+| KES 499 | 499 | 6 | 493 | 8 (7.40 ↑) | 3.730769 |
+| KES 500 | 500 | 10 | 490 | 8 (7.35 ↑) | 3.707692 (the band edge: one shilling more buys a little less) |
+| KES 2 500 | 2 500 | 25 | 2 475 | 38 (37.13 ↑) | 18.746153 |
+| quote KES 100 (USDC asked) | 106 | 6 | 100 | | as asked |
+| quote KES 493 | 499 | 6 | 493 | | |
+| quote KES 494 | 504 (494 + 6 = 500 is the 10 band; 494 + 10 = 504) | 10 | 494 | | |
+| quote KES 500 | 510 | 10 | 500 | | |
+| quote KES 2 480 | 2 505 (2 480 + 20 = 2 500 is the 25 band) | 25 | 2 480 | | |
+| quote KES 2 500 | 2 525 | 25 | 2 500 | | |
+
+**What uses which amount.** The order's `fiat` is the **total prompted** (the STK push, the provider's paid amount check, the day's counter, R3/R4 `pay`, the frame's `pay`, the merchant's alert). `provider_fee_minor` and `provider_fee_source` are on the quote and the order, as a sale's already were. The **order limits and the day are on the total** (the amount that moves over M-Pesa, as selling's are on its payout). The merchant's **float** holds the USDC alone. **Commissions** split Circaso's fee only, so PayHero's fee is nobody's income; `collected` in the statements is still the shillings the till received (the total), and `fees`/the shares never include it.
+
+**Never a fee of 0 by default.** The fee is `ProviderFees.collectionFee` (`LIVE` or `CACHED`), else staff's `collectionFeeBands` (`STAFF_TABLE`), else **no quote** (`ramp.pricing_unavailable`, 502, as a paused rate).
+
+### Selling: verified end to end
+
+What was already true (2026-11-23) and checked again: the payout fee is `ProviderFees.payoutFee` for the payout amount (asked of the payout before Circaso's fee comes off when the USDC is named, which is never less than the fee of what is paid; of the payout itself when the shillings are named), added to the user's cost; the merchant pays out exactly `receive`; the quote and the order keep it with its source; the KES hold at the merchant's provider is the payout plus the fee; the actual is the tariff at the send. The app's Cash Out quote and order already show it ("M-Pesa payout fee"). **Fixed:** the staff payout table was empty on every network (an unreadable pricing page stopped every sale): seeded (below). **Fixed:** RM18's `charged` read only the FinoQ payment wallet; the fee may be taken from FinoQ's service wallet instead (three wallets, above), so the test payout also records that wallet before and after (`serviceBalanceBefore`, `serviceBalanceAfter`, `chargedFromService`; the real fee is `charged + chargedFromService`). **Not reconciled here:** no measured `charged` from a real test payout was readable from this session (the dev server isn't reachable from it); compare the next one with `providerFee`.
+
+**FinoQ has no official fee endpoint.** docs.payhero.africa re-read 2026-11-24 (its sitemap and `llms.txt` now answer 404; read from the docs root and the API reference index, all 33 operations): no fee, pricing or quote operation for payouts (the only "pricing" is `GET /api/v1/kyc/pricing`, for identity checks), and no fee field on the withdraw answer (`status`, `merchant_reference`, `checkout_request_id`, `response_code`, `conversation_id`, `external_reference`), the result callback, or the status lookup. So the pricing page's data (`GET api.payhero.africa/api/pricing`, interpolated in a straight line) stays the source. Its phone bands on 2026-11-24: 1–100 → 0.01–0.80, 101–500 → 7.81–11, 501–1 000 → 15.01–19, 1 001–2 500 → 27.01–39, 2 501–10 000 → 44.01–104, 10 001–20 000 → 109.01–189, 20 001–250 000 → 199.01–2 039 (a flat part plus 0.8 %).
+
+### The fallback order and the staff tables (V17)
+
+Both directions: the provider's table fetched for this call (`LIVE`) → this server's copy (`CACHED`, up to 7 days old) → **staff's table** (`STAFF_TABLE`) → no quote. `ProviderFeeLookup` is the one place the order is decided. The sources were `LIVE_TABLE` and `ADMIN_TABLE` before; V17 renamed the stored values.
+
+- `ramp.settings.collection_fee_bands` (new) and `payout_fee_bands`: `[{ upToMinor, feeMinor }]`, KES cents as strings, an amount up to `upToMinor` inclusive. RO5 reads and writes `collectionFeeBands` beside `payoutFeeBands` (left out: unchanged; audited by size, or "collectionFeeBands changed").
+- **Seeds** (V17 fills a table only where it was `[]`; `StaffFeeTables` for a new row): collections = PayHero's tariff as it stands, without its upside-down `35000–34999` row; payouts = FinoQ's phone bands **at each band's highest fee** (100 → 0.80, 500 → 11, 1 000 → 19, 2 500 → 39, 10 000 → 104, 20 000 → 189, 250 000 → 2 039), so the fallback never undercharges the merchant's cost.
+- **RO19 `GET /ops/ramp/provider-fees?network=`** (`ramp.read`) → `{ network, provider, collection, payout, collectionFallback, payoutFallback }`; each provider table `{ source: LIVE|CACHED, asOf, ageSeconds, bands: [{ fromMinor, toMinor, feeFromMinor, feeToMinor }] }` or null. Through `RampAdmin.providerFeeTables` and the new `ProviderFees.table(provider, kind)` (default null; `PayHeroFees` answers from the same kept copy, fetching first if it has none). The admin shows it beside the staff tables with a "copy live into fallback" button (each band's `toMinor` and `feeToMinor`).
+- **Order reads for staff:** RO4's list gains `providerFeeSource` and `providerFeeActualMinor` (`providerFeeMinor` was there); RO8 gains `providerFee`, `providerFeeSource`, `providerFeeActual`. A purchase's provider fee is inside `fiatAmountMinor` / `paid`.
+
+### The app (R2, R3, R4)
+
+`providerFee` is now on **every** quote and order, buying too (it was null when buying): PayHero's fee, inside `pay`. Additive; an older app ignores it, and `pay` was always what the prompt asks for. See docs/mobile-integration.md ("Changed on 2026-11-24, provider fees").
+
+**Files.** `domain/support/PurchaseTotals.kt`, `SalePricing.kt` (`PayoutFees`, `CollectionFees`, `ProviderFeeLookup`), `OrderUseCases.kt` (`CreateQuote.purchase`), `PurchaseRouting`, `models/Settings.kt` (`collectionFeeBands`, `StaffFeeTables`), `models/OffRamp.kt` (`StaffFeeBand`, the sources), `TestPayouts`, `V17__provider_fees.sql`; integrations `ProviderFees.table`, `PayHeroFees`; ops `GetRampProviderFees`, `RampController` (`provider-fees`). Tests: `ProviderFeesTest` (the real table's boundaries and bad row, the fixed point around 499 → 500 and 2 499 → 2 500, every base to KES 20 000, KES- and USDC-asked buys, the fallback order, limits, earnings), `PayHeroFeesTest` (the tables for staff), the off-ramp's tests (sources, the seeded payout table).
 
 ## To check against the vendor before building on it
 

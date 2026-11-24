@@ -32,7 +32,8 @@ import java.util.UUID
  * own contact phone, never any other number**, so a real payout can be tried end to end before anyone sells. It obeys
  * every rule a sale's payout does: written down before it is sent (`SENDING`), sent once by a client that never
  * retries, never sent again on an unclear answer, and only the provider's lookup says it was paid. The payout balance
- * is read before it is sent and after it is paid, so the provider's real charge can be read off the difference.
+ * is read before it is sent and after it is paid, so the provider's real charge can be read off the difference; so is
+ * FinoQ's service wallet (2026-11-24), in case the fee is taken from there and not from the payment wallet.
  *
  * What the integration logs (layouts, never values) is what the first real test is read from; this class logs one
  * line per step with ids and outcomes only.
@@ -90,6 +91,7 @@ class TestPayouts(
                 balanceAfter = null,
                 createdAt = now,
                 updatedAt = now,
+                serviceBefore = before?.finoqService?.let { BalanceRead(it.minor, it.source) },
             )
         // Written before it is sent, under the one-in-flight key: from here on the row says a payout may be out.
         if (!tests.insert(test)) return Resource.error(RampError.TestPayoutInProgress)
@@ -186,6 +188,7 @@ class TestPayouts(
             receipt = status.providerReceipt,
             paidAmountMinor = status.amount?.amountMinor,
             balanceAfter = after?.finoqPayment?.let { BalanceRead(it.minor, it.source) },
+            serviceAfter = after?.finoqService?.let { BalanceRead(it.minor, it.source) },
         )
     }
 

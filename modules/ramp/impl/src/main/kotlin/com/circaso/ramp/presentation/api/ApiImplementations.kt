@@ -1,12 +1,18 @@
 package com.circaso.ramp.presentation.api
 
 import com.circaso.integrations.api.CollectionNotifications
+import com.circaso.integrations.api.FeeKind
+import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.integrations.api.KycNotifications
+import com.circaso.integrations.api.ProviderFees
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsMerchantWallet
 import com.circaso.ramp.api.OpsPayoutFeeBand
+import com.circaso.ramp.api.OpsProviderFeeTable
+import com.circaso.ramp.api.OpsProviderFeeTableBand
+import com.circaso.ramp.api.OpsProviderFeeTables
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
@@ -51,7 +57,7 @@ import com.circaso.ramp.domain.models.MerchantSummary
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.OrderView
 import com.circaso.ramp.domain.models.PageCursor
-import com.circaso.ramp.domain.models.PayoutFeeBand
+import com.circaso.ramp.domain.models.PayoutFee
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProviderWalletView
 import com.circaso.ramp.domain.models.RampFeeBand
@@ -60,6 +66,7 @@ import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
 import com.circaso.ramp.domain.models.Resolution
 import com.circaso.ramp.domain.models.ResolveCommand
+import com.circaso.ramp.domain.models.StaffFeeBand
 import com.circaso.ramp.domain.models.StaffOrder
 import com.circaso.ramp.domain.models.StaffOrderFilter
 import com.circaso.ramp.domain.models.StatementTotals
@@ -123,7 +130,7 @@ class RampRealtimeReplay(private val events: RampEventsService) : RealtimeReplay
 }
 
 /** ramp:api's staff contract, for the ops module. Who acted is kept as the staff member's id. */
-class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
+class RampAdminImpl(private val admin: RampAdminService, private val fees: ProviderFees? = null) : RampAdmin {
     override suspend fun merchants(before: MerchantId?, limit: Int): List<OpsMerchant> =
         admin
             .merchants(before, limit)
@@ -152,6 +159,31 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
                     )
                 }
         }
+
+    override suspend fun providerFeeTables(network: Network): OpsProviderFeeTables {
+        val settings = current(network)
+        val provider = settings.collectionsProvider
+
+        suspend fun table(kind: FeeKind): OpsProviderFeeTable? =
+            fees?.table(provider, kind)?.let { read ->
+                OpsProviderFeeTable(
+                    bands =
+                        read.bands.map {
+                            OpsProviderFeeTableBand(it.fromMinor, it.toMinor, it.feeFromMinor, it.feeToMinor)
+                        },
+                    source = if (read.source == FeeSource.LIVE_TABLE) PayoutFee.LIVE else PayoutFee.CACHED,
+                    asOf = read.asOf,
+                )
+            }
+        return OpsProviderFeeTables(
+            network = network,
+            provider = provider,
+            collection = table(FeeKind.COLLECTION),
+            payout = table(FeeKind.PAYOUT),
+            collectionFallback = settings.collectionFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
+            payoutFallback = settings.payoutFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
+        )
+    }
 
     private suspend fun offered(): List<String> = admin.collectionProviders().getOrNull().orEmpty()
 
@@ -397,6 +429,8 @@ private fun OrderView.toOps() =
         rateSource = order.rateBasis?.source?.name,
         referenceRate = order.rateBasis?.referenceRate?.toPlainString(),
         spreadBps = order.rateBasis?.spreadBps,
+        providerFeeSource = order.providerFeeSource,
+        providerFeeActualMinor = order.providerFeeActualMinor,
     )
 
 private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) =
@@ -437,6 +471,7 @@ private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) 
         transferWindowSeconds = transferWindowSeconds,
         payoutWindowSeconds = payoutWindowSeconds,
         payoutFeeBands = payoutFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
+        collectionFeeBands = collectionFeeBands.map { OpsPayoutFeeBand(it.upToMinor, it.feeMinor) },
         payoutBalanceLowMinor = payoutBalanceLowMinor,
         onRampFeeBands = feeBandsOf(Direction.ON_RAMP).map { OpsRampFeeBand(it.fromMinor, it.toMinor, it.feeBps) },
         offRampFeeBands = feeBandsOf(Direction.OFF_RAMP).map { OpsRampFeeBand(it.fromMinor, it.toMinor, it.feeBps) },
@@ -510,7 +545,9 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             transferWindowSeconds = transferWindowSeconds ?: current.transferWindowSeconds,
             payoutWindowSeconds = payoutWindowSeconds ?: current.payoutWindowSeconds,
             payoutFeeBands =
-                payoutFeeBands?.map { PayoutFeeBand(it.upToMinor, it.feeMinor) } ?: current.payoutFeeBands,
+                payoutFeeBands?.map { StaffFeeBand(it.upToMinor, it.feeMinor) } ?: current.payoutFeeBands,
+            collectionFeeBands =
+                collectionFeeBands?.map { StaffFeeBand(it.upToMinor, it.feeMinor) } ?: current.collectionFeeBands,
             payoutBalanceLowMinor = payoutBalanceLowMinor ?: current.payoutBalanceLowMinor,
             withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: current.withdrawDestinationDelayHours,
             withdrawMinMinor = withdrawMinMinor ?: current.withdrawMinMinor,
@@ -679,4 +716,7 @@ private fun StaffOrder.toOps() =
         rateSource = order.rateBasis?.source?.name,
         referenceRate = order.rateBasis?.referenceRate?.toPlainString(),
         spreadBps = order.rateBasis?.spreadBps,
+        providerFee = Amounts.fiat(order.providerFeeMinor),
+        providerFeeSource = order.providerFeeSource,
+        providerFeeActual = order.providerFeeActualMinor?.let { Amounts.fiat(it) },
     )

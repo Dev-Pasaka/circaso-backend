@@ -3,6 +3,7 @@ package com.circaso.ops
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsMerchantWallet
+import com.circaso.ramp.api.OpsProviderFeeTables
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
@@ -235,6 +236,11 @@ class FakeRampAdmin : RampAdmin {
         current = current + (settings.network to after)
         return Resource.success(OpsRampSettingsChange(before, after))
     }
+
+    var feeTables: OpsProviderFeeTables? = null
+
+    override suspend fun providerFeeTables(network: Network): OpsProviderFeeTables =
+        feeTables ?: OpsProviderFeeTables(network, "payhero", null, null, emptyList(), emptyList())
 
     override suspend fun previewAccess(network: Network): List<OpsRampPreviewAccess> =
         preview.filter {

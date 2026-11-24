@@ -216,6 +216,14 @@ data class OpsRampMerchantOrder(
     val rateSource: String? = null,
     val referenceRate: String? = null,
     val spreadBps: Int? = null,
+    /**
+     * The M-Pesa provider's fee passed to the customer (2026-11-24): PayHero's prompt fee inside [paid] when buying,
+     * the payout fee on top when selling; where it came from (`LIVE`, `CACHED`, `STAFF_TABLE`; null on purchases made
+     * before it was charged); and, for a sale, the tariff when the payout was sent.
+     */
+    val providerFee: RampAmount? = null,
+    val providerFeeSource: String? = null,
+    val providerFeeActual: RampAmount? = null,
 ) {
     override fun toString(): String = "OpsRampMerchantOrder($orderId, $state)"
 }

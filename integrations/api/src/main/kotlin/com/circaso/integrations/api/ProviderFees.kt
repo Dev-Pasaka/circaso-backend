@@ -16,7 +16,31 @@ interface ProviderFees {
 
     /** The provider's charge for paying [amount] out to a phone. */
     suspend fun payoutFee(provider: String, amount: FiatAmount): ProviderFee
+
+    /**
+     * The provider's whole table for [kind], as this server holds it (fetched first if it has none), for staff to see
+     * beside their fallback table (2026-11-24). Null when the provider publishes none or it can't be read.
+     */
+    suspend fun table(provider: String, kind: FeeKind): ProviderFeeTable? = null
 }
+
+/** Which of the provider's two tables. */
+enum class FeeKind { COLLECTION, PAYOUT }
+
+/**
+ * One of the provider's published tables: [bands] in order of amount, with where it came from and when it was
+ * fetched. For a band whose fee changes across it (payouts), [ProviderFeeBand.feeFromMinor] is the fee at its first
+ * amount and [ProviderFeeBand.feeToMinor] at its last; for a flat band (collections) they are equal.
+ */
+data class ProviderFeeTable(val bands: List<ProviderFeeBand>, val source: FeeSource, val asOf: Instant)
+
+/** KES minor units throughout; both ends whole shillings and included. */
+data class ProviderFeeBand(
+    val fromMinor: Long,
+    val toMinor: Long,
+    val feeFromMinor: Long,
+    val feeToMinor: Long,
+)
 
 /**
  * A fee and where it came from. [fee] is null exactly when [source] is [FeeSource.UNKNOWN]; [asOf] is when the table

@@ -950,11 +950,26 @@ class SwitchableRandom(private val current: () -> Random) : Random() {
     override fun nextDouble(): Double = current().nextDouble()
 }
 
-/** The provider's published fees, as a test sets them: every payout costs [payoutFeeMinor]; null is "can't say". */
+/**
+ * The provider's published fees, as a test sets them: every payout costs [payoutFeeMinor] and every prompt
+ * [collectionFeeMinor] (0 by default, so purchases price as they did before fees were passed on), or [collectionFee]
+ * by amount when set; null is "can't say".
+ */
 class FakeProviderFees(var payoutFeeMinor: Long? = 500) : ProviderFees {
     val asked = mutableListOf<Long>()
+    val collectionsAsked = mutableListOf<Long>()
+    var collectionFeeMinor: Long? = 0
+    var collectionFee: ((Long) -> Long?)? = null
+    var collectionSource: FeeSource = FeeSource.LIVE_TABLE
 
-    override suspend fun collectionFee(provider: String, amount: FiatAmount): ProviderFee = ProviderFee.UNKNOWN
+    override suspend fun collectionFee(provider: String, amount: FiatAmount): ProviderFee {
+        collectionsAsked += amount.amountMinor
+        val byAmount = collectionFee
+        val fee =
+            (if (byAmount != null) byAmount(amount.amountMinor) else collectionFeeMinor) ?: return ProviderFee.UNKNOWN
+        if (collectionSource == FeeSource.UNKNOWN) return ProviderFee.UNKNOWN
+        return ProviderFee(FiatAmount(fee, amount.currency), collectionSource)
+    }
 
     override suspend fun payoutFee(provider: String, amount: FiatAmount): ProviderFee {
         asked += amount.amountMinor

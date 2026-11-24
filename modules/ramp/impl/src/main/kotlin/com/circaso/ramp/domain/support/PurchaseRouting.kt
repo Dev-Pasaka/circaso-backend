@@ -169,6 +169,9 @@ class PurchaseRouting(
             feeBps = quote.feeBps,
             merchantShareBps = quote.merchantShareBps,
             feeBandFromMinor = quote.feeBandFromMinor,
+            // The total prompted carries PayHero's fee (2026-11-24): the order keeps it and where it came from.
+            providerFeeMinor = quote.providerFeeMinor,
+            providerFeeSource = quote.providerFeeSource,
             collectionsProvider = purchase.settings.collectionsProvider,
             payerPhone = purchase.command.phone,
             destinationAddress = purchase.address,

@@ -148,6 +148,11 @@ data class OpsRampSettings(
     val payoutWindowSeconds: Int? = null,
     /** Staff's payout fee table, used only when the provider's own published table can't be read; empty: none. */
     val payoutFeeBands: List<OpsPayoutFeeBand>? = null,
+    /**
+     * Staff's collection fee table (2026-11-24): PayHero's charge for one M-Pesa prompt, used only when PayHero's own
+     * published table can't be read; empty: none, and purchases aren't quoted then. Null on an update: unchanged.
+     */
+    val collectionFeeBands: List<OpsPayoutFeeBand>? = null,
     /** Below this payout balance a merchant's portal flags `payout_balance_low`, KES minor units; 0: never. */
     val payoutBalanceLowMinor: Long? = null,
     /** Hours before a merchant's new withdrawal address can be used (0 to 720); null on an update: unchanged. */
@@ -174,8 +179,40 @@ data class OpsRampSettings(
  */
 data class OpsRampFeeBand(val fromMinor: Long, val toMinor: Long?, val feeBps: Int)
 
-/** One band of staff's payout fee table: an amount up to [upToMinor] (inclusive) costs [feeMinor]. KES minor units. */
+/**
+ * One band of a staff fee table (payouts, or collections since 2026-11-24): an amount up to [upToMinor] (inclusive)
+ * costs [feeMinor]. KES minor units.
+ */
 data class OpsPayoutFeeBand(val upToMinor: Long, val feeMinor: Long)
+
+/**
+ * The providers' own fee tables for one network (2026-11-24), as this server holds them, beside staff's fallback
+ * tables: [collection] is the collections provider's prompt fee (buying), [payout] the payout fee (selling). A table
+ * is null when the provider publishes none or it can't be read now.
+ */
+data class OpsProviderFeeTables(
+    val network: Network,
+    val provider: String,
+    val collection: OpsProviderFeeTable?,
+    val payout: OpsProviderFeeTable?,
+    val collectionFallback: List<OpsPayoutFeeBand>,
+    val payoutFallback: List<OpsPayoutFeeBand>,
+)
+
+/**
+ * One provider table: bands of whole shillings, both ends included, in KES minor units. A payout band's fee slides
+ * from [OpsProviderFeeTableBand.feeFromMinor] at its first amount to [OpsProviderFeeTableBand.feeToMinor] at its
+ * last; a collection band's two are equal. [source] is `LIVE` (fetched for this read) or `CACHED`, [asOf] when it was
+ * fetched from the provider.
+ */
+data class OpsProviderFeeTable(val bands: List<OpsProviderFeeTableBand>, val source: String, val asOf: Instant)
+
+data class OpsProviderFeeTableBand(
+    val fromMinor: Long,
+    val toMinor: Long,
+    val feeFromMinor: Long,
+    val feeToMinor: Long,
+)
 
 data class OpsRampSettingsChange(val before: OpsRampSettings, val after: OpsRampSettings)
 
@@ -206,7 +243,10 @@ data class OpsRampOrder(
     val updatedAt: Instant,
     /** `ON_RAMP` or `OFF_RAMP` (a sale). */
     val direction: String = "ON_RAMP",
-    /** A sale: the payout provider's fee the user paid on top; what the merchant's wallet received; the payouts. */
+    /**
+     * The M-Pesa provider's fee the customer paid (2026-11-24): PayHero's prompt fee inside [fiatAmountMinor] when
+     * buying, the payout fee on top when selling. A sale: what the merchant's wallet received; the payouts.
+     */
     val providerFeeMinor: Long = 0,
     val fundedMinor: Long? = null,
     val payoutAttempts: Int = 0,
@@ -219,6 +259,10 @@ data class OpsRampOrder(
     val rateSource: String? = null,
     val referenceRate: String? = null,
     val spreadBps: Int? = null,
+    /** Where [providerFeeMinor] came from: `LIVE`, `CACHED` or `STAFF_TABLE` (null before it was recorded). */
+    val providerFeeSource: String? = null,
+    /** A sale: the provider's tariff when the payout was sent. */
+    val providerFeeActualMinor: Long? = null,
 ) {
     override fun toString(): String = "OpsRampOrder($orderId, $state)"
 }
@@ -261,6 +305,9 @@ interface RampAdmin {
      * server offers. In force everywhere within ten seconds, with no restart.
      */
     suspend fun updateSettings(settings: OpsRampSettings, by: UUID): Resource<OpsRampSettingsChange>
+
+    /** The providers' own fee tables for [network] and staff's fallback tables beside them (2026-11-24). */
+    suspend fun providerFeeTables(network: Network): OpsProviderFeeTables
 
     suspend fun previewAccess(network: Network): List<OpsRampPreviewAccess>
 

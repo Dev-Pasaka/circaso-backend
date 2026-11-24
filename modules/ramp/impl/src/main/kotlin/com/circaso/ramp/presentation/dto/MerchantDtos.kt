@@ -220,8 +220,10 @@ data class TestPayoutRequest(val amountMinor: String = "")
  * statement). `outcome` says what the provider answered in our words (`accepted`, `rejected:INVALID_REQUEST`,
  * `insufficient_balance`, `unavailable`, `unknown`, `failed:<its word>`, `looked_up:PENDING`, `paid`).
  * `providerFee` is the provider's published charge for the amount; `charged` is what your payout balance actually
- * fell by beyond the amount (before − after − amount), when both readings exist. Read it again (`GET`) until it
- * leaves `SENDING`, `ACCEPTED` and `UNKNOWN`.
+ * fell by beyond the amount (before − after − amount), when both readings exist. FinoQ may take the fee from its service
+ * wallet instead (2026-11-24): `serviceBalanceBefore`/`serviceBalanceAfter` are that wallet's readings and
+ * `chargedFromService` how far it fell (before − after) once paid. The real fee is `charged + chargedFromService`.
+ * Read it again (`GET`) until it leaves `SENDING`, `ACCEPTED` and `UNKNOWN`.
  */
 @Serializable
 data class TestPayoutResponse(
@@ -239,6 +241,9 @@ data class TestPayoutResponse(
     val charged: RampAmount?,
     val createdAt: String,
     val updatedAt: String,
+    val serviceBalanceBefore: KesBalanceDto? = null,
+    val serviceBalanceAfter: KesBalanceDto? = null,
+    val chargedFromService: RampAmount? = null,
 )
 
 /** `onRamp`: people buying USDC from you with M-Pesa. `offRamp`: people selling USDC to you for M-Pesa. */

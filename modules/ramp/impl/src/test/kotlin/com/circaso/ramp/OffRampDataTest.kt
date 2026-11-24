@@ -27,12 +27,13 @@ import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PayoutFee
-import com.circaso.ramp.domain.models.PayoutFeeBand
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RampState
+import com.circaso.ramp.domain.models.StaffFeeBand
+import com.circaso.ramp.domain.models.StaffFeeTables
 import com.circaso.ramp.domain.models.TestPayout
 import com.circaso.ramp.domain.models.TestPayoutState
 import com.circaso.ramp.domain.models.TopUp
@@ -140,7 +141,7 @@ class OffRampDataTest {
         createdAt = now,
         updatedAt = now,
         providerFeeMinor = 500,
-        providerFeeSource = "LIVE_TABLE",
+        providerFeeSource = "LIVE",
         refundAddress = "0xuser",
     )
 
@@ -154,16 +155,23 @@ class OffRampDataTest {
                 Triple(900, 1_800, 100_000L),
                 Triple(seeded.transferWindowSeconds, seeded.payoutWindowSeconds, seeded.payoutBalanceLowMinor),
             )
-            assertTrue(seeded.payoutFeeBands.isEmpty())
+            assertEquals(StaffFeeTables.FINOQ_PAYOUTS, seeded.payoutFeeBands, "seeded from FinoQ's pricing")
+            assertEquals(StaffFeeTables.PAYHERO_COLLECTIONS, seeded.collectionFeeBands, "seeded from PayHero's table")
 
-            val bands = listOf(PayoutFeeBand(10_000, 100), PayoutFeeBand(500_000, 1_500))
+            val bands = listOf(StaffFeeBand(10_000, 100), StaffFeeBand(500_000, 1_500))
             val changed =
-                seeded.copy(offRampState = RampState.PREVIEW, offRampMinMinor = 2_000, payoutFeeBands = bands)
+                seeded.copy(
+                    offRampState = RampState.PREVIEW,
+                    offRampMinMinor = 2_000,
+                    payoutFeeBands = bands,
+                    collectionFeeBands = bands.take(1),
+                )
             val saved = settingsRows.update(changed, seeded.version, "staff", now)!!
 
             assertEquals(RampState.PREVIEW to 2_000L, saved.offRampState to saved.offRampMinMinor)
             assertEquals(bands, saved.payoutFeeBands)
             assertEquals(bands, settingsRows.load().getValue(TESTNET).payoutFeeBands)
+            assertEquals(bands.take(1), settingsRows.load().getValue(TESTNET).collectionFeeBands)
         }
 
     @Test
@@ -185,11 +193,11 @@ class OffRampDataTest {
                     7_000,
                     now.plusSeconds(60),
                     providerFeeMinor = 500,
-                    providerFeeSource = "ADMIN_TABLE",
+                    providerFeeSource = "STAFF_TABLE",
                 )
             quotes.insert(quote)
             assertEquals(
-                500L to "ADMIN_TABLE",
+                500L to "STAFF_TABLE",
                 quotes.find(quote.quoteId, now)!!.let { it.providerFeeMinor to it.providerFeeSource },
             )
 
@@ -348,7 +356,7 @@ class OffRampDataTest {
                     secondaryReference = null,
                     receipt = null,
                     paidAmountMinor = null,
-                    providerFee = PayoutFee(9, "LIVE_TABLE"),
+                    providerFee = PayoutFee(9, "LIVE"),
                     balanceBefore = BalanceRead(50_000, "payment_wallet"),
                     balanceAfter = null,
                     createdAt = now,

@@ -37,6 +37,7 @@ object SettingsTable : Table("ramp.settings") {
     val transferWindowSeconds = integer("transfer_window_seconds").default(900)
     val payoutWindowSeconds = integer("payout_window_seconds").default(1_800)
     val payoutFeeBands = text("payout_fee_bands").default("[]")
+    val collectionFeeBands = text("collection_fee_bands").default("[]")
 
     /** V15 (2026-11-24): buying's and selling's fee bands as JSON lists; `[]` is one band at [feeBps]. */
     val onrampFeeBands = text("onramp_fee_bands").default("[]")
@@ -265,6 +266,10 @@ object TestPayoutsTable : Table("ramp.test_payouts") {
     val balanceBeforeSource = text("balance_before_source").nullable()
     val balanceAfterMinor = long("balance_after_minor").nullable()
     val balanceAfterSource = text("balance_after_source").nullable()
+    val serviceBeforeMinor = long("service_before_minor").nullable()
+    val serviceBeforeSource = text("service_before_source").nullable()
+    val serviceAfterMinor = long("service_after_minor").nullable()
+    val serviceAfterSource = text("service_after_source").nullable()
     val createdAt = timestamp("created_at")
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(testId)

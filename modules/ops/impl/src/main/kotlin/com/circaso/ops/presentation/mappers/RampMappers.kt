@@ -24,6 +24,9 @@ import com.circaso.ops.presentation.dto.RampPaymentsIssueDto
 import com.circaso.ops.presentation.dto.RampPayoutFeeBandDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessDto
 import com.circaso.ops.presentation.dto.RampPreviewAccessResponse
+import com.circaso.ops.presentation.dto.RampProviderFeeBandDto
+import com.circaso.ops.presentation.dto.RampProviderFeeTableDto
+import com.circaso.ops.presentation.dto.RampProviderFeesResponse
 import com.circaso.ops.presentation.dto.RampProviderWalletDto
 import com.circaso.ops.presentation.dto.RampResolveResponse
 import com.circaso.ops.presentation.dto.RampSettingsDto
@@ -38,6 +41,8 @@ import com.circaso.ops.presentation.dto.UpdateRampSettingsRequest
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsMerchant
 import com.circaso.ramp.api.OpsPayoutFeeBand
+import com.circaso.ramp.api.OpsProviderFeeTable
+import com.circaso.ramp.api.OpsProviderFeeTables
 import com.circaso.ramp.api.OpsRampBlock
 import com.circaso.ramp.api.OpsRampBlockCursor
 import com.circaso.ramp.api.OpsRampDay
@@ -62,6 +67,7 @@ import com.circaso.ramp.api.RampOrderId
 import com.circaso.ramp.api.RampOrderStates
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -204,6 +210,8 @@ fun OpsRampSettings.toDto() =
         payoutFeeBands =
             payoutFeeBands.orEmpty().map { RampPayoutFeeBandDto(it.upToMinor.toString(), it.feeMinor.toString()) },
         payoutBalanceLowMinor = (payoutBalanceLowMinor ?: 0).toString(),
+        collectionFeeBands =
+            collectionFeeBands.orEmpty().map { RampPayoutFeeBandDto(it.upToMinor.toString(), it.feeMinor.toString()) },
         withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: 0,
         withdrawMinMinor = (withdrawMinMinor ?: 0).toString(),
         withdrawDailyMaxMinor = (withdrawDailyMaxMinor ?: 0).toString(),
@@ -254,6 +262,13 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             if (upTo == null || fee == null) return malformed("payoutFeeBands[$index]", NOT_CENTS)
             OpsPayoutFeeBand(upTo, fee)
         }
+    val collectionBands =
+        collectionFeeBands?.mapIndexed { index, band ->
+            val upTo = band.upToMinor.trim().toLongOrNull()
+            val fee = band.feeMinor.trim().toLongOrNull()
+            if (upTo == null || fee == null) return malformed("collectionFeeBands[$index]", NOT_CENTS)
+            OpsPayoutFeeBand(upTo, fee)
+        }
     val buying =
         onRampFeeBands?.let { list ->
             when (val parsed = list.toBands("onRampFeeBands")) {
@@ -301,6 +316,7 @@ fun UpdateRampSettingsRequest.toSettings(network: Network): Resource<OpsRampSett
             transferWindowSeconds = transferWindowSeconds,
             payoutWindowSeconds = payoutWindowSeconds,
             payoutFeeBands = bands,
+            collectionFeeBands = collectionBands,
             payoutBalanceLowMinor = selling[3],
             withdrawDestinationDelayHours = withdrawDestinationDelayHours,
             withdrawMinMinor = selling[4],
@@ -353,6 +369,8 @@ fun OpsRampOrder.toDto() =
         rateSource = rateSource,
         referenceRate = referenceRate,
         spreadBps = spreadBps,
+        providerFeeSource = providerFeeSource,
+        providerFeeActualMinor = providerFeeActualMinor?.toString(),
     )
 
 fun OpsRampResolved.toResponse() = RampResolveResponse(order.toDto(), providerSaid)
@@ -589,6 +607,9 @@ private fun OpsRampMerchantOrder.toDto() =
         rateSource = rateSource,
         referenceRate = referenceRate,
         spreadBps = spreadBps,
+        providerFee = providerFee?.toDto(),
+        providerFeeSource = providerFeeSource,
+        providerFeeActual = providerFeeActual?.toDto(),
     )
 
 /** A page of a merchant's orders; `nextCursor` continues after its last order, null on the last page. */
@@ -628,6 +649,45 @@ fun OpsRampWithdrawals.toResponse() =
                     usableAt = it.usableAt.toString(),
                     removedAt = it.removedAt?.toString(),
                     frozenAt = it.frozenAt?.toString(),
+                )
+            },
+    )
+
+/** The providers' fee tables and staff's fallbacks, with how old each provider table is at [now]. */
+fun OpsProviderFeeTables.toResponse(now: Instant) =
+    RampProviderFeesResponse(
+        network = network.name,
+        provider = provider,
+        collection = collection?.toDto(now),
+        payout = payout?.toDto(now),
+        collectionFallback =
+            collectionFallback.map {
+                RampPayoutFeeBandDto(
+                    it.upToMinor.toString(),
+                    it.feeMinor.toString(),
+                )
+            },
+        payoutFallback =
+            payoutFallback.map {
+                RampPayoutFeeBandDto(
+                    it.upToMinor.toString(),
+                    it.feeMinor.toString(),
+                )
+            },
+    )
+
+private fun OpsProviderFeeTable.toDto(now: Instant) =
+    RampProviderFeeTableDto(
+        source = source,
+        asOf = asOf.toString(),
+        ageSeconds = Duration.between(asOf, now).seconds.coerceAtLeast(0),
+        bands =
+            bands.map {
+                RampProviderFeeBandDto(
+                    it.fromMinor.toString(),
+                    it.toMinor.toString(),
+                    it.feeFromMinor.toString(),
+                    it.feeToMinor.toString(),
                 )
             },
     )

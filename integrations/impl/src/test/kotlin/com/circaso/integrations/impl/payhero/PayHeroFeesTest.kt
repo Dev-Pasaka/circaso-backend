@@ -1,7 +1,9 @@
 package com.circaso.integrations.impl.payhero
 
+import com.circaso.integrations.api.FeeKind
 import com.circaso.integrations.api.FeeSource
 import com.circaso.integrations.api.ProviderFee
+import com.circaso.integrations.api.ProviderFeeBand
 import com.circaso.integrations.impl.payhero.FakePayHero.Companion.API
 import com.circaso.integrations.impl.payhero.FakePayHero.Companion.LEGACY
 import com.circaso.integrations.impl.payhero.FakePayHero.Companion.PRICING
@@ -180,5 +182,21 @@ class PayHeroFeesTest {
 
         now = refreshedAt + PayHeroFees.KEEP_FOR
         assertEquals(ProviderFee.UNKNOWN, payout(kes(100)), "a week old with no refresh: no longer trusted")
+    }
+
+    @Test
+    fun `the whole tables are given to staff, in minor units, with their source and age`() {
+        vendor.answer(legacyTariff, tariff)
+        vendor.answer(pricing, payoutPricing)
+
+        val collections = runBlocking { fees.table("payhero", FeeKind.COLLECTION) }!!
+        assertEquals(FeeSource.LIVE_TABLE to now, collections.source to collections.asOf)
+        assertEquals(ProviderFeeBand(5_000, 49_900, 600, 600), collections.bands[2])
+        assertEquals(7, collections.bands.size, "the upside-down row dropped")
+        assertEquals(FeeSource.CACHED, runBlocking { fees.table("payhero", FeeKind.COLLECTION) }!!.source)
+
+        val payouts = runBlocking { fees.table("payhero", FeeKind.PAYOUT) }!!
+        assertEquals(ProviderFeeBand(10_100, 50_000, 781, 1_100), payouts.bands[1])
+        assertNull(runBlocking { fees.table("log", FeeKind.PAYOUT) })
     }
 }
