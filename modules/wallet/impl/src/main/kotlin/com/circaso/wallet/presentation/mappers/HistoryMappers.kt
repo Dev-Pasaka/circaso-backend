@@ -102,4 +102,5 @@ private fun HistoryEntry.toDto(): TransactionDto {
     )
 }
 
-private fun Counterparty.toDto() = CounterpartyDto(userId, displayName, handle, avatarUrl, address, groupId?.toString())
+private fun Counterparty.toDto() =
+    CounterpartyDto(userId, displayName, handle, avatarUrl, address, groupId?.toString(), verified)

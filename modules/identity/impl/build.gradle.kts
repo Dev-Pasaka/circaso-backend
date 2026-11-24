@@ -5,6 +5,8 @@ plugins {
 // Accounts, providers, phone, devices, sessions, recovery. The domain imports nothing from the libraries below;
 // presentation uses Ktor and `shared-web`, data uses Exposed (PostgreSQL) and Redis through `infrastructure:api`.
 dependencies {
+    // ramp's `UserVerificationChanged` (the verified badge, 2026-11-24): identity keeps the account's verification.
+    implementation(project(":modules:ramp:api"))
     implementation(libs.ktor.server.core)
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines.core)

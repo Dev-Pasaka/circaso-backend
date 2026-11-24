@@ -147,6 +147,7 @@ import com.circaso.ramp.domain.support.SaleRefunds
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
+import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.ApplyAsMerchant
 import com.circaso.ramp.domain.usecases.BlockUser
 import com.circaso.ramp.domain.usecases.CallbackSigningSecret
@@ -295,6 +296,9 @@ private val SWEEP_INTERVAL: Duration = Duration.ofSeconds(30)
 private val PURGE_INTERVAL: Duration = Duration.ofMinutes(5)
 private val END_SESSIONS_INTERVAL: Duration = Duration.ofMinutes(1)
 private val VERIFICATIONS_INTERVAL: Duration = Duration.ofMinutes(2)
+
+/** How often users' recent live verifications are said again (`ramp.UserVerificationChanged`, the verified badge). */
+private val ANNOUNCE_VERIFICATIONS_INTERVAL: Duration = Duration.ofHours(6)
 private val RELEASE_INTERVAL: Duration = Duration.ofSeconds(5)
 private val SETTLE_INTERVAL: Duration = Duration.ofMinutes(10)
 private val PRUNE_ROUTING_INTERVAL: Duration = Duration.ofHours(1)
@@ -405,6 +409,8 @@ fun rampModule(config: Config): Module =
                 transactor = get(),
                 frames = get(),
                 alerts = get(),
+                outbox = get(),
+                bus = get(),
                 clock = clock,
             )
         }
@@ -493,7 +499,8 @@ fun rampModule(config: Config): Module =
         single { ListBlocks(get()) }
         single { BlockUser(get(), get(), get(), clock) }
         single { UnblockUser(get()) }
-        single { ResetVerification(get()) }
+        single { ResetVerification(get(), get(), get(), get(), get(), clock) }
+        single { AnnounceVerifications(get(), get(), get(), get(), clock) }
         single { ResetMerchantVerification(get(), get()) }
         single { ListKycProviders(get()) }
         single { CreateQuote(get(), get(), get(), get(), clock, get()) }
@@ -610,6 +617,7 @@ fun rampModule(config: Config): Module =
                 get(),
                 get(),
                 get(),
+                get(),
             )
         }
         single { RampOpsJobsService(get(), get()) }
@@ -675,6 +683,13 @@ fun rampModule(config: Config): Module =
         single(named("ramp.sweep-verifications")) {
             val events = get<RampEventsService>()
             ScheduledJob("ramp.sweep-verifications", VERIFICATIONS_INTERVAL) { events.sweepVerifications() }
+        }
+        single(named("ramp.announce-verifications")) {
+            val events = get<RampEventsService>()
+            ScheduledJob(
+                "ramp.announce-verifications",
+                ANNOUNCE_VERIFICATIONS_INTERVAL,
+            ) { events.announceVerifications() }
         }
         single(named("ramp.prune-routing")) {
             val engine = get<RampEngineService>()

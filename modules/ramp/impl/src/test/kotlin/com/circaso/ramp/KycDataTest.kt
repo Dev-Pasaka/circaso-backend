@@ -68,7 +68,19 @@ class KycDataTest {
     private val book = SettingsBook(settingsRows, alerts, FakeProviders(emptyMap()), kycProviders, clock)
     private val identities = HmacIdentityKeys { EnvelopeVault.masterKey(MASTER_KEY) }
     private val verifications =
-        Verifications(rows, blocks, kycProviders, identities, book, transactor, frames, alerts, clock)
+        Verifications(
+            rows,
+            blocks,
+            kycProviders,
+            identities,
+            book,
+            transactor,
+            frames,
+            alerts,
+            RecordingOutbox(),
+            MemoryBus(),
+            clock,
+        )
 
     @BeforeTest
     fun clean() =

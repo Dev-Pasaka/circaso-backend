@@ -31,7 +31,14 @@ data class Profile(
     val hidden: Boolean = false,
     /** Circaso's own support account (decision 2026-10-31): set when the profile is made, never changed. */
     val support: Boolean = false,
-)
+    /**
+     * When the person's identity was verified with a government ID and a selfie (Didit live, 2026-11-24): the
+     * verified badge. Null when not verified. Only identity's event changes it; a profile edit never writes it.
+     */
+    val verifiedAt: Instant? = null,
+) {
+    val verified: Boolean get() = verifiedAt != null
+}
 
 enum class ContactSource { PHONEBOOK, QR, INVITE, HANDLE }
 

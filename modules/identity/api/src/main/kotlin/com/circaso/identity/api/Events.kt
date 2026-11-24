@@ -2,9 +2,11 @@ package com.circaso.identity.api
 
 import com.circaso.shared.DeviceId
 import com.circaso.shared.DomainEvent
+import com.circaso.shared.InstantSerializer
 import com.circaso.shared.Network
 import com.circaso.shared.UserId
 import kotlinx.serialization.Serializable
+import java.time.Instant
 
 /** The stream these are published on is `events:identity`. No raw phone number goes on it: only the HMAC. */
 
@@ -103,5 +105,23 @@ data class PinVaultOpened(
 
     companion object {
         const val TYPE = "identity.PinVaultOpened"
+    }
+}
+
+/**
+ * The verified badge (2026-11-24): whether the person's identity is verified now, with Didit's live environment (ramp
+ * reports it; a sandbox approval never counts). [verifiedAt] is when, null when not verified. Published only when the
+ * answer changed. Never a document, a name or anything read from the ID.
+ */
+@Serializable
+data class IdentityVerificationChanged(
+    val userId: UserId,
+    val verified: Boolean,
+    @Serializable(with = InstantSerializer::class) val verifiedAt: Instant? = null,
+) : DomainEvent {
+    override val type: String get() = TYPE
+
+    companion object {
+        const val TYPE = "identity.IdentityVerificationChanged"
     }
 }

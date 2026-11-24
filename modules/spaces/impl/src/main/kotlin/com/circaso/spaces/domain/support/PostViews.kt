@@ -85,7 +85,15 @@ fun PostView.toFrame(): FramePost =
         postId = post.postId,
         spaceId = post.spaceId,
         clientPostId = post.clientPostId.toString().takeIf { mine },
-        author = FramePerson(author.userId, author.displayName, author.handle, author.avatarUrl, authorRole?.name),
+        author =
+            FramePerson(
+                author.userId,
+                author.displayName,
+                author.handle,
+                author.avatarUrl,
+                authorRole?.name,
+                author.verified,
+            ),
         text = post.text,
         media =
             media.map {

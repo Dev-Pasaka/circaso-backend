@@ -36,6 +36,8 @@ data class FramePerson(
     val handle: String? = null,
     val avatarUrl: String? = null,
     val role: String? = null,
+    /** The verified badge (2026-11-24). */
+    val verified: Boolean = false,
 )
 
 @Serializable

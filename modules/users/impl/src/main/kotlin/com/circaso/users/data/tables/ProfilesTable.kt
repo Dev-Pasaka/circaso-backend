@@ -29,6 +29,12 @@ object ProfilesTable : Table("users.profiles") {
 
     /** Circaso's own support account, from `identity.SupportAccountCreated`; every change copies it as it was. */
     val support = bool("support").default(false)
+
+    /** V5: when the identity was verified (Didit live; the verified badge), from identity; null when not verified. */
+    val verifiedAt = timestamp("verified_at").nullable()
+
+    /** V5: when that was reported (the event's `occurredAt`), so a late, older event never overwrites a newer one. */
+    val verifiedChangedAt = timestamp("verified_changed_at").nullable()
     override val primaryKey = PrimaryKey(userId)
 
     init {

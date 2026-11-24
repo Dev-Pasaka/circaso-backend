@@ -22,6 +22,9 @@ data class ProfileUpdated(
         const val AVATAR = "avatar"
         const val HANDLE = "handle"
         const val ABOUT = "about"
+
+        /** The verified badge came or went (2026-11-24). */
+        const val VERIFIED = "verified"
     }
 }
 

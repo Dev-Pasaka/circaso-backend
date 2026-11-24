@@ -8,6 +8,7 @@ import com.circaso.integrations.api.KycProviders
 import com.circaso.integrations.api.KycSession
 import com.circaso.integrations.api.KycSessionRequest
 import com.circaso.integrations.api.KycStatus
+import com.circaso.ramp.api.UserVerificationChanged
 import com.circaso.ramp.domain.errors.RampError
 import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.BlockReason
@@ -26,13 +27,17 @@ import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.IdentityKeys
 import com.circaso.ramp.domain.ports.KycGate
 import com.circaso.ramp.domain.ports.RampAlerts
+import com.circaso.ramp.domain.ports.RampOutbox
 import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.repositories.BlockRepository
 import com.circaso.ramp.domain.repositories.VerificationRepository
+import com.circaso.shared.EventBus
+import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
 import com.circaso.shared.Uuid7
+import com.circaso.shared.envelope
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -57,6 +62,12 @@ import java.time.Instant
  * dropped. A key that is barred refuses the account and bars it too; a key that already verified another account of
  * the same kind refuses this one (`identity_in_use`). In the sandbox no key is kept at all: its checks read the same
  * sample document for everybody, so a key there would make every tester the same person.
+ *
+ * **The verified badge** (2026-11-24). Every move of a user's **live** row writes `ramp.UserVerificationChanged`
+ * ([announcement]), which identity keeps as the account's verification and users shows as the badge. A move's event
+ * is written in the move's own transaction; an approval's right after it commits, since the identity claim's unique
+ * violation can't share a transaction. `ramp.announce-verifications` says it again for recent rows, which covers that
+ * gap and backfilled the approvals made before the event.
  */
 class Verifications(
     private val rows: VerificationRepository,
@@ -67,6 +78,8 @@ class Verifications(
     private val transactor: Transactor,
     private val frames: FrameSender,
     private val alerts: RampAlerts,
+    private val outbox: RampOutbox,
+    private val bus: EventBus,
     private val clock: Clock,
 ) : KycGate {
     /** How asking the provider about a session went. */
@@ -375,7 +388,7 @@ class Verifications(
             }
         if (identityKey != null && blocks.hasIdentity(identityKey)) return refuseBarred(row, sessionId, now)
         return when (val outcome = rows.verify(row.subject, row.environment, sessionId, identityKey, now)) {
-            is VerifiedOutcome.Moved -> outcome.verification.also { tell(it) }
+            is VerifiedOutcome.Moved -> outcome.verification.also { announceAfter(it) }.also { tell(it) }
             VerifiedOutcome.AlreadyThere -> current(row)
             VerifiedOutcome.IdentityInUse -> moved(row, sessionId, declined(VerificationReason.IDENTITY_IN_USE), now)
         }
@@ -401,10 +414,11 @@ class Verifications(
                 if (moved != null && userId != null) {
                     blocks.add(Block(Uuid7.generate(), userId, null, BlockReason.IDENTITY, "", null, SYSTEM, now))
                 }
-                moved
+                moved?.let { it to announcement(it)?.also { event -> outbox.write(event) } }
             } ?: return current(row)
-        tell(refused)
-        return refused
+        refused.second?.let { bus.publish(it) }
+        tell(refused.first)
+        return refused.first
     }
 
     private suspend fun moved(
@@ -413,7 +427,13 @@ class Verifications(
         change: VerificationChange,
         now: Instant,
     ): Verification {
-        val moved = rows.move(row.subject, row.environment, sessionId, change, now) ?: return current(row)
+        val (moved, event) =
+            transactor.run("kyc.move") {
+                rows.move(row.subject, row.environment, sessionId, change, now)?.let { moved ->
+                    moved to announcement(moved)?.also { outbox.write(it) }
+                }
+            } ?: return current(row)
+        event?.let { bus.publish(it) }
         tell(moved)
         return moved
     }
@@ -430,6 +450,40 @@ class Verifications(
             val current = settings.of(network)
             if (current.kycEnvironment == row.environment) frames.kycUpdated(userId, network, view(row, current))
         }
+    }
+
+    /**
+     * `ramp.UserVerificationChanged` for [row] when it is a user's live verification; null otherwise (a merchant, the
+     * sandbox). Building the envelope is pure, so it may happen inside a transaction.
+     */
+    fun announcement(row: Verification): EventEnvelope? =
+        announce(row, row.status == VerificationStatus.VERIFIED, row.updatedAt)
+
+    /** The announcement that [row] is gone (staff reset it at [at]): not verified any more. */
+    fun removal(row: Verification, at: Instant): EventEnvelope? = announce(row, verified = false, changedAt = at)
+
+    private fun announce(
+        row: Verification,
+        verified: Boolean,
+        changedAt: Instant,
+    ): EventEnvelope? {
+        val userId = row.subject.userId ?: return null
+        if (row.environment != KycEnvironment.LIVE) return null
+        return bus.envelope(
+            UserVerificationChanged(
+                userId = userId,
+                verified = verified,
+                verifiedAt = row.verifiedAt.takeIf { verified },
+                changedAt = changedAt,
+            ),
+        )
+    }
+
+    /** Writes and publishes [row]'s announcement after the change that caused it committed (the approval's case). */
+    private suspend fun announceAfter(row: Verification) {
+        val event = announcement(row) ?: return
+        outbox.write(event)
+        bus.publish(event)
     }
 
     private fun pending(reason: VerificationReason?, isSubmitted: Boolean = false) =

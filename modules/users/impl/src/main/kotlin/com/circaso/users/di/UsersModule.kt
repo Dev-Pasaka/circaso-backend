@@ -61,6 +61,7 @@ import com.circaso.users.domain.support.UserNotifier
 import com.circaso.users.domain.support.UsersConfig
 import com.circaso.users.domain.support.WaitingContactMatcher
 import com.circaso.users.domain.usecases.ApplyAccountStatus
+import com.circaso.users.domain.usecases.ApplyIdentityVerification
 import com.circaso.users.domain.usecases.BlockUser
 import com.circaso.users.domain.usecases.CanReach
 import com.circaso.users.domain.usecases.CheckBlockedEitherWay
@@ -220,6 +221,7 @@ fun usersModule(config: Config): Module =
         single { CreateProfileOnActivation(get(), get(), get()) }
         single { RecheckWaitingContacts(get(), get(), get()) }
         single { ApplyAccountStatus(get(), get(), get()) }
+        single { ApplyIdentityVerification(get(), get(), get(), get(), get(), get()) }
         single { DeleteUserData(get(), get(), get(), get(), get(), clock) }
         single { CheckSupportHandle(get()) }
         single { CreateSupportProfile(get(), get(), get(), clock) }
@@ -236,7 +238,7 @@ fun usersModule(config: Config): Module =
         single { UsersAgentService(get(), get()) }
         single { ListContactIds(get()) }
         single { DirectoryService(get(), get(), get(), get(), get(), get(), get()) }
-        single { IdentityEventsService(get(), get(), get(), get(), get()) }
+        single { IdentityEventsService(get(), get(), get(), get(), get(), get()) }
         single { ProfileAdminService(get(), get(), get()) }
         single<RouteContributor>(named("users.routes")) {
             val profiles = get<ProfileService>()

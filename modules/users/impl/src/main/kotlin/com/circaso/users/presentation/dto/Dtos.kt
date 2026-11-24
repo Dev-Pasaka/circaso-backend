@@ -13,6 +13,9 @@ data class PublicProfileDto(
     val about: String? = null,
     /** True only for Circaso's own support account: the app shows it as verified support (decision 2026-10-31). */
     val support: Boolean = false,
+    /** The verified badge (2026-11-24): identity verified with a government ID and a selfie. Nothing else from the ID. */
+    val verified: Boolean = false,
+    @Serializable(with = InstantSerializer::class) val verifiedAt: Instant? = null,
 )
 
 @Serializable
@@ -28,6 +31,9 @@ data class MyProfileResponse(
     val avatarUrl: String? = null,
     val privacy: PrivacyDto,
     val version: Long,
+    /** The verified badge on the person's own profile (2026-11-24). */
+    val verified: Boolean = false,
+    @Serializable(with = InstantSerializer::class) val verifiedAt: Instant? = null,
 )
 
 @Serializable

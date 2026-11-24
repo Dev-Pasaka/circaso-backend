@@ -4,6 +4,7 @@ import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.domain.ports.LoggedFrame
 import com.circaso.ramp.domain.support.MerchantTopUps
 import com.circaso.ramp.domain.support.TestPayouts
+import com.circaso.ramp.domain.usecases.AnnounceVerifications
 import com.circaso.ramp.domain.usecases.CallbackSigningSecret
 import com.circaso.ramp.domain.usecases.EndSessions
 import com.circaso.ramp.domain.usecases.HandleKycNotification
@@ -42,6 +43,7 @@ class RampEventsService(
     private val testPayouts: TestPayouts,
     private val callbackSigningSecret: CallbackSigningSecret,
     private val topUps: MerchantTopUps,
+    private val announceVerificationsUseCase: AnnounceVerifications,
 ) {
     /** The webhook signing secret for a callback on the address ending in [callbackKey], or null. */
     suspend fun callbackSecret(callbackKey: String): String? = callbackSigningSecret(callbackKey)
@@ -63,6 +65,9 @@ class RampEventsService(
         handleKycNotification(environment, sessionId)
 
     suspend fun sweepVerifications(): Int = sweepVerifications.invoke()
+
+    /** `ramp.announce-verifications`: users' recent live verifications said again (the verified badge). */
+    suspend fun announceVerifications(): Int = announceVerificationsUseCase()
 
     suspend fun paymentCallback(callbackKey: String, reference: String): Resource<Unit> =
         handlePaymentCallback(callbackKey, reference)

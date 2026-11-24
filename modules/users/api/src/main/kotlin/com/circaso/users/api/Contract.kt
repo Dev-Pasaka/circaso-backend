@@ -39,6 +39,14 @@ data class PublicProfile(
     val about: String?,
     /** Circaso's own support account (decision 2026-10-31), which the app shows as verified support. */
     val support: Boolean = false,
+    /**
+     * The verified badge (2026-11-24): the person's identity was verified with a government ID and a selfie (Didit's
+     * live environment; a sandbox approval never counts). Only this flag and [verifiedAt] are ever shown to others,
+     * never anything read from the ID.
+     */
+    val verified: Boolean = false,
+    /** When it was verified; null when not verified. */
+    val verifiedAt: Instant? = null,
 )
 
 /**

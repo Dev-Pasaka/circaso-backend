@@ -273,7 +273,7 @@ fun ReportRequest.toCommand(reporter: UserId, spaceId: SpaceId): Resource<Report
 
 // ---- model → response ----
 
-fun PublicProfile.toDto() = PersonDto(userId.toString(), displayName, handle, avatarUrl)
+fun PublicProfile.toDto() = PersonDto(userId.toString(), displayName, handle, avatarUrl, verified)
 
 fun Price.toDto() = PriceDto(Asset.USDC.symbol, amountMinor.toString(), usdcAmount(amountMinor), period.name)
 
@@ -461,6 +461,7 @@ fun MemberView.toDto() =
         joinedAt?.toString(),
         mutedUntil?.toString(),
         bannedAt?.toString(),
+        profile.verified,
     )
 
 fun MembersView.toResponse() =

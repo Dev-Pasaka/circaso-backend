@@ -146,6 +146,7 @@ fun PublicProfile.toDto() =
         avatarUrl = avatarUrl,
         about = about,
         support = support,
+        verified = verified,
     )
 
 fun InviteView.toDto() =

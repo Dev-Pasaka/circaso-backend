@@ -63,7 +63,14 @@ class Counterparties(
             emptyMap()
         } else {
             profiles.get(people).mapValues { (id, profile) ->
-                Counterparty(id, profile.displayName, profile.handle, profile.avatarUrl, null)
+                Counterparty(
+                    id,
+                    profile.displayName,
+                    profile.handle,
+                    profile.avatarUrl,
+                    null,
+                    verified = profile.verified,
+                )
             }
         }
 
@@ -73,6 +80,14 @@ class Counterparties(
         named: Map<UserId, Counterparty>,
     ): Counterparty {
         val person = userId?.let { named[it] }
-        return Counterparty(userId, person?.displayName, person?.handle, person?.avatarUrl, address, person?.groupId)
+        return Counterparty(
+            userId,
+            person?.displayName,
+            person?.handle,
+            person?.avatarUrl,
+            address,
+            person?.groupId,
+            person?.verified == true,
+        )
     }
 }

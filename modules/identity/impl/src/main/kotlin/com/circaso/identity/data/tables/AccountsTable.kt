@@ -15,6 +15,12 @@ object AccountsTable : Table("identity.accounts") {
     val status = text("status")
     val activeDeviceId = javaUUID("active_device_id").nullable()
     val verification = text("verification").default("NONE")
+
+    /** V10: when the identity was verified (Didit live, from ramp); null unless [verification] is `VERIFIED`. */
+    val verifiedAt = timestamp("verified_at").nullable()
+
+    /** V10: the `changedAt` of the last `ramp.UserVerificationChanged` applied, which orders them. */
+    val verificationChangedAt = timestamp("verification_changed_at").nullable()
     val sessionVersion = integer("session_version").default(1)
     val deleteAfter = timestamp("delete_after").nullable()
     val createdAt = timestamp("created_at")

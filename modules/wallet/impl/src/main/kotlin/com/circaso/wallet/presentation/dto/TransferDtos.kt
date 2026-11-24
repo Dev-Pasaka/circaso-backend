@@ -251,6 +251,8 @@ data class CounterpartyDto(
     val address: String? = null,
     /** Set when the other side is a group's wallet (added 2026-11-03); name it from the group on the phone. */
     val groupId: String? = null,
+    /** The verified badge (2026-11-24): identity verified with a government ID and a selfie. Nothing else from the ID. */
+    val verified: Boolean = false,
 )
 
 /** One row of W6. The fields it shares with W5's [TransferResponse] mean the same and have the same type. */

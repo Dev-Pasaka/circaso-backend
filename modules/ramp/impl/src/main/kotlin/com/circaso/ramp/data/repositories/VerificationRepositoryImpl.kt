@@ -26,6 +26,8 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
@@ -175,6 +177,32 @@ class VerificationRepositoryImpl(private val database: Database) : VerificationR
                     (VerificationsTable.status inList statuses.map { it.name }) and
                         (VerificationsTable.checkedAt less checkedBefore)
                 }.orderBy(VerificationsTable.checkedAt to SortOrder.ASC)
+                .limit(limit)
+                .map { it.toVerification() }
+                .toList()
+        }
+
+    override suspend fun liveUsersChangedSince(
+        since: Instant,
+        afterSubjectId: UUID?,
+        limit: Int,
+    ): List<Verification> =
+        database.tx("verifications.live-users-changed") {
+            val changed =
+                (VerificationsTable.subjectKind eq SubjectKind.USER.name) and
+                    (VerificationsTable.environment eq KycEnvironment.LIVE.name) and
+                    (VerificationsTable.updatedAt greaterEq since)
+            VerificationsTable
+                .selectAll()
+                .where {
+                    if (afterSubjectId ==
+                        null
+                    ) {
+                        changed
+                    } else {
+                        changed and (VerificationsTable.subjectId greater afterSubjectId)
+                    }
+                }.orderBy(VerificationsTable.subjectId to SortOrder.ASC)
                 .limit(limit)
                 .map { it.toVerification() }
                 .toList()

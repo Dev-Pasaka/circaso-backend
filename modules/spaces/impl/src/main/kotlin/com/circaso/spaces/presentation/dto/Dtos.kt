@@ -115,6 +115,8 @@ data class PersonDto(
     val displayName: String,
     val handle: String? = null,
     val avatarUrl: String? = null,
+    /** The verified badge (2026-11-24): identity verified with a government ID and a selfie. Nothing else from the ID. */
+    val verified: Boolean = false,
 )
 
 @Serializable
@@ -330,6 +332,8 @@ data class MemberDto(
     val joinedAt: String? = null,
     val mutedUntil: String? = null,
     val bannedAt: String? = null,
+    /** The verified badge (2026-11-24): identity verified with a government ID and a selfie. Nothing else from the ID. */
+    val verified: Boolean = false,
 )
 
 @Serializable
