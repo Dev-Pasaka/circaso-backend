@@ -10,9 +10,11 @@ import com.circaso.ramp.domain.models.MerchantPerformance
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
+import com.circaso.ramp.domain.models.PasskeyAssertion
 import com.circaso.ramp.domain.models.PaymentAccountCommand
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.ProfileCommand
+import com.circaso.ramp.domain.models.SignInContext
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.models.Statement
 import com.circaso.ramp.domain.models.TestPayout
@@ -61,7 +63,8 @@ class MerchantAuthService(
         email: String,
         code: String,
         network: Network,
-    ): Resource<SignedIn> = verifySignInCode(email, code, network)
+        context: SignInContext,
+    ): Resource<SignedIn> = verifySignInCode(email, code, network, context)
 
     suspend fun merchantOf(token: String?): Resource<MerchantId> = resolveSession(token)
 
@@ -113,7 +116,9 @@ class MerchantService(
         merchantId: MerchantId,
         network: Network,
         accountId: String,
-    ): Resource<MerchantOverview> = setPayoutAccount(merchantId, network, accountId)
+        pin: String? = null,
+        passkey: PasskeyAssertion? = null,
+    ): Resource<MerchantOverview> = setPayoutAccount(merchantId, network, accountId, pin, passkey)
 
     suspend fun testPayout(
         merchantId: MerchantId,
@@ -170,7 +175,8 @@ class MerchantService(
         merchantId: MerchantId,
         currentPin: String,
         newPin: String,
-    ): Resource<Unit> = changePinUseCase(merchantId, currentPin, newPin)
+        passkey: PasskeyAssertion? = null,
+    ): Resource<Unit> = changePinUseCase(merchantId, currentPin, newPin, passkey)
 
     suspend fun orders(
         merchantId: MerchantId,

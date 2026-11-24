@@ -122,7 +122,7 @@ fun PaymentsRequest.toCommand(): Resource<PaymentAccountCommand> {
     val account = accountId?.trim()?.takeIf { it.isNotEmpty() }
     if (account != null && !PayoutAccount.PATTERN.matches(account)) return malformed("accountId", "digits only")
     val credentials = CollectionCredentials(username.trim(), password, channelId.trim())
-    return Resource.success(PaymentAccountCommand(credentials, pin, account))
+    return Resource.success(PaymentAccountCommand(credentials, pin, account, passkey?.toAssertion()))
 }
 
 /** RM5c: the secret as FinoQ shows it, trimmed; 8 to 512 visible characters, no spaces. */
@@ -280,6 +280,7 @@ fun MerchantOverview.toResponse() =
         providerWallets = providerWallets.map { it.toDto(merchant.payoutAccountId) },
         webhookSecretSet = merchant.webhookSecretUpdatedAt != null,
         webhookSecretUpdatedAt = merchant.webhookSecretUpdatedAt?.toString(),
+        security = security?.toDto(),
     )
 
 /** RM17: at least one of the two switches must be named. */

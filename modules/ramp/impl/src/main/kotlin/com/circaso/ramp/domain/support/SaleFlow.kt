@@ -46,6 +46,7 @@ class SaleFlow(
     private val counters: RampCounters,
     private val alerts: RampAlerts,
     private val clock: Clock,
+    private val merchantAlerts: MerchantAlerts,
 ) {
     /**
      * Ends a sale the user never funded ([to]: `EXPIRED` by the deadline, `CANCELLED` by the user): the merchant's
@@ -235,8 +236,10 @@ class SaleFlow(
                 if (moved != null) {
                     reservations.consume(order.orderId, now)
                     payoutHolds.consume(order.orderId, now)
-                    commissions.insert(moved, Fees.split(moved), now)
+                    val split = Fees.split(moved)
+                    commissions.insert(moved, split, now)
                     outbox.write(event)
+                    merchantAlerts.orderCompleted(moved, split, now)
                 }
                 moved
             } ?: return current(order)

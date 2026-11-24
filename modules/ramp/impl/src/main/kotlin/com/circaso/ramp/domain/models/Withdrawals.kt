@@ -21,16 +21,22 @@ data class WithdrawalDestination(
     val createdAt: Instant,
     val usableAt: Instant,
     val removedAt: Instant? = null,
+    /** Set when a lock found it still cooling off (2026-11-24): never usable; remove it and add it again. */
+    val frozenAt: Instant? = null,
 ) {
-    fun isUsableAt(at: Instant): Boolean = removedAt == null && !usableAt.isAfter(at)
+    fun isUsableAt(at: Instant): Boolean = removedAt == null && frozenAt == null && !usableAt.isAfter(at)
 }
 
-/** `REQUESTED → SENT → COMPLETED | FAILED`; `REQUESTED → FAILED` when the custodian refuses. Nothing else moves. */
+/**
+ * `REQUESTED → SENT → COMPLETED | FAILED`; `REQUESTED → FAILED` when the custodian refuses; `REQUESTED → CANCELLED`
+ * (2026-11-24) when a lock or the address's removal comes before the ops process claimed it for sending.
+ */
 enum class WithdrawalState {
     REQUESTED,
     SENT,
     COMPLETED,
     FAILED,
+    CANCELLED,
     ;
 
     val isOpen: Boolean get() = this == REQUESTED || this == SENT
@@ -59,20 +65,28 @@ data class Withdrawal(
     val updatedAt: Instant,
     val sentAt: Instant? = null,
     val closedAt: Instant? = null,
+    /** When the ops process claimed it for sending; from then on it can't be cancelled. */
+    val sendClaimedAt: Instant? = null,
 )
 
-/** RM21: what the merchant asked for; the PIN confirms it. */
+/** RM21: what the merchant asked for; the PIN (and a passkey, once they have one) confirms it. */
 data class WithdrawCommand(
     val amountMinor: Long,
     val destinationId: UUID,
     val pin: String,
     val idempotencyKey: String?,
+    val passkey: PasskeyAssertion? = null,
 ) {
     override fun toString(): String = "WithdrawCommand($amountMinor, $destinationId, ***)"
 }
 
-/** RM20: a new address and its label; the PIN confirms it. */
-data class DestinationCommand(val address: String, val label: String, val pin: String) {
+/** RM20: a new address and its label; the PIN (and a passkey, once they have one) confirms it. */
+data class DestinationCommand(
+    val address: String,
+    val label: String,
+    val pin: String,
+    val passkey: PasskeyAssertion? = null,
+) {
     override fun toString(): String = "DestinationCommand($address, $label, ***)"
 }
 

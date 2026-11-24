@@ -7,11 +7,14 @@ import com.circaso.integrations.api.TreasuryTransactionState
 import com.circaso.integrations.api.TreasuryTransfer
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
+import com.circaso.ramp.domain.models.AlertKind
 import com.circaso.ramp.domain.models.DestinationBook
 import com.circaso.ramp.domain.models.DestinationCommand
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantWallet
+import com.circaso.ramp.domain.models.PasskeyAssertion
 import com.circaso.ramp.domain.models.SavedDestination
+import com.circaso.ramp.domain.models.StepUpBinding
 import com.circaso.ramp.domain.models.WithdrawCommand
 import com.circaso.ramp.domain.models.Withdrawal
 import com.circaso.ramp.domain.models.WithdrawalDestination
@@ -24,6 +27,7 @@ import com.circaso.ramp.domain.ports.Transactor
 import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
+import com.circaso.ramp.domain.repositories.MerchantSecurityRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.WithdrawalDestinationRepository
@@ -47,6 +51,12 @@ import java.util.UUID
  * reservation takes, against the custodian's balance less what open orders and withdrawals hold and Circaso's unswept
  * share. Its amount is reserved in the same transaction, so routing sees less free float at once. It is allowed online
  * or offline.
+ *
+ * **Approved addresses only (2026-11-24).** There is no other way out: a withdrawal names a saved, usable address by
+ * its id and nothing else; an address can't be edited (not even its label), only removed and added again, which
+ * starts the delay again. Every change and every withdrawal takes the PIN and, once the merchant has a passkey, a
+ * passkey confirmation bound to that exact request ([StepUp]); each one emails the merchant ([MerchantAlerts]). A
+ * merchant whose withdrawals are locked ("This wasn't me") can do none of it.
  */
 class FloatWithdrawals(
     private val merchants: MerchantRepository,
@@ -62,6 +72,9 @@ class FloatWithdrawals(
     private val addresses: EvmAddresses,
     private val transactor: Transactor,
     private val clock: Clock,
+    private val stepUp: StepUp,
+    private val security: MerchantSecurityRepository,
+    private val alerts: MerchantAlerts,
 ) {
     // ---- addresses ----
 
@@ -84,6 +97,8 @@ class FloatWithdrawals(
                 is Resource.Error -> return ready
                 is Resource.Success -> ready.data
             }
+        if (security.find(merchantId).locked) return Resource.error(RampError.WithdrawalsLocked)
+        if (stepUp.blockedWithoutPasskey(merchantId)) return Resource.error(RampError.PasskeyRequired)
         val address =
             when (val checked = addresses.check(command.address)) {
                 is AddressCheck.Invalid -> return Resource.error(RampError.AddressInvalid(checked.problem))
@@ -104,6 +119,8 @@ class FloatWithdrawals(
         }
         if (live.size >= MAX_DESTINATIONS) return Resource.error(RampError.DestinationsFull(MAX_DESTINATIONS))
         checkPin(merchantId, command.pin)?.let { return it }
+        val binding = StepUpBinding.addAddress(merchantId, network, command.address, command.label)
+        stepUp.check(binding, command.passkey)?.let { return it }
         val now = clock.instant()
         val destination =
             WithdrawalDestination(
@@ -116,7 +133,11 @@ class FloatWithdrawals(
                 createdAt = now,
                 usableAt = now.plus(settings.of(network).withdrawDestinationDelay),
             )
-        if (!destinations.insert(destination)) return Resource.error(RampError.DestinationExists)
+        val inserted =
+            transactor.run("withdrawal-destinations.add") {
+                destinations.insert(destination).also { if (it) alerts.addressAdded(destination, now) }
+            }
+        if (!inserted) return Resource.error(RampError.DestinationExists)
         return Resource.success(SavedDestination(destination, destination.isUsableAt(now)))
     }
 
@@ -125,13 +146,24 @@ class FloatWithdrawals(
         network: Network,
         destinationId: UUID,
         pin: String,
+        passkey: PasskeyAssertion? = null,
     ): Resource<Unit> {
         val destination =
             destinations.find(destinationId)?.takeIf {
                 it.merchantId == merchantId && it.network == network && it.removedAt == null
             } ?: return Resource.error(RampError.DestinationNotFound)
         checkPin(merchantId, pin)?.let { return it }
-        destinations.remove(destination.destinationId, clock.instant())
+        stepUp.check(StepUpBinding.removeAddress(merchantId, network, destinationId), passkey)?.let { return it }
+        val now = clock.instant()
+        // A withdrawal to it that the ops process hasn't claimed yet goes no further: cancelled, its amount freed.
+        transactor.run("withdrawal-destinations.remove") {
+            if (destinations.remove(destination.destinationId, now)) {
+                withdrawals
+                    .cancelUnclaimed(merchantId, destination.destinationId, WithdrawalLock.CANCELLED_REMOVED, now)
+                    .forEach { reservations.closeWithdrawal(it.withdrawalId, consumed = false, at = now) }
+                alerts.addressRemoved(destination, now)
+            }
+        }
         return Resource.success(Unit)
     }
 
@@ -147,6 +179,8 @@ class FloatWithdrawals(
                 is Resource.Error -> return ready
                 is Resource.Success -> ready.data
             }
+        if (security.find(merchantId).locked) return Resource.error(RampError.WithdrawalsLocked)
+        if (stepUp.blockedWithoutPasskey(merchantId)) return Resource.error(RampError.PasskeyRequired)
         val current = settings.of(network)
         if (command.amountMinor < current.withdrawMinMinor) {
             return Resource.error(
@@ -168,7 +202,10 @@ class FloatWithdrawals(
             return Resource.error(RampError.DestinationNotReady(destination.usableAt.toString()))
         }
         checkPin(merchantId, command.pin)?.let { return it }
+        // A repeat of the same request (its Idempotency-Key) is the same withdrawal: nothing new, so nothing to confirm.
         command.idempotencyKey?.let { key -> withdrawals.byKey(merchantId, key)?.let { return Resource.success(it) } }
+        val binding = StepUpBinding.withdraw(merchantId, network, destination.destinationId, command.amountMinor)
+        stepUp.check(binding, command.passkey)?.let { return it }
 
         // The custodian is read outside the transaction, which holds database work only.
         val balance =
@@ -202,6 +239,8 @@ class FloatWithdrawals(
         val written =
             transactor.attempt("withdrawals.request") {
                 merchants.lock(merchantId) ?: return@attempt Resource.error(RampError.MerchantNotFound)
+                // Under the merchant's row lock, which a lock takes too: a withdrawal is never written after one.
+                if (security.find(merchantId).locked) return@attempt Resource.error(RampError.WithdrawalsLocked)
                 val spoken = reservations.openTotal(merchantId, network) + commissions.owedTotal(merchantId, network)
                 val free = (balance - spoken).coerceAtLeast(0)
                 val cap = current.withdrawDailyMaxMinor
@@ -235,6 +274,7 @@ class FloatWithdrawals(
                             withdrawal.amountMinor,
                             now,
                         )
+                        alerts.withdrawal(AlertKind.WITHDRAWAL_REQUESTED, withdrawal, now)
                         Resource.success(withdrawal)
                     }
                 }
@@ -311,6 +351,7 @@ class WithdrawalSends(
     private val transactor: Transactor,
     private val alerts: RampAlerts,
     private val clock: Clock,
+    private val merchantAlerts: MerchantAlerts,
 ) {
     /** One run on [network]; how many withdrawals it touched. */
     suspend fun run(treasury: TreasuryCustody, network: Network): Int {
@@ -339,19 +380,28 @@ class WithdrawalSends(
             }
 
             TreasuryTransactionState.IN_FLIGHT -> {
-                hash?.let {
-                    withdrawals.noteHash(
-                        withdrawal.withdrawalId,
-                        it,
-                        clock.instant(),
-                    )
-                }
+                hash?.let { noteHash(withdrawal, it) }
             }
         }
     }
 
-    /** Asks the custodian to send; its transaction id, or null when there is nothing to follow yet. */
+    /** The chain's hash, first seen: recorded, and the merchant told it is on its way (with the link). */
+    private suspend fun noteHash(withdrawal: Withdrawal, hash: String) {
+        val now = clock.instant()
+        transactor.run("withdrawals.note-hash") {
+            if (withdrawals.noteHash(withdrawal.withdrawalId, hash, now)) {
+                merchantAlerts.withdrawal(AlertKind.WITHDRAWAL_SENT, withdrawal, now, hash)
+            }
+        }
+    }
+
+    /**
+     * Asks the custodian to send; its transaction id, or null when there is nothing to follow yet. The withdrawal is
+     * claimed first (2026-11-24): a lock or the address's removal cancels only an unclaimed one, so once claimed it is
+     * never both cancelled and sent. One cancelled (or locked) in the meantime isn't claimed and isn't sent.
+     */
     private suspend fun send(treasury: TreasuryCustody, withdrawal: Withdrawal): String? {
+        if (!withdrawals.claim(withdrawal.withdrawalId, clock.instant())) return null
         val wallet = wallets.find(withdrawal.merchantId, withdrawal.network)
         if (wallet == null) {
             fail(withdrawal, "wallet_missing")
@@ -410,6 +460,7 @@ class WithdrawalSends(
         transactor.run("withdrawals.complete") {
             if (withdrawals.complete(withdrawal.withdrawalId, txHash, now)) {
                 reservations.closeWithdrawal(withdrawal.withdrawalId, consumed = true, at = now)
+                merchantAlerts.withdrawal(AlertKind.WITHDRAWAL_COMPLETED, withdrawal, now, txHash ?: withdrawal.txHash)
             }
         }
     }
@@ -419,7 +470,14 @@ class WithdrawalSends(
         val failed =
             transactor.run("withdrawals.fail") {
                 withdrawals.fail(withdrawal.withdrawalId, reason, now).also { moved ->
-                    if (moved) reservations.closeWithdrawal(withdrawal.withdrawalId, consumed = false, at = now)
+                    if (moved) {
+                        reservations.closeWithdrawal(withdrawal.withdrawalId, consumed = false, at = now)
+                        merchantAlerts.withdrawal(
+                            AlertKind.WITHDRAWAL_FAILED,
+                            withdrawal.copy(failureReason = reason),
+                            now,
+                        )
+                    }
                 }
             }
         if (failed) alerts.stuck("float withdrawal ${withdrawal.withdrawalId}", reason)

@@ -40,6 +40,9 @@ enum class OfflineReason {
 
     /** The server restarted and the session's working copy could not be restored: they must unlock again. */
     RESTART,
+
+    /** "This wasn't me" locked the merchant's withdrawals and ended their sessions (2026-11-24). */
+    LOCKED,
 }
 
 /**
@@ -316,6 +319,8 @@ data class MerchantOverview(
     val offRamp: OffRampView = OffRampView.NONE,
     /** The three wallets at the provider, buying's first (2026-11-24). */
     val providerWallets: List<ProviderWalletView> = emptyList(),
+    /** Passkeys, the lock and the email choices (2026-11-24); filled by RM2 only. */
+    val security: SecurityView? = null,
 ) {
     /** A PIN exists once a payment account has been sealed under one. */
     val pinSet: Boolean get() = payments != null
@@ -386,6 +391,8 @@ class PaymentAccountCommand(
     val credentials: CollectionCredentials,
     val pin: String,
     val payoutAccountId: String? = null,
+    /** Replacing an account that is already set: the passkey confirmation, once the merchant has one (2026-11-24). */
+    val passkey: PasskeyAssertion? = null,
 ) {
     override fun toString(): String = "PaymentAccountCommand(***)"
 }

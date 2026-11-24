@@ -66,14 +66,19 @@ interface Mail {
   outro: string[];
   /** Numbered first steps (title, one line, optional icon file), shown after the intro. */
   steps?: [string, string, string?][];
-  /** The "not you?" box. */
-  notYou?: { heading: string; text: string; button: string };
+  /** The "not you?" box; [href] is the button's link (the support address when left out). */
+  notYou?: { heading: string; text: string; button: string; href?: string };
+  /** The footer's "why you get this" line, when it isn't a security notice or the welcome. */
+  why?: string;
+  /** Its name in the admin (Email templates) and in the code (`EmailTemplate`); written to templates.json. */
+  template?: string;
   /** Resend template variables the email uses; the build fails if this list and the HTML disagree. */
   variables: string[];
 }
 
 const mails: Mail[] = [
   {
+    template: 'WELCOME',
     file: 'welcome.html',
     subject: 'Welcome to Circaso',
     preheader: 'Your account is ready. Three things to try first.',
@@ -96,6 +101,7 @@ const mails: Mail[] = [
     variables: [],
   },
   {
+    template: 'NEW_PHONE_SIGN_IN',
     file: 'new-phone-sign-in.html',
     subject: 'New phone signed in to your Circaso account',
     preheader: 'Your Circaso account was opened on a new phone. If that was you, there is nothing to do.',
@@ -120,6 +126,7 @@ const mails: Mail[] = [
     variables: ['DEVICE_MODEL'],
   },
   {
+    template: 'PIN_VAULT_OPENED',
     file: 'pin-vault-opened.html',
     subject: 'Your Circaso PIN backup was opened',
     preheader: 'Your PIN backup was opened on your phone. Payments are paused for 24 hours to keep your money safe.',
@@ -143,6 +150,7 @@ const mails: Mail[] = [
     variables: ['DEVICE_MODEL'],
   },
   {
+    template: 'RECOVERY_STARTED',
     file: 'recovery-started.html',
     subject: 'A request was made to recover your Circaso account',
     preheader: 'Someone asked to change how you sign in to Circaso. Nothing changes until it is verified.',
@@ -164,6 +172,7 @@ const mails: Mail[] = [
     variables: [],
   },
   {
+    template: 'RECOVERY_COMPLETED',
     file: 'recovery-completed.html',
     subject: 'Your Circaso account recovery is complete',
     preheader: 'Your account now signs in the new way. Your money and messages are unchanged.',
@@ -185,6 +194,7 @@ const mails: Mail[] = [
   {
     // The one email that carries a code: a ramp merchant signs in to the merchant portal with their email and a
     // one-time code (decision 2026-11-22). It is short-lived and useless without the browser that asked for it.
+    template: 'MERCHANT_SIGN_IN_CODE',
     file: 'merchant-sign-in-code.html',
     subject: 'Your Circaso Merchants sign-in code',
     preheader: 'Use this code to sign in to the Circaso merchant portal. It works once and expires soon.',
@@ -205,6 +215,7 @@ const mails: Mail[] = [
   {
     // A ramp merchant's unlocked payment keys live only in the server's memory, so a restart (a deploy) ends their
     // session, even one they set to last until they stop it (decision 2026-11-23). This tells them to unlock again.
+    template: 'MERCHANT_TAKEN_OFFLINE',
     file: 'merchant-taken-offline.html',
     subject: 'You were taken offline on Circaso Merchants',
     preheader: 'Circaso restarted, so you are offline. Enter your PIN on the merchant portal to go online again.',
@@ -224,6 +235,272 @@ const mails: Mail[] = [
     variables: [],
   },
 ];
+
+
+// ---------------------------------------------------------------------------------------------------------------
+// Merchant security alerts and activity (2026-11-24). Every security alert ends with a "This wasn't me" button:
+// a one-time link that locks the merchant's withdrawals without signing in. Activity emails can be turned off.
+// ---------------------------------------------------------------------------------------------------------------
+
+const LOCK = '{{{LOCK_URL}}}';
+
+/** The box every merchant security alert ends with. */
+const notMe = (what: string) => ({
+  heading: 'This wasn’t you?',
+  text:
+    `If you didn’t ${what}, lock your withdrawals now. It works without signing in: withdrawals not yet sent are ` +
+    'cancelled, new addresses are frozen, you are signed out everywhere, and Circaso is alerted. The link works once ' +
+    'and for 72 hours.',
+  button: 'This wasn’t me: lock withdrawals',
+  href: LOCK,
+});
+
+const merchantMails: Mail[] = [
+  {
+    template: 'MERCHANT_SECURITY_CODE',
+    file: 'merchant-security-code.html',
+    subject: 'Your Circaso Merchants security code',
+    preheader: 'Use this code to confirm a security change on the merchant portal.',
+    eyebrow: 'Merchant portal',
+    title: 'Your security code',
+    intro: ['Enter this code on the Circaso merchant portal to {{{ACTION}}}.'],
+    facts: [['Code', '{{{CODE}}}']],
+    outro: ['The code works once and expires in {{{MINUTES}}} minutes.'],
+    notYou: {
+      heading: 'Did not ask for this?',
+      text:
+        'Someone signed in to your merchant account is trying to change its security. Sign in, check Settings, ' +
+        'Security, and contact us. Never share this code with anyone.',
+      button: 'Contact support',
+    },
+    variables: ['CODE', 'MINUTES', 'ACTION'],
+  },
+  {
+    template: 'MERCHANT_NEW_SIGN_IN',
+    file: 'merchant-new-sign-in.html',
+    subject: 'New sign-in to Circaso Merchants',
+    preheader: 'Someone signed in to your merchant account. If that was you, there is nothing to do.',
+    eyebrow: 'Security notice',
+    title: 'New sign-in to your merchant account',
+    intro: ['Your Circaso merchant account was just signed in to.'],
+    facts: [['How', '{{{METHOD}}}'], ['Browser', '{{{DEVICE}}}'], ['Where (approximate)', '{{{LOCATION}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If this was you, there is nothing to do.'],
+    notYou: notMe('sign in'),
+    variables: ['METHOD', 'DEVICE', 'LOCATION', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_ADDRESS_ADDED',
+    file: 'merchant-address-added.html',
+    subject: 'A withdrawal address was added to your Circaso merchant account',
+    preheader: 'A new address can receive your float after its cooling-off period. Check it is yours.',
+    eyebrow: 'Security notice',
+    title: 'A withdrawal address was added',
+    intro: [
+      'A new address was saved for withdrawing your USDC float. It can be used only after its cooling-off period, ' +
+        'so you have time to remove it if it is not yours.',
+    ],
+    facts: [['Label', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['Network', '{{{NETWORK}}}'], ['Usable from', '{{{USABLE_FROM}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If you added it, there is nothing to do.'],
+    notYou: notMe('add this address'),
+    variables: ['LABEL', 'ADDRESS', 'NETWORK', 'USABLE_FROM', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_ADDRESS_REMOVED',
+    file: 'merchant-address-removed.html',
+    subject: 'A withdrawal address was removed from your Circaso merchant account',
+    preheader: 'An address you saved for withdrawals was removed.',
+    eyebrow: 'Security notice',
+    title: 'A withdrawal address was removed',
+    intro: ['An address saved for withdrawing your float was removed. Any withdrawal to it not yet sent was cancelled.'],
+    facts: [['Label', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['Network', '{{{NETWORK}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If you removed it, there is nothing to do.'],
+    notYou: notMe('remove this address'),
+    variables: ['LABEL', 'ADDRESS', 'NETWORK', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_WITHDRAWAL_REQUESTED',
+    file: 'merchant-withdrawal-requested.html',
+    subject: 'Withdrawal requested from your Circaso float',
+    preheader: 'A withdrawal of your USDC float was requested. It is sent within seconds.',
+    eyebrow: 'Security notice',
+    title: 'A withdrawal was requested',
+    intro: ['A withdrawal from your USDC float was requested and will be sent within seconds.'],
+    facts: [['Amount', '{{{AMOUNT}}}'], ['To', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['Network', '{{{NETWORK}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If you asked for it, there is nothing to do. We email you again when it is on its way.'],
+    notYou: notMe('ask for this withdrawal'),
+    variables: ['AMOUNT', 'LABEL', 'ADDRESS', 'NETWORK', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_WITHDRAWAL_SENT',
+    file: 'merchant-withdrawal-sent.html',
+    subject: 'Your Circaso withdrawal is on its way',
+    preheader: 'Your USDC withdrawal was sent. Follow it on the block explorer.',
+    eyebrow: 'Security notice',
+    title: 'Your withdrawal is on its way',
+    intro: ['Your USDC withdrawal was sent and is on the chain. <a href="{{{TX_URL}}}">See the transaction</a>.'],
+    facts: [['Amount', '{{{AMOUNT}}}'], ['To', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['When', '{{{TIME}}}']],
+    outro: ['We email you again when it is confirmed.'],
+    notYou: notMe('ask for this withdrawal'),
+    variables: ['AMOUNT', 'LABEL', 'ADDRESS', 'TX_URL', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_WITHDRAWAL_COMPLETED',
+    file: 'merchant-withdrawal-completed.html',
+    subject: 'Your Circaso withdrawal is complete',
+    preheader: 'Your USDC withdrawal was confirmed on the chain.',
+    eyebrow: 'Security notice',
+    title: 'Your withdrawal is complete',
+    intro: ['Your USDC withdrawal was confirmed on the chain. <a href="{{{TX_URL}}}">See the transaction</a>.'],
+    facts: [['Amount', '{{{AMOUNT}}}'], ['To', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['When', '{{{TIME}}}']],
+    outro: ['There is nothing more to do.'],
+    notYou: notMe('ask for this withdrawal'),
+    variables: ['AMOUNT', 'LABEL', 'ADDRESS', 'TX_URL', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_WITHDRAWAL_FAILED',
+    file: 'merchant-withdrawal-failed.html',
+    subject: 'Your Circaso withdrawal did not go through',
+    preheader: 'A withdrawal of your USDC float failed. The amount is back in your free float.',
+    eyebrow: 'Security notice',
+    title: 'Your withdrawal did not go through',
+    intro: ['A withdrawal of your USDC float failed and nothing was sent. The amount is back in your free float.'],
+    facts: [['Amount', '{{{AMOUNT}}}'], ['To', '{{{LABEL}}}'], ['Address', '{{{ADDRESS}}}'], ['Why', '{{{REASON}}}'], ['When', '{{{TIME}}}']],
+    outro: ['You can ask for it again on the merchant portal.'],
+    notYou: notMe('ask for this withdrawal'),
+    variables: ['AMOUNT', 'LABEL', 'ADDRESS', 'REASON', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_PIN_CHANGED',
+    file: 'merchant-pin-changed.html',
+    subject: 'Your Circaso Merchants PIN was changed',
+    preheader: 'The PIN that protects your payment account and withdrawals was changed.',
+    eyebrow: 'Security notice',
+    title: 'Your PIN was changed',
+    intro: ['The 6-digit PIN that protects your payment account and your withdrawals was changed.'],
+    facts: [['When', '{{{TIME}}}']],
+    outro: ['If you changed it, there is nothing to do.'],
+    notYou: notMe('change your PIN'),
+    variables: ['TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_PAYMENT_ACCOUNT_CHANGED',
+    file: 'merchant-payment-account-changed.html',
+    subject: 'Your Circaso Merchants payment account was changed',
+    preheader: 'The account your trading runs through was changed.',
+    eyebrow: 'Security notice',
+    title: 'Your {{{WHAT}}} was changed',
+    intro: ['The {{{WHAT}}} your trading runs through was replaced on the merchant portal.'],
+    facts: [['When', '{{{TIME}}}']],
+    outro: ['If you changed it, there is nothing to do.'],
+    notYou: notMe('change it'),
+    variables: ['WHAT', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_PASSKEY_ADDED',
+    file: 'merchant-passkey-added.html',
+    subject: 'A passkey was added to your Circaso merchant account',
+    preheader: 'A new passkey can now sign in and confirm withdrawals.',
+    eyebrow: 'Security notice',
+    title: 'A passkey was added',
+    intro: ['A new passkey was added to your merchant account. It can sign you in and confirm withdrawals and other changes.'],
+    facts: [['Passkey', '{{{LABEL}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If you added it, there is nothing to do.'],
+    notYou: notMe('add this passkey'),
+    variables: ['LABEL', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_PASSKEY_REMOVED',
+    file: 'merchant-passkey-removed.html',
+    subject: 'A passkey was removed from your Circaso merchant account',
+    preheader: 'A passkey can no longer sign in to your merchant account.',
+    eyebrow: 'Security notice',
+    title: 'A passkey was removed',
+    intro: ['A passkey was removed from your merchant account. It can no longer sign in or confirm anything.'],
+    facts: [['Passkey', '{{{LABEL}}}'], ['When', '{{{TIME}}}']],
+    outro: ['If you removed it, there is nothing to do.'],
+    notYou: notMe('remove this passkey'),
+    variables: ['LABEL', 'TIME', 'LOCK_URL'],
+  },
+  {
+    template: 'MERCHANT_WITHDRAWALS_LOCKED',
+    file: 'merchant-withdrawals-locked.html',
+    subject: 'Withdrawals are locked on your Circaso merchant account',
+    preheader: 'You locked withdrawals. Circaso will contact you to unlock them.',
+    eyebrow: 'Security notice',
+    title: 'Withdrawals are locked',
+    intro: [
+      'You told us a change on your merchant account was not you, so your withdrawals are now locked. ' +
+        '{{{CANCELLED}}} withdrawal(s) not yet sent were cancelled and their amount is back in your float. Addresses still in ' +
+        'their cooling-off period are frozen, and you were signed out everywhere.',
+      'Your orders are not affected. Only Circaso can unlock withdrawals, after speaking to you.',
+    ],
+    facts: [['When', '{{{TIME}}}']],
+    outro: ['Sign in again with your email and check Settings, Security: your PIN, passkeys and addresses.'],
+    notYou: {
+      heading: 'What next?',
+      text: 'Contact us so we can check your account with you and unlock withdrawals.',
+      button: 'Contact support',
+    },
+    variables: ['CANCELLED', 'TIME'],
+  },
+  {
+    template: 'MERCHANT_BUY_COMPLETED',
+    file: 'merchant-buy-completed.html',
+    why: 'You get this because order emails are on for your merchant account. Turn them off in Settings, Notifications.',
+
+    subject: 'A buy order you filled is complete',
+    preheader: 'A buyer paid you and received their USDC.',
+    eyebrow: 'Merchant activity',
+    title: 'Order completed',
+    intro: ['A buyer paid you with M-Pesa and their USDC was released from your float.'],
+    facts: [['Order', '{{{ORDER}}}'], ['Shillings received', '{{{KES_RECEIVED}}}'], ['USDC sent', '{{{USDC_SENT}}}'], ['You earned', '{{{EARNED}}}'], ['When', '{{{TIME}}}']],
+    outro: ['You can turn these emails off, or get one daily summary instead, in Settings, Notifications.'],
+    variables: ['ORDER', 'KES_RECEIVED', 'USDC_SENT', 'EARNED', 'TIME'],
+  },
+  {
+    template: 'MERCHANT_SELL_COMPLETED',
+    file: 'merchant-sell-completed.html',
+    why: 'You get this because order emails are on for your merchant account. Turn them off in Settings, Notifications.',
+
+    subject: 'A sell order you filled is complete',
+    preheader: 'A seller sent you USDC and was paid out in M-Pesa.',
+    eyebrow: 'Merchant activity',
+    title: 'Order completed',
+    intro: ['A seller sent you USDC and you paid them out in M-Pesa.'],
+    facts: [['Order', '{{{ORDER}}}'], ['USDC received', '{{{USDC_RECEIVED}}}'], ['Shillings paid out', '{{{KES_PAID}}}'], ['You earned', '{{{EARNED}}}'], ['When', '{{{TIME}}}']],
+    outro: ['You can turn these emails off, or get one daily summary instead, in Settings, Notifications.'],
+    variables: ['ORDER', 'USDC_RECEIVED', 'KES_PAID', 'EARNED', 'TIME'],
+  },
+  {
+    template: 'MERCHANT_TOPUP_RESULT',
+    file: 'merchant-topup-result.html',
+    why: 'You get this because order emails are on for your merchant account. Turn them off in Settings, Notifications.',
+
+    subject: 'Your Circaso Merchants top-up',
+    preheader: 'The result of your M-Pesa top-up.',
+    eyebrow: 'Merchant activity',
+    title: 'Your top-up',
+    intro: ['Here is how your M-Pesa top-up ended.'],
+    facts: [['Wallet', '{{{WALLET}}}'], ['Amount', '{{{AMOUNT}}}'], ['Result', '{{{RESULT}}}'], ['When', '{{{TIME}}}']],
+    outro: ['You can turn these emails off in Settings, Notifications.'],
+    variables: ['WALLET', 'AMOUNT', 'RESULT', 'TIME'],
+  },
+  {
+    template: 'MERCHANT_DAILY_SUMMARY',
+    file: 'merchant-daily-summary.html',
+    why: 'You get this because you asked for a daily summary. Change it in Settings, Notifications.',
+
+    subject: 'Your Circaso Merchants daily summary',
+    preheader: 'Yesterday on Circaso Merchants, in one email.',
+    eyebrow: 'Daily summary',
+    title: '{{{DAY}}}',
+    intro: ['Here is your trading for the day.'],
+    facts: [['Orders completed', '{{{ORDERS}}}'], ['Buyers', '{{{BOUGHT}}}'], ['Sellers', '{{{SOLD}}}'], ['You earned', '{{{EARNED}}}']],
+    outro: ['You can change this in Settings, Notifications.'],
+    variables: ['DAY', 'ORDERS', 'BOUGHT', 'SOLD', 'EARNED'],
+  },
+];
+mails.push(...merchantMails);
 
 // ---------------------------------------------------------------------------------------------------------------
 // The <style> block: dark mode and the phone layout, for the clients that read it
@@ -301,11 +578,11 @@ function heading(tag: 'h1' | 'h2', cls: string, size: number, tracking: string, 
 }
 
 /** The paragraph under every email: why it arrives, and the one thing Circaso never asks for. */
-function footer(isSecurityNotice: boolean): string {
-  const why = isSecurityNotice
+function footer(isSecurityNotice: boolean, own?: string): string {
+  const why = own ?? (isSecurityNotice
     ? 'This email is about the security of your account, so you receive it even if you turned other notifications off.'
     : 'You are getting this one email because you just created a Circaso account. ' +
-      'We will not send you marketing email.';
+      'We will not send you marketing email.');
   const small = (margin: string) => style(`margin:${margin}`, font(400, 13, 1.55), `color:${color.faint}`);
 
   return `<tr><td class="px rule" style="${style('padding:20px 36px 28px', `border-top:1px solid ${color.hairline}`)}">
@@ -419,7 +696,7 @@ function notYouBox(box: NonNullable<Mail['notYou']>): string {
               <div class="ink" style="${text.rowTitle(600, 17, '-.01em')}">${box.heading}</div>
               <p class="muted" style="${text.rowText('margin:6px 0 18px', 15, 1.55)}">${box.text}</p>
               <table ${TABLE} class="btn"><tr><td>
-                <a href="mailto:${SUPPORT}" style="${button}">${box.button}</a>
+                <a href="${box.href ?? `mailto:${SUPPORT}`}" style="${button}">${box.button}</a>
               </td></tr></table>
             </td></tr>
           </table>`;
@@ -444,7 +721,7 @@ function renderNotice(m: Mail): string {
     `<tr><td class="px" style="padding:0 36px 32px;">
         ${m.notYou ? notYouBox(m.notYou) : ''}
       </td></tr>`,
-    footer(Boolean(m.notYou)),
+    footer(Boolean(m.notYou), m.why),
   ]);
 }
 
@@ -593,5 +870,11 @@ for (const m of mails) {
   checkVariables(m, html);
   if (html.length > MAX_BYTES) throw new Error(`${m.file} is ${html.length} bytes; Gmail clips mail over about 102 KB`);
   writeFileSync(join(import.meta.dir, m.file), html);
-  console.log(m.file.padEnd(26), String(html.length).padStart(5), 'bytes  subject:', m.subject);
+  console.log(m.file.padEnd(36), String(html.length).padStart(5), 'bytes  subject:', m.subject);
 }
+
+// What publish.ts creates in Resend: each template's name, file, subject and variables (2026-11-24).
+const manifest = mails
+  .filter((m) => m.template)
+  .map((m) => ({ template: m.template, file: m.file, subject: m.subject, variables: m.variables }));
+writeFileSync(join(import.meta.dir, 'templates.json'), JSON.stringify(manifest, null, 2) + '\n');

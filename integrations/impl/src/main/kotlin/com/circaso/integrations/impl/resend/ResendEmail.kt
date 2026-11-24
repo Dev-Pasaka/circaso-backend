@@ -21,6 +21,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
 /** Resend's `POST /emails` body for a stored template, with [V] the template's own variables. */
@@ -46,6 +47,189 @@ private data class SignInCodeVariables(
     @SerialName("CODE") val code: String,
     @SerialName("MINUTES") val minutes: Int,
 )
+
+/**
+ * The merchant alerts' variables (2026-11-24), under the names their Resend templates use. One class for all of them:
+ * each email fills exactly its own fields and the rest stay out of the body (null fields are not written), so a
+ * template only ever receives the variables it declares.
+ */
+@Serializable
+private data class MerchantVariables(
+    @SerialName("CODE") val code: String? = null,
+    @SerialName("MINUTES") val minutes: Int? = null,
+    @SerialName("ACTION") val action: String? = null,
+    @SerialName("METHOD") val method: String? = null,
+    @SerialName("DEVICE") val device: String? = null,
+    @SerialName("LOCATION") val location: String? = null,
+    @SerialName("LABEL") val label: String? = null,
+    @SerialName("ADDRESS") val address: String? = null,
+    @SerialName("NETWORK") val network: String? = null,
+    @SerialName("USABLE_FROM") val usableFrom: String? = null,
+    @SerialName("AMOUNT") val amount: String? = null,
+    @SerialName("TX_URL") val txUrl: String? = null,
+    @SerialName("REASON") val reason: String? = null,
+    @SerialName("WHAT") val what: String? = null,
+    @SerialName("CANCELLED") val cancelled: String? = null,
+    @SerialName("ORDER") val order: String? = null,
+    @SerialName("KES_RECEIVED") val kesReceived: String? = null,
+    @SerialName("USDC_SENT") val usdcSent: String? = null,
+    @SerialName("USDC_RECEIVED") val usdcReceived: String? = null,
+    @SerialName("KES_PAID") val kesPaid: String? = null,
+    @SerialName("EARNED") val earned: String? = null,
+    @SerialName("WALLET") val wallet: String? = null,
+    @SerialName("RESULT") val result: String? = null,
+    @SerialName("DAY") val day: String? = null,
+    @SerialName("ORDERS") val orders: String? = null,
+    @SerialName("BOUGHT") val bought: String? = null,
+    @SerialName("SOLD") val sold: String? = null,
+    @SerialName("TIME") val time: String? = null,
+    @SerialName("LOCK_URL") val lockUrl: String? = null,
+)
+
+/** Writes [MerchantVariables] without its unused (null) fields. */
+private val SparseJson = Json(CircasoJson) { explicitNulls = false }
+
+/** The variables of a merchant alert; null for any other email. */
+@Suppress("CyclomaticComplexMethod")
+private fun merchantVariables(email: Email): MerchantVariables? =
+    when (email) {
+        is Email.MerchantSecurityCode -> {
+            MerchantVariables(code = email.code, minutes = email.minutes, action = email.action)
+        }
+
+        is Email.MerchantNewSignIn -> {
+            MerchantVariables(
+                method = email.method,
+                device = email.device,
+                location = email.location,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantAddressAdded -> {
+            MerchantVariables(
+                label = email.label,
+                address = email.address,
+                network = email.network,
+                usableFrom = email.usableFrom,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantAddressRemoved -> {
+            MerchantVariables(
+                label = email.label,
+                address = email.address,
+                network = email.network,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantWithdrawalRequested -> {
+            MerchantVariables(
+                amount = email.amount,
+                label = email.label,
+                address = email.address,
+                network = email.network,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantWithdrawalSent -> {
+            MerchantVariables(
+                amount = email.amount,
+                label = email.label,
+                address = email.address,
+                txUrl = email.txUrl,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantWithdrawalCompleted -> {
+            MerchantVariables(
+                amount = email.amount,
+                label = email.label,
+                address = email.address,
+                txUrl = email.txUrl,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantWithdrawalFailed -> {
+            MerchantVariables(
+                amount = email.amount,
+                label = email.label,
+                address = email.address,
+                reason = email.reason,
+                time = email.time,
+                lockUrl = email.lockUrl,
+            )
+        }
+
+        is Email.MerchantPinChanged -> {
+            MerchantVariables(time = email.time, lockUrl = email.lockUrl)
+        }
+
+        is Email.MerchantPaymentAccountChanged -> {
+            MerchantVariables(what = email.what, time = email.time, lockUrl = email.lockUrl)
+        }
+
+        is Email.MerchantPasskeyAdded -> {
+            MerchantVariables(label = email.label, time = email.time, lockUrl = email.lockUrl)
+        }
+
+        is Email.MerchantPasskeyRemoved -> {
+            MerchantVariables(label = email.label, time = email.time, lockUrl = email.lockUrl)
+        }
+
+        is Email.MerchantWithdrawalsLocked -> {
+            MerchantVariables(cancelled = email.cancelled, time = email.time)
+        }
+
+        is Email.MerchantBuyCompleted -> {
+            MerchantVariables(
+                order = email.order,
+                kesReceived = email.kesReceived,
+                usdcSent = email.usdcSent,
+                earned = email.earned,
+                time = email.time,
+            )
+        }
+
+        is Email.MerchantSellCompleted -> {
+            MerchantVariables(
+                order = email.order,
+                usdcReceived = email.usdcReceived,
+                kesPaid = email.kesPaid,
+                earned = email.earned,
+                time = email.time,
+            )
+        }
+
+        is Email.MerchantTopUpResult -> {
+            MerchantVariables(wallet = email.wallet, amount = email.amount, result = email.result, time = email.time)
+        }
+
+        is Email.MerchantDailySummary -> {
+            MerchantVariables(
+                day = email.day,
+                orders = email.orders,
+                bought = email.bought,
+                sold = email.sold,
+                earned = email.earned,
+            )
+        }
+
+        else -> {
+            null
+        }
+    }
 
 /** A template that takes no variables: `{}`. */
 @Serializable
@@ -91,6 +275,14 @@ private fun sendBody(
 
         Email.RecoveryStarted, Email.RecoveryCompleted, Email.Welcome, Email.MerchantTakenOffline -> {
             encode(from, to, templateId, NoVariables, NoVariables.serializer())
+        }
+
+        else -> {
+            val variables = requireNotNull(merchantVariables(email)) { "no variables for ${email.template}" }
+            SparseJson.encodeToString(
+                SendTemplateEmail.serializer(MerchantVariables.serializer()),
+                SendTemplateEmail(from, listOf(to), TemplateRef(templateId, variables)),
+            )
         }
     }
 

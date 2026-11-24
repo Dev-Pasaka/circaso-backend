@@ -174,4 +174,10 @@ interface RampTokens {
 
     /** Sixteen random base62 characters: the unguessable end of a merchant's callback address. */
     fun callbackToken(): String
+
+    /** 32 random bytes (a WebAuthn challenge's nonce). */
+    fun nonce(): ByteArray
+
+    /** SHA-256 of [bytes]. */
+    fun digest(bytes: ByteArray): ByteArray
 }

@@ -20,11 +20,13 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
-import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.sum
 import org.jetbrains.exposed.v1.r2dbc.insertIgnore
 import org.jetbrains.exposed.v1.r2dbc.select
@@ -99,6 +101,16 @@ class WithdrawalDestinationRepositoryImpl(private val database: Database) : With
             }) { it[removedAt] = at } > 0
         }
 
+    override suspend fun freezeCooling(merchantId: MerchantId, at: Instant): Int =
+        database.tx("withdrawal-destinations.freeze-cooling") {
+            WithdrawalDestinationsTable.update({
+                (WithdrawalDestinationsTable.merchantId eq merchantId.value) and
+                    WithdrawalDestinationsTable.removedAt.isNull() and
+                    WithdrawalDestinationsTable.frozenAt.isNull() and
+                    (WithdrawalDestinationsTable.usableAt greater at)
+            }) { it[frozenAt] = at }
+        }
+
     private fun ResultRow.toDestination() =
         WithdrawalDestination(
             destinationId = this[WithdrawalDestinationsTable.destinationId],
@@ -110,6 +122,7 @@ class WithdrawalDestinationRepositoryImpl(private val database: Database) : With
             createdAt = this[WithdrawalDestinationsTable.createdAt],
             usableAt = this[WithdrawalDestinationsTable.usableAt],
             removedAt = this[WithdrawalDestinationsTable.removedAt],
+            frozenAt = this[WithdrawalDestinationsTable.frozenAt],
         )
 
     private companion object {
@@ -209,7 +222,7 @@ class WithdrawalRepositoryImpl(private val database: Database) : WithdrawalRepos
                 .where {
                     (WithdrawalsTable.merchantId eq merchantId.value) and
                         (WithdrawalsTable.network eq network.name) and
-                        (WithdrawalsTable.state neq WithdrawalState.FAILED.name) and
+                        (WithdrawalsTable.state notInList CLOSED_UNSPENT) and
                         (WithdrawalsTable.createdAt greaterEq since)
                 }.single()[total] ?: 0
         }
@@ -232,16 +245,15 @@ class WithdrawalRepositoryImpl(private val database: Database) : WithdrawalRepos
         withdrawalId: UUID,
         txHash: String,
         at: Instant,
-    ) {
+    ): Boolean =
         database.tx("withdrawals.note-hash") {
             WithdrawalsTable.update({
                 moving(withdrawalId, WithdrawalState.SENT) and WithdrawalsTable.txHash.isNull()
             }) {
                 it[WithdrawalsTable.txHash] = txHash
                 it[updatedAt] = at
-            }
+            } > 0
         }
-    }
 
     override suspend fun complete(
         withdrawalId: UUID,
@@ -255,6 +267,59 @@ class WithdrawalRepositoryImpl(private val database: Database) : WithdrawalRepos
                 it[updatedAt] = at
                 it[closedAt] = at
             } > 0
+        }
+
+    override suspend fun claim(withdrawalId: UUID, at: Instant): Boolean =
+        database.tx("withdrawals.claim") {
+            val claimed =
+                WithdrawalsTable.update({
+                    moving(withdrawalId, WithdrawalState.REQUESTED) and WithdrawalsTable.sendClaimedAt.isNull()
+                }) {
+                    it[sendClaimedAt] = at
+                    it[updatedAt] = at
+                } > 0
+            claimed ||
+                WithdrawalsTable
+                    .select(WithdrawalsTable.withdrawalId)
+                    .where {
+                        moving(withdrawalId, WithdrawalState.REQUESTED) and
+                            WithdrawalsTable.sendClaimedAt.isNotNull()
+                    }.singleOrNull() != null
+        }
+
+    override suspend fun cancelUnclaimed(
+        merchantId: MerchantId,
+        destinationId: UUID?,
+        reason: String,
+        at: Instant,
+    ): List<Withdrawal> =
+        database.tx("withdrawals.cancel-unclaimed") {
+            val which =
+                (WithdrawalsTable.merchantId eq merchantId.value) and
+                    (WithdrawalsTable.state eq WithdrawalState.REQUESTED.name) and
+                    WithdrawalsTable.sendClaimedAt.isNull()
+            val guard =
+                if (destinationId ==
+                    null
+                ) {
+                    which
+                } else {
+                    which and (WithdrawalsTable.destinationId eq destinationId)
+                }
+            val candidates =
+                WithdrawalsTable
+                    .selectAll()
+                    .where { guard }
+                    .map { it.toWithdrawal() }
+                    .toList()
+            candidates.filter { w ->
+                WithdrawalsTable.update({ (WithdrawalsTable.withdrawalId eq w.withdrawalId) and guard }) {
+                    it[state] = WithdrawalState.CANCELLED.name
+                    it[failureReason] = reason
+                    it[updatedAt] = at
+                    it[closedAt] = at
+                } > 0
+            }
         }
 
     override suspend fun fail(
@@ -295,9 +360,13 @@ class WithdrawalRepositoryImpl(private val database: Database) : WithdrawalRepos
             updatedAt = this[WithdrawalsTable.updatedAt],
             sentAt = this[WithdrawalsTable.sentAt],
             closedAt = this[WithdrawalsTable.closedAt],
+            sendClaimedAt = this[WithdrawalsTable.sendClaimedAt],
         )
 
     private companion object {
         val OPEN_STATES = WithdrawalState.entries.filter { it.isOpen }.map { it.name }
+
+        /** Closed without the money leaving: not counted toward the day's cap. */
+        val CLOSED_UNSPENT = listOf(WithdrawalState.FAILED.name, WithdrawalState.CANCELLED.name)
     }
 }

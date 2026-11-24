@@ -205,6 +205,9 @@ interface SessionRepository {
     suspend fun extend(tokenHash: ByteArray, expiresAt: Instant)
 
     suspend fun delete(tokenHash: ByteArray): Boolean
+
+    /** Ends every portal session of [merchantId] (a lock, 2026-11-24); how many. */
+    suspend fun deleteAll(merchantId: MerchantId): Int
 }
 
 /** The daily sweeps of Circaso's share, and the commission rows they collect. */

@@ -3,6 +3,7 @@ package com.circaso.ramp.presentation.services
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.models.DestinationBook
 import com.circaso.ramp.domain.models.DestinationCommand
+import com.circaso.ramp.domain.models.PasskeyAssertion
 import com.circaso.ramp.domain.models.SavedDestination
 import com.circaso.ramp.domain.models.WithdrawCommand
 import com.circaso.ramp.domain.models.Withdrawal
@@ -40,7 +41,8 @@ class WithdrawalService(
         network: Network,
         destinationId: UUID,
         pin: String,
-    ): Resource<Unit> = removeDestination(merchantId, network, destinationId, pin)
+        passkey: PasskeyAssertion? = null,
+    ): Resource<Unit> = removeDestination(merchantId, network, destinationId, pin, passkey)
 
     suspend fun withdraw(
         merchantId: MerchantId,

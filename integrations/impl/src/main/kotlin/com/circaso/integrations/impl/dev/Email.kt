@@ -23,6 +23,11 @@ class LogEmail : EmailGateway {
     ): Resource<EmailReceipt> {
         if (email is Email.MerchantSignInCode) {
             log.info("email: {} code={} (valid {} min)", email.template, email.code, email.minutes)
+        } else if (email is Email.MerchantSecurityCode) {
+            log.info("email: {} code={} (valid {} min)", email.template, email.code, email.minutes)
+        } else if (email is Email.MerchantSecurityAlert) {
+            // Local only, like the codes: the "This wasn't me" link can't be followed any other way on a laptop.
+            log.info("email: {} lock={}", email.template, email.lockUrl)
         } else {
             log.info("email: {}", email.template)
         }

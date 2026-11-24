@@ -14,6 +14,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     // Argon2id, which stretches a merchant's PIN for the credential envelope (data/support/EnvelopeVault).
     implementation(libs.bouncycastle.provider)
+    // WebAuthn (passkeys on the merchant portal, 2026-11-24): Yubico's relying-party library checks registrations
+    // and assertions (data/support/YubicoPasskeys).
+    implementation(libs.yubico.webauthn.server)
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.server.test.host)

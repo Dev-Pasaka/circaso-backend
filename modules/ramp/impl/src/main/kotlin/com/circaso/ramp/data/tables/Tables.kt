@@ -475,6 +475,7 @@ object WithdrawalDestinationsTable : Table("ramp.withdrawal_destinations") {
     val createdAt = timestamp("created_at")
     val usableAt = timestamp("usable_at")
     val removedAt = timestamp("removed_at").nullable()
+    val frozenAt = timestamp("frozen_at").nullable()
     override val primaryKey = PrimaryKey(destinationId)
 }
 
@@ -498,5 +499,6 @@ object WithdrawalsTable : Table("ramp.withdrawals") {
     val updatedAt = timestamp("updated_at")
     val sentAt = timestamp("sent_at").nullable()
     val closedAt = timestamp("closed_at").nullable()
+    val sendClaimedAt = timestamp("send_claimed_at").nullable()
     override val primaryKey = PrimaryKey(withdrawalId)
 }

@@ -451,4 +451,81 @@ sealed class RampError(
         "We couldn't find that withdrawal.",
         ErrorKind.NOT_FOUND,
     )
+
+    // ---- merchant security (2026-11-24) ----
+
+    /** Staff require a passkey for this action and the merchant has none. */
+    data object PasskeyRequired : RampError(
+        "ramp.passkey_required",
+        "Add a passkey in Settings, Security first: Circaso requires one for this.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    /** The merchant has a passkey, so this action needs it as well as the PIN. */
+    data object StepUpRequired : RampError(
+        "ramp.step_up_required",
+        "Confirm this with your passkey.",
+        ErrorKind.FORBIDDEN,
+        ErrorDetails(fields = listOf(FieldError("passkey", "required"))),
+    )
+
+    /** The passkey confirmation is missing its challenge, expired, used already, made for another request, or wrong. */
+    data object StepUpInvalid : RampError(
+        "ramp.step_up_invalid",
+        "Your passkey couldn't confirm this. Try again.",
+        ErrorKind.FORBIDDEN,
+        ErrorDetails(fields = listOf(FieldError("passkey", "invalid"))),
+    )
+
+    /** A new passkey that didn't check out (another site's, no user verification, a reused credential). */
+    data object PasskeyInvalid : RampError(
+        "ramp.passkey_invalid",
+        "That passkey couldn't be added. Try again.",
+        ErrorKind.INVALID,
+    )
+
+    data object PasskeyNotFound : RampError(
+        "ramp.passkey_not_found",
+        "We couldn't find that passkey.",
+        ErrorKind.NOT_FOUND,
+    )
+
+    class PasskeysFull(max: Int) :
+        RampError(
+            "ramp.passkeys_full",
+            "You can keep at most $max passkeys. Remove one first.",
+            ErrorKind.CONFLICT,
+        )
+
+    /** Passkey sign-in: no passkey of any merchant answered. */
+    data object PasskeySignInFailed : RampError(
+        "ramp.passkey_sign_in_failed",
+        "That passkey didn't sign you in. Use your email code instead.",
+        ErrorKind.UNAUTHORIZED,
+    )
+
+    /** "This wasn't me" locked the merchant's withdrawals; only Circaso can lift it. */
+    data object WithdrawalsLocked : RampError(
+        "ramp.withdrawals_locked",
+        "Withdrawals are locked on your account. Contact Circaso support to unlock them.",
+        ErrorKind.FORBIDDEN,
+    )
+
+    data object LockLinkInvalid : RampError(
+        "ramp.lock_link_invalid",
+        "This link isn't valid. Contact Circaso support.",
+        ErrorKind.INVALID,
+    )
+
+    data object LockLinkExpired : RampError(
+        "ramp.lock_link_expired",
+        "This link has expired. Contact Circaso support to lock your account.",
+        ErrorKind.INVALID,
+    )
+
+    data object NotLocked : RampError(
+        "ramp.not_locked",
+        "This merchant's withdrawals aren't locked.",
+        ErrorKind.CONFLICT,
+    )
 }

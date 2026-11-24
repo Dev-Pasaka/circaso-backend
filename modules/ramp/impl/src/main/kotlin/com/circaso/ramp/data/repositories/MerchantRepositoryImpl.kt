@@ -567,6 +567,11 @@ class SessionRepositoryImpl(private val database: Database) : SessionRepository 
         database.tx("sessions.delete") {
             MerchantSessionsTable.deleteWhere { MerchantSessionsTable.tokenHash eq tokenHash } > 0
         }
+
+    override suspend fun deleteAll(merchantId: MerchantId): Int =
+        database.tx("sessions.delete-all") {
+            MerchantSessionsTable.deleteWhere { MerchantSessionsTable.merchantId eq merchantId.value }
+        }
 }
 
 private val BALANCE_COLUMNS =

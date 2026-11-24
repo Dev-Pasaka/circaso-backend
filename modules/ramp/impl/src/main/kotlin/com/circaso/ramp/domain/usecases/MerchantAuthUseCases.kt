@@ -9,11 +9,13 @@ import com.circaso.ramp.domain.models.CodeSent
 import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.OfflineReason
+import com.circaso.ramp.domain.models.SignInContext
 import com.circaso.ramp.domain.models.SignedIn
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.SignInCodes
 import com.circaso.ramp.domain.repositories.MerchantRepository
 import com.circaso.ramp.domain.repositories.SessionRepository
+import com.circaso.ramp.domain.support.MerchantAlerts
 import com.circaso.ramp.domain.support.MerchantSignIn
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.Presence
@@ -56,11 +58,13 @@ class VerifySignInCode(
     private val sessions: SessionRepository,
     private val views: MerchantViews,
     private val clock: Clock,
+    private val alerts: MerchantAlerts,
 ) {
     suspend operator fun invoke(
         address: String,
         code: String,
         network: Network,
+        context: SignInContext = SignInContext.UNKNOWN,
     ): Resource<SignedIn> {
         when (codes.check(tokens.hexDigest(address), tokens.hexDigest("$address:$code"))) {
             CodeCheck.MATCH -> Unit
@@ -72,6 +76,7 @@ class VerifySignInCode(
         val token = tokens.sessionToken()
         val expiresAt = now.plus(MerchantSignIn.SESSION_LIFETIME)
         sessions.insert(tokens.digest(token), merchant.merchantId, now, expiresAt)
+        alerts.signedIn(merchant.merchantId, "email code", context, now)
         return Resource.success(SignedIn(token, expiresAt, views.overview(merchant, network)))
     }
 

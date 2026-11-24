@@ -4,6 +4,8 @@ import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.QuoteId
 import com.circaso.ramp.api.RampOrderId
+import com.circaso.ramp.domain.models.AlertKind
+import com.circaso.ramp.domain.models.AlertState
 import com.circaso.ramp.domain.models.Block
 import com.circaso.ramp.domain.models.Candidate
 import com.circaso.ramp.domain.models.CommissionFigures
@@ -15,6 +17,8 @@ import com.circaso.ramp.domain.models.FeeSplit
 import com.circaso.ramp.domain.models.FinishedOrder
 import com.circaso.ramp.domain.models.KesBalances
 import com.circaso.ramp.domain.models.Merchant
+import com.circaso.ramp.domain.models.MerchantAlert
+import com.circaso.ramp.domain.models.MerchantSecurity
 import com.circaso.ramp.domain.models.MerchantSession
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.MerchantType
@@ -25,6 +29,7 @@ import com.circaso.ramp.domain.models.OrderPatch
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaidOutcome
+import com.circaso.ramp.domain.models.Passkey
 import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.Period
@@ -38,6 +43,7 @@ import com.circaso.ramp.domain.models.RoutingFilter
 import com.circaso.ramp.domain.models.RoutingOutcome
 import com.circaso.ramp.domain.models.RoutingStep
 import com.circaso.ramp.domain.models.SealedCredentials
+import com.circaso.ramp.domain.models.SecuritySettings
 import com.circaso.ramp.domain.models.Settlement
 import com.circaso.ramp.domain.models.SettlementState
 import com.circaso.ramp.domain.models.StaffOrder
@@ -65,11 +71,14 @@ import com.circaso.ramp.domain.repositories.CommissionRepository
 import com.circaso.ramp.domain.repositories.CredentialRepository
 import com.circaso.ramp.domain.repositories.EngineSettingsRepository
 import com.circaso.ramp.domain.repositories.InsightRepository
+import com.circaso.ramp.domain.repositories.MerchantAlertRepository
 import com.circaso.ramp.domain.repositories.MerchantRepository
+import com.circaso.ramp.domain.repositories.MerchantSecurityRepository
 import com.circaso.ramp.domain.repositories.MerchantWalletRepository
 import com.circaso.ramp.domain.repositories.OrderEvent
 import com.circaso.ramp.domain.repositories.OrderEventRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
+import com.circaso.ramp.domain.repositories.PasskeyRepository
 import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.PreviewAccessRepository
 import com.circaso.ramp.domain.repositories.PricingSettingsRepository
@@ -77,6 +86,7 @@ import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.RevenueWalletRepository
 import com.circaso.ramp.domain.repositories.RoutingLogRepository
+import com.circaso.ramp.domain.repositories.SecuritySettingsRepository
 import com.circaso.ramp.domain.repositories.SessionRepository
 import com.circaso.ramp.domain.repositories.SettingsRepository
 import com.circaso.ramp.domain.repositories.SettlementRepository
@@ -404,6 +414,12 @@ class MemoryPortalSessions : SessionRepository {
     }
 
     override suspend fun delete(tokenHash: ByteArray) = rows.remove(key(tokenHash)) != null
+
+    override suspend fun deleteAll(merchantId: MerchantId): Int {
+        val mine = rows.filterValues { it.merchantId == merchantId }.keys
+        mine.forEach { rows.remove(it) }
+        return mine.size
+    }
 }
 
 class MemoryQuotes : QuoteRepository {
@@ -771,6 +787,15 @@ class MemoryWithdrawalDestinations : WithdrawalDestinationRepository {
         rows[destinationId] = row.copy(removedAt = at)
         return true
     }
+
+    override suspend fun freezeCooling(merchantId: MerchantId, at: Instant): Int {
+        val cooling =
+            rows.values.filter {
+                it.merchantId == merchantId && it.removedAt == null && it.frozenAt == null && it.usableAt.isAfter(at)
+            }
+        cooling.forEach { rows[it.destinationId] = it.copy(frozenAt = at) }
+        return cooling.size
+    }
 }
 
 /** Float withdrawals in memory, moved only from the states the table allows. */
@@ -814,8 +839,9 @@ class MemoryWithdrawals : WithdrawalRepository {
         since: Instant,
     ) = rows.values
         .filter { it.merchantId == merchantId && it.network == network }
-        .filter { it.state != WithdrawalState.FAILED && !it.createdAt.isBefore(since) }
-        .sumOf { it.amountMinor }
+        .filter {
+            it.state != WithdrawalState.FAILED && it.state != WithdrawalState.CANCELLED && !it.createdAt.isBefore(since)
+        }.sumOf { it.amountMinor }
 
     override suspend fun sent(
         withdrawalId: UUID,
@@ -829,8 +855,34 @@ class MemoryWithdrawals : WithdrawalRepository {
         withdrawalId: UUID,
         txHash: String,
         at: Instant,
-    ) {
-        move(withdrawalId, setOf(WithdrawalState.SENT)) { if (it.txHash == null) it.copy(txHash = txHash) else it }
+    ): Boolean {
+        val row = rows[withdrawalId]?.takeIf { it.state == WithdrawalState.SENT && it.txHash == null } ?: return false
+        rows[withdrawalId] = row.copy(txHash = txHash, updatedAt = at)
+        return true
+    }
+
+    override suspend fun claim(withdrawalId: UUID, at: Instant): Boolean {
+        val row = rows[withdrawalId]?.takeIf { it.state == WithdrawalState.REQUESTED } ?: return false
+        if (row.sendClaimedAt == null) rows[withdrawalId] = row.copy(sendClaimedAt = at, updatedAt = at)
+        return true
+    }
+
+    override suspend fun cancelUnclaimed(
+        merchantId: MerchantId,
+        destinationId: UUID?,
+        reason: String,
+        at: Instant,
+    ): List<Withdrawal> {
+        val gone =
+            rows.values.filter {
+                it.merchantId == merchantId && it.state == WithdrawalState.REQUESTED && it.sendClaimedAt == null &&
+                    (destinationId == null || it.destinationId == destinationId)
+            }
+        gone.forEach {
+            rows[it.withdrawalId] =
+                it.copy(state = WithdrawalState.CANCELLED, failureReason = reason, updatedAt = at, closedAt = at)
+        }
+        return gone
     }
 
     override suspend fun complete(
@@ -1474,5 +1526,169 @@ class MemoryPricingSettings : PricingSettingsRepository {
         val current = rows[settings.network] ?: return null
         if (expectedVersion != null && current.version != expectedVersion) return null
         return settings.copy(version = current.version + 1).also { rows[settings.network] = it }
+    }
+}
+
+// ---- merchant security (2026-11-24) ----
+
+class MemoryPasskeys : PasskeyRepository {
+    val rows = linkedMapOf<UUID, Passkey>()
+
+    override suspend fun insert(passkey: Passkey): Boolean {
+        if (rows.values.any { it.credentialId.contentEquals(passkey.credentialId) }) return false
+        rows[passkey.passkeyId] = passkey
+        return true
+    }
+
+    override suspend fun find(passkeyId: UUID) = rows[passkeyId]
+
+    override suspend fun byCredentialId(credentialId: ByteArray) =
+        rows.values.firstOrNull { it.credentialId.contentEquals(credentialId) }
+
+    override suspend fun ofMerchant(merchantId: MerchantId) =
+        rows.values.filter { it.merchantId == merchantId }.sortedBy { it.createdAt }
+
+    override suspend fun count(merchantId: MerchantId) = ofMerchant(merchantId).size
+
+    override suspend fun used(
+        passkeyId: UUID,
+        signCount: Long,
+        backedUp: Boolean,
+        at: Instant,
+    ) {
+        val row = rows[passkeyId] ?: return
+        rows[passkeyId] =
+            Passkey(
+                row.passkeyId,
+                row.merchantId,
+                row.credentialId,
+                row.publicKeyCose,
+                signCount,
+                row.label,
+                row.transports,
+                row.backupEligible,
+                backedUp,
+                row.createdAt,
+                at,
+            )
+    }
+
+    override suspend fun delete(passkeyId: UUID) = rows.remove(passkeyId) != null
+}
+
+class MemoryMerchantSecurity : MerchantSecurityRepository {
+    val rows = mutableMapOf<MerchantId, MerchantSecurity>()
+
+    override suspend fun find(merchantId: MerchantId) = rows[merchantId] ?: MerchantSecurity(merchantId)
+
+    override suspend fun setChoices(
+        merchantId: MerchantId,
+        orderEmails: Boolean,
+        dailySummary: Boolean,
+        at: Instant,
+    ) {
+        rows[merchantId] = find(merchantId).copy(orderEmails = orderEmails, dailySummary = dailySummary)
+    }
+
+    override suspend fun lock(
+        merchantId: MerchantId,
+        alertId: UUID?,
+        cancelled: Int,
+        at: Instant,
+    ): Boolean {
+        val row = find(merchantId)
+        if (row.locked) return false
+        rows[merchantId] = row.copy(lockedAt = at, lockedAlertId = alertId, lockedCancelled = cancelled)
+        return true
+    }
+
+    override suspend fun unlock(
+        merchantId: MerchantId,
+        by: String,
+        reason: String,
+        at: Instant,
+    ): Boolean {
+        val row = find(merchantId)
+        if (!row.locked) return false
+        rows[merchantId] =
+            row.copy(lockedAt = null, lockedAlertId = null, unlockedAt = at, unlockedBy = by, unlockReason = reason)
+        return true
+    }
+
+    override suspend fun withDailySummary() = rows.values.filter { it.dailySummary }.map { it.merchantId }
+}
+
+class MemoryMerchantAlerts : MerchantAlertRepository {
+    val rows = linkedMapOf<UUID, MerchantAlert>()
+
+    fun of(kind: AlertKind): List<MerchantAlert> = rows.values.filter { it.kind == kind }
+
+    override suspend fun insert(alert: MerchantAlert): Boolean {
+        if (rows.values.any { it.dedupeKey == alert.dedupeKey }) return false
+        rows[alert.alertId] = alert
+        return true
+    }
+
+    override suspend fun find(alertId: UUID) = rows[alertId]
+
+    override suspend fun due(now: Instant, limit: Int) =
+        rows.values
+            .filter { it.state == AlertState.PENDING && !it.nextAttemptAt.isAfter(now) }
+            .sortedBy { it.nextAttemptAt }
+            .take(limit)
+
+    private fun update(alertId: UUID, change: (MerchantAlert) -> MerchantAlert) {
+        val row = rows[alertId]?.takeIf { it.state == AlertState.PENDING } ?: return
+        rows[alertId] = change(row)
+    }
+
+    override suspend fun sent(alertId: UUID, at: Instant) =
+        update(alertId) { it.copy(state = AlertState.SENT, sentAt = at, failure = null) }
+
+    override suspend fun skipped(
+        alertId: UUID,
+        why: String,
+        at: Instant,
+    ) = update(alertId) { it.copy(state = AlertState.SKIPPED, failure = why) }
+
+    override suspend fun retry(
+        alertId: UUID,
+        attempts: Int,
+        next: Instant,
+        why: String,
+    ) = update(alertId) { it.copy(attempts = attempts, nextAttemptAt = next, failure = why) }
+
+    override suspend fun failed(
+        alertId: UUID,
+        attempts: Int,
+        why: String,
+    ) = update(alertId) { it.copy(state = AlertState.FAILED, attempts = attempts, failure = why) }
+
+    override suspend fun useLink(alertId: UUID, at: Instant): Boolean {
+        val row = rows[alertId]?.takeIf { it.linkUsedAt == null } ?: return false
+        rows[alertId] = row.copy(linkUsedAt = at)
+        return true
+    }
+
+    override suspend fun recent(merchantId: MerchantId, limit: Int) =
+        rows.values
+            .filter { it.merchantId == merchantId }
+            .sortedByDescending { it.createdAt }
+            .take(limit)
+}
+
+class MemorySecuritySettings : SecuritySettingsRepository {
+    var row = SecuritySettings()
+
+    override suspend fun get() = row
+
+    override suspend fun update(
+        settings: SecuritySettings,
+        version: Long,
+        at: Instant,
+    ): Boolean {
+        if (version != row.version) return false
+        row = settings.copy(version = version + 1, updatedAt = at)
+        return true
     }
 }

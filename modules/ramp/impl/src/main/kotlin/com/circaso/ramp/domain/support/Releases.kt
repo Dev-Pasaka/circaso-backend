@@ -50,6 +50,7 @@ class Releases(
     private val alerts: RampAlerts,
     private val usdc: UsdcContracts,
     private val clock: Clock,
+    private val merchantAlerts: MerchantAlerts,
 ) {
     /** Sends the USDC for a `PAID` order from its merchant's wallet to the user's. */
     suspend fun release(treasury: TreasuryCustody, order: Order): Order {
@@ -179,8 +180,10 @@ class Releases(
                 val moved = orders.move(order.orderId, OrderState.COMPLETED, setOf(OrderState.RELEASING), patch, now)
                 if (moved != null) {
                     reservations.consume(order.orderId, now)
-                    commissions.insert(moved, Fees.split(moved), now)
+                    val split = Fees.split(moved)
+                    commissions.insert(moved, split, now)
                     outbox.write(event)
+                    merchantAlerts.orderCompleted(moved, split, now)
                 }
                 moved
             } ?: return current(order)

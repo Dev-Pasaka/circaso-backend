@@ -206,6 +206,15 @@ The ramp's buy and sell rates (ramp.md → "As built: rates"), under `/v1/ops/ra
 - **Orders show how their rate was made:** the review list (RO4) gains `rate`, `rateSource`, `referenceRate`, `spreadBps`; a merchant's orders (RO8) gain `rateSource`, `referenceRate`, `spreadBps`. All null on orders from before 2026-11-24.
 - **What the admin needs:** a "Rates" page under Ramp (built in circaso-admin the same day).
 
+## Ramp: merchant security (decision 2026-11-24)
+
+Through a fourth contract in `ramp:api`, `RampSecurityAdmin` (ramp.md → "As built: merchant security"), in `rampSecurityController`.
+
+- **`GET /ramp/merchants/{id}/security`** (`ramp.read`) → `{ merchantId, locked, lockedAt, lockedByLink, lockedCancelled, unlockedAt, unlockedBy, unlockReason, orderEmails, dailySummary, passkeys: [{ passkeyId, label, createdAt, lastUsedAt, backedUp }], alerts: [{ alertId, kind, security, state, failure, createdAt, sentAt, linkUsedAt }] }` (the last 50 emails; never content). `ramp.merchant_not_found`.
+- **`POST /ramp/merchants/{id}/unlock-withdrawals`** `{ reason }` (`ramp.manage`, ADMIN) → the same shape. Lifts a "This wasn't me" lock; cancelled withdrawals stay cancelled and frozen addresses stay frozen. Audit `ramp_merchant.withdrawals_unlock` (target `ramp_merchant`). Errors `ops.reason_required`, `ramp.not_locked` (409).
+- **`GET` · `PUT /ramp/security-settings`** `{ merchantPasskeyRequired, version, reason }` (read `ramp.read`, change ADMIN) → `{ merchantPasskeyRequired, version, updatedBy, reason, updatedAt }`. Audit `ramp_security_settings.update` (new target `ramp_security_settings`). `ramp.settings_changed` on an old version.
+- **What the admin needs:** on a merchant's page, a Security card (locked banner with Unlock and a reason, passkeys, recent emails); on Ramp settings, the passkey-required switch with a reason (built in circaso-admin the same day).
+
 ## Ramp: selling (decision 2026-11-23)
 
 The off-ramp's staff side (ramp.md → "As built: the off-ramp"), on the same routes as "Ramp" with the same roles.
