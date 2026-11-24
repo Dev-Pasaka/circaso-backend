@@ -60,8 +60,9 @@ data class MerchantPaymentsDto(
  * - `state`: `ONLINE` or `OFFLINE`, the same fact as `online`.
  * - `until`: a timed window's end; null while offline **and** while online until stopped (`openEnded` true): show
  *   "Online until you go offline".
- * - `keysHeld`: whether the server holds the unlocked payment account. The keys live only in its memory, so a restart
- *   (a deploy) ends every session, open-ended ones too: then `keysHeld` is false and `offlineReason` is `RESTART`
+ * - `keysHeld`: whether the server holds the unlocked payment account. A restart (a deploy) restores it from the
+ *   session's encrypted working copy and the session goes on (2026-11-24); only when that copy can't be restored
+ *   (lost, unreadable, past `online_session_max_days`) is `keysHeld` false and `offlineReason` `RESTART`
  *   ("You were taken offline when Circaso restarted: go online again").
  * - `since`: when the current session began (null while offline).
  * - `offlineReason`: while offline, why the last session ended: `STOPPED` (you went offline), `SIGNED_OUT`,
@@ -317,7 +318,7 @@ data class CallbackResponse(val callbackUrl: String)
 
 /**
  * RM6 request: the PIN, and either `minutes` (a window of 15 to 720) or `untilStopped: true` (online until you go
- * offline yourself, with no end time; a server restart still ends it). Not both.
+ * offline yourself, with no end time; it survives restarts for up to `online_session_max_days`). Not both.
  */
 @Serializable
 data class GoOnlineRequest(val pin: String = "", val minutes: Int? = null, val untilStopped: Boolean = false) {

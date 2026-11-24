@@ -178,6 +178,8 @@ The ramp's staff routes, under `/v1/ops/ramp` inside `networkFiltered { }`, thro
 
 Counting: `completed` orders are counted on the day they completed, the others on the day they were made; `orders` is their sum and `successRatePercent` is completed out of it (`"0"` with none). `online` is the merchant's trading window.
 
+**Merchants stay online across restarts (2026-11-24; ramp.md → "As built: merchants stay online across restarts").** RO5 settings gain `onlineSessionMaxDays` (integer, 1 to 90, default 30): how many days an open-ended merchant session's encrypted working copy is kept, so how long it survives restarts and deploys without the merchant's PIN. Always in the answer; a `PUT` that leaves it out keeps the current value; audited by name.
+
 **Float withdrawals (2026-11-24; ramp.md → "As built: float withdrawals").** `GET /ramp/merchants/{merchantId}/withdrawals?network=&limit=` (`ramp.read`, `?network=` required) → `{ withdrawals: [ { withdrawalId, state, amount, blockchain, destinationAddress, destinationLabel, txHash, explorerUrl, failureReason, createdAt, updatedAt, closedAt } ], destinations: [ { destinationId, label, address, blockchain, createdAt, usableAt, removedAt } ] }`, newest first. `state`: `REQUESTED`, `SENT`, `COMPLETED`, `FAILED`. `ramp.merchant_not_found` (404). The ramp settings (RO5) carry `withdrawDestinationDelayHours`, `withdrawMinMinor` and `withdrawDailyMaxMinor` (USDC minor units as strings; `"0"`: no cap), audited by name in `ramp_settings.update`. The sends themselves run in the ops process inside `ramp.release`.
 
 ## Ramp: the merchant engine (decision 2026-11-23)

@@ -437,6 +437,7 @@ private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) 
         withdrawDestinationDelayHours = withdrawDestinationDelayHours,
         withdrawMinMinor = withdrawMinMinor,
         withdrawDailyMaxMinor = withdrawDailyMaxMinor,
+        onlineSessionMaxDays = onlineSessionMaxDays,
     )
 
 /**
@@ -498,6 +499,7 @@ private fun OpsRampSettings.toDomain(current: RampSettings): Resource<RampSettin
             withdrawDestinationDelayHours = withdrawDestinationDelayHours ?: current.withdrawDestinationDelayHours,
             withdrawMinMinor = withdrawMinMinor ?: current.withdrawMinMinor,
             withdrawDailyMaxMinor = withdrawDailyMaxMinor ?: current.withdrawDailyMaxMinor,
+            onlineSessionMaxDays = onlineSessionMaxDays ?: current.onlineSessionMaxDays,
         ),
     )
 }

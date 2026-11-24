@@ -84,7 +84,15 @@ data class RampSettings(
     val withdrawMinMinor: Long = DEFAULT_WITHDRAW_MIN_MINOR,
     /** The most a merchant may withdraw in a Nairobi day, USDC minor units; 0: no cap. */
     val withdrawDailyMaxMinor: Long = 0,
+    /**
+     * The longest an open-ended trading session's encrypted working copy is kept in Redis, in days (2026-11-24): past
+     * it, the next restart asks the merchant for their PIN again. A timed window's copy lasts as long as the window.
+     */
+    val onlineSessionMaxDays: Int = DEFAULT_ONLINE_SESSION_MAX_DAYS,
 ) {
+    /** How long an open-ended session survives restarts without the merchant's PIN. */
+    val onlineSessionMax: Duration get() = Duration.ofDays(onlineSessionMaxDays.toLong())
+
     /** The cooling-off delay of a new withdrawal address. */
     val withdrawDestinationDelay: Duration get() = Duration.ofHours(withdrawDestinationDelayHours.toLong())
 
@@ -126,6 +134,10 @@ data class RampSettings(
 
         /** KES 50: a few dozen prompts' worth of the provider's fees. */
         const val DEFAULT_PROVIDER_FEE_FLOOR_MINOR = 5_000L
+
+        /** A month: an open-ended session stays through restarts for this long before the PIN is asked again. */
+        const val DEFAULT_ONLINE_SESSION_MAX_DAYS = 30
+        const val MAX_ONLINE_SESSION_MAX_DAYS = 90
 
         const val DEFAULT_MERCHANT_PORTAL_URL = "https://merchants.circaso.com"
         const val DEFAULT_KYC_ATTEMPTS_PER_DAY = 3

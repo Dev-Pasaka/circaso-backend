@@ -2,8 +2,6 @@ package com.circaso.ramp.domain.usecases
 
 import com.circaso.integrations.api.CollectionCredentials
 import com.circaso.integrations.api.CollectionProviders
-import com.circaso.integrations.api.Email
-import com.circaso.integrations.api.EmailGateway
 import com.circaso.integrations.api.IntegrationError
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.domain.errors.RampError
@@ -13,6 +11,7 @@ import com.circaso.ramp.domain.models.Merchant
 import com.circaso.ramp.domain.models.MerchantOverview
 import com.circaso.ramp.domain.models.MerchantState
 import com.circaso.ramp.domain.models.OfflineReason
+import com.circaso.ramp.domain.models.OnlineSessionCopy
 import com.circaso.ramp.domain.models.OnlineView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.PageCursor
@@ -21,11 +20,13 @@ import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutAccount
 import com.circaso.ramp.domain.models.ProfileCommand
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.SessionTally
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.TradingWindow
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.models.WalletBalance
 import com.circaso.ramp.domain.ports.CredentialVault
+import com.circaso.ramp.domain.ports.OnlineSessionCopies
 import com.circaso.ramp.domain.ports.RampTokens
 import com.circaso.ramp.domain.ports.TradingSessions
 import com.circaso.ramp.domain.repositories.CredentialRepository
@@ -38,6 +39,7 @@ import com.circaso.ramp.domain.support.Callbacks
 import com.circaso.ramp.domain.support.MerchantViews
 import com.circaso.ramp.domain.support.PinGuard
 import com.circaso.ramp.domain.support.Presence
+import com.circaso.ramp.domain.support.SessionRestorer
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.Verifications
 import com.circaso.shared.FiatAmount
@@ -100,6 +102,7 @@ class StorePaymentAccount(
     private val tokens: RampTokens,
     private val settings: SettingsBook,
     private val clock: Clock,
+    private val copies: OnlineSessionCopies,
 ) {
     suspend operator fun invoke(
         merchantId: MerchantId,
@@ -132,7 +135,12 @@ class StorePaymentAccount(
                 ?: return Resource.error(RampError.VaultUnavailable)
         credentials.save(merchantId, sealed, clock.instant())
         command.payoutAccountId?.let { merchants.setPayoutAccount(merchantId, it) }
-        sessions.replace(merchantId, UnlockedKeys(current.collectionsProvider, command.credentials))
+        val keys = UnlockedKeys(current.collectionsProvider, command.credentials)
+        if (sessions.of(merchantId) != null) {
+            sessions.replace(merchantId, keys)
+            // The online session's working copy follows, so a restart restores the new account, not the old one.
+            copies.rekey(merchantId, keys)
+        }
         val key = merchant.callbackKey ?: newKey(merchant)
         return Resource.success(CallbackView(Callbacks.url(current.callbackBaseUrl, key)))
     }
@@ -187,9 +195,10 @@ class RotateCallback(
 
 /**
  * RM6: goes online for a trading window, or until the merchant stops it ([TradingWindow.UntilStopped], decision
- * 2026-11-23: no end time; RM6 `DELETE`, sign-out, a suspension or a provider's refusal end it, and so does a restart
- * of this server, which takes the keys with it). The PIN unwraps the payment keys **into this node's memory only**; the
- * merchant must be approved, verified where the network requires KYC (`kyc`), with a float wallet on the network and
+ * 2026-11-23: no end time; RM6 `DELETE`, sign-out, a suspension or a provider's refusal end it). The PIN unwraps the
+ * payment keys into this node's memory, and an encrypted working copy of them goes to Redis for as long as the session
+ * may last (the window, or `online_session_max_days` for an open-ended one), so a restart or a deploy restores the
+ * session instead of ending it (decision 2026-11-24). The merchant must be approved, verified where the network requires KYC (`kyc`), with a float wallet on the network and
  * a payment account. A float the custodian reports as too small for the smallest order refuses too; one it can't
  * report doesn't.
  *
@@ -208,6 +217,7 @@ class GoOnline(
     private val providers: CollectionProviders,
     private val settings: SettingsBook,
     private val clock: Clock,
+    private val copies: OnlineSessionCopies,
 ) {
     suspend operator fun invoke(
         merchantId: MerchantId,
@@ -240,7 +250,10 @@ class GoOnline(
                 TradingWindow.UntilStopped -> null
             }
         // The keys first, then the session: whoever sees the session open finds the keys already here.
-        sessions.unlock(merchantId, UnlockedKeys(sealed.provider, keys), until)
+        val unlocked = UnlockedKeys(sealed.provider, keys)
+        sessions.unlock(merchantId, unlocked, until)
+        val keepUntil = until ?: now.plus(settings.of(network).onlineSessionMax)
+        copies.save(OnlineSessionCopy(merchantId, network, now, unlocked), keepUntil)
         if (merchant.paymentsIssue != null) merchants.setPaymentsIssue(merchantId, null, now)
         // Going online is how a merchant says they put their provider right: a payout refusal is tried again too.
         if (merchant.payoutIssue != null) merchants.setPayoutIssue(merchantId, null, now)
@@ -340,13 +353,14 @@ class ListMerchantOrders(private val orders: OrderRepository) {
 }
 
 /**
- * `ramp.end-sessions`, every minute on this node:
+ * `ramp.end-sessions`, every minute on this node (and [RestoreSessions] once as the app starts):
  *
  * - ends every timed window that has run out (`WINDOW_ENDED`);
- * - ends every session whose keys this node doesn't hold (`RESTART`): the keys live only in memory, so after a restart
- *   (a deploy) the database may still show a merchant online, open-ended or inside their window, whom no order could
- *   reach. Each such merchant is emailed once, best effort, to go online again. One node only, as the rest of the
- *   trading session: a second node would hold keys this one can't see;
+ * - restores every session whose keys this node doesn't hold from its encrypted working copy ([SessionRestorer],
+ *   decision 2026-11-24): after a restart (a deploy) the merchant is online again with no PIN asked;
+ * - ends with `RESTART` only a session that has no usable copy (Redis lost it, it doesn't open, its expiry passed):
+ *   no order could reach that merchant. Each is emailed once, best effort, to go online again. One node only, as the
+ *   rest of the trading session: a second node would hold keys this one can't see;
  * - renews the Redis mark of every open-ended session this node holds;
  * - drops from memory the keys of merchants who are no longer online once none of their orders waits for its payment.
  */
@@ -354,14 +368,17 @@ class EndSessions(
     private val merchants: MerchantRepository,
     private val orders: OrderRepository,
     private val sessions: TradingSessions,
-    private val email: EmailGateway,
     private val clock: Clock,
     private val topUps: TopUpRepository,
+    private val restorer: SessionRestorer,
 ) {
+    /** The minute's run. The tally of what it restored or ended is [last]. */
     suspend operator fun invoke(): Int {
         val now = clock.instant()
         var handled = merchants.endPassedWindows(now)
-        handled += endLostSessions(now)
+        val tally = restorer.settle(now)
+        last = tally
+        handled += tally.restored + tally.ended
         sessions.held().forEach { merchantId ->
             val online = merchants.find(merchantId)?.isTradingUntil(now) == true
             if (!online && !orders.needsKeys(merchantId) && !topUps.hasOpen(merchantId)) {
@@ -372,35 +389,25 @@ class EndSessions(
         return handled
     }
 
-    // TODO(decision: more than one app node; `rmp:work` would route to the holder, and this check would read the mark)
-    private suspend fun endLostSessions(now: Instant): Int {
-        var ended = 0
-        merchants.withSessions(MAX_SESSIONS).forEach { merchant ->
-            val merchantId = merchant.merchantId
-            if (sessions.of(merchantId) != null) {
-                if (merchant.onlineOpenEnded) sessions.renew(merchantId)
-                return@forEach
-            }
-            // Guarded by when the session began: one opened since this run read the row is left alone. Its stale mark
-            // in Redis isn't touched either (it may already be the new session's) and expires on its own.
-            if (!merchants.endLostSession(merchantId, merchant.onlineSince, now)) return@forEach
-            ended++
-            tellTakenOffline(merchant, now)
-        }
-        return ended
-    }
+    /** What the last run restored or ended; an empty tally before the first. */
+    @Volatile
+    var last: SessionTally = SessionTally()
+        private set
+}
 
-    /** Best effort: an email that can't be sent (no template id yet, the provider down) changes nothing. */
-    private suspend fun tellTakenOffline(merchant: Merchant, now: Instant) {
-        val session = (merchant.onlineSince ?: now).toEpochMilli()
-        email.send(
-            merchant.email,
-            Email.MerchantTakenOffline,
-            idempotencyKey = "merchant-offline-${merchant.merchantId}-$session",
-        )
-    }
-
-    private companion object {
-        const val MAX_SESSIONS = 500
+/**
+ * As the app starts (`ramp.restore-sessions`, before the scheduler, 2026-11-24): windows that ran out while it was
+ * down end, then every other session is restored from its working copy or, with no usable copy, ended with `RESTART`.
+ * The tally is for the start-up log line.
+ */
+class RestoreSessions(
+    private val merchants: MerchantRepository,
+    private val restorer: SessionRestorer,
+    private val clock: Clock,
+) {
+    suspend operator fun invoke(): SessionTally {
+        val now = clock.instant()
+        merchants.endPassedWindows(now)
+        return restorer.settle(now)
     }
 }

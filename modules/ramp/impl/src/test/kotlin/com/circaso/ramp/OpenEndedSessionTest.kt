@@ -24,8 +24,9 @@ import kotlin.test.assertTrue
 
 /**
  * Online until stopped (decision 2026-11-23): RM6 with no end time. It covers any payment window and never ends by
- * time; the merchant ends it (RM6 `DELETE`), and so does a restart, which takes the unlocked keys with it: RM2 says so
- * at once, `ramp.end-sessions` ends it in the database with `RESTART` and emails the merchant once.
+ * time; the merchant ends it (RM6 `DELETE`). A restart restores it (StayOnlineTest); a restart that can't (here, Redis
+ * lost its working copy) ends it: RM2 says so at once, `ramp.end-sessions` ends it in the database with `RESTART` and
+ * emails the merchant once.
  */
 class OpenEndedSessionTest {
     private val ramp = Harness()
@@ -118,12 +119,12 @@ class OpenEndedSessionTest {
         }
 
     @Test
-    fun `a restart ends it - at once on RM2, in the database within the minute, and the merchant is emailed once`() =
+    fun `a restart that lost the copy ends it - on RM2 at once, in the database within the minute, one email`() =
         runTest {
             val id = ready()
             untilStopped(id)
 
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
 
             val seen = presence(id)
             assertFalse(seen.online || seen.keysHeld)
@@ -146,11 +147,11 @@ class OpenEndedSessionTest {
         }
 
     @Test
-    fun `a timed window is ended by a restart too, and still ends by time as before`() =
+    fun `a timed window is ended by such a restart too, and still ends by time as before`() =
         runTest {
             val id = ready()
             ramp.goOnline(id, TESTNET, pin, 60)
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
             ramp.endSessions()
             assertEquals(OfflineReason.RESTART, ramp.merchants.find(id)!!.offlineReason)
             assertNull(ramp.merchants.find(id)!!.onlineUntil)
@@ -169,7 +170,7 @@ class OpenEndedSessionTest {
             val id = ready()
             untilStopped(id)
             val lost = ramp.merchants.find(id)!!
-            ramp.sessions.restart()
+            ramp.restartLosingCopies()
             ramp.clock.advance(5)
             untilStopped(id)
 

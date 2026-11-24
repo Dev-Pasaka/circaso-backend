@@ -18,8 +18,9 @@ enum class MerchantState { NEW, APPLIED, APPROVED, SUSPENDED }
 
 /**
  * Why a merchant's trading session ended, kept until they go online again so the portal can say it. `RESTART`: the
- * server that held their unlocked keys restarted (a deploy), and the keys, which live only in its memory, went with
- * it. Recorded from 2026-11-23; older sessions ended with none.
+ * server restarted (a deploy) and could not restore the session's encrypted working copy (2026-11-24: none in Redis,
+ * one that doesn't open, or one past its expiry), so the merchant must unlock again. A restart whose copy restores
+ * ends nothing. Recorded from 2026-11-23; older sessions ended with none.
  */
 enum class OfflineReason {
     /** The merchant went offline themselves (RM6 `DELETE`). */
@@ -37,13 +38,14 @@ enum class OfflineReason {
     /** The timed window they chose ran out. */
     WINDOW_ENDED,
 
-    /** The server holding their keys restarted: they must unlock again. */
+    /** The server restarted and the session's working copy could not be restored: they must unlock again. */
     RESTART,
 }
 
 /**
  * How long RM6 opens a session for: a window of [Minutes], or until the merchant stops it themselves (decision
- * 2026-11-23). Neither outlives the server's memory: a restart ends both.
+ * 2026-11-23). Both survive a restart through the session's encrypted working copy (2026-11-24); an open-ended one's
+ * copy lasts at most `online_session_max_days`.
  */
 sealed interface TradingWindow {
     data class Minutes(val minutes: Int) : TradingWindow
@@ -62,7 +64,7 @@ enum class PaymentsIssue {
 
 /**
  * A partner merchant: an account of its own, signed in to by [email]. [onlineUntil] is the end of a timed trading
- * window; [onlineOpenEnded] is a session with no end but the merchant's own (or the server's restart), and then
+ * window; [onlineOpenEnded] is a session with no end but the merchant's own (or a restart that can't restore it), and then
  * [onlineUntil] is null. Neither: offline, and [offlineReason] says why when it is known. [callbackKey] is the end of
  * the merchant's own callback address, null until they connect a payment account. [paymentsIssue] is set when the provider refused a prompt for a reason the merchant must fix, and
  * cleared when they go online again or a later prompt goes through. [merchantType] and [orderLimitMinor] are staff's;
@@ -193,6 +195,64 @@ class UnlockedKeys(val provider: String, val credentials: CollectionCredentials)
     override fun toString(): String = "UnlockedKeys($provider, ***)"
 }
 
+/**
+ * An online merchant's session as its encrypted working copy holds it (2026-11-24): the unlocked [keys], and the
+ * session they belong to ([since] names it, as `online_since` does; [network] is where they went online). Kept so a
+ * restarted server can put the merchant back online without their PIN; never kept past the session.
+ */
+class OnlineSessionCopy(
+    val merchantId: MerchantId,
+    val network: Network,
+    val since: Instant,
+    val keys: UnlockedKeys,
+) {
+    override fun toString(): String = "OnlineSessionCopy($merchantId, $network, $since, ***)"
+}
+
+/** What reading a merchant's working copy gave. */
+sealed interface StoredSession {
+    class Found(val copy: OnlineSessionCopy) : StoredSession
+
+    /** None: never written, deleted when the session ended, expired, or Redis lost it. */
+    data object Missing : StoredSession
+
+    /** One that doesn't open: another master key, no master key, or a changed value. */
+    data object Unreadable : StoredSession
+}
+
+/** What restoring one merchant's session after a restart came to. */
+enum class RestoreOutcome {
+    /** The keys are already in this node's memory: nothing to do. */
+    HELD,
+
+    /** The working copy opened and matched the session in the database: the merchant is online again. */
+    RESTORED,
+
+    /** A copy newer than the database row: a go-online in flight. Left alone. */
+    PENDING,
+
+    /** The database shows no such session any more (offline, or another one): the copy is deleted, nothing loaded. */
+    STALE,
+
+    /** No usable copy for the session the database shows: it ends with `RESTART`. */
+    MISSING,
+
+    /** A copy that doesn't open (another master key, a changed value): deleted, and the session ends with `RESTART`. */
+    UNREADABLE,
+}
+
+/** What `ramp.end-sessions` (or the start-up restore) did with the sessions whose keys this node didn't hold. */
+data class SessionTally(val restored: Int = 0, val missing: Int = 0, val unreadable: Int = 0) {
+    /** Ended with `RESTART`. */
+    val ended: Int get() = missing + unreadable
+
+    /** Anything restored or ended. */
+    val any: Boolean get() = restored + ended > 0
+
+    operator fun plus(other: SessionTally) =
+        SessionTally(restored + other.restored, missing + other.missing, unreadable + other.unreadable)
+}
+
 /** What opening the envelope with a PIN gave. */
 sealed interface Unsealed {
     class Opened(val credentials: CollectionCredentials) : Unsealed
@@ -297,8 +357,9 @@ data class MerchantOverview(
 
 /**
  * A merchant's trading session as RM2 and RM6 answer it. [online] is a session that is open **and** whose keys this
- * node holds; [until] is a timed window's end (null when [openEnded] or offline). [keysHeld] is false after the server
- * restarted, even while the database still shows the session (until `ramp.end-sessions` ends it with `RESTART`).
+ * node holds; [until] is a timed window's end (null when [openEnded] or offline). [keysHeld] is false after a restart
+ * that couldn't restore the session's working copy, even while the database still shows the session (until
+ * `ramp.end-sessions` ends it with `RESTART`).
  * [offlineReason] and [offlineAt] say why and when the last session ended, while offline.
  */
 data class OnlineView(

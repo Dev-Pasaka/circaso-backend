@@ -120,6 +120,7 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
         this[SettingsTable.withdrawDestinationDelayHours] = settings.withdrawDestinationDelayHours
         this[SettingsTable.withdrawMinMinor] = settings.withdrawMinMinor
         this[SettingsTable.withdrawDailyMaxMinor] = settings.withdrawDailyMaxMinor
+        this[SettingsTable.onlineSessionMaxDays] = settings.onlineSessionMaxDays
     }
 
     private fun ResultRow.toSettings(): RampSettings? {
@@ -164,6 +165,7 @@ class SettingsRepositoryImpl(private val database: Database) : SettingsRepositor
             withdrawDestinationDelayHours = this[SettingsTable.withdrawDestinationDelayHours],
             withdrawMinMinor = this[SettingsTable.withdrawMinMinor],
             withdrawDailyMaxMinor = this[SettingsTable.withdrawDailyMaxMinor],
+            onlineSessionMaxDays = this[SettingsTable.onlineSessionMaxDays],
         )
     }
 }

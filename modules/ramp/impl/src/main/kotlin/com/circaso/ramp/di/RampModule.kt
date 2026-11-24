@@ -7,6 +7,7 @@ import com.circaso.infrastructure.api.OpsJob
 import com.circaso.infrastructure.api.RedisScopes
 import com.circaso.infrastructure.api.ScheduledJob
 import com.circaso.infrastructure.api.Secrets
+import com.circaso.infrastructure.api.StartupJob
 import com.circaso.integrations.api.CollectionNotifications
 import com.circaso.integrations.api.CustodySetups
 import com.circaso.integrations.api.DEV_TREASURY
@@ -21,6 +22,7 @@ import com.circaso.ramp.data.cache.NodeTradingSessions
 import com.circaso.ramp.data.cache.RampExpiry
 import com.circaso.ramp.data.cache.RealtimeFramesImpl
 import com.circaso.ramp.data.cache.RedisCounters
+import com.circaso.ramp.data.cache.RedisOnlineSessionCopies
 import com.circaso.ramp.data.cache.RedisPinAttempts
 import com.circaso.ramp.data.cache.RedisSignInCodes
 import com.circaso.ramp.data.repositories.BlockRepositoryImpl
@@ -84,12 +86,14 @@ import com.circaso.ramp.data.tables.TopUpsTable
 import com.circaso.ramp.data.tables.VerificationsTable
 import com.circaso.ramp.data.tables.WithdrawalDestinationsTable
 import com.circaso.ramp.data.tables.WithdrawalsTable
+import com.circaso.ramp.domain.models.SessionTally
 import com.circaso.ramp.domain.ports.CredentialVault
 import com.circaso.ramp.domain.ports.EvmAddresses
 import com.circaso.ramp.domain.ports.FrameSender
 import com.circaso.ramp.domain.ports.IdentityKeys
 import com.circaso.ramp.domain.ports.KesFloat
 import com.circaso.ramp.domain.ports.KycGate
+import com.circaso.ramp.domain.ports.OnlineSessionCopies
 import com.circaso.ramp.domain.ports.PayoutJournal
 import com.circaso.ramp.domain.ports.PinAttempts
 import com.circaso.ramp.domain.ports.Pricing
@@ -153,6 +157,7 @@ import com.circaso.ramp.domain.support.SaleFlow
 import com.circaso.ramp.domain.support.SaleFunding
 import com.circaso.ramp.domain.support.SalePayouts
 import com.circaso.ramp.domain.support.SaleRefunds
+import com.circaso.ramp.domain.support.SessionRestorer
 import com.circaso.ramp.domain.support.SettingsBook
 import com.circaso.ramp.domain.support.TestPayouts
 import com.circaso.ramp.domain.support.Verifications
@@ -216,6 +221,7 @@ import com.circaso.ramp.domain.usecases.ResetMerchantVerification
 import com.circaso.ramp.domain.usecases.ResetVerification
 import com.circaso.ramp.domain.usecases.ResolveOrder
 import com.circaso.ramp.domain.usecases.ResolveSession
+import com.circaso.ramp.domain.usecases.RestoreSessions
 import com.circaso.ramp.domain.usecases.RotateCallback
 import com.circaso.ramp.domain.usecases.RunRechecks
 import com.circaso.ramp.domain.usecases.SetMerchantOffers
@@ -271,6 +277,7 @@ import org.koin.core.module.Module
 import org.koin.core.qualifier.named
 import org.koin.core.scope.Scope
 import org.koin.dsl.module
+import org.slf4j.LoggerFactory
 import java.time.Clock
 import java.time.Duration
 import java.util.UUID
@@ -388,6 +395,15 @@ fun rampModule(config: Config): Module =
         single<PinAttempts> { RedisPinAttempts(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<SignInCodes> { RedisSignInCodes(get<RedisScopes>().scope(REDIS_PREFIX)) }
         single<TradingSessions> { NodeTradingSessions(get<RedisScopes>().scope(REDIS_PREFIX), nodeId, clock) }
+        single<OnlineSessionCopies> {
+            val secrets = get<Secrets>()
+            RedisOnlineSessionCopies(
+                redis = get<RedisScopes>().scope(REDIS_PREFIX),
+                masterKey = { EnvelopeVault.masterKey(secrets.get(EnvelopeVault.MASTER_KEY_SECRET)) },
+                clock = clock,
+            )
+        }
+        single { SessionRestorer(get(), get(), get(), get(), clock) }
         single {
             RealtimeFramesImpl(
                 get<RedisScopes>().scope(REDIS_PREFIX),
@@ -528,7 +544,7 @@ fun rampModule(config: Config): Module =
             )
         }
         single { PinGuard(get(), get()) }
-        single { Presence(get(), get(), get(), clock) }
+        single { Presence(get(), get(), get(), clock, get()) }
         single { GetRampStatus(get(), get(), get(), get(), get()) }
         single { StartUserKyc(get(), get(), get()) }
         single { GetUserKyc(get(), get(), get()) }
@@ -580,15 +596,16 @@ fun rampModule(config: Config): Module =
         single { SignOut(get(), get(), get(), clock) }
         single { GetMerchant(get(), get(), get(), get(), get()) }
         single { ApplyAsMerchant(get(), get()) }
-        single { StorePaymentAccount(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { StorePaymentAccount(get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { RotateCallback(get(), get(), get(), get()) }
         single { SetWebhookSecret(get(), get(), get(), clock) }
         single { CallbackSigningSecret(get(), get()) }
-        single { GoOnline(get(), get(), get(), get(), get(), get(), get(), get(), clock) }
+        single { GoOnline(get(), get(), get(), get(), get(), get(), get(), get(), clock, get()) }
         single { GoOffline(get(), clock) }
         single { ChangePin(get(), get(), clock) }
         single { ListMerchantOrders(get()) }
-        single { EndSessions(get(), get(), get(), get(), clock, get()) }
+        single { EndSessions(get(), get(), get(), clock, get(), get()) }
+        single { RestoreSessions(get(), get(), clock) }
         single { GetEarnings(get(), get(), get(), clock) }
         single { GetStatement(get(), clock) }
         single { ListMerchants(get(), get(), get(), get()) }
@@ -667,6 +684,7 @@ fun rampModule(config: Config): Module =
                 get(),
                 get(),
                 get(),
+                get(),
             )
         }
         single { RampOpsJobsService(get(), get()) }
@@ -728,7 +746,14 @@ fun rampModule(config: Config): Module =
         }
         single(named("ramp.end-sessions")) {
             val events = get<RampEventsService>()
-            ScheduledJob("ramp.end-sessions", END_SESSIONS_INTERVAL) { events.endSessions() }
+            ScheduledJob("ramp.end-sessions", END_SESSIONS_INTERVAL) {
+                events.endSessions().also { events.lastSessionTally().takeIf { it.any }?.let(::logSessions) }
+            }
+        }
+        // Merchants stay online through a restart (2026-11-24): their sessions are restored before the jobs start.
+        single(named("ramp.restore-sessions")) {
+            val events = get<RampEventsService>()
+            StartupJob("ramp.restore-sessions") { logSessions(events.restoreSessions()) }
         }
         single(named("ramp.sweep-verifications")) {
             val events = get<RampEventsService>()
@@ -760,6 +785,22 @@ fun rampModule(config: Config): Module =
             OpsJob("ramp.settle-fees", SETTLE_INTERVAL) { onEachNetwork { jobs.settle(it) } }
         }
     }
+
+/**
+ * The line that says what happened to the merchants' sessions across a restart, for checking a deploy took nobody
+ * offline: counts only, never a merchant's keys.
+ */
+private fun logSessions(tally: SessionTally) {
+    LoggerFactory
+        .getLogger("com.circaso.ramp.sessions")
+        .info(
+            "ramp online sessions restored: {}, ended: {} (missing copy: {}, unreadable copy: {})",
+            tally.restored,
+            tally.ended,
+            tally.missing,
+            tally.unreadable,
+        )
+}
 
 private fun Scope.treasury(): TreasuryCustody? =
     getOrNull<TreasuryCustody>() ?: getOrNull<TreasuryCustody>(named(DEV_TREASURY))

@@ -202,7 +202,7 @@ class RampDataTest {
             providers,
             sessions,
             book,
-            Presence(merchants, orders, sessions, Clock.systemUTC()),
+            Presence(merchants, orders, sessions, Clock.systemUTC(), NoSessionCopies),
             HttpPromptTransport(),
             clock,
         )

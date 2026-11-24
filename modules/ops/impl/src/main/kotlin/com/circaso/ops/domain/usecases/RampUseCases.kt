@@ -138,6 +138,7 @@ class UpdateRampSettings(private val ramp: RampAdmin, private val trail: AuditTr
         )
         changed("withdrawMinMinor", before.withdrawMinMinor, after.withdrawMinMinor)
         changed("withdrawDailyMaxMinor", before.withdrawDailyMaxMinor, after.withdrawDailyMaxMinor)
+        changed("onlineSessionMaxDays", before.onlineSessionMaxDays, after.onlineSessionMaxDays)
         return parts.joinToString("; ")
     }
 }

@@ -156,6 +156,8 @@ data class OpsRampSettings(
     val withdrawMinMinor: Long? = null,
     /** The most a merchant may withdraw in a Nairobi day, USDC minor units; 0: no cap. */
     val withdrawDailyMaxMinor: Long? = null,
+    /** Days an open-ended trading session survives server restarts without the PIN (1 to 90); null: unchanged. */
+    val onlineSessionMaxDays: Int? = null,
 )
 
 /** One band of staff's payout fee table: an amount up to [upToMinor] (inclusive) costs [feeMinor]. KES minor units. */
