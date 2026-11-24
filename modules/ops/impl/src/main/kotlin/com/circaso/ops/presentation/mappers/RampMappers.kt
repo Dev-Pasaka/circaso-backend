@@ -627,6 +627,7 @@ fun OpsRampWithdrawals.toResponse() =
                     createdAt = it.createdAt.toString(),
                     usableAt = it.usableAt.toString(),
                     removedAt = it.removedAt?.toString(),
+                    frozenAt = it.frozenAt?.toString(),
                 )
             },
     )

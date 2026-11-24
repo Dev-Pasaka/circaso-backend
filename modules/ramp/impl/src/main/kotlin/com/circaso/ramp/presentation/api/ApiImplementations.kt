@@ -239,6 +239,7 @@ class RampAdminImpl(private val admin: RampAdminService) : RampAdmin {
                             createdAt = it.createdAt,
                             usableAt = it.usableAt,
                             removedAt = it.removedAt,
+                            frozenAt = it.frozenAt,
                         )
                     },
             )

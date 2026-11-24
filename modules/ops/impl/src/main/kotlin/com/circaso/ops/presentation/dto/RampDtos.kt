@@ -588,6 +588,8 @@ data class RampWithdrawalDestinationDto(
     val createdAt: String,
     val usableAt: String,
     val removedAt: String?,
+    /** Frozen by the merchant's "This wasn't me" lock while cooling off (2026-11-24). */
+    val frozenAt: String? = null,
 )
 
 @Serializable
