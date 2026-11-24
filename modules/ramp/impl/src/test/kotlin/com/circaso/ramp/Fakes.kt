@@ -55,12 +55,18 @@ import com.circaso.integrations.api.TreasuryWallet
 import com.circaso.integrations.api.TreasuryWalletRequest
 import com.circaso.messaging.api.ChatId
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.AppliedRate
 import com.circaso.ramp.domain.models.CodeCheck
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.OrderState
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.RateBasis
+import com.circaso.ramp.domain.models.RateMode
+import com.circaso.ramp.domain.models.RatePause
+import com.circaso.ramp.domain.models.RateReading
+import com.circaso.ramp.domain.models.ReferenceRate
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.ramp.domain.models.UnlockedKeys
 import com.circaso.ramp.domain.ports.FrameSender
@@ -392,11 +398,23 @@ class FakeKycProviders(private val offered: Map<String, KycProvider>) : KycProvi
 /** 130 shillings a dollar; the fee is the settings' rate of what is paid: 1 300 at 2 % is a fee of 26, buying 9.8 USDC. */
 class FixedPricing : Pricing {
     var failure: Resource.Error? = null
+    private val basis = RateBasis(RateMode.REFERENCE_SPREAD, BigDecimal("130"), 0)
 
     /** 130 shillings a dollar, as [price] uses. */
-    override suspend fun rate(): Resource<BigDecimal> = failure ?: Resource.success(BigDecimal("130"))
+    override suspend fun rate(network: Network, direction: Direction): Resource<AppliedRate> =
+        failure ?: Resource.success(AppliedRate(BigDecimal("130"), basis))
+
+    override suspend fun reading(network: Network, direction: Direction): RateReading =
+        if (failure != null) {
+            RateReading.Paused(RatePause.NO_REFERENCE)
+        } else {
+            RateReading.Ready(AppliedRate(BigDecimal("130"), basis))
+        }
+
+    override suspend fun reference(): ReferenceRate? = ReferenceRate(BigDecimal("130"), Instant.EPOCH)
 
     override suspend fun price(
+        network: Network,
         direction: Direction,
         fiatMinor: Long?,
         assetMinor: Long?,
@@ -405,7 +423,7 @@ class FixedPricing : Pricing {
         failure?.let { return it }
         val paid = fiatMinor ?: (assetMinor!! * 130 / 10_000)
         val fee = paid * feeBps / 10_000
-        return Resource.success(Priced(paid, (paid - fee) * 10_000 / 130, BigDecimal("130"), fee))
+        return Resource.success(Priced(paid, (paid - fee) * 10_000 / 130, BigDecimal("130"), fee, basis))
     }
 }
 

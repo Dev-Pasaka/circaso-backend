@@ -3,16 +3,18 @@ package com.circaso.ramp.domain.ports
 import com.circaso.integrations.api.KycDocument
 import com.circaso.integrations.api.KycEnvironment
 import com.circaso.ramp.api.MerchantId
+import com.circaso.ramp.domain.models.AppliedRate
 import com.circaso.ramp.domain.models.Direction
 import com.circaso.ramp.domain.models.KycView
 import com.circaso.ramp.domain.models.Order
 import com.circaso.ramp.domain.models.Priced
+import com.circaso.ramp.domain.models.RateReading
+import com.circaso.ramp.domain.models.ReferenceRate
 import com.circaso.ramp.domain.models.Subject
 import com.circaso.shared.EventEnvelope
 import com.circaso.shared.Network
 import com.circaso.shared.Resource
 import com.circaso.shared.UserId
-import java.math.BigDecimal
 import java.time.LocalDate
 
 /**
@@ -90,14 +92,23 @@ interface IdentityKeys {
 }
 
 /**
- * Prices one side from the other at [feeBps] basis points, the fee inside what the user pays.
- * TODO(decision: the exchange rate) the day's reference rate with no spread, until where the rate comes from is decided.
+ * Prices one side from the other at [feeBps] basis points, the fee inside what the user pays, at the rate staff's
+ * pricing settings give the side (decision 2026-11-24: the buy rate for buying, the sell rate for selling; see
+ * `RatePolicy`). A side whose rate is paused (no reference, a stale one, an expired manual rate) is
+ * `ramp.pricing_unavailable`: never a silent fallback to another rate.
  */
 interface Pricing {
-    /** Shillings per USDC now; `ramp.pricing_unavailable` when no reference rate can be read. */
-    suspend fun rate(): Resource<BigDecimal>
+    /** Shillings per USDC for [direction] on [network] now, and how that rate was made. */
+    suspend fun rate(network: Network, direction: Direction): Resource<AppliedRate>
+
+    /** What [direction] on [network] reads as now: its rate, or why it is paused. */
+    suspend fun reading(network: Network, direction: Direction): RateReading
+
+    /** The reference rate as last read (any age), or null when none can be read. */
+    suspend fun reference(): ReferenceRate?
 
     suspend fun price(
+        network: Network,
         direction: Direction,
         fiatMinor: Long?,
         assetMinor: Long?,

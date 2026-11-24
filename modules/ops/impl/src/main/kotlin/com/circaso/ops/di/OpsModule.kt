@@ -55,6 +55,8 @@ import com.circaso.ops.domain.usecases.GetRampMerchantSummary
 import com.circaso.ops.domain.usecases.GetRampMerchants
 import com.circaso.ops.domain.usecases.GetRampOverview
 import com.circaso.ops.domain.usecases.GetRampPreviewAccess
+import com.circaso.ops.domain.usecases.GetRampPricing
+import com.circaso.ops.domain.usecases.GetRampRates
 import com.circaso.ops.domain.usecases.GetRampReviewOrders
 import com.circaso.ops.domain.usecases.GetRampRoutingDecision
 import com.circaso.ops.domain.usecases.GetRampRoutingDecisions
@@ -102,6 +104,7 @@ import com.circaso.ops.domain.usecases.UnblockRampUser
 import com.circaso.ops.domain.usecases.UnsuspendUser
 import com.circaso.ops.domain.usecases.UpdateFeeBounds
 import com.circaso.ops.domain.usecases.UpdateRampEngineSettings
+import com.circaso.ops.domain.usecases.UpdateRampPricing
 import com.circaso.ops.domain.usecases.UpdateRampSettings
 import com.circaso.ops.domain.usecases.UpdateStaff
 import com.circaso.ops.domain.usecases.UpdateWalletNetwork
@@ -121,6 +124,7 @@ import com.circaso.ops.presentation.controllers.moneyController
 import com.circaso.ops.presentation.controllers.networkController
 import com.circaso.ops.presentation.controllers.rampController
 import com.circaso.ops.presentation.controllers.rampEngineController
+import com.circaso.ops.presentation.controllers.rampRatesController
 import com.circaso.ops.presentation.controllers.staffController
 import com.circaso.ops.presentation.controllers.ticketController
 import com.circaso.ops.presentation.controllers.userController
@@ -137,6 +141,7 @@ import com.circaso.ops.presentation.services.MeService
 import com.circaso.ops.presentation.services.MoneyService
 import com.circaso.ops.presentation.services.NetworkService
 import com.circaso.ops.presentation.services.RampEngineService
+import com.circaso.ops.presentation.services.RampRatesService
 import com.circaso.ops.presentation.services.RampService
 import com.circaso.ops.presentation.services.StaffDirectoryService
 import com.circaso.ops.presentation.services.StaffService
@@ -352,6 +357,11 @@ fun opsModule(config: Config): Module =
         single { SetRampMerchantTier(get(), get()) }
         single { GetRampMerchantSignals(get()) }
         single { RampEngineService(get(), get(), get(), get(), get(), get(), get()) }
+        // The ramp's rates for staff (decision 2026-11-24), through ramp:api's RampRatesAdmin
+        single { GetRampPricing(get()) }
+        single { UpdateRampPricing(get(), get()) }
+        single { GetRampRates(get()) }
+        single { RampRatesService(get(), get(), get()) }
         single<StaffDirectory> { StaffDirectoryImpl(get()) }
         single<OpsRouteContributor>(named("ops.routes")) {
             val me = get<MeService>()
@@ -371,6 +381,7 @@ fun opsModule(config: Config): Module =
             val feeWallets = get<FeeWalletService>()
             val ramp = get<RampService>()
             val rampEngine = get<RampEngineService>()
+            val rampRates = get<RampRatesService>()
             val emailTemplates = get<EmailTemplateService>()
             OpsRouteContributor { root ->
                 // `?network=MAINNET|TESTNET` narrows any money read to one network; without it, both (2026-11-18).
@@ -391,6 +402,7 @@ fun opsModule(config: Config): Module =
                     route.feeWalletController(feeWallets, settings, clock)
                     route.rampController(ramp, settings, clock)
                     route.rampEngineController(rampEngine, settings, clock)
+                    route.rampRatesController(rampRates)
                     route.emailTemplateController(emailTemplates)
                 }
             }

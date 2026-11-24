@@ -509,6 +509,9 @@ Merchant errors: `ramp.session_invalid` (401), `ramp.code_invalid` (400), `ramp.
 | RO12 | `GET /ops/ramp/routing/{decisionId}` | One routing in full: why this merchant |
 | RO13 | `PUT /ops/ramp/merchants/{id}/tier` | A merchant's type (`INDIVIDUAL` \| `BUSINESS`) and own order limit, audited |
 | RO14 | `GET /ops/ramp/merchants/{id}/signals?network=` | What the engine scores a merchant on, per direction |
+| RO15 | `GET /ops/ramp/pricing?network=` | One network's pricing settings: a spread on each side of the reference, or manual rates with an expiry (2026-11-24, "As built: rates") |
+| RO16 | `PUT /ops/ramp/pricing?network=` | Changes them, version-checked, audited with a reason |
+| RO17 | `GET /ops/ramp/rates?network=` | The buy and sell rates in force now (or why each is paused), the reference and its age |
 
 Every money read takes `?network=`, as the other ops routes do. RO6–RO8 are described under "As built" (staff visibility per merchant).
 
@@ -862,7 +865,7 @@ Ramp implements `RealtimeReplay` with its `realtime` table. Merchants get no fra
 | `ramp.order_not_found` | NOT_FOUND → 404 | No such order, or not this user's or merchant's |
 | `ramp.order_not_cancellable` | CONFLICT → 409 | Already paid or finished |
 | `ramp.collections_unavailable` | UPSTREAM → 502 | PayHero is out of reach (down, timing out, or the circuit is open) for every merchant tried, or gave no answer and couldn't then say whether a prompt went out (2026-11-23). A refusal is `ramp.merchant_unavailable`, never this |
-| `ramp.pricing_unavailable` | UPSTREAM → 502 | No reference rate is available to price a quote |
+| `ramp.pricing_unavailable` | UPSTREAM → 502 | The side asked for has no rate in force: no reference rate, one older than `maxReferenceAgeHours`, or an expired manual rate (2026-11-24; see "As built: rates") |
 | `ramp.custody_unavailable` | UPSTREAM → 502 | Circle is down |
 | `ramp.merchant_not_found` | NOT_FOUND → 404 | The account is not a merchant |
 | `ramp.merchant_not_approved` | FORBIDDEN → 403 | Not yet KYC-verified and partner-approved, or suspended |
@@ -1459,7 +1462,7 @@ Every move is a transition guard (`SaleStates`), with what it holds or frees in 
 
 ### Pricing (R2, `direction: OFF_RAMP`)
 
-`SalePricing`, pure. The rate is the reference rate (`Pricing.rate()`, new). From USDC `X`: `gross = floor_cent(X × rate)`, `fee = ceil_cent(gross × fee_bps)`, the provider's payout fee asked **of `gross − fee`** (never less than the fee of what is finally paid), `receive = floor_shilling(gross − fee − providerFee)`. From shillings `Y` (whole): `providerFee = fee(Y)`, `X = ceil_6dp((Y + providerFee) / (1 − fee_bps) / rate)`, `fee = floor_cent(X × rate) − Y − providerFee` (never below the rate: the rounding goes to the fee). The payout fee is `ProviderFees.payoutFee(network's provider, amount)` when it is `LIVE_TABLE` or `CACHED`, else the first band of `settings.payout_fee_bands` that covers the amount (`ADMIN_TABLE`), else **no quote** (`ramp.payout_fee_unavailable`, 502). The quote keeps `provider_fee_minor` and its source; the order copies them. Limits are selling's own (`offramp_min/max/daily_limit_minor`, on what the user receives); the day is counted on its own Redis key (`rmp:sold:…`).
+`SalePricing`, pure. The rate is the **sell rate** (`Pricing.rate(network, OFF_RAMP)`; until 2026-11-24 the reference rate: see "As built: rates"). From USDC `X`: `gross = floor_cent(X × rate)`, `fee = ceil_cent(gross × fee_bps)`, the provider's payout fee asked **of `gross − fee`** (never less than the fee of what is finally paid), `receive = floor_shilling(gross − fee − providerFee)`. From shillings `Y` (whole): `providerFee = fee(Y)`, `X = ceil_6dp((Y + providerFee) / (1 − fee_bps) / rate)`, `fee = floor_cent(X × rate) − Y − providerFee` (never below the rate: the rounding goes to the fee). The payout fee is `ProviderFees.payoutFee(network's provider, amount)` when it is `LIVE_TABLE` or `CACHED`, else the first band of `settings.payout_fee_bands` that covers the amount (`ADMIN_TABLE`), else **no quote** (`ramp.payout_fee_unavailable`, 502). The quote keeps `provider_fee_minor` and its source; the order copies them. Limits are selling's own (`offramp_min/max/daily_limit_minor`, on what the user receives); the day is counted on its own Redis key (`rmp:sold:…`).
 
 ### The order (R7) and the engine
 
@@ -1704,6 +1707,37 @@ Each wallet is read only from its own calls: a PayHero reading never fills FinoQ
 
 **Confirmed and not.** *Confirmed:* on the dev server (logs, 2026-11-23/24) PayHero's legacy wallet answer is its own object (`{account_id, wallet_type, available_balance, …}`) and FinoQ's account balance is `{service_wallet_balance:{account_id,balance,currency}, wallet_balance:{…}}`; a `SERVICE` top-up on the legacy host was accepted (`201`) and reported paid by the legacy status lookup, while FinoQ's status lookup didn't know it (`404`); PayHero's STK callbacks carry `ServiceWalletBalance` and `PaymentWalletBalance` of their own. FinoQ's docs say each Team "gets its own service wallet (created automatically)" and that balances "never mix across Teams". *Not confirmed (trusted from the owner):* that PayHero's legacy service wallet and FinoQ's `service_wallet_balance` are different wallets with different balances (no doc says either way; the logs carry no values), that the prompt fee comes from PayHero's and the payout fee from FinoQ's (no doc names which wallet pays which fee), and FinoQ's service-wallet top-up itself. Check: after a real payout, `finoq_service` should fall by the fee and `payhero_service` stay put.
 
+## As built: rates (2026-11-24, `feat/ramp-rates`)
+
+Approved by Pasaka the same day. Until now both directions were priced at one rate, the day's reference (shillings per US dollar from open.er-api.com through `ExchangeRates`, refreshed about daily) with no spread, the fee being the only margin. That is open to arbitrage: the rate goes stale intraday, and Kenya's P2P USDC market sits above the official rate. Now each network has **two rates, set by staff in the admin**.
+
+**The rule (`RatePolicy`, pure).** Buying (`ON_RAMP`, the user pays KES for USDC) is quoted at the **buy rate**; selling (`OFF_RAMP`) at the **sell rate**. Per network, `mode`:
+
+- `REFERENCE_SPREAD` (the default): buy = reference × (1 + `buySpreadBps` / 10 000), sell = reference × (1 − `sellSpreadBps` / 10 000). A rate with more than six decimals rounds the merchant's way (buy up, sell down). **Spreads start at 0**, so the rates equal the reference and nothing changed until staff set them. A reference older than `maxReferenceAgeHours` (default 36; `UsdRate.asOf` is the source's publication time, `time_last_update_unix`), or none at all, **pauses** quoting both sides.
+- `MANUAL`: staff's exact `manualBuyRate` and `manualSellRate` (KES per USDC) until `manualExpiresAt` (24 hours from the save when none is given; at most 30 days). Once it passes, quoting pauses until staff set new rates or go back to the reference. A manual rate needs no reference to quote; the reference is needed only for the band check when it is saved.
+
+A paused side is `ramp.pricing_unavailable` (502, unchanged for the app), **never a silent fallback** to another rate; the reason (`NO_REFERENCE`, `REFERENCE_STALE`, `MANUAL_MISSING`, `MANUAL_EXPIRED`) is logged (`ramp rate paused`) and shown on the admin's rates read. One expiry covers both manual rates, so the pair is always checked together.
+
+**Checked when saved** (`ramp.settings_invalid`, 400, naming the field): spreads 0 to 2000 bps; `maxDeviationBps` 1 to 5000 (default 500); `maxReferenceAgeHours` 1 to 168; in `MANUAL`, both rates above 0 with at most six decimals, **buy ≥ sell**, the expiry in the future, and **both rates within `maxDeviationBps` of the reference read now** (the sanity band; with no reference to check against, manual rates can't be saved). The rest of the house rule holds: version-checked (`ramp.settings_changed`), audited by name on the ops gateway, read through `PricingBook` at most every 10 seconds per process (the last read stays in force on a database error). A quote already made keeps its rate.
+
+**Rounding still favours the merchant** everywhere: the spread rate as above; buying keeps its fee rounded up to a shilling and the USDC down (`RatePricing`, which replaces `ReferenceRatePricing`); selling keeps `SalePricing` as it was, at the sell rate.
+
+**Transparency.** Every quote and order records how its rate was made: `rate_source` (`REFERENCE_SPREAD` | `MANUAL`), `reference_rate` (the reference read at the time; null when none could be read, which a manual rate allows) and `spread_bps` (the spread set; for a manual rate the margin it works out to, signed, null without a reference). The order copies them from its quote. Orders from before V12 have them null. Staff see them on RO4 (the review list, which also gains `rate`) and RO8 (a merchant's orders). **The app's quote response is unchanged**: it already carries `rate`, and the reference and margin are not shown to users.
+
+**Data (V12).** `ramp.pricing_settings` (one row per network: `mode`, `buy_spread_bps`, `sell_spread_bps`, `manual_buy_rate`, `manual_sell_rate` (decimal strings), `manual_expires_at`, `max_deviation_bps`, `max_reference_age_hours`, `version`, `updated_by`, `reason`, `updated_at`; `CHECK`s on the ranges and on a manual row having its rates and expiry), seeded from the defaults by `PricingBook` the first time a network has no row. `ramp.quotes` and `ramp.orders` gain `rate_source`, `reference_rate`, `spread_bps`.
+
+**Contract (`ramp:api` `RampRatesAdmin`)**, for the ops module: `pricing(network)`, `updatePricing(settings, version, reason, by)`, `rates(network)`.
+
+**Ops routes** (`rampRatesController`, inside `networkFiltered { }`; `?network=` required):
+
+| # | Route | Does |
+| --- | --- | --- |
+| RO15 | `GET /ops/ramp/pricing?network=` (`ramp.read`) | The pricing settings with their version |
+| RO16 | `PUT /ops/ramp/pricing?network=` (`ramp.manage`, ADMIN) | Replaces them: `{ mode, buySpreadBps, sellSpreadBps, manualBuyRate?, manualSellRate?, manualExpiresAt?, maxDeviationBps, maxReferenceAgeHours, version, reason }`; audited `ramp_pricing.update` with what changed, by name |
+| RO17 | `GET /ops/ramp/rates?network=` (`ramp.read`) | The reference and its age (`referenceRate`, `referenceAsOf`, `referenceAgeSeconds`, `referenceStale`), and `buy` and `sell`: `{ rate, source, spreadBps, paused }` |
+
+**The admin's "Rates" page** (under Ramp, per network): the reference and its age with an alert when stale, the effective buy and sell rates (or why each is paused), a mode switch; in spread mode the two spreads with a live preview of the rates and the margin over the reference; in manual mode the two rates and the expiry, with the band shown; a reason on save.
+
 ## To check against the vendor before building on it
 
 - **PayHero, payouts:** superseded 2026-11-23: FinoQ's docs describe `POST /api/v2/withdraw`, and the integrations half is built on them (see "As built: payouts through FinoQ"). Still to get in writing: that withdraws are enabled for a merchant's account, and every "Not confirmed" item there.
@@ -1717,7 +1751,7 @@ Each wallet is read only from its own calls: a PayHero reading never fills FinoQ
 
 These also go into `decisions.md`; each is a `TODO(decision: …)` in code, behind a port or a setting.
 
-- **The exchange rate.** Decided 2026-11-22: the fee is a percentage staff set, split between the merchant and Circaso by a ratio staff set (Fees, above). Still open: where the rate itself comes from (today a daily reference rate from `ExchangeRates`, with no spread), and whether merchants may set their own.
+- **The exchange rate.** Settled 2026-11-24 (see "As built: rates"): staff set each network's buy and sell rates as a spread on each side of the reference, or as exact manual rates with an expiry. Still open: whether merchants may set their own (an order book is "Not in v1"), and a live intraday reference (a P2P or exchange feed) in place of the daily one.
 - **Reversal after release.** Who carries the loss when a user reverses M-Pesa after USDC was released (the merchant, Circaso, a shared reserve), how a reversal is proven (PayHero reports none), and what a user paid-after-expiry is owed when the float is gone.
 - **Key vault or envelope encryption.** The envelope above keeps merchant keys out of the database in plaintext, but the master key and the Circle entity secret are environment secrets. Which key store before real money moves (the open "Signing key storage" question, now sharper: the entity secret can move every merchant's float).
 - **Payout provider for the off-ramp.** Settled 2026-11-23: FinoQ (PayHero) payouts from each merchant's own account (see "As built: the off-ramp"). Earlier: PayHero has no payouts today (unverified until it replies in writing). Which provider pays users out: the merchant's own Daraja B2C, another aggregator, or PayHero later; whether merchants hold KES float there; and whether the semi-manual payout (Proposed above) opens selling in the meantime.

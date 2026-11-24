@@ -130,6 +130,8 @@ data class Quote(
     /** Selling: the provider's payout fee the user pays on top of [feeMinor] (KES minor units), and its source. */
     val providerFeeMinor: Long = 0,
     val providerFeeSource: String? = null,
+    /** How [rate] was made (decision 2026-11-24); null on quotes made before it was recorded. */
+    val rateBasis: RateBasis? = null,
 )
 
 data class Order(
@@ -188,6 +190,8 @@ data class Order(
     val payoutSentAt: Instant? = null,
     /** Selling, `FUNDED`: the next payout attempt not before then. */
     val payoutRetryAt: Instant? = null,
+    /** How [rate] was made, copied from the quote (decision 2026-11-24); null on orders from before. */
+    val rateBasis: RateBasis? = null,
 ) {
     /** Selling: the shillings held at the merchant's provider for it, the payout and its fee. */
     val payoutHoldMinor: Long get() = fiat.amountMinor + providerFeeMinor
@@ -307,6 +311,7 @@ data class Priced(
     val assetMinor: Long,
     val rate: BigDecimal,
     val feeMinor: Long,
+    val rateBasis: RateBasis? = null,
 )
 
 /** How an order's fee is shared: the merchant's part and Circaso's in the fiat currency, and Circaso's in USDC. */

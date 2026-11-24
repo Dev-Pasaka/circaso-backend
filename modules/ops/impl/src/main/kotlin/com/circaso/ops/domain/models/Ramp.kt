@@ -2,6 +2,7 @@ package com.circaso.ops.domain.models
 
 import com.circaso.ramp.api.MerchantId
 import com.circaso.ramp.api.OpsEngineSettings
+import com.circaso.ramp.api.OpsPricingSettings
 import com.circaso.ramp.api.OpsRampOrderCursor
 import com.circaso.ramp.api.OpsRampPeriod
 import com.circaso.shared.Network
@@ -31,3 +32,6 @@ data class RampMerchantTierUpdate(
     val orderLimitMinor: Long?,
     val reason: String,
 )
+
+/** A change of a network's pricing settings (the rates): the settings, the version they were read at, and why. */
+data class RampPricingUpdate(val settings: OpsPricingSettings, val version: Long?, val reason: String)

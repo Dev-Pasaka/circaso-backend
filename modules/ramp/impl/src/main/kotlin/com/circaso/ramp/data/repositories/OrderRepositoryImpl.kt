@@ -16,6 +16,8 @@ import com.circaso.ramp.domain.models.PageCursor
 import com.circaso.ramp.domain.models.PaidOutcome
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
+import com.circaso.ramp.domain.models.RateBasis
+import com.circaso.ramp.domain.models.RateMode
 import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.shared.FiatAmount
@@ -71,6 +73,9 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
                 it[expiresAt] = quote.expiresAt
                 it[providerFeeMinor] = quote.providerFeeMinor
                 it[providerFeeSource] = quote.providerFeeSource
+                it[rateSource] = quote.rateBasis?.source?.name
+                it[referenceRate] = quote.rateBasis?.referenceRate?.toPlainString()
+                it[spreadBps] = quote.rateBasis?.spreadBps
             }
         }
     }
@@ -100,6 +105,12 @@ class QuoteRepositoryImpl(private val database: Database) : QuoteRepository {
             expiresAt = this[QuotesTable.expiresAt],
             providerFeeMinor = this[QuotesTable.providerFeeMinor],
             providerFeeSource = this[QuotesTable.providerFeeSource],
+            rateBasis =
+                rateBasisOf(
+                    this[QuotesTable.rateSource],
+                    this[QuotesTable.referenceRate],
+                    this[QuotesTable.spreadBps],
+                ),
         )
 }
 
@@ -149,6 +160,9 @@ class OrderRepositoryImpl(private val database: Database) : OrderRepository {
                         it[providerFeeMinor] = order.providerFeeMinor
                         it[providerFeeSource] = order.providerFeeSource
                         it[refundAddress] = order.refundAddress
+                        it[rateSource] = order.rateBasis?.source?.name
+                        it[referenceRate] = order.rateBasis?.referenceRate?.toPlainString()
+                        it[spreadBps] = order.rateBasis?.spreadBps
                     }.insertedCount > 0
             if (inserted) record(order, order.createdAt, detail = null)
             inserted
@@ -516,6 +530,8 @@ internal fun ResultRow.toOrder() =
         fundingTxHash = this[OrdersTable.fundingTxHash],
         fundedAt = this[OrdersTable.fundedAt],
         refundAddress = this[OrdersTable.refundAddress],
+        rateBasis =
+            rateBasisOf(this[OrdersTable.rateSource], this[OrdersTable.referenceRate], this[OrdersTable.spreadBps]),
         payoutAttempts = this[OrdersTable.payoutAttempts],
         payoutFailures = this[OrdersTable.payoutFailures],
         payoutReference = this[OrdersTable.payoutReference],
@@ -530,3 +546,13 @@ internal fun payer(stored: String): PhoneNumber =
     checkNotNull(PhoneNumber.parse(stored)) {
         "A stored payer number is E.164"
     }
+
+/** A quote's or order's rate basis as stored; null on rows from before V12 (or a source this build doesn't know). */
+internal fun rateBasisOf(
+    source: String?,
+    reference: String?,
+    spreadBps: Int?,
+): RateBasis? {
+    val mode = source?.let { raw -> RateMode.entries.firstOrNull { it.name == raw } } ?: return null
+    return RateBasis(mode, reference?.let(::BigDecimal), spreadBps)
+}

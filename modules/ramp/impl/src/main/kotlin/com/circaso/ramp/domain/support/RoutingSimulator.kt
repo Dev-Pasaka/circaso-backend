@@ -129,7 +129,16 @@ class RoutingSimulator(
         }
         val blockchain = rampSettings.chains.firstOrNull() ?: return Resource.success(emptyList())
         val assetMinor =
-            when (val priced = pricing.price(command.direction, fiatMinor, null, rampSettings.feeBps)) {
+            when (
+                val priced =
+                    pricing.price(
+                        command.network,
+                        command.direction,
+                        fiatMinor,
+                        null,
+                        rampSettings.feeBps,
+                    )
+            ) {
                 is Resource.Error -> return priced
                 is Resource.Success -> priced.data.assetMinor
             }

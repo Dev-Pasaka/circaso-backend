@@ -270,6 +270,11 @@ data class RampOrderDto(
     /** A sale's latest payout: `SENDING`, `ACCEPTED`, `UNKNOWN`, `NOT_SENT:…`, `FAILED:…` or `PAID`. */
     val payoutOutcome: String? = null,
     val hasReceipt: Boolean = false,
+    /** The rate (KES per USDC) and how it was made: `REFERENCE_SPREAD` or `MANUAL`, the reference then, the margin. */
+    val rate: String? = null,
+    val rateSource: String? = null,
+    val referenceRate: String? = null,
+    val spreadBps: Int? = null,
 )
 
 @Serializable
@@ -512,6 +517,10 @@ data class RampMerchantOrderDto(
     val settlementId: String? = null,
     val txHash: String? = null,
     val collectionsProvider: String,
+    /** How `rate` was made: `REFERENCE_SPREAD` or `MANUAL`, the reference then, the margin (null before 2026-11-24). */
+    val rateSource: String? = null,
+    val referenceRate: String? = null,
+    val spreadBps: Int? = null,
 )
 
 @Serializable

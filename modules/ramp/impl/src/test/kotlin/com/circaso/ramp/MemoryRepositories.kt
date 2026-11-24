@@ -29,6 +29,7 @@ import com.circaso.ramp.domain.models.PaymentsIssue
 import com.circaso.ramp.domain.models.PayoutIssue
 import com.circaso.ramp.domain.models.Period
 import com.circaso.ramp.domain.models.PreviewAccess
+import com.circaso.ramp.domain.models.PricingSettings
 import com.circaso.ramp.domain.models.Quote
 import com.circaso.ramp.domain.models.RampSettings
 import com.circaso.ramp.domain.models.RevenueWallet
@@ -68,6 +69,7 @@ import com.circaso.ramp.domain.repositories.OrderEventRepository
 import com.circaso.ramp.domain.repositories.OrderRepository
 import com.circaso.ramp.domain.repositories.PayoutHoldRepository
 import com.circaso.ramp.domain.repositories.PreviewAccessRepository
+import com.circaso.ramp.domain.repositories.PricingSettingsRepository
 import com.circaso.ramp.domain.repositories.QuoteRepository
 import com.circaso.ramp.domain.repositories.ReservationRepository
 import com.circaso.ramp.domain.repositories.RevenueWalletRepository
@@ -1291,5 +1293,21 @@ suspend fun MerchantRepository.setOnlineUntil(merchantId: MerchantId, until: Ins
         goOffline(merchantId, OfflineReason.STOPPED, Instant.now())
     } else {
         goOnline(merchantId, until, since = Instant.now())
+    }
+}
+
+class MemoryPricingSettings : PricingSettingsRepository {
+    val rows = linkedMapOf<Network, PricingSettings>()
+
+    override suspend fun load() = rows.toMap()
+
+    override suspend fun seed(settings: PricingSettings) {
+        rows.putIfAbsent(settings.network, settings)
+    }
+
+    override suspend fun update(settings: PricingSettings, expectedVersion: Long?): PricingSettings? {
+        val current = rows[settings.network] ?: return null
+        if (expectedVersion != null && current.version != expectedVersion) return null
+        return settings.copy(version = current.version + 1).also { rows[settings.network] = it }
     }
 }

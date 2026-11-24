@@ -346,6 +346,10 @@ private fun OrderView.toOps() =
         payoutAttempts = order.payoutAttempts,
         payoutOutcome = order.payoutOutcome,
         hasReceipt = order.mpesaReceipt != null,
+        rate = order.rate.stripTrailingZeros().toPlainString(),
+        rateSource = order.rateBasis?.source?.name,
+        referenceRate = order.rateBasis?.referenceRate?.toPlainString(),
+        spreadBps = order.rateBasis?.spreadBps,
     )
 
 private fun RampSettings.toOps(offered: List<String>, offeredKyc: List<String>) =
@@ -603,4 +607,7 @@ private fun StaffOrder.toOps() =
         settlementId = commission?.settlementId,
         txHash = order.txHash,
         collectionsProvider = order.collectionsProvider,
+        rateSource = order.rateBasis?.source?.name,
+        referenceRate = order.rateBasis?.referenceRate?.toPlainString(),
+        spreadBps = order.rateBasis?.spreadBps,
     )
