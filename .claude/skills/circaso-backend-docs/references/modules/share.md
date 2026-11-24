@@ -6,6 +6,7 @@ Built 2026-11-06. **Share links**: every share in the app (a payment receipt, a 
 
 ### Owns
 - Share links: a 12-character base62 code (about 71 bits, `SecureRandom`), its owner, kind, the **snapshot** the page shows (typed JSON), when it ends (optional) and when it was turned off.
+- Pay links' page (`GET /pay/{address}?chain=…&asset=USDC[&amount=…]`, decision 2026-11-24): stateless, nothing stored.
 - The public page (`GET /s/{code}`) and the app association files (`/.well-known/assetlinks.json`, `/.well-known/apple-app-site-association`), mounted at the root through `PageContributor`, outside `/v1`.
 
 ### Contract (`share:api`)
@@ -30,8 +31,9 @@ Built 2026-11-06. **Share links**: every share in the app (a payment receipt, a 
 | SH3 | `DELETE /share/links/{code}` | app | `RevokeShareLink` | owner only; clears the snapshot, stamps `revoked_at`, keeps the row 30 days |
 | SH4 | `GET /share/links/{code}` | app | `OpenShareLink` | what the page shows plus `open`, decided for this viewer (a party to the payment, a member of the group, someone else's invite or pay me) |
 | — | `GET /s/{code}` | public | `ViewSharePage` | HTML; `shr:views:{hash(ip)}` 60/minute before the code is read; 200 live, 410 off or ended, 404 unknown, 429 throttled; `no-store`, `X-Robots-Tag: noindex`, strict CSP (inline style and `img-src https://assets.circaso.com` only, no script) |
+| — | `GET /pay/{address}?chain=&asset=&amount=` | public | `ReadPayLink` | HTML; a pay link (decision 2026-11-24): the address grouped in fours with Copy, the network and coin large, the warning, "Open in Circaso" (`circaso://pay/…`). Strict: EIP-55 when mixed case, a 32-byte base58 key on SOL chains, `chain` one of BASE, BASE-SEPOLIA, MATIC, MATIC-AMOY, ETH, ETH-SEPOLIA, SOL, SOL-DEVNET, `asset` USDC (or absent), `amount` a decimal with at most 6 places (else not shown, and said). 200 payable, 404 bad address, 400 unknown chain or coin; no address is ever shown on those. `no-store`, `noindex`, the share CSP plus `script-src 'sha256-…'` for the one Copy script. No throttle: nothing is looked up |
 | — | `GET /.well-known/assetlinks.json` | public | — | `SHARE_ANDROID_PACKAGE` + `SHARE_ANDROID_CERT_SHA256`; 404 while no fingerprint is set |
-| — | `GET /.well-known/apple-app-site-association` | public | — | `SHARE_IOS_APP_IDS`, components `/s/*` |
+| — | `GET /.well-known/apple-app-site-association` | public | — | `SHARE_IOS_APP_IDS`, components `/s/*` and `/pay/*` |
 
 ## Data
 

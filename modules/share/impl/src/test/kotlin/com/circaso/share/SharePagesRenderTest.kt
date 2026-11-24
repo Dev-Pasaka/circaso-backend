@@ -231,8 +231,11 @@ class SharePagesRenderTest {
     fun `an address is readable in groups of four and copies whole`() {
         val html = render(address())
         assertPage(html)
-        assertTrue("0x1234567890abcdef1234567890abcdef12345678" in html, "whole for screen readers")
-        assertTrue("<span>0x12</span><span>3456</span>" in html, "grouped for eyes")
+        assertTrue(
+            "0x1234, 5678, 90ab, cdef, 1234, 5678, 90ab, cdef, 1234, 5678" in html,
+            "group by group for screen readers",
+        )
+        assertTrue("<span>0x1234</span><span>5678</span>" in html, "grouped for eyes, as the app and the pay page")
         assertTrue("user-select: all" in html)
         assertTrue("Send only USDC on Base (testnet)" in html)
     }

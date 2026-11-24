@@ -269,6 +269,21 @@ internal object SharePageStyle {
           .address span { display: inline-block; margin-right: 0.42em; }
           .address span:nth-child(even) { color: var(--ink-2); }
           .address-hint { margin-top: 8px; font: 400 12px/16px var(--font-sans); letter-spacing: 0; color: var(--ink-2); }
+          /* ---- a pay link: the network and coin large, the address with Copy ---- */
+          .address-head h1 .pay-on { display: block; color: var(--ink-2); }
+          .address-head h1 .pay-on b { font-weight: inherit; color: var(--ink); }
+          .pay-amount { margin-top: 14px; padding: 6px 14px; border-radius: 999px; background: var(--fill); font: 600 17px/22px var(--font-rounded); letter-spacing: -0.43px; font-variant-numeric: tabular-nums; }
+          .pay-amount .pay-amount-label { font: 400 13px/18px var(--font-sans); letter-spacing: -0.08px; color: var(--ink-2); margin-right: 2px; }
+          .pay-amount .amount-code { font-size: 13px; letter-spacing: 0; color: var(--ink-2); }
+          .copy { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 12px; padding: 0 16px;
+            border: 0; border-radius: 999px; background: var(--fill); color: var(--ink); font: 600 15px/20px var(--font-sans); letter-spacing: -0.23px; cursor: pointer;
+            transition: transform 120ms var(--ease-out), background-color 120ms ease; }
+          .copy[hidden] { display: none; }
+          .copy:active { transform: scale(0.97); background: var(--fill-strong); background: color-mix(in srgb, var(--ink) 14%, var(--fill)); }
+          .copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+          .copy .done-icon, .copy.done .copy-icon { display: none; }
+          .copy.done .done-icon { display: inline; }
+          .copy.done { background: var(--action); color: var(--on-action); }
           .warn { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md);
             background: var(--fill); background: color-mix(in srgb, var(--warning) 10%, transparent); color: var(--warning); }
           .warn svg { flex: none; margin-top: 0; }

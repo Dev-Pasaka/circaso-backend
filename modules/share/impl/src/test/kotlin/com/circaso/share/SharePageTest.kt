@@ -120,7 +120,7 @@ class SharePageTest {
             assertTrue("Chat with Wanjiru on Circaso" in i && "@wanjiru" in i)
             assertFalse("invite-token" in i)
             val a = client.get("/s/${address.code.value}").bodyAsText()
-            assertTrue("0x1234567890abcdef1234567890abcdef12345678" in a && "Base (testnet)" in a)
+            assertTrue("<span>0x1234</span><span>5678</span>" in a && "Base (testnet)" in a)
         }
     }
 
@@ -161,6 +161,7 @@ class SharePageTest {
             val body = ios.bodyAsText()
             assertTrue("\"appIDs\":[\"985W5Z7984.com.circaso.app\"]" in body)
             assertTrue("\"/\":\"/s/*\"" in body && "\"apps\":[]" in body)
+            assertTrue("\"/\":\"/pay/*\"" in body && "\"/pay/*\"" in body, "pay links open the app too")
         }
         page(h, h.config.copy(androidCertFingerprints = emptyList())) {
             assertEquals(HttpStatusCode.NotFound, client.get("/.well-known/assetlinks.json").status)

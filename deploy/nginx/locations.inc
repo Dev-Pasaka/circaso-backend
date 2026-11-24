@@ -90,6 +90,14 @@ location ^~ /s/ {
     include /etc/nginx/conf.d/proxy.inc;
 }
 
+# Pay link pages (decision 2026-11-24): the app answers a bad address (404) or an unknown network or coin (400) with
+# designed pages, so these pass through like share links.
+location ^~ /pay/ {
+    proxy_set_header Accept "*/*";
+    limit_req zone=api burst=60 nodelay;
+    include /etc/nginx/conf.d/proxy.inc;
+}
+
 location ^~ /.well-known/ {
     limit_req zone=api burst=60 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
